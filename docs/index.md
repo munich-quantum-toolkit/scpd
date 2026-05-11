@@ -16,11 +16,6 @@ self
 :caption: User Guide
 
 installation
-quickstart
-equivalence_checking
-compilation_flow_verification
-parametrized_circuits
-partial_equivalence
 references
 CHANGELOG
 UPGRADING
