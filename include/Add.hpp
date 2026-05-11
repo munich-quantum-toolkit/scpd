@@ -8,5 +8,7 @@
  * Licensed under the MIT License
  */
 
+#pragma once
+
 /// Add two integers.
 int add(int a, int b);

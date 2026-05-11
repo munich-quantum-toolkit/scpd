@@ -101,7 +101,7 @@ jobs:
     if: fromJSON(needs.change-detection.outputs.run-cpp-linter)
     uses: munich-quantum-toolkit/workflows/.github/workflows/reusable-cpp-linter.yml@b59d15aa4f266e713afad51e132bde6e3a28a6b3 # v1.18.1
     with:
-      cmake-args: -DBUILD_MQT_CORE_BENCHMARKS=ON -DBUILD_MQT_CORE_BINDINGS=ON
+      cmake-args: -DBUILD_MQT_SCPD_BINDINGS=ON
       clang-version: 22
       build-project: true
       files-changed-only: true

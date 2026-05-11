@@ -8,4 +8,6 @@
  * Licensed under the MIT License
  */
 
+#include "Add.hpp"
+
 int add(int a, int b) { return a + b; }
