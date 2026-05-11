@@ -35,8 +35,6 @@ jobs:
       runs-on: ${{ matrix.runs-on }}
       compiler: ${{ matrix.compiler }}
       config: ${{ matrix.config }}
-      setup-mlir: true
-      llvm-version: 22.1.0
 
   cpp-tests-macos:
     name: 🇨‌ Test 🍎
@@ -58,8 +56,6 @@ jobs:
       compiler: ${{ matrix.compiler }}
       config: ${{ matrix.config }}
       cmake-args: -DMQT_CORE_WITH_GMP=ON
-      setup-mlir: true
-      llvm-version: 22.1.0
 
   cpp-tests-windows:
     name: 🇨‌ Test 🏁
@@ -80,17 +76,12 @@ jobs:
       runs-on: ${{ matrix.runs-on }}
       compiler: ${{ matrix.compiler }}
       config: ${{ matrix.config }}
-      setup-mlir: true
-      llvm-version: 22.1.0
 
   cpp-coverage:
     name: 🇨‌ Coverage
     needs: change-detection
     if: fromJSON(needs.change-detection.outputs.run-cpp-tests)
     uses: munich-quantum-toolkit/workflows/.github/workflows/reusable-cpp-coverage.yml@b59d15aa4f266e713afad51e132bde6e3a28a6b3 # v1.18.1
-    with:
-      setup-mlir: true
-      llvm-version: 22.1.0
     permissions:
       contents: read
       id-token: write
@@ -108,8 +99,6 @@ jobs:
       setup-python: true
       install-pkgs: "nanobind==2.12.0"
       cpp-linter-extra-args: "-std=c++20"
-      setup-mlir: true
-      llvm-version: 22.1.0
 
   python-tests:
     name: 🐍 Test
