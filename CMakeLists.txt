@@ -43,15 +43,16 @@ endif()
 
 option(BUILD_MQT_SCPD_TESTS "Also build tests for the MQT SCPD project" ${PROJECT_IS_TOP_LEVEL})
 
-include(cmake/AddMQTPythonBinding.cmake)
-include(cmake/ExternalDependencies.cmake)
-include(cmake/PackageAddTest.cmake)
-
 # set the include directory for the build tree
 set(MQT_SCPD_INCLUDE_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 # set prefix for all MQT SCPD targets
 set(MQT_SCPD_TARGET_NAME mqt-scpd)
+
+include(cmake/AddMQTPythonBinding.cmake)
+include(cmake/ExternalDependencies.cmake)
+include(cmake/PackageAddTest.cmake)
+include(cmake/StandardProjectSettings.cmake)
 
 # add main library code
 add_subdirectory(src)
