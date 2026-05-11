@@ -13,42 +13,12 @@ include(FetchContent)
 set(FETCH_PACKAGES "")
 
 if(BUILD_MQT_SCPD_BINDINGS)
-  # Manually detect the installed mqt-core package.
-  execute_process(
-    COMMAND "${Python_EXECUTABLE}" -m mqt.core --cmake_dir
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    OUTPUT_VARIABLE mqt-core_DIR
-    ERROR_QUIET)
-
-  # Add the detected directory to the CMake prefix path.
-  if(mqt-core_DIR)
-    list(APPEND CMAKE_PREFIX_PATH "${mqt-core_DIR}")
-    message(STATUS "Found mqt-core package: ${mqt-core_DIR}")
-  endif()
-
   execute_process(
     COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
     OUTPUT_STRIP_TRAILING_WHITESPACE
     OUTPUT_VARIABLE nanobind_ROOT)
   find_package(nanobind CONFIG REQUIRED)
 endif()
-
-# cmake-format: off
-set(MQT_CORE_MINIMUM_VERSION 3.4.1
-    CACHE STRING "MQT Core minimum version")
-set(MQT_CORE_VERSION 3.4.1
-    CACHE STRING "MQT Core version")
-set(MQT_CORE_REV "8747a89766dfb943d62ed100d383cd1823d2356c"
-    CACHE STRING "MQT Core identifier (tag, branch or commit hash)")
-set(MQT_CORE_REPO_OWNER "munich-quantum-toolkit"
-    CACHE STRING "MQT Core repository owner (change when using a fork)")
-# cmake-format: on
-FetchContent_Declare(
-  mqt-core
-  GIT_REPOSITORY https://github.com/${MQT_CORE_REPO_OWNER}/core.git
-  GIT_TAG ${MQT_CORE_REV}
-  FIND_PACKAGE_ARGS ${MQT_CORE_MINIMUM_VERSION})
-list(APPEND FETCH_PACKAGES mqt-core)
 
 if(BUILD_MQT_SCPD_TESTS)
   set(gtest_force_shared_crt

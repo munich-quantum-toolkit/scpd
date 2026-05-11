@@ -25,7 +25,7 @@ list(
   ${BASEPOINT}/../../core/lib
   ${BASEPOINT}/../../core/lib64)
 
-add_mqt_python_binding_nanobind(
+add_mqt_python_binding(
   SCPD
   ${MQT_SCPD_TARGET_NAME}-bindings
   bindings.cpp

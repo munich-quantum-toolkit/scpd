@@ -14,9 +14,6 @@ project(
   LANGUAGES C CXX
   DESCRIPTION "MQT SCPD: Super Conducting Physical Design")
 
-# Add path for custom modules
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-
 option(BUILD_MQT_SCPD_BINDINGS "Build the MQT SCPD Python bindings" OFF)
 if(BUILD_MQT_SCPD_BINDINGS)
   # ensure that the BINDINGS option is set
@@ -46,19 +43,9 @@ endif()
 
 option(BUILD_MQT_SCPD_TESTS "Also build tests for the MQT SCPD project" ${PROJECT_IS_TOP_LEVEL})
 
-# on macOS with GCC, disable module scanning
-# https://www.reddit.com/r/cpp_questions/comments/1kwlkom/comment/ni5angh/
-if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.28")
-    set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
-  else()
-    message(WARNING "CMake 3.28+ is required to disable C++ module scanning on macOS with GCC. "
-                    "Current version: ${CMAKE_VERSION}. "
-                    "Consider upgrading CMake to avoid potential build issues.")
-  endif()
-endif()
-
+include(cmake/AddMQTPythonBinding.cmake)
 include(cmake/ExternalDependencies.cmake)
+include(cmake/PackageAddTest.cmake)
 
 # set the include directory for the build tree
 set(MQT_SCPD_INCLUDE_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")

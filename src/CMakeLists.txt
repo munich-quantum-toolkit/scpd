@@ -18,9 +18,6 @@ if(NOT TARGET MQT::SCPD)
   target_include_directories(${PROJECT_NAME}
                              PUBLIC $<BUILD_INTERFACE:${MQT_SCPD_INCLUDE_BUILD_DIR}>)
 
-  # link to the MQT::Core libraries
-  target_link_libraries(${PROJECT_NAME} PRIVATE MQT::ProjectWarnings MQT::ProjectOptions)
-
   # add MQT alias
   add_library(MQT::SCPD ALIAS ${PROJECT_NAME})
 endif()
