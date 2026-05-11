@@ -19,7 +19,7 @@ This project adheres to [Semantic Versioning], with the exception that minor rel
 
 <!-- PR links -->
 
-[#1]: https://github.com/munich-quantum-toolkit/core/pull/1
+[#1]: https://github.com/munich-quantum-toolkit/scpd/pull/1
 
 <!-- Contributor -->
 

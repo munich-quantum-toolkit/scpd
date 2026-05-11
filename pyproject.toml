@@ -243,7 +243,7 @@ test-skip = [
 ]
 
 # The mqt-core shared libraries are provided by the mqt-core Python package.
-# They should not be vendorized into the mqt-qcec wheel. This requires
+# They should not be vendorized into the mqt-scpd wheel. This requires
 # excluding the shared libraries from the repair process.
 
 [tool.cibuildwheel.linux]
