@@ -17,7 +17,7 @@
 
 # MQT SCPD - Super Conducting Physical Design
 
-A physical design tool for superconducting quantum chips developed as part of the [_Munich Quantum Toolkit (MQT)_](https://mqt.readthedocs.io). 
+A physical design tool for superconducting quantum chips developed as part of the [_Munich Quantum Toolkit (MQT)_](https://mqt.readthedocs.io).
 It currently supports automated port assignment and routing under special technology constraints of superconducting quantum technologies.
 
 <p align="center">
