@@ -12,7 +12,7 @@ cmake_minimum_required(VERSION 3.24...4.3)
 project(
   mqt-scpd
   LANGUAGES C CXX
-  DESCRIPTION "MQT SCPD: Super Conducting Physical Design")
+  DESCRIPTION "MQT SCPD: A Physical Design Tool for Superconducting Quantum Chips")
 
 option(BUILD_MQT_SCPD_BINDINGS "Build the MQT SCPD Python bindings" OFF)
 if(BUILD_MQT_SCPD_BINDINGS)

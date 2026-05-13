@@ -16,7 +16,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "mqt.scpd"
-description = "Super Conducting Physical Design"
+description = "Physical Design for Superconducting Quantum Chips"
 readme = "README.md"
 authors = [
     { name = "Michael Feldmeier", email = "michael.feldmeier@tum.de" },
