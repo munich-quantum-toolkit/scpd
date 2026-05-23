@@ -48,7 +48,7 @@ PROJECT_NAME           = "MQT SCPD"
 # for a project that appears at the top of each page and should give viewer a
 # quick idea about the purpose of the project. Keep the description short.
 
-PROJECT_BRIEF          = "Super Conducting Physical Design"
+PROJECT_BRIEF          = "A physical design tool for superconducting quantum chips"
 
 # The OUTPUT_DIRECTORY tag is used to specify the (relative or absolute) path
 # into which the generated documentation will be written. If a relative path is

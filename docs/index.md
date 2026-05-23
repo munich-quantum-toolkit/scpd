@@ -1,4 +1,4 @@
-# MQT SCPD - Super Conducting Physical Design
+# MQT SCPD - A physical design tool for superconducting quantum chips
 
 MQT SCPD is an open-source C++20 and Python library for the physical design of superconducting quantum circuits developed as part of the _{doc}`Munich Quantum Toolkit (MQT) <mqt:index>`_. It supports automated port assignment and routing under the special technology constraints of superconducting quantum technologies.
 
