@@ -45,17 +45,17 @@ templates_path = ["_templates"]
 html_css_files = ["custom.css"]
 
 extensions = [
-    "myst_nb",
     "autoapi.extension",
+    "myst_nb",
+    "sphinx_copybutton",
+    "sphinx_design",
     "sphinx.ext.autodoc",
     "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",
-    "sphinx_copybutton",
-    "sphinx_design",
-    "sphinxext.opengraph",
     "sphinx.ext.viewcode",
-    "sphinxcontrib.inkscapeconverter",
     "sphinxcontrib.bibtex",
+    "sphinxcontrib.inkscapeconverter",
+    "sphinxext.opengraph",
 ]
 
 source_suffix = [".rst", ".md"]
@@ -149,7 +149,6 @@ toc_object_entries_show_parents = "hide"
 python_use_unqualified_type_names = True
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
-
 
 # -- Options for HTML output -------------------------------------------------
 
