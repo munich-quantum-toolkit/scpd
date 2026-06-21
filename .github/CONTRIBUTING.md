@@ -4,4 +4,5 @@
 # Contributing
 
 Thank you for your interest in contributing to MQT SCPD!
-An extensive contribution guide is available in our [documentation](https://mqt.readthedocs.io/projects/scpd/en/latest/contributing.html).
+An extensive contribution guide is available in our
+[documentation](https://mqt.readthedocs.io/projects/scpd/en/latest/contributing.html).
