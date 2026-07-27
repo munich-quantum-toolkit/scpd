@@ -17,8 +17,10 @@
 
 # MQT SCPD - A physical design tool for superconducting quantum chips
 
-A physical design tool for superconducting quantum chips developed as part of the [_Munich Quantum Toolkit (MQT)_](https://mqt.readthedocs.io).
-It currently supports automated port assignment and routing under special technology constraints of superconducting quantum technologies.
+A physical design tool for superconducting quantum chips developed as part of
+the [_Munich Quantum Toolkit (MQT)_](https://mqt.readthedocs.io). It currently
+supports automated port assignment and routing under special technology
+constraints of superconducting quantum technologies.
 
 <p align="center">
   <a href="https://mqt.readthedocs.io/projects/scpd">
@@ -29,15 +31,23 @@ It currently supports automated port assignment and routing under special techno
 ## Key Features
 
 > [!NOTE]
-> MQT SCPD is still under development.
-> This section will be expanded in the future.
+> MQT SCPD is still under development. This section will be expanded in the
+> future.
 
-If you have any questions, feel free to create a [discussion](https://github.com/munich-quantum-toolkit/scpd/discussions) or an [issue](https://github.com/munich-quantum-toolkit/scpd/issues) on [GitHub](https://github.com/munich-quantum-toolkit/scpd).
+If you have any questions, feel free to create a
+[discussion](https://github.com/munich-quantum-toolkit/scpd/discussions) or an
+[issue](https://github.com/munich-quantum-toolkit/scpd/issues) on
+[GitHub](https://github.com/munich-quantum-toolkit/scpd).
 
 ## Contributors and Supporters
 
-The _[Munich Quantum Toolkit (MQT)](https://mqt.readthedocs.io)_ is developed by the [Chair for Design Automation](https://www.cda.cit.tum.de/) at the [Technical University of Munich](https://www.tum.de/) and supported by [MQSC](https://mq.sc).
-Among others, it is part of the [Munich Quantum Software Stack (MQSS)](https://www.munich-quantum-valley.de/research/research-areas/mqss) ecosystem, which is being developed as part of the [Munich Quantum Valley (MQV)](https://www.munich-quantum-valley.de) initiative.
+The _[Munich Quantum Toolkit (MQT)](https://mqt.readthedocs.io)_ is developed by
+the [Chair for Design Automation](https://www.cda.cit.tum.de/) at the
+[Technical University of Munich](https://www.tum.de/) and supported by
+[MQSC](https://mq.sc). Among others, it is part of the
+[Munich Quantum Software Stack (MQSS)](https://www.munich-quantum-valley.de/research/research-areas/mqss)
+ecosystem, which is being developed as part of the
+[Munich Quantum Valley (MQV)](https://www.munich-quantum-valley.de) initiative.
 
 <p align="center">
   <picture>
@@ -54,17 +64,21 @@ Thank you to all the contributors who have helped make MQT SCPD a reality!
   </a>
 </p>
 
-The MQT will remain free, open-source, and permissively licensed—now and in the future.
-We are firmly committed to keeping it open and actively maintained for the quantum computing community.
+The MQT will remain free, open-source, and permissively licensed—now and in the
+future. We are firmly committed to keeping it open and actively maintained for
+the quantum computing community.
 
 To support this endeavor, please consider:
 
-- Starring and sharing our repositories: https://github.com/munich-quantum-toolkit
-- Contributing code, documentation, tests, or examples via issues and pull requests
+- Starring and sharing our repositories:
+  <https://github.com/munich-quantum-toolkit>
+- Contributing code, documentation, tests, or examples via issues and pull
+  requests
 - Citing the MQT in your publications (see [Cite This](#cite-this))
-- Citing our research in your publications (see [References](https://mqt.readthedocs.io/projects/scpd/en/latest/references.html))
+- Citing our research in your publications (see
+  [References](https://mqt.readthedocs.io/projects/scpd/en/latest/references.html))
 - Using the MQT in research and teaching, and sharing feedback and use cases
-- Sponsoring us on GitHub: https://github.com/sponsors/munich-quantum-toolkit
+- Sponsoring us on GitHub: <https://github.com/sponsors/munich-quantum-toolkit>
 
 <p align="center">
   <a href="https://github.com/sponsors/munich-quantum-toolkit">
@@ -81,17 +95,21 @@ uv pip install mqt.scpd
 ```
 
 > [!NOTE]
-> MQT SCPD is still under development.
-> This section will be expanded in the future.
+> MQT SCPD is still under development. This section will be expanded in the
+> future.
 
-**Detailed documentation and examples are available at [ReadTheDocs](https://mqt.readthedocs.io/projects/scpd).**
+**Detailed documentation and examples are available at
+[ReadTheDocs](https://mqt.readthedocs.io/projects/scpd).**
 
 ## System Requirements and Building
 
-Building the project requires a C++ compiler with support for C++20 and CMake 3.24 or newer.
-For details on how to build the project, please refer to the [documentation](https://mqt.readthedocs.io/projects/scpd).
-Building (and running) is continuously tested under Linux, macOS, and Windows using the [latest available system versions for GitHub Actions](https://github.com/actions/runner-images).
-MQT SCPD is compatible with all [officially supported Python versions](https://devguide.python.org/versions/).
+Building the project requires a C++ compiler with support for C++20 and CMake
+3.24 or newer. For details on how to build the project, please refer to the
+[documentation](https://mqt.readthedocs.io/projects/scpd). Building (and
+running) is continuously tested under Linux, macOS, and Windows using the
+[latest available system versions for GitHub Actions](https://github.com/actions/runner-images).
+MQT SCPD is compatible with all
+[officially supported Python versions](https://devguide.python.org/versions/).
 
 ## Cite This
 
@@ -118,14 +136,19 @@ When discussing the overall MQT project or its ecosystem, cite the MQT Handbook:
 ### Peer-Reviewed Research
 
 > [!NOTE]
-> MQT SCPD is still under development.
-> This section will be expanded in the future.
+> MQT SCPD is still under development. This section will be expanded in the
+> future.
 
 ---
 
 ## Acknowledgements
 
-The Munich Quantum Toolkit has been supported by the European Research Council (ERC) under the European Union's Horizon 2020 research and innovation program (grant agreement No. 101001318), the Bavarian State Ministry for Science and Arts through the Distinguished Professorship Program, as well as the Munich Quantum Valley, which is supported by the Bavarian state government with funds from the Hightech Agenda Bayern Plus.
+The Munich Quantum Toolkit has been supported by the European Research Council
+(ERC) under the European Union's Horizon 2020 research and innovation program
+(grant agreement No. 101001318), the Bavarian State Ministry for Science and
+Arts through the Distinguished Professorship Program, as well as the Munich
+Quantum Valley, which is supported by the Bavarian state government with funds
+from the Hightech Agenda Bayern Plus.
 
 <p align="center">
   <picture>
