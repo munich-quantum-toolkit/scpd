@@ -1,7 +1,8 @@
 # References
 
-_MQT SCPD_ is part of the Munich Quantum Toolkit, which is described in {cite:p}`mqt`.
-If you want to cite the Munich Quantum Toolkit, please use the following BibTeX entry:
+_MQT SCPD_ is part of the Munich Quantum Toolkit, which is described in
+{cite:p}`mqt`. If you want to cite the Munich Quantum Toolkit, please use the
+following BibTeX entry:
 
 ```bibtex
 @inproceedings{mqt,
