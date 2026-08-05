@@ -12,6 +12,7 @@ releases may include breaking changes.
 
 ### Added
 
+- 🐍 Start building CPython 3.15 wheels ([#67]) ([**@denialhaag**])
 - ✨ Set up the repository ([#1]) ([**@denialhaag**])
 
 <!-- Version links -->
@@ -20,6 +21,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#67]: https://github.com/munich-quantum-toolkit/scpd/pull/67
 [#1]: https://github.com/munich-quantum-toolkit/scpd/pull/1
 
 <!-- Contributor -->
