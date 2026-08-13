@@ -15,12 +15,17 @@ releases may include breaking changes.
 - 🐍 Start building CPython 3.15 wheels ([#67]) ([**@denialhaag**])
 - ✨ Set up the repository ([#1]) ([**@denialhaag**])
 
+### Changed
+
+- ⬆️ Update `nanobind` to version 2.14.0 ([#76]) ([**@denialhaag**])
+
 <!-- Version links -->
 
 [unreleased]: https://github.com/munich-quantum-toolkit/scpd
 
 <!-- PR links -->
 
+[#76]: https://github.com/munich-quantum-toolkit/scpd/pull/76
 [#67]: https://github.com/munich-quantum-toolkit/scpd/pull/67
 [#1]: https://github.com/munich-quantum-toolkit/scpd/pull/1
 
