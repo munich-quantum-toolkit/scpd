@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 from importlib import metadata
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pybtex.plugin
@@ -21,8 +20,6 @@ from pybtex.style.template import field, href
 if TYPE_CHECKING:
     from pybtex.database import Entry
     from pybtex.richtext import HRef
-
-ROOT = Path(__file__).parent.parent.resolve()
 
 
 try:
@@ -55,7 +52,6 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinxcontrib.bibtex",
-    "sphinxcontrib.inkscapeconverter",
     "sphinxext.opengraph",
 ]
 
