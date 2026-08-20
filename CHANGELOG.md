@@ -17,7 +17,7 @@ releases may include breaking changes.
 
 ### Changed
 
-- ⬆️ Update `nanobind` to version 2.14.0 ([#76]) ([**@denialhaag**])
+- ⬆️ Update `nanobind` to version 2.15.0 ([#83]) ([**@denialhaag**])
 
 <!-- Version links -->
 
@@ -25,7 +25,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
-[#76]: https://github.com/munich-quantum-toolkit/scpd/pull/76
+[#83]: https://github.com/munich-quantum-toolkit/scpd/pull/83
 [#67]: https://github.com/munich-quantum-toolkit/scpd/pull/67
 [#1]: https://github.com/munich-quantum-toolkit/scpd/pull/1
 
