@@ -17,6 +17,11 @@ releases may include breaking changes.
 
 ### Changed
 
+- 💥 Drop support for x86 macOS and stop publishing the respective wheels
+  ([#89]) ([**@denialhaag**])
+- ⬆️ Raise the macOS deployment target to 13.3 to enable `std::format` in libc++
+  ([#89]) ([**@denialhaag**])
+- 💥 Require Python 3.11 or newer ([#89]) ([**@denialhaag**])
 - ⬆️ Update `nanobind` to version 2.15.0 ([#83]) ([**@denialhaag**])
 
 <!-- Version links -->
@@ -25,6 +30,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#89]: https://github.com/munich-quantum-toolkit/scpd/pull/89
 [#83]: https://github.com/munich-quantum-toolkit/scpd/pull/83
 [#67]: https://github.com/munich-quantum-toolkit/scpd/pull/67
 [#1]: https://github.com/munich-quantum-toolkit/scpd/pull/1
