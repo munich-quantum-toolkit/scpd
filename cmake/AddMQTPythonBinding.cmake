@@ -48,17 +48,6 @@ function(add_mqt_python_binding package_name target_name)
   # Keep statically linked dependencies local.
   if(APPLE)
     target_link_options(${target_name} PRIVATE "LINKER:-exported_symbol,_PyInit_${module_name}")
-
-    # Apple's x86-64 ABI requires unique RTTI. Its arm64 ABI compares non-unique RTTI names.
-    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-      target_link_options(
-        ${target_name}
-        PRIVATE
-        "LINKER:-exported_symbol,__ZTIN8nanobind4abi112python_errorE"
-        "LINKER:-exported_symbol,__ZTSN8nanobind4abi112python_errorE"
-        "LINKER:-exported_symbol,__ZTIN8nanobind4abi117builtin_exceptionE"
-        "LINKER:-exported_symbol,__ZTSN8nanobind4abi117builtin_exceptionE")
-    endif()
   elseif(UNIX)
     target_link_options(${target_name} PRIVATE "LINKER:--exclude-libs,ALL")
 
