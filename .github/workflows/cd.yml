@@ -1,4 +1,3 @@
-# Temporarily trigger the CD
 name: CD 🚀
 on:
   release:
