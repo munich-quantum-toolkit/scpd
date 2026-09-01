@@ -32,10 +32,14 @@ OASIS.
    takes its inputs by `const&`. No stage mutates another stage's state.
 3. **One vocabulary per concept.** One point type per coordinate system, one
    design-rule struct, one path representation. The prototype had eight point
-   types and three contradictory clearance constants.
-4. **Derived state is never an artifact.** Grids and router containers are
+   types, and the same clearance appeared as a physical constant in two stages
+   and as an unexplained cell count in a third.
+4. **Design rules are physical, and converted once.** Every rule is a length in
+   layout units. A stage that works in grid space obtains its cell count from
+   `cells_for`, never from a literal. No stage declares its own constant.
+5. **Derived state is never an artifact.** Grids and router containers are
    rebuilt deterministically from the chip and the configuration.
-5. **Minimum viable structure.** Abstractions exist where a second
+6. **Minimum viable structure.** Abstractions exist where a second
    implementation is already planned or a dependency must be swappable. Nowhere
    else.
 
@@ -46,11 +50,11 @@ graph LR
   user([Researcher])
   cli[mqt-scpd CLI<br/>Python]
   core[MQT::Scpd*<br/>C++ core]
-  kl[KLayout<br/>GDS / OASIS / DRC]
+  kl[KLayout<br/>GDS / OASIS / render]
   gf[GDSFactory<br/>optional extra]
   fab([Fabrication])
 
-  user -->|chip recipe<br/>config.toml| cli
+  user -->|routing_config.json<br/>config.toml| cli
   cli -->|nanobind| core
   core -->|geometry IR + metrics| cli
   cli --> kl
@@ -67,8 +71,8 @@ documented as internal and unstable. See
 
 ```mermaid
 flowchart TD
-  chip[00-chip.json<br/>instance-based description]
-  cfg[config.toml]
+  chip[routing_config.json<br/>obstacles and ports]
+  cfg[config.toml<br/>roles, rules, tuning]
 
   subgraph core["C++ core"]
     cap[Capacity<br/>watershed / EDT / budgets]
@@ -86,15 +90,22 @@ flowchart TD
   a5[05-final.fb]
   a6[06-geometry.fb<br/>analytic line and arc]
   met[metrics.json<br/>log.jsonl]
+  drc[drc.json<br/>DRCPolice findings]
   gds[(out.gds / out.oas)]
+
+  svg[["mqt-scpd plot<br/>per-stage SVG"]]
 
   chip --> cap --> a1 --> asg --> a2 --> glb --> a3 --> det --> a4 --> fin --> a5 --> geo --> a6
   cfg -.-> cap & asg & glb & det & fin & geo
   core --> met
+  a5 & a6 -->|DRCPolice| drc
   a6 -->|KLayout adapter| gds
+  a1 & a4 & a5 & a6 -.-> svg
+  drc -.-> svg
 ```
 
-Each stage is independently runnable and resumable. Full contracts are in
+Each stage is independently runnable and resumable, and every artifact can be
+rendered to SVG without re-running the pipeline. Full contracts are in
 [the pipeline document](docs/design/pipeline.md).
 
 **The geometry IR carries analytic segments** — lines and circular arcs with
@@ -105,42 +116,49 @@ at a configured tolerance.
 
 ## Level 3 — Modules
 
-Seven libraries, following the per-module pattern of MQT Core rather than a
+Eight libraries, following the per-module pattern of MQT Core rather than a
 single flat target. Public headers live under `include/mqt-scpd/<module>/` and
 sources mirror them under `src/<module>/`.
 
 ```mermaid
 graph TD
   geometry[MQT::ScpdGeometry<br/>Point, Polygon, Path, arcs, units]
-  design[MQT::ScpdDesign<br/>Chip, entity IDs, Technology, DesignRules]
-  grid[MQT::ScpdGrid<br/>ObstacleGrid, EDT, rasterize, watershed]
+  design[MQT::ScpdDesign<br/>Chip, ports, roles, DesignRules, Config]
+  grid[MQT::ScpdGrid<br/>ObstacleGrid, EDT, watershed, cells_for]
   routing[MQT::ScpdRouting<br/>Dubins A*, move primitives]
   milp[MQT::ScpdMilp<br/>Model, HiGHS backend, MPS emit]
+  drc[MQT::ScpdDrc<br/>DrcPolice, eight rules, DrcReport]
   pipeline[MQT::ScpdPipeline<br/>stage interfaces, registry, six stages]
-  io[MQT::ScpdIO<br/>artifacts, metrics, DRC report]
+  io[MQT::ScpdIO<br/>artifacts, metrics, report writing]
 
   design --> geometry
   grid --> geometry
   grid --> design
   routing --> grid
+  drc --> grid
+  drc --> design
+  drc --> geometry
   io --> design
   io --> geometry
+  io --> drc
   pipeline --> routing
   pipeline --> milp
+  pipeline --> drc
   pipeline --> io
 ```
 
 The dependency graph is acyclic. Nothing depends on `pipeline`; it is the top.
 
-| Target              | Alias               | Responsibility                                                                             |
-| ------------------- | ------------------- | ------------------------------------------------------------------------------------------ |
-| `mqt-scpd-geometry` | `MQT::ScpdGeometry` | Point, polygon, path with line and arc segments, transforms, unit handling                 |
-| `mqt-scpd-design`   | `MQT::ScpdDesign`   | The chip entity model, cell library and instances, technology and design rules             |
-| `mqt-scpd-grid`     | `MQT::ScpdGrid`     | Rasterization, Euclidean distance transform, watershed partitioning, packed obstacle grids |
-| `mqt-scpd-routing`  | `MQT::ScpdRouting`  | Curvature-constrained A* over Dubins primitives                                            |
-| `mqt-scpd-milp`     | `MQT::ScpdMilp`     | Solver-neutral model assembly, HiGHS backend, MPS emission for the BYOK path               |
-| `mqt-scpd-pipeline` | `MQT::ScpdPipeline` | Stage interfaces, the implementation registry, and the six stage implementations           |
-| `mqt-scpd-io`       | `MQT::ScpdIO`       | Artifact read and write, metrics, design-rule reporting                                    |
+| Target              | Alias               | Responsibility                                                                               |
+| ------------------- | ------------------- | -------------------------------------------------------------------------------------------- |
+| `mqt-scpd-geometry` | `MQT::ScpdGeometry` | Point, polygon, path with line and arc segments, transforms, unit handling                   |
+| `mqt-scpd-design`   | `MQT::ScpdDesign`   | Chip ports and obstacles, the two port-role enums, design rules, the run configuration       |
+| `mqt-scpd-grid`     | `MQT::ScpdGrid`     | Rasterization, distance transform, watershed, packed obstacle grids, rule-to-cell conversion |
+| `mqt-scpd-routing`  | `MQT::ScpdRouting`  | Curvature-constrained A* over Dubins primitives                                              |
+| `mqt-scpd-milp`     | `MQT::ScpdMilp`     | Solver-neutral model assembly, HiGHS backend, MPS emission for the BYOK path                 |
+| `mqt-scpd-drc`      | `MQT::ScpdDrc`      | DRCPolice: the eight design rules, checked in both the router and layout coordinate spaces   |
+| `mqt-scpd-pipeline` | `MQT::ScpdPipeline` | Stage interfaces, the implementation registry, and the six stage implementations             |
+| `mqt-scpd-io`       | `MQT::ScpdIO`       | Artifact read and write, metrics, serialization of the DRC report                            |
 
 Each is declared through `cmake/AddMQTScpdLibrary.cmake`, adapted from MQT
 Core's `AddMQTCoreLibrary.cmake`: `FILE_SET HEADERS`, `generate_export_header`,
@@ -209,14 +227,18 @@ sequenceDiagram
   participant S as Solver backend
   participant K as KLayout
 
-  U->>CLI: mqt-scpd route chip.json -c config.toml -o run/
-  CLI->>CLI: validate chip and config against schema
+  U->>CLI: mqt-scpd route -c 69q/config.toml -o run/
+  CLI->>CLI: load routing_config.json, validate config, classify port roles
   CLI->>B: route(chip, config, run_dir)
   loop each stage
     B->>C: stage.run(inputs, config)
     opt MILP stage
       C->>S: model (in-process HiGHS, or MPS to gurobipy)
       S-->>C: solution
+    end
+    opt after Final and after Finalize
+      C->>C: DrcPolice::check(view, rules)
+      C-->>B: DrcReport appended to drc.json
     end
     C-->>C: spdlog to log.jsonl sink
     C-->>B: typed stage output
@@ -226,6 +248,7 @@ sequenceDiagram
   B-->>CLI: Geometry (analytic segments)
   CLI->>K: polygonize at tolerance, write GDS or OASIS
   CLI->>U: table of fails, angle cost, runtime, DRC
+  CLI->>U: exit nonzero if any active DRC rule was violated
 ```
 
 ## Repository layout
@@ -239,34 +262,33 @@ mqt-scpd/
   bindings/bindings.cpp                  minimal: run pipeline, read metrics
   python/mqt/scpd/
     cli.py                               argparse subcommands
-    gen.py                               lattice chip generator
-    convert.py                           legacy config to chip.json
     solvers/gurobipy_backend.py          BYOK Gurobi via MPS
     export/klayout.py                    GDS and OASIS
     export/gdsfactory.py                 optional extra
-    report.py                            tables from metrics.json
-    plot.py                              debug plotter from the geometry IR
+    report.py                            tables from metrics.json and drc.json
+    plot.py                              per-stage SVG from the artifacts
   test/<module>/*.cpp                    GoogleTest, per module
   test/python/{unit,property,integration}/
-  benchmarks/recipes/*.toml
+  benchmarks/<n>q/config.toml            one per benchmark chip
+  benchmarks/<n>q/routing_config.json    4Q and 9Q only; larger ones by path
   docs/design/                           these documents
 ```
 
 ## Dependencies
 
-| Layer         | Dependency    | Acquisition                      | Why                                                                                  |
-| ------------- | ------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
-| C++           | FlatBuffers   | FetchContent                     | Schema-generated data model; the parser validates JSON input against the same schema |
-| C++           | nlohmann/json | FetchContent                     | Metrics and logs only                                                                |
-| C++           | spdlog        | FetchContent                     | Structured logging; replaces scattered `std::cout`                                   |
-| C++           | HiGHS         | FetchContent                     | Default solver; makes an unlicensed install fully functional                         |
-| C++           | Boost.Polygon | FetchContent or vendored headers | One Voronoi construction. Never a user-installed Boost                               |
-| C++           | GoogleTest    | FetchContent                     | Existing repository convention                                                       |
-| Python        | klayout       | PyPI                             | GDS and OASIS, DRC, rendering                                                        |
-| Python        | rich          | PyPI                             | Progress over long runs, and result tables                                           |
-| Python (test) | hypothesis    | PyPI                             | Property-based tests                                                                 |
-| Optional      | gurobipy      | user-installed                   | Bring-your-own-license solver path                                                   |
-| Optional      | gdsfactory    | `mqt-scpd[gdsfactory]`           | Adapter over the same geometry IR                                                    |
+| Layer         | Dependency    | Acquisition                      | Why                                                                              |
+| ------------- | ------------- | -------------------------------- | -------------------------------------------------------------------------------- |
+| C++           | FlatBuffers   | FetchContent                     | Schema-generated data model and stage artifacts. Runtime only, no parser library |
+| C++           | nlohmann/json | FetchContent                     | The chip input, metrics and logs                                                 |
+| C++           | spdlog        | FetchContent                     | Structured logging; replaces scattered `std::cout`                               |
+| C++           | HiGHS         | FetchContent                     | Default solver; makes an unlicensed install fully functional                     |
+| C++           | Boost.Polygon | FetchContent or vendored headers | One Voronoi construction. Never a user-installed Boost                           |
+| C++           | GoogleTest    | FetchContent                     | Existing repository convention                                                   |
+| Python        | klayout       | PyPI                             | GDS and OASIS writing and rendering. It provides no DRC                          |
+| Python        | rich          | PyPI                             | Progress over long runs, and result tables                                       |
+| Python (test) | hypothesis    | PyPI                             | Property-based tests                                                             |
+| Optional      | gurobipy      | user-installed                   | Bring-your-own-license solver path                                               |
+| Optional      | gdsfactory    | `mqt-scpd[gdsfactory]`           | Adapter over the same geometry IR                                                |
 
 The CLI uses the standard library's `argparse`. Dependencies are declared in
 `cmake/ExternalDependencies.cmake`, never inline in a target.
@@ -282,10 +304,24 @@ Recorded so that future contributors do not add them speculatively.
 - No custom geometry library beyond what the stages use, and no expression
   templates in the MILP layer.
 - No CLI or argument parsing in C++, and no file paths inside the core.
-- No GDS writer of our own, and no SVG writer of our own.
+- No GDS writer of our own. No SVG writer **in the core** — `plot.py` renders
+  from the artifacts, which is why it can render a half-finished run.
+- No DRC rule deck for an external tool. The **checker** is ours and is not
+  optional — KLayout ships no design-rule checking to defer to, so DRCPolice in
+  `MQT::ScpdDrc` is the only thing standing between a routed chip and a claim
+  that it is manufacturable. See
+  [decision 0022](docs/design/decisions/0022-drc-in-the-core.md).
 - No hand-written struct for anything a schema already describes, and no second
   schema language.
 - No schema constraints on metrics. They stay loose JSON on purpose.
 - No golden metric pins in the test suite.
 - No second implementation of any stage in the first release. The registry ships
   with one entry each.
+- No entity model recovered from label strings, and equally no chip generator or
+  format converter in the first release. Port roles come from configured
+  patterns; the chip input stays the prototype's own JSON. See
+  [decision 0018](docs/design/decisions/0018-port-roles-unassigned-and-assigned.md)
+  and
+  [decision 0020](docs/design/decisions/0020-legacy-routing-config-as-input.md).
+- No environment-variable tuning. The prototype's 72 `getenv` sites are deleted
+  outright; `config.toml` is the only tuning surface.

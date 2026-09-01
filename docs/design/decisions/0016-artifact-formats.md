@@ -6,8 +6,8 @@
 ## Context
 
 The prototype had no data model. Entity semantics lived in label strings, there
-were eight incompatible point types across four coordinate systems, and three
-contradictory sets of the same design-rule constants.
+were eight incompatible point types across four coordinate systems, and the same
+design-rule constant was re-declared in each of the three grid classes.
 
 Separately, the resumable run directory needs a serialization format, and the
 chip description needs an on-disk form.
@@ -19,16 +19,28 @@ Those schemas generate the C++ and Python types, so the two cannot drift.
 
 Encoding is then chosen per artifact, by what that artifact is for.
 
-| Artifact                    | Format                                        | Why                                                                                                          |
-| --------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `chip.json`, `config.toml`  | JSON and TOML text, parsed against the schema | Human-authored and generator-written; editability is a requirement and validation comes from the same schema |
-| `01-` through `06-`         | Binary FlatBuffers                            | Machine state: typed, compact, versioned                                                                     |
-| `metrics.json`, `log.jsonl` | JSON through nlohmann                         | Ad-hoc and evolving; consumed by `jq` and pandas. Deliberately not schema-constrained                        |
+| Artifact                    | Format                | Why                                                                                   |
+| --------------------------- | --------------------- | ------------------------------------------------------------------------------------- |
+| `00-chip.json`              | The prototype's JSON  | Unchanged input, so the routing baseline is directly comparable                       |
+| `config.toml`               | Validated TOML        | Human-authored; editability is a requirement                                          |
+| `01-` through `06-`         | Binary FlatBuffers    | Machine state: typed, compact, versioned                                              |
+| `metrics.json`, `log.jsonl` | JSON through nlohmann | Ad-hoc and evolving; consumed by `jq` and pandas. Deliberately not schema-constrained |
 
-Chip descriptions are **instance-based**: a cell library plus placements, the
-same hierarchy GDSII uses. The prototype's flattened form made the 69-qubit
-description 34 MB; the same chip is tens of kilobytes as a library plus
-placements.
+> **Amended 2026-09-01.** As originally written, this decision also made the
+> chip description instance-based — a cell library plus placements, the same
+> hierarchy GDSII uses — and had the FlatBuffers *parser* validate `chip.json`
+> against the schema that defines the binary artifacts. That is superseded by
+> [decision 0020](0020-legacy-routing-config-as-input.md): the chip input is the
+> prototype's own flattened JSON, read through nlohmann, so `ScpdIO` links only
+> the header-only FlatBuffers runtime.
+>
+> Everything else stands. The schemas remain the single definition of the model
+> and of the `01-`…`06-` artifacts, and "derived state is never an artifact"
+> remains the rule that keeps them small.
+>
+> The instance-based form is still the right long-term answer on size: the
+> prototype's flattened 69-qubit description is 34 MB, and the same chip is tens
+> of kilobytes as a library plus placements. It is deferred, not withdrawn.
 
 ## Alternatives considered
 
@@ -50,10 +62,10 @@ build.
 ## Consequences
 
 - Binary state stays inspectable: `mqt-scpd inspect run/04-detail.fb` prints
-  schema-driven JSON.
-- Parsing JSON against the schema needs the FlatBuffers *parser* library, not
-  only the header-only runtime. That is a slightly heavier link for `ScpdIO`,
-  accepted so one schema serves both text input and binary state.
+  schema-driven JSON, and `mqt-scpd plot` renders it as SVG
+  ([decision 0021](0021-debug-rendering-in-python.md)).
+- `ScpdIO` links the header-only FlatBuffers runtime only. The parser library is
+  not needed, because no text input is parsed against the schema.
 - Two serialization libraries coexist, deliberately. Schema-enforced state and
   schema-free metrics are different jobs.
 - **Derived state is never an artifact.** Grids and router containers are

@@ -6,7 +6,7 @@
 ## Context
 
 The prototype uses Boost in exactly one place: `construct_voronoi` inside the
-capacity stage's Voronoi graph construction, roughly 150 lines out of 64,000.
+capacity stage's Voronoi graph construction, roughly 150 lines out of 68,000.
 Everything else — polygon extraction, distance transform, watershed, medial-axis
 pruning — is hand-rolled.
 

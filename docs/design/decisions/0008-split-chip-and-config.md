@@ -1,6 +1,6 @@
 # 0008 — Chip description separate from routing configuration
 
-- **Status:** Accepted
+- **Status:** Superseded by [0020](0020-legacy-routing-config-as-input.md)
 - **Date:** 2026-08-27
 
 ## Context
@@ -39,3 +39,15 @@ the existing schema does not describe half of what a run depends on.
 - The conversion tool is what preserves the quality baseline across the move.
 - Chip descriptions become instance-based rather than flattened, which is
   covered separately in [decision 0016](0016-artifact-formats.md).
+
+## Why this was superseded
+
+The split itself survives — there are still two inputs, one describing the chip
+and one describing how to route it.
+[Decision 0020](0020-legacy-routing-config-as-input.md) changes which file plays
+the first role: the prototype's own `routing_config.json`, unchanged, rather
+than a new schema reached through a converter.
+
+The consequence above about the port ring is **reversed**. `all_outer` and
+`fixed_outer` are configuration, which deletes the port-ordering pass entirely.
+The reasoning is in 0020.

@@ -18,8 +18,8 @@ Four layers, none of them a pinned metric.
 | Layer        | Location                   | Content                                                                                                       |
 | ------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Unit, C++    | `test/<module>/`           | Dubins arc construction, distance transform, point-in-polygon, watershed, model assembly, artifact round-trip |
-| Unit, Python | `test/python/unit/`        | Schema validation, chip generator, converter, KLayout export                                                  |
-| Property     | `test/python/property/`    | Invariants over generated chips                                                                               |
+| Unit, Python | `test/python/unit/`        | Config validation, role classification, KLayout export, `plot` output                                         |
+| Property     | `test/python/property/`    | Invariants over synthesised chips                                                                             |
 | Integration  | `test/python/integration/` | CLI end to end on the small benchmarks; resume equals an uninterrupted run                                    |
 
 Properties assert what makes a routing result *valid*, for any input: every net
@@ -52,5 +52,8 @@ pass unnoticed.
 - Quality regressions are visible in a benchmark report rather than as a test
   failure, which means someone has to read the report. That is the accepted
   trade.
-- KLayout design-rule checking on exported GDS provides an independent check of
-  the core's own checker.
+- Design-rule checking is DRCPolice's own, and its independence therefore comes
+  from fixtures rather than from a second tool: each rule is tested on geometry
+  hand-built to violate it by a known margin and to sit just inside it. KLayout
+  ships no design-rule checking to cross-check against — see
+  [decision 0022](0022-drc-in-the-core.md).

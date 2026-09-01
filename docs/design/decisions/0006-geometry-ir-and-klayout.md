@@ -41,5 +41,7 @@ arc structure from the polylines it flattened.
 - The core never links a layout library.
 - Export backends are independently testable against a fixed IR.
 - Bend-radius checking becomes a direct comparison rather than an inference.
-- KLayout gives design-rule checking on the exported file, which independently
-  cross-checks the core's own checker.
+- KLayout does **not** give design-rule checking on the exported file. Its
+  Python package is used here for GDS/OASIS writing and rendering only, and the
+  core owns design-rule checking outright
+  ([decision 0022](0022-drc-in-the-core.md)).

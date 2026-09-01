@@ -17,8 +17,12 @@ The port is complete when all of the following hold:
   is the prototype's measured time.
 - Total feedline angle cost is within an agreed tolerance of the published value
   of 188 on the 69-qubit benchmark.
-- KLayout design-rule checking on the exported GDS agrees with the core's own
-  checker, so the two are not marking each other's homework.
+- All eight benchmarks pass every **active** DRCPolice rule. Each rule has unit
+  tests on geometry hand-built to violate it by a known margin and to sit just
+  inside it, and an integration test asserts that the Final and Finalize views
+  agree on the same design. The independence comes from fixtures authored
+  against the rule — KLayout ships no design-rule checking to compare against,
+  which is why the core owns the checker at all.
 - Peak resident memory on the 69-qubit benchmark is at most about 2 GB, down
   from roughly 7.5 GB.
 
@@ -26,7 +30,7 @@ The port is complete when all of the following hold:
 
 Bootstrap the repository structure and the data model. No domain logic.
 
-- Restructure from the single flat `mqt-scpd` target to the seven per-module
+- Restructure from the single flat `mqt-scpd` target to the eight per-module
   targets described in [ARCHITECTURE.md](../../ARCHITECTURE.md).
 - Adapt `AddMQTCoreLibrary.cmake` and `CompilerWarnings.cmake` from MQT Core.
 - Write `schemas/*.fbs` and the `nox -s schemas` session that regenerates the
@@ -40,19 +44,26 @@ generated code is stale.
 
 The first phase that produces something a user can look at.
 
-- `MQT::ScpdGeometry`, `MQT::ScpdDesign`, `MQT::ScpdIO`.
-- `gen.py`: a lattice chip generator driven by short recipes.
-- `convert.py`: converts the prototype's `routing_config` files into the new
-  instance-based chip description.
+- `MQT::ScpdGeometry`, `MQT::ScpdDesign` — now thin: ports, the two role enums,
+  design rules, and the parsed configuration — and `MQT::ScpdIO`.
+- The `routing_config.json` loader and the `config.toml` loader, both
+  validating, and one `config.toml` per benchmark chip.
+- Pattern-based role classification, with the classification table printed by
+  `mqt-scpd doctor` so a wrong regex is visible before a 456-second run.
+- `plot.py` and `mqt-scpd plot`. This lands **now**, not in phase 5: it is the
+  instrument for watching phases 2 through 4 make progress, and it is only cheap
+  to build because it reads artifacts rather than pipeline internals.
 - `export/klayout.py`: the GDS and OASIS adapter.
 
-**Done when** `mqt-scpd gen benchmarks/recipes/69q.toml` followed by
-`mqt-scpd render -o chip.gds` renders the *unrouted* chip, all eight legacy
-configurations convert, and `mqt-scpd inspect` round-trips every artifact.
+**Done when** all eight configurations load, `mqt-scpd doctor --config` passes
+on every one, `mqt-scpd plot --stage layout` renders each chip under 2 MB,
+`mqt-scpd render -o chip.gds` renders the *unrouted* chip, and
+`mqt-scpd inspect` round-trips every artifact.
 
-Converting the legacy configurations first is deliberate: it produces the
-reference inputs that validate the generator, which protects the quality
-baseline. See risk 1 below.
+There is no generator and no converter. The benchmark chips are the prototype's
+own inputs, unchanged, which is what makes the routing baseline directly
+comparable. See
+[decision 0020](decisions/0020-legacy-routing-config-as-input.md).
 
 ## Phase 2 — Grid and router
 
@@ -88,15 +99,34 @@ merely compiling.
 ## Phase 4 — Routing stages
 
 - Detail, Final and Finalize stages.
-- Collapse the prototype's six near-identical rip-up-and-reroute drivers into
-  one parameterized implementation.
+- Collapse the prototype's four live rip-up-and-reroute drivers into one
+  parameterized implementation, keeping coupler placement and feedline routing
+  as one fixpoint rather than two sequential steps. The coupler optimizer is
+  ported as it stands; it is genuine algorithm, not duplication.
 - The analytic-segment geometry IR, end to end.
+- Validate the two derived values that are no longer literals: the detail-grid
+  blockade radius (4–9 instead of a fixed 6) and the straight-start stub (10–11
+  instead of a fixed 9).
+- `MQT::ScpdDrc` with DRCPolice's four **active** rules — wire clearance,
+  feedline orthogonality, obstacle clearance and resonator length — in both
+  coordinate views, plus `drc.json` and `mqt-scpd drc`.
 
-**Done when** all eight benchmarks route with zero final failures.
+**Done when** all eight benchmarks route with zero final failures *and* pass the
+four active rules.
+
+DRC lands here rather than in phase 5 because "zero failures" is not a
+manufacturability claim on its own: a route can complete and still violate a
+clearance. Two of the four rules are ports of prototype code, and the other two
+are the ones the prototype never had — obstacle clearance is only ever marked,
+never verified, and `lengthSatisfied` is a stub that reads `false` everywhere.
 
 ## Phase 5 — Quality, tooling, documentation
 
-- Metrics, design-rule reporting, `report.py`, `mqt-scpd benchmark`.
+- Metrics, `report.py`, `mqt-scpd benchmark`.
+- DRCPolice's four **advisory** rules — wire loops, component overlap, minimum
+  straight length and minimum bend radius — with `--drc-all` and the `--drc`
+  plot overlay. Measure what they report on all eight benchmarks before
+  proposing any of them for promotion to active.
 - The property and integration test suites.
 - User documentation and the CLI reference.
 
@@ -118,11 +148,15 @@ prematurely.
 
 ## Risks
 
-1. **The generator must reproduce benchmark geometry faithfully**, or the
-   baseline that makes "port, then improve" safe is lost. Mitigation: convert
-   the legacy configurations in phase 1, commit the converted chips for the four
-   smaller benchmarks as reference inputs, and validate the generator against
-   them.
+1. **The two outer port sequences are hand-maintained input.** `all_outer` runs
+   to about 330 entries on the 69-qubit chip, and a typo in it is a silently
+   worse assignment rather than a compile error. This is the price of deleting
+   the port-ordering subsystem, and it is a smaller risk than the generator it
+   replaces — the sequences are copied verbatim from the prototype's own
+   drivers, where they were already hand-maintained, just in C++. Mitigation:
+   load-time validation that every label exists and matches exactly one role
+   pattern, that `fixed_outer ⊆ all_outer`, and `mqt-scpd doctor` printing the
+   resolved ring.
 2. **HiGHS may be materially slower than Gurobi** on the largest assignment
    model. The mixed-integer stages are roughly 10 percent of wall time, so the
    exposure is bounded. If HiGHS cannot close the 69-qubit model, the honest
@@ -132,6 +166,13 @@ prematurely.
    the flat primitive tables, where headings are packed as
    `(ang << 10) | path_id`, capping path identifiers at 1024. Named constants
    make it visible. Changing it is out of scope for the first release.
-4. **Boost via FetchContent is the least-proven dependency choice.** If
+4. **Deriving the two grid-cell values changes routing behaviour.** The
+   detail-grid blockade and the straight-start stub are literals in the
+   prototype and become chip-dependent under
+   [decision 0019](decisions/0019-design-rules-in-layout-units.md). A benchmark
+   may regress. Mitigation: both are validated in phase 4 against the zero-fail
+   baseline, and a chip that genuinely needs a different value gets a documented
+   per-chip override — never a reverted rule.
+5. **Boost via FetchContent is the least-proven dependency choice.** If
    `BOOST_INCLUDE_LIBRARIES` does not cleanly yield a `Boost::polygon` target,
    vendor the headers rather than requiring a system Boost.

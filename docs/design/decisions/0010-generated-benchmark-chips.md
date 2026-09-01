@@ -1,6 +1,6 @@
 # 0010 — Benchmark chips are generated, not committed
 
-- **Status:** Accepted
+- **Status:** Superseded by [0020](0020-legacy-routing-config-as-input.md)
 - **Date:** 2026-08-27
 
 ## Context
@@ -36,3 +36,14 @@ network dependency in continuous integration for little gain.
   risk of the decision. Mitigated by converting the prototype's configurations
   first and committing the converted chips for the four smaller benchmarks as
   reference inputs, then validating the generator against them.
+
+## Why this was superseded
+
+That risk is the reason. [Decision 0020](0020-legacy-routing-config-as-input.md)
+drops the generator entirely: the benchmark chips are the prototype's own
+inputs, byte for byte, so a quality difference against the prototype is a
+difference in the port rather than a difference in the geometry. The 4-qubit and
+9-qubit inputs are committed; the larger ones are referenced by path.
+
+A generator remains worth having once the routing baseline is established, at
+which point there is something to validate it against.
