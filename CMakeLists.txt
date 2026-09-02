@@ -20,7 +20,8 @@ if(BUILD_MQT_SCPD_BINDINGS)
   set(BINDINGS
       ON
       CACHE INTERNAL "Enable settings related to Python bindings")
-  # Some common settings for finding Python
+
+  # common settings for finding Python
   set(Python_FIND_VIRTUALENV
       FIRST
       CACHE STRING "Give precedence to virtualenvs when searching for Python")
@@ -30,11 +31,6 @@ if(BUILD_MQT_SCPD_BINDINGS)
   set(Python_ARTIFACTS_INTERACTIVE
       ON
       CACHE BOOL "Prevent multiple searches for Python and instead cache the results.")
-
-  if(DISABLE_GIL)
-    message(STATUS "Disabling Python GIL")
-    add_compile_definitions(Py_GIL_DISABLED)
-  endif()
 
   # top-level call to find Python
   find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module

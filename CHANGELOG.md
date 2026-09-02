@@ -22,7 +22,7 @@ releases may include breaking changes.
 - ⬆️ Raise the macOS deployment target to 13.3 to enable `std::format` in libc++
   ([#89]) ([**@denialhaag**])
 - 💥 Require Python 3.11 or newer ([#89]) ([**@denialhaag**])
-- ⬆️ Update `nanobind` to version 2.15.0 ([#83]) ([**@denialhaag**])
+- ⬆️ Update `nanobind` to version 3.0.1 ([#83]) ([**@denialhaag**])
 
 <!-- Version links -->
 
