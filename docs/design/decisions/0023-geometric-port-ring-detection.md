@@ -69,10 +69,10 @@ retires risk 1, and a mechanism nobody can select does not retire anything.
 
 - Decision 0020's first consequence softens. The port ring *may* be input; it is
   no longer true that it must be.
-- Risk 1 in [the roadmap](../roadmap.md) shrinks but survives, because manual
-  remains the default. `mqt-scpd doctor` gains the job of diffing a configured
-  sequence against the walk whenever both are available, and of reporting a
-  rotation as a rotation.
+- The risk of a typo in the hand-maintained sequences shrinks but survives,
+  because manual remains the default. `mqt-scpd doctor` gains the job of diffing
+  a configured sequence against the walk whenever both are available, and of
+  reporting a rotation as a rotation.
 - A new risk replaces what risk 1 gives up: the two modes are not proven to
   agree. Phase 1 measures both on all eight benchmarks.
 - The order of `all_outer` reaches the solver, so `start_component` is a real

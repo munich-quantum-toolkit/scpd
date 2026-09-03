@@ -138,6 +138,9 @@ _skbuild/
 
 # Any build dirs in the tests
 test/**/build/
+
+# CMake writes these into the working directory of gtest_discover_tests
+cmake_test_discovery_*.json
 _version.py
 
 # Common editor files

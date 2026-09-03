@@ -11,7 +11,7 @@ add_mqt_scpd_library(
   ALIAS_NAME
   IO
   GENERATED_HEADERS
-  artifacts_generated.hpp
+  artifacts.hpp
   LINK_LIBRARIES
   MQT::ScpdDesign
   MQT::ScpdGeometry

@@ -30,7 +30,7 @@
     "py\\.typed",
     "Doxyfile",
     "(^|/)LICENSE$",
-    "include/mqt-scpd/generated/.*",
-    "python/mqt/scpd/generated/[A-Z][A-Za-z]*\\.pyi?"
+    "include/mqt-scpd/flatbuffers/.*",
+    "python/mqt/scpd/flatbuffers/.*/[A-Z][A-Za-z]*\\.py"
   ]
 }

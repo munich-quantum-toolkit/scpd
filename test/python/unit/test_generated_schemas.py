@@ -13,29 +13,29 @@ from __future__ import annotations
 import flatbuffers
 import pytest
 
-from mqt.scpd.generated.Arc import ArcT
-from mqt.scpd.generated.Artifact import Artifact, ArtifactT
-from mqt.scpd.generated.AssignedRole import AssignedRole
-from mqt.scpd.generated.Chip import ChipT
-from mqt.scpd.generated.Connection import ConnectionT
-from mqt.scpd.generated.FinalRouting import FinalRoutingT
-from mqt.scpd.generated.Geometry import GeometryT
-from mqt.scpd.generated.GlobalRouting import GlobalRoutingT
-from mqt.scpd.generated.GridParams import GridParamsT
-from mqt.scpd.generated.Line import LineT
-from mqt.scpd.generated.Path import PathT
-from mqt.scpd.generated.Point import PointT
-from mqt.scpd.generated.Polygon import PolygonT
-from mqt.scpd.generated.Port import PortT
-from mqt.scpd.generated.PortConfig import PortConfigT
-from mqt.scpd.generated.PortDetection import PortDetection
-from mqt.scpd.generated.PortRef import PortRefT
-from mqt.scpd.generated.Rotation import Rotation
-from mqt.scpd.generated.Segment import SegmentT
-from mqt.scpd.generated.SegmentShape import SegmentShape
-from mqt.scpd.generated.StageOutput import StageOutput
-from mqt.scpd.generated.UnassignedRole import UnassignedRole
-from mqt.scpd.generated.Wire import WireT
+from mqt.scpd.flatbuffers.artifacts.Artifact import Artifact, ArtifactT
+from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
+from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
+from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
+from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
+from mqt.scpd.flatbuffers.artifacts.Wire import WireT
+from mqt.scpd.flatbuffers.config.GridParams import GridParamsT
+from mqt.scpd.flatbuffers.config.PortConfig import PortConfigT
+from mqt.scpd.flatbuffers.config.PortDetection import PortDetection
+from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
+from mqt.scpd.flatbuffers.design.Chip import ChipT
+from mqt.scpd.flatbuffers.design.Connection import ConnectionT
+from mqt.scpd.flatbuffers.design.Port import PortT
+from mqt.scpd.flatbuffers.design.PortRef import PortRefT
+from mqt.scpd.flatbuffers.design.Rotation import Rotation
+from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
+from mqt.scpd.flatbuffers.geometry.Arc import ArcT
+from mqt.scpd.flatbuffers.geometry.Line import LineT
+from mqt.scpd.flatbuffers.geometry.Path import PathT
+from mqt.scpd.flatbuffers.geometry.Point import PointT
+from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
+from mqt.scpd.flatbuffers.geometry.Segment import SegmentT
+from mqt.scpd.flatbuffers.geometry.SegmentShape import SegmentShape
 
 
 def test_role_enums_match_the_wire_format() -> None:

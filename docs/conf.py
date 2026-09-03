@@ -134,7 +134,7 @@ autoapi_root = "api"
 autoapi_add_toctree_entry = False
 autoapi_ignore = [
     "*/**/_version.py",
-    "*/generated/*",
+    "*/flatbuffers/*",
 ]
 autoapi_options = [
     "members",

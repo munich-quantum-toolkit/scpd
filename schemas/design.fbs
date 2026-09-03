@@ -12,7 +12,7 @@
 
 include "geometry.fbs";
 
-namespace mqt.scpd.generated;
+namespace mqt.scpd.flatbuffers.design;
 
 /// What a port is, before anything is decided. Set at load, from the role
 /// patterns in the configuration.
@@ -56,7 +56,7 @@ struct PortRef {
 /// parses it.
 table Port {
   label: string (required);
-  centre: Point (native_inline);
+  centre: geometry.Point (native_inline);
   /// Degrees, as the chip input carries it.
   orientation: double;
   role: UnassignedRole;
@@ -64,7 +64,7 @@ table Port {
 
 /// The chip: obstacle geometry and ports, exactly as the input carries them.
 table Chip {
-  obstacles: [Polygon] (required);
+  obstacles: [geometry.Polygon] (required);
   ports: [Port] (required);
 }
 
@@ -96,7 +96,7 @@ table DesignRules {
 table CpwCoupler {
   /// The ResonatorSource port the coupler carries.
   port: PortRef (native_inline);
-  centre: Point (native_inline);
+  centre: geometry.Point (native_inline);
   rotation: Rotation;
   length: double;
   height: double;
@@ -105,7 +105,7 @@ table CpwCoupler {
 /// An air bridge where a feedline crosses a regular wire. Instantiated at
 /// exact physical dimensions in layout units.
 table Bridge {
-  centre: Point (native_inline);
+  centre: geometry.Point (native_inline);
   rotation: Rotation;
   width: double;
   height: double;

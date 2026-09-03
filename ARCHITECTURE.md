@@ -8,9 +8,7 @@ Companion documents:
 
 - [Data model](docs/design/data-model.md) — entities, coordinate systems
 - [Pipeline](docs/design/pipeline.md) — stage contracts, artifacts, resume
-- [Roadmap](docs/design/roadmap.md) — phased plan with acceptance criteria
 - [Decisions](docs/design/decisions/) — one record per architectural decision
-- [Porting notes](docs/design/porting-notes.md) — map of the prototype
 
 Diagrams are Mermaid and render on GitHub. These design documents are excluded
 from the Sphinx build; they target contributors, not users.
@@ -261,11 +259,11 @@ sequenceDiagram
 mqt-scpd/
   schemas/*.fbs                          the data model, single source of truth
   include/mqt-scpd/<module>/*.hpp        public headers
-  include/mqt-scpd/generated/            committed, via nox -s schemas
+  include/mqt-scpd/flatbuffers/          committed, via nox -s schemas
   src/<module>/                          mirrors include/
   bindings/bindings.cpp                  minimal: run pipeline, read metrics
   python/mqt/scpd/
-    generated/                           committed, via nox -s schemas
+    flatbuffers/                         committed, via nox -s schemas
     cli.py                               argparse subcommands
     solvers/gurobipy_backend.py          BYOK Gurobi via MPS
     export/klayout.py                    GDS and OASIS

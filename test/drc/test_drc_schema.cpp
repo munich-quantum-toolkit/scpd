@@ -8,8 +8,8 @@
  * Licensed under the MIT License
  */
 
-#include "mqt-scpd/generated/drc_generated.hpp"
-#include "mqt-scpd/generated/geometry_generated.hpp"
+#include "mqt-scpd/flatbuffers/drc.hpp"
+#include "mqt-scpd/flatbuffers/geometry.hpp"
 
 #include <flatbuffers/flatbuffer_builder.h>
 #include <flatbuffers/verifier.h>
@@ -22,7 +22,8 @@
 
 namespace {
 
-using namespace mqt::scpd::generated;
+using namespace mqt::scpd::flatbuffers::drc;
+using mqt::scpd::flatbuffers::geometry::Point;
 
 TEST(DrcSchema, EightRulesInTableOrder) {
   EXPECT_EQ(static_cast<std::uint8_t>(DrcRule::WireClearance), 0U);

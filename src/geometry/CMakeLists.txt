@@ -6,4 +6,4 @@
 #
 # Licensed under the MIT License
 
-add_mqt_scpd_library(geometry GENERATED_HEADERS geometry_generated.hpp)
+add_mqt_scpd_library(geometry GENERATED_HEADERS geometry.hpp)

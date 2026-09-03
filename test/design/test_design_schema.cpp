@@ -8,8 +8,8 @@
  * Licensed under the MIT License
  */
 
-#include "mqt-scpd/generated/design_generated.hpp"
-#include "mqt-scpd/generated/geometry_generated.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
+#include "mqt-scpd/flatbuffers/geometry.hpp"
 
 #include <flatbuffers/buffer.h>
 #include <flatbuffers/flatbuffer_builder.h>
@@ -23,7 +23,9 @@
 
 namespace {
 
-using namespace mqt::scpd::generated;
+using namespace mqt::scpd::flatbuffers::design;
+using mqt::scpd::flatbuffers::geometry::Point;
+using mqt::scpd::flatbuffers::geometry::PolygonT;
 
 template <typename NativeT> NativeT roundTrip(const NativeT& object) {
   flatbuffers::FlatBufferBuilder builder;

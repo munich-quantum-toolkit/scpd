@@ -13,9 +13,9 @@ each other's homework."
 **There is no KLayout design-rule checking to agree with.** The prototype's
 `klayout/` package is a GDS/OASIS exporter plus a viewer panel; not one file in
 it mentions DRC. The criterion described a cross-check that had never existed,
-and the package's own README asks for the opposite arrangement — *"Sobald ein
-`MinClearanceReport` als JSON vorliegt, gehören dessen Verletzungen…"* — the
-viewer wants the core to hand it a structured report it can highlight.
+and the package's own README asks for the opposite arrangement: once a
+`MinClearanceReport` exists as JSON, its violations belong in the viewer, which
+wants the core to hand it a structured report it can highlight.
 
 What the prototype does have is two of the eight rules that matter, implemented
 twice over: `FinalGrid::verify_min_clearance` (483 lines, router cells) and

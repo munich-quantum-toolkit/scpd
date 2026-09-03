@@ -22,7 +22,7 @@ endif()
 
 # FlatBuffers provides the schema-generated data model. The core links only the header-only runtime.
 # The compiler `flatc` is built on request by `uvx nox -s schemas`, which regenerates the committed
-# code under include/mqt-scpd/generated/ and python/mqt/scpd/generated/. It is never part of a
+# code under include/mqt-scpd/flatbuffers/ and python/mqt/scpd/flatbuffers/. It is never part of a
 # regular or a wheel build. The version must match the one that generated the committed code, which
 # the generated headers assert at compile time.
 option(MQT_SCPD_BUILD_FLATC "Build the FlatBuffers compiler for schema regeneration" OFF)

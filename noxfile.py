@@ -35,8 +35,8 @@ nox.options.default_venv_backend = "uv"
 PYTHON_ALL_VERSIONS = ["3.11", "3.12", "3.13", "3.14"]
 
 SCHEMA_DIR = Path("schemas")
-GENERATED_CPP_DIR = Path("include") / "mqt-scpd" / "generated"
-GENERATED_PYTHON_DIR = Path("python") / "mqt" / "scpd" / "generated"
+GENERATED_CPP_DIR = Path("include") / "mqt-scpd" / "flatbuffers"
+GENERATED_PYTHON_DIR = Path("python") / "mqt" / "scpd" / "flatbuffers"
 # Python reads and writes the chip, the configuration and the stage artifacts itself. The DRC report
 # is written as JSON, which Python reads without generated code.
 PYTHON_ONLY_CPP_SCHEMAS = {"drc.fbs"}
@@ -251,8 +251,8 @@ def schemas(session: nox.Session) -> None:
 
     # Remove the output of schemas and types that no longer exist before regenerating.
     for stale in [
-        *GENERATED_CPP_DIR.glob("*_generated.hpp"),
-        *(path for path in GENERATED_PYTHON_DIR.glob("*.py*") if path.name != "__init__.py"),
+        *GENERATED_CPP_DIR.glob("*.hpp"),
+        *(path for path in GENERATED_PYTHON_DIR.rglob("*.py*") if path.name != "__init__.py"),
     ]:
         stale.unlink()
 
@@ -267,11 +267,11 @@ def schemas(session: nox.Session) -> None:
             "--cpp-std",
             "c++17",
             "--filename-suffix",
-            "_generated",
+            "",
             "--filename-ext",
             "hpp",
             "--include-prefix",
-            "mqt-scpd/generated",
+            "mqt-scpd/flatbuffers",
             "--warnings-as-errors",
             "-o",
             str(Path("..") / GENERATED_CPP_DIR),
@@ -279,9 +279,10 @@ def schemas(session: nox.Session) -> None:
             external=True,
         )
 
-    # flatc writes one Python module per type into the directories of the schema namespace, together
-    # with empty package initializers up to the top-level namespace and a stub per module. Only the
-    # modules are wanted; they keep their inline annotations.
+    # flatc writes one Python module per type into the directories of the schema namespace, one
+    # subpackage per schema, together with empty package initializers and a stub per module. Only
+    # the modules are wanted; they keep their inline annotations, and the package initializers are
+    # hand-written.
     python_schema_names = [name for name in schema_names if name not in PYTHON_ONLY_CPP_SCHEMAS]
     with tempfile.TemporaryDirectory() as temp_dir_name, session.chdir(SCHEMA_DIR):
         session.run(
@@ -296,10 +297,12 @@ def schemas(session: nox.Session) -> None:
             *python_schema_names,
             external=True,
         )
-        generated = Path(temp_dir_name) / "mqt" / "scpd" / "generated"
-        for module in sorted(generated.glob("*.py")):
+        generated = Path(temp_dir_name) / "mqt" / "scpd" / "flatbuffers"
+        for module in sorted(generated.rglob("*.py")):
             if module.name != "__init__.py":
-                shutil.copyfile(module, Path("..") / GENERATED_PYTHON_DIR / module.name)
+                target = Path("..") / GENERATED_PYTHON_DIR / module.relative_to(generated)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(module, target)
 
     if check:
         status = session.run(
@@ -345,7 +348,7 @@ def stubs(session: nox.Session) -> None:
     )
 
     # The schema-generated stubs are owned by the schemas session.
-    pyi_files = [path for path in package_root.glob("**/*.pyi") if path.parent != package_root / "generated"]
+    pyi_files = [path for path in package_root.glob("**/*.pyi") if package_root / "flatbuffers" not in path.parents]
 
     if not pyi_files:
         session.warn("No .pyi files found")

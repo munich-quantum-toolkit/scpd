@@ -16,7 +16,7 @@
 # `src/<module>/`. The headers form a `FILE_SET HEADERS` whose base directory is `include/`, so a
 # header is included as `mqt-scpd/<module>/<Header>.hpp`.
 #
-# GENERATED_HEADERS names schema-generated headers under `include/mqt-scpd/generated/` that the
+# GENERATED_HEADERS names schema-generated headers under `include/mqt-scpd/flatbuffers/` that the
 # module owns. They join the header set, and the module links the FlatBuffers runtime.
 #
 # LINK_LIBRARIES names the modules this module depends on. The dependency direction between the
@@ -56,8 +56,13 @@ function(add_mqt_scpd_library module)
   file(GLOB_RECURSE headers ${MQT_SCPD_INCLUDE_BUILD_DIR}/mqt-scpd/${module}/*.hpp)
   file(GLOB_RECURSE sources ${PROJECT_SOURCE_DIR}/src/${module}/*.cpp)
   foreach(generated ${ARG_GENERATED_HEADERS})
-    set(path ${MQT_SCPD_INCLUDE_BUILD_DIR}/mqt-scpd/generated/${generated})
+    set(path ${MQT_SCPD_INCLUDE_BUILD_DIR}/mqt-scpd/flatbuffers/${generated})
     if(NOT EXISTS ${path})
+      if(MQT_SCPD_BUILD_FLATC)
+        # The schema session configures the project before it generates the headers.
+        message(STATUS "${name}: ${path} will be generated")
+        continue()
+      endif()
       message(FATAL_ERROR "${name}: generated header ${path} does not exist. "
                           "Run `uvx nox -s schemas` to regenerate it.")
     endif()

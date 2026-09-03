@@ -12,7 +12,7 @@
 // behind analytic segments. The three grid coordinate types arrive with
 // MQT::ScpdGrid in phase 2.
 
-namespace mqt.scpd.generated;
+namespace mqt.scpd.flatbuffers.geometry;
 
 /// A point in layout space. Micrometres, as double.
 struct Point {

@@ -8,7 +8,7 @@
  * Licensed under the MIT License
  */
 
-#include "mqt-scpd/generated/geometry_generated.hpp"
+#include "mqt-scpd/flatbuffers/geometry.hpp"
 
 #include <flatbuffers/buffer.h>
 #include <flatbuffers/flatbuffer_builder.h>
@@ -22,7 +22,7 @@
 
 namespace {
 
-using namespace mqt::scpd::generated;
+using namespace mqt::scpd::flatbuffers::geometry;
 
 /// Pack a native object into a buffer and unpack it again.
 template <typename NativeT> NativeT roundTrip(const NativeT& object) {

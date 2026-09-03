@@ -9,7 +9,7 @@
 add_mqt_scpd_library(
   drc
   GENERATED_HEADERS
-  drc_generated.hpp
+  drc.hpp
   LINK_LIBRARIES
   MQT::ScpdGrid
   MQT::ScpdDesign

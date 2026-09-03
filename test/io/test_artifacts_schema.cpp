@@ -8,9 +8,9 @@
  * Licensed under the MIT License
  */
 
-#include "mqt-scpd/generated/artifacts_generated.hpp"
-#include "mqt-scpd/generated/design_generated.hpp"
-#include "mqt-scpd/generated/geometry_generated.hpp"
+#include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
+#include "mqt-scpd/flatbuffers/geometry.hpp"
 
 #include <flatbuffers/flatbuffer_builder.h>
 #include <flatbuffers/verifier.h>
@@ -27,7 +27,9 @@
 
 namespace {
 
-using namespace mqt::scpd::generated;
+using namespace mqt::scpd::flatbuffers::artifacts;
+using namespace mqt::scpd::flatbuffers::design;
+using namespace mqt::scpd::flatbuffers::geometry;
 
 /// Serialize an artifact as a run directory would store it.
 std::vector<std::uint8_t> serialize(const ArtifactT& artifact) {

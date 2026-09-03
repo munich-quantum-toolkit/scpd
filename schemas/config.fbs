@@ -17,7 +17,7 @@
 
 include "design.fbs";
 
-namespace mqt.scpd.generated;
+namespace mqt.scpd.flatbuffers.config;
 
 /// Where the outer port ring comes from. See decision 0023.
 enum PortDetection : ubyte {
@@ -64,6 +64,6 @@ table Config {
   /// The chip input path, relative to the configuration file.
   chip_input: string (required);
   ports: PortConfig (required);
-  rules: DesignRules (required);
+  rules: design.DesignRules (required);
   grid: GridParams;
 }

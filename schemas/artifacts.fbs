@@ -15,14 +15,14 @@
 
 include "design.fbs";
 
-namespace mqt.scpd.generated;
+namespace mqt.scpd.flatbuffers.artifacts;
 
 /// Output of the Capacity stage.
 table CapacityPlan {}
 
 /// Output of the Assignment stage.
 table Assignment {
-  connections: [Connection] (required);
+  connections: [design.Connection] (required);
   objective: double;
 }
 
@@ -34,8 +34,8 @@ table DetailRouting {}
 
 /// Output of the Final stage.
 table FinalRouting {
-  couplers: [CpwCoupler] (required);
-  bridges: [Bridge] (required);
+  couplers: [design.CpwCoupler] (required);
+  bridges: [design.Bridge] (required);
   /// Indices into Assignment.connections that did not route.
   unresolved: [uint32] (required);
 }
@@ -44,14 +44,14 @@ table FinalRouting {
 table Wire {
   /// Index into Assignment.connections.
   connection: uint32;
-  path: Path (required);
+  path: geometry.Path (required);
 }
 
 /// Output of the Finalize stage: the geometry IR.
 table Geometry {
   wires: [Wire] (required);
-  couplers: [CpwCoupler] (required);
-  bridges: [Bridge] (required);
+  couplers: [design.CpwCoupler] (required);
+  bridges: [design.Bridge] (required);
 }
 
 /// What a stage produces.

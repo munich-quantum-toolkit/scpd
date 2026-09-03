@@ -33,7 +33,6 @@ table can usefully list — but every row is measured, not estimated.
 | `mini_project/`, `lib/`, committed logs and results | ~18 MB | Nothing                                                               |
 
 Each deletion has a named replacement or is confirmed to have zero call sites.
-The full inventory is in [porting notes](../porting-notes.md).
 
 The port-ordering row is the one place where deleting is not the whole story.
 The subsystem in the table goes, but the prototype has since grown a second,
