@@ -35,30 +35,6 @@ struct GridParams;
 struct GridParamsBuilder;
 struct GridParamsT;
 
-struct AssignmentParams;
-struct AssignmentParamsBuilder;
-struct AssignmentParamsT;
-
-struct FinalParams;
-struct FinalParamsBuilder;
-struct FinalParamsT;
-
-struct Algorithms;
-struct AlgorithmsBuilder;
-struct AlgorithmsT;
-
-struct StageParams;
-struct StageParamsBuilder;
-struct StageParamsT;
-
-struct ComponentParams;
-struct ComponentParamsBuilder;
-struct ComponentParamsT;
-
-struct DrcParams;
-struct DrcParamsBuilder;
-struct DrcParamsT;
-
 struct Config;
 struct ConfigBuilder;
 struct ConfigT;
@@ -71,18 +47,6 @@ bool operator==(const PortConfigT &lhs, const PortConfigT &rhs);
 bool operator!=(const PortConfigT &lhs, const PortConfigT &rhs);
 bool operator==(const GridParamsT &lhs, const GridParamsT &rhs);
 bool operator!=(const GridParamsT &lhs, const GridParamsT &rhs);
-bool operator==(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs);
-bool operator!=(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs);
-bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs);
-bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs);
-bool operator==(const AlgorithmsT &lhs, const AlgorithmsT &rhs);
-bool operator!=(const AlgorithmsT &lhs, const AlgorithmsT &rhs);
-bool operator==(const StageParamsT &lhs, const StageParamsT &rhs);
-bool operator!=(const StageParamsT &lhs, const StageParamsT &rhs);
-bool operator==(const ComponentParamsT &lhs, const ComponentParamsT &rhs);
-bool operator!=(const ComponentParamsT &lhs, const ComponentParamsT &rhs);
-bool operator==(const DrcParamsT &lhs, const DrcParamsT &rhs);
-bool operator!=(const DrcParamsT &lhs, const DrcParamsT &rhs);
 bool operator==(const ConfigT &lhs, const ConfigT &rhs);
 bool operator!=(const ConfigT &lhs, const ConfigT &rhs);
 
@@ -523,582 +487,12 @@ struct GridParams::Traits {
 
 ::flatbuffers::Offset<GridParams> CreateGridParams(::flatbuffers::FlatBufferBuilder &_fbb, const GridParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
-struct AssignmentParamsT : public ::flatbuffers::NativeTable {
-  typedef AssignmentParams TableType;
-  uint32_t launcher_target = 0;
-};
-
-struct AssignmentParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef AssignmentParamsT NativeTableType;
-  typedef AssignmentParamsBuilder Builder;
-  struct Traits;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_LAUNCHER_TARGET = 4
-  };
-  uint32_t launcher_target() const {
-    return GetField<uint32_t>(VT_LAUNCHER_TARGET, 0);
-  }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyField<uint32_t>(verifier, VT_LAUNCHER_TARGET, 4) &&
-           verifier.EndTable();
-  }
-  AssignmentParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(AssignmentParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<AssignmentParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-};
-
-struct AssignmentParamsBuilder {
-  typedef AssignmentParams Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_launcher_target(uint32_t launcher_target) {
-    fbb_.AddElement<uint32_t>(AssignmentParams::VT_LAUNCHER_TARGET, launcher_target, 0);
-  }
-  explicit AssignmentParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<AssignmentParams> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<AssignmentParams>(end);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<AssignmentParams> CreateAssignmentParams(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    uint32_t launcher_target = 0) {
-  AssignmentParamsBuilder builder_(_fbb);
-  builder_.add_launcher_target(launcher_target);
-  return builder_.Finish();
-}
-
-struct AssignmentParams::Traits {
-  using type = AssignmentParams;
-  static auto constexpr Create = CreateAssignmentParams;
-};
-
-::flatbuffers::Offset<AssignmentParams> CreateAssignmentParams(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-
-struct FinalParamsT : public ::flatbuffers::NativeTable {
-  typedef FinalParams TableType;
-  double meander_length = 600.0;
-  uint32_t expansion = 200;
-  uint32_t rounds = 10;
-  uint32_t refinement_rounds = 15;
-};
-
-struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef FinalParamsT NativeTableType;
-  typedef FinalParamsBuilder Builder;
-  struct Traits;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_MEANDER_LENGTH = 4,
-    VT_EXPANSION = 6,
-    VT_ROUNDS = 8,
-    VT_REFINEMENT_ROUNDS = 10
-  };
-  double meander_length() const {
-    return GetField<double>(VT_MEANDER_LENGTH, 600.0);
-  }
-  uint32_t expansion() const {
-    return GetField<uint32_t>(VT_EXPANSION, 200);
-  }
-  uint32_t rounds() const {
-    return GetField<uint32_t>(VT_ROUNDS, 10);
-  }
-  uint32_t refinement_rounds() const {
-    return GetField<uint32_t>(VT_REFINEMENT_ROUNDS, 15);
-  }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyField<double>(verifier, VT_MEANDER_LENGTH, 8) &&
-           VerifyField<uint32_t>(verifier, VT_EXPANSION, 4) &&
-           VerifyField<uint32_t>(verifier, VT_ROUNDS, 4) &&
-           VerifyField<uint32_t>(verifier, VT_REFINEMENT_ROUNDS, 4) &&
-           verifier.EndTable();
-  }
-  FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<FinalParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-};
-
-struct FinalParamsBuilder {
-  typedef FinalParams Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_meander_length(double meander_length) {
-    fbb_.AddElement<double>(FinalParams::VT_MEANDER_LENGTH, meander_length, 600.0);
-  }
-  void add_expansion(uint32_t expansion) {
-    fbb_.AddElement<uint32_t>(FinalParams::VT_EXPANSION, expansion, 200);
-  }
-  void add_rounds(uint32_t rounds) {
-    fbb_.AddElement<uint32_t>(FinalParams::VT_ROUNDS, rounds, 10);
-  }
-  void add_refinement_rounds(uint32_t refinement_rounds) {
-    fbb_.AddElement<uint32_t>(FinalParams::VT_REFINEMENT_ROUNDS, refinement_rounds, 15);
-  }
-  explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<FinalParams> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<FinalParams>(end);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    double meander_length = 600.0,
-    uint32_t expansion = 200,
-    uint32_t rounds = 10,
-    uint32_t refinement_rounds = 15) {
-  FinalParamsBuilder builder_(_fbb);
-  builder_.add_meander_length(meander_length);
-  builder_.add_refinement_rounds(refinement_rounds);
-  builder_.add_rounds(rounds);
-  builder_.add_expansion(expansion);
-  return builder_.Finish();
-}
-
-struct FinalParams::Traits {
-  using type = FinalParams;
-  static auto constexpr Create = CreateFinalParams;
-};
-
-::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-
-struct AlgorithmsT : public ::flatbuffers::NativeTable {
-  typedef Algorithms TableType;
-  std::string assigner{};
-  std::string global_router{};
-  std::string detail_router{};
-  std::string final_router{};
-};
-
-/// Algorithm selection by registry name. Empty selects the default
-/// implementation of a stage.
-struct Algorithms FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef AlgorithmsT NativeTableType;
-  typedef AlgorithmsBuilder Builder;
-  struct Traits;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_ASSIGNER = 4,
-    VT_GLOBAL_ROUTER = 6,
-    VT_DETAIL_ROUTER = 8,
-    VT_FINAL_ROUTER = 10
-  };
-  const ::flatbuffers::String *assigner() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_ASSIGNER);
-  }
-  const ::flatbuffers::String *global_router() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_GLOBAL_ROUTER);
-  }
-  const ::flatbuffers::String *detail_router() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_DETAIL_ROUTER);
-  }
-  const ::flatbuffers::String *final_router() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_FINAL_ROUTER);
-  }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyOffset(verifier, VT_ASSIGNER) &&
-           verifier.VerifyString(assigner()) &&
-           VerifyOffset(verifier, VT_GLOBAL_ROUTER) &&
-           verifier.VerifyString(global_router()) &&
-           VerifyOffset(verifier, VT_DETAIL_ROUTER) &&
-           verifier.VerifyString(detail_router()) &&
-           VerifyOffset(verifier, VT_FINAL_ROUTER) &&
-           verifier.VerifyString(final_router()) &&
-           verifier.EndTable();
-  }
-  AlgorithmsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(AlgorithmsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<Algorithms> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const AlgorithmsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-};
-
-struct AlgorithmsBuilder {
-  typedef Algorithms Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_assigner(::flatbuffers::Offset<::flatbuffers::String> assigner) {
-    fbb_.AddOffset(Algorithms::VT_ASSIGNER, assigner);
-  }
-  void add_global_router(::flatbuffers::Offset<::flatbuffers::String> global_router) {
-    fbb_.AddOffset(Algorithms::VT_GLOBAL_ROUTER, global_router);
-  }
-  void add_detail_router(::flatbuffers::Offset<::flatbuffers::String> detail_router) {
-    fbb_.AddOffset(Algorithms::VT_DETAIL_ROUTER, detail_router);
-  }
-  void add_final_router(::flatbuffers::Offset<::flatbuffers::String> final_router) {
-    fbb_.AddOffset(Algorithms::VT_FINAL_ROUTER, final_router);
-  }
-  explicit AlgorithmsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<Algorithms> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<Algorithms>(end);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<Algorithms> CreateAlgorithms(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    ::flatbuffers::Offset<::flatbuffers::String> assigner = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> global_router = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> detail_router = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> final_router = 0) {
-  AlgorithmsBuilder builder_(_fbb);
-  builder_.add_final_router(final_router);
-  builder_.add_detail_router(detail_router);
-  builder_.add_global_router(global_router);
-  builder_.add_assigner(assigner);
-  return builder_.Finish();
-}
-
-struct Algorithms::Traits {
-  using type = Algorithms;
-  static auto constexpr Create = CreateAlgorithms;
-};
-
-inline ::flatbuffers::Offset<Algorithms> CreateAlgorithmsDirect(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    const char *assigner = nullptr,
-    const char *global_router = nullptr,
-    const char *detail_router = nullptr,
-    const char *final_router = nullptr) {
-  auto assigner__ = assigner ? _fbb.CreateString(assigner) : 0;
-  auto global_router__ = global_router ? _fbb.CreateString(global_router) : 0;
-  auto detail_router__ = detail_router ? _fbb.CreateString(detail_router) : 0;
-  auto final_router__ = final_router ? _fbb.CreateString(final_router) : 0;
-  return mqt::scpd::generated::CreateAlgorithms(
-      _fbb,
-      assigner__,
-      global_router__,
-      detail_router__,
-      final_router__);
-}
-
-::flatbuffers::Offset<Algorithms> CreateAlgorithms(::flatbuffers::FlatBufferBuilder &_fbb, const AlgorithmsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-
-struct StageParamsT : public ::flatbuffers::NativeTable {
-  typedef StageParams TableType;
-  std::unique_ptr<mqt::scpd::generated::AlgorithmsT> algorithms{};
-  std::unique_ptr<mqt::scpd::generated::AssignmentParamsT> assignment{};
-  std::unique_ptr<mqt::scpd::generated::FinalParamsT> final{};
-  StageParamsT() = default;
-  StageParamsT(const StageParamsT &o);
-  StageParamsT(StageParamsT&&) FLATBUFFERS_NOEXCEPT = default;
-  StageParamsT &operator=(StageParamsT o) FLATBUFFERS_NOEXCEPT;
-};
-
-struct StageParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef StageParamsT NativeTableType;
-  typedef StageParamsBuilder Builder;
-  struct Traits;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_ALGORITHMS = 4,
-    VT_ASSIGNMENT = 6,
-    VT_FINAL = 8
-  };
-  const mqt::scpd::generated::Algorithms *algorithms() const {
-    return GetPointer<const mqt::scpd::generated::Algorithms *>(VT_ALGORITHMS);
-  }
-  const mqt::scpd::generated::AssignmentParams *assignment() const {
-    return GetPointer<const mqt::scpd::generated::AssignmentParams *>(VT_ASSIGNMENT);
-  }
-  const mqt::scpd::generated::FinalParams *final() const {
-    return GetPointer<const mqt::scpd::generated::FinalParams *>(VT_FINAL);
-  }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyOffset(verifier, VT_ALGORITHMS) &&
-           verifier.VerifyTable(algorithms()) &&
-           VerifyOffset(verifier, VT_ASSIGNMENT) &&
-           verifier.VerifyTable(assignment()) &&
-           VerifyOffset(verifier, VT_FINAL) &&
-           verifier.VerifyTable(final()) &&
-           verifier.EndTable();
-  }
-  StageParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(StageParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<StageParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-};
-
-struct StageParamsBuilder {
-  typedef StageParams Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_algorithms(::flatbuffers::Offset<mqt::scpd::generated::Algorithms> algorithms) {
-    fbb_.AddOffset(StageParams::VT_ALGORITHMS, algorithms);
-  }
-  void add_assignment(::flatbuffers::Offset<mqt::scpd::generated::AssignmentParams> assignment) {
-    fbb_.AddOffset(StageParams::VT_ASSIGNMENT, assignment);
-  }
-  void add_final(::flatbuffers::Offset<mqt::scpd::generated::FinalParams> final) {
-    fbb_.AddOffset(StageParams::VT_FINAL, final);
-  }
-  explicit StageParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<StageParams> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<StageParams>(end);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<StageParams> CreateStageParams(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    ::flatbuffers::Offset<mqt::scpd::generated::Algorithms> algorithms = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::AssignmentParams> assignment = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::FinalParams> final = 0) {
-  StageParamsBuilder builder_(_fbb);
-  builder_.add_final(final);
-  builder_.add_assignment(assignment);
-  builder_.add_algorithms(algorithms);
-  return builder_.Finish();
-}
-
-struct StageParams::Traits {
-  using type = StageParams;
-  static auto constexpr Create = CreateStageParams;
-};
-
-::flatbuffers::Offset<StageParams> CreateStageParams(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-
-struct ComponentParamsT : public ::flatbuffers::NativeTable {
-  typedef ComponentParams TableType;
-  double coupler_length = 200.0;
-  double coupler_height = 26.0;
-  double bridge_width = 60.0;
-  double bridge_height = 60.0;
-};
-
-/// Physical dimensions of the components a run instantiates, in layout units.
-struct ComponentParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef ComponentParamsT NativeTableType;
-  typedef ComponentParamsBuilder Builder;
-  struct Traits;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_COUPLER_LENGTH = 4,
-    VT_COUPLER_HEIGHT = 6,
-    VT_BRIDGE_WIDTH = 8,
-    VT_BRIDGE_HEIGHT = 10
-  };
-  double coupler_length() const {
-    return GetField<double>(VT_COUPLER_LENGTH, 200.0);
-  }
-  double coupler_height() const {
-    return GetField<double>(VT_COUPLER_HEIGHT, 26.0);
-  }
-  double bridge_width() const {
-    return GetField<double>(VT_BRIDGE_WIDTH, 60.0);
-  }
-  double bridge_height() const {
-    return GetField<double>(VT_BRIDGE_HEIGHT, 60.0);
-  }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyField<double>(verifier, VT_COUPLER_LENGTH, 8) &&
-           VerifyField<double>(verifier, VT_COUPLER_HEIGHT, 8) &&
-           VerifyField<double>(verifier, VT_BRIDGE_WIDTH, 8) &&
-           VerifyField<double>(verifier, VT_BRIDGE_HEIGHT, 8) &&
-           verifier.EndTable();
-  }
-  ComponentParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(ComponentParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<ComponentParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ComponentParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-};
-
-struct ComponentParamsBuilder {
-  typedef ComponentParams Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_coupler_length(double coupler_length) {
-    fbb_.AddElement<double>(ComponentParams::VT_COUPLER_LENGTH, coupler_length, 200.0);
-  }
-  void add_coupler_height(double coupler_height) {
-    fbb_.AddElement<double>(ComponentParams::VT_COUPLER_HEIGHT, coupler_height, 26.0);
-  }
-  void add_bridge_width(double bridge_width) {
-    fbb_.AddElement<double>(ComponentParams::VT_BRIDGE_WIDTH, bridge_width, 60.0);
-  }
-  void add_bridge_height(double bridge_height) {
-    fbb_.AddElement<double>(ComponentParams::VT_BRIDGE_HEIGHT, bridge_height, 60.0);
-  }
-  explicit ComponentParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<ComponentParams> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<ComponentParams>(end);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<ComponentParams> CreateComponentParams(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    double coupler_length = 200.0,
-    double coupler_height = 26.0,
-    double bridge_width = 60.0,
-    double bridge_height = 60.0) {
-  ComponentParamsBuilder builder_(_fbb);
-  builder_.add_bridge_height(bridge_height);
-  builder_.add_bridge_width(bridge_width);
-  builder_.add_coupler_height(coupler_height);
-  builder_.add_coupler_length(coupler_length);
-  return builder_.Finish();
-}
-
-struct ComponentParams::Traits {
-  using type = ComponentParams;
-  static auto constexpr Create = CreateComponentParams;
-};
-
-::flatbuffers::Offset<ComponentParams> CreateComponentParams(::flatbuffers::FlatBufferBuilder &_fbb, const ComponentParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-
-struct DrcParamsT : public ::flatbuffers::NativeTable {
-  typedef DrcParams TableType;
-  bool all = false;
-  bool component_overlap = false;
-  bool min_straight_length = false;
-  bool min_bend_radius = false;
-  double short_threshold = 2.0;
-  double junction_radius_norm = 1.5;
-};
-
-/// DRCPolice settings. The active rules are not switchable.
-struct DrcParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef DrcParamsT NativeTableType;
-  typedef DrcParamsBuilder Builder;
-  struct Traits;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_ALL = 4,
-    VT_COMPONENT_OVERLAP = 6,
-    VT_MIN_STRAIGHT_LENGTH = 8,
-    VT_MIN_BEND_RADIUS = 10,
-    VT_SHORT_THRESHOLD = 12,
-    VT_JUNCTION_RADIUS_NORM = 14
-  };
-  /// Also run the advisory rules.
-  bool all() const {
-    return GetField<uint8_t>(VT_ALL, 0) != 0;
-  }
-  bool component_overlap() const {
-    return GetField<uint8_t>(VT_COMPONENT_OVERLAP, 0) != 0;
-  }
-  bool min_straight_length() const {
-    return GetField<uint8_t>(VT_MIN_STRAIGHT_LENGTH, 0) != 0;
-  }
-  bool min_bend_radius() const {
-    return GetField<uint8_t>(VT_MIN_BEND_RADIUS, 0) != 0;
-  }
-  /// Below this distance two wires are one net, not a near-miss.
-  double short_threshold() const {
-    return GetField<double>(VT_SHORT_THRESHOLD, 2.0);
-  }
-  /// Times the required clearance; how far past a junction two wires may
-  /// still touch.
-  double junction_radius_norm() const {
-    return GetField<double>(VT_JUNCTION_RADIUS_NORM, 1.5);
-  }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyField<uint8_t>(verifier, VT_ALL, 1) &&
-           VerifyField<uint8_t>(verifier, VT_COMPONENT_OVERLAP, 1) &&
-           VerifyField<uint8_t>(verifier, VT_MIN_STRAIGHT_LENGTH, 1) &&
-           VerifyField<uint8_t>(verifier, VT_MIN_BEND_RADIUS, 1) &&
-           VerifyField<double>(verifier, VT_SHORT_THRESHOLD, 8) &&
-           VerifyField<double>(verifier, VT_JUNCTION_RADIUS_NORM, 8) &&
-           verifier.EndTable();
-  }
-  DrcParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(DrcParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<DrcParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DrcParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-};
-
-struct DrcParamsBuilder {
-  typedef DrcParams Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_all(bool all) {
-    fbb_.AddElement<uint8_t>(DrcParams::VT_ALL, static_cast<uint8_t>(all), 0);
-  }
-  void add_component_overlap(bool component_overlap) {
-    fbb_.AddElement<uint8_t>(DrcParams::VT_COMPONENT_OVERLAP, static_cast<uint8_t>(component_overlap), 0);
-  }
-  void add_min_straight_length(bool min_straight_length) {
-    fbb_.AddElement<uint8_t>(DrcParams::VT_MIN_STRAIGHT_LENGTH, static_cast<uint8_t>(min_straight_length), 0);
-  }
-  void add_min_bend_radius(bool min_bend_radius) {
-    fbb_.AddElement<uint8_t>(DrcParams::VT_MIN_BEND_RADIUS, static_cast<uint8_t>(min_bend_radius), 0);
-  }
-  void add_short_threshold(double short_threshold) {
-    fbb_.AddElement<double>(DrcParams::VT_SHORT_THRESHOLD, short_threshold, 2.0);
-  }
-  void add_junction_radius_norm(double junction_radius_norm) {
-    fbb_.AddElement<double>(DrcParams::VT_JUNCTION_RADIUS_NORM, junction_radius_norm, 1.5);
-  }
-  explicit DrcParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<DrcParams> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<DrcParams>(end);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<DrcParams> CreateDrcParams(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    bool all = false,
-    bool component_overlap = false,
-    bool min_straight_length = false,
-    bool min_bend_radius = false,
-    double short_threshold = 2.0,
-    double junction_radius_norm = 1.5) {
-  DrcParamsBuilder builder_(_fbb);
-  builder_.add_junction_radius_norm(junction_radius_norm);
-  builder_.add_short_threshold(short_threshold);
-  builder_.add_min_bend_radius(min_bend_radius);
-  builder_.add_min_straight_length(min_straight_length);
-  builder_.add_component_overlap(component_overlap);
-  builder_.add_all(all);
-  return builder_.Finish();
-}
-
-struct DrcParams::Traits {
-  using type = DrcParams;
-  static auto constexpr Create = CreateDrcParams;
-};
-
-::flatbuffers::Offset<DrcParams> CreateDrcParams(::flatbuffers::FlatBufferBuilder &_fbb, const DrcParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-
 struct ConfigT : public ::flatbuffers::NativeTable {
   typedef Config TableType;
   std::string chip_input{};
   std::unique_ptr<mqt::scpd::generated::PortConfigT> ports{};
   std::unique_ptr<mqt::scpd::generated::DesignRulesT> rules{};
   std::unique_ptr<mqt::scpd::generated::GridParamsT> grid{};
-  std::unique_ptr<mqt::scpd::generated::StageParamsT> stages{};
-  std::unique_ptr<mqt::scpd::generated::ComponentParamsT> components{};
-  std::unique_ptr<mqt::scpd::generated::DrcParamsT> drc{};
   ConfigT() = default;
   ConfigT(const ConfigT &o);
   ConfigT(ConfigT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -1114,10 +508,7 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_CHIP_INPUT = 4,
     VT_PORTS = 6,
     VT_RULES = 8,
-    VT_GRID = 10,
-    VT_STAGES = 12,
-    VT_COMPONENTS = 14,
-    VT_DRC = 16
+    VT_GRID = 10
   };
   /// The chip input path, relative to the configuration file.
   const ::flatbuffers::String *chip_input() const {
@@ -1132,15 +523,6 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const mqt::scpd::generated::GridParams *grid() const {
     return GetPointer<const mqt::scpd::generated::GridParams *>(VT_GRID);
   }
-  const mqt::scpd::generated::StageParams *stages() const {
-    return GetPointer<const mqt::scpd::generated::StageParams *>(VT_STAGES);
-  }
-  const mqt::scpd::generated::ComponentParams *components() const {
-    return GetPointer<const mqt::scpd::generated::ComponentParams *>(VT_COMPONENTS);
-  }
-  const mqt::scpd::generated::DrcParams *drc() const {
-    return GetPointer<const mqt::scpd::generated::DrcParams *>(VT_DRC);
-  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1152,12 +534,6 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(rules()) &&
            VerifyOffset(verifier, VT_GRID) &&
            verifier.VerifyTable(grid()) &&
-           VerifyOffset(verifier, VT_STAGES) &&
-           verifier.VerifyTable(stages()) &&
-           VerifyOffset(verifier, VT_COMPONENTS) &&
-           verifier.VerifyTable(components()) &&
-           VerifyOffset(verifier, VT_DRC) &&
-           verifier.VerifyTable(drc()) &&
            verifier.EndTable();
   }
   ConfigT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1181,15 +557,6 @@ struct ConfigBuilder {
   void add_grid(::flatbuffers::Offset<mqt::scpd::generated::GridParams> grid) {
     fbb_.AddOffset(Config::VT_GRID, grid);
   }
-  void add_stages(::flatbuffers::Offset<mqt::scpd::generated::StageParams> stages) {
-    fbb_.AddOffset(Config::VT_STAGES, stages);
-  }
-  void add_components(::flatbuffers::Offset<mqt::scpd::generated::ComponentParams> components) {
-    fbb_.AddOffset(Config::VT_COMPONENTS, components);
-  }
-  void add_drc(::flatbuffers::Offset<mqt::scpd::generated::DrcParams> drc) {
-    fbb_.AddOffset(Config::VT_DRC, drc);
-  }
   explicit ConfigBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1209,14 +576,8 @@ inline ::flatbuffers::Offset<Config> CreateConfig(
     ::flatbuffers::Offset<::flatbuffers::String> chip_input = 0,
     ::flatbuffers::Offset<mqt::scpd::generated::PortConfig> ports = 0,
     ::flatbuffers::Offset<mqt::scpd::generated::DesignRules> rules = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::GridParams> grid = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::StageParams> stages = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::ComponentParams> components = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::DrcParams> drc = 0) {
+    ::flatbuffers::Offset<mqt::scpd::generated::GridParams> grid = 0) {
   ConfigBuilder builder_(_fbb);
-  builder_.add_drc(drc);
-  builder_.add_components(components);
-  builder_.add_stages(stages);
   builder_.add_grid(grid);
   builder_.add_rules(rules);
   builder_.add_ports(ports);
@@ -1234,20 +595,14 @@ inline ::flatbuffers::Offset<Config> CreateConfigDirect(
     const char *chip_input = nullptr,
     ::flatbuffers::Offset<mqt::scpd::generated::PortConfig> ports = 0,
     ::flatbuffers::Offset<mqt::scpd::generated::DesignRules> rules = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::GridParams> grid = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::StageParams> stages = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::ComponentParams> components = 0,
-    ::flatbuffers::Offset<mqt::scpd::generated::DrcParams> drc = 0) {
+    ::flatbuffers::Offset<mqt::scpd::generated::GridParams> grid = 0) {
   auto chip_input__ = chip_input ? _fbb.CreateString(chip_input) : 0;
   return mqt::scpd::generated::CreateConfig(
       _fbb,
       chip_input__,
       ports,
       rules,
-      grid,
-      stages,
-      components,
-      drc);
+      grid);
 }
 
 ::flatbuffers::Offset<Config> CreateConfig(::flatbuffers::FlatBufferBuilder &_fbb, const ConfigT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -1452,314 +807,12 @@ inline ::flatbuffers::Offset<GridParams> GridParams::Pack(::flatbuffers::FlatBuf
 }
 
 
-inline bool operator==(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs) {
-  return
-      (lhs.launcher_target == rhs.launcher_target);
-}
-
-inline bool operator!=(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs) {
-    return !(lhs == rhs);
-}
-
-
-inline AssignmentParamsT *AssignmentParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::make_unique<AssignmentParamsT>();
-  UnPackTo(_o.get(), _resolver);
-  return _o.release();
-}
-
-inline void AssignmentParams::UnPackTo(AssignmentParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
-  (void)_o;
-  (void)_resolver;
-  { auto _e = launcher_target(); _o->launcher_target = _e; }
-}
-
-inline ::flatbuffers::Offset<AssignmentParams> CreateAssignmentParams(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return AssignmentParams::Pack(_fbb, _o, _rehasher);
-}
-
-inline ::flatbuffers::Offset<AssignmentParams> AssignmentParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  (void)_rehasher;
-  (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const AssignmentParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _launcher_target = _o->launcher_target;
-  return mqt::scpd::generated::CreateAssignmentParams(
-      _fbb,
-      _launcher_target);
-}
-
-
-inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
-  return
-      (lhs.meander_length == rhs.meander_length) &&
-      (lhs.expansion == rhs.expansion) &&
-      (lhs.rounds == rhs.rounds) &&
-      (lhs.refinement_rounds == rhs.refinement_rounds);
-}
-
-inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
-    return !(lhs == rhs);
-}
-
-
-inline FinalParamsT *FinalParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::make_unique<FinalParamsT>();
-  UnPackTo(_o.get(), _resolver);
-  return _o.release();
-}
-
-inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
-  (void)_o;
-  (void)_resolver;
-  { auto _e = meander_length(); _o->meander_length = _e; }
-  { auto _e = expansion(); _o->expansion = _e; }
-  { auto _e = rounds(); _o->rounds = _e; }
-  { auto _e = refinement_rounds(); _o->refinement_rounds = _e; }
-}
-
-inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return FinalParams::Pack(_fbb, _o, _rehasher);
-}
-
-inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  (void)_rehasher;
-  (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const FinalParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _meander_length = _o->meander_length;
-  auto _expansion = _o->expansion;
-  auto _rounds = _o->rounds;
-  auto _refinement_rounds = _o->refinement_rounds;
-  return mqt::scpd::generated::CreateFinalParams(
-      _fbb,
-      _meander_length,
-      _expansion,
-      _rounds,
-      _refinement_rounds);
-}
-
-
-inline bool operator==(const AlgorithmsT &lhs, const AlgorithmsT &rhs) {
-  return
-      (lhs.assigner == rhs.assigner) &&
-      (lhs.global_router == rhs.global_router) &&
-      (lhs.detail_router == rhs.detail_router) &&
-      (lhs.final_router == rhs.final_router);
-}
-
-inline bool operator!=(const AlgorithmsT &lhs, const AlgorithmsT &rhs) {
-    return !(lhs == rhs);
-}
-
-
-inline AlgorithmsT *Algorithms::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::make_unique<AlgorithmsT>();
-  UnPackTo(_o.get(), _resolver);
-  return _o.release();
-}
-
-inline void Algorithms::UnPackTo(AlgorithmsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
-  (void)_o;
-  (void)_resolver;
-  { auto _e = assigner(); if (_e) _o->assigner = _e->str(); }
-  { auto _e = global_router(); if (_e) _o->global_router = _e->str(); }
-  { auto _e = detail_router(); if (_e) _o->detail_router = _e->str(); }
-  { auto _e = final_router(); if (_e) _o->final_router = _e->str(); }
-}
-
-inline ::flatbuffers::Offset<Algorithms> CreateAlgorithms(::flatbuffers::FlatBufferBuilder &_fbb, const AlgorithmsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return Algorithms::Pack(_fbb, _o, _rehasher);
-}
-
-inline ::flatbuffers::Offset<Algorithms> Algorithms::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const AlgorithmsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  (void)_rehasher;
-  (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const AlgorithmsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _assigner = _o->assigner.empty() ? 0 : _fbb.CreateString(_o->assigner);
-  auto _global_router = _o->global_router.empty() ? 0 : _fbb.CreateString(_o->global_router);
-  auto _detail_router = _o->detail_router.empty() ? 0 : _fbb.CreateString(_o->detail_router);
-  auto _final_router = _o->final_router.empty() ? 0 : _fbb.CreateString(_o->final_router);
-  return mqt::scpd::generated::CreateAlgorithms(
-      _fbb,
-      _assigner,
-      _global_router,
-      _detail_router,
-      _final_router);
-}
-
-
-inline bool operator==(const StageParamsT &lhs, const StageParamsT &rhs) {
-  return
-      ((lhs.algorithms == rhs.algorithms) || (lhs.algorithms && rhs.algorithms && *lhs.algorithms == *rhs.algorithms)) &&
-      ((lhs.assignment == rhs.assignment) || (lhs.assignment && rhs.assignment && *lhs.assignment == *rhs.assignment)) &&
-      ((lhs.final == rhs.final) || (lhs.final && rhs.final && *lhs.final == *rhs.final));
-}
-
-inline bool operator!=(const StageParamsT &lhs, const StageParamsT &rhs) {
-    return !(lhs == rhs);
-}
-
-
-inline StageParamsT::StageParamsT(const StageParamsT &o)
-      : algorithms((o.algorithms) ? new mqt::scpd::generated::AlgorithmsT(*o.algorithms) : nullptr),
-        assignment((o.assignment) ? new mqt::scpd::generated::AssignmentParamsT(*o.assignment) : nullptr),
-        final((o.final) ? new mqt::scpd::generated::FinalParamsT(*o.final) : nullptr) {
-}
-
-inline StageParamsT &StageParamsT::operator=(StageParamsT o) FLATBUFFERS_NOEXCEPT {
-  std::swap(algorithms, o.algorithms);
-  std::swap(assignment, o.assignment);
-  std::swap(final, o.final);
-  return *this;
-}
-
-inline StageParamsT *StageParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::make_unique<StageParamsT>();
-  UnPackTo(_o.get(), _resolver);
-  return _o.release();
-}
-
-inline void StageParams::UnPackTo(StageParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
-  (void)_o;
-  (void)_resolver;
-  { auto _e = algorithms(); if (_e) { if(_o->algorithms) { _e->UnPackTo(_o->algorithms.get(), _resolver); } else { _o->algorithms = std::unique_ptr<mqt::scpd::generated::AlgorithmsT>(_e->UnPack(_resolver)); } } else if (_o->algorithms) { _o->algorithms.reset(); } }
-  { auto _e = assignment(); if (_e) { if(_o->assignment) { _e->UnPackTo(_o->assignment.get(), _resolver); } else { _o->assignment = std::unique_ptr<mqt::scpd::generated::AssignmentParamsT>(_e->UnPack(_resolver)); } } else if (_o->assignment) { _o->assignment.reset(); } }
-  { auto _e = final(); if (_e) { if(_o->final) { _e->UnPackTo(_o->final.get(), _resolver); } else { _o->final = std::unique_ptr<mqt::scpd::generated::FinalParamsT>(_e->UnPack(_resolver)); } } else if (_o->final) { _o->final.reset(); } }
-}
-
-inline ::flatbuffers::Offset<StageParams> CreateStageParams(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return StageParams::Pack(_fbb, _o, _rehasher);
-}
-
-inline ::flatbuffers::Offset<StageParams> StageParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  (void)_rehasher;
-  (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const StageParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _algorithms = _o->algorithms ? CreateAlgorithms(_fbb, _o->algorithms.get(), _rehasher) : 0;
-  auto _assignment = _o->assignment ? CreateAssignmentParams(_fbb, _o->assignment.get(), _rehasher) : 0;
-  auto _final = _o->final ? CreateFinalParams(_fbb, _o->final.get(), _rehasher) : 0;
-  return mqt::scpd::generated::CreateStageParams(
-      _fbb,
-      _algorithms,
-      _assignment,
-      _final);
-}
-
-
-inline bool operator==(const ComponentParamsT &lhs, const ComponentParamsT &rhs) {
-  return
-      (lhs.coupler_length == rhs.coupler_length) &&
-      (lhs.coupler_height == rhs.coupler_height) &&
-      (lhs.bridge_width == rhs.bridge_width) &&
-      (lhs.bridge_height == rhs.bridge_height);
-}
-
-inline bool operator!=(const ComponentParamsT &lhs, const ComponentParamsT &rhs) {
-    return !(lhs == rhs);
-}
-
-
-inline ComponentParamsT *ComponentParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::make_unique<ComponentParamsT>();
-  UnPackTo(_o.get(), _resolver);
-  return _o.release();
-}
-
-inline void ComponentParams::UnPackTo(ComponentParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
-  (void)_o;
-  (void)_resolver;
-  { auto _e = coupler_length(); _o->coupler_length = _e; }
-  { auto _e = coupler_height(); _o->coupler_height = _e; }
-  { auto _e = bridge_width(); _o->bridge_width = _e; }
-  { auto _e = bridge_height(); _o->bridge_height = _e; }
-}
-
-inline ::flatbuffers::Offset<ComponentParams> CreateComponentParams(::flatbuffers::FlatBufferBuilder &_fbb, const ComponentParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return ComponentParams::Pack(_fbb, _o, _rehasher);
-}
-
-inline ::flatbuffers::Offset<ComponentParams> ComponentParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ComponentParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  (void)_rehasher;
-  (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ComponentParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _coupler_length = _o->coupler_length;
-  auto _coupler_height = _o->coupler_height;
-  auto _bridge_width = _o->bridge_width;
-  auto _bridge_height = _o->bridge_height;
-  return mqt::scpd::generated::CreateComponentParams(
-      _fbb,
-      _coupler_length,
-      _coupler_height,
-      _bridge_width,
-      _bridge_height);
-}
-
-
-inline bool operator==(const DrcParamsT &lhs, const DrcParamsT &rhs) {
-  return
-      (lhs.all == rhs.all) &&
-      (lhs.component_overlap == rhs.component_overlap) &&
-      (lhs.min_straight_length == rhs.min_straight_length) &&
-      (lhs.min_bend_radius == rhs.min_bend_radius) &&
-      (lhs.short_threshold == rhs.short_threshold) &&
-      (lhs.junction_radius_norm == rhs.junction_radius_norm);
-}
-
-inline bool operator!=(const DrcParamsT &lhs, const DrcParamsT &rhs) {
-    return !(lhs == rhs);
-}
-
-
-inline DrcParamsT *DrcParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::make_unique<DrcParamsT>();
-  UnPackTo(_o.get(), _resolver);
-  return _o.release();
-}
-
-inline void DrcParams::UnPackTo(DrcParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
-  (void)_o;
-  (void)_resolver;
-  { auto _e = all(); _o->all = _e; }
-  { auto _e = component_overlap(); _o->component_overlap = _e; }
-  { auto _e = min_straight_length(); _o->min_straight_length = _e; }
-  { auto _e = min_bend_radius(); _o->min_bend_radius = _e; }
-  { auto _e = short_threshold(); _o->short_threshold = _e; }
-  { auto _e = junction_radius_norm(); _o->junction_radius_norm = _e; }
-}
-
-inline ::flatbuffers::Offset<DrcParams> CreateDrcParams(::flatbuffers::FlatBufferBuilder &_fbb, const DrcParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return DrcParams::Pack(_fbb, _o, _rehasher);
-}
-
-inline ::flatbuffers::Offset<DrcParams> DrcParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DrcParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  (void)_rehasher;
-  (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DrcParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _all = _o->all;
-  auto _component_overlap = _o->component_overlap;
-  auto _min_straight_length = _o->min_straight_length;
-  auto _min_bend_radius = _o->min_bend_radius;
-  auto _short_threshold = _o->short_threshold;
-  auto _junction_radius_norm = _o->junction_radius_norm;
-  return mqt::scpd::generated::CreateDrcParams(
-      _fbb,
-      _all,
-      _component_overlap,
-      _min_straight_length,
-      _min_bend_radius,
-      _short_threshold,
-      _junction_radius_norm);
-}
-
-
 inline bool operator==(const ConfigT &lhs, const ConfigT &rhs) {
   return
       (lhs.chip_input == rhs.chip_input) &&
       ((lhs.ports == rhs.ports) || (lhs.ports && rhs.ports && *lhs.ports == *rhs.ports)) &&
       ((lhs.rules == rhs.rules) || (lhs.rules && rhs.rules && *lhs.rules == *rhs.rules)) &&
-      ((lhs.grid == rhs.grid) || (lhs.grid && rhs.grid && *lhs.grid == *rhs.grid)) &&
-      ((lhs.stages == rhs.stages) || (lhs.stages && rhs.stages && *lhs.stages == *rhs.stages)) &&
-      ((lhs.components == rhs.components) || (lhs.components && rhs.components && *lhs.components == *rhs.components)) &&
-      ((lhs.drc == rhs.drc) || (lhs.drc && rhs.drc && *lhs.drc == *rhs.drc));
+      ((lhs.grid == rhs.grid) || (lhs.grid && rhs.grid && *lhs.grid == *rhs.grid));
 }
 
 inline bool operator!=(const ConfigT &lhs, const ConfigT &rhs) {
@@ -1771,10 +824,7 @@ inline ConfigT::ConfigT(const ConfigT &o)
       : chip_input(o.chip_input),
         ports((o.ports) ? new mqt::scpd::generated::PortConfigT(*o.ports) : nullptr),
         rules((o.rules) ? new mqt::scpd::generated::DesignRulesT(*o.rules) : nullptr),
-        grid((o.grid) ? new mqt::scpd::generated::GridParamsT(*o.grid) : nullptr),
-        stages((o.stages) ? new mqt::scpd::generated::StageParamsT(*o.stages) : nullptr),
-        components((o.components) ? new mqt::scpd::generated::ComponentParamsT(*o.components) : nullptr),
-        drc((o.drc) ? new mqt::scpd::generated::DrcParamsT(*o.drc) : nullptr) {
+        grid((o.grid) ? new mqt::scpd::generated::GridParamsT(*o.grid) : nullptr) {
 }
 
 inline ConfigT &ConfigT::operator=(ConfigT o) FLATBUFFERS_NOEXCEPT {
@@ -1782,9 +832,6 @@ inline ConfigT &ConfigT::operator=(ConfigT o) FLATBUFFERS_NOEXCEPT {
   std::swap(ports, o.ports);
   std::swap(rules, o.rules);
   std::swap(grid, o.grid);
-  std::swap(stages, o.stages);
-  std::swap(components, o.components);
-  std::swap(drc, o.drc);
   return *this;
 }
 
@@ -1801,9 +848,6 @@ inline void Config::UnPackTo(ConfigT *_o, const ::flatbuffers::resolver_function
   { auto _e = ports(); if (_e) { if(_o->ports) { _e->UnPackTo(_o->ports.get(), _resolver); } else { _o->ports = std::unique_ptr<mqt::scpd::generated::PortConfigT>(_e->UnPack(_resolver)); } } else if (_o->ports) { _o->ports.reset(); } }
   { auto _e = rules(); if (_e) { if(_o->rules) { _e->UnPackTo(_o->rules.get(), _resolver); } else { _o->rules = std::unique_ptr<mqt::scpd::generated::DesignRulesT>(_e->UnPack(_resolver)); } } else if (_o->rules) { _o->rules.reset(); } }
   { auto _e = grid(); if (_e) { if(_o->grid) { _e->UnPackTo(_o->grid.get(), _resolver); } else { _o->grid = std::unique_ptr<mqt::scpd::generated::GridParamsT>(_e->UnPack(_resolver)); } } else if (_o->grid) { _o->grid.reset(); } }
-  { auto _e = stages(); if (_e) { if(_o->stages) { _e->UnPackTo(_o->stages.get(), _resolver); } else { _o->stages = std::unique_ptr<mqt::scpd::generated::StageParamsT>(_e->UnPack(_resolver)); } } else if (_o->stages) { _o->stages.reset(); } }
-  { auto _e = components(); if (_e) { if(_o->components) { _e->UnPackTo(_o->components.get(), _resolver); } else { _o->components = std::unique_ptr<mqt::scpd::generated::ComponentParamsT>(_e->UnPack(_resolver)); } } else if (_o->components) { _o->components.reset(); } }
-  { auto _e = drc(); if (_e) { if(_o->drc) { _e->UnPackTo(_o->drc.get(), _resolver); } else { _o->drc = std::unique_ptr<mqt::scpd::generated::DrcParamsT>(_e->UnPack(_resolver)); } } else if (_o->drc) { _o->drc.reset(); } }
 }
 
 inline ::flatbuffers::Offset<Config> CreateConfig(::flatbuffers::FlatBufferBuilder &_fbb, const ConfigT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1818,18 +862,12 @@ inline ::flatbuffers::Offset<Config> Config::Pack(::flatbuffers::FlatBufferBuild
   auto _ports = _o->ports ? CreatePortConfig(_fbb, _o->ports.get(), _rehasher) : 0;
   auto _rules = _o->rules ? CreateDesignRules(_fbb, _o->rules.get(), _rehasher) : 0;
   auto _grid = _o->grid ? CreateGridParams(_fbb, _o->grid.get(), _rehasher) : 0;
-  auto _stages = _o->stages ? CreateStageParams(_fbb, _o->stages.get(), _rehasher) : 0;
-  auto _components = _o->components ? CreateComponentParams(_fbb, _o->components.get(), _rehasher) : 0;
-  auto _drc = _o->drc ? CreateDrcParams(_fbb, _o->drc.get(), _rehasher) : 0;
   return mqt::scpd::generated::CreateConfig(
       _fbb,
       _chip_input,
       _ports,
       _rules,
-      _grid,
-      _stages,
-      _components,
-      _drc);
+      _grid);
 }
 
 }  // namespace generated

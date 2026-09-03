@@ -278,8 +278,10 @@ so each has a distinct type and conversions are explicit.
 | Router grid | `RCoord` | node index plus heading | Final routing: the Dubins A* state, heading `0..7`                  |
 
 Conversions live in `MQT::ScpdGrid` as named functions, never as inline
-arithmetic at the call site. The prototype re-derived `pad + x * px_w` in six
-separate renderers, each with its own y-flip convention.
+arithmetic at the call site. The three grid types enter `geometry.fbs` together
+with that module in phase 2; until then the schema carries `Point` alone. The
+prototype re-derived `pad + x * px_w` in six separate renderers, each with its
+own y-flip convention.
 
 `Rotation` and the router heading are both eight-way. That assumption is baked
 into the A* state index and the flat primitive tables, where a heading is packed
@@ -313,17 +315,28 @@ the configuration.
 
 | File            | Holds                                                                                                          | Owner               |
 | --------------- | -------------------------------------------------------------------------------------------------------------- | ------------------- |
-| `geometry.fbs`  | `Point` and the three grid coordinates, `Polygon`, `Line`, `Arc`, `Segment`, `Path`                            | `MQT::ScpdGeometry` |
+| `geometry.fbs`  | `Point`, `Polygon`, `Line`, `Arc`, `Segment`, `Path`                                                           | `MQT::ScpdGeometry` |
 | `design.fbs`    | The two role enums, `Rotation`, `PortRef`, `Port`, `Chip`, `Connection`, `DesignRules`, `CpwCoupler`, `Bridge` | `MQT::ScpdDesign`   |
-| `config.fbs`    | `Config` and its sections, with the defaults the loader applies to absent keys                                 | `MQT::ScpdDesign`   |
+| `config.fbs`    | `Config` with the port and grid sections, with the defaults the loader applies to absent keys                  | `MQT::ScpdDesign`   |
 | `artifacts.fbs` | The six stage outputs, each behind the one `Artifact` root                                                     | `MQT::ScpdIO`       |
 | `drc.fbs`       | `DrcReport` and its findings                                                                                   | `MQT::ScpdDrc`      |
+
+A schema holds what the implemented phases read. Each later stage appends its
+own tables and fields when it arrives: the grid coordinate types with
+`MQT::ScpdGrid`, the contents of the capacity, global and detail outputs with
+their stages, and the stage, component and DRC parameters of `Config` with the
+code that consumes them. FlatBuffers permits that growth without touching what
+exists.
 
 The generated C++ lives in the namespace `mqt::scpd::generated`. For a table
 `Chip` it holds the read-only accessor `Chip` over a buffer and the native
 object `ChipT`; the object types are the in-memory model. The generated Python
 lives in `mqt.scpd.generated`, one module per type, with the same split between
-`Chip` and `ChipT` in `mqt.scpd.generated.Chip`.
+`Chip` and `ChipT` in `mqt.scpd.generated.Chip`. Python code is generated only
+for the schemas Python reads or writes itself: the chip, the configuration it
+hands to the core, and the artifacts that `plot` and `inspect` open. The DRC
+report is written as JSON and read with the `json` module, so `drc.fbs` has no
+Python module.
 
 ## Schema evolution
 

@@ -1,10 +1,10 @@
 {
-  "tests": 14,
+  "tests": 11,
   "name": "AllTests",
   "testsuites": [
     {
       "name": "ConfigSchema",
-      "tests": 7,
+      "tests": 4,
       "testsuite": [
         {
           "name": "PortDetectionDefaultsToManual",
@@ -17,29 +17,14 @@
           "line": 57
         },
         {
-          "name": "FinalStageDefaults",
+          "name": "ManualConfigRoundTripsSequences",
           "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/design\/test_config_schema.cpp",
           "line": 65
         },
         {
-          "name": "ComponentDefaultsAreThePhysicalDimensions",
-          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/design\/test_config_schema.cpp",
-          "line": 73
-        },
-        {
-          "name": "DrcDefaultsSkipTheAdvisoryRules",
-          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/design\/test_config_schema.cpp",
-          "line": 81
-        },
-        {
-          "name": "ManualConfigRoundTripsSequences",
-          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/design\/test_config_schema.cpp",
-          "line": 91
-        },
-        {
           "name": "AutoConfigRoundTripsStartComponent",
           "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/design\/test_config_schema.cpp",
-          "line": 118
+          "line": 92
         }
       ]
     },

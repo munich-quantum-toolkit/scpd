@@ -62,32 +62,6 @@ TEST(ConfigSchema, GridDefaults) {
   EXPECT_EQ(grid.launcher_offset_y, 15U);
 }
 
-TEST(ConfigSchema, FinalStageDefaults) {
-  const FinalParamsT final;
-  EXPECT_DOUBLE_EQ(final.meander_length, 600.0);
-  EXPECT_EQ(final.expansion, 200U);
-  EXPECT_EQ(final.rounds, 10U);
-  EXPECT_EQ(final.refinement_rounds, 15U);
-}
-
-TEST(ConfigSchema, ComponentDefaultsAreThePhysicalDimensions) {
-  const ComponentParamsT components;
-  EXPECT_DOUBLE_EQ(components.coupler_length, 200.0);
-  EXPECT_DOUBLE_EQ(components.coupler_height, 26.0);
-  EXPECT_DOUBLE_EQ(components.bridge_width, 60.0);
-  EXPECT_DOUBLE_EQ(components.bridge_height, 60.0);
-}
-
-TEST(ConfigSchema, DrcDefaultsSkipTheAdvisoryRules) {
-  const DrcParamsT drc;
-  EXPECT_FALSE(drc.all);
-  EXPECT_FALSE(drc.component_overlap);
-  EXPECT_FALSE(drc.min_straight_length);
-  EXPECT_FALSE(drc.min_bend_radius);
-  EXPECT_DOUBLE_EQ(drc.short_threshold, 2.0);
-  EXPECT_DOUBLE_EQ(drc.junction_radius_norm, 1.5);
-}
-
 TEST(ConfigSchema, ManualConfigRoundTripsSequences) {
   ConfigT config;
   config.chip_input = "routing_config.json";
@@ -100,9 +74,8 @@ TEST(ConfigSchema, ManualConfigRoundTripsSequences) {
   config.ports->sequences->fixed_outer = {};
   config.rules = std::make_unique<DesignRulesT>();
   config.rules->min_wire_spacing = 185.0;
-  config.stages = std::make_unique<StageParamsT>();
-  config.stages->assignment = std::make_unique<AssignmentParamsT>();
-  config.stages->assignment->launcher_target = 24;
+  config.grid = std::make_unique<GridParamsT>();
+  config.grid->capacity_cells_x = 60;
 
   const ConfigT back = roundTrip(config);
   EXPECT_EQ(back, config);
@@ -111,8 +84,9 @@ TEST(ConfigSchema, ManualConfigRoundTripsSequences) {
       back.ports->sequences->all_outer,
       (std::vector<std::string>{"Qb1.port0", "Qb1.port1", "Coupler1_2.port3"}));
   EXPECT_TRUE(back.ports->sequences->fixed_outer.empty());
-  EXPECT_EQ(back.stages->assignment->launcher_target, 24U);
-  EXPECT_EQ(back.grid, nullptr);
+  ASSERT_NE(back.grid, nullptr);
+  EXPECT_EQ(back.grid->capacity_cells_x, 60U);
+  EXPECT_EQ(back.grid->launcher_offset_x, 15U);
 }
 
 TEST(ConfigSchema, AutoConfigRoundTripsStartComponent) {
@@ -129,6 +103,7 @@ TEST(ConfigSchema, AutoConfigRoundTripsStartComponent) {
   EXPECT_EQ(back.ports->detection, PortDetection::Auto);
   EXPECT_EQ(back.ports->start_component, "Qb15");
   EXPECT_EQ(back.ports->sequences, nullptr);
+  EXPECT_EQ(back.grid, nullptr);
 }
 
 } // namespace

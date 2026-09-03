@@ -7,24 +7,24 @@
       "tests": 4,
       "testsuite": [
         {
-          "name": "CoordinateTypesAreInlineStructs",
+          "name": "PointIsAnInlineStruct",
           "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/geometry\/test_geometry_schema.cpp",
           "line": 41
         },
         {
           "name": "PolygonRoundTripsThroughBuffer",
           "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/geometry\/test_geometry_schema.cpp",
-          "line": 60
+          "line": 51
         },
         {
           "name": "PathKeepsLineAndArcSegmentsAnalytic",
           "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/geometry\/test_geometry_schema.cpp",
-          "line": 71
+          "line": 62
         },
         {
           "name": "SegmentShapesAreLineAndArcOnly",
           "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/geometry\/test_geometry_schema.cpp",
-          "line": 105
+          "line": 96
         }
       ]
     }

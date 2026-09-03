@@ -37,6 +37,9 @@ PYTHON_ALL_VERSIONS = ["3.11", "3.12", "3.13", "3.14"]
 SCHEMA_DIR = Path("schemas")
 GENERATED_CPP_DIR = Path("include") / "mqt-scpd" / "generated"
 GENERATED_PYTHON_DIR = Path("python") / "mqt" / "scpd" / "generated"
+# Python reads and writes the chip, the configuration and the stage artifacts itself. The DRC report
+# is written as JSON, which Python reads without generated code.
+PYTHON_ONLY_CPP_SCHEMAS = {"drc.fbs"}
 
 if os.environ.get("CI", None):
     nox.options.error_on_missing_interpreters = True
@@ -277,7 +280,9 @@ def schemas(session: nox.Session) -> None:
         )
 
     # flatc writes one Python module per type into the directories of the schema namespace, together
-    # with empty package initializers up to the top-level namespace. Only the modules are wanted.
+    # with empty package initializers up to the top-level namespace and a stub per module. Only the
+    # modules are wanted; they keep their inline annotations.
+    python_schema_names = [name for name in schema_names if name not in PYTHON_ONLY_CPP_SCHEMAS]
     with tempfile.TemporaryDirectory() as temp_dir_name, session.chdir(SCHEMA_DIR):
         session.run(
             str(flatc),
@@ -288,11 +293,11 @@ def schemas(session: nox.Session) -> None:
             "--warnings-as-errors",
             "-o",
             temp_dir_name,
-            *schema_names,
+            *python_schema_names,
             external=True,
         )
         generated = Path(temp_dir_name) / "mqt" / "scpd" / "generated"
-        for module in sorted(generated.glob("*.py*")):
+        for module in sorted(generated.glob("*.py")):
             if module.name != "__init__.py":
                 shutil.copyfile(module, Path("..") / GENERATED_PYTHON_DIR / module.name)
 

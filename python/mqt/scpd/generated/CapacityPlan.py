@@ -5,10 +5,6 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
-from mqt.scpd.generated.Border import Border
-from mqt.scpd.generated.CapacityChain import CapacityChain
-from mqt.scpd.generated.Partition import Partition
-from typing import Optional
 np = import_numpy()
 
 # Output of the Capacity stage.
@@ -34,119 +30,11 @@ class CapacityPlan(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # CapacityPlan
-    def Partitions(self, j: int) -> Optional[Partition]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Partition()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    # CapacityPlan
-    def PartitionsLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    # CapacityPlan
-    def PartitionsIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        return o == 0
-
-    # CapacityPlan
-    def Borders(self, j: int) -> Optional[Border]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Border()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    # CapacityPlan
-    def BordersLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    # CapacityPlan
-    def BordersIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        return o == 0
-
-    # CapacityPlan
-    def Chains(self, j: int) -> Optional[CapacityChain]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = CapacityChain()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    # CapacityPlan
-    def ChainsLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    # CapacityPlan
-    def ChainsIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        return o == 0
-
 def CapacityPlanStart(builder: flatbuffers.Builder):
-    builder.StartObject(3)
+    builder.StartObject(0)
 
 def Start(builder: flatbuffers.Builder):
     CapacityPlanStart(builder)
-
-def CapacityPlanAddPartitions(builder: flatbuffers.Builder, partitions: int):
-    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(partitions), 0)
-
-def AddPartitions(builder: flatbuffers.Builder, partitions: int):
-    CapacityPlanAddPartitions(builder, partitions)
-
-def CapacityPlanStartPartitionsVector(builder, numElems: int) -> int:
-    return builder.StartVector(4, numElems, 4)
-
-def StartPartitionsVector(builder, numElems: int) -> int:
-    return CapacityPlanStartPartitionsVector(builder, numElems)
-
-def CapacityPlanAddBorders(builder: flatbuffers.Builder, borders: int):
-    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(borders), 0)
-
-def AddBorders(builder: flatbuffers.Builder, borders: int):
-    CapacityPlanAddBorders(builder, borders)
-
-def CapacityPlanStartBordersVector(builder, numElems: int) -> int:
-    return builder.StartVector(4, numElems, 4)
-
-def StartBordersVector(builder, numElems: int) -> int:
-    return CapacityPlanStartBordersVector(builder, numElems)
-
-def CapacityPlanAddChains(builder: flatbuffers.Builder, chains: int):
-    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(chains), 0)
-
-def AddChains(builder: flatbuffers.Builder, chains: int):
-    CapacityPlanAddChains(builder, chains)
-
-def CapacityPlanStartChainsVector(builder, numElems: int) -> int:
-    return builder.StartVector(4, numElems, 4)
-
-def StartChainsVector(builder, numElems: int) -> int:
-    return CapacityPlanStartChainsVector(builder, numElems)
 
 def CapacityPlanEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -154,26 +42,14 @@ def CapacityPlanEnd(builder: flatbuffers.Builder) -> int:
 def End(builder: flatbuffers.Builder) -> int:
     return CapacityPlanEnd(builder)
 
-import mqt.scpd.generated.Border
-import mqt.scpd.generated.CapacityChain
-import mqt.scpd.generated.Partition
-try:
-    from typing import List
-except:
-    pass
 
 class CapacityPlanT(object):
 
     # CapacityPlanT
     def __init__(
         self,
-        partitions = None,
-        borders = None,
-        chains = None,
     ):
-        self.partitions = partitions  # type: Optional[List[mqt.scpd.generated.Partition.PartitionT]]
-        self.borders = borders  # type: Optional[List[mqt.scpd.generated.Border.BorderT]]
-        self.chains = chains  # type: Optional[List[mqt.scpd.generated.CapacityChain.CapacityChainT]]
+        pass
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -196,63 +72,9 @@ class CapacityPlanT(object):
     def _UnPack(self, capacityPlan):
         if capacityPlan is None:
             return
-        if not capacityPlan.PartitionsIsNone():
-            self.partitions = []
-            for i in range(capacityPlan.PartitionsLength()):
-                if capacityPlan.Partitions(i) is None:
-                    self.partitions.append(None)
-                else:
-                    partition_ = mqt.scpd.generated.Partition.PartitionT.InitFromObj(capacityPlan.Partitions(i))
-                    self.partitions.append(partition_)
-        if not capacityPlan.BordersIsNone():
-            self.borders = []
-            for i in range(capacityPlan.BordersLength()):
-                if capacityPlan.Borders(i) is None:
-                    self.borders.append(None)
-                else:
-                    border_ = mqt.scpd.generated.Border.BorderT.InitFromObj(capacityPlan.Borders(i))
-                    self.borders.append(border_)
-        if not capacityPlan.ChainsIsNone():
-            self.chains = []
-            for i in range(capacityPlan.ChainsLength()):
-                if capacityPlan.Chains(i) is None:
-                    self.chains.append(None)
-                else:
-                    capacityChain_ = mqt.scpd.generated.CapacityChain.CapacityChainT.InitFromObj(capacityPlan.Chains(i))
-                    self.chains.append(capacityChain_)
 
     # CapacityPlanT
     def Pack(self, builder):
-        if self.partitions is not None:
-            partitionslist = []
-            for i in range(len(self.partitions)):
-                partitionslist.append(self.partitions[i].Pack(builder))
-            CapacityPlanStartPartitionsVector(builder, len(self.partitions))
-            for i in reversed(range(len(self.partitions))):
-                builder.PrependUOffsetTRelative(partitionslist[i])
-            partitions = builder.EndVector()
-        if self.borders is not None:
-            borderslist = []
-            for i in range(len(self.borders)):
-                borderslist.append(self.borders[i].Pack(builder))
-            CapacityPlanStartBordersVector(builder, len(self.borders))
-            for i in reversed(range(len(self.borders))):
-                builder.PrependUOffsetTRelative(borderslist[i])
-            borders = builder.EndVector()
-        if self.chains is not None:
-            chainslist = []
-            for i in range(len(self.chains)):
-                chainslist.append(self.chains[i].Pack(builder))
-            CapacityPlanStartChainsVector(builder, len(self.chains))
-            for i in reversed(range(len(self.chains))):
-                builder.PrependUOffsetTRelative(chainslist[i])
-            chains = builder.EndVector()
         CapacityPlanStart(builder)
-        if self.partitions is not None:
-            CapacityPlanAddPartitions(builder, partitions)
-        if self.borders is not None:
-            CapacityPlanAddBorders(builder, borders)
-        if self.chains is not None:
-            CapacityPlanAddChains(builder, chains)
         capacityPlan = CapacityPlanEnd(builder)
         return capacityPlan

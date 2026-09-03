@@ -9,88 +9,31 @@
 // The six stage artifacts of a run directory, 01-capacity.fb through
 // 06-geometry.fb. Owned by MQT::ScpdIO. Grids and router containers are
 // derived state and never appear here. See docs/design/pipeline.md.
+//
+// Each stage appends the fields of its output when the stage is implemented,
+// so the tables of stages that do not exist yet are empty on purpose.
 
 include "design.fbs";
 
 namespace mqt.scpd.generated;
 
-/// A region of free space on the coarse grid, produced by the watershed.
-table Partition {
-  id: uint32;
-  cells: [GCoord] (required);
-}
-
-/// The border between two partitions and the number of wires it may carry.
-table Border {
-  first: uint32;
-  second: uint32;
-  budget: uint32;
-  bottleneck: bool;
-}
-
-/// A corridor of partitions that a group of wires routes along.
-table CapacityChain {
-  ports: [PortRef] (required);
-  /// Partition ids, in routing order.
-  partitions: [uint32] (required);
-}
-
 /// Output of the Capacity stage.
-table CapacityPlan {
-  partitions: [Partition] (required);
-  borders: [Border] (required);
-  chains: [CapacityChain] (required);
-}
-
-/// A launcher-to-launcher feedline chain and the resonators it feeds, in
-/// ring order.
-table Feedline {
-  source: PortRef (native_inline);
-  target: PortRef (native_inline);
-  resonators: [PortRef] (required);
-}
+table CapacityPlan {}
 
 /// Output of the Assignment stage.
 table Assignment {
   connections: [Connection] (required);
-  feedlines: [Feedline] (required);
   objective: double;
 }
 
-/// One connection's route on the Hanan lattice of its capacity chain.
-table LatticeRoute {
-  /// Index into Assignment.connections.
-  connection: uint32;
-  points: [Point] (required);
-}
-
 /// Output of the Global stage. Empty when the chip has no inner circuit.
-table GlobalRouting {
-  routes: [LatticeRoute] (required);
-}
-
-/// One connection's path on the detail grid.
-table PixelPath {
-  /// Index into Assignment.connections.
-  connection: uint32;
-  pixels: [DCoord] (required);
-}
+table GlobalRouting {}
 
 /// Output of the Detail stage.
-table DetailRouting {
-  wires: [PixelPath] (required);
-}
-
-/// One connection's Dubins path as router states.
-table CellPath {
-  /// Index into Assignment.connections.
-  connection: uint32;
-  states: [RCoord] (required);
-}
+table DetailRouting {}
 
 /// Output of the Final stage.
 table FinalRouting {
-  wires: [CellPath] (required);
   couplers: [CpwCoupler] (required);
   bridges: [Bridge] (required);
   /// Indices into Assignment.connections that did not route.

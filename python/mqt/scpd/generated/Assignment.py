@@ -6,7 +6,6 @@ import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
 from mqt.scpd.generated.Connection import Connection
-from mqt.scpd.generated.Feedline import Feedline
 from typing import Optional
 np = import_numpy()
 
@@ -58,38 +57,14 @@ class Assignment(object):
         return o == 0
 
     # Assignment
-    def Feedlines(self, j: int) -> Optional[Feedline]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Feedline()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    # Assignment
-    def FeedlinesLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    # Assignment
-    def FeedlinesIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        return o == 0
-
-    # Assignment
     def Objective(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.0
 
 def AssignmentStart(builder: flatbuffers.Builder):
-    builder.StartObject(3)
+    builder.StartObject(2)
 
 def Start(builder: flatbuffers.Builder):
     AssignmentStart(builder)
@@ -106,20 +81,8 @@ def AssignmentStartConnectionsVector(builder, numElems: int) -> int:
 def StartConnectionsVector(builder, numElems: int) -> int:
     return AssignmentStartConnectionsVector(builder, numElems)
 
-def AssignmentAddFeedlines(builder: flatbuffers.Builder, feedlines: int):
-    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(feedlines), 0)
-
-def AddFeedlines(builder: flatbuffers.Builder, feedlines: int):
-    AssignmentAddFeedlines(builder, feedlines)
-
-def AssignmentStartFeedlinesVector(builder, numElems: int) -> int:
-    return builder.StartVector(4, numElems, 4)
-
-def StartFeedlinesVector(builder, numElems: int) -> int:
-    return AssignmentStartFeedlinesVector(builder, numElems)
-
 def AssignmentAddObjective(builder: flatbuffers.Builder, objective: float):
-    builder.PrependFloat64Slot(2, objective, 0.0)
+    builder.PrependFloat64Slot(1, objective, 0.0)
 
 def AddObjective(builder: flatbuffers.Builder, objective: float):
     AssignmentAddObjective(builder, objective)
@@ -131,7 +94,6 @@ def End(builder: flatbuffers.Builder) -> int:
     return AssignmentEnd(builder)
 
 import mqt.scpd.generated.Connection
-import mqt.scpd.generated.Feedline
 try:
     from typing import List
 except:
@@ -143,11 +105,9 @@ class AssignmentT(object):
     def __init__(
         self,
         connections = None,
-        feedlines = None,
         objective = 0.0,
     ):
         self.connections = connections  # type: Optional[List[mqt.scpd.generated.Connection.ConnectionT]]
-        self.feedlines = feedlines  # type: Optional[List[mqt.scpd.generated.Feedline.FeedlineT]]
         self.objective = objective  # type: float
 
     @classmethod
@@ -179,14 +139,6 @@ class AssignmentT(object):
                 else:
                     connection_ = mqt.scpd.generated.Connection.ConnectionT.InitFromObj(assignment.Connections(i))
                     self.connections.append(connection_)
-        if not assignment.FeedlinesIsNone():
-            self.feedlines = []
-            for i in range(assignment.FeedlinesLength()):
-                if assignment.Feedlines(i) is None:
-                    self.feedlines.append(None)
-                else:
-                    feedline_ = mqt.scpd.generated.Feedline.FeedlineT.InitFromObj(assignment.Feedlines(i))
-                    self.feedlines.append(feedline_)
         self.objective = assignment.Objective()
 
     # AssignmentT
@@ -199,19 +151,9 @@ class AssignmentT(object):
             for i in reversed(range(len(self.connections))):
                 builder.PrependUOffsetTRelative(connectionslist[i])
             connections = builder.EndVector()
-        if self.feedlines is not None:
-            feedlineslist = []
-            for i in range(len(self.feedlines)):
-                feedlineslist.append(self.feedlines[i].Pack(builder))
-            AssignmentStartFeedlinesVector(builder, len(self.feedlines))
-            for i in reversed(range(len(self.feedlines))):
-                builder.PrependUOffsetTRelative(feedlineslist[i])
-            feedlines = builder.EndVector()
         AssignmentStart(builder)
         if self.connections is not None:
             AssignmentAddConnections(builder, connections)
-        if self.feedlines is not None:
-            AssignmentAddFeedlines(builder, feedlines)
         AssignmentAddObjective(builder, self.objective)
         assignment = AssignmentEnd(builder)
         return assignment

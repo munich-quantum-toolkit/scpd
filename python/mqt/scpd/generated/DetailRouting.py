@@ -5,8 +5,6 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
-from mqt.scpd.generated.PixelPath import PixelPath
-from typing import Optional
 np = import_numpy()
 
 # Output of the Detail stage.
@@ -32,47 +30,11 @@ class DetailRouting(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # DetailRouting
-    def Wires(self, j: int) -> Optional[PixelPath]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = PixelPath()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    # DetailRouting
-    def WiresLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    # DetailRouting
-    def WiresIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        return o == 0
-
 def DetailRoutingStart(builder: flatbuffers.Builder):
-    builder.StartObject(1)
+    builder.StartObject(0)
 
 def Start(builder: flatbuffers.Builder):
     DetailRoutingStart(builder)
-
-def DetailRoutingAddWires(builder: flatbuffers.Builder, wires: int):
-    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(wires), 0)
-
-def AddWires(builder: flatbuffers.Builder, wires: int):
-    DetailRoutingAddWires(builder, wires)
-
-def DetailRoutingStartWiresVector(builder, numElems: int) -> int:
-    return builder.StartVector(4, numElems, 4)
-
-def StartWiresVector(builder, numElems: int) -> int:
-    return DetailRoutingStartWiresVector(builder, numElems)
 
 def DetailRoutingEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -80,20 +42,14 @@ def DetailRoutingEnd(builder: flatbuffers.Builder) -> int:
 def End(builder: flatbuffers.Builder) -> int:
     return DetailRoutingEnd(builder)
 
-import mqt.scpd.generated.PixelPath
-try:
-    from typing import List
-except:
-    pass
 
 class DetailRoutingT(object):
 
     # DetailRoutingT
     def __init__(
         self,
-        wires = None,
     ):
-        self.wires = wires  # type: Optional[List[mqt.scpd.generated.PixelPath.PixelPathT]]
+        pass
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -116,27 +72,9 @@ class DetailRoutingT(object):
     def _UnPack(self, detailRouting):
         if detailRouting is None:
             return
-        if not detailRouting.WiresIsNone():
-            self.wires = []
-            for i in range(detailRouting.WiresLength()):
-                if detailRouting.Wires(i) is None:
-                    self.wires.append(None)
-                else:
-                    pixelPath_ = mqt.scpd.generated.PixelPath.PixelPathT.InitFromObj(detailRouting.Wires(i))
-                    self.wires.append(pixelPath_)
 
     # DetailRoutingT
     def Pack(self, builder):
-        if self.wires is not None:
-            wireslist = []
-            for i in range(len(self.wires)):
-                wireslist.append(self.wires[i].Pack(builder))
-            DetailRoutingStartWiresVector(builder, len(self.wires))
-            for i in reversed(range(len(self.wires))):
-                builder.PrependUOffsetTRelative(wireslist[i])
-            wires = builder.EndVector()
         DetailRoutingStart(builder)
-        if self.wires is not None:
-            DetailRoutingAddWires(builder, wires)
         detailRouting = DetailRoutingEnd(builder)
         return detailRouting

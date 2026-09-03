@@ -11,6 +11,9 @@
 // a shipped configuration carries only what differs from them, except
 // [design_rules] and [ports].detection, which are always written out.
 // See the configuration section of docs/design/pipeline.md.
+//
+// The stage, component and DRC parameters of that section arrive with the
+// stages that read them, appended to Config.
 
 include "design.fbs";
 
@@ -56,54 +59,6 @@ table GridParams {
   launcher_offset_y: uint32 = 15;
 }
 
-table AssignmentParams {
-  launcher_target: uint32;
-}
-
-table FinalParams {
-  meander_length: double = 600.0;
-  expansion: uint32 = 200;
-  rounds: uint32 = 10;
-  refinement_rounds: uint32 = 15;
-}
-
-/// Algorithm selection by registry name. Empty selects the default
-/// implementation of a stage.
-table Algorithms {
-  assigner: string;
-  global_router: string;
-  detail_router: string;
-  final_router: string;
-}
-
-table StageParams {
-  algorithms: Algorithms;
-  assignment: AssignmentParams;
-  final: FinalParams;
-}
-
-/// Physical dimensions of the components a run instantiates, in layout units.
-table ComponentParams {
-  coupler_length: double = 200.0;
-  coupler_height: double = 26.0;
-  bridge_width: double = 60.0;
-  bridge_height: double = 60.0;
-}
-
-/// DRCPolice settings. The active rules are not switchable.
-table DrcParams {
-  /// Also run the advisory rules.
-  all: bool = false;
-  component_overlap: bool = false;
-  min_straight_length: bool = false;
-  min_bend_radius: bool = false;
-  /// Below this distance two wires are one net, not a near-miss.
-  short_threshold: double = 2.0;
-  /// Times the required clearance; how far past a junction two wires may
-  /// still touch.
-  junction_radius_norm: double = 1.5;
-}
-
 /// The whole run configuration.
 table Config {
   /// The chip input path, relative to the configuration file.
@@ -111,7 +66,4 @@ table Config {
   ports: PortConfig (required);
   rules: DesignRules (required);
   grid: GridParams;
-  stages: StageParams;
-  components: ComponentParams;
-  drc: DrcParams;
 }

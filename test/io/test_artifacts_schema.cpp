@@ -72,28 +72,18 @@ TEST(ArtifactSchema, EveryStageOutputIsAnArtifact) {
   EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 6U);
 }
 
-TEST(ArtifactSchema, CapacityPlanRoundTrips) {
-  CapacityPlanT plan;
-  plan.partitions.push_back(std::make_unique<PartitionT>());
-  plan.partitions.back()->id = 0;
-  plan.partitions.back()->cells = {GCoord(0, 0), GCoord(1, 0)};
-  plan.partitions.push_back(std::make_unique<PartitionT>());
-  plan.partitions.back()->id = 1;
-  plan.partitions.back()->cells = {GCoord(2, 0)};
-  plan.borders.push_back(std::make_unique<BorderT>());
-  plan.borders.back()->first = 0;
-  plan.borders.back()->second = 1;
-  plan.borders.back()->budget = 3;
-  plan.borders.back()->bottleneck = true;
-  plan.chains.push_back(std::make_unique<CapacityChainT>());
-  plan.chains.back()->ports = {PortRef(4), PortRef(5)};
-  plan.chains.back()->partitions = {0, 1};
+TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
+  // The outputs of the stages that are not implemented yet are empty tables.
+  // Each still travels behind the Artifact root with its own tag.
+  const ArtifactT capacity = deserialize(serialize(wrap(CapacityPlanT{})));
+  EXPECT_EQ(capacity.output.type, StageOutput::CapacityPlan);
+  EXPECT_NE(capacity.output.AsCapacityPlan(), nullptr);
+  EXPECT_EQ(capacity.producer, "mqt-scpd test");
 
-  const ArtifactT back = deserialize(serialize(wrap(plan)));
-  EXPECT_EQ(back.output.type, StageOutput::CapacityPlan);
-  ASSERT_NE(back.output.AsCapacityPlan(), nullptr);
-  EXPECT_EQ(*back.output.AsCapacityPlan(), plan);
-  EXPECT_TRUE(back.output.AsCapacityPlan()->borders[0]->bottleneck);
+  const ArtifactT detail = deserialize(serialize(wrap(DetailRoutingT{})));
+  EXPECT_EQ(detail.output.type, StageOutput::DetailRouting);
+  EXPECT_NE(detail.output.AsDetailRouting(), nullptr);
+  EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
 }
 
 TEST(ArtifactSchema, AssignmentRoundTrips) {
@@ -102,10 +92,6 @@ TEST(ArtifactSchema, AssignmentRoundTrips) {
   assignment.connections.back()->target = PortRef(3);
   assignment.connections.back()->source_role = AssignedRole::ResonatorSource;
   assignment.connections.back()->target_role = AssignedRole::ResonatorTarget;
-  assignment.feedlines.push_back(std::make_unique<FeedlineT>());
-  assignment.feedlines.back()->source = PortRef(0);
-  assignment.feedlines.back()->target = PortRef(1);
-  assignment.feedlines.back()->resonators = {PortRef(3)};
   assignment.objective = 132.68;
 
   const ArtifactT back = deserialize(serialize(wrap(assignment)));
@@ -120,24 +106,11 @@ TEST(ArtifactSchema, EmptyGlobalRoutingIsAValidArtifact) {
 
   const ArtifactT back = deserialize(serialize(wrap(routing)));
   EXPECT_EQ(back.output.type, StageOutput::GlobalRouting);
-  ASSERT_NE(back.output.AsGlobalRouting(), nullptr);
-  EXPECT_TRUE(back.output.AsGlobalRouting()->routes.empty());
+  EXPECT_NE(back.output.AsGlobalRouting(), nullptr);
 }
 
-TEST(ArtifactSchema, DetailAndFinalRoutingKeepGridCoordinates) {
-  DetailRoutingT detail;
-  detail.wires.push_back(std::make_unique<PixelPathT>());
-  detail.wires.back()->connection = 2;
-  detail.wires.back()->pixels = {DCoord(10, 10), DCoord(11, 10)};
-
-  const ArtifactT backDetail = deserialize(serialize(wrap(detail)));
-  ASSERT_NE(backDetail.output.AsDetailRouting(), nullptr);
-  EXPECT_EQ(*backDetail.output.AsDetailRouting(), detail);
-
+TEST(ArtifactSchema, FinalRoutingKeepsComponentsAndFailures) {
   FinalRoutingT final;
-  final.wires.push_back(std::make_unique<CellPathT>());
-  final.wires.back()->connection = 2;
-  final.wires.back()->states = {RCoord(10, 10, 0), RCoord(11, 11, 1)};
   final.couplers.push_back(std::make_unique<CpwCouplerT>());
   final.couplers.back()->port = PortRef(9);
   final.couplers.back()->rotation = Rotation::R180;
@@ -145,12 +118,12 @@ TEST(ArtifactSchema, DetailAndFinalRoutingKeepGridCoordinates) {
   final.bridges.back()->centre = Point(50.0, 60.0);
   final.unresolved = {7};
 
-  const ArtifactT backFinal = deserialize(serialize(wrap(final)));
-  ASSERT_NE(backFinal.output.AsFinalRouting(), nullptr);
-  EXPECT_EQ(*backFinal.output.AsFinalRouting(), final);
-  EXPECT_EQ(backFinal.output.AsFinalRouting()->wires[0]->states[1].heading(),
-            1U);
-  EXPECT_EQ(backFinal.output.AsFinalRouting()->unresolved,
+  const ArtifactT back = deserialize(serialize(wrap(final)));
+  ASSERT_NE(back.output.AsFinalRouting(), nullptr);
+  EXPECT_EQ(*back.output.AsFinalRouting(), final);
+  EXPECT_EQ(back.output.AsFinalRouting()->couplers[0]->rotation,
+            Rotation::R180);
+  EXPECT_EQ(back.output.AsFinalRouting()->unresolved,
             std::vector<std::uint32_t>{7});
 }
 

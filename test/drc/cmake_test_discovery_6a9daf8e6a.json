@@ -9,12 +9,12 @@
         {
           "name": "EightRulesInTableOrder",
           "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/drc\/test_drc_schema.cpp",
-          "line": 26
+          "line": 27
         },
         {
           "name": "ReportRoundTripsFindings",
           "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/drc\/test_drc_schema.cpp",
-          "line": 39
+          "line": 40
         }
       ]
     }

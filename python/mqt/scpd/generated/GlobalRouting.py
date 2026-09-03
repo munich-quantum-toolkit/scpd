@@ -5,8 +5,6 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
-from mqt.scpd.generated.LatticeRoute import LatticeRoute
-from typing import Optional
 np = import_numpy()
 
 # Output of the Global stage. Empty when the chip has no inner circuit.
@@ -32,47 +30,11 @@ class GlobalRouting(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # GlobalRouting
-    def Routes(self, j: int) -> Optional[LatticeRoute]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = LatticeRoute()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    # GlobalRouting
-    def RoutesLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    # GlobalRouting
-    def RoutesIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        return o == 0
-
 def GlobalRoutingStart(builder: flatbuffers.Builder):
-    builder.StartObject(1)
+    builder.StartObject(0)
 
 def Start(builder: flatbuffers.Builder):
     GlobalRoutingStart(builder)
-
-def GlobalRoutingAddRoutes(builder: flatbuffers.Builder, routes: int):
-    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(routes), 0)
-
-def AddRoutes(builder: flatbuffers.Builder, routes: int):
-    GlobalRoutingAddRoutes(builder, routes)
-
-def GlobalRoutingStartRoutesVector(builder, numElems: int) -> int:
-    return builder.StartVector(4, numElems, 4)
-
-def StartRoutesVector(builder, numElems: int) -> int:
-    return GlobalRoutingStartRoutesVector(builder, numElems)
 
 def GlobalRoutingEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -80,20 +42,14 @@ def GlobalRoutingEnd(builder: flatbuffers.Builder) -> int:
 def End(builder: flatbuffers.Builder) -> int:
     return GlobalRoutingEnd(builder)
 
-import mqt.scpd.generated.LatticeRoute
-try:
-    from typing import List
-except:
-    pass
 
 class GlobalRoutingT(object):
 
     # GlobalRoutingT
     def __init__(
         self,
-        routes = None,
     ):
-        self.routes = routes  # type: Optional[List[mqt.scpd.generated.LatticeRoute.LatticeRouteT]]
+        pass
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -116,27 +72,9 @@ class GlobalRoutingT(object):
     def _UnPack(self, globalRouting):
         if globalRouting is None:
             return
-        if not globalRouting.RoutesIsNone():
-            self.routes = []
-            for i in range(globalRouting.RoutesLength()):
-                if globalRouting.Routes(i) is None:
-                    self.routes.append(None)
-                else:
-                    latticeRoute_ = mqt.scpd.generated.LatticeRoute.LatticeRouteT.InitFromObj(globalRouting.Routes(i))
-                    self.routes.append(latticeRoute_)
 
     # GlobalRoutingT
     def Pack(self, builder):
-        if self.routes is not None:
-            routeslist = []
-            for i in range(len(self.routes)):
-                routeslist.append(self.routes[i].Pack(builder))
-            GlobalRoutingStartRoutesVector(builder, len(self.routes))
-            for i in reversed(range(len(self.routes))):
-                builder.PrependUOffsetTRelative(routeslist[i])
-            routes = builder.EndVector()
         GlobalRoutingStart(builder)
-        if self.routes is not None:
-            GlobalRoutingAddRoutes(builder, routes)
         globalRouting = GlobalRoutingEnd(builder)
         return globalRouting

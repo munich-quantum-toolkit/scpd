@@ -17,15 +17,7 @@ from mqt.scpd.generated.Arc import ArcT
 from mqt.scpd.generated.Artifact import Artifact, ArtifactT
 from mqt.scpd.generated.AssignedRole import AssignedRole
 from mqt.scpd.generated.Chip import ChipT
-from mqt.scpd.generated.ClearanceKind import ClearanceKind
 from mqt.scpd.generated.Connection import ConnectionT
-from mqt.scpd.generated.DrcFinding import DrcFindingT
-from mqt.scpd.generated.DrcParams import DrcParamsT
-from mqt.scpd.generated.DrcReport import DrcReportT
-from mqt.scpd.generated.DrcRule import DrcRule
-from mqt.scpd.generated.DrcSeverity import DrcSeverity
-from mqt.scpd.generated.DrcStage import DrcStage
-from mqt.scpd.generated.FinalParams import FinalParamsT
 from mqt.scpd.generated.FinalRouting import FinalRoutingT
 from mqt.scpd.generated.Geometry import GeometryT
 from mqt.scpd.generated.GlobalRouting import GlobalRoutingT
@@ -57,8 +49,6 @@ def test_role_enums_match_the_wire_format() -> None:
     assert Rotation.R315 == 7
     assert PortDetection.Manual == 0
     assert PortDetection.Auto == 1
-    assert DrcRule.WireClearance == 0
-    assert DrcRule.MinBendRadius == 7
 
 
 def test_chip_round_trips_through_object_api() -> None:
@@ -125,7 +115,7 @@ def test_artifact_carries_the_schema_identifier() -> None:
     artifact = ArtifactT(
         producer="mqt-scpd test",
         outputType=StageOutput.GlobalRouting,
-        output=GlobalRoutingT(routes=[]),
+        output=GlobalRoutingT(),
     )
 
     builder = flatbuffers.Builder()
@@ -137,7 +127,6 @@ def test_artifact_carries_the_schema_identifier() -> None:
     assert back.producer == "mqt-scpd test"
     assert back.outputType == StageOutput.GlobalRouting
     assert isinstance(back.output, GlobalRoutingT)
-    assert back.output.routes == []
 
 
 def test_final_routing_keeps_scalar_vectors() -> None:
@@ -145,7 +134,7 @@ def test_final_routing_keeps_scalar_vectors() -> None:
     for unresolved in ([], [7], [2, 5, 11]):
         artifact = ArtifactT(
             outputType=StageOutput.FinalRouting,
-            output=FinalRoutingT(wires=[], couplers=[], bridges=[], unresolved=list(unresolved)),
+            output=FinalRoutingT(couplers=[], bridges=[], unresolved=list(unresolved)),
         )
 
         builder = flatbuffers.Builder()
@@ -201,42 +190,3 @@ def test_config_defaults_are_the_documented_defaults() -> None:
     grid = GridParamsT()
     assert (grid.capacityCellsX, grid.capacityCellsY) == (50, 0)
     assert (grid.launcherOffsetX, grid.launcherOffsetY) == (15, 15)
-
-    final = FinalParamsT()
-    assert (final.meanderLength, final.expansion, final.rounds, final.refinementRounds) == (600.0, 200, 10, 15)
-
-    drc_params = DrcParamsT()
-    assert drc_params.all is False
-    assert (drc_params.shortThreshold, drc_params.junctionRadiusNorm) == (2.0, 1.5)
-
-
-def test_drc_report_round_trips_findings() -> None:
-    """A report keeps every field of a finding."""
-    report = DrcReportT(
-        stage=DrcStage.Final,
-        findings=[
-            DrcFindingT(
-                rule=DrcRule.WireClearance,
-                severity=DrcSeverity.Active,
-                wires=[3, 8],
-                location=PointT(12.0, 34.0),
-                measured=1.0,
-                limit=185.0,
-                clearanceKind=ClearanceKind.Short,
-                message="wires 3 and 8 touch",
-            )
-        ],
-        feedlinesSkipped=4,
-    )
-
-    builder = flatbuffers.Builder()
-    builder.Finish(report.Pack(builder))
-    back = DrcReportT.InitFromPackedBuf(builder.Output())
-
-    assert back.stage == DrcStage.Final
-    assert back.feedlinesSkipped == 4
-    finding = back.findings[0]
-    assert finding.rule == DrcRule.WireClearance
-    assert list(finding.wires) == [3, 8]
-    assert finding.clearanceKind == ClearanceKind.Short
-    assert finding.message == "wires 3 and 8 touch"

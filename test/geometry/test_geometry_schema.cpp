@@ -38,23 +38,14 @@ template <typename NativeT> NativeT roundTrip(const NativeT& object) {
   return result;
 }
 
-TEST(GeometrySchema, CoordinateTypesAreInlineStructs) {
-  // One point type per coordinate system, each stored inline without
-  // indirection.
+TEST(GeometrySchema, PointIsAnInlineStruct) {
+  // The layout-space point is stored inline, without indirection.
   static_assert(std::is_trivially_copyable_v<Point>);
-  static_assert(std::is_trivially_copyable_v<GCoord>);
-  static_assert(std::is_trivially_copyable_v<DCoord>);
-  static_assert(std::is_trivially_copyable_v<RCoord>);
   static_assert(sizeof(Point) == 2 * sizeof(double));
 
   const Point point(1.5, -2.5);
   EXPECT_DOUBLE_EQ(point.x(), 1.5);
   EXPECT_DOUBLE_EQ(point.y(), -2.5);
-
-  const RCoord state(3, 4, 7);
-  EXPECT_EQ(state.x(), 3U);
-  EXPECT_EQ(state.y(), 4U);
-  EXPECT_EQ(state.heading(), 7U);
 }
 
 TEST(GeometrySchema, PolygonRoundTripsThroughBuffer) {

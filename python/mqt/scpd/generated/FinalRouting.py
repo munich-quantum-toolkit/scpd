@@ -6,7 +6,6 @@ import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
 from mqt.scpd.generated.Bridge import Bridge
-from mqt.scpd.generated.CellPath import CellPath
 from mqt.scpd.generated.CpwCoupler import CpwCoupler
 from typing import Optional
 np = import_numpy()
@@ -35,32 +34,8 @@ class FinalRouting(object):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # FinalRouting
-    def Wires(self, j: int) -> Optional[CellPath]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = CellPath()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    # FinalRouting
-    def WiresLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    # FinalRouting
-    def WiresIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        return o == 0
-
-    # FinalRouting
     def Couplers(self, j: int) -> Optional[CpwCoupler]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         if o != 0:
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
@@ -72,19 +47,19 @@ class FinalRouting(object):
 
     # FinalRouting
     def CouplersLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # FinalRouting
     def CouplersIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         return o == 0
 
     # FinalRouting
     def Bridges(self, j: int) -> Optional[Bridge]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         if o != 0:
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
@@ -96,20 +71,20 @@ class FinalRouting(object):
 
     # FinalRouting
     def BridgesLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # FinalRouting
     def BridgesIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         return o == 0
 
     # Indices into Assignment.connections that did not route.
     # FinalRouting
     def Unresolved(self, j: int):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
             a = self._tab.Vector(o)
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
@@ -117,43 +92,31 @@ class FinalRouting(object):
 
     # FinalRouting
     def UnresolvedAsNumpy(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
             return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Uint32Flags, o)
         return 0
 
     # FinalRouting
     def UnresolvedLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # FinalRouting
     def UnresolvedIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         return o == 0
 
 def FinalRoutingStart(builder: flatbuffers.Builder):
-    builder.StartObject(4)
+    builder.StartObject(3)
 
 def Start(builder: flatbuffers.Builder):
     FinalRoutingStart(builder)
 
-def FinalRoutingAddWires(builder: flatbuffers.Builder, wires: int):
-    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(wires), 0)
-
-def AddWires(builder: flatbuffers.Builder, wires: int):
-    FinalRoutingAddWires(builder, wires)
-
-def FinalRoutingStartWiresVector(builder, numElems: int) -> int:
-    return builder.StartVector(4, numElems, 4)
-
-def StartWiresVector(builder, numElems: int) -> int:
-    return FinalRoutingStartWiresVector(builder, numElems)
-
 def FinalRoutingAddCouplers(builder: flatbuffers.Builder, couplers: int):
-    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(couplers), 0)
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(couplers), 0)
 
 def AddCouplers(builder: flatbuffers.Builder, couplers: int):
     FinalRoutingAddCouplers(builder, couplers)
@@ -165,7 +128,7 @@ def StartCouplersVector(builder, numElems: int) -> int:
     return FinalRoutingStartCouplersVector(builder, numElems)
 
 def FinalRoutingAddBridges(builder: flatbuffers.Builder, bridges: int):
-    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(bridges), 0)
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(bridges), 0)
 
 def AddBridges(builder: flatbuffers.Builder, bridges: int):
     FinalRoutingAddBridges(builder, bridges)
@@ -177,7 +140,7 @@ def StartBridgesVector(builder, numElems: int) -> int:
     return FinalRoutingStartBridgesVector(builder, numElems)
 
 def FinalRoutingAddUnresolved(builder: flatbuffers.Builder, unresolved: int):
-    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(unresolved), 0)
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(unresolved), 0)
 
 def AddUnresolved(builder: flatbuffers.Builder, unresolved: int):
     FinalRoutingAddUnresolved(builder, unresolved)
@@ -195,7 +158,6 @@ def End(builder: flatbuffers.Builder) -> int:
     return FinalRoutingEnd(builder)
 
 import mqt.scpd.generated.Bridge
-import mqt.scpd.generated.CellPath
 import mqt.scpd.generated.CpwCoupler
 try:
     from typing import List
@@ -207,12 +169,10 @@ class FinalRoutingT(object):
     # FinalRoutingT
     def __init__(
         self,
-        wires = None,
         couplers = None,
         bridges = None,
         unresolved = None,
     ):
-        self.wires = wires  # type: Optional[List[mqt.scpd.generated.CellPath.CellPathT]]
         self.couplers = couplers  # type: Optional[List[mqt.scpd.generated.CpwCoupler.CpwCouplerT]]
         self.bridges = bridges  # type: Optional[List[mqt.scpd.generated.Bridge.BridgeT]]
         self.unresolved = unresolved  # type: Optional[List[int]]
@@ -238,14 +198,6 @@ class FinalRoutingT(object):
     def _UnPack(self, finalRouting):
         if finalRouting is None:
             return
-        if not finalRouting.WiresIsNone():
-            self.wires = []
-            for i in range(finalRouting.WiresLength()):
-                if finalRouting.Wires(i) is None:
-                    self.wires.append(None)
-                else:
-                    cellPath_ = mqt.scpd.generated.CellPath.CellPathT.InitFromObj(finalRouting.Wires(i))
-                    self.wires.append(cellPath_)
         if not finalRouting.CouplersIsNone():
             self.couplers = []
             for i in range(finalRouting.CouplersLength()):
@@ -272,14 +224,6 @@ class FinalRoutingT(object):
 
     # FinalRoutingT
     def Pack(self, builder):
-        if self.wires is not None:
-            wireslist = []
-            for i in range(len(self.wires)):
-                wireslist.append(self.wires[i].Pack(builder))
-            FinalRoutingStartWiresVector(builder, len(self.wires))
-            for i in reversed(range(len(self.wires))):
-                builder.PrependUOffsetTRelative(wireslist[i])
-            wires = builder.EndVector()
         if self.couplers is not None:
             couplerslist = []
             for i in range(len(self.couplers)):
@@ -305,8 +249,6 @@ class FinalRoutingT(object):
                     builder.PrependUint32(self.unresolved[i])
                 unresolved = builder.EndVector()
         FinalRoutingStart(builder)
-        if self.wires is not None:
-            FinalRoutingAddWires(builder, wires)
         if self.couplers is not None:
             FinalRoutingAddCouplers(builder, couplers)
         if self.bridges is not None:
