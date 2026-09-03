@@ -873,7 +873,7 @@ struct Artifact FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyOffset(verifier, VT_PRODUCER) &&
+           VerifyOffsetRequired(verifier, VT_PRODUCER) &&
            verifier.VerifyString(producer()) &&
            VerifyField<uint8_t>(verifier, VT_OUTPUT_TYPE, 1) &&
            VerifyOffsetRequired(verifier, VT_OUTPUT) &&
@@ -929,6 +929,7 @@ struct ArtifactBuilder {
   ::flatbuffers::Offset<Artifact> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Artifact>(end);
+    fbb_.Required(o, Artifact::VT_PRODUCER);
     fbb_.Required(o, Artifact::VT_OUTPUT);
     return o;
   }
@@ -1325,7 +1326,7 @@ inline ::flatbuffers::Offset<Artifact> Artifact::Pack(::flatbuffers::FlatBufferB
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ArtifactT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _producer = _o->producer.empty() ? 0 : _fbb.CreateString(_o->producer);
+  auto _producer = _fbb.CreateString(_o->producer);
   auto _output_type = _o->output.type;
   auto _output = _o->output.Pack(_fbb);
   return mqt::scpd::flatbuffers::artifacts::CreateArtifact(

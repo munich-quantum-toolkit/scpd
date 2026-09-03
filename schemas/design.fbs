@@ -56,7 +56,7 @@ struct PortRef {
 /// parses it.
 table Port {
   label: string (required);
-  centre: geometry.Point (native_inline);
+  centre: geometry.Point (required, native_inline);
   /// Degrees, as the chip input carries it.
   orientation: double;
   role: UnassignedRole;
@@ -73,7 +73,7 @@ table Connection {
   /// Absent for a resonator until the Final stage inserts the coupler that
   /// carries the ResonatorSource role.
   source: PortRef;
-  target: PortRef (native_inline);
+  target: PortRef (required, native_inline);
   source_role: AssignedRole;
   target_role: AssignedRole;
 }
@@ -95,8 +95,8 @@ table DesignRules {
 /// Final stage at exact physical dimensions in layout units.
 table CpwCoupler {
   /// The ResonatorSource port the coupler carries.
-  port: PortRef (native_inline);
-  centre: geometry.Point (native_inline);
+  port: PortRef (required, native_inline);
+  centre: geometry.Point (required, native_inline);
   rotation: Rotation;
   length: double;
   height: double;
@@ -105,7 +105,7 @@ table CpwCoupler {
 /// An air bridge where a feedline crosses a regular wire. Instantiated at
 /// exact physical dimensions in layout units.
 table Bridge {
-  centre: geometry.Point (native_inline);
+  centre: geometry.Point (required, native_inline);
   rotation: Rotation;
   width: double;
   height: double;

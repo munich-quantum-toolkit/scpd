@@ -38,6 +38,24 @@ TEST(DrcSchema, EightRulesInTableOrder) {
   EXPECT_STREQ(EnumNameDrcRule(DrcRule::WireLoop), "WireLoop");
 }
 
+TEST(DrcSchema, VerifierRejectsAFindingWithoutItsLocation) {
+  for (const bool withLocation : {true, false}) {
+    flatbuffers::FlatBufferBuilder builder;
+    const auto wires = builder.CreateVector(std::vector<std::uint32_t>{3});
+    const Point location(1.0, 2.0);
+    const auto table = builder.StartTable();
+    builder.AddOffset(DrcFinding::VT_WIRES, wires);
+    if (withLocation) {
+      builder.AddStruct(DrcFinding::VT_LOCATION, &location);
+    }
+    builder.Finish(flatbuffers::Offset<DrcFinding>(builder.EndTable(table)));
+
+    flatbuffers::Verifier verifier(builder.GetBufferPointer(),
+                                   builder.GetSize());
+    EXPECT_EQ(verifier.VerifyBuffer<DrcFinding>(nullptr), withLocation);
+  }
+}
+
 TEST(DrcSchema, ReportRoundTripsFindings) {
   DrcReportT report;
   report.stage = DrcStage::Finalize;

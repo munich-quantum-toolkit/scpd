@@ -239,7 +239,7 @@ struct DrcFinding FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint8_t>(verifier, VT_SEVERITY, 1) &&
            VerifyOffsetRequired(verifier, VT_WIRES) &&
            verifier.VerifyVector(wires()) &&
-           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_LOCATION, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_LOCATION, 8) &&
            VerifyField<double>(verifier, VT_MEASURED, 8) &&
            VerifyField<double>(verifier, VT_LIMIT, 8) &&
            VerifyField<uint8_t>(verifier, VT_CLEARANCE_KIND, 1) &&
@@ -288,6 +288,7 @@ struct DrcFindingBuilder {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<DrcFinding>(end);
     fbb_.Required(o, DrcFinding::VT_WIRES);
+    fbb_.Required(o, DrcFinding::VT_LOCATION);
     return o;
   }
 };

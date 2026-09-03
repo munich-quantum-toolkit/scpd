@@ -27,14 +27,14 @@ table Polygon {
 
 /// A straight segment in layout space.
 table Line {
-  start: Point (native_inline);
-  end: Point (native_inline);
+  start: Point (required, native_inline);
+  end: Point (required, native_inline);
 }
 
 /// A circular arc in layout space with an exact centre and radius. Angles are
 /// radians; a positive sweep runs counter-clockwise.
 table Arc {
-  centre: Point (native_inline);
+  centre: Point (required, native_inline);
   radius: double;
   start_angle: double;
   sweep: double;

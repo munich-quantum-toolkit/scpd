@@ -12,10 +12,10 @@ releases may include breaking changes.
 
 ### Added
 
-- 👷 Fail CI when the committed schema-generated code is stale ([#97])
+- 👷 Fail CI when the committed schema-generated code is stale ([#98])
   ([**@FeldmeierMichael**])
 - ✨ Add the FlatBuffers schemas of the data model, the committed C++ and Python
-  code generated from them, and the `nox -s schemas` session ([#97])
+  code generated from them, and the `nox -s schemas` session ([#98])
   ([**@FeldmeierMichael**])
 - 🏗️ Split the core into the eight per-module CMake targets of the architecture
   ([#97]) ([**@FeldmeierMichael**])

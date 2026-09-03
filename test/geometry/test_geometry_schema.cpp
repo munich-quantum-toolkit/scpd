@@ -16,9 +16,12 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <iterator>
 #include <memory>
 #include <numbers>
 #include <type_traits>
+#include <vector>
 
 namespace {
 
@@ -91,6 +94,34 @@ TEST(GeometrySchema, PathKeepsLineAndArcSegmentsAnalytic) {
   EXPECT_EQ(backArc->centre, Point(100.0, 50.0));
   EXPECT_DOUBLE_EQ(backArc->radius, 50.0);
   EXPECT_DOUBLE_EQ(backArc->sweep, std::numbers::pi / 2);
+}
+
+/// Build a Line table the way a foreign writer could, with or without start.
+std::vector<std::uint8_t> lineBuffer(const bool withStart) {
+  flatbuffers::FlatBufferBuilder builder;
+  const Point start(0.0, 0.0);
+  const Point end(100.0, 0.0);
+  const auto table = builder.StartTable();
+  if (withStart) {
+    builder.AddStruct(Line::VT_START, &start);
+  }
+  builder.AddStruct(Line::VT_END, &end);
+  builder.Finish(flatbuffers::Offset<Line>(builder.EndTable(table)));
+  const auto* begin = builder.GetBufferPointer();
+  return {begin, std::next(begin, builder.GetSize())};
+}
+
+TEST(GeometrySchema, VerifierRejectsALineWithoutItsStart) {
+  // The model holds the endpoints by value, so a buffer that omits one must
+  // fail verification rather than unpack to the origin.
+  const auto complete = lineBuffer(true);
+  flatbuffers::Verifier completeVerifier(complete.data(), complete.size());
+  EXPECT_TRUE(completeVerifier.VerifyBuffer<Line>(nullptr));
+
+  const auto incomplete = lineBuffer(false);
+  flatbuffers::Verifier incompleteVerifier(incomplete.data(),
+                                           incomplete.size());
+  EXPECT_FALSE(incompleteVerifier.VerifyBuffer<Line>(nullptr));
 }
 
 TEST(GeometrySchema, SegmentShapesAreLineAndArcOnly) {

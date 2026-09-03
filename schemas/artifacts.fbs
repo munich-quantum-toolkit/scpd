@@ -67,7 +67,7 @@ union StageOutput {
 /// The root of every stage artifact.
 table Artifact {
   /// The mqt-scpd version that wrote the artifact, for provenance.
-  producer: string;
+  producer: string (required);
   output: StageOutput (required);
 }
 

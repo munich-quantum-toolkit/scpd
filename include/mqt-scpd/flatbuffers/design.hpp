@@ -262,7 +262,7 @@ struct Port FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return VerifyTableStart(verifier) &&
            VerifyOffsetRequired(verifier, VT_LABEL) &&
            verifier.VerifyString(label()) &&
-           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
            VerifyField<double>(verifier, VT_ORIENTATION, 8) &&
            VerifyField<uint8_t>(verifier, VT_ROLE, 1) &&
            verifier.EndTable();
@@ -296,6 +296,7 @@ struct PortBuilder {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Port>(end);
     fbb_.Required(o, Port::VT_LABEL);
+    fbb_.Required(o, Port::VT_CENTRE);
     return o;
   }
 };
@@ -470,7 +471,7 @@ struct Connection FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_SOURCE, 4) &&
-           VerifyField<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_TARGET, 4) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_TARGET, 4) &&
            VerifyField<uint8_t>(verifier, VT_SOURCE_ROLE, 1) &&
            VerifyField<uint8_t>(verifier, VT_TARGET_ROLE, 1) &&
            verifier.EndTable();
@@ -503,6 +504,7 @@ struct ConnectionBuilder {
   ::flatbuffers::Offset<Connection> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Connection>(end);
+    fbb_.Required(o, Connection::VT_TARGET);
     return o;
   }
 };
@@ -707,8 +709,8 @@ struct CpwCoupler FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_PORT, 4) &&
-           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_PORT, 4) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
            VerifyField<uint8_t>(verifier, VT_ROTATION, 1) &&
            VerifyField<double>(verifier, VT_LENGTH, 8) &&
            VerifyField<double>(verifier, VT_HEIGHT, 8) &&
@@ -745,6 +747,8 @@ struct CpwCouplerBuilder {
   ::flatbuffers::Offset<CpwCoupler> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<CpwCoupler>(end);
+    fbb_.Required(o, CpwCoupler::VT_PORT);
+    fbb_.Required(o, CpwCoupler::VT_CENTRE);
     return o;
   }
 };
@@ -807,7 +811,7 @@ struct Bridge FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
            VerifyField<uint8_t>(verifier, VT_ROTATION, 1) &&
            VerifyField<double>(verifier, VT_WIDTH, 8) &&
            VerifyField<double>(verifier, VT_HEIGHT, 8) &&
@@ -841,6 +845,7 @@ struct BridgeBuilder {
   ::flatbuffers::Offset<Bridge> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Bridge>(end);
+    fbb_.Required(o, Bridge::VT_CENTRE);
     return o;
   }
 };

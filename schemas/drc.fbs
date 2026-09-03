@@ -53,7 +53,7 @@ table DrcFinding {
   /// Indices into Assignment.connections of the wires involved.
   wires: [uint32] (required);
   /// Where the finding is, in layout units.
-  location: geometry.Point (native_inline);
+  location: geometry.Point (required, native_inline);
   /// The value the rule measured, in layout units.
   measured: double;
   /// The value the rule requires, in layout units.

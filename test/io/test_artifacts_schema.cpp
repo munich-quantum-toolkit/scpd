@@ -150,6 +150,30 @@ TEST(ArtifactSchema, GeometryKeepsAnalyticSegments) {
   EXPECT_DOUBLE_EQ(backArc->radius, 50.0);
 }
 
+TEST(ArtifactSchema, VerifierRejectsAnArtifactWithoutItsProducer) {
+  // Provenance is part of the contract: an artifact that does not record the
+  // version that wrote it is not a valid artifact.
+  for (const bool withProducer : {true, false}) {
+    flatbuffers::FlatBufferBuilder builder;
+    const auto producer = builder.CreateString("mqt-scpd test");
+    const auto output = CreateGlobalRouting(builder);
+    const auto table = builder.StartTable();
+    if (withProducer) {
+      builder.AddOffset(Artifact::VT_PRODUCER, producer);
+    }
+    builder.AddElement<std::uint8_t>(
+        Artifact::VT_OUTPUT_TYPE,
+        static_cast<std::uint8_t>(StageOutput::GlobalRouting), 0);
+    builder.AddOffset(Artifact::VT_OUTPUT, output);
+    builder.Finish(flatbuffers::Offset<Artifact>(builder.EndTable(table)),
+                   ArtifactIdentifier());
+
+    flatbuffers::Verifier verifier(builder.GetBufferPointer(),
+                                   builder.GetSize());
+    EXPECT_EQ(VerifyArtifactBuffer(verifier), withProducer);
+  }
+}
+
 TEST(ArtifactSchema, VerifierRejectsForeignAndTruncatedBuffers) {
   std::vector<std::uint8_t> bytes = serialize(wrap(GlobalRoutingT{}));
 

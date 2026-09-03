@@ -123,6 +123,26 @@ TEST(DesignSchema, ConnectionSourceIsAbsentUntilMaterialized) {
   EXPECT_EQ(backFeedline.source->index(), 0U);
 }
 
+TEST(DesignSchema, VerifierRejectsAConnectionWithoutItsTarget) {
+  // The target is held by value in the model; the source may be absent.
+  for (const bool withTarget : {true, false}) {
+    flatbuffers::FlatBufferBuilder builder;
+    const PortRef target(3);
+    const auto table = builder.StartTable();
+    if (withTarget) {
+      builder.AddStruct(Connection::VT_TARGET, &target);
+    }
+    builder.AddElement<std::uint8_t>(
+        Connection::VT_TARGET_ROLE,
+        static_cast<std::uint8_t>(AssignedRole::ResonatorTarget), 0);
+    builder.Finish(flatbuffers::Offset<Connection>(builder.EndTable(table)));
+
+    flatbuffers::Verifier verifier(builder.GetBufferPointer(),
+                                   builder.GetSize());
+    EXPECT_EQ(verifier.VerifyBuffer<Connection>(nullptr), withTarget);
+  }
+}
+
 TEST(DesignSchema, DesignRulesRoundTripInLayoutUnits) {
   DesignRulesT rules;
   rules.min_wire_spacing = 185.0;

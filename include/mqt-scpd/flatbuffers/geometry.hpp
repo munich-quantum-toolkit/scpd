@@ -324,8 +324,8 @@ struct Line FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_START, 8) &&
-           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_END, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_START, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_END, 8) &&
            verifier.EndTable();
   }
   LineT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -350,6 +350,8 @@ struct LineBuilder {
   ::flatbuffers::Offset<Line> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Line>(end);
+    fbb_.Required(o, Line::VT_START);
+    fbb_.Required(o, Line::VT_END);
     return o;
   }
 };
@@ -406,7 +408,7 @@ struct Arc FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
            VerifyField<double>(verifier, VT_RADIUS, 8) &&
            VerifyField<double>(verifier, VT_START_ANGLE, 8) &&
            VerifyField<double>(verifier, VT_SWEEP, 8) &&
@@ -440,6 +442,7 @@ struct ArcBuilder {
   ::flatbuffers::Offset<Arc> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Arc>(end);
+    fbb_.Required(o, Arc::VT_CENTRE);
     return o;
   }
 };
