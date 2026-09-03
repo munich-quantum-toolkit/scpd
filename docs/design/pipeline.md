@@ -171,8 +171,7 @@ progress stage by stage.
 
 Pixel fields are rendered as one downsampled raster, never one element per
 pixel. The prototype's equivalent 4-qubit capacity view is 17.8 MB because it
-did the latter; the budget here is 2 MB per snapshot on every benchmark. See
-[decision 0021](decisions/0021-debug-rendering-in-python.md).
+did the latter; the budget here is 2 MB per snapshot on every benchmark.
 
 ### What is never an artifact
 
@@ -346,8 +345,7 @@ flowchart LR
 
 HiGHS is vendored and always present, so an unlicensed installation is fully
 functional. Gurobi is reached at run time through `gurobipy` if the user has it
-installed and licensed. See
-[decision 0001](decisions/0001-byok-milp-solver.md).
+installed and licensed.
 
 ## Logging and metrics
 
@@ -471,8 +469,8 @@ the problem in a new place. `FG_OBSTACLE_INFLATE` is typical: it overrides the
 obstacle keepout distance, and setting it to `0` disables the keepout entirely
 and restores the behaviour from before that rule existed. That is a calibration
 knob for one experiment, not a setting. `config.toml` is the only tuning
-surface; the sole environment variable that survives is `SCPD_SOLVER` from
-[decision 0001](decisions/0001-byok-milp-solver.md).
+surface; the sole environment variable that survives is `SCPD_SOLVER`, which
+selects the solver backend.
 
 One of them earns a CLI flag rather than deletion. `FG_CLEARANCE_DEBUG` lists
 every pair the clearance check *exempted*, together with the closest non-exempt

@@ -287,7 +287,7 @@ own y-flip convention.
 into the A* state index and the flat primitive tables, where a heading is packed
 as `(ang << 10) | path_id`. It is named as `kNumAngles` rather than spelled `8`
 throughout, so it is greppable — but changing it is out of scope for the first
-release. See [decision 0015](decisions/0015-grid-and-memory-model.md).
+release.
 
 ## Paths
 
