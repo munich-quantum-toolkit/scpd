@@ -6,11 +6,5 @@
 #
 # Licensed under the MIT License
 
-"""Test the add function."""
-
-from mqt.scpd.pyscpd import add
-
-
-def test_add() -> None:
-    """Test the add function."""
-    assert add(1, 2) == 3
+add_mqt_scpd_library(design GENERATED_HEADERS design_generated.hpp config_generated.hpp
+                     LINK_LIBRARIES MQT::ScpdGeometry)

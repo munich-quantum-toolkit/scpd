@@ -1,0 +1,32 @@
+{
+  "tests": 4,
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "GeometrySchema",
+      "tests": 4,
+      "testsuite": [
+        {
+          "name": "CoordinateTypesAreInlineStructs",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/geometry\/test_geometry_schema.cpp",
+          "line": 41
+        },
+        {
+          "name": "PolygonRoundTripsThroughBuffer",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/geometry\/test_geometry_schema.cpp",
+          "line": 60
+        },
+        {
+          "name": "PathKeepsLineAndArcSegmentsAnalytic",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/geometry\/test_geometry_schema.cpp",
+          "line": 71
+        },
+        {
+          "name": "SegmentShapesAreLineAndArcOnly",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/geometry\/test_geometry_schema.cpp",
+          "line": 105
+        }
+      ]
+    }
+  ]
+}

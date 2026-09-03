@@ -34,6 +34,10 @@ nox.options.default_venv_backend = "uv"
 
 PYTHON_ALL_VERSIONS = ["3.11", "3.12", "3.13", "3.14"]
 
+SCHEMA_DIR = Path("schemas")
+GENERATED_CPP_DIR = Path("include") / "mqt-scpd" / "generated"
+GENERATED_PYTHON_DIR = Path("python") / "mqt" / "scpd" / "generated"
+
 if os.environ.get("CI", None):
     nox.options.error_on_missing_interpreters = True
 
@@ -192,6 +196,122 @@ def docs(session: nox.Session) -> None:
     )
 
 
+def _find_flatc(build_dir: Path) -> Path:
+    """Locate the flatc executable that the C++ build produced.
+
+    Returns:
+        The path to the executable.
+
+    Raises:
+        FileNotFoundError: If the build directory holds no flatc executable.
+    """
+    candidates = [
+        path
+        for path in (build_dir / "_deps" / "flatbuffers-build").glob("flatc*")
+        if path.is_file() and path.suffix in {"", ".exe"}
+    ]
+    if not candidates:
+        msg = f"flatc was not built under {build_dir}"
+        raise FileNotFoundError(msg)
+    return candidates[0].resolve()
+
+
+@nox.session(reuse_venv=True, venv_backend="uv")
+def schemas(session: nox.Session) -> None:
+    """Regenerate the C++ and Python code from the FlatBuffers schemas.
+
+    The session builds ``flatc`` from the FlatBuffers source that the C++ build fetches, so the
+    generator always matches the runtime. Pass ``--check`` to fail when the committed code is stale.
+    """
+    check = "--check" in session.posargs
+    if shutil.which("cmake") is None and shutil.which("cmake3") is None:
+        session.install("cmake")
+    if shutil.which("ninja") is None:
+        session.install("ninja")
+
+    build_dir = Path("build") / "schemas"
+    session.run(
+        "cmake",
+        "-S",
+        ".",
+        "-B",
+        str(build_dir),
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DMQT_SCPD_BUILD_FLATC=ON",
+        "-DBUILD_MQT_SCPD_TESTS=OFF",
+        external=True,
+    )
+    session.run("cmake", "--build", str(build_dir), "--target", "flatc", external=True)
+    flatc = _find_flatc(build_dir)
+
+    # Remove the output of schemas and types that no longer exist before regenerating.
+    for stale in [
+        *GENERATED_CPP_DIR.glob("*_generated.hpp"),
+        *(path for path in GENERATED_PYTHON_DIR.glob("*.py*") if path.name != "__init__.py"),
+    ]:
+        stale.unlink()
+
+    schema_names = sorted(path.name for path in SCHEMA_DIR.glob("*.fbs"))
+    with session.chdir(SCHEMA_DIR):
+        session.run(
+            str(flatc),
+            "--cpp",
+            "--gen-object-api",
+            "--gen-compare",
+            "--scoped-enums",
+            "--cpp-std",
+            "c++17",
+            "--filename-suffix",
+            "_generated",
+            "--filename-ext",
+            "hpp",
+            "--include-prefix",
+            "mqt-scpd/generated",
+            "--warnings-as-errors",
+            "-o",
+            str(Path("..") / GENERATED_CPP_DIR),
+            *schema_names,
+            external=True,
+        )
+
+    # flatc writes one Python module per type into the directories of the schema namespace, together
+    # with empty package initializers up to the top-level namespace. Only the modules are wanted.
+    with tempfile.TemporaryDirectory() as temp_dir_name, session.chdir(SCHEMA_DIR):
+        session.run(
+            str(flatc),
+            "--python",
+            "--gen-object-api",
+            "--python-typing",
+            "--python-decode-obj-api-strings",
+            "--warnings-as-errors",
+            "-o",
+            temp_dir_name,
+            *schema_names,
+            external=True,
+        )
+        generated = Path(temp_dir_name) / "mqt" / "scpd" / "generated"
+        for module in sorted(generated.glob("*.py*")):
+            if module.name != "__init__.py":
+                shutil.copyfile(module, Path("..") / GENERATED_PYTHON_DIR / module.name)
+
+    if check:
+        status = session.run(
+            "git",
+            "status",
+            "--porcelain",
+            "--",
+            str(GENERATED_CPP_DIR),
+            str(GENERATED_PYTHON_DIR),
+            external=True,
+            silent=True,
+        )
+        if status and status.strip():
+            session.log(status)
+            session.error("The committed schema-generated code is stale. Run `uvx nox -s schemas` and commit it.")
+
+
 @nox.session(reuse_venv=True, venv_backend="uv")
 def stubs(session: nox.Session) -> None:
     """Generate type stubs for Python bindings using nanobind."""
@@ -219,7 +339,8 @@ def stubs(session: nox.Session) -> None:
         "mqt.scpd.pyscpd",
     )
 
-    pyi_files = list(package_root.glob("**/*.pyi"))
+    # The schema-generated stubs are owned by the schemas session.
+    pyi_files = [path for path in package_root.glob("**/*.pyi") if path.parent != package_root / "generated"]
 
     if not pyi_files:
         session.warn("No .pyi files found")

@@ -1,0 +1,22 @@
+{
+  "tests": 2,
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "DrcSchema",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "EightRulesInTableOrder",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/drc\/test_drc_schema.cpp",
+          "line": 26
+        },
+        {
+          "name": "ReportRoundTripsFindings",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/drc\/test_drc_schema.cpp",
+          "line": 39
+        }
+      ]
+    }
+  ]
+}

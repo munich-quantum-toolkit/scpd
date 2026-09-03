@@ -1,0 +1,242 @@
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
+"""Tests of the schema-generated Python modules."""
+
+from __future__ import annotations
+
+import flatbuffers
+import pytest
+
+from mqt.scpd.generated.Arc import ArcT
+from mqt.scpd.generated.Artifact import Artifact, ArtifactT
+from mqt.scpd.generated.AssignedRole import AssignedRole
+from mqt.scpd.generated.Chip import ChipT
+from mqt.scpd.generated.ClearanceKind import ClearanceKind
+from mqt.scpd.generated.Connection import ConnectionT
+from mqt.scpd.generated.DrcFinding import DrcFindingT
+from mqt.scpd.generated.DrcParams import DrcParamsT
+from mqt.scpd.generated.DrcReport import DrcReportT
+from mqt.scpd.generated.DrcRule import DrcRule
+from mqt.scpd.generated.DrcSeverity import DrcSeverity
+from mqt.scpd.generated.DrcStage import DrcStage
+from mqt.scpd.generated.FinalParams import FinalParamsT
+from mqt.scpd.generated.FinalRouting import FinalRoutingT
+from mqt.scpd.generated.Geometry import GeometryT
+from mqt.scpd.generated.GlobalRouting import GlobalRoutingT
+from mqt.scpd.generated.GridParams import GridParamsT
+from mqt.scpd.generated.Line import LineT
+from mqt.scpd.generated.Path import PathT
+from mqt.scpd.generated.Point import PointT
+from mqt.scpd.generated.Polygon import PolygonT
+from mqt.scpd.generated.Port import PortT
+from mqt.scpd.generated.PortConfig import PortConfigT
+from mqt.scpd.generated.PortDetection import PortDetection
+from mqt.scpd.generated.PortRef import PortRefT
+from mqt.scpd.generated.Rotation import Rotation
+from mqt.scpd.generated.Segment import SegmentT
+from mqt.scpd.generated.SegmentShape import SegmentShape
+from mqt.scpd.generated.StageOutput import StageOutput
+from mqt.scpd.generated.UnassignedRole import UnassignedRole
+from mqt.scpd.generated.Wire import WireT
+
+
+def test_role_enums_match_the_wire_format() -> None:
+    """The numeric enum values are the on-disk format shared with the C++ side."""
+    assert UnassignedRole.Launcher == 0
+    assert UnassignedRole.Resonator == 1
+    assert UnassignedRole.Conventional == 2
+    assert AssignedRole.FeedlineSource == 0
+    assert AssignedRole.ResonatorSource == 2
+    assert AssignedRole.ConventionalTarget == 5
+    assert Rotation.R315 == 7
+    assert PortDetection.Manual == 0
+    assert PortDetection.Auto == 1
+    assert DrcRule.WireClearance == 0
+    assert DrcRule.MinBendRadius == 7
+
+
+def test_chip_round_trips_through_object_api() -> None:
+    """A chip built with the object API survives packing and unpacking."""
+    chip = ChipT(
+        obstacles=[
+            PolygonT(
+                vertices=[
+                    PointT(0.0, 0.0),
+                    PointT(1000.0, 0.0),
+                    PointT(1000.0, 1000.0),
+                ]
+            )
+        ],
+        ports=[
+            PortT(
+                label="Chip.port0",
+                centre=PointT(0.0, 500.0),
+                orientation=180.0,
+                role=UnassignedRole.Launcher,
+            ),
+            PortT(
+                label="Qb1.port0",
+                centre=PointT(500.0, 500.0),
+                orientation=90.0,
+                role=UnassignedRole.Resonator,
+            ),
+        ],
+    )
+
+    builder = flatbuffers.Builder()
+    builder.Finish(chip.Pack(builder))
+    back = ChipT.InitFromPackedBuf(builder.Output())
+
+    assert [port.label for port in back.ports] == ["Chip.port0", "Qb1.port0"]
+    resonator = back.ports[1]
+    assert resonator.role == UnassignedRole.Resonator
+    assert resonator.centre is not None
+    assert (resonator.centre.x, resonator.centre.y) == (500.0, 500.0)
+    assert len(back.obstacles) == 1
+    assert [(vertex.x, vertex.y) for vertex in back.obstacles[0].vertices][1] == (1000.0, 0.0)
+
+
+def test_connection_source_may_be_absent() -> None:
+    """A resonator connection has no source until the Final stage creates the coupler port."""
+    connection = ConnectionT(
+        target=PortRefT(index=3),
+        sourceRole=AssignedRole.ResonatorSource,
+        targetRole=AssignedRole.ResonatorTarget,
+    )
+
+    builder = flatbuffers.Builder()
+    builder.Finish(connection.Pack(builder))
+    back = ConnectionT.InitFromPackedBuf(builder.Output())
+
+    assert back.source is None
+    assert back.target is not None
+    assert back.target.index == 3
+    assert back.sourceRole == AssignedRole.ResonatorSource
+
+
+def test_artifact_carries_the_schema_identifier() -> None:
+    """A stored artifact starts with the identifier that records the schema version."""
+    artifact = ArtifactT(
+        producer="mqt-scpd test",
+        outputType=StageOutput.GlobalRouting,
+        output=GlobalRoutingT(routes=[]),
+    )
+
+    builder = flatbuffers.Builder()
+    builder.Finish(artifact.Pack(builder), file_identifier=b"SCP1")
+    stored = builder.Output()
+
+    assert Artifact.ArtifactBufferHasIdentifier(stored, 0, size_prefixed=False)
+    back = ArtifactT.InitFromPackedBuf(stored)
+    assert back.producer == "mqt-scpd test"
+    assert back.outputType == StageOutput.GlobalRouting
+    assert isinstance(back.output, GlobalRoutingT)
+    assert back.output.routes == []
+
+
+def test_final_routing_keeps_scalar_vectors() -> None:
+    """A vector of indices survives packing with zero, one and several elements."""
+    for unresolved in ([], [7], [2, 5, 11]):
+        artifact = ArtifactT(
+            outputType=StageOutput.FinalRouting,
+            output=FinalRoutingT(wires=[], couplers=[], bridges=[], unresolved=list(unresolved)),
+        )
+
+        builder = flatbuffers.Builder()
+        builder.Finish(artifact.Pack(builder), file_identifier=b"SCP1")
+        back = ArtifactT.InitFromPackedBuf(builder.Output())
+
+        assert isinstance(back.output, FinalRoutingT)
+        assert list(back.output.unresolved) == unresolved
+
+
+def test_geometry_artifact_keeps_analytic_segments() -> None:
+    """A wire is stored as lines and arcs, never as sampled points."""
+    wire = WireT(
+        connection=0,
+        path=PathT(
+            segments=[
+                SegmentT(
+                    shapeType=SegmentShape.Line,
+                    shape=LineT(start=PointT(0.0, 0.0), end=PointT(100.0, 0.0)),
+                ),
+                SegmentT(
+                    shapeType=SegmentShape.Arc,
+                    shape=ArcT(centre=PointT(100.0, 50.0), radius=50.0, startAngle=0.0, sweep=1.5),
+                ),
+            ]
+        ),
+    )
+    artifact = ArtifactT(
+        outputType=StageOutput.Geometry,
+        output=GeometryT(wires=[wire], couplers=[], bridges=[]),
+    )
+
+    builder = flatbuffers.Builder()
+    builder.Finish(artifact.Pack(builder), file_identifier=b"SCP1")
+    back = ArtifactT.InitFromPackedBuf(builder.Output())
+
+    assert isinstance(back.output, GeometryT)
+    path = back.output.wires[0].path
+    assert path is not None
+    segments = path.segments
+    assert [segment.shapeType for segment in segments] == [SegmentShape.Line, SegmentShape.Arc]
+    assert isinstance(segments[0].shape, LineT)
+    assert isinstance(segments[1].shape, ArcT)
+    assert segments[1].shape.radius == pytest.approx(50.0)
+
+
+def test_config_defaults_are_the_documented_defaults() -> None:
+    """Absent keys take the defaults that the configuration section documents."""
+    ports = PortConfigT()
+    assert ports.detection == PortDetection.Manual
+    assert ports.sequences is None
+
+    grid = GridParamsT()
+    assert (grid.capacityCellsX, grid.capacityCellsY) == (50, 0)
+    assert (grid.launcherOffsetX, grid.launcherOffsetY) == (15, 15)
+
+    final = FinalParamsT()
+    assert (final.meanderLength, final.expansion, final.rounds, final.refinementRounds) == (600.0, 200, 10, 15)
+
+    drc_params = DrcParamsT()
+    assert drc_params.all is False
+    assert (drc_params.shortThreshold, drc_params.junctionRadiusNorm) == (2.0, 1.5)
+
+
+def test_drc_report_round_trips_findings() -> None:
+    """A report keeps every field of a finding."""
+    report = DrcReportT(
+        stage=DrcStage.Final,
+        findings=[
+            DrcFindingT(
+                rule=DrcRule.WireClearance,
+                severity=DrcSeverity.Active,
+                wires=[3, 8],
+                location=PointT(12.0, 34.0),
+                measured=1.0,
+                limit=185.0,
+                clearanceKind=ClearanceKind.Short,
+                message="wires 3 and 8 touch",
+            )
+        ],
+        feedlinesSkipped=4,
+    )
+
+    builder = flatbuffers.Builder()
+    builder.Finish(report.Pack(builder))
+    back = DrcReportT.InitFromPackedBuf(builder.Output())
+
+    assert back.stage == DrcStage.Final
+    assert back.feedlinesSkipped == 4
+    finding = back.findings[0]
+    assert finding.rule == DrcRule.WireClearance
+    assert list(finding.wires) == [3, 8]
+    assert finding.clearanceKind == ClearanceKind.Short
+    assert finding.message == "wires 3 and 8 touch"

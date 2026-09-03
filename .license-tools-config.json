@@ -10,7 +10,8 @@
   "include": ["**/*"],
   "style_override_for_suffix": {
     ".pyi": "DOCSTRING_STYLE",
-    ".toml": "POUND_STYLE"
+    ".toml": "POUND_STYLE",
+    ".fbs": "SLASH_STYLE"
   },
   "exclude": [
     "^\\.[^/]+",
@@ -28,6 +29,8 @@
     "uv\\.lock",
     "py\\.typed",
     "Doxyfile",
-    "(^|/)LICENSE$"
+    "(^|/)LICENSE$",
+    "include/mqt-scpd/generated/.*",
+    "python/mqt/scpd/generated/[A-Z][A-Za-z]*\\.pyi?"
   ]
 }
