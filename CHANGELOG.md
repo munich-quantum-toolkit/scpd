@@ -18,7 +18,7 @@ releases may include breaking changes.
   code generated from them, and the `nox -s schemas` session ([#98])
   ([**@FeldmeierMichael**])
 - 🏗️ Split the core into the eight per-module CMake targets of the architecture
-  ([#97]) ([**@FeldmeierMichael**])
+  ([#98]) ([**@FeldmeierMichael**])
 - 🐍 Start building CPython 3.15 wheels ([#67]) ([**@denialhaag**])
 - ✨ Set up the repository ([#1]) ([**@denialhaag**])
 
@@ -37,7 +37,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
-[#97]: https://github.com/munich-quantum-toolkit/scpd/pull/97
+[#98]: https://github.com/munich-quantum-toolkit/scpd/pull/98
 [#89]: https://github.com/munich-quantum-toolkit/scpd/pull/89
 [#83]: https://github.com/munich-quantum-toolkit/scpd/pull/83
 [#67]: https://github.com/munich-quantum-toolkit/scpd/pull/67
