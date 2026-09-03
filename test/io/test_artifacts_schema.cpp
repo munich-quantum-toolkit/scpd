@@ -12,6 +12,7 @@
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 
+#include <flatbuffers/buffer.h>
 #include <flatbuffers/flatbuffer_builder.h>
 #include <flatbuffers/verifier.h>
 #include <gtest/gtest.h>
