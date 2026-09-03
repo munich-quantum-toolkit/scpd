@@ -12,6 +12,13 @@ releases may include breaking changes.
 
 ### Added
 
+- 👷 Fail CI when the committed schema-generated code is stale ([#97])
+  ([**@FeldmeierMichael**])
+- ✨ Add the FlatBuffers schemas of the data model, the committed C++ and Python
+  code generated from them, and the `nox -s schemas` session ([#97])
+  ([**@FeldmeierMichael**])
+- 🏗️ Split the core into the eight per-module CMake targets of the architecture
+  ([#97]) ([**@FeldmeierMichael**])
 - 🐍 Start building CPython 3.15 wheels ([#67]) ([**@denialhaag**])
 - ✨ Set up the repository ([#1]) ([**@denialhaag**])
 
@@ -30,6 +37,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#97]: https://github.com/munich-quantum-toolkit/scpd/pull/97
 [#89]: https://github.com/munich-quantum-toolkit/scpd/pull/89
 [#83]: https://github.com/munich-quantum-toolkit/scpd/pull/83
 [#67]: https://github.com/munich-quantum-toolkit/scpd/pull/67
@@ -38,6 +46,7 @@ releases may include breaking changes.
 <!-- Contributor -->
 
 [**@denialhaag**]: https://github.com/denialhaag
+[**@FeldmeierMichael**]: https://github.com/FeldmeierMichael
 
 <!-- General links -->
 

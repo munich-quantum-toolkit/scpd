@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Chair for Design Automation, TUM
+// Copyright (c) 2026 Munich Quantum Software Company GmbH
+// All rights reserved.
+//
+// SPDX-License-Identifier: MIT
+//
+// Licensed under the MIT License
+
+// The chip, its ports and their roles, the design rules, and the components
+// that a run instantiates. Owned by MQT::ScpdDesign.
+// See docs/design/data-model.md and decisions 0018 and 0019.
+
+include "geometry.fbs";
+
+namespace mqt.scpd.generated;
+
+/// What a port is, before anything is decided. Set at load, from the role
+/// patterns in the configuration.
+enum UnassignedRole : ubyte {
+  Launcher,
+  Resonator,
+  Conventional,
+}
+
+/// What a port does in the solved design. Set by the Assignment stage, except
+/// ResonatorSource, whose port the Final stage creates with the coupler.
+enum AssignedRole : ubyte {
+  FeedlineSource,
+  FeedlineTarget,
+  ResonatorSource,
+  ResonatorTarget,
+  ConventionalSource,
+  ConventionalTarget,
+}
+
+/// The eight-way rotation of a placed component.
+enum Rotation : ubyte {
+  R0,
+  R45,
+  R90,
+  R135,
+  R180,
+  R225,
+  R270,
+  R315,
+}
+
+/// A dense index into Chip.ports. A label is resolved to a PortRef once, at
+/// load. Ports are appended and never reordered, so a PortRef stays valid for
+/// the life of a run.
+struct PortRef {
+  index: uint32;
+}
+
+/// A port of the chip. The label is the only name the input has; no algorithm
+/// parses it.
+table Port {
+  label: string (required);
+  centre: Point (native_inline);
+  /// Degrees, as the chip input carries it.
+  orientation: double;
+  role: UnassignedRole;
+}
+
+/// The chip: obstacle geometry and ports, exactly as the input carries them.
+table Chip {
+  obstacles: [Polygon] (required);
+  ports: [Port] (required);
+}
+
+/// One endpoint pair of the solved design.
+table Connection {
+  /// Absent for a resonator until the Final stage inserts the coupler that
+  /// carries the ResonatorSource role.
+  source: PortRef;
+  target: PortRef (native_inline);
+  source_role: AssignedRole;
+  target_role: AssignedRole;
+}
+
+/// The design rules. Every rule is a length in layout units, held once and
+/// converted to cells only through cells_for. See decision 0019.
+table DesignRules {
+  min_wire_spacing: double;
+  min_obstacle_spacing: double;
+  min_bend_radius: double;
+  min_straight_length: double;
+  target_resonator_length: double;
+  resonator_length_tolerance: double;
+  max_feedline_utilization: uint32;
+  feedline_terminations: uint32;
+}
+
+/// A coplanar-waveguide coupler that taps a feedline. Instantiated by the
+/// Final stage at exact physical dimensions in layout units.
+table CpwCoupler {
+  /// The ResonatorSource port the coupler carries.
+  port: PortRef (native_inline);
+  centre: Point (native_inline);
+  rotation: Rotation;
+  length: double;
+  height: double;
+}
+
+/// An air bridge where a feedline crosses a regular wire. Instantiated at
+/// exact physical dimensions in layout units.
+table Bridge {
+  centre: Point (native_inline);
+  rotation: Rotation;
+  width: double;
+  height: double;
+}

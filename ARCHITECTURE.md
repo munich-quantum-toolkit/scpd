@@ -163,7 +163,11 @@ The dependency graph is acyclic. Nothing depends on `pipeline`; it is the top.
 Each is declared through `cmake/AddMQTScpdLibrary.cmake`, adapted from MQT
 Core's `AddMQTCoreLibrary.cmake`: `FILE_SET HEADERS`, `generate_export_header`,
 the `MQT::` export namespace, and a per-module `test/<module>/CMakeLists.txt`
-that globs its own tests.
+that globs its own tests. A module without source files is an interface library.
+The first file under `src/<module>/` turns it into a regular library with an
+export header, and nothing changes for the modules that depend on it. Each
+schema-generated header belongs to the module that owns its schema, so a
+dependency on the data model is a dependency on that module.
 
 ### Stage interfaces
 
@@ -261,6 +265,7 @@ mqt-scpd/
   src/<module>/                          mirrors include/
   bindings/bindings.cpp                  minimal: run pipeline, read metrics
   python/mqt/scpd/
+    generated/                           committed, via nox -s schemas
     cli.py                               argparse subcommands
     solvers/gurobipy_backend.py          BYOK Gurobi via MPS
     export/klayout.py                    GDS and OASIS
@@ -284,6 +289,7 @@ mqt-scpd/
 | C++           | HiGHS         | FetchContent                     | Default solver; makes an unlicensed install fully functional                     |
 | C++           | Boost.Polygon | FetchContent or vendored headers | One Voronoi construction. Never a user-installed Boost                           |
 | C++           | GoogleTest    | FetchContent                     | Existing repository convention                                                   |
+| Python        | flatbuffers   | PyPI                             | Runtime for the generated artifact readers behind `plot`, `inspect` and `report` |
 | Python        | klayout       | PyPI                             | GDS and OASIS writing and rendering. It provides no DRC                          |
 | Python        | rich          | PyPI                             | Progress over long runs, and result tables                                       |
 | Python (test) | hypothesis    | PyPI                             | Property-based tests                                                             |
@@ -292,6 +298,10 @@ mqt-scpd/
 
 The CLI uses the standard library's `argparse`. Dependencies are declared in
 `cmake/ExternalDependencies.cmake`, never inline in a target.
+
+The FlatBuffers compiler `flatc` is built from the same fetched source, and only
+on request by `uvx nox -s schemas`. The generator and the runtime therefore
+cannot disagree on their version, and no wheel build contains the compiler.
 
 ## What we deliberately do not build
 

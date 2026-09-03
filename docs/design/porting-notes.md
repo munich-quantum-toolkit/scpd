@@ -218,8 +218,8 @@ Three details decide whether a reimplementation is faithful:
 - Polygon 0, the chip outline, is skipped.
 - The seam runs in the constructor, before `add_fixed_port_obstacles()`. It
   therefore surrounds the layout polygons only, never the port extensions drawn
-  later, or every port exit would be blocked. `fg_port_extension_units()`
-  states the extension length once so the two callers cannot disagree.
+  later, or every port exit would be blocked. `fg_port_extension_units()` states
+  the extension length once so the two callers cannot disagree.
 
 **Self-intersecting paths are detected and refused.** `dubin_router_opt`
 searches over `(cell, heading)` states, so a route may legally return to a cell
@@ -240,8 +240,8 @@ heading change re-emits the cell it turns on, giving 800 to 1,300 harmless
 `A->B->A` micro-backtracks per layout. They are suppressed by a window,
 `kPathLoopSpurWindow = 4`, not by collapsing spurs off a stack. A stack collapse
 looks right and is wrong: it pops any `A->B->A` and so unwinds a long exact
-retrace one cell at a time, removing the defect it is meant to find. The upstream
-unit test for this file measures that.
+retrace one cell at a time, removing the defect it is meant to find. The
+upstream unit test for this file measures that.
 
 ## What the prototype does not check
 

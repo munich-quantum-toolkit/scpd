@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Chair for Design Automation, TUM
+// Copyright (c) 2026 Munich Quantum Software Company GmbH
+// All rights reserved.
+//
+// SPDX-License-Identifier: MIT
+//
+// Licensed under the MIT License
+
+// The geometry vocabulary: one point type per coordinate system, polygons,
+// and paths built from analytic segments. Owned by MQT::ScpdGeometry.
+// See docs/design/data-model.md for the coordinate systems and the reasons
+// behind analytic segments.
+
+namespace mqt.scpd.generated;
+
+/// A point in layout space. Micrometres, as double.
+struct Point {
+  x: double;
+  y: double;
+}
+
+/// A cell index on the coarse capacity grid.
+struct GCoord {
+  x: uint32;
+  y: uint32;
+}
+
+/// A pixel index on the detail grid.
+struct DCoord {
+  x: uint32;
+  y: uint32;
+}
+
+/// A node on the router grid plus its heading. Headings are eight-way, 0..7.
+struct RCoord {
+  x: uint32;
+  y: uint32;
+  heading: ubyte;
+}
+
+/// A closed polygon in layout space, stored as the input carries it.
+table Polygon {
+  vertices: [Point] (required);
+}
+
+/// A straight segment in layout space.
+table Line {
+  start: Point (native_inline);
+  end: Point (native_inline);
+}
+
+/// A circular arc in layout space with an exact centre and radius. Angles are
+/// radians; a positive sweep runs counter-clockwise.
+table Arc {
+  centre: Point (native_inline);
+  radius: double;
+  start_angle: double;
+  sweep: double;
+}
+
+/// The two analytic shapes a routed wire consists of.
+union SegmentShape {
+  Line,
+  Arc,
+}
+
+/// One analytic segment of a path.
+table Segment {
+  shape: SegmentShape (required);
+}
+
+/// A routed wire as a sequence of analytic segments, never as sampled points.
+table Path {
+  segments: [Segment] (required);
+}

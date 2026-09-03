@@ -34,7 +34,7 @@ add_mqt_python_binding(
   INSTALL_DIR
   .
   LINK_LIBS
-  MQT::SCPD)
+  MQT::ScpdPipeline)
 
 # install the Python stub files in editable mode for better IDE support
 if(SKBUILD_STATE STREQUAL "editable")

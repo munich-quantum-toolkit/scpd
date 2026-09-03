@@ -50,11 +50,12 @@ set(MQT_SCPD_INCLUDE_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(MQT_SCPD_TARGET_NAME mqt-scpd)
 
 include(cmake/AddMQTPythonBinding.cmake)
+include(cmake/AddMQTScpdLibrary.cmake)
 include(cmake/ExternalDependencies.cmake)
 include(cmake/PackageAddTest.cmake)
 include(cmake/StandardProjectSettings.cmake)
 
-# add main library code
+# add the module libraries
 add_subdirectory(src)
 
 # add bindings code if enabled

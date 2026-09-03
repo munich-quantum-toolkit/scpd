@@ -6,6 +6,19 @@
 #
 # Licensed under the MIT License
 
+if(NOT TARGET MQT::ProjectWarnings)
+  # use the warnings specified in CompilerWarnings.cmake
+  add_library(project_warnings INTERFACE)
+
+  # standard compiler warnings
+  include(${PROJECT_SOURCE_DIR}/cmake/CompilerWarnings.cmake)
+  set_project_warnings(project_warnings)
+
+  # add MQT alias
+  add_library(MQT::ProjectWarnings ALIAS project_warnings)
+  set_target_properties(project_warnings PROPERTIES EXPORT_NAME ProjectWarnings)
+endif()
+
 if(NOT TARGET MQT::ProjectOptions)
   # use the options specified in CompilerOptions.cmake
   add_library(project_options INTERFACE)
@@ -19,20 +32,13 @@ if(NOT TARGET MQT::ProjectOptions)
   set_target_properties(project_options PROPERTIES EXPORT_NAME ProjectOptions)
 endif()
 
-if(NOT TARGET MQT::SCPD)
-  # collect headers and source files
-  file(GLOB_RECURSE SCPD_HEADERS ${MQT_SCPD_INCLUDE_BUILD_DIR}/*.hpp)
-  file(GLOB_RECURSE SCPD_SOURCES **.cpp)
-
-  # add SCPD Package library
-  add_library(${PROJECT_NAME} ${SCPD_HEADERS} ${SCPD_SOURCES})
-
-  # set include directories
-  target_include_directories(${PROJECT_NAME}
-                             PUBLIC $<BUILD_INTERFACE:${MQT_SCPD_INCLUDE_BUILD_DIR}>)
-
-  target_link_libraries(${PROJECT_NAME} PRIVATE MQT::ProjectOptions)
-
-  # add MQT alias
-  add_library(MQT::SCPD ALIAS ${PROJECT_NAME})
-endif()
+# The eight module libraries, in dependency order. The dependency graph is documented in
+# ARCHITECTURE.md; nothing depends on pipeline, which is the top.
+add_subdirectory(geometry)
+add_subdirectory(design)
+add_subdirectory(grid)
+add_subdirectory(routing)
+add_subdirectory(milp)
+add_subdirectory(drc)
+add_subdirectory(io)
+add_subdirectory(pipeline)

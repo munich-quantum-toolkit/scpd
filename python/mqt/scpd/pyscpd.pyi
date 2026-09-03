@@ -6,5 +6,4 @@
 #
 # Licensed under the MIT License
 
-def add(arg0: int, arg1: int, /) -> int:
-    """Add two integers."""
+"""Internal bindings of the MQT SCPD core. The command-line interface is the supported product."""

@@ -1,0 +1,52 @@
+{
+  "tests": 8,
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "ArtifactSchema",
+      "tests": 8,
+      "testsuite": [
+        {
+          "name": "IdentifierRecordsTheSchemaVersion",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/io\/test_artifacts_schema.cpp",
+          "line": 57
+        },
+        {
+          "name": "EveryStageOutputIsAnArtifact",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/io\/test_artifacts_schema.cpp",
+          "line": 62
+        },
+        {
+          "name": "CapacityPlanRoundTrips",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/io\/test_artifacts_schema.cpp",
+          "line": 74
+        },
+        {
+          "name": "AssignmentRoundTrips",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/io\/test_artifacts_schema.cpp",
+          "line": 98
+        },
+        {
+          "name": "EmptyGlobalRoutingIsAValidArtifact",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/io\/test_artifacts_schema.cpp",
+          "line": 116
+        },
+        {
+          "name": "DetailAndFinalRoutingKeepGridCoordinates",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/io\/test_artifacts_schema.cpp",
+          "line": 126
+        },
+        {
+          "name": "GeometryKeepsAnalyticSegments",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/io\/test_artifacts_schema.cpp",
+          "line": 156
+        },
+        {
+          "name": "VerifierRejectsForeignAndTruncatedBuffers",
+          "file": "\/Users\/michaelfeldmeier\/Documents\/GitHub\/scpd\/test\/io\/test_artifacts_schema.cpp",
+          "line": 178
+        }
+      ]
+    }
+  ]
+}
