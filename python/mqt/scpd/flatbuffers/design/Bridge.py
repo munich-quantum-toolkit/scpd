@@ -30,7 +30,7 @@ class Bridge(object):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # Bridge
-    def Centre(self) -> Optional[Point]:
+    def Center(self) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         if o != 0:
             x = o + self._tab.Pos
@@ -66,11 +66,11 @@ def BridgeStart(builder: flatbuffers.Builder):
 def Start(builder: flatbuffers.Builder):
     BridgeStart(builder)
 
-def BridgeAddCentre(builder: flatbuffers.Builder, centre: Any):
-    builder.PrependStructSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(centre), 0)
+def BridgeAddCenter(builder: flatbuffers.Builder, center: Any):
+    builder.PrependStructSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(center), 0)
 
-def AddCentre(builder: flatbuffers.Builder, centre: Any):
-    BridgeAddCentre(builder, centre)
+def AddCenter(builder: flatbuffers.Builder, center: Any):
+    BridgeAddCenter(builder, center)
 
 def BridgeAddRotation(builder: flatbuffers.Builder, rotation: int):
     builder.PrependUint8Slot(1, rotation, 0)
@@ -107,12 +107,12 @@ class BridgeT(object):
     # BridgeT
     def __init__(
         self,
-        centre = None,
+        center = None,
         rotation = 0,
         width = 0.0,
         height = 0.0,
     ):
-        self.centre = centre  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
+        self.center = center  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
         self.rotation = rotation  # type: int
         self.width = width  # type: float
         self.height = height  # type: float
@@ -138,8 +138,8 @@ class BridgeT(object):
     def _UnPack(self, bridge):
         if bridge is None:
             return
-        if bridge.Centre() is not None:
-            self.centre = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(bridge.Centre())
+        if bridge.Center() is not None:
+            self.center = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(bridge.Center())
         self.rotation = bridge.Rotation()
         self.width = bridge.Width()
         self.height = bridge.Height()
@@ -147,9 +147,9 @@ class BridgeT(object):
     # BridgeT
     def Pack(self, builder):
         BridgeStart(builder)
-        if self.centre is not None:
-            centre = self.centre.Pack(builder)
-            BridgeAddCentre(builder, centre)
+        if self.center is not None:
+            center = self.center.Pack(builder)
+            BridgeAddCenter(builder, center)
         BridgeAddRotation(builder, self.rotation)
         BridgeAddWidth(builder, self.width)
         BridgeAddHeight(builder, self.height)

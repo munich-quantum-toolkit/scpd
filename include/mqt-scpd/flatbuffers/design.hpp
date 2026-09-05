@@ -227,7 +227,7 @@ struct PortRef::Traits {
 struct PortT : public ::flatbuffers::NativeTable {
   typedef Port TableType;
   std::string label{};
-  mqt::scpd::flatbuffers::geometry::Point centre{};
+  mqt::scpd::flatbuffers::geometry::Point center{};
   double orientation = 0.0;
   mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Launcher;
 };
@@ -240,15 +240,15 @@ struct Port FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   struct Traits;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_LABEL = 4,
-    VT_CENTRE = 6,
+    VT_CENTER = 6,
     VT_ORIENTATION = 8,
     VT_ROLE = 10
   };
   const ::flatbuffers::String *label() const {
     return GetPointer<const ::flatbuffers::String *>(VT_LABEL);
   }
-  const mqt::scpd::flatbuffers::geometry::Point *centre() const {
-    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTRE);
+  const mqt::scpd::flatbuffers::geometry::Point *center() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTER);
   }
   /// Degrees, as the chip input carries it.
   double orientation() const {
@@ -262,7 +262,7 @@ struct Port FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return VerifyTableStart(verifier) &&
            VerifyOffsetRequired(verifier, VT_LABEL) &&
            verifier.VerifyString(label()) &&
-           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTER, 8) &&
            VerifyField<double>(verifier, VT_ORIENTATION, 8) &&
            VerifyField<uint8_t>(verifier, VT_ROLE, 1) &&
            verifier.EndTable();
@@ -279,8 +279,8 @@ struct PortBuilder {
   void add_label(::flatbuffers::Offset<::flatbuffers::String> label) {
     fbb_.AddOffset(Port::VT_LABEL, label);
   }
-  void add_centre(const mqt::scpd::flatbuffers::geometry::Point *centre) {
-    fbb_.AddStruct(Port::VT_CENTRE, centre);
+  void add_center(const mqt::scpd::flatbuffers::geometry::Point *center) {
+    fbb_.AddStruct(Port::VT_CENTER, center);
   }
   void add_orientation(double orientation) {
     fbb_.AddElement<double>(Port::VT_ORIENTATION, orientation, 0.0);
@@ -296,7 +296,7 @@ struct PortBuilder {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Port>(end);
     fbb_.Required(o, Port::VT_LABEL);
-    fbb_.Required(o, Port::VT_CENTRE);
+    fbb_.Required(o, Port::VT_CENTER);
     return o;
   }
 };
@@ -304,12 +304,12 @@ struct PortBuilder {
 inline ::flatbuffers::Offset<Port> CreatePort(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<::flatbuffers::String> label = 0,
-    const mqt::scpd::flatbuffers::geometry::Point *centre = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
     double orientation = 0.0,
     mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Launcher) {
   PortBuilder builder_(_fbb);
   builder_.add_orientation(orientation);
-  builder_.add_centre(centre);
+  builder_.add_center(center);
   builder_.add_label(label);
   builder_.add_role(role);
   return builder_.Finish();
@@ -323,14 +323,14 @@ struct Port::Traits {
 inline ::flatbuffers::Offset<Port> CreatePortDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const char *label = nullptr,
-    const mqt::scpd::flatbuffers::geometry::Point *centre = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
     double orientation = 0.0,
     mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Launcher) {
   auto label__ = label ? _fbb.CreateString(label) : 0;
   return mqt::scpd::flatbuffers::design::CreatePort(
       _fbb,
       label__,
-      centre,
+      center,
       orientation,
       role);
 }
@@ -671,7 +671,7 @@ struct DesignRules::Traits {
 struct CpwCouplerT : public ::flatbuffers::NativeTable {
   typedef CpwCoupler TableType;
   mqt::scpd::flatbuffers::design::PortRef port{};
-  mqt::scpd::flatbuffers::geometry::Point centre{};
+  mqt::scpd::flatbuffers::geometry::Point center{};
   mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::R0;
   double length = 0.0;
   double height = 0.0;
@@ -685,7 +685,7 @@ struct CpwCoupler FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   struct Traits;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PORT = 4,
-    VT_CENTRE = 6,
+    VT_CENTER = 6,
     VT_ROTATION = 8,
     VT_LENGTH = 10,
     VT_HEIGHT = 12
@@ -694,8 +694,8 @@ struct CpwCoupler FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const mqt::scpd::flatbuffers::design::PortRef *port() const {
     return GetStruct<const mqt::scpd::flatbuffers::design::PortRef *>(VT_PORT);
   }
-  const mqt::scpd::flatbuffers::geometry::Point *centre() const {
-    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTRE);
+  const mqt::scpd::flatbuffers::geometry::Point *center() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTER);
   }
   mqt::scpd::flatbuffers::design::Rotation rotation() const {
     return static_cast<mqt::scpd::flatbuffers::design::Rotation>(GetField<uint8_t>(VT_ROTATION, 0));
@@ -710,7 +710,7 @@ struct CpwCoupler FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyFieldRequired<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_PORT, 4) &&
-           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTER, 8) &&
            VerifyField<uint8_t>(verifier, VT_ROTATION, 1) &&
            VerifyField<double>(verifier, VT_LENGTH, 8) &&
            VerifyField<double>(verifier, VT_HEIGHT, 8) &&
@@ -728,8 +728,8 @@ struct CpwCouplerBuilder {
   void add_port(const mqt::scpd::flatbuffers::design::PortRef *port) {
     fbb_.AddStruct(CpwCoupler::VT_PORT, port);
   }
-  void add_centre(const mqt::scpd::flatbuffers::geometry::Point *centre) {
-    fbb_.AddStruct(CpwCoupler::VT_CENTRE, centre);
+  void add_center(const mqt::scpd::flatbuffers::geometry::Point *center) {
+    fbb_.AddStruct(CpwCoupler::VT_CENTER, center);
   }
   void add_rotation(mqt::scpd::flatbuffers::design::Rotation rotation) {
     fbb_.AddElement<uint8_t>(CpwCoupler::VT_ROTATION, static_cast<uint8_t>(rotation), 0);
@@ -748,7 +748,7 @@ struct CpwCouplerBuilder {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<CpwCoupler>(end);
     fbb_.Required(o, CpwCoupler::VT_PORT);
-    fbb_.Required(o, CpwCoupler::VT_CENTRE);
+    fbb_.Required(o, CpwCoupler::VT_CENTER);
     return o;
   }
 };
@@ -756,14 +756,14 @@ struct CpwCouplerBuilder {
 inline ::flatbuffers::Offset<CpwCoupler> CreateCpwCoupler(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const mqt::scpd::flatbuffers::design::PortRef *port = nullptr,
-    const mqt::scpd::flatbuffers::geometry::Point *centre = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
     mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::R0,
     double length = 0.0,
     double height = 0.0) {
   CpwCouplerBuilder builder_(_fbb);
   builder_.add_height(height);
   builder_.add_length(length);
-  builder_.add_centre(centre);
+  builder_.add_center(center);
   builder_.add_port(port);
   builder_.add_rotation(rotation);
   return builder_.Finish();
@@ -778,7 +778,7 @@ struct CpwCoupler::Traits {
 
 struct BridgeT : public ::flatbuffers::NativeTable {
   typedef Bridge TableType;
-  mqt::scpd::flatbuffers::geometry::Point centre{};
+  mqt::scpd::flatbuffers::geometry::Point center{};
   mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::R0;
   double width = 0.0;
   double height = 0.0;
@@ -791,13 +791,13 @@ struct Bridge FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef BridgeBuilder Builder;
   struct Traits;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_CENTRE = 4,
+    VT_CENTER = 4,
     VT_ROTATION = 6,
     VT_WIDTH = 8,
     VT_HEIGHT = 10
   };
-  const mqt::scpd::flatbuffers::geometry::Point *centre() const {
-    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTRE);
+  const mqt::scpd::flatbuffers::geometry::Point *center() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTER);
   }
   mqt::scpd::flatbuffers::design::Rotation rotation() const {
     return static_cast<mqt::scpd::flatbuffers::design::Rotation>(GetField<uint8_t>(VT_ROTATION, 0));
@@ -811,7 +811,7 @@ struct Bridge FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTER, 8) &&
            VerifyField<uint8_t>(verifier, VT_ROTATION, 1) &&
            VerifyField<double>(verifier, VT_WIDTH, 8) &&
            VerifyField<double>(verifier, VT_HEIGHT, 8) &&
@@ -826,8 +826,8 @@ struct BridgeBuilder {
   typedef Bridge Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
-  void add_centre(const mqt::scpd::flatbuffers::geometry::Point *centre) {
-    fbb_.AddStruct(Bridge::VT_CENTRE, centre);
+  void add_center(const mqt::scpd::flatbuffers::geometry::Point *center) {
+    fbb_.AddStruct(Bridge::VT_CENTER, center);
   }
   void add_rotation(mqt::scpd::flatbuffers::design::Rotation rotation) {
     fbb_.AddElement<uint8_t>(Bridge::VT_ROTATION, static_cast<uint8_t>(rotation), 0);
@@ -845,21 +845,21 @@ struct BridgeBuilder {
   ::flatbuffers::Offset<Bridge> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Bridge>(end);
-    fbb_.Required(o, Bridge::VT_CENTRE);
+    fbb_.Required(o, Bridge::VT_CENTER);
     return o;
   }
 };
 
 inline ::flatbuffers::Offset<Bridge> CreateBridge(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    const mqt::scpd::flatbuffers::geometry::Point *centre = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
     mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::R0,
     double width = 0.0,
     double height = 0.0) {
   BridgeBuilder builder_(_fbb);
   builder_.add_height(height);
   builder_.add_width(width);
-  builder_.add_centre(centre);
+  builder_.add_center(center);
   builder_.add_rotation(rotation);
   return builder_.Finish();
 }
@@ -875,7 +875,7 @@ struct Bridge::Traits {
 inline bool operator==(const PortT &lhs, const PortT &rhs) {
   return
       (lhs.label == rhs.label) &&
-      (lhs.centre == rhs.centre) &&
+      (lhs.center == rhs.center) &&
       (lhs.orientation == rhs.orientation) &&
       (lhs.role == rhs.role);
 }
@@ -895,7 +895,7 @@ inline void Port::UnPackTo(PortT *_o, const ::flatbuffers::resolver_function_t *
   (void)_o;
   (void)_resolver;
   { auto _e = label(); if (_e) _o->label = _e->str(); }
-  { auto _e = centre(); if (_e) _o->centre = *_e; }
+  { auto _e = center(); if (_e) _o->center = *_e; }
   { auto _e = orientation(); _o->orientation = _e; }
   { auto _e = role(); _o->role = _e; }
 }
@@ -909,13 +909,13 @@ inline ::flatbuffers::Offset<Port> Port::Pack(::flatbuffers::FlatBufferBuilder &
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const PortT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _label = _fbb.CreateString(_o->label);
-  auto _centre = &_o->centre;
+  auto _center = &_o->center;
   auto _orientation = _o->orientation;
   auto _role = _o->role;
   return mqt::scpd::flatbuffers::design::CreatePort(
       _fbb,
       _label,
-      _centre,
+      _center,
       _orientation,
       _role);
 }
@@ -1107,7 +1107,7 @@ inline ::flatbuffers::Offset<DesignRules> DesignRules::Pack(::flatbuffers::FlatB
 inline bool operator==(const CpwCouplerT &lhs, const CpwCouplerT &rhs) {
   return
       (lhs.port == rhs.port) &&
-      (lhs.centre == rhs.centre) &&
+      (lhs.center == rhs.center) &&
       (lhs.rotation == rhs.rotation) &&
       (lhs.length == rhs.length) &&
       (lhs.height == rhs.height);
@@ -1128,7 +1128,7 @@ inline void CpwCoupler::UnPackTo(CpwCouplerT *_o, const ::flatbuffers::resolver_
   (void)_o;
   (void)_resolver;
   { auto _e = port(); if (_e) _o->port = *_e; }
-  { auto _e = centre(); if (_e) _o->centre = *_e; }
+  { auto _e = center(); if (_e) _o->center = *_e; }
   { auto _e = rotation(); _o->rotation = _e; }
   { auto _e = length(); _o->length = _e; }
   { auto _e = height(); _o->height = _e; }
@@ -1143,14 +1143,14 @@ inline ::flatbuffers::Offset<CpwCoupler> CpwCoupler::Pack(::flatbuffers::FlatBuf
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CpwCouplerT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _port = &_o->port;
-  auto _centre = &_o->centre;
+  auto _center = &_o->center;
   auto _rotation = _o->rotation;
   auto _length = _o->length;
   auto _height = _o->height;
   return mqt::scpd::flatbuffers::design::CreateCpwCoupler(
       _fbb,
       _port,
-      _centre,
+      _center,
       _rotation,
       _length,
       _height);
@@ -1159,7 +1159,7 @@ inline ::flatbuffers::Offset<CpwCoupler> CpwCoupler::Pack(::flatbuffers::FlatBuf
 
 inline bool operator==(const BridgeT &lhs, const BridgeT &rhs) {
   return
-      (lhs.centre == rhs.centre) &&
+      (lhs.center == rhs.center) &&
       (lhs.rotation == rhs.rotation) &&
       (lhs.width == rhs.width) &&
       (lhs.height == rhs.height);
@@ -1179,7 +1179,7 @@ inline BridgeT *Bridge::UnPack(const ::flatbuffers::resolver_function_t *_resolv
 inline void Bridge::UnPackTo(BridgeT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
-  { auto _e = centre(); if (_e) _o->centre = *_e; }
+  { auto _e = center(); if (_e) _o->center = *_e; }
   { auto _e = rotation(); _o->rotation = _e; }
   { auto _e = width(); _o->width = _e; }
   { auto _e = height(); _o->height = _e; }
@@ -1193,13 +1193,13 @@ inline ::flatbuffers::Offset<Bridge> Bridge::Pack(::flatbuffers::FlatBufferBuild
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const BridgeT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _centre = &_o->centre;
+  auto _center = &_o->center;
   auto _rotation = _o->rotation;
   auto _width = _o->width;
   auto _height = _o->height;
   return mqt::scpd::flatbuffers::design::CreateBridge(
       _fbb,
-      _centre,
+      _center,
       _rotation,
       _width,
       _height);

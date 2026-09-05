@@ -7,7 +7,7 @@ from flatbuffers.compat import import_numpy
 from typing import Any
 np = import_numpy()
 
-# A point in layout space. Micrometres, as double.
+# A point in layout space. Micrometers, as double.
 class Point(object):
     __slots__ = ['_tab']
 

@@ -37,7 +37,7 @@ class Port(object):
         return None
 
     # Port
-    def Centre(self) -> Optional[Point]:
+    def Center(self) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         if o != 0:
             x = o + self._tab.Pos
@@ -73,11 +73,11 @@ def PortAddLabel(builder: flatbuffers.Builder, label: int):
 def AddLabel(builder: flatbuffers.Builder, label: int):
     PortAddLabel(builder, label)
 
-def PortAddCentre(builder: flatbuffers.Builder, centre: Any):
-    builder.PrependStructSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(centre), 0)
+def PortAddCenter(builder: flatbuffers.Builder, center: Any):
+    builder.PrependStructSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(center), 0)
 
-def AddCentre(builder: flatbuffers.Builder, centre: Any):
-    PortAddCentre(builder, centre)
+def AddCenter(builder: flatbuffers.Builder, center: Any):
+    PortAddCenter(builder, center)
 
 def PortAddOrientation(builder: flatbuffers.Builder, orientation: float):
     builder.PrependFloat64Slot(2, orientation, 0.0)
@@ -109,12 +109,12 @@ class PortT(object):
     def __init__(
         self,
         label = None,
-        centre = None,
+        center = None,
         orientation = 0.0,
         role = 0,
     ):
         self.label = label  # type: Optional[str]
-        self.centre = centre  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
+        self.center = center  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
         self.orientation = orientation  # type: float
         self.role = role  # type: int
 
@@ -142,8 +142,8 @@ class PortT(object):
         self.label = port.Label()
         if self.label is not None:
             self.label = self.label.decode('utf-8')
-        if port.Centre() is not None:
-            self.centre = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(port.Centre())
+        if port.Center() is not None:
+            self.center = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(port.Center())
         self.orientation = port.Orientation()
         self.role = port.Role()
 
@@ -154,9 +154,9 @@ class PortT(object):
         PortStart(builder)
         if self.label is not None:
             PortAddLabel(builder, label)
-        if self.centre is not None:
-            centre = self.centre.Pack(builder)
-            PortAddCentre(builder, centre)
+        if self.center is not None:
+            center = self.center.Pack(builder)
+            PortAddCenter(builder, center)
         PortAddOrientation(builder, self.orientation)
         PortAddRole(builder, self.role)
         port = PortEnd(builder)

@@ -107,7 +107,7 @@ rendered to SVG without re-running the pipeline. Full contracts are in
 [the pipeline document](docs/design/pipeline.md).
 
 **The geometry IR carries analytic segments** — lines and circular arcs with
-exact centre and radius — not sampled points. The router already produces Dubins
+exact center and radius — not sampled points. The router already produces Dubins
 paths; sampling early and reconstructing arc structure afterwards loses
 precision and wastes work. Polygonization happens once, in the export adapter,
 at a configured tolerance.

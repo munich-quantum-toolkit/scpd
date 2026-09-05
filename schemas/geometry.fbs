@@ -14,7 +14,7 @@
 
 namespace mqt.scpd.flatbuffers.geometry;
 
-/// A point in layout space. Micrometres, as double.
+/// A point in layout space. Micrometers, as double.
 struct Point {
   x: double;
   y: double;
@@ -31,10 +31,10 @@ table Line {
   end: Point (required, native_inline);
 }
 
-/// A circular arc in layout space with an exact centre and radius. Angles are
+/// A circular arc in layout space with an exact center and radius. Angles are
 /// radians; a positive sweep runs counter-clockwise.
 table Arc {
-  centre: Point (required, native_inline);
+  center: Point (required, native_inline);
   radius: double;
   start_angle: double;
   sweep: double;

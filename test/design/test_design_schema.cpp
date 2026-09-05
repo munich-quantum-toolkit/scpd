@@ -40,11 +40,11 @@ template <typename NativeT> NativeT roundTrip(const NativeT& object) {
   return result;
 }
 
-std::unique_ptr<PortT> makePort(std::string label, const Point centre,
+std::unique_ptr<PortT> makePort(std::string label, const Point center,
                                 const UnassignedRole role) {
   auto port = std::make_unique<PortT>();
   port->label = std::move(label);
-  port->centre = centre;
+  port->center = center;
   port->orientation = 90.0;
   port->role = role;
   return port;
@@ -94,7 +94,7 @@ TEST(DesignSchema, ChipRoundTripsPortsWithRoles) {
   ASSERT_EQ(back.ports.size(), 3U);
   EXPECT_EQ(back.ports[1]->label, "Qb1.port0");
   EXPECT_EQ(back.ports[1]->role, UnassignedRole::Resonator);
-  EXPECT_EQ(back.ports[1]->centre, Point(500.0, 500.0));
+  EXPECT_EQ(back.ports[1]->center, Point(500.0, 500.0));
   EXPECT_DOUBLE_EQ(back.ports[1]->orientation, 90.0);
 }
 
@@ -163,7 +163,7 @@ TEST(DesignSchema, DesignRulesRoundTripInLayoutUnits) {
 TEST(DesignSchema, ComponentsCarryExactDimensions) {
   CpwCouplerT coupler;
   coupler.port = PortRef(42);
-  coupler.centre = Point(1200.0, 800.0);
+  coupler.center = Point(1200.0, 800.0);
   coupler.rotation = Rotation::R90;
   coupler.length = 200.0;
   coupler.height = 26.0;
@@ -174,7 +174,7 @@ TEST(DesignSchema, ComponentsCarryExactDimensions) {
   EXPECT_EQ(backCoupler.rotation, Rotation::R90);
 
   BridgeT bridge;
-  bridge.centre = Point(300.0, 300.0);
+  bridge.center = Point(300.0, 300.0);
   bridge.rotation = Rotation::R45;
   bridge.width = 60.0;
   bridge.height = 60.0;

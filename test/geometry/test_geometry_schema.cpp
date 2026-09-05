@@ -68,7 +68,7 @@ TEST(GeometrySchema, PathKeepsLineAndArcSegmentsAnalytic) {
   line.end = Point(100.0, 0.0);
 
   ArcT arc;
-  arc.centre = Point(100.0, 50.0);
+  arc.center = Point(100.0, 50.0);
   arc.radius = 50.0;
   arc.start_angle = -std::numbers::pi / 2;
   arc.sweep = std::numbers::pi / 2;
@@ -91,7 +91,7 @@ TEST(GeometrySchema, PathKeepsLineAndArcSegmentsAnalytic) {
   EXPECT_EQ(back.segments[1]->shape.type, SegmentShape::Arc);
   const auto* backArc = back.segments[1]->shape.AsArc();
   ASSERT_NE(backArc, nullptr);
-  EXPECT_EQ(backArc->centre, Point(100.0, 50.0));
+  EXPECT_EQ(backArc->center, Point(100.0, 50.0));
   EXPECT_DOUBLE_EQ(backArc->radius, 50.0);
   EXPECT_DOUBLE_EQ(backArc->sweep, std::numbers::pi / 2);
 }

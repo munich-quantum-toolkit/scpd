@@ -118,7 +118,7 @@ TEST(ArtifactSchema, FinalRoutingKeepsComponentsAndFailures) {
   final.couplers.back()->port = PortRef(9);
   final.couplers.back()->rotation = Rotation::R180;
   final.bridges.push_back(std::make_unique<BridgeT>());
-  final.bridges.back()->centre = Point(50.0, 60.0);
+  final.bridges.back()->center = Point(50.0, 60.0);
   final.unresolved = {7};
 
   const ArtifactT back = deserialize(serialize(wrap(final)));
@@ -137,7 +137,7 @@ TEST(ArtifactSchema, GeometryKeepsAnalyticSegments) {
   geometry.wires.back()->path = std::make_unique<PathT>();
   geometry.wires.back()->path->segments.push_back(std::make_unique<SegmentT>());
   ArcT arc;
-  arc.centre = Point(0.0, 50.0);
+  arc.center = Point(0.0, 50.0);
   arc.radius = 50.0;
   arc.sweep = std::numbers::pi;
   geometry.wires.back()->path->segments.back()->shape.Set(arc);

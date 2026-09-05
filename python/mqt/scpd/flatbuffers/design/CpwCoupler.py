@@ -42,7 +42,7 @@ class CpwCoupler(object):
         return None
 
     # CpwCoupler
-    def Centre(self) -> Optional[Point]:
+    def Center(self) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         if o != 0:
             x = o + self._tab.Pos
@@ -84,11 +84,11 @@ def CpwCouplerAddPort(builder: flatbuffers.Builder, port: Any):
 def AddPort(builder: flatbuffers.Builder, port: Any):
     CpwCouplerAddPort(builder, port)
 
-def CpwCouplerAddCentre(builder: flatbuffers.Builder, centre: Any):
-    builder.PrependStructSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(centre), 0)
+def CpwCouplerAddCenter(builder: flatbuffers.Builder, center: Any):
+    builder.PrependStructSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(center), 0)
 
-def AddCentre(builder: flatbuffers.Builder, centre: Any):
-    CpwCouplerAddCentre(builder, centre)
+def AddCenter(builder: flatbuffers.Builder, center: Any):
+    CpwCouplerAddCenter(builder, center)
 
 def CpwCouplerAddRotation(builder: flatbuffers.Builder, rotation: int):
     builder.PrependUint8Slot(2, rotation, 0)
@@ -127,13 +127,13 @@ class CpwCouplerT(object):
     def __init__(
         self,
         port = None,
-        centre = None,
+        center = None,
         rotation = 0,
         length = 0.0,
         height = 0.0,
     ):
         self.port = port  # type: Optional[mqt.scpd.flatbuffers.design.PortRef.PortRefT]
-        self.centre = centre  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
+        self.center = center  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
         self.rotation = rotation  # type: int
         self.length = length  # type: float
         self.height = height  # type: float
@@ -161,8 +161,8 @@ class CpwCouplerT(object):
             return
         if cpwCoupler.Port() is not None:
             self.port = mqt.scpd.flatbuffers.design.PortRef.PortRefT.InitFromObj(cpwCoupler.Port())
-        if cpwCoupler.Centre() is not None:
-            self.centre = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(cpwCoupler.Centre())
+        if cpwCoupler.Center() is not None:
+            self.center = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(cpwCoupler.Center())
         self.rotation = cpwCoupler.Rotation()
         self.length = cpwCoupler.Length()
         self.height = cpwCoupler.Height()
@@ -173,9 +173,9 @@ class CpwCouplerT(object):
         if self.port is not None:
             port = self.port.Pack(builder)
             CpwCouplerAddPort(builder, port)
-        if self.centre is not None:
-            centre = self.centre.Pack(builder)
-            CpwCouplerAddCentre(builder, centre)
+        if self.center is not None:
+            center = self.center.Pack(builder)
+            CpwCouplerAddCenter(builder, center)
         CpwCouplerAddRotation(builder, self.rotation)
         CpwCouplerAddLength(builder, self.length)
         CpwCouplerAddHeight(builder, self.height)

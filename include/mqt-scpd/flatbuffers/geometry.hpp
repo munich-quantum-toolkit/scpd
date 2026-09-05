@@ -189,7 +189,7 @@ bool VerifySegmentShape(::flatbuffers::VerifierTemplate<B> &verifier, const void
 template <bool B = false>
 bool VerifySegmentShapeVector(::flatbuffers::VerifierTemplate<B> &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<SegmentShape> *types);
 
-/// A point in layout space. Micrometres, as double.
+/// A point in layout space. Micrometers, as double.
 FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(8) Point FLATBUFFERS_FINAL_CLASS {
  private:
   double x_;
@@ -375,26 +375,26 @@ struct Line::Traits {
 
 struct ArcT : public ::flatbuffers::NativeTable {
   typedef Arc TableType;
-  mqt::scpd::flatbuffers::geometry::Point centre{};
+  mqt::scpd::flatbuffers::geometry::Point center{};
   double radius = 0.0;
   double start_angle = 0.0;
   double sweep = 0.0;
 };
 
-/// A circular arc in layout space with an exact centre and radius. Angles are
+/// A circular arc in layout space with an exact center and radius. Angles are
 /// radians; a positive sweep runs counter-clockwise.
 struct Arc FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ArcT NativeTableType;
   typedef ArcBuilder Builder;
   struct Traits;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_CENTRE = 4,
+    VT_CENTER = 4,
     VT_RADIUS = 6,
     VT_START_ANGLE = 8,
     VT_SWEEP = 10
   };
-  const mqt::scpd::flatbuffers::geometry::Point *centre() const {
-    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTRE);
+  const mqt::scpd::flatbuffers::geometry::Point *center() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTER);
   }
   double radius() const {
     return GetField<double>(VT_RADIUS, 0.0);
@@ -408,7 +408,7 @@ struct Arc FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTRE, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTER, 8) &&
            VerifyField<double>(verifier, VT_RADIUS, 8) &&
            VerifyField<double>(verifier, VT_START_ANGLE, 8) &&
            VerifyField<double>(verifier, VT_SWEEP, 8) &&
@@ -423,8 +423,8 @@ struct ArcBuilder {
   typedef Arc Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
-  void add_centre(const mqt::scpd::flatbuffers::geometry::Point *centre) {
-    fbb_.AddStruct(Arc::VT_CENTRE, centre);
+  void add_center(const mqt::scpd::flatbuffers::geometry::Point *center) {
+    fbb_.AddStruct(Arc::VT_CENTER, center);
   }
   void add_radius(double radius) {
     fbb_.AddElement<double>(Arc::VT_RADIUS, radius, 0.0);
@@ -442,14 +442,14 @@ struct ArcBuilder {
   ::flatbuffers::Offset<Arc> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Arc>(end);
-    fbb_.Required(o, Arc::VT_CENTRE);
+    fbb_.Required(o, Arc::VT_CENTER);
     return o;
   }
 };
 
 inline ::flatbuffers::Offset<Arc> CreateArc(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    const mqt::scpd::flatbuffers::geometry::Point *centre = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
     double radius = 0.0,
     double start_angle = 0.0,
     double sweep = 0.0) {
@@ -457,7 +457,7 @@ inline ::flatbuffers::Offset<Arc> CreateArc(
   builder_.add_sweep(sweep);
   builder_.add_start_angle(start_angle);
   builder_.add_radius(radius);
-  builder_.add_centre(centre);
+  builder_.add_center(center);
   return builder_.Finish();
 }
 
@@ -712,7 +712,7 @@ inline ::flatbuffers::Offset<Line> Line::Pack(::flatbuffers::FlatBufferBuilder &
 
 inline bool operator==(const ArcT &lhs, const ArcT &rhs) {
   return
-      (lhs.centre == rhs.centre) &&
+      (lhs.center == rhs.center) &&
       (lhs.radius == rhs.radius) &&
       (lhs.start_angle == rhs.start_angle) &&
       (lhs.sweep == rhs.sweep);
@@ -732,7 +732,7 @@ inline ArcT *Arc::UnPack(const ::flatbuffers::resolver_function_t *_resolver) co
 inline void Arc::UnPackTo(ArcT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
-  { auto _e = centre(); if (_e) _o->centre = *_e; }
+  { auto _e = center(); if (_e) _o->center = *_e; }
   { auto _e = radius(); _o->radius = _e; }
   { auto _e = start_angle(); _o->start_angle = _e; }
   { auto _e = sweep(); _o->sweep = _e; }
@@ -746,13 +746,13 @@ inline ::flatbuffers::Offset<Arc> Arc::Pack(::flatbuffers::FlatBufferBuilder &_f
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ArcT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _centre = &_o->centre;
+  auto _center = &_o->center;
   auto _radius = _o->radius;
   auto _start_angle = _o->start_angle;
   auto _sweep = _o->sweep;
   return mqt::scpd::flatbuffers::geometry::CreateArc(
       _fbb,
-      _centre,
+      _center,
       _radius,
       _start_angle,
       _sweep);

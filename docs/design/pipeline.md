@@ -163,7 +163,7 @@ progress stage by stage.
 
 | `--stage`  | Reads            | Renders                                               |
 | ---------- | ---------------- | ----------------------------------------------------- |
-| `layout`   | `00-chip.json`   | obstacles, ports coloured by `UnassignedRole`         |
+| `layout`   | `00-chip.json`   | obstacles, ports colored by `UnassignedRole`          |
 | `capacity` | `01-capacity.fb` | + partitions, bottlenecks, budgets, routed chains     |
 | `detail`   | `04-detail.fb`   | + pixel paths                                         |
 | `final`    | `05-final.fb`    | + Dubins paths, couplers, bridges                     |
@@ -274,7 +274,7 @@ a single bogus component. Under
 branch does not exist: a port carries a `PortRef` and a role, so the test is a
 field comparison. The rule ports over as strictly less code than it is today.
 
-### Behaviour
+### Behavior
 
 - Both reports go to `drc.json`, tagged by stage, and are summarized in the run
   table alongside failures and angle cost.
@@ -467,7 +467,7 @@ The `getenv` sites are **deleted outright**, not migrated. They are debug and
 sweep knobs from a research process, and carrying them forward would recreate
 the problem in a new place. `FG_OBSTACLE_INFLATE` is typical: it overrides the
 obstacle keepout distance, and setting it to `0` disables the keepout entirely
-and restores the behaviour from before that rule existed. That is a calibration
+and restores the behavior from before that rule existed. That is a calibration
 knob for one experiment, not a setting. `config.toml` is the only tuning
 surface; the sole environment variable that survives is `SCPD_SOLVER`, which
 selects the solver backend.

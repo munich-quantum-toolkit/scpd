@@ -10,7 +10,7 @@ Decision 0022 split DRCPolice's eight rules four and four. Wire clearance,
 feedline orthogonality, obstacle clearance and resonator length were active;
 wire loops, component overlap, minimum straight length and minimum bend radius
 were advisory. The argument for the advisory half was maturity: six of the eight
-rules were new code with no measured behaviour on any benchmark, and declaring
+rules were new code with no measured behavior on any benchmark, and declaring
 them enforced before anyone had seen what they report would either block the
 port on false positives or get them switched off wholesale.
 
@@ -18,7 +18,7 @@ That argument no longer applies to wire loops. Commit `8a188ec`, dated
 2026-09-01, added `path_self_intersection.hpp` to the prototype and wired it
 into two places: `dubin_router_opt`, which now refuses to commit a self-crossing
 path, and `FinalGrid::verify_no_path_loops`, which runs after all four routing
-passes. The rule has measured behaviour on all eight benchmarks, and the
+passes. The rule has measured behavior on all eight benchmarks, and the
 prototype reaches zero unresolved wires with it enabled.
 
 The defect it catches is not cosmetic. `dubin_router_opt` searches over
@@ -38,7 +38,7 @@ It is ported as one implementation with two callers, matching upstream:
 it to check a committed one. Both detected shapes are ported — a repeated cell,
 and two diagonal steps crossing inside one 2×2 block where all four cells stay
 distinct — as is the spur window that suppresses the router's state re-emission
-artefact.
+artifact.
 
 Phase 4 gains it as an exit criterion.
 

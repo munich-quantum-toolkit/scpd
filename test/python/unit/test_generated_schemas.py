@@ -66,13 +66,13 @@ def test_chip_round_trips_through_object_api() -> None:
         ports=[
             PortT(
                 label="Chip.port0",
-                centre=PointT(0.0, 500.0),
+                center=PointT(0.0, 500.0),
                 orientation=180.0,
                 role=UnassignedRole.Launcher,
             ),
             PortT(
                 label="Qb1.port0",
-                centre=PointT(500.0, 500.0),
+                center=PointT(500.0, 500.0),
                 orientation=90.0,
                 role=UnassignedRole.Resonator,
             ),
@@ -86,8 +86,8 @@ def test_chip_round_trips_through_object_api() -> None:
     assert [port.label for port in back.ports] == ["Chip.port0", "Qb1.port0"]
     resonator = back.ports[1]
     assert resonator.role == UnassignedRole.Resonator
-    assert resonator.centre is not None
-    assert (resonator.centre.x, resonator.centre.y) == (500.0, 500.0)
+    assert resonator.center is not None
+    assert (resonator.center.x, resonator.center.y) == (500.0, 500.0)
     assert len(back.obstacles) == 1
     assert [(vertex.x, vertex.y) for vertex in back.obstacles[0].vertices][1] == (1000.0, 0.0)
 
@@ -157,7 +157,7 @@ def test_geometry_artifact_keeps_analytic_segments() -> None:
                 ),
                 SegmentT(
                     shapeType=SegmentShape.Arc,
-                    shape=ArcT(centre=PointT(100.0, 50.0), radius=50.0, startAngle=0.0, sweep=1.5),
+                    shape=ArcT(center=PointT(100.0, 50.0), radius=50.0, startAngle=0.0, sweep=1.5),
                 ),
             ]
         ),

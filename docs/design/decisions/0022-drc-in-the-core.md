@@ -74,7 +74,7 @@ with them. Rejected: nothing outside the pipeline could then run a check, and
 algorithms live.
 
 **Ship all eight rules active.** Rejected as dishonest about their maturity. Six
-rules are new code with no measured behaviour on any benchmark; declaring them
+rules are new code with no measured behavior on any benchmark; declaring them
 enforced before anyone has seen what they report on a working chip would either
 block the port on false positives or, worse, get switched off wholesale the
 first time one fired.

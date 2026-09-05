@@ -43,7 +43,7 @@ classDiagram
   }
   class Port {
     string label
-    Point centre
+    Point center
     double orientation
     UnassignedRole role
   }
@@ -259,7 +259,7 @@ was right; nothing in the prototype recorded *why*, so nothing could have caught
 it drifting.
 
 Two of these are not constant across chips, and making them derived therefore
-changes behaviour: the detail-grid blockade becomes 4–9 rather than a fixed 6,
+changes behavior: the detail-grid blockade becomes 4–9 rather than a fixed 6,
 and the straight-start stub becomes 10–11 rather than a fixed 9. That is the
 point — one literal cannot be correct on eight differently-scaled grids. Both
 are validated by benchmark result in phase 4, and a chip that genuinely needs a
@@ -272,7 +272,7 @@ so each has a distinct type and conversions are explicit.
 
 | Space       | Type     | Unit                    | Where it is valid                                                   |
 | ----------- | -------- | ----------------------- | ------------------------------------------------------------------- |
-| Layout      | `Point`  | micrometres as `double` | The chip description, the geometry IR, all design rules, GDS export |
+| Layout      | `Point`  | micrometers as `double` | The chip description, the geometry IR, all design rules, GDS export |
 | Coarse grid | `GCoord` | cell index              | Capacity planning: partitions, budgets, chains                      |
 | Detail grid | `DCoord` | pixel index             | Detail routing: the A* over partitions                              |
 | Router grid | `RCoord` | node index plus heading | Final routing: the Dubins A* state, heading `0..7`                  |
@@ -295,7 +295,7 @@ A routed wire is a sequence of **analytic segments**, not sampled points:
 
 ```text
 Segment := Line{ start, end }
-         | Arc { centre, radius, startAngle, sweep }
+         | Arc { center, radius, startAngle, sweep }
 ```
 
 The router produces Dubins paths, which are exactly lines and circular arcs.

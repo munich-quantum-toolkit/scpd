@@ -9,7 +9,7 @@ from mqt.scpd.flatbuffers.geometry.Point import Point
 from typing import Optional
 np = import_numpy()
 
-# A circular arc in layout space with an exact centre and radius. Angles are
+# A circular arc in layout space with an exact center and radius. Angles are
 # radians; a positive sweep runs counter-clockwise.
 class Arc(object):
     __slots__ = ['_tab']
@@ -30,7 +30,7 @@ class Arc(object):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # Arc
-    def Centre(self) -> Optional[Point]:
+    def Center(self) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         if o != 0:
             x = o + self._tab.Pos
@@ -66,11 +66,11 @@ def ArcStart(builder: flatbuffers.Builder):
 def Start(builder: flatbuffers.Builder):
     ArcStart(builder)
 
-def ArcAddCentre(builder: flatbuffers.Builder, centre: Any):
-    builder.PrependStructSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(centre), 0)
+def ArcAddCenter(builder: flatbuffers.Builder, center: Any):
+    builder.PrependStructSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(center), 0)
 
-def AddCentre(builder: flatbuffers.Builder, centre: Any):
-    ArcAddCentre(builder, centre)
+def AddCenter(builder: flatbuffers.Builder, center: Any):
+    ArcAddCenter(builder, center)
 
 def ArcAddRadius(builder: flatbuffers.Builder, radius: float):
     builder.PrependFloat64Slot(1, radius, 0.0)
@@ -107,12 +107,12 @@ class ArcT(object):
     # ArcT
     def __init__(
         self,
-        centre = None,
+        center = None,
         radius = 0.0,
         startAngle = 0.0,
         sweep = 0.0,
     ):
-        self.centre = centre  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
+        self.center = center  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
         self.radius = radius  # type: float
         self.startAngle = startAngle  # type: float
         self.sweep = sweep  # type: float
@@ -138,8 +138,8 @@ class ArcT(object):
     def _UnPack(self, arc):
         if arc is None:
             return
-        if arc.Centre() is not None:
-            self.centre = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(arc.Centre())
+        if arc.Center() is not None:
+            self.center = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(arc.Center())
         self.radius = arc.Radius()
         self.startAngle = arc.StartAngle()
         self.sweep = arc.Sweep()
@@ -147,9 +147,9 @@ class ArcT(object):
     # ArcT
     def Pack(self, builder):
         ArcStart(builder)
-        if self.centre is not None:
-            centre = self.centre.Pack(builder)
-            ArcAddCentre(builder, centre)
+        if self.center is not None:
+            center = self.center.Pack(builder)
+            ArcAddCenter(builder, center)
         ArcAddRadius(builder, self.radius)
         ArcAddStartAngle(builder, self.startAngle)
         ArcAddSweep(builder, self.sweep)
