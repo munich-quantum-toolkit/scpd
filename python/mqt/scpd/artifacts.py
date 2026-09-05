@@ -19,6 +19,7 @@ core's job.
 from __future__ import annotations
 
 import struct
+from typing import TYPE_CHECKING
 
 import flatbuffers
 
@@ -27,14 +28,16 @@ from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
 from .flatbuffers.artifacts.StageOutput import StageOutput
-from .flatbuffers.artifacts.Wire import WireT
-from .flatbuffers.design.Bridge import BridgeT
-from .flatbuffers.design.Connection import ConnectionT
-from .flatbuffers.design.CpwCoupler import CpwCouplerT
-from .flatbuffers.design.Port import PortT
 from .flatbuffers.geometry.Arc import ArcT
 from .flatbuffers.geometry.Line import LineT
-from .flatbuffers.geometry.Segment import SegmentT
+
+if TYPE_CHECKING:
+    from .flatbuffers.artifacts.Wire import WireT
+    from .flatbuffers.design.Bridge import BridgeT
+    from .flatbuffers.design.Connection import ConnectionT
+    from .flatbuffers.design.CpwCoupler import CpwCouplerT
+    from .flatbuffers.design.Port import PortT
+    from .flatbuffers.geometry.Segment import SegmentT
 
 #: The file identifier that records the schema version, as ``artifacts.fbs`` declares it.
 IDENTIFIER = b"SCP1"
@@ -125,7 +128,7 @@ def _problems(artifact: ArtifactT) -> list[str]:
     return problems
 
 
-def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # noqa: ANN001
+def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # ruff: ignore[missing-type-function-argument]
     """Report a missing list, then the problems of each of its items with the item's index."""
     if items is None:
         problems.append(f"{name} is missing")

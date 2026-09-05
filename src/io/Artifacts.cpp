@@ -14,10 +14,11 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 
-#include <cstddef>
-#include <cstdint>
 #include <flatbuffers/flatbuffer_builder.h>
 #include <flatbuffers/verifier.h>
+
+#include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <memory>
 #include <span>
@@ -67,7 +68,8 @@ void validateWires(
     }
     for (std::size_t j = 0; j < segments.size(); ++j) {
       const std::string segment = prefix + "segment " + std::to_string(j) + " ";
-      if (segments[j] == nullptr || segments[j]->shape.type == SegmentShape::NONE) {
+      if (segments[j] == nullptr ||
+          segments[j]->shape.type == SegmentShape::NONE) {
         problems.push_back(segment + "has no shape");
         continue;
       }
@@ -133,8 +135,8 @@ std::vector<std::uint8_t> writeArtifact(const ArtifactT& artifact) {
     throw std::invalid_argument("artifact is not valid: " + join(problems));
   }
   ::flatbuffers::FlatBufferBuilder builder;
-  FinishArtifactBuffer(builder,
-                       flatbuffers::artifacts::Artifact::Pack(builder, &artifact));
+  FinishArtifactBuffer(
+      builder, flatbuffers::artifacts::Artifact::Pack(builder, &artifact));
   const auto* const begin = builder.GetBufferPointer();
   return {begin, std::next(begin, builder.GetSize())};
 }
