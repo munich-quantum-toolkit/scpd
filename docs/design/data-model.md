@@ -103,21 +103,32 @@ stage works in indices.
 The rule that matters: *a label is looked up, never parsed*. There is no code
 that reads digits out of `Coupler13_14`, and no code that tests a prefix.
 
+A connection is identified the same way: a `ConnectionRef` is a dense index into
+the connection list of the Assignment stage's output. Wires, couplers, failures
+and design-rule findings name their connection through it.
+
 ### Roles: unassigned in, assigned out
 
 Roles come in two enums, with a defined transition between them.
 
 ```fbs
-/// What a port is, before anything is decided. Set at load, from patterns.
-enum UnassignedRole : ubyte { Launcher, Resonator, Conventional }
+/// What a port is, before anything is decided. Set at load, from patterns,
+/// or by coupler insertion for a Coupler port.
+enum UnassignedRole : ubyte { Unset, Launcher, Resonator, Conventional, Coupler }
 
 /// What a port does in the solved design. Set by the Assignment stage.
 enum AssignedRole : ubyte {
+  Unset,
   FeedlineSource,     FeedlineTarget,
   ResonatorSource,    ResonatorTarget,
   ConventionalSource, ConventionalTarget,
 }
 ```
+
+Every enum starts with `Unset` at zero. A scalar field that is absent from a
+buffer reads as zero, so without the sentinel an incomplete connection would
+decode as a feedline. `Unset` is never valid after validation; it exists so that
+absence is visible.
 
 `UnassignedRole` is a property of a **port** and comes from the regular
 expressions in `config.toml`. `AssignedRole` is a property of a
@@ -137,9 +148,15 @@ routing request in one place and a `NodeKind` on a graph node in another.
 `ResonatorSource` is the case that shapes the schema. A resonator runs from the
 CPW coupler that taps the feedline to the qubit's readout port — so its source
 port **does not exist in the chip input**. The Assignment stage decides that a
-resonator is fed; the Final stage's coupler insertion materializes the port that
-carries the role. `Chip::ports` therefore grows during a run, and `PortRef` must
-stay valid across that growth: ports are appended, never reordered or removed.
+resonator is fed and records the connection without a source; the Final stage's
+coupler insertion creates the port that carries the role. The stage receives an
+immutable chip, so the created port lives in its output: each `CpwCoupler`
+carries the `Port` it creates, with the role `Coupler`, and a `ConnectionRef` to
+the connection it completes. After the Final stage, the port list is the input
+ports followed by the couplers' ports in coupler order, so the `PortRef` of a
+coupler's port is the number of input ports plus the coupler's index. That rule
+is what a reloaded run, a plot and a design-rule check use to rebuild the grown
+port list; ports are appended, never reordered or removed.
 
 ### Patterns, not prefixes
 
@@ -355,7 +372,9 @@ Python module.
   but a violation has to be machine-readable to be overlaid on a plot, diffed
   between runs and gated on in continuous integration. The prototype's clearance
   findings existed only as printed text, and its own viewer records that it
-  cannot use them for exactly that reason.
+  cannot use them for exactly that reason. The root of `drc.json` is
+  `DrcReports`, one report per checked stage, so the whole file conforms to the
+  schema.
 - The chip input is **not** parsed by FlatBuffers; it is the prototype's JSON,
   read through nlohmann into the schema-defined model. Only the header-only
   FlatBuffers runtime is linked, not the parser library.
@@ -387,3 +406,23 @@ that name the offending field:
 
 Per the project's minimalism rules, trust-boundary validation is one of the
 things that is never trimmed for brevity.
+
+Validation of the binary artifacts has two layers, because the FlatBuffers
+verifier answers only half of the question:
+
+- **Structural.** The verifier checks that a buffer is well formed and that
+  every field marked `required` is present. Every field the in-memory model
+  holds by value is marked `required`, so a buffer that omits a point, a
+  reference or the producer fails here rather than unpacking to a default.
+- **Semantic.** A scalar field is never required; an absent role reads as
+  `Unset` and an absent dimension as zero. The `validate` functions in
+  `MQT::ScpdDesign`, `MQT::ScpdIO` and `MQT::ScpdDrc` check what the verifier
+  cannot: no enum at `Unset`, every length positive, every coupler carrying a
+  port of role `Coupler`. `readArtifact` and `writeArtifact` in `MQT::ScpdIO`
+  run both layers, so an artifact never crosses the core's boundary unchecked.
+
+The generated Python code has neither layer: the builders do not enforce
+required fields, and the runtime has no verifier. `mqt.scpd.artifacts` is the
+checked path for Python: `write_artifact` and `read_artifact` reject a missing
+identifier and every missing required field, so an artifact that Python writes
+is one the core accepts. Checking the values is the core's job.

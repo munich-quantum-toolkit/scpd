@@ -531,14 +531,16 @@ struct FinalRoutingT : public ::flatbuffers::NativeTable {
   typedef FinalRouting TableType;
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT>> couplers{};
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::BridgeT>> bridges{};
-  std::vector<uint32_t> unresolved{};
+  std::vector<mqt::scpd::flatbuffers::design::ConnectionRef> unresolved{};
   FinalRoutingT() = default;
   FinalRoutingT(const FinalRoutingT &o);
   FinalRoutingT(FinalRoutingT&&) FLATBUFFERS_NOEXCEPT = default;
   FinalRoutingT &operator=(FinalRoutingT o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// Output of the Final stage.
+/// Output of the Final stage. The couplers carry the ports they create and
+/// the connections they complete, so a reloaded run can rebuild the grown
+/// port list and the completed connections without the stage.
 struct FinalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FinalRoutingT NativeTableType;
   typedef FinalRoutingBuilder Builder;
@@ -554,9 +556,9 @@ struct FinalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>> *bridges() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>> *>(VT_BRIDGES);
   }
-  /// Indices into Assignment.connections that did not route.
-  const ::flatbuffers::Vector<uint32_t> *unresolved() const {
-    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_UNRESOLVED);
+  /// The connections that did not route.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::ConnectionRef *> *unresolved() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::ConnectionRef *> *>(VT_UNRESOLVED);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -586,7 +588,7 @@ struct FinalRoutingBuilder {
   void add_bridges(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>>> bridges) {
     fbb_.AddOffset(FinalRouting::VT_BRIDGES, bridges);
   }
-  void add_unresolved(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> unresolved) {
+  void add_unresolved(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::ConnectionRef *>> unresolved) {
     fbb_.AddOffset(FinalRouting::VT_UNRESOLVED, unresolved);
   }
   explicit FinalRoutingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
@@ -607,7 +609,7 @@ inline ::flatbuffers::Offset<FinalRouting> CreateFinalRouting(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>>> couplers = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>>> bridges = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> unresolved = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::ConnectionRef *>> unresolved = 0) {
   FinalRoutingBuilder builder_(_fbb);
   builder_.add_unresolved(unresolved);
   builder_.add_bridges(bridges);
@@ -624,10 +626,10 @@ inline ::flatbuffers::Offset<FinalRouting> CreateFinalRoutingDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> *couplers = nullptr,
     const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>> *bridges = nullptr,
-    const std::vector<uint32_t> *unresolved = nullptr) {
+    const std::vector<mqt::scpd::flatbuffers::design::ConnectionRef> *unresolved = nullptr) {
   auto couplers__ = couplers ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>>(*couplers) : 0;
   auto bridges__ = bridges ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>>(*bridges) : 0;
-  auto unresolved__ = unresolved ? _fbb.CreateVector<uint32_t>(*unresolved) : 0;
+  auto unresolved__ = unresolved ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::ConnectionRef>(*unresolved) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateFinalRouting(
       _fbb,
       couplers__,
@@ -639,7 +641,7 @@ inline ::flatbuffers::Offset<FinalRouting> CreateFinalRoutingDirect(
 
 struct WireT : public ::flatbuffers::NativeTable {
   typedef Wire TableType;
-  uint32_t connection = 0;
+  mqt::scpd::flatbuffers::design::ConnectionRef connection{};
   std::unique_ptr<mqt::scpd::flatbuffers::geometry::PathT> path{};
   WireT() = default;
   WireT(const WireT &o);
@@ -656,9 +658,8 @@ struct Wire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_CONNECTION = 4,
     VT_PATH = 6
   };
-  /// Index into Assignment.connections.
-  uint32_t connection() const {
-    return GetField<uint32_t>(VT_CONNECTION, 0);
+  const mqt::scpd::flatbuffers::design::ConnectionRef *connection() const {
+    return GetStruct<const mqt::scpd::flatbuffers::design::ConnectionRef *>(VT_CONNECTION);
   }
   const mqt::scpd::flatbuffers::geometry::Path *path() const {
     return GetPointer<const mqt::scpd::flatbuffers::geometry::Path *>(VT_PATH);
@@ -666,7 +667,7 @@ struct Wire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint32_t>(verifier, VT_CONNECTION, 4) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::design::ConnectionRef>(verifier, VT_CONNECTION, 4) &&
            VerifyOffsetRequired(verifier, VT_PATH) &&
            verifier.VerifyTable(path()) &&
            verifier.EndTable();
@@ -680,8 +681,8 @@ struct WireBuilder {
   typedef Wire Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
-  void add_connection(uint32_t connection) {
-    fbb_.AddElement<uint32_t>(Wire::VT_CONNECTION, connection, 0);
+  void add_connection(const mqt::scpd::flatbuffers::design::ConnectionRef *connection) {
+    fbb_.AddStruct(Wire::VT_CONNECTION, connection);
   }
   void add_path(::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Path> path) {
     fbb_.AddOffset(Wire::VT_PATH, path);
@@ -693,6 +694,7 @@ struct WireBuilder {
   ::flatbuffers::Offset<Wire> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Wire>(end);
+    fbb_.Required(o, Wire::VT_CONNECTION);
     fbb_.Required(o, Wire::VT_PATH);
     return o;
   }
@@ -700,7 +702,7 @@ struct WireBuilder {
 
 inline ::flatbuffers::Offset<Wire> CreateWire(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    uint32_t connection = 0,
+    const mqt::scpd::flatbuffers::design::ConnectionRef *connection = nullptr,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Path> path = 0) {
   WireBuilder builder_(_fbb);
   builder_.add_path(path);
@@ -1158,7 +1160,7 @@ inline void FinalRouting::UnPackTo(FinalRoutingT *_o, const ::flatbuffers::resol
   (void)_resolver;
   { auto _e = couplers(); if (_e) { _o->couplers.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->couplers[_i]) { _e->Get(_i)->UnPackTo(_o->couplers[_i].get(), _resolver); } else { _o->couplers[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->couplers.resize(0); } }
   { auto _e = bridges(); if (_e) { _o->bridges.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->bridges[_i]) { _e->Get(_i)->UnPackTo(_o->bridges[_i].get(), _resolver); } else { _o->bridges[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::BridgeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->bridges.resize(0); } }
-  { auto _e = unresolved(); if (_e) { _o->unresolved.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->unresolved[_i] = _e->Get(_i); } } else { _o->unresolved.resize(0); } }
+  { auto _e = unresolved(); if (_e) { _o->unresolved.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->unresolved[_i] = *_e->Get(_i); } } else { _o->unresolved.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<FinalRouting> CreateFinalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const FinalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1171,7 +1173,7 @@ inline ::flatbuffers::Offset<FinalRouting> FinalRouting::Pack(::flatbuffers::Fla
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const FinalRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _couplers = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> (_o->couplers.size(), [](size_t i, _VectorArgs *__va) { return CreateCpwCoupler(*__va->__fbb, __va->__o->couplers[i].get(), __va->__rehasher); }, &_va );
   auto _bridges = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>> (_o->bridges.size(), [](size_t i, _VectorArgs *__va) { return CreateBridge(*__va->__fbb, __va->__o->bridges[i].get(), __va->__rehasher); }, &_va );
-  auto _unresolved = _fbb.CreateVector(_o->unresolved);
+  auto _unresolved = _fbb.CreateVectorOfStructs(_o->unresolved);
   return mqt::scpd::flatbuffers::artifacts::CreateFinalRouting(
       _fbb,
       _couplers,
@@ -1211,7 +1213,7 @@ inline WireT *Wire::UnPack(const ::flatbuffers::resolver_function_t *_resolver) 
 inline void Wire::UnPackTo(WireT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
-  { auto _e = connection(); _o->connection = _e; }
+  { auto _e = connection(); if (_e) _o->connection = *_e; }
   { auto _e = path(); if (_e) { if(_o->path) { _e->UnPackTo(_o->path.get(), _resolver); } else { _o->path = std::unique_ptr<mqt::scpd::flatbuffers::geometry::PathT>(_e->UnPack(_resolver)); } } else if (_o->path) { _o->path.reset(); } }
 }
 
@@ -1223,7 +1225,7 @@ inline ::flatbuffers::Offset<Wire> Wire::Pack(::flatbuffers::FlatBufferBuilder &
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const WireT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _connection = _o->connection;
+  auto _connection = &_o->connection;
   auto _path = _o->path ? CreatePath(_fbb, _o->path.get(), _rehasher) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateWire(
       _fbb,

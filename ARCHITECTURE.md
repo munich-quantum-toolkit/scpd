@@ -264,6 +264,7 @@ mqt-scpd/
   bindings/bindings.cpp                  minimal: run pipeline, read metrics
   python/mqt/scpd/
     flatbuffers/                         committed, via nox -s schemas
+    artifacts.py                         checked read and write of the .fb artifacts
     cli.py                               argparse subcommands
     solvers/gurobipy_backend.py          BYOK Gurobi via MPS
     export/klayout.py                    GDS and OASIS

@@ -7,7 +7,7 @@
 # Licensed under the MIT License
 
 if(TARGET MQT::ScpdDrc)
-  file(GLOB_RECURSE DRC_TEST_SOURCES *.cpp)
+  file(GLOB_RECURSE DRC_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(DRC_TEST_SOURCES)
     package_add_test(mqt-scpd-drc-test MQT::ScpdDrc ${DRC_TEST_SOURCES})
   endif()

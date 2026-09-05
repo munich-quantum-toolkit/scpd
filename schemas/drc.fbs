@@ -11,12 +11,16 @@
 // See the design-rule checking section of docs/design/pipeline.md and
 // decisions 0022 and 0024.
 
-include "geometry.fbs";
+include "design.fbs";
 
 namespace mqt.scpd.flatbuffers.drc;
 
+// Every enum starts with Unset, the value an absent field reads as, so an
+// incomplete finding fails validation instead of decoding as the first rule.
+
 /// The eight design rules, in the order of the rule table.
 enum DrcRule : ubyte {
+  Unset,
   WireClearance,
   FeedlineOrthogonality,
   WireLoop,
@@ -29,12 +33,14 @@ enum DrcRule : ubyte {
 
 /// Whether a finding affects the exit code.
 enum DrcSeverity : ubyte {
+  Unset,
   Active,
   Advisory,
 }
 
 /// The stage whose geometry view was checked.
 enum DrcStage : ubyte {
+  Unset,
   Final,
   Finalize,
 }
@@ -42,6 +48,8 @@ enum DrcStage : ubyte {
 /// Rule 1 reports a pair closer than short_threshold as a short, so that a
 /// genuine short never hides in a list of near-misses.
 enum ClearanceKind : ubyte {
+  /// The value for every rule other than WireClearance.
+  Unset,
   NearMiss,
   Short,
 }
@@ -50,8 +58,8 @@ enum ClearanceKind : ubyte {
 table DrcFinding {
   rule: DrcRule;
   severity: DrcSeverity;
-  /// Indices into Assignment.connections of the wires involved.
-  wires: [uint32] (required);
+  /// The wires involved: one for a loop or a length rule, two for a pair.
+  wires: [design.ConnectionRef] (required);
   /// Where the finding is, in layout units.
   location: geometry.Point (required, native_inline);
   /// The value the rule measured, in layout units.
@@ -71,4 +79,9 @@ table DrcReport {
   feedlines_skipped: uint32;
 }
 
-root_type DrcReport;
+/// The root of drc.json: one report per checked stage.
+table DrcReports {
+  reports: [DrcReport] (required);
+}
+
+root_type DrcReports;

@@ -52,28 +52,33 @@ std::unique_ptr<PortT> makePort(std::string label, const Point center,
 
 // The numeric values of the enums are the on-disk format. FlatBuffers rules
 // allow appending members, never renumbering.
+// Every enum starts with Unset at zero, the value an absent field reads as.
 TEST(DesignSchema, UnassignedRoleValuesAreTheWireFormat) {
-  EXPECT_EQ(static_cast<std::uint8_t>(UnassignedRole::Launcher), 0U);
-  EXPECT_EQ(static_cast<std::uint8_t>(UnassignedRole::Resonator), 1U);
-  EXPECT_EQ(static_cast<std::uint8_t>(UnassignedRole::Conventional), 2U);
+  EXPECT_EQ(static_cast<std::uint8_t>(UnassignedRole::Unset), 0U);
+  EXPECT_EQ(static_cast<std::uint8_t>(UnassignedRole::Launcher), 1U);
+  EXPECT_EQ(static_cast<std::uint8_t>(UnassignedRole::Resonator), 2U);
+  EXPECT_EQ(static_cast<std::uint8_t>(UnassignedRole::Conventional), 3U);
+  EXPECT_EQ(static_cast<std::uint8_t>(UnassignedRole::Coupler), 4U);
   EXPECT_STREQ(EnumNameUnassignedRole(UnassignedRole::Resonator), "Resonator");
 }
 
 TEST(DesignSchema, AssignedRoleValuesAreTheWireFormat) {
-  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::FeedlineSource), 0U);
-  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::FeedlineTarget), 1U);
-  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::ResonatorSource), 2U);
-  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::ResonatorTarget), 3U);
-  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::ConventionalSource), 4U);
-  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::ConventionalTarget), 5U);
+  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::Unset), 0U);
+  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::FeedlineSource), 1U);
+  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::FeedlineTarget), 2U);
+  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::ResonatorSource), 3U);
+  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::ResonatorTarget), 4U);
+  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::ConventionalSource), 5U);
+  EXPECT_EQ(static_cast<std::uint8_t>(AssignedRole::ConventionalTarget), 6U);
   EXPECT_STREQ(EnumNameAssignedRole(AssignedRole::ResonatorSource),
                "ResonatorSource");
 }
 
 TEST(DesignSchema, RotationIsEightWay) {
-  EXPECT_EQ(static_cast<std::uint8_t>(Rotation::R0), 0U);
-  EXPECT_EQ(static_cast<std::uint8_t>(Rotation::R315), 7U);
-  EXPECT_EQ(static_cast<std::uint8_t>(Rotation::MAX), 7U);
+  EXPECT_EQ(static_cast<std::uint8_t>(Rotation::Unset), 0U);
+  EXPECT_EQ(static_cast<std::uint8_t>(Rotation::R0), 1U);
+  EXPECT_EQ(static_cast<std::uint8_t>(Rotation::R315), 8U);
+  EXPECT_EQ(static_cast<std::uint8_t>(Rotation::MAX), 8U);
 }
 
 TEST(DesignSchema, ChipRoundTripsPortsWithRoles) {
@@ -162,7 +167,9 @@ TEST(DesignSchema, DesignRulesRoundTripInLayoutUnits) {
 
 TEST(DesignSchema, ComponentsCarryExactDimensions) {
   CpwCouplerT coupler;
-  coupler.port = PortRef(42);
+  coupler.connection = ConnectionRef(3);
+  coupler.port =
+      makePort("Coupler3.port0", Point(1200.0, 800.0), UnassignedRole::Coupler);
   coupler.center = Point(1200.0, 800.0);
   coupler.rotation = Rotation::R90;
   coupler.length = 200.0;
@@ -170,7 +177,9 @@ TEST(DesignSchema, ComponentsCarryExactDimensions) {
 
   const CpwCouplerT backCoupler = roundTrip(coupler);
   EXPECT_EQ(backCoupler, coupler);
-  EXPECT_EQ(backCoupler.port.index(), 42U);
+  EXPECT_EQ(backCoupler.connection.index(), 3U);
+  ASSERT_NE(backCoupler.port, nullptr);
+  EXPECT_EQ(backCoupler.port->role, UnassignedRole::Coupler);
   EXPECT_EQ(backCoupler.rotation, Rotation::R90);
 
   BridgeT bridge;

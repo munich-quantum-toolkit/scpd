@@ -6,11 +6,14 @@ import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
 from mqt.scpd.flatbuffers.design.Bridge import Bridge
+from mqt.scpd.flatbuffers.design.ConnectionRef import ConnectionRef
 from mqt.scpd.flatbuffers.design.CpwCoupler import CpwCoupler
 from typing import Optional
 np = import_numpy()
 
-# Output of the Final stage.
+# Output of the Final stage. The couplers carry the ports they create and
+# the connections they complete, so a reloaded run can rebuild the grown
+# port list and the completed connections without the stage.
 class FinalRouting(object):
     __slots__ = ['_tab']
 
@@ -81,21 +84,17 @@ class FinalRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         return o == 0
 
-    # Indices into Assignment.connections that did not route.
+    # The connections that did not route.
     # FinalRouting
-    def Unresolved(self, j: int):
+    def Unresolved(self, j: int) -> Optional[ConnectionRef]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
-            a = self._tab.Vector(o)
-            return self._tab.Get(flatbuffers.number_types.Uint32Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
-        return 0
-
-    # FinalRouting
-    def UnresolvedAsNumpy(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Uint32Flags, o)
-        return 0
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            obj = ConnectionRef()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
 
     # FinalRouting
     def UnresolvedLength(self) -> int:
@@ -158,6 +157,7 @@ def End(builder: flatbuffers.Builder) -> int:
     return FinalRoutingEnd(builder)
 
 import mqt.scpd.flatbuffers.design.Bridge
+import mqt.scpd.flatbuffers.design.ConnectionRef
 import mqt.scpd.flatbuffers.design.CpwCoupler
 try:
     from typing import List
@@ -175,7 +175,7 @@ class FinalRoutingT(object):
     ):
         self.couplers = couplers  # type: Optional[List[mqt.scpd.flatbuffers.design.CpwCoupler.CpwCouplerT]]
         self.bridges = bridges  # type: Optional[List[mqt.scpd.flatbuffers.design.Bridge.BridgeT]]
-        self.unresolved = unresolved  # type: Optional[List[int]]
+        self.unresolved = unresolved  # type: Optional[List[mqt.scpd.flatbuffers.design.ConnectionRef.ConnectionRefT]]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -215,12 +215,13 @@ class FinalRoutingT(object):
                     bridge_ = mqt.scpd.flatbuffers.design.Bridge.BridgeT.InitFromObj(finalRouting.Bridges(i))
                     self.bridges.append(bridge_)
         if not finalRouting.UnresolvedIsNone():
-            if np is None:
-                self.unresolved = []
-                for i in range(finalRouting.UnresolvedLength()):
-                    self.unresolved.append(finalRouting.Unresolved(i))
-            else:
-                self.unresolved = finalRouting.UnresolvedAsNumpy()
+            self.unresolved = []
+            for i in range(finalRouting.UnresolvedLength()):
+                if finalRouting.Unresolved(i) is None:
+                    self.unresolved.append(None)
+                else:
+                    connectionRef_ = mqt.scpd.flatbuffers.design.ConnectionRef.ConnectionRefT.InitFromObj(finalRouting.Unresolved(i))
+                    self.unresolved.append(connectionRef_)
 
     # FinalRoutingT
     def Pack(self, builder):
@@ -241,13 +242,10 @@ class FinalRoutingT(object):
                 builder.PrependUOffsetTRelative(bridgeslist[i])
             bridges = builder.EndVector()
         if self.unresolved is not None:
-            if np is not None and type(self.unresolved) is np.ndarray:
-                unresolved = builder.CreateNumpyVector(self.unresolved)
-            else:
-                FinalRoutingStartUnresolvedVector(builder, len(self.unresolved))
-                for i in reversed(range(len(self.unresolved))):
-                    builder.PrependUint32(self.unresolved[i])
-                unresolved = builder.EndVector()
+            FinalRoutingStartUnresolvedVector(builder, len(self.unresolved))
+            for i in reversed(range(len(self.unresolved))):
+                self.unresolved[i].Pack(builder)
+            unresolved = builder.EndVector()
         FinalRoutingStart(builder)
         if self.couplers is not None:
             FinalRoutingAddCouplers(builder, couplers)

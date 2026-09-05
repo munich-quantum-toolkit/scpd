@@ -5,6 +5,7 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
+from mqt.scpd.flatbuffers.design.ConnectionRef import ConnectionRef
 from mqt.scpd.flatbuffers.geometry.Path import Path
 from typing import Optional
 np = import_numpy()
@@ -32,13 +33,15 @@ class Wire(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # Index into Assignment.connections.
     # Wire
-    def Connection(self):
+    def Connection(self) -> Optional[ConnectionRef]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 0
+            x = o + self._tab.Pos
+            obj = ConnectionRef()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
 
     # Wire
     def Path(self) -> Optional[Path]:
@@ -56,10 +59,10 @@ def WireStart(builder: flatbuffers.Builder):
 def Start(builder: flatbuffers.Builder):
     WireStart(builder)
 
-def WireAddConnection(builder: flatbuffers.Builder, connection: int):
-    builder.PrependUint32Slot(0, connection, 0)
+def WireAddConnection(builder: flatbuffers.Builder, connection: Any):
+    builder.PrependStructSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(connection), 0)
 
-def AddConnection(builder: flatbuffers.Builder, connection: int):
+def AddConnection(builder: flatbuffers.Builder, connection: Any):
     WireAddConnection(builder, connection)
 
 def WireAddPath(builder: flatbuffers.Builder, path: int):
@@ -74,6 +77,7 @@ def WireEnd(builder: flatbuffers.Builder) -> int:
 def End(builder: flatbuffers.Builder) -> int:
     return WireEnd(builder)
 
+import mqt.scpd.flatbuffers.design.ConnectionRef
 import mqt.scpd.flatbuffers.geometry.Path
 try:
     from typing import Optional
@@ -85,10 +89,10 @@ class WireT(object):
     # WireT
     def __init__(
         self,
-        connection = 0,
+        connection = None,
         path = None,
     ):
-        self.connection = connection  # type: int
+        self.connection = connection  # type: Optional[mqt.scpd.flatbuffers.design.ConnectionRef.ConnectionRefT]
         self.path = path  # type: Optional[mqt.scpd.flatbuffers.geometry.Path.PathT]
 
     @classmethod
@@ -112,7 +116,8 @@ class WireT(object):
     def _UnPack(self, wire):
         if wire is None:
             return
-        self.connection = wire.Connection()
+        if wire.Connection() is not None:
+            self.connection = mqt.scpd.flatbuffers.design.ConnectionRef.ConnectionRefT.InitFromObj(wire.Connection())
         if wire.Path() is not None:
             self.path = mqt.scpd.flatbuffers.geometry.Path.PathT.InitFromObj(wire.Path())
 
@@ -121,7 +126,9 @@ class WireT(object):
         if self.path is not None:
             path = self.path.Pack(builder)
         WireStart(builder)
-        WireAddConnection(builder, self.connection)
+        if self.connection is not None:
+            connection = self.connection.Pack(builder)
+            WireAddConnection(builder, connection)
         if self.path is not None:
             WireAddPath(builder, path)
         wire = WireEnd(builder)

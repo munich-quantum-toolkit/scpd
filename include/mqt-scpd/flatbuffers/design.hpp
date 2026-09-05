@@ -22,6 +22,8 @@ namespace design {
 
 struct PortRef;
 
+struct ConnectionRef;
+
 struct Port;
 struct PortBuilder;
 struct PortT;
@@ -48,6 +50,8 @@ struct BridgeT;
 
 bool operator==(const PortRef &lhs, const PortRef &rhs);
 bool operator!=(const PortRef &lhs, const PortRef &rhs);
+bool operator==(const ConnectionRef &lhs, const ConnectionRef &rhs);
+bool operator!=(const ConnectionRef &lhs, const ConnectionRef &rhs);
 bool operator==(const PortT &lhs, const PortT &rhs);
 bool operator!=(const PortT &lhs, const PortT &rhs);
 bool operator==(const ChipT &lhs, const ChipT &rhs);
@@ -62,36 +66,43 @@ bool operator==(const BridgeT &lhs, const BridgeT &rhs);
 bool operator!=(const BridgeT &lhs, const BridgeT &rhs);
 
 /// What a port is, before anything is decided. Set at load, from the role
-/// patterns in the configuration.
+/// patterns in the configuration, or by coupler insertion for a Coupler port.
 enum class UnassignedRole : uint8_t {
-  Launcher = 0,
-  Resonator = 1,
-  Conventional = 2,
-  MIN = Launcher,
-  MAX = Conventional
+  Unset = 0,
+  Launcher = 1,
+  Resonator = 2,
+  Conventional = 3,
+  /// Created by the Final stage's coupler insertion. No pattern produces it.
+  Coupler = 4,
+  MIN = Unset,
+  MAX = Coupler
 };
 
-inline const UnassignedRole (&EnumValuesUnassignedRole())[3] {
+inline const UnassignedRole (&EnumValuesUnassignedRole())[5] {
   static const UnassignedRole values[] = {
+    UnassignedRole::Unset,
     UnassignedRole::Launcher,
     UnassignedRole::Resonator,
-    UnassignedRole::Conventional
+    UnassignedRole::Conventional,
+    UnassignedRole::Coupler
   };
   return values;
 }
 
 inline const char * const *EnumNamesUnassignedRole() {
-  static const char * const names[4] = {
+  static const char * const names[6] = {
+    "Unset",
     "Launcher",
     "Resonator",
     "Conventional",
+    "Coupler",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameUnassignedRole(UnassignedRole e) {
-  if (::flatbuffers::IsOutRange(e, UnassignedRole::Launcher, UnassignedRole::Conventional)) return "";
+  if (::flatbuffers::IsOutRange(e, UnassignedRole::Unset, UnassignedRole::Coupler)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesUnassignedRole()[index];
 }
@@ -99,18 +110,20 @@ inline const char *EnumNameUnassignedRole(UnassignedRole e) {
 /// What a port does in the solved design. Set by the Assignment stage, except
 /// ResonatorSource, whose port the Final stage creates with the coupler.
 enum class AssignedRole : uint8_t {
-  FeedlineSource = 0,
-  FeedlineTarget = 1,
-  ResonatorSource = 2,
-  ResonatorTarget = 3,
-  ConventionalSource = 4,
-  ConventionalTarget = 5,
-  MIN = FeedlineSource,
+  Unset = 0,
+  FeedlineSource = 1,
+  FeedlineTarget = 2,
+  ResonatorSource = 3,
+  ResonatorTarget = 4,
+  ConventionalSource = 5,
+  ConventionalTarget = 6,
+  MIN = Unset,
   MAX = ConventionalTarget
 };
 
-inline const AssignedRole (&EnumValuesAssignedRole())[6] {
+inline const AssignedRole (&EnumValuesAssignedRole())[7] {
   static const AssignedRole values[] = {
+    AssignedRole::Unset,
     AssignedRole::FeedlineSource,
     AssignedRole::FeedlineTarget,
     AssignedRole::ResonatorSource,
@@ -122,7 +135,8 @@ inline const AssignedRole (&EnumValuesAssignedRole())[6] {
 }
 
 inline const char * const *EnumNamesAssignedRole() {
-  static const char * const names[7] = {
+  static const char * const names[8] = {
+    "Unset",
     "FeedlineSource",
     "FeedlineTarget",
     "ResonatorSource",
@@ -135,27 +149,29 @@ inline const char * const *EnumNamesAssignedRole() {
 }
 
 inline const char *EnumNameAssignedRole(AssignedRole e) {
-  if (::flatbuffers::IsOutRange(e, AssignedRole::FeedlineSource, AssignedRole::ConventionalTarget)) return "";
+  if (::flatbuffers::IsOutRange(e, AssignedRole::Unset, AssignedRole::ConventionalTarget)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesAssignedRole()[index];
 }
 
 /// The eight-way rotation of a placed component.
 enum class Rotation : uint8_t {
-  R0 = 0,
-  R45 = 1,
-  R90 = 2,
-  R135 = 3,
-  R180 = 4,
-  R225 = 5,
-  R270 = 6,
-  R315 = 7,
-  MIN = R0,
+  Unset = 0,
+  R0 = 1,
+  R45 = 2,
+  R90 = 3,
+  R135 = 4,
+  R180 = 5,
+  R225 = 6,
+  R270 = 7,
+  R315 = 8,
+  MIN = Unset,
   MAX = R315
 };
 
-inline const Rotation (&EnumValuesRotation())[8] {
+inline const Rotation (&EnumValuesRotation())[9] {
   static const Rotation values[] = {
+    Rotation::Unset,
     Rotation::R0,
     Rotation::R45,
     Rotation::R90,
@@ -169,7 +185,8 @@ inline const Rotation (&EnumValuesRotation())[8] {
 }
 
 inline const char * const *EnumNamesRotation() {
-  static const char * const names[9] = {
+  static const char * const names[10] = {
+    "Unset",
     "R0",
     "R45",
     "R90",
@@ -184,7 +201,7 @@ inline const char * const *EnumNamesRotation() {
 }
 
 inline const char *EnumNameRotation(Rotation e) {
-  if (::flatbuffers::IsOutRange(e, Rotation::R0, Rotation::R315)) return "";
+  if (::flatbuffers::IsOutRange(e, Rotation::Unset, Rotation::R315)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesRotation()[index];
 }
@@ -224,12 +241,45 @@ struct PortRef::Traits {
   using type = PortRef;
 };
 
+/// A dense index into the connections of the Assignment stage's output.
+FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) ConnectionRef FLATBUFFERS_FINAL_CLASS {
+ private:
+  uint32_t index_;
+
+ public:
+  struct Traits;
+  ConnectionRef()
+      : index_(0) {
+  }
+  ConnectionRef(uint32_t _index)
+      : index_(::flatbuffers::EndianScalar(_index)) {
+  }
+  uint32_t index() const {
+    return ::flatbuffers::EndianScalar(index_);
+  }
+};
+FLATBUFFERS_STRUCT_END(ConnectionRef, 4);
+
+inline bool operator==(const ConnectionRef &lhs, const ConnectionRef &rhs) {
+  return
+      (lhs.index() == rhs.index());
+}
+
+inline bool operator!=(const ConnectionRef &lhs, const ConnectionRef &rhs) {
+    return !(lhs == rhs);
+}
+
+
+struct ConnectionRef::Traits {
+  using type = ConnectionRef;
+};
+
 struct PortT : public ::flatbuffers::NativeTable {
   typedef Port TableType;
   std::string label{};
   mqt::scpd::flatbuffers::geometry::Point center{};
   double orientation = 0.0;
-  mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Launcher;
+  mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Unset;
 };
 
 /// A port of the chip. The label is the only name the input has; no algorithm
@@ -306,7 +356,7 @@ inline ::flatbuffers::Offset<Port> CreatePort(
     ::flatbuffers::Offset<::flatbuffers::String> label = 0,
     const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
     double orientation = 0.0,
-    mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Launcher) {
+    mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Unset) {
   PortBuilder builder_(_fbb);
   builder_.add_orientation(orientation);
   builder_.add_center(center);
@@ -325,7 +375,7 @@ inline ::flatbuffers::Offset<Port> CreatePortDirect(
     const char *label = nullptr,
     const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
     double orientation = 0.0,
-    mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Launcher) {
+    mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Unset) {
   auto label__ = label ? _fbb.CreateString(label) : 0;
   return mqt::scpd::flatbuffers::design::CreatePort(
       _fbb,
@@ -434,8 +484,8 @@ struct ConnectionT : public ::flatbuffers::NativeTable {
   typedef Connection TableType;
   std::unique_ptr<mqt::scpd::flatbuffers::design::PortRef> source{};
   mqt::scpd::flatbuffers::design::PortRef target{};
-  mqt::scpd::flatbuffers::design::AssignedRole source_role = mqt::scpd::flatbuffers::design::AssignedRole::FeedlineSource;
-  mqt::scpd::flatbuffers::design::AssignedRole target_role = mqt::scpd::flatbuffers::design::AssignedRole::FeedlineSource;
+  mqt::scpd::flatbuffers::design::AssignedRole source_role = mqt::scpd::flatbuffers::design::AssignedRole::Unset;
+  mqt::scpd::flatbuffers::design::AssignedRole target_role = mqt::scpd::flatbuffers::design::AssignedRole::Unset;
   ConnectionT() = default;
   ConnectionT(const ConnectionT &o);
   ConnectionT(ConnectionT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -513,8 +563,8 @@ inline ::flatbuffers::Offset<Connection> CreateConnection(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const mqt::scpd::flatbuffers::design::PortRef *source = nullptr,
     const mqt::scpd::flatbuffers::design::PortRef *target = nullptr,
-    mqt::scpd::flatbuffers::design::AssignedRole source_role = mqt::scpd::flatbuffers::design::AssignedRole::FeedlineSource,
-    mqt::scpd::flatbuffers::design::AssignedRole target_role = mqt::scpd::flatbuffers::design::AssignedRole::FeedlineSource) {
+    mqt::scpd::flatbuffers::design::AssignedRole source_role = mqt::scpd::flatbuffers::design::AssignedRole::Unset,
+    mqt::scpd::flatbuffers::design::AssignedRole target_role = mqt::scpd::flatbuffers::design::AssignedRole::Unset) {
   ConnectionBuilder builder_(_fbb);
   builder_.add_target(target);
   builder_.add_source(source);
@@ -670,11 +720,16 @@ struct DesignRules::Traits {
 
 struct CpwCouplerT : public ::flatbuffers::NativeTable {
   typedef CpwCoupler TableType;
-  mqt::scpd::flatbuffers::design::PortRef port{};
+  mqt::scpd::flatbuffers::design::ConnectionRef connection{};
+  std::unique_ptr<mqt::scpd::flatbuffers::design::PortT> port{};
   mqt::scpd::flatbuffers::geometry::Point center{};
-  mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::R0;
+  mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::Unset;
   double length = 0.0;
   double height = 0.0;
+  CpwCouplerT() = default;
+  CpwCouplerT(const CpwCouplerT &o);
+  CpwCouplerT(CpwCouplerT&&) FLATBUFFERS_NOEXCEPT = default;
+  CpwCouplerT &operator=(CpwCouplerT o) FLATBUFFERS_NOEXCEPT;
 };
 
 /// A coplanar-waveguide coupler that taps a feedline. Instantiated by the
@@ -684,15 +739,23 @@ struct CpwCoupler FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CpwCouplerBuilder Builder;
   struct Traits;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_PORT = 4,
-    VT_CENTER = 6,
-    VT_ROTATION = 8,
-    VT_LENGTH = 10,
-    VT_HEIGHT = 12
+    VT_CONNECTION = 4,
+    VT_PORT = 6,
+    VT_CENTER = 8,
+    VT_ROTATION = 10,
+    VT_LENGTH = 12,
+    VT_HEIGHT = 14
   };
-  /// The ResonatorSource port the coupler carries.
-  const mqt::scpd::flatbuffers::design::PortRef *port() const {
-    return GetStruct<const mqt::scpd::flatbuffers::design::PortRef *>(VT_PORT);
+  /// The connection the coupler completes. The port below is its
+  /// ResonatorSource endpoint, which the Assignment stage left absent.
+  const mqt::scpd::flatbuffers::design::ConnectionRef *connection() const {
+    return GetStruct<const mqt::scpd::flatbuffers::design::ConnectionRef *>(VT_CONNECTION);
+  }
+  /// The port the coupler creates. After the Final stage, Chip.ports is the
+  /// input ports followed by the couplers' ports in coupler order, so this
+  /// port's PortRef is the number of input ports plus the coupler's index.
+  const mqt::scpd::flatbuffers::design::Port *port() const {
+    return GetPointer<const mqt::scpd::flatbuffers::design::Port *>(VT_PORT);
   }
   const mqt::scpd::flatbuffers::geometry::Point *center() const {
     return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTER);
@@ -709,7 +772,9 @@ struct CpwCoupler FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyFieldRequired<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_PORT, 4) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::design::ConnectionRef>(verifier, VT_CONNECTION, 4) &&
+           VerifyOffsetRequired(verifier, VT_PORT) &&
+           verifier.VerifyTable(port()) &&
            VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTER, 8) &&
            VerifyField<uint8_t>(verifier, VT_ROTATION, 1) &&
            VerifyField<double>(verifier, VT_LENGTH, 8) &&
@@ -725,8 +790,11 @@ struct CpwCouplerBuilder {
   typedef CpwCoupler Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
-  void add_port(const mqt::scpd::flatbuffers::design::PortRef *port) {
-    fbb_.AddStruct(CpwCoupler::VT_PORT, port);
+  void add_connection(const mqt::scpd::flatbuffers::design::ConnectionRef *connection) {
+    fbb_.AddStruct(CpwCoupler::VT_CONNECTION, connection);
+  }
+  void add_port(::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Port> port) {
+    fbb_.AddOffset(CpwCoupler::VT_PORT, port);
   }
   void add_center(const mqt::scpd::flatbuffers::geometry::Point *center) {
     fbb_.AddStruct(CpwCoupler::VT_CENTER, center);
@@ -747,6 +815,7 @@ struct CpwCouplerBuilder {
   ::flatbuffers::Offset<CpwCoupler> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<CpwCoupler>(end);
+    fbb_.Required(o, CpwCoupler::VT_CONNECTION);
     fbb_.Required(o, CpwCoupler::VT_PORT);
     fbb_.Required(o, CpwCoupler::VT_CENTER);
     return o;
@@ -755,9 +824,10 @@ struct CpwCouplerBuilder {
 
 inline ::flatbuffers::Offset<CpwCoupler> CreateCpwCoupler(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    const mqt::scpd::flatbuffers::design::PortRef *port = nullptr,
+    const mqt::scpd::flatbuffers::design::ConnectionRef *connection = nullptr,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Port> port = 0,
     const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
-    mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::R0,
+    mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::Unset,
     double length = 0.0,
     double height = 0.0) {
   CpwCouplerBuilder builder_(_fbb);
@@ -765,6 +835,7 @@ inline ::flatbuffers::Offset<CpwCoupler> CreateCpwCoupler(
   builder_.add_length(length);
   builder_.add_center(center);
   builder_.add_port(port);
+  builder_.add_connection(connection);
   builder_.add_rotation(rotation);
   return builder_.Finish();
 }
@@ -779,7 +850,7 @@ struct CpwCoupler::Traits {
 struct BridgeT : public ::flatbuffers::NativeTable {
   typedef Bridge TableType;
   mqt::scpd::flatbuffers::geometry::Point center{};
-  mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::R0;
+  mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::Unset;
   double width = 0.0;
   double height = 0.0;
 };
@@ -853,7 +924,7 @@ struct BridgeBuilder {
 inline ::flatbuffers::Offset<Bridge> CreateBridge(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
-    mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::R0,
+    mqt::scpd::flatbuffers::design::Rotation rotation = mqt::scpd::flatbuffers::design::Rotation::Unset,
     double width = 0.0,
     double height = 0.0) {
   BridgeBuilder builder_(_fbb);
@@ -1106,7 +1177,8 @@ inline ::flatbuffers::Offset<DesignRules> DesignRules::Pack(::flatbuffers::FlatB
 
 inline bool operator==(const CpwCouplerT &lhs, const CpwCouplerT &rhs) {
   return
-      (lhs.port == rhs.port) &&
+      (lhs.connection == rhs.connection) &&
+      ((lhs.port == rhs.port) || (lhs.port && rhs.port && *lhs.port == *rhs.port)) &&
       (lhs.center == rhs.center) &&
       (lhs.rotation == rhs.rotation) &&
       (lhs.length == rhs.length) &&
@@ -1118,6 +1190,25 @@ inline bool operator!=(const CpwCouplerT &lhs, const CpwCouplerT &rhs) {
 }
 
 
+inline CpwCouplerT::CpwCouplerT(const CpwCouplerT &o)
+      : connection(o.connection),
+        port((o.port) ? new mqt::scpd::flatbuffers::design::PortT(*o.port) : nullptr),
+        center(o.center),
+        rotation(o.rotation),
+        length(o.length),
+        height(o.height) {
+}
+
+inline CpwCouplerT &CpwCouplerT::operator=(CpwCouplerT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(connection, o.connection);
+  std::swap(port, o.port);
+  std::swap(center, o.center);
+  std::swap(rotation, o.rotation);
+  std::swap(length, o.length);
+  std::swap(height, o.height);
+  return *this;
+}
+
 inline CpwCouplerT *CpwCoupler::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::make_unique<CpwCouplerT>();
   UnPackTo(_o.get(), _resolver);
@@ -1127,7 +1218,8 @@ inline CpwCouplerT *CpwCoupler::UnPack(const ::flatbuffers::resolver_function_t 
 inline void CpwCoupler::UnPackTo(CpwCouplerT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
-  { auto _e = port(); if (_e) _o->port = *_e; }
+  { auto _e = connection(); if (_e) _o->connection = *_e; }
+  { auto _e = port(); if (_e) { if(_o->port) { _e->UnPackTo(_o->port.get(), _resolver); } else { _o->port = std::unique_ptr<mqt::scpd::flatbuffers::design::PortT>(_e->UnPack(_resolver)); } } else if (_o->port) { _o->port.reset(); } }
   { auto _e = center(); if (_e) _o->center = *_e; }
   { auto _e = rotation(); _o->rotation = _e; }
   { auto _e = length(); _o->length = _e; }
@@ -1142,13 +1234,15 @@ inline ::flatbuffers::Offset<CpwCoupler> CpwCoupler::Pack(::flatbuffers::FlatBuf
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CpwCouplerT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _port = &_o->port;
+  auto _connection = &_o->connection;
+  auto _port = _o->port ? CreatePort(_fbb, _o->port.get(), _rehasher) : 0;
   auto _center = &_o->center;
   auto _rotation = _o->rotation;
   auto _length = _o->length;
   auto _height = _o->height;
   return mqt::scpd::flatbuffers::design::CreateCpwCoupler(
       _fbb,
+      _connection,
       _port,
       _center,
       _rotation,

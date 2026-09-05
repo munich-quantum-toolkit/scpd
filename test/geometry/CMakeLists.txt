@@ -7,7 +7,7 @@
 # Licensed under the MIT License
 
 if(TARGET MQT::ScpdGeometry)
-  file(GLOB_RECURSE GEOMETRY_TEST_SOURCES *.cpp)
+  file(GLOB_RECURSE GEOMETRY_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(GEOMETRY_TEST_SOURCES)
     package_add_test(mqt-scpd-geometry-test MQT::ScpdGeometry ${GEOMETRY_TEST_SOURCES})
   endif()

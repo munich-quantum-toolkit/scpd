@@ -3,8 +3,11 @@
 # namespace: design
 
 # What a port is, before anything is decided. Set at load, from the role
-# patterns in the configuration.
+# patterns in the configuration, or by coupler insertion for a Coupler port.
 class UnassignedRole(object):
-    Launcher = 0
-    Resonator = 1
-    Conventional = 2
+    Unset = 0
+    Launcher = 1
+    Resonator = 2
+    Conventional = 3
+    # Created by the Final stage's coupler insertion. No pattern produces it.
+    Coupler = 4

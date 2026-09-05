@@ -14,17 +14,25 @@ include "geometry.fbs";
 
 namespace mqt.scpd.flatbuffers.design;
 
+// Every enum starts with Unset. It is the value an absent field reads as, so
+// a buffer that omits a role or a rotation is recognisable as incomplete and
+// fails validation instead of decoding as the first real member.
+
 /// What a port is, before anything is decided. Set at load, from the role
-/// patterns in the configuration.
+/// patterns in the configuration, or by coupler insertion for a Coupler port.
 enum UnassignedRole : ubyte {
+  Unset,
   Launcher,
   Resonator,
   Conventional,
+  /// Created by the Final stage's coupler insertion. No pattern produces it.
+  Coupler,
 }
 
 /// What a port does in the solved design. Set by the Assignment stage, except
 /// ResonatorSource, whose port the Final stage creates with the coupler.
 enum AssignedRole : ubyte {
+  Unset,
   FeedlineSource,
   FeedlineTarget,
   ResonatorSource,
@@ -35,6 +43,7 @@ enum AssignedRole : ubyte {
 
 /// The eight-way rotation of a placed component.
 enum Rotation : ubyte {
+  Unset,
   R0,
   R45,
   R90,
@@ -49,6 +58,11 @@ enum Rotation : ubyte {
 /// load. Ports are appended and never reordered, so a PortRef stays valid for
 /// the life of a run.
 struct PortRef {
+  index: uint32;
+}
+
+/// A dense index into the connections of the Assignment stage's output.
+struct ConnectionRef {
   index: uint32;
 }
 
@@ -94,8 +108,13 @@ table DesignRules {
 /// A coplanar-waveguide coupler that taps a feedline. Instantiated by the
 /// Final stage at exact physical dimensions in layout units.
 table CpwCoupler {
-  /// The ResonatorSource port the coupler carries.
-  port: PortRef (required, native_inline);
+  /// The connection the coupler completes. The port below is its
+  /// ResonatorSource endpoint, which the Assignment stage left absent.
+  connection: ConnectionRef (required, native_inline);
+  /// The port the coupler creates. After the Final stage, Chip.ports is the
+  /// input ports followed by the couplers' ports in coupler order, so this
+  /// port's PortRef is the number of input ports plus the coupler's index.
+  port: Port (required);
   center: geometry.Point (required, native_inline);
   rotation: Rotation;
   length: double;

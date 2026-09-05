@@ -23,7 +23,8 @@
 # modules is documented in ARCHITECTURE.md.
 #
 # A module without sources becomes an INTERFACE library. The first source file in `src/<module>/`
-# turns it into a regular library with an export header; nothing else changes for its users.
+# turns it into a regular library with an export header; nothing else changes for its users. Both
+# globs use CONFIGURE_DEPENDS, so a new file triggers a reconfiguration of an existing build tree.
 
 function(kebab_to_camel output input)
   string(REPLACE "-" ";" parts "${input}")
@@ -53,8 +54,9 @@ function(add_mqt_scpd_library module)
   set(alias MQT::Scpd${ARG_ALIAS_NAME})
 
   # collect headers and source files
-  file(GLOB_RECURSE headers ${MQT_SCPD_INCLUDE_BUILD_DIR}/mqt-scpd/${module}/*.hpp)
-  file(GLOB_RECURSE sources ${PROJECT_SOURCE_DIR}/src/${module}/*.cpp)
+  file(GLOB_RECURSE headers CONFIGURE_DEPENDS
+       ${MQT_SCPD_INCLUDE_BUILD_DIR}/mqt-scpd/${module}/*.hpp)
+  file(GLOB_RECURSE sources CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/src/${module}/*.cpp)
   foreach(generated ${ARG_GENERATED_HEADERS})
     set(path ${MQT_SCPD_INCLUDE_BUILD_DIR}/mqt-scpd/flatbuffers/${generated})
     if(NOT EXISTS ${path})

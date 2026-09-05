@@ -7,7 +7,7 @@
 # Licensed under the MIT License
 
 if(TARGET MQT::ScpdDesign)
-  file(GLOB_RECURSE DESIGN_TEST_SOURCES *.cpp)
+  file(GLOB_RECURSE DESIGN_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(DESIGN_TEST_SOURCES)
     package_add_test(mqt-scpd-design-test MQT::ScpdDesign ${DESIGN_TEST_SOURCES})
   endif()

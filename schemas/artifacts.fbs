@@ -32,18 +32,19 @@ table GlobalRouting {}
 /// Output of the Detail stage.
 table DetailRouting {}
 
-/// Output of the Final stage.
+/// Output of the Final stage. The couplers carry the ports they create and
+/// the connections they complete, so a reloaded run can rebuild the grown
+/// port list and the completed connections without the stage.
 table FinalRouting {
   couplers: [design.CpwCoupler] (required);
   bridges: [design.Bridge] (required);
-  /// Indices into Assignment.connections that did not route.
-  unresolved: [uint32] (required);
+  /// The connections that did not route.
+  unresolved: [design.ConnectionRef] (required);
 }
 
 /// One connection's wire in its exact analytic form.
 table Wire {
-  /// Index into Assignment.connections.
-  connection: uint32;
+  connection: design.ConnectionRef (required, native_inline);
   path: geometry.Path (required);
 }
 

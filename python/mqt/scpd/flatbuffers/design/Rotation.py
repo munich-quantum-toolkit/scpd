@@ -4,11 +4,12 @@
 
 # The eight-way rotation of a placed component.
 class Rotation(object):
-    R0 = 0
-    R45 = 1
-    R90 = 2
-    R135 = 3
-    R180 = 4
-    R225 = 5
-    R270 = 6
-    R315 = 7
+    Unset = 0
+    R0 = 1
+    R45 = 2
+    R90 = 3
+    R135 = 4
+    R180 = 5
+    R225 = 6
+    R270 = 7
+    R315 = 8

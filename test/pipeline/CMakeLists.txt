@@ -7,7 +7,7 @@
 # Licensed under the MIT License
 
 if(TARGET MQT::ScpdPipeline)
-  file(GLOB_RECURSE PIPELINE_TEST_SOURCES *.cpp)
+  file(GLOB_RECURSE PIPELINE_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(PIPELINE_TEST_SOURCES)
     package_add_test(mqt-scpd-pipeline-test MQT::ScpdPipeline ${PIPELINE_TEST_SOURCES})
   endif()

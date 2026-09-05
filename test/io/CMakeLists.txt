@@ -7,7 +7,7 @@
 # Licensed under the MIT License
 
 if(TARGET MQT::ScpdIO)
-  file(GLOB_RECURSE IO_TEST_SOURCES *.cpp)
+  file(GLOB_RECURSE IO_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(IO_TEST_SOURCES)
     package_add_test(mqt-scpd-io-test MQT::ScpdIO ${IO_TEST_SOURCES})
   endif()

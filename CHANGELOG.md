@@ -14,6 +14,9 @@ releases may include breaking changes.
 
 - 👷 Fail CI when the committed schema-generated code is stale ([#98])
   ([**@FeldmeierMichael**])
+- ✨ Add semantic validation of the data model in the core and a checked
+  artifact read and write layer in C++ and Python ([#98])
+  ([**@FeldmeierMichael**])
 - ✨ Add the FlatBuffers schemas of the data model, the committed C++ and Python
   code generated from them, and the `nox -s schemas` session ([#98])
   ([**@FeldmeierMichael**])
@@ -24,6 +27,8 @@ releases may include breaking changes.
 
 ### Changed
 
+- 💥 Remove the flat `MQT::SCPD` target in favor of the per-module targets
+  `MQT::Scpd<Module>` ([#98]) ([**@FeldmeierMichael**])
 - 💥 Drop support for x86 macOS and stop publishing the respective wheels
   ([#89]) ([**@denialhaag**])
 - ⬆️ Raise the macOS deployment target to 13.3 to enable `std::format` in libc++

@@ -7,7 +7,7 @@
 # Licensed under the MIT License
 
 if(TARGET MQT::ScpdGrid)
-  file(GLOB_RECURSE GRID_TEST_SOURCES *.cpp)
+  file(GLOB_RECURSE GRID_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(GRID_TEST_SOURCES)
     package_add_test(mqt-scpd-grid-test MQT::ScpdGrid ${GRID_TEST_SOURCES})
   endif()

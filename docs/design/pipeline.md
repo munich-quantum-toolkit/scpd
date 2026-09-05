@@ -276,8 +276,9 @@ field comparison. The rule ports over as strictly less code than it is today.
 
 ### Behavior
 
-- Both reports go to `drc.json`, tagged by stage, and are summarized in the run
-  table alongside failures and angle cost.
+- Both reports go to `drc.json`, behind the `DrcReports` root that holds one
+  report per checked stage, and are summarized in the run table alongside
+  failures and angle cost.
 - **A violation does not abort the run.** The pipeline finishes, so the
   artifacts and the SVG that explain the violation exist; the CLI then exits
   nonzero. Aborting at the point of detection would destroy the evidence needed

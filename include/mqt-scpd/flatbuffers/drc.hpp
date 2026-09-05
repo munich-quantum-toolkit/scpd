@@ -13,7 +13,7 @@ static_assert(FLATBUFFERS_VERSION_MAJOR == 25 &&
               FLATBUFFERS_VERSION_REVISION == 19,
              "Non-compatible flatbuffers version included");
 
-#include "mqt-scpd/flatbuffers/geometry.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 
 namespace mqt {
 namespace scpd {
@@ -28,27 +28,35 @@ struct DrcReport;
 struct DrcReportBuilder;
 struct DrcReportT;
 
+struct DrcReports;
+struct DrcReportsBuilder;
+struct DrcReportsT;
+
 bool operator==(const DrcFindingT &lhs, const DrcFindingT &rhs);
 bool operator!=(const DrcFindingT &lhs, const DrcFindingT &rhs);
 bool operator==(const DrcReportT &lhs, const DrcReportT &rhs);
 bool operator!=(const DrcReportT &lhs, const DrcReportT &rhs);
+bool operator==(const DrcReportsT &lhs, const DrcReportsT &rhs);
+bool operator!=(const DrcReportsT &lhs, const DrcReportsT &rhs);
 
 /// The eight design rules, in the order of the rule table.
 enum class DrcRule : uint8_t {
-  WireClearance = 0,
-  FeedlineOrthogonality = 1,
-  WireLoop = 2,
-  ObstacleClearance = 3,
-  ComponentOverlap = 4,
-  MinStraightLength = 5,
-  ResonatorLength = 6,
-  MinBendRadius = 7,
-  MIN = WireClearance,
+  Unset = 0,
+  WireClearance = 1,
+  FeedlineOrthogonality = 2,
+  WireLoop = 3,
+  ObstacleClearance = 4,
+  ComponentOverlap = 5,
+  MinStraightLength = 6,
+  ResonatorLength = 7,
+  MinBendRadius = 8,
+  MIN = Unset,
   MAX = MinBendRadius
 };
 
-inline const DrcRule (&EnumValuesDrcRule())[8] {
+inline const DrcRule (&EnumValuesDrcRule())[9] {
   static const DrcRule values[] = {
+    DrcRule::Unset,
     DrcRule::WireClearance,
     DrcRule::FeedlineOrthogonality,
     DrcRule::WireLoop,
@@ -62,7 +70,8 @@ inline const DrcRule (&EnumValuesDrcRule())[8] {
 }
 
 inline const char * const *EnumNamesDrcRule() {
-  static const char * const names[9] = {
+  static const char * const names[10] = {
+    "Unset",
     "WireClearance",
     "FeedlineOrthogonality",
     "WireLoop",
@@ -77,21 +86,23 @@ inline const char * const *EnumNamesDrcRule() {
 }
 
 inline const char *EnumNameDrcRule(DrcRule e) {
-  if (::flatbuffers::IsOutRange(e, DrcRule::WireClearance, DrcRule::MinBendRadius)) return "";
+  if (::flatbuffers::IsOutRange(e, DrcRule::Unset, DrcRule::MinBendRadius)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesDrcRule()[index];
 }
 
 /// Whether a finding affects the exit code.
 enum class DrcSeverity : uint8_t {
-  Active = 0,
-  Advisory = 1,
-  MIN = Active,
+  Unset = 0,
+  Active = 1,
+  Advisory = 2,
+  MIN = Unset,
   MAX = Advisory
 };
 
-inline const DrcSeverity (&EnumValuesDrcSeverity())[2] {
+inline const DrcSeverity (&EnumValuesDrcSeverity())[3] {
   static const DrcSeverity values[] = {
+    DrcSeverity::Unset,
     DrcSeverity::Active,
     DrcSeverity::Advisory
   };
@@ -99,7 +110,8 @@ inline const DrcSeverity (&EnumValuesDrcSeverity())[2] {
 }
 
 inline const char * const *EnumNamesDrcSeverity() {
-  static const char * const names[3] = {
+  static const char * const names[4] = {
+    "Unset",
     "Active",
     "Advisory",
     nullptr
@@ -108,21 +120,23 @@ inline const char * const *EnumNamesDrcSeverity() {
 }
 
 inline const char *EnumNameDrcSeverity(DrcSeverity e) {
-  if (::flatbuffers::IsOutRange(e, DrcSeverity::Active, DrcSeverity::Advisory)) return "";
+  if (::flatbuffers::IsOutRange(e, DrcSeverity::Unset, DrcSeverity::Advisory)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesDrcSeverity()[index];
 }
 
 /// The stage whose geometry view was checked.
 enum class DrcStage : uint8_t {
-  Final = 0,
-  Finalize = 1,
-  MIN = Final,
+  Unset = 0,
+  Final = 1,
+  Finalize = 2,
+  MIN = Unset,
   MAX = Finalize
 };
 
-inline const DrcStage (&EnumValuesDrcStage())[2] {
+inline const DrcStage (&EnumValuesDrcStage())[3] {
   static const DrcStage values[] = {
+    DrcStage::Unset,
     DrcStage::Final,
     DrcStage::Finalize
   };
@@ -130,7 +144,8 @@ inline const DrcStage (&EnumValuesDrcStage())[2] {
 }
 
 inline const char * const *EnumNamesDrcStage() {
-  static const char * const names[3] = {
+  static const char * const names[4] = {
+    "Unset",
     "Final",
     "Finalize",
     nullptr
@@ -139,7 +154,7 @@ inline const char * const *EnumNamesDrcStage() {
 }
 
 inline const char *EnumNameDrcStage(DrcStage e) {
-  if (::flatbuffers::IsOutRange(e, DrcStage::Final, DrcStage::Finalize)) return "";
+  if (::flatbuffers::IsOutRange(e, DrcStage::Unset, DrcStage::Finalize)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesDrcStage()[index];
 }
@@ -147,14 +162,17 @@ inline const char *EnumNameDrcStage(DrcStage e) {
 /// Rule 1 reports a pair closer than short_threshold as a short, so that a
 /// genuine short never hides in a list of near-misses.
 enum class ClearanceKind : uint8_t {
-  NearMiss = 0,
-  Short = 1,
-  MIN = NearMiss,
+  /// The value for every rule other than WireClearance.
+  Unset = 0,
+  NearMiss = 1,
+  Short = 2,
+  MIN = Unset,
   MAX = Short
 };
 
-inline const ClearanceKind (&EnumValuesClearanceKind())[2] {
+inline const ClearanceKind (&EnumValuesClearanceKind())[3] {
   static const ClearanceKind values[] = {
+    ClearanceKind::Unset,
     ClearanceKind::NearMiss,
     ClearanceKind::Short
   };
@@ -162,7 +180,8 @@ inline const ClearanceKind (&EnumValuesClearanceKind())[2] {
 }
 
 inline const char * const *EnumNamesClearanceKind() {
-  static const char * const names[3] = {
+  static const char * const names[4] = {
+    "Unset",
     "NearMiss",
     "Short",
     nullptr
@@ -171,20 +190,20 @@ inline const char * const *EnumNamesClearanceKind() {
 }
 
 inline const char *EnumNameClearanceKind(ClearanceKind e) {
-  if (::flatbuffers::IsOutRange(e, ClearanceKind::NearMiss, ClearanceKind::Short)) return "";
+  if (::flatbuffers::IsOutRange(e, ClearanceKind::Unset, ClearanceKind::Short)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesClearanceKind()[index];
 }
 
 struct DrcFindingT : public ::flatbuffers::NativeTable {
   typedef DrcFinding TableType;
-  mqt::scpd::flatbuffers::drc::DrcRule rule = mqt::scpd::flatbuffers::drc::DrcRule::WireClearance;
-  mqt::scpd::flatbuffers::drc::DrcSeverity severity = mqt::scpd::flatbuffers::drc::DrcSeverity::Active;
-  std::vector<uint32_t> wires{};
+  mqt::scpd::flatbuffers::drc::DrcRule rule = mqt::scpd::flatbuffers::drc::DrcRule::Unset;
+  mqt::scpd::flatbuffers::drc::DrcSeverity severity = mqt::scpd::flatbuffers::drc::DrcSeverity::Unset;
+  std::vector<mqt::scpd::flatbuffers::design::ConnectionRef> wires{};
   mqt::scpd::flatbuffers::geometry::Point location{};
   double measured = 0.0;
   double limit = 0.0;
-  mqt::scpd::flatbuffers::drc::ClearanceKind clearance_kind = mqt::scpd::flatbuffers::drc::ClearanceKind::NearMiss;
+  mqt::scpd::flatbuffers::drc::ClearanceKind clearance_kind = mqt::scpd::flatbuffers::drc::ClearanceKind::Unset;
   std::string message{};
 };
 
@@ -209,9 +228,9 @@ struct DrcFinding FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   mqt::scpd::flatbuffers::drc::DrcSeverity severity() const {
     return static_cast<mqt::scpd::flatbuffers::drc::DrcSeverity>(GetField<uint8_t>(VT_SEVERITY, 0));
   }
-  /// Indices into Assignment.connections of the wires involved.
-  const ::flatbuffers::Vector<uint32_t> *wires() const {
-    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_WIRES);
+  /// The wires involved: one for a loop or a length rule, two for a pair.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::ConnectionRef *> *wires() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::ConnectionRef *> *>(VT_WIRES);
   }
   /// Where the finding is, in layout units.
   const mqt::scpd::flatbuffers::geometry::Point *location() const {
@@ -262,7 +281,7 @@ struct DrcFindingBuilder {
   void add_severity(mqt::scpd::flatbuffers::drc::DrcSeverity severity) {
     fbb_.AddElement<uint8_t>(DrcFinding::VT_SEVERITY, static_cast<uint8_t>(severity), 0);
   }
-  void add_wires(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> wires) {
+  void add_wires(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::ConnectionRef *>> wires) {
     fbb_.AddOffset(DrcFinding::VT_WIRES, wires);
   }
   void add_location(const mqt::scpd::flatbuffers::geometry::Point *location) {
@@ -295,13 +314,13 @@ struct DrcFindingBuilder {
 
 inline ::flatbuffers::Offset<DrcFinding> CreateDrcFinding(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    mqt::scpd::flatbuffers::drc::DrcRule rule = mqt::scpd::flatbuffers::drc::DrcRule::WireClearance,
-    mqt::scpd::flatbuffers::drc::DrcSeverity severity = mqt::scpd::flatbuffers::drc::DrcSeverity::Active,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> wires = 0,
+    mqt::scpd::flatbuffers::drc::DrcRule rule = mqt::scpd::flatbuffers::drc::DrcRule::Unset,
+    mqt::scpd::flatbuffers::drc::DrcSeverity severity = mqt::scpd::flatbuffers::drc::DrcSeverity::Unset,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::ConnectionRef *>> wires = 0,
     const mqt::scpd::flatbuffers::geometry::Point *location = nullptr,
     double measured = 0.0,
     double limit = 0.0,
-    mqt::scpd::flatbuffers::drc::ClearanceKind clearance_kind = mqt::scpd::flatbuffers::drc::ClearanceKind::NearMiss,
+    mqt::scpd::flatbuffers::drc::ClearanceKind clearance_kind = mqt::scpd::flatbuffers::drc::ClearanceKind::Unset,
     ::flatbuffers::Offset<::flatbuffers::String> message = 0) {
   DrcFindingBuilder builder_(_fbb);
   builder_.add_limit(limit);
@@ -322,15 +341,15 @@ struct DrcFinding::Traits {
 
 inline ::flatbuffers::Offset<DrcFinding> CreateDrcFindingDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    mqt::scpd::flatbuffers::drc::DrcRule rule = mqt::scpd::flatbuffers::drc::DrcRule::WireClearance,
-    mqt::scpd::flatbuffers::drc::DrcSeverity severity = mqt::scpd::flatbuffers::drc::DrcSeverity::Active,
-    const std::vector<uint32_t> *wires = nullptr,
+    mqt::scpd::flatbuffers::drc::DrcRule rule = mqt::scpd::flatbuffers::drc::DrcRule::Unset,
+    mqt::scpd::flatbuffers::drc::DrcSeverity severity = mqt::scpd::flatbuffers::drc::DrcSeverity::Unset,
+    const std::vector<mqt::scpd::flatbuffers::design::ConnectionRef> *wires = nullptr,
     const mqt::scpd::flatbuffers::geometry::Point *location = nullptr,
     double measured = 0.0,
     double limit = 0.0,
-    mqt::scpd::flatbuffers::drc::ClearanceKind clearance_kind = mqt::scpd::flatbuffers::drc::ClearanceKind::NearMiss,
+    mqt::scpd::flatbuffers::drc::ClearanceKind clearance_kind = mqt::scpd::flatbuffers::drc::ClearanceKind::Unset,
     const char *message = nullptr) {
-  auto wires__ = wires ? _fbb.CreateVector<uint32_t>(*wires) : 0;
+  auto wires__ = wires ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::ConnectionRef>(*wires) : 0;
   auto message__ = message ? _fbb.CreateString(message) : 0;
   return mqt::scpd::flatbuffers::drc::CreateDrcFinding(
       _fbb,
@@ -348,7 +367,7 @@ inline ::flatbuffers::Offset<DrcFinding> CreateDrcFindingDirect(
 
 struct DrcReportT : public ::flatbuffers::NativeTable {
   typedef DrcReport TableType;
-  mqt::scpd::flatbuffers::drc::DrcStage stage = mqt::scpd::flatbuffers::drc::DrcStage::Final;
+  mqt::scpd::flatbuffers::drc::DrcStage stage = mqt::scpd::flatbuffers::drc::DrcStage::Unset;
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcFindingT>> findings{};
   uint32_t feedlines_skipped = 0;
   DrcReportT() = default;
@@ -419,7 +438,7 @@ struct DrcReportBuilder {
 
 inline ::flatbuffers::Offset<DrcReport> CreateDrcReport(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    mqt::scpd::flatbuffers::drc::DrcStage stage = mqt::scpd::flatbuffers::drc::DrcStage::Final,
+    mqt::scpd::flatbuffers::drc::DrcStage stage = mqt::scpd::flatbuffers::drc::DrcStage::Unset,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcFinding>>> findings = 0,
     uint32_t feedlines_skipped = 0) {
   DrcReportBuilder builder_(_fbb);
@@ -436,7 +455,7 @@ struct DrcReport::Traits {
 
 inline ::flatbuffers::Offset<DrcReport> CreateDrcReportDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    mqt::scpd::flatbuffers::drc::DrcStage stage = mqt::scpd::flatbuffers::drc::DrcStage::Final,
+    mqt::scpd::flatbuffers::drc::DrcStage stage = mqt::scpd::flatbuffers::drc::DrcStage::Unset,
     const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcFinding>> *findings = nullptr,
     uint32_t feedlines_skipped = 0) {
   auto findings__ = findings ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcFinding>>(*findings) : 0;
@@ -448,6 +467,82 @@ inline ::flatbuffers::Offset<DrcReport> CreateDrcReportDirect(
 }
 
 ::flatbuffers::Offset<DrcReport> CreateDrcReport(::flatbuffers::FlatBufferBuilder &_fbb, const DrcReportT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct DrcReportsT : public ::flatbuffers::NativeTable {
+  typedef DrcReports TableType;
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportT>> reports{};
+  DrcReportsT() = default;
+  DrcReportsT(const DrcReportsT &o);
+  DrcReportsT(DrcReportsT&&) FLATBUFFERS_NOEXCEPT = default;
+  DrcReportsT &operator=(DrcReportsT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// The root of drc.json: one report per checked stage.
+struct DrcReports FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DrcReportsT NativeTableType;
+  typedef DrcReportsBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_REPORTS = 4
+  };
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReport>> *reports() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReport>> *>(VT_REPORTS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_REPORTS) &&
+           verifier.VerifyVector(reports()) &&
+           verifier.VerifyVectorOfTables(reports()) &&
+           verifier.EndTable();
+  }
+  DrcReportsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DrcReportsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DrcReports> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DrcReportsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DrcReportsBuilder {
+  typedef DrcReports Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_reports(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReport>>> reports) {
+    fbb_.AddOffset(DrcReports::VT_REPORTS, reports);
+  }
+  explicit DrcReportsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DrcReports> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DrcReports>(end);
+    fbb_.Required(o, DrcReports::VT_REPORTS);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DrcReports> CreateDrcReports(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReport>>> reports = 0) {
+  DrcReportsBuilder builder_(_fbb);
+  builder_.add_reports(reports);
+  return builder_.Finish();
+}
+
+struct DrcReports::Traits {
+  using type = DrcReports;
+  static auto constexpr Create = CreateDrcReports;
+};
+
+inline ::flatbuffers::Offset<DrcReports> CreateDrcReportsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReport>> *reports = nullptr) {
+  auto reports__ = reports ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReport>>(*reports) : 0;
+  return mqt::scpd::flatbuffers::drc::CreateDrcReports(
+      _fbb,
+      reports__);
+}
+
+::flatbuffers::Offset<DrcReports> CreateDrcReports(::flatbuffers::FlatBufferBuilder &_fbb, const DrcReportsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 
 inline bool operator==(const DrcFindingT &lhs, const DrcFindingT &rhs) {
@@ -478,7 +573,7 @@ inline void DrcFinding::UnPackTo(DrcFindingT *_o, const ::flatbuffers::resolver_
   (void)_resolver;
   { auto _e = rule(); _o->rule = _e; }
   { auto _e = severity(); _o->severity = _e; }
-  { auto _e = wires(); if (_e) { _o->wires.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->wires[_i] = _e->Get(_i); } } else { _o->wires.resize(0); } }
+  { auto _e = wires(); if (_e) { _o->wires.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->wires[_i] = *_e->Get(_i); } } else { _o->wires.resize(0); } }
   { auto _e = location(); if (_e) _o->location = *_e; }
   { auto _e = measured(); _o->measured = _e; }
   { auto _e = limit(); _o->limit = _e; }
@@ -496,7 +591,7 @@ inline ::flatbuffers::Offset<DrcFinding> DrcFinding::Pack(::flatbuffers::FlatBuf
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DrcFindingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _rule = _o->rule;
   auto _severity = _o->severity;
-  auto _wires = _fbb.CreateVector(_o->wires);
+  auto _wires = _fbb.CreateVectorOfStructs(_o->wires);
   auto _location = &_o->location;
   auto _measured = _o->measured;
   auto _limit = _o->limit;
@@ -573,48 +668,95 @@ inline ::flatbuffers::Offset<DrcReport> DrcReport::Pack(::flatbuffers::FlatBuffe
       _feedlines_skipped);
 }
 
-inline const mqt::scpd::flatbuffers::drc::DrcReport *GetDrcReport(const void *buf) {
-  return ::flatbuffers::GetRoot<mqt::scpd::flatbuffers::drc::DrcReport>(buf);
+
+inline bool operator==(const DrcReportsT &lhs, const DrcReportsT &rhs) {
+  return
+      (lhs.reports.size() == rhs.reports.size() && std::equal(lhs.reports.cbegin(), lhs.reports.cend(), rhs.reports.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportT> const &b) { return (a == b) || (a && b && *a == *b); }));
 }
 
-inline const mqt::scpd::flatbuffers::drc::DrcReport *GetSizePrefixedDrcReport(const void *buf) {
-  return ::flatbuffers::GetSizePrefixedRoot<mqt::scpd::flatbuffers::drc::DrcReport>(buf);
+inline bool operator!=(const DrcReportsT &lhs, const DrcReportsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline DrcReportsT::DrcReportsT(const DrcReportsT &o) {
+  reports.reserve(o.reports.size());
+  for (const auto &reports_ : o.reports) { reports.emplace_back((reports_) ? new mqt::scpd::flatbuffers::drc::DrcReportT(*reports_) : nullptr); }
+}
+
+inline DrcReportsT &DrcReportsT::operator=(DrcReportsT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(reports, o.reports);
+  return *this;
+}
+
+inline DrcReportsT *DrcReports::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<DrcReportsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DrcReports::UnPackTo(DrcReportsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = reports(); if (_e) { _o->reports.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->reports[_i]) { _e->Get(_i)->UnPackTo(_o->reports[_i].get(), _resolver); } else { _o->reports[_i] = std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->reports.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<DrcReports> CreateDrcReports(::flatbuffers::FlatBufferBuilder &_fbb, const DrcReportsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DrcReports::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DrcReports> DrcReports::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DrcReportsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DrcReportsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _reports = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReport>> (_o->reports.size(), [](size_t i, _VectorArgs *__va) { return CreateDrcReport(*__va->__fbb, __va->__o->reports[i].get(), __va->__rehasher); }, &_va );
+  return mqt::scpd::flatbuffers::drc::CreateDrcReports(
+      _fbb,
+      _reports);
+}
+
+inline const mqt::scpd::flatbuffers::drc::DrcReports *GetDrcReports(const void *buf) {
+  return ::flatbuffers::GetRoot<mqt::scpd::flatbuffers::drc::DrcReports>(buf);
+}
+
+inline const mqt::scpd::flatbuffers::drc::DrcReports *GetSizePrefixedDrcReports(const void *buf) {
+  return ::flatbuffers::GetSizePrefixedRoot<mqt::scpd::flatbuffers::drc::DrcReports>(buf);
 }
 
 template <bool B = false>
-inline bool VerifyDrcReportBuffer(
+inline bool VerifyDrcReportsBuffer(
     ::flatbuffers::VerifierTemplate<B> &verifier) {
-  return verifier.template VerifyBuffer<mqt::scpd::flatbuffers::drc::DrcReport>(nullptr);
+  return verifier.template VerifyBuffer<mqt::scpd::flatbuffers::drc::DrcReports>(nullptr);
 }
 
 template <bool B = false>
-inline bool VerifySizePrefixedDrcReportBuffer(
+inline bool VerifySizePrefixedDrcReportsBuffer(
     ::flatbuffers::VerifierTemplate<B> &verifier) {
-  return verifier.template VerifySizePrefixedBuffer<mqt::scpd::flatbuffers::drc::DrcReport>(nullptr);
+  return verifier.template VerifySizePrefixedBuffer<mqt::scpd::flatbuffers::drc::DrcReports>(nullptr);
 }
 
-inline void FinishDrcReportBuffer(
+inline void FinishDrcReportsBuffer(
     ::flatbuffers::FlatBufferBuilder &fbb,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReport> root) {
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReports> root) {
   fbb.Finish(root);
 }
 
-inline void FinishSizePrefixedDrcReportBuffer(
+inline void FinishSizePrefixedDrcReportsBuffer(
     ::flatbuffers::FlatBufferBuilder &fbb,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReport> root) {
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::drc::DrcReports> root) {
   fbb.FinishSizePrefixed(root);
 }
 
-inline std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportT> UnPackDrcReport(
+inline std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportsT> UnPackDrcReports(
     const void *buf,
     const ::flatbuffers::resolver_function_t *res = nullptr) {
-  return std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportT>(GetDrcReport(buf)->UnPack(res));
+  return std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportsT>(GetDrcReports(buf)->UnPack(res));
 }
 
-inline std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportT> UnPackSizePrefixedDrcReport(
+inline std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportsT> UnPackSizePrefixedDrcReports(
     const void *buf,
     const ::flatbuffers::resolver_function_t *res = nullptr) {
-  return std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportT>(GetSizePrefixedDrcReport(buf)->UnPack(res));
+  return std::unique_ptr<mqt::scpd::flatbuffers::drc::DrcReportsT>(GetSizePrefixedDrcReports(buf)->UnPack(res));
 }
 
 }  // namespace drc

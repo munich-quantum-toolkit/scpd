@@ -5,9 +5,10 @@
 # What a port does in the solved design. Set by the Assignment stage, except
 # ResonatorSource, whose port the Final stage creates with the coupler.
 class AssignedRole(object):
-    FeedlineSource = 0
-    FeedlineTarget = 1
-    ResonatorSource = 2
-    ResonatorTarget = 3
-    ConventionalSource = 4
-    ConventionalTarget = 5
+    Unset = 0
+    FeedlineSource = 1
+    FeedlineTarget = 2
+    ResonatorSource = 3
+    ResonatorTarget = 4
+    ConventionalSource = 5
+    ConventionalTarget = 6

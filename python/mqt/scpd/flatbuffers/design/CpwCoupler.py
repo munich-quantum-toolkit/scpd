@@ -5,7 +5,8 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
-from mqt.scpd.flatbuffers.design.PortRef import PortRef
+from mqt.scpd.flatbuffers.design.ConnectionRef import ConnectionRef
+from mqt.scpd.flatbuffers.design.Port import Port
 from mqt.scpd.flatbuffers.geometry.Point import Point
 from typing import Optional
 np = import_numpy()
@@ -30,20 +31,34 @@ class CpwCoupler(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # The ResonatorSource port the coupler carries.
+    # The connection the coupler completes. The port below is its
+    # ResonatorSource endpoint, which the Assignment stage left absent.
     # CpwCoupler
-    def Port(self) -> Optional[PortRef]:
+    def Connection(self) -> Optional[ConnectionRef]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         if o != 0:
             x = o + self._tab.Pos
-            obj = PortRef()
+            obj = ConnectionRef()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # The port the coupler creates. After the Final stage, Chip.ports is the
+    # input ports followed by the couplers' ports in coupler order, so this
+    # port's PortRef is the number of input ports plus the coupler's index.
+    # CpwCoupler
+    def Port(self) -> Optional[Port]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = Port()
             obj.Init(self._tab.Bytes, x)
             return obj
         return None
 
     # CpwCoupler
     def Center(self) -> Optional[Point]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
             x = o + self._tab.Pos
             obj = Point()
@@ -53,57 +68,63 @@ class CpwCoupler(object):
 
     # CpwCoupler
     def Rotation(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint8Flags, o + self._tab.Pos)
         return 0
 
     # CpwCoupler
     def Length(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.0
 
     # CpwCoupler
     def Height(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.0
 
 def CpwCouplerStart(builder: flatbuffers.Builder):
-    builder.StartObject(5)
+    builder.StartObject(6)
 
 def Start(builder: flatbuffers.Builder):
     CpwCouplerStart(builder)
 
-def CpwCouplerAddPort(builder: flatbuffers.Builder, port: Any):
-    builder.PrependStructSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(port), 0)
+def CpwCouplerAddConnection(builder: flatbuffers.Builder, connection: Any):
+    builder.PrependStructSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(connection), 0)
 
-def AddPort(builder: flatbuffers.Builder, port: Any):
+def AddConnection(builder: flatbuffers.Builder, connection: Any):
+    CpwCouplerAddConnection(builder, connection)
+
+def CpwCouplerAddPort(builder: flatbuffers.Builder, port: int):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(port), 0)
+
+def AddPort(builder: flatbuffers.Builder, port: int):
     CpwCouplerAddPort(builder, port)
 
 def CpwCouplerAddCenter(builder: flatbuffers.Builder, center: Any):
-    builder.PrependStructSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(center), 0)
+    builder.PrependStructSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(center), 0)
 
 def AddCenter(builder: flatbuffers.Builder, center: Any):
     CpwCouplerAddCenter(builder, center)
 
 def CpwCouplerAddRotation(builder: flatbuffers.Builder, rotation: int):
-    builder.PrependUint8Slot(2, rotation, 0)
+    builder.PrependUint8Slot(3, rotation, 0)
 
 def AddRotation(builder: flatbuffers.Builder, rotation: int):
     CpwCouplerAddRotation(builder, rotation)
 
 def CpwCouplerAddLength(builder: flatbuffers.Builder, length: float):
-    builder.PrependFloat64Slot(3, length, 0.0)
+    builder.PrependFloat64Slot(4, length, 0.0)
 
 def AddLength(builder: flatbuffers.Builder, length: float):
     CpwCouplerAddLength(builder, length)
 
 def CpwCouplerAddHeight(builder: flatbuffers.Builder, height: float):
-    builder.PrependFloat64Slot(4, height, 0.0)
+    builder.PrependFloat64Slot(5, height, 0.0)
 
 def AddHeight(builder: flatbuffers.Builder, height: float):
     CpwCouplerAddHeight(builder, height)
@@ -114,7 +135,8 @@ def CpwCouplerEnd(builder: flatbuffers.Builder) -> int:
 def End(builder: flatbuffers.Builder) -> int:
     return CpwCouplerEnd(builder)
 
-import mqt.scpd.flatbuffers.design.PortRef
+import mqt.scpd.flatbuffers.design.ConnectionRef
+import mqt.scpd.flatbuffers.design.Port
 import mqt.scpd.flatbuffers.geometry.Point
 try:
     from typing import Optional
@@ -126,13 +148,15 @@ class CpwCouplerT(object):
     # CpwCouplerT
     def __init__(
         self,
+        connection = None,
         port = None,
         center = None,
         rotation = 0,
         length = 0.0,
         height = 0.0,
     ):
-        self.port = port  # type: Optional[mqt.scpd.flatbuffers.design.PortRef.PortRefT]
+        self.connection = connection  # type: Optional[mqt.scpd.flatbuffers.design.ConnectionRef.ConnectionRefT]
+        self.port = port  # type: Optional[mqt.scpd.flatbuffers.design.Port.PortT]
         self.center = center  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
         self.rotation = rotation  # type: int
         self.length = length  # type: float
@@ -159,8 +183,10 @@ class CpwCouplerT(object):
     def _UnPack(self, cpwCoupler):
         if cpwCoupler is None:
             return
+        if cpwCoupler.Connection() is not None:
+            self.connection = mqt.scpd.flatbuffers.design.ConnectionRef.ConnectionRefT.InitFromObj(cpwCoupler.Connection())
         if cpwCoupler.Port() is not None:
-            self.port = mqt.scpd.flatbuffers.design.PortRef.PortRefT.InitFromObj(cpwCoupler.Port())
+            self.port = mqt.scpd.flatbuffers.design.Port.PortT.InitFromObj(cpwCoupler.Port())
         if cpwCoupler.Center() is not None:
             self.center = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(cpwCoupler.Center())
         self.rotation = cpwCoupler.Rotation()
@@ -169,9 +195,13 @@ class CpwCouplerT(object):
 
     # CpwCouplerT
     def Pack(self, builder):
-        CpwCouplerStart(builder)
         if self.port is not None:
             port = self.port.Pack(builder)
+        CpwCouplerStart(builder)
+        if self.connection is not None:
+            connection = self.connection.Pack(builder)
+            CpwCouplerAddConnection(builder, connection)
+        if self.port is not None:
             CpwCouplerAddPort(builder, port)
         if self.center is not None:
             center = self.center.Pack(builder)

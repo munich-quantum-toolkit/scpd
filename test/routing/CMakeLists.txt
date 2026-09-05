@@ -7,7 +7,7 @@
 # Licensed under the MIT License
 
 if(TARGET MQT::ScpdRouting)
-  file(GLOB_RECURSE ROUTING_TEST_SOURCES *.cpp)
+  file(GLOB_RECURSE ROUTING_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(ROUTING_TEST_SOURCES)
     package_add_test(mqt-scpd-routing-test MQT::ScpdRouting ${ROUTING_TEST_SOURCES})
   endif()
