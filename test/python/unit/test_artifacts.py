@@ -41,12 +41,20 @@ from mqt.scpd.flatbuffers.geometry.SegmentShape import SegmentShape
 
 
 def wrap(output_type: int, output: object) -> ArtifactT:
-    """An artifact with a producer around the given stage output."""
+    """Put a stage output behind an artifact root that has a producer.
+
+    Returns:
+        The artifact.
+    """
     return ArtifactT(producer="mqt-scpd test", outputType=output_type, output=output)
 
 
 def make_coupler(connection: int) -> CpwCouplerT:
-    """A coupler that completes the given connection with the port it creates."""
+    """Build a coupler that completes the given connection with the port it creates.
+
+    Returns:
+        The coupler.
+    """
     return CpwCouplerT(
         connection=ConnectionRefT(index=connection),
         port=PortT(

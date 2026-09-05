@@ -103,7 +103,11 @@ def read_artifact(data: bytes) -> ArtifactT:
 
 
 def _problems(artifact: ArtifactT) -> list[str]:
-    """The required fields of an artifact that are missing, as messages."""
+    """Find the required fields of an artifact that are missing.
+
+    Returns:
+        One message per missing field, naming the field and its position.
+    """
     problems: list[str] = []
     if not artifact.producer:
         problems.append("producer is missing")
