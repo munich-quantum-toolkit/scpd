@@ -21,15 +21,19 @@ from mqt.scpd.flatbuffers.artifacts.Artifact import (
     ArtifactStart,
     ArtifactT,
 )
+from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingEnd, GlobalRoutingStart, GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.artifacts.Wire import WireT
+from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
 from mqt.scpd.flatbuffers.design.Bridge import BridgeT
+from mqt.scpd.flatbuffers.design.Connection import ConnectionT
 from mqt.scpd.flatbuffers.design.ConnectionRef import ConnectionRefT
 from mqt.scpd.flatbuffers.design.CpwCoupler import CpwCouplerT
 from mqt.scpd.flatbuffers.design.Port import PortT
+from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.design.Rotation import Rotation
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Arc import ArcT
@@ -170,3 +174,157 @@ def test_read_rejects_foreign_bytes() -> None:
         read_artifact(bytes(data))
     with pytest.raises(ArtifactError):
         read_artifact(b"SCP1")
+
+
+def test_assignment_round_trips() -> None:
+    """The connections of an assignment survive with their roles."""
+    assignment = AssignmentT(
+        connections=[
+            ConnectionT(
+                target=PortRefT(index=3),
+                sourceRole=AssignedRole.ResonatorSource,
+                targetRole=AssignedRole.ResonatorTarget,
+            )
+        ],
+        objective=132.68,
+    )
+
+    back = read_artifact(write_artifact(wrap(StageOutput.Assignment, assignment)))
+
+    assert isinstance(back.output, AssignmentT)
+    assert back.output.connections[0].sourceRole == AssignedRole.ResonatorSource
+    assert back.output.objective == pytest.approx(132.68)
+
+
+def _make_geometry(segment: SegmentT) -> GeometryT:
+    """Build a geometry with one wire that carries the given segment.
+
+    Returns:
+        The geometry.
+    """
+    return GeometryT(
+        wires=[WireT(connection=ConnectionRefT(index=0), path=PathT(segments=[segment]))],
+        couplers=[],
+        bridges=[],
+    )
+
+
+def _without_port_label() -> CpwCouplerT:
+    coupler = make_coupler(0)
+    assert coupler.port is not None
+    coupler.port.label = None
+    return coupler
+
+
+def _without_port_center() -> CpwCouplerT:
+    coupler = make_coupler(0)
+    assert coupler.port is not None
+    coupler.port.center = None
+    return coupler
+
+
+INCOMPLETE_ARTIFACTS = [
+    pytest.param(
+        ArtifactT(producer="p", outputType=StageOutput.Assignment, output=GlobalRoutingT()),
+        "output does not match its type tag",
+        id="type-tag",
+    ),
+    pytest.param(
+        wrap(StageOutput.Assignment, AssignmentT(connections=[ConnectionT()])),
+        r"connections\[0\]: target is missing",
+        id="connection-target",
+    ),
+    pytest.param(
+        wrap(StageOutput.FinalRouting, FinalRoutingT(couplers=None, bridges=[], unresolved=[])),
+        "couplers is missing",
+        id="list",
+    ),
+    pytest.param(
+        wrap(StageOutput.FinalRouting, FinalRoutingT(couplers=[], bridges=[], unresolved=None)),
+        "unresolved is missing",
+        id="unresolved",
+    ),
+    pytest.param(
+        wrap(
+            StageOutput.FinalRouting,
+            FinalRoutingT(
+                couplers=[CpwCouplerT(port=make_coupler(0).port, center=PointT(0.0, 0.0))], bridges=[], unresolved=[]
+            ),
+        ),
+        r"couplers\[0\]: connection is missing",
+        id="coupler-connection",
+    ),
+    pytest.param(
+        wrap(
+            StageOutput.FinalRouting,
+            FinalRoutingT(
+                couplers=[CpwCouplerT(connection=ConnectionRefT(), port=make_coupler(0).port)],
+                bridges=[],
+                unresolved=[],
+            ),
+        ),
+        r"couplers\[0\]: center is missing",
+        id="coupler-center",
+    ),
+    pytest.param(
+        wrap(StageOutput.FinalRouting, FinalRoutingT(couplers=[_without_port_label()], bridges=[], unresolved=[])),
+        r"couplers\[0\]: port: label is missing",
+        id="port-label",
+    ),
+    pytest.param(
+        wrap(StageOutput.FinalRouting, FinalRoutingT(couplers=[_without_port_center()], bridges=[], unresolved=[])),
+        r"couplers\[0\]: port: center is missing",
+        id="port-center",
+    ),
+    pytest.param(
+        wrap(StageOutput.FinalRouting, FinalRoutingT(couplers=[], bridges=[BridgeT()], unresolved=[])),
+        r"bridges\[0\]: center is missing",
+        id="bridge-center",
+    ),
+    pytest.param(
+        wrap(StageOutput.Geometry, GeometryT(wires=[WireT(path=PathT(segments=[]))], couplers=[], bridges=[])),
+        r"wires\[0\]: connection is missing",
+        id="wire-connection",
+    ),
+    pytest.param(
+        wrap(StageOutput.Geometry, GeometryT(wires=[WireT(connection=ConnectionRefT())], couplers=[], bridges=[])),
+        r"wires\[0\]: path is missing",
+        id="wire-path",
+    ),
+    pytest.param(
+        wrap(StageOutput.Geometry, _make_geometry(SegmentT(shapeType=SegmentShape.Line))),
+        r"wires\[0\]: segment 0: shape is missing",
+        id="segment-shape",
+    ),
+    pytest.param(
+        wrap(
+            StageOutput.Geometry,
+            _make_geometry(SegmentT(shapeType=SegmentShape.Line, shape=LineT(start=PointT(0.0, 0.0)))),
+        ),
+        r"wires\[0\]: segment 0: end is missing",
+        id="line-end",
+    ),
+    pytest.param(
+        wrap(StageOutput.Geometry, _make_geometry(SegmentT(shapeType=SegmentShape.Arc, shape=ArcT(radius=1.0)))),
+        r"wires\[0\]: segment 0: center is missing",
+        id="arc-center",
+    ),
+    pytest.param(
+        wrap(StageOutput.Geometry, _make_geometry(SegmentT(shapeType=SegmentShape.Line, shape=PointT(0.0, 0.0)))),
+        r"wires\[0\]: segment 0: shape does not match its type tag",
+        id="segment-tag",
+    ),
+]
+
+
+@pytest.mark.parametrize(("artifact", "message"), INCOMPLETE_ARTIFACTS)
+def test_write_names_every_missing_required_field(artifact: ArtifactT, message: str) -> None:
+    """Each required field the schema declares is reported with its position when it is missing."""
+    with pytest.raises(ArtifactError, match=message):
+        write_artifact(artifact)
+
+
+def test_read_rejects_bytes_that_do_not_decode() -> None:
+    """A buffer with the identifier but a root offset outside the buffer is not an artifact."""
+    with pytest.raises(ArtifactError, match="not an artifact"):
+        read_artifact(b"\xff\xff\xff\xff" + IDENTIFIER)
