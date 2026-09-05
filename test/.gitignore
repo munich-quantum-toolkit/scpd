@@ -1,0 +1,2 @@
+# CMake writes these into the working directory of gtest_discover_tests
+cmake_test_discovery_*.json

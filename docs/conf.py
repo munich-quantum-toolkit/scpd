@@ -59,6 +59,10 @@ source_suffix = [".rst", ".md"]
 
 exclude_patterns = [
     "_build",
+    # Developer design documents. They use Mermaid, which is not among the
+    # extensions above, and they target contributors rather than users.
+    # They render on GitHub instead.
+    "design/**",
     "**.ipynb_checkpoints",
     "**.jupyter_cache",
     "**jupyter_execute",
@@ -130,6 +134,7 @@ autoapi_root = "api"
 autoapi_add_toctree_entry = False
 autoapi_ignore = [
     "*/**/_version.py",
+    "*/flatbuffers/*",
 ]
 autoapi_options = [
     "members",

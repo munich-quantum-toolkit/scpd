@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Chair for Design Automation, TUM
+// Copyright (c) 2026 Munich Quantum Software Company GmbH
+// All rights reserved.
+//
+// SPDX-License-Identifier: MIT
+//
+// Licensed under the MIT License
+
+// The DRCPolice report. Schema-defined even though it is written as JSON,
+// because a violation has to be machine-readable. Owned by MQT::ScpdDrc.
+// See the design-rule checking section of docs/design/pipeline.md and
+// decisions 0022 and 0024.
+
+include "design.fbs";
+
+namespace mqt.scpd.flatbuffers.drc;
+
+// Every enum starts with Unset, the value an absent field reads as, so an
+// incomplete finding fails validation instead of decoding as the first rule.
+
+/// The eight design rules, in the order of the rule table.
+enum DrcRule : ubyte {
+  Unset,
+  WireClearance,
+  FeedlineOrthogonality,
+  WireLoop,
+  ObstacleClearance,
+  ComponentOverlap,
+  MinStraightLength,
+  ResonatorLength,
+  MinBendRadius,
+}
+
+/// Whether a finding affects the exit code.
+enum DrcSeverity : ubyte {
+  Unset,
+  Active,
+  Advisory,
+}
+
+/// The stage whose geometry view was checked.
+enum DrcStage : ubyte {
+  Unset,
+  Final,
+  Finalize,
+}
+
+/// Rule 1 reports a pair closer than short_threshold as a short, so that a
+/// genuine short never hides in a list of near-misses.
+enum ClearanceKind : ubyte {
+  /// The value for every rule other than WireClearance.
+  Unset,
+  NearMiss,
+  Short,
+}
+
+/// One finding of one rule.
+table DrcFinding {
+  rule: DrcRule;
+  severity: DrcSeverity;
+  /// The wires involved: one for a loop or a length rule, two for a pair.
+  wires: [design.ConnectionRef] (required);
+  /// Where the finding is, in layout units.
+  location: geometry.Point (required, native_inline);
+  /// The value the rule measured, in layout units.
+  measured: double;
+  /// The value the rule requires, in layout units.
+  limit: double;
+  /// Meaningful for WireClearance only.
+  clearance_kind: ClearanceKind;
+  message: string;
+}
+
+/// The report of one check of one stage.
+table DrcReport {
+  stage: DrcStage;
+  findings: [DrcFinding] (required);
+  /// Regular coupler-to-coupler feedlines that rule 1 excluded.
+  feedlines_skipped: uint32;
+}
+
+/// The root of drc.json: one report per checked stage.
+table DrcReports {
+  reports: [DrcReport] (required);
+}
+
+root_type DrcReports;

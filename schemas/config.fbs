@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Chair for Design Automation, TUM
+// Copyright (c) 2026 Munich Quantum Software Company GmbH
+// All rights reserved.
+//
+// SPDX-License-Identifier: MIT
+//
+// Licensed under the MIT License
+
+// The run configuration, as loaded and validated from config.toml. Owned by
+// MQT::ScpdDesign. Scalar defaults here are the defaults the loader applies;
+// a shipped configuration carries only what differs from them, except
+// [design_rules] and [ports].detection, which are always written out.
+// See the configuration section of docs/design/pipeline.md.
+//
+// The stage, component and DRC parameters of that section arrive with the
+// stages that read them, appended to Config.
+
+include "design.fbs";
+
+namespace mqt.scpd.flatbuffers.config;
+
+/// Where the outer port ring comes from. See decision 0023.
+enum PortDetection : ubyte {
+  /// The configuration supplies all_outer and fixed_outer.
+  Manual,
+  /// The outer-boundary walk derives both sequences from the chip geometry.
+  Auto,
+}
+
+/// One regular expression per role. Every port must match exactly one.
+table PortPatterns {
+  launcher: string (required);
+  resonator: string (required);
+  conventional: string (required);
+}
+
+/// The two ordered outer port sequences. Required under Manual, an error
+/// under Auto.
+table PortSequences {
+  all_outer: [string] (required);
+  fixed_outer: [string] (required);
+}
+
+table PortConfig {
+  patterns: PortPatterns (required);
+  detection: PortDetection = Manual;
+  /// Auto only. The component at which the closed ring is entered; empty
+  /// takes the walk's own start.
+  start_component: string;
+  /// Manual only.
+  sequences: PortSequences;
+}
+
+table GridParams {
+  capacity_cells_x: uint32 = 50;
+  /// Zero derives the value from the chip aspect ratio.
+  capacity_cells_y: uint32 = 0;
+  launcher_offset_x: uint32 = 15;
+  launcher_offset_y: uint32 = 15;
+}
+
+/// The whole run configuration.
+table Config {
+  /// The chip input path, relative to the configuration file.
+  chip_input: string (required);
+  ports: PortConfig (required);
+  rules: design.DesignRules (required);
+  grid: GridParams;
+}

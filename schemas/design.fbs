@@ -1,0 +1,131 @@
+// Copyright (c) 2026 Chair for Design Automation, TUM
+// Copyright (c) 2026 Munich Quantum Software Company GmbH
+// All rights reserved.
+//
+// SPDX-License-Identifier: MIT
+//
+// Licensed under the MIT License
+
+// The chip, its ports and their roles, the design rules, and the components
+// that a run instantiates. Owned by MQT::ScpdDesign.
+// See docs/design/data-model.md and decisions 0018 and 0019.
+
+include "geometry.fbs";
+
+namespace mqt.scpd.flatbuffers.design;
+
+// Every enum starts with Unset. It is the value an absent field reads as, so
+// a buffer that omits a role or a rotation is recognisable as incomplete and
+// fails validation instead of decoding as the first real member.
+
+/// What a port is, before anything is decided. Set at load, from the role
+/// patterns in the configuration, or by coupler insertion for a Coupler port.
+enum UnassignedRole : ubyte {
+  Unset,
+  Launcher,
+  Resonator,
+  Conventional,
+  /// Created by the Final stage's coupler insertion. No pattern produces it.
+  Coupler,
+}
+
+/// What a port does in the solved design. Set by the Assignment stage, except
+/// ResonatorSource, whose port the Final stage creates with the coupler.
+enum AssignedRole : ubyte {
+  Unset,
+  FeedlineSource,
+  FeedlineTarget,
+  ResonatorSource,
+  ResonatorTarget,
+  ConventionalSource,
+  ConventionalTarget,
+}
+
+/// The eight-way rotation of a placed component.
+enum Rotation : ubyte {
+  Unset,
+  R0,
+  R45,
+  R90,
+  R135,
+  R180,
+  R225,
+  R270,
+  R315,
+}
+
+/// A dense index into Chip.ports. A label is resolved to a PortRef once, at
+/// load. Ports are appended and never reordered, so a PortRef stays valid for
+/// the life of a run.
+struct PortRef {
+  index: uint32;
+}
+
+/// A dense index into the connections of the Assignment stage's output.
+struct ConnectionRef {
+  index: uint32;
+}
+
+/// A port of the chip. The label is the only name the input has; no algorithm
+/// parses it.
+table Port {
+  label: string (required);
+  center: geometry.Point (required, native_inline);
+  /// Degrees, as the chip input carries it.
+  orientation: double;
+  role: UnassignedRole;
+}
+
+/// The chip: obstacle geometry and ports, exactly as the input carries them.
+table Chip {
+  obstacles: [geometry.Polygon] (required);
+  ports: [Port] (required);
+}
+
+/// One endpoint pair of the solved design.
+table Connection {
+  /// Absent for a resonator until the Final stage inserts the coupler that
+  /// carries the ResonatorSource role.
+  source: PortRef;
+  target: PortRef (required, native_inline);
+  source_role: AssignedRole;
+  target_role: AssignedRole;
+}
+
+/// The design rules. Every rule is a length in layout units, held once and
+/// converted to cells only through cells_for. See decision 0019.
+table DesignRules {
+  min_wire_spacing: double;
+  min_obstacle_spacing: double;
+  min_bend_radius: double;
+  min_straight_length: double;
+  target_resonator_length: double;
+  resonator_length_tolerance: double;
+  max_feedline_utilization: uint32;
+  feedline_terminations: uint32;
+}
+
+/// A coplanar-waveguide coupler that taps a feedline. Instantiated by the
+/// Final stage at exact physical dimensions in layout units.
+table CpwCoupler {
+  /// The connection the coupler completes. The port below is its
+  /// ResonatorSource endpoint, which the Assignment stage left absent.
+  connection: ConnectionRef (required, native_inline);
+  /// The port the coupler creates. After the Final stage, Chip.ports is the
+  /// input ports followed by the couplers' ports in coupler order, so this
+  /// port's PortRef is the number of input ports plus the coupler's index.
+  port: Port (required);
+  center: geometry.Point (required, native_inline);
+  rotation: Rotation;
+  length: double;
+  height: double;
+}
+
+/// An air bridge where a feedline crosses a regular wire. Instantiated at
+/// exact physical dimensions in layout units.
+table Bridge {
+  center: geometry.Point (required, native_inline);
+  rotation: Rotation;
+  width: double;
+  height: double;
+}

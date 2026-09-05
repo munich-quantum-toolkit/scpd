@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Chair for Design Automation, TUM
+// Copyright (c) 2026 Munich Quantum Software Company GmbH
+// All rights reserved.
+//
+// SPDX-License-Identifier: MIT
+//
+// Licensed under the MIT License
+
+// The six stage artifacts of a run directory, 01-capacity.fb through
+// 06-geometry.fb. Owned by MQT::ScpdIO. Grids and router containers are
+// derived state and never appear here. See docs/design/pipeline.md.
+//
+// Each stage appends the fields of its output when the stage is implemented,
+// so the tables of stages that do not exist yet are empty on purpose.
+
+include "design.fbs";
+
+namespace mqt.scpd.flatbuffers.artifacts;
+
+/// Output of the Capacity stage.
+table CapacityPlan {}
+
+/// Output of the Assignment stage.
+table Assignment {
+  connections: [design.Connection] (required);
+  objective: double;
+}
+
+/// Output of the Global stage. Empty when the chip has no inner circuit.
+table GlobalRouting {}
+
+/// Output of the Detail stage.
+table DetailRouting {}
+
+/// Output of the Final stage. The couplers carry the ports they create and
+/// the connections they complete, so a reloaded run can rebuild the grown
+/// port list and the completed connections without the stage.
+table FinalRouting {
+  couplers: [design.CpwCoupler] (required);
+  bridges: [design.Bridge] (required);
+  /// The connections that did not route.
+  unresolved: [design.ConnectionRef] (required);
+}
+
+/// One connection's wire in its exact analytic form.
+table Wire {
+  connection: design.ConnectionRef (required, native_inline);
+  path: geometry.Path (required);
+}
+
+/// Output of the Finalize stage: the geometry IR.
+table Geometry {
+  wires: [Wire] (required);
+  couplers: [design.CpwCoupler] (required);
+  bridges: [design.Bridge] (required);
+}
+
+/// What a stage produces.
+union StageOutput {
+  CapacityPlan,
+  Assignment,
+  GlobalRouting,
+  DetailRouting,
+  FinalRouting,
+  Geometry,
+}
+
+/// The root of every stage artifact.
+table Artifact {
+  /// The mqt-scpd version that wrote the artifact, for provenance.
+  producer: string (required);
+  output: StageOutput (required);
+}
+
+root_type Artifact;
+
+// The identifier records the schema version. Change the digit on an
+// incompatible schema change, so that loading an artifact written by an
+// incompatible version fails with a clear message rather than misreading it.
+file_identifier "SCP1";
+file_extension "fb";

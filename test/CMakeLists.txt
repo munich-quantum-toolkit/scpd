@@ -6,4 +6,12 @@
 #
 # Licensed under the MIT License
 
-package_add_test(mqt-scpd-test MQT::SCPD test_add.cpp)
+# one test directory per module, each globbing its own tests
+add_subdirectory(geometry)
+add_subdirectory(design)
+add_subdirectory(grid)
+add_subdirectory(routing)
+add_subdirectory(milp)
+add_subdirectory(drc)
+add_subdirectory(io)
+add_subdirectory(pipeline)
