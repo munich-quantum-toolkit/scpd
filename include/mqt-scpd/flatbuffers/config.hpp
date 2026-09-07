@@ -51,7 +51,7 @@ bool operator!=(const GridParamsT &lhs, const GridParamsT &rhs);
 bool operator==(const ConfigT &lhs, const ConfigT &rhs);
 bool operator!=(const ConfigT &lhs, const ConfigT &rhs);
 
-/// Where the outer port ring comes from. See decision 0023.
+/// Where the outer port ring comes from.
 enum class PortDetection : uint8_t {
   /// The configuration supplies all_outer and fixed_outer.
   Manual = 0,

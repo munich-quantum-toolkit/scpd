@@ -61,7 +61,8 @@ exclude_patterns = [
     "_build",
     # Developer design documents. They use Mermaid, which is not among the
     # extensions above, and they target contributors rather than users.
-    # They render on GitHub instead.
+    # They render on GitHub instead. Remove this exclusion together with the
+    # documents once the port of the prototype is complete.
     "design/**",
     "**.ipynb_checkpoints",
     "**.jupyter_cache",

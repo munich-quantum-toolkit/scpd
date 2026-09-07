@@ -19,8 +19,7 @@
 # GENERATED_HEADERS names schema-generated headers under `include/mqt-scpd/flatbuffers/` that the
 # module owns. They join the header set, and the module links the FlatBuffers runtime.
 #
-# LINK_LIBRARIES names the modules this module depends on. The dependency direction between the
-# modules is documented in ARCHITECTURE.md.
+# LINK_LIBRARIES names the modules this module depends on.
 #
 # A module without sources becomes an INTERFACE library. The first source file in `src/<module>/`
 # turns it into a regular library with an export header; nothing else changes for its users. Both

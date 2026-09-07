@@ -8,8 +8,6 @@
 
 // The DRCPolice report. Schema-defined even though it is written as JSON,
 // because a violation has to be machine-readable. Owned by MQT::ScpdDrc.
-// See the design-rule checking section of docs/design/pipeline.md and
-// decisions 0022 and 0024.
 
 include "design.fbs";
 

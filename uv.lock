@@ -1135,7 +1135,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flatbuffers", specifier = ">=25.12.19" },
+    { name = "flatbuffers", specifier = "~=25.12.19" },
     { name = "nanobind-backend", specifier = ">=1.0" },
 ]
 
@@ -1148,7 +1148,7 @@ build = [
 ]
 dev = [
     { name = "cmake", specifier = ">=4.4.1" },
-    { name = "flatbuffers", specifier = ">=25.12.19" },
+    { name = "flatbuffers", specifier = "~=25.12.19" },
     { name = "nanobind", specifier = "~=3.0.1" },
     { name = "nox", specifier = ">=2025.11.12" },
     { name = "pytest", specifier = ">=9.0.1" },
@@ -1172,7 +1172,7 @@ docs = [
     { name = "sphinxext-opengraph", specifier = ">=0.13.0" },
 ]
 test = [
-    { name = "flatbuffers", specifier = ">=25.12.19" },
+    { name = "flatbuffers", specifier = "~=25.12.19" },
     { name = "pytest", specifier = ">=9.0.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-sugar", specifier = ">=1.1.1" },

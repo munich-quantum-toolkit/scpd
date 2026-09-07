@@ -2,7 +2,7 @@
 
 # namespace: config
 
-# Where the outer port ring comes from. See decision 0023.
+# Where the outer port ring comes from.
 class PortDetection(object):
     # The configuration supplies all_outer and fixed_outer.
     Manual = 0

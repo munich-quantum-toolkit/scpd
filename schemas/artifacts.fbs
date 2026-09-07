@@ -8,7 +8,7 @@
 
 // The six stage artifacts of a run directory, 01-capacity.fb through
 // 06-geometry.fb. Owned by MQT::ScpdIO. Grids and router containers are
-// derived state and never appear here. See docs/design/pipeline.md.
+// derived state and never appear here.
 //
 // Each stage appends the fields of its output when the stage is implemented,
 // so the tables of stages that do not exist yet are empty on purpose.

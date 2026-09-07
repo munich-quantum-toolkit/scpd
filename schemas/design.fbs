@@ -8,7 +8,6 @@
 
 // The chip, its ports and their roles, the design rules, and the components
 // that a run instantiates. Owned by MQT::ScpdDesign.
-// See docs/design/data-model.md and decisions 0018 and 0019.
 
 include "geometry.fbs";
 
@@ -93,7 +92,7 @@ table Connection {
 }
 
 /// The design rules. Every rule is a length in layout units, held once and
-/// converted to cells only through cells_for. See decision 0019.
+/// converted to cells only through cells_for.
 table DesignRules {
   min_wire_spacing: double;
   min_obstacle_spacing: double;

@@ -10,7 +10,6 @@
 // MQT::ScpdDesign. Scalar defaults here are the defaults the loader applies;
 // a shipped configuration carries only what differs from them, except
 // [design_rules] and [ports].detection, which are always written out.
-// See the configuration section of docs/design/pipeline.md.
 //
 // The stage, component and DRC parameters of that section arrive with the
 // stages that read them, appended to Config.
@@ -19,7 +18,7 @@ include "design.fbs";
 
 namespace mqt.scpd.flatbuffers.config;
 
-/// Where the outer port ring comes from. See decision 0023.
+/// Where the outer port ring comes from.
 enum PortDetection : ubyte {
   /// The configuration supplies all_outer and fixed_outer.
   Manual,

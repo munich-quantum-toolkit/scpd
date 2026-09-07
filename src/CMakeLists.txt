@@ -32,8 +32,7 @@ if(NOT TARGET MQT::ProjectOptions)
   set_target_properties(project_options PROPERTIES EXPORT_NAME ProjectOptions)
 endif()
 
-# The eight module libraries, in dependency order. The dependency graph is documented in
-# ARCHITECTURE.md; nothing depends on pipeline, which is the top.
+# The eight module libraries, in dependency order. Nothing depends on pipeline, which is the top.
 add_subdirectory(geometry)
 add_subdirectory(design)
 add_subdirectory(grid)
@@ -42,3 +41,21 @@ add_subdirectory(milp)
 add_subdirectory(drc)
 add_subdirectory(io)
 add_subdirectory(pipeline)
+
+# The whole core as one target, for the bindings and for a project that embeds MQT SCPD without
+# picking modules.
+if(NOT TARGET MQT::SCPD)
+  add_library(${MQT_SCPD_TARGET_NAME} INTERFACE)
+  target_link_libraries(
+    ${MQT_SCPD_TARGET_NAME}
+    INTERFACE MQT::ScpdGeometry
+              MQT::ScpdDesign
+              MQT::ScpdGrid
+              MQT::ScpdRouting
+              MQT::ScpdMilp
+              MQT::ScpdDrc
+              MQT::ScpdIO
+              MQT::ScpdPipeline)
+  add_library(MQT::SCPD ALIAS ${MQT_SCPD_TARGET_NAME})
+  set_target_properties(${MQT_SCPD_TARGET_NAME} PROPERTIES EXPORT_NAME SCPD)
+endif()

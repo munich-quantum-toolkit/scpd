@@ -27,8 +27,6 @@ releases may include breaking changes.
 
 ### Changed
 
-- 💥 Remove the flat `MQT::SCPD` target in favor of the per-module targets
-  `MQT::Scpd<Module>` ([#98]) ([**@FeldmeierMichael**])
 - 💥 Drop support for x86 macOS and stop publishing the respective wheels
   ([#89]) ([**@denialhaag**])
 - ⬆️ Raise the macOS deployment target to 13.3 to enable `std::format` in libc++

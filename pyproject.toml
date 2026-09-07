@@ -48,7 +48,8 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-  "flatbuffers>=25.12.19",
+  # The same version as FLATBUFFERS_VERSION in cmake/ExternalDependencies.cmake, which generates the code
+  "flatbuffers~=25.12.19",
   "nanobind-backend>=1.0",
 ]
 dynamic = ["version"]
@@ -308,7 +309,7 @@ docs = [
   "breathe>=4.36.0",
 ]
 test = [
-  "flatbuffers>=25.12.19", # the tests build buffers directly
+  "flatbuffers~=25.12.19",
   "pytest>=9.0.1",
   "pytest-cov>=7.1.0",
   "pytest-sugar>=1.1.1",

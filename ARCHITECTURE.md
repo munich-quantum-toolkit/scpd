@@ -165,7 +165,9 @@ that globs its own tests. A module without source files is an interface library.
 The first file under `src/<module>/` turns it into a regular library with an
 export header, and nothing changes for the modules that depend on it. Each
 schema-generated header belongs to the module that owns its schema, so a
-dependency on the data model is a dependency on that module.
+dependency on the data model is a dependency on that module. `MQT::SCPD` links
+all eight modules; it is what the bindings link, and what a project that embeds
+the whole core links instead of picking modules.
 
 ### Stage interfaces
 
