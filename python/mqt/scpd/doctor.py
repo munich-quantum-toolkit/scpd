@@ -88,9 +88,7 @@ def classification_table(chip: ChipT, config: ConfigT) -> list[str]:
         lines.append(f"{name:<13}{counts.get(name, 0):>6}  {pattern_of[name]}")
         if examples.get(name):
             lines.append(f"{'':<19}  {', '.join(examples[name])}")
-    for name in counts:
-        if name not in pattern_of:
-            lines.append(f"{name:<13}{counts[name]:>6}")
+    lines.extend(f"{name:<13}{counts[name]:>6}" for name in counts if name not in pattern_of)
     return lines
 
 

@@ -138,7 +138,7 @@ def _enum_names(enum: type) -> dict[int, str]:
 def _to_value(value: Any, kind: Field, owner: Any) -> Any:
     if value is None:
         return None
-    if kind in (float, int, str):
+    if kind in {float, int, str}:
         return value
     tag, *rest = kind
     if tag == "enum":
@@ -163,7 +163,7 @@ def to_dict(obj: Any) -> dict[str, Any]:
 def _from_value(value: Any, kind: Field, where: str, owner: dict[str, Any]) -> Any:
     if value is None:
         return None
-    if kind in (float, int, str):
+    if kind in {float, int, str}:
         if not isinstance(value, kind) or (kind is not str and isinstance(value, bool)):
             msg = f"{where} must be {kind.__name__}"
             raise InspectionError(msg)

@@ -13,13 +13,13 @@ walk derives `all_outer` and `fixed_outer` from the chip geometry. It also gave
 
 Phase 1 ported the walk and measured both modes on all eight benchmark chips.
 The walk reproduces the drivers' sequences on 4Q, 33Q, 45Q and 57Q, up to a
-rotation on 17Q, and up to an open sub-chain of the fixed sequence on 9Q. On
-21Q and 69Q it produces different sequences. Those two inputs carried two ports
-per qubit and five per coupler, without the coupler-mating ports the walk read
-a qubit's center and a coupler's axis from, so it fell back to centroids and
-diagonals. All eight inputs now have that shape. The prototype reached the same result: its
-last commit before the port, `0708436` of 2026-09-05, reverted every driver to
-hand-written sequences.
+rotation on 17Q, and up to an open sub-chain of the fixed sequence on 9Q. On 21Q
+and 69Q it produces different sequences. Those two inputs carried two ports per
+qubit and five per coupler, without the coupler-mating ports the walk read a
+qubit's center and a coupler's axis from, so it fell back to centroids and
+diagonals. All eight inputs now have that shape. The prototype reached the same
+result: its last commit before the port, `0708436` of 2026-09-05, reverted every
+driver to hand-written sequences.
 
 ## Decision
 
@@ -37,17 +37,17 @@ the classification table.
 
 **Keep automatic detection as an opt-in mode.** What decision 0023 chose.
 Rejected: a mode that is wrong on two of eight benchmarks, and whose result
-cannot be told from a right one without the sequence it was meant to replace,
-is not a mode anyone can select. The sequences have to ship either way.
+cannot be told from a right one without the sequence it was meant to replace, is
+not a mode anyone can select. The sequences have to ship either way.
 
 **Keep the walk as the doctor's cross-check only.** Rejected: it is several
 hundred lines of geometry to check an input that the validation already checks
 label by label, and where the two disagree the doctor cannot say which side is
 right.
 
-**Extend the walk to inputs that carry routable ports only.** Rejected: it
-needs a definition of a qubit's center and a coupler's axis that the inputs do
-not carry, so it would reintroduce the guessing from names that decision 0018
+**Extend the walk to inputs that carry routable ports only.** Rejected: it needs
+a definition of a qubit's center and a coupler's axis that the inputs do not
+carry, so it would reintroduce the guessing from names that decision 0018
 removed.
 
 ## Consequences
@@ -55,8 +55,8 @@ removed.
 - Decision 0020's first consequence stands again in full: the ring is input,
   about 330 entries on the 69-qubit chip, validated at load and printed by the
   doctor.
-- The 17-qubit ring enters the cycle at `Qb15` because its sequence does; no
-  key carries that rotation separately.
+- The 17-qubit ring enters the cycle at `Qb15` because its sequence does; no key
+  carries that rotation separately.
 - The acceptance figures that were measured with the derived ring are to be
   re-measured with the shipped sequences before they serve as a baseline.
 - `MQT::ScpdGeometry` keeps its vector and bounding-box helpers; the grid of

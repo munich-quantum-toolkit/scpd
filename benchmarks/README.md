@@ -19,23 +19,23 @@ patterns.
 | `57q` |     57 | FridgeCAD-0fails   | `57Q_layout/routing_config_57q.json`     | 3.3 MB | no        |
 | `69q` |     69 | FridgeCAD-0fails   | `69Q_layout/routing_config_69q_new.json` | 4.1 MB | no        |
 
-The table names the prototype file each input derives from. Every
-configuration names its input as `routing_config.json` next to it. To work
-with one of the six larger chips, copy its file there; `.gitignore` keeps the
-copies out of the repository.
+The table names the prototype file each input derives from. Every configuration
+names its input as `routing_config.json` next to it. To work with one of the six
+larger chips, copy its file there; `.gitignore` keeps the copies out of the
+repository.
 
 ## What the configurations carry
 
 **Role patterns.** Two naming schemes exist: the 4-qubit chip names its
 components `Q1` and `C12` with three ports per coupler, every other chip `Qb1`
-and `Coupler1_2` with five. Every qubit carries the readout port `port0` and
-the drive port `port1`.
+and `Coupler1_2` with five. Every qubit carries the readout port `port0` and the
+drive port `port1`.
 
 **Port sequences.** `all_outer` and `fixed_outer` are the literals of the
-prototype's drivers, `all_outer_ports` and `fixed_outer_ports`, copied
-verbatim. The 4-qubit driver carries one list, `all_ports`, and passes it as
-both. The 9-qubit driver's fixed literal omits `Qb4` and `Coupler1_4`, which
-its own `all_outer` lists. Loading checks every label against the chip; see
+prototype's drivers, `all_outer_ports` and `fixed_outer_ports`, copied verbatim.
+The 4-qubit driver carries one list, `all_ports`, and passes it as both. The
+9-qubit driver's fixed literal omits `Qb4` and `Coupler1_4`, which its own
+`all_outer` lists. Loading checks every label against the chip; see
 [decision 0025](../docs/design/decisions/0025-port-ring-is-manual-input.md).
 
 **Design rules.** The five lengths are the same on every chip: 185, 25, 50 and
@@ -54,9 +54,9 @@ counts come from each driver's assignment call:
 | `69q` |                          6 |                       0 |
 
 **Grid.** The capacity grid's cell count and launcher offset come from each
-driver's `CapacityGrid` constructor call. The 17-qubit chip is the one that
-sets a cell count in both directions and an offset of 20; the 69-qubit chip
-runs on the defaults and therefore has no `[grid]` section.
+driver's `CapacityGrid` constructor call. The 17-qubit chip is the one that sets
+a cell count in both directions and an offset of 20; the 69-qubit chip runs on
+the defaults and therefore has no `[grid]` section.
 
 ## What the drivers do that no key carries yet
 
@@ -75,15 +75,15 @@ These values arrive with the stages that read them.
 
 The drivers do not agree on what they pin as fixed ports. The 4-qubit driver
 pins `all_outer` in the capacity stage and nothing in the final stage. The
-9-qubit driver pins every routable port in the capacity stage and nothing in
-the final stage; its `fixed_outer_ports` literal is a dead variable there. The
+9-qubit driver pins every routable port in the capacity stage and nothing in the
+final stage; its `fixed_outer_ports` literal is a dead variable there. The
 17-qubit driver pins `fixed_outer` in both stages. The five larger drivers pin
 nothing in either stage, although each carries a `fixed_outer_ports` literal.
 The phase that ports the capacity stage decides how a run reproduces this; the
 configurations record the literals so that the decision has its input.
 
-The 17-qubit driver's `all_outer` enters the ring at `Qb15`; the sequence
-itself carries that rotation, and the assignment consumes it in order.
+The 17-qubit driver's `all_outer` enters the ring at `Qb15`; the sequence itself
+carries that rotation, and the assignment consumes it in order.
 
 ## Checks
 

@@ -10,11 +10,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from mqt.scpd.config import ConfigError, load_config, parse_config, read_config, shipped_config_problems, write_config
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 MANUAL = """
 [chip]
@@ -79,12 +82,18 @@ def test_the_grid_section_is_optional_and_partial() -> None:
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        (MANUAL.replace("[ports.patterns]", "[ports]\nsloppy = 1\n\n[ports.patterns]"), "[ports] has the unknown key 'sloppy'"),
+        (
+            MANUAL.replace("[ports.patterns]", "[ports]\nsloppy = 1\n\n[ports.patterns]"),
+            "[ports] has the unknown key 'sloppy'",
+        ),
         (MANUAL + "\n[extra]\nx = 1\n", "unknown section [extra]"),
         (MANUAL.replace("max_feedline_utilization = 5", "max_feedline_utilization = 5.5"), "must be an integer"),
         (MANUAL.replace("min_bend_radius = 50.0\n", ""), "[design_rules] lacks the required key 'min_bend_radius'"),
-        (MANUAL.split("[ports.sequences]")[0] + "[design_rules]" + MANUAL.split("[design_rules]")[1], "[ports.sequences] is missing"),
-        (MANUAL.replace("[chip]\ninput = \"routing_config.json\"\n", ""), "[chip] is missing"),
+        (
+            MANUAL.split("[ports.sequences]", maxsplit=1)[0] + "[design_rules]" + MANUAL.split("[design_rules]")[1],
+            "[ports.sequences] is missing",
+        ),
+        (MANUAL.replace('[chip]\ninput = "routing_config.json"\n', ""), "[chip] is missing"),
         (MANUAL.replace('fixed_outer = ["Qb1.port0"]', "fixed_outer = [1]"), "must be an array of strings"),
         ("not = [toml", "is not TOML"),
     ],

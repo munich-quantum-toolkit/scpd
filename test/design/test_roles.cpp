@@ -75,8 +75,8 @@ TEST(Roles, NamesFollowTheConfigurationKeys) {
 }
 
 TEST(Roles, EveryPortTakesTheRoleOfItsOnePattern) {
-  ChipT chip = chipWith(
-      {"Chip.port0", "Qb1.port0", "Qb1.port1", "Coupler1_2.port3"});
+  ChipT chip =
+      chipWith({"Chip.port0", "Qb1.port0", "Qb1.port1", "Coupler1_2.port3"});
 
   EXPECT_TRUE(classifyPorts(chip, benchmarkPatterns()).empty());
   EXPECT_EQ(rolesOf(chip),

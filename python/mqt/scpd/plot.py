@@ -75,13 +75,16 @@ def simplify(points: Sequence[tuple[float, float]], tolerance: float) -> list[tu
         farthest, distance = first, 0.0
         for i in range(first + 1, last):
             px, py = points[i]
-            d = abs(dx * (py - ay) - dy * (px - ax)) / length if length > 0 else ((px - ax) ** 2 + (py - ay) ** 2) ** 0.5
+            d = (
+                abs(dx * (py - ay) - dy * (px - ax)) / length
+                if length > 0
+                else ((px - ax) ** 2 + (py - ay) ** 2) ** 0.5
+            )
             if d > distance:
                 farthest, distance = i, d
         if distance > tolerance:
             keep[farthest] = True
-            stack.append((first, farthest))
-            stack.append((farthest, last))
+            stack.extend(((first, farthest), (farthest, last)))
     return [point for point, kept in zip(points, keep, strict=True) if kept]
 
 
@@ -145,7 +148,7 @@ def layout_svg(chip: ChipT, *, width: int = 2000, tolerance: float = 0.0, title:
     pad = 0.02 * span
     view_width = (max_x - min_x) + 2 * pad
     view_height = (max_y - min_y) + 2 * pad
-    height = int(round(width * view_height / view_width))
+    height = round(width * view_height / view_width)
 
     def to_view(x: float, y: float) -> tuple[float, float]:
         return x - min_x + pad, max_y - y + pad

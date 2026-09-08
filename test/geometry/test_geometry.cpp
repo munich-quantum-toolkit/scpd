@@ -57,22 +57,28 @@ TEST(Geometry, BoundingBoxCoversEveryPoint) {
   const std::vector<Point> points = {Point(2.0, -1.0), Point(-3.0, 4.0),
                                      Point(0.5, 0.5)};
   const BoundingBox box = boundingBox(points);
-  EXPECT_EQ(box, (BoundingBox{.minX = -3.0, .minY = -1.0, .maxX = 2.0, .maxY = 4.0}));
+  EXPECT_EQ(
+      box, (BoundingBox{.minX = -3.0, .minY = -1.0, .maxX = 2.0, .maxY = 4.0}));
   EXPECT_DOUBLE_EQ(box.width(), 5.0);
   EXPECT_DOUBLE_EQ(box.height(), 5.0);
   EXPECT_EQ(box.center(), Point(-0.5, 1.5));
 
   BoundingBox grown = box;
   grown.extend(Point(10.0, 0.0));
-  EXPECT_EQ(grown, (BoundingBox{.minX = -3.0, .minY = -1.0, .maxX = 10.0, .maxY = 4.0}));
-  grown.extend(BoundingBox{.minX = -5.0, .minY = -5.0, .maxX = -4.0, .maxY = -4.0});
-  EXPECT_EQ(grown, (BoundingBox{.minX = -5.0, .minY = -5.0, .maxX = 10.0, .maxY = 4.0}));
+  EXPECT_EQ(grown, (BoundingBox{
+                       .minX = -3.0, .minY = -1.0, .maxX = 10.0, .maxY = 4.0}));
+  grown.extend(
+      BoundingBox{.minX = -5.0, .minY = -5.0, .maxX = -4.0, .maxY = -4.0});
+  EXPECT_EQ(grown, (BoundingBox{
+                       .minX = -5.0, .minY = -5.0, .maxX = 10.0, .maxY = 4.0}));
 }
 
 TEST(Geometry, BoundingBoxOfAPolygonAndOfNothing) {
   mqt::scpd::flatbuffers::geometry::PolygonT polygon;
   polygon.vertices = {Point(0.0, 0.0), Point(100.0, 0.0), Point(100.0, 50.0)};
-  EXPECT_EQ(boundingBox(polygon), (BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 100.0, .maxY = 50.0}));
+  EXPECT_EQ(
+      boundingBox(polygon),
+      (BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 100.0, .maxY = 50.0}));
 
   const std::vector<Point> none;
   EXPECT_THROW(static_cast<void>(boundingBox(std::span<const Point>(none))),

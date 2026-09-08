@@ -237,9 +237,9 @@ def parse_config(text: str, *, source: str = "config.toml", strict: bool = False
     grid = root.subtable("grid")
     config.grid = _read_grid(grid, problems) if grid is not None else None
 
-    for key in document:
-        if key not in {"chip", "ports", "design_rules", "grid"}:
-            problems.append(f"unknown section [{key}]")
+    problems.extend(
+        f"unknown section [{key}]" for key in document if key not in {"chip", "ports", "design_rules", "grid"}
+    )
     if strict:
         problems.extend(shipped_config_problems(document))
     if problems:
@@ -297,4 +297,3 @@ def read_config(data: bytes) -> ConfigT:
 
 def _text(label: str | bytes | None) -> str:
     return label.decode("utf-8") if isinstance(label, bytes) else (label or "")
-

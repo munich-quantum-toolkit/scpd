@@ -62,8 +62,8 @@ std::string join(const Problems& problems) {
     joined += problems[i];
   }
   if (problems.size() > MAX_REPORTED_PROBLEMS) {
-    joined += "; and " + std::to_string(problems.size() - MAX_REPORTED_PROBLEMS) +
-              " more";
+    joined += "; and " +
+              std::to_string(problems.size() - MAX_REPORTED_PROBLEMS) + " more";
   }
   return joined;
 }
@@ -166,7 +166,8 @@ void readPorts(const json& document, ChipT& chip, Problems& problems) {
     auto port = std::make_unique<PortT>();
     port->label = label;
     port->role = UnassignedRole::Unset;
-    if (!value.contains("center") || !readPoint(value["center"], port->center)) {
+    if (!value.contains("center") ||
+        !readPoint(value["center"], port->center)) {
       problems.push_back(where + " has no center that is a pair of numbers");
       continue;
     }

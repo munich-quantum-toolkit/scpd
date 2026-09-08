@@ -13,14 +13,16 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from mqt.scpd.artifacts import write_artifact
 from mqt.scpd.cli import main
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
+
+if TYPE_CHECKING:
+    import pytest
 
 BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
 CONFIG = str(BENCHMARKS / "4q" / "config.toml")
@@ -63,7 +65,9 @@ def test_render_writes_a_layout_file(tmp_path: Path, capsys: pytest.CaptureFixtu
 def test_inspect_prints_an_artifact_as_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """An artifact file prints as JSON to stdout or to a file."""
     artifact = tmp_path / "03-global.fb"
-    artifact.write_bytes(write_artifact(ArtifactT(producer="test", outputType=StageOutput.GlobalRouting, output=GlobalRoutingT())))
+    artifact.write_bytes(
+        write_artifact(ArtifactT(producer="test", outputType=StageOutput.GlobalRouting, output=GlobalRoutingT()))
+    )
 
     assert main(["inspect", str(artifact)]) == 0
     document = json.loads(capsys.readouterr().out)

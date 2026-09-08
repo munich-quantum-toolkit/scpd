@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from xml.etree import ElementTree
+from xml.etree import ElementTree as ET
 
 import pytest
 
@@ -55,7 +55,7 @@ def test_the_layout_view_keeps_every_vertex(chip: str) -> None:
 
     svg = layout_svg(model, title=chip)
 
-    root = ElementTree.fromstring(svg)
+    root = ET.fromstring(svg)
     paths = {path.get("class"): path.get("d") or "" for path in root.findall(f"{SVG}path")}
     drawn = sum(data.count("M") + data.count("l") for data in paths.values())
     assert drawn == _distinct_vertices(model)

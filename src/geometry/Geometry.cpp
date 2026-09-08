@@ -24,7 +24,9 @@ Point subtract(const Point to, const Point from) {
   return {to.x() - from.x(), to.y() - from.y()};
 }
 
-Point add(const Point a, const Point b) { return {a.x() + b.x(), a.y() + b.y()}; }
+Point add(const Point a, const Point b) {
+  return {a.x() + b.x(), a.y() + b.y()};
+}
 
 Point midpoint(const Point a, const Point b) {
   return {0.5 * (a.x() + b.x()), 0.5 * (a.y() + b.y())};
@@ -42,7 +44,9 @@ double norm(const Point vector) { return std::hypot(vector.x(), vector.y()); }
 
 double distance(const Point a, const Point b) { return norm(subtract(a, b)); }
 
-double angleOf(const Point vector) { return std::atan2(vector.y(), vector.x()); }
+double angleOf(const Point vector) {
+  return std::atan2(vector.y(), vector.x());
+}
 
 double normalizeAngle(const double radians) {
   constexpr double tau = 2.0 * std::numbers::pi;

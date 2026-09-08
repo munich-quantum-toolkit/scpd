@@ -86,8 +86,9 @@ TEST(ChipJson, ReadsObstaclesAndPortsInFileOrder) {
   const ChipT chip = readChipJson(CHIP_TEXT);
 
   ASSERT_EQ(chip.obstacles.size(), 2U);
-  EXPECT_EQ(chip.obstacles[0]->vertices,
-            (std::vector{Point(0.0, 0.0), Point(100.0, 0.0), Point(100.0, 50.0)}));
+  EXPECT_EQ(
+      chip.obstacles[0]->vertices,
+      (std::vector{Point(0.0, 0.0), Point(100.0, 0.0), Point(100.0, 50.0)}));
   ASSERT_EQ(chip.ports.size(), 3U);
   EXPECT_EQ(chip.ports[0]->label, "Qb1.port0");
   EXPECT_EQ(chip.ports[0]->center, Point(10.5, 20.5));

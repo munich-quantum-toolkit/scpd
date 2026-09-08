@@ -50,7 +50,9 @@ def coupler(connection: int) -> CpwCouplerT:
     """
     return CpwCouplerT(
         connection=ConnectionRefT(index=connection),
-        port=PortT(label=f"Coupler{connection}.port0", center=PointT(1.0, 2.0), orientation=90.0, role=UnassignedRole.Coupler),
+        port=PortT(
+            label=f"Coupler{connection}.port0", center=PointT(1.0, 2.0), orientation=90.0, role=UnassignedRole.Coupler
+        ),
         center=PointT(1.0, 2.0),
         rotation=Rotation.R90,
         length=200.0,
@@ -73,7 +75,9 @@ STAGE_OUTPUTS = [
         StageOutput.Assignment,
         AssignmentT(
             connections=[
-                ConnectionT(target=PortRefT(3), sourceRole=AssignedRole.ResonatorSource, targetRole=AssignedRole.ResonatorTarget),
+                ConnectionT(
+                    target=PortRefT(3), sourceRole=AssignedRole.ResonatorSource, targetRole=AssignedRole.ResonatorTarget
+                ),
                 ConnectionT(
                     source=PortRefT(1),
                     target=PortRefT(2),
@@ -104,8 +108,13 @@ STAGE_OUTPUTS = [
                     connection=ConnectionRefT(0),
                     path=PathT(
                         segments=[
-                            SegmentT(shapeType=SegmentShape.Line, shape=LineT(start=PointT(0.0, 0.0), end=PointT(100.0, 0.0))),
-                            SegmentT(shapeType=SegmentShape.Arc, shape=ArcT(center=PointT(100.0, 50.0), radius=50.0, sweep=1.5)),
+                            SegmentT(
+                                shapeType=SegmentShape.Line, shape=LineT(start=PointT(0.0, 0.0), end=PointT(100.0, 0.0))
+                            ),
+                            SegmentT(
+                                shapeType=SegmentShape.Arc,
+                                shape=ArcT(center=PointT(100.0, 50.0), radius=50.0, sweep=1.5),
+                            ),
                         ]
                     ),
                 )
@@ -133,7 +142,9 @@ def test_every_stage_output_round_trips_through_json(output_type: int, output: o
 
 def test_enums_and_union_tags_are_spelled_by_name() -> None:
     """The JSON names roles, rotations and shapes instead of numbering them."""
-    document = to_dict(artifact(StageOutput.FinalRouting, FinalRoutingT(couplers=[coupler(3)], bridges=[], unresolved=[])))
+    document = to_dict(
+        artifact(StageOutput.FinalRouting, FinalRoutingT(couplers=[coupler(3)], bridges=[], unresolved=[]))
+    )
 
     assert document["outputType"] == "FinalRouting"
     assert document["output"]["couplers"][0]["rotation"] == "R90"
@@ -144,8 +155,14 @@ def test_enums_and_union_tags_are_spelled_by_name() -> None:
 @pytest.mark.parametrize(
     ("document", "message"),
     [
-        ({"producer": "p", "outputType": "Assignment", "output": {"objective": "high"}}, "output.objective must be float"),
-        ({"producer": "p", "outputType": "Assignment", "output": {"connections": 3}}, "output.connections must be a list"),
+        (
+            {"producer": "p", "outputType": "Assignment", "output": {"objective": "high"}},
+            "output.objective must be float",
+        ),
+        (
+            {"producer": "p", "outputType": "Assignment", "output": {"connections": 3}},
+            "output.connections must be a list",
+        ),
         ({"producer": "p", "outputType": "Sideways", "output": {}}, "outputType must be one of"),
         ({"producer": "p", "output": {}}, "output has no type tag in outputType"),
         ({"producer": "p", "outputType": "GlobalRouting", "output": {}, "extra": 1}, "unknown fields: extra"),

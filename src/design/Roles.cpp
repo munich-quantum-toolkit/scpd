@@ -38,10 +38,10 @@ std::vector<CompiledPattern> compile(const PortPatternsT& patterns) {
   std::vector<CompiledPattern> compiled;
   const auto add = [&](const std::string_view key, const UnassignedRole role,
                        const std::string& expression) {
-    compiled.push_back({.key = key,
-                        .role = role,
-                        .expression =
-                            std::regex(expression, std::regex::ECMAScript)});
+    compiled.push_back(
+        {.key = key,
+         .role = role,
+         .expression = std::regex(expression, std::regex::ECMAScript)});
   };
   add("launcher", UnassignedRole::Launcher, patterns.launcher);
   add("resonator", UnassignedRole::Resonator, patterns.resonator);
@@ -96,8 +96,7 @@ Problems classifyPorts(ChipT& chip, const PortPatternsT& patterns) {
     }
     port->role = UnassignedRole::Unset;
     if (matched.empty()) {
-      problems.push_back("port '" + port->label +
-                         "' matches no role pattern");
+      problems.push_back("port '" + port->label + "' matches no role pattern");
       continue;
     }
     std::string names;

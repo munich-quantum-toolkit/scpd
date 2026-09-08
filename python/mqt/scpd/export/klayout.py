@@ -73,7 +73,7 @@ def write_layout(chip: ChipT, path: Path, *, cell: str = "chip") -> ExportSummar
         msg = f"{path}: the suffix must be one of {', '.join(FORMATS)}"
         raise ExportError(msg)
     try:
-        import klayout.db as kdb  # noqa: PLC0415
+        import klayout.db as kdb  # ruff: ignore[import-outside-top-level]
     except ImportError as error:
         msg = "KLayout is not installed; install mqt-scpd[klayout] to write layouts"
         raise ExportError(msg) from error

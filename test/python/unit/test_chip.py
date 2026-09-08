@@ -42,7 +42,11 @@ def test_the_nine_qubit_chip_loads_with_its_sequences() -> None:
     config_path = BENCHMARKS / "9q" / "config.toml"
     chip = decode_chip(load_chip(load_config(config_path), config_path))
 
-    assert Counter(role_name(port.role) for port in ports_of(chip)) == {"launcher": 24, "resonator": 9, "conventional": 69}
+    assert Counter(role_name(port.role) for port in ports_of(chip)) == {
+        "launcher": 24,
+        "resonator": 9,
+        "conventional": 69,
+    }
 
 
 def test_a_chip_that_does_not_fit_its_configuration_is_refused() -> None:
