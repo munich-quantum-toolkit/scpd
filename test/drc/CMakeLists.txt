@@ -6,11 +6,9 @@
 #
 # Licensed under the MIT License
 
-"""Test the add function."""
-
-from mqt.scpd.pyscpd import add
-
-
-def test_add() -> None:
-    """Test the add function."""
-    assert add(1, 2) == 3
+if(TARGET MQT::ScpdDrc)
+  file(GLOB_RECURSE DRC_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
+  if(DRC_TEST_SOURCES)
+    package_add_test(mqt-scpd-drc-test MQT::ScpdDrc ${DRC_TEST_SOURCES})
+  endif()
+endif()

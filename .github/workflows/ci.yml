@@ -113,7 +113,7 @@ jobs:
     with:
       clang-version: 22
       build-project: true
-      files-changed-only: true
+      files-changed-only: false
       setup-python: true
       install-pkgs: "nanobind==3.0.1"
       cpp-linter-extra-args: "-std=c++20"
@@ -155,6 +155,21 @@ jobs:
       enable-mypy: false
     permissions:
       contents: read
+
+  schemas:
+    name: 📐 Schemas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Check that the committed schema-generated code is current
+        run: uvx nox -s schemas -- --check
 
   build-sdist:
     name: 🚀 CD
@@ -198,6 +213,7 @@ jobs:
       - cpp-linter
       - python-tests
       - python-linter
+      - schemas
       - build-sdist
       - build-wheel
     runs-on: ubuntu-latest

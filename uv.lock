@@ -638,6 +638,14 @@ wheels = [
 ]
 
 [[package]]
+name = "flatbuffers"
+version = "25.12.19"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/2d/d2a548598be01649e2d46231d151a6c56d10b964d94043a335ae56ea2d92/flatbuffers-25.12.19-py2.py3-none-any.whl", hash = "sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4", size = 26661, upload-time = "2025-12-19T23:16:13.622Z" },
+]
+
+[[package]]
 name = "furo"
 version = "2025.12.19"
 source = { registry = "https://pypi.org/simple" }
@@ -1080,6 +1088,7 @@ wheels = [
 name = "mqt-scpd"
 source = { editable = "." }
 dependencies = [
+    { name = "flatbuffers" },
     { name = "nanobind-backend" },
 ]
 
@@ -1092,6 +1101,7 @@ build = [
 ]
 dev = [
     { name = "cmake" },
+    { name = "flatbuffers" },
     { name = "nanobind" },
     { name = "nox" },
     { name = "pytest" },
@@ -1116,6 +1126,7 @@ docs = [
     { name = "sphinxext-opengraph" },
 ]
 test = [
+    { name = "flatbuffers" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-sugar" },
@@ -1123,7 +1134,10 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "nanobind-backend", specifier = ">=1.0" }]
+requires-dist = [
+    { name = "flatbuffers", specifier = "~=25.12.19" },
+    { name = "nanobind-backend", specifier = ">=1.0" },
+]
 
 [package.metadata.requires-dev]
 build = [
@@ -1134,6 +1148,7 @@ build = [
 ]
 dev = [
     { name = "cmake", specifier = ">=4.4.1" },
+    { name = "flatbuffers", specifier = "~=25.12.19" },
     { name = "nanobind", specifier = "~=3.0.1" },
     { name = "nox", specifier = ">=2025.11.12" },
     { name = "pytest", specifier = ">=9.0.1" },
@@ -1157,6 +1172,7 @@ docs = [
     { name = "sphinxext-opengraph", specifier = ">=0.13.0" },
 ]
 test = [
+    { name = "flatbuffers", specifier = "~=25.12.19" },
     { name = "pytest", specifier = ">=9.0.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-sugar", specifier = ">=1.1.1" },

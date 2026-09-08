@@ -8,12 +8,11 @@
  * Licensed under the MIT License
  */
 
-#include "Add.hpp"
-
 #include <nanobind/nanobind.h>
 
-namespace nb = nanobind;
-using namespace nb::literals;
-
+// The bindings expose what the command-line interface needs and nothing else.
 // NOLINTNEXTLINE(performance-unnecessary-value-param)
-NB_MODULE(MQT_SCPD_MODULE_NAME, m) { m.def("add", &add, "Add two integers."); }
+NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
+  m.doc() = "Internal bindings of the MQT SCPD core. The command-line "
+            "interface is the supported product.";
+}
