@@ -57,7 +57,7 @@ def test_problems_end_the_report_with_a_verdict(tmp_path: Path) -> None:
     wrong_ring = tmp_path / "ring.toml"
     wrong_ring.write_text(
         config.replace(
-            'input = "routing_config.json"', f'input = "{BENCHMARKS / "4q" / "routing_config.json"}"'
+            'input = "routing_config.json"', f'input = "{(BENCHMARKS / "4q" / "routing_config.json").as_posix()}"'
         ).replace('"Q1.port0",', '"Q9.port0",', 1),
         encoding="utf-8",
     )
