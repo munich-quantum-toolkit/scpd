@@ -13,9 +13,11 @@
 #include "mqt-scpd/io/Config.hpp"
 
 #include <nanobind/nanobind.h>
-#include <nanobind/stl/string.h>
-#include <nanobind/stl/string_view.h>
-#include <nanobind/stl/vector.h>
+// The type casters below take part through the conversions they enable, not
+// through a name the code spells out.
+#include <nanobind/stl/string.h>      // IWYU pragma: keep
+#include <nanobind/stl/string_view.h> // IWYU pragma: keep
+#include <nanobind/stl/vector.h>      // IWYU pragma: keep
 
 #include <cstdint>
 #include <span>

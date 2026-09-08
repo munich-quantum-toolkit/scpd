@@ -17,7 +17,7 @@ the bytes of the ``config.fbs`` schema.
 from __future__ import annotations
 
 import tomllib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import flatbuffers
 
@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 
 class ConfigError(ValueError):
     """A configuration that cannot be loaded. The message names every problem."""
+
+
+T = TypeVar("T")
 
 
 #: The keys of ``[design_rules]``, all of them required, with the kind of number each holds.
@@ -66,8 +69,12 @@ class _Section:
         self.problems = problems
         self.seen: set[str] = set()
 
-    def take(self, key: str, kind: type, *, required: bool = False, default: Any = None) -> Any:
-        """Read one value, checking its type; report a missing required key or a wrong type."""
+    def take(self, key: str, kind: type[T], *, default: T, required: bool = False) -> T:
+        """Read one value, checking its type; report a missing required key or a wrong type.
+
+        Returns:
+            The value, or ``default`` when the key is absent or holds the wrong type.
+        """
         self.seen.add(key)
         if key not in self.table:
             if required:
@@ -77,10 +84,14 @@ class _Section:
         if not _is_kind(value, kind):
             self.problems.append(f"[{self.name}] {key} must be {_kind_name(kind)}")
             return default
-        return float(value) if kind is float else value
+        return cast("T", float(value) if kind is float else value)
 
     def subtable(self, key: str) -> dict[str, Any] | None:
-        """Read a nested table, or None when it is absent."""
+        """Read a nested table.
+
+        Returns:
+            The table, or None when it is absent or not a table.
+        """
         self.seen.add(key)
         value = self.table.get(key)
         if value is None:

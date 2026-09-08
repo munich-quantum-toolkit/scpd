@@ -128,6 +128,7 @@ TEST(ConfigValidation, AConfigurationNeedsEverySection) {
 TEST(ConfigValidation, SequencesMustNameRoutablePortsOfTheChip) {
   const ChipT chip = smallChip();
   EXPECT_TRUE(validate(manualConfig(), chip).empty());
+  EXPECT_TRUE(validate(ConfigT(), chip).empty());
 
   ConfigT config = manualConfig();
   config.ports->sequences->all_outer = {"Qb1.port0", "Qb9.port0", "Chip.port0",

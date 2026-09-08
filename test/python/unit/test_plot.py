@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from xml.etree import ElementTree as ET
+
+# The parsed SVG is the output of the code under test, not foreign input.
+from xml.etree import ElementTree as ET  # ruff: ignore[suspicious-xml-etree-import]
 
 import pytest
 
@@ -36,7 +38,11 @@ def test_simplification_keeps_corners_and_drops_the_rest() -> None:
 
 
 def _distinct_vertices(model: ChipT) -> int:
-    """The vertices the layout view draws: every input vertex except a repeat of its predecessor."""
+    """The vertices the layout view draws: every input vertex except a repeat of its predecessor.
+
+    Returns:
+        The count.
+    """
     count = 0
     for polygon in obstacles_of(model):
         points = [(v.x, v.y) for v in vertices_of(polygon)]
@@ -55,7 +61,7 @@ def test_the_layout_view_keeps_every_vertex(chip: str) -> None:
 
     svg = layout_svg(model, title=chip)
 
-    root = ET.fromstring(svg)
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
     paths = {path.get("class"): path.get("d") or "" for path in root.findall(f"{SVG}path")}
     drawn = sum(data.count("M") + data.count("l") for data in paths.values())
     assert drawn == _distinct_vertices(model)

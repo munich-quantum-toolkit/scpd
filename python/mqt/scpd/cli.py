@@ -28,20 +28,32 @@ from .plot import STAGES, PlotError, layout_svg
 
 
 def _load(config_path: Path) -> tuple[bytes, Path]:
-    """Load the configuration and its chip, for the commands that draw the chip."""
+    """Load the configuration and its chip, for the commands that draw the chip.
+
+    Returns:
+        The classified chip bytes and the configuration path.
+    """
     config = load_config(config_path)
     return load_chip(config, config_path), config_path
 
 
 def command_doctor(args: argparse.Namespace) -> int:
-    """Run the doctor and print its report."""
+    """Run the doctor and print its report.
+
+    Returns:
+        The exit code.
+    """
     report = run_doctor(args.config, list_ports=args.ports)
     print(report.text())
     return 0 if report.ok else 1
 
 
 def command_plot(args: argparse.Namespace) -> int:
-    """Render one stage of a run as SVG."""
+    """Render one stage of a run as SVG.
+
+    Returns:
+        The exit code.
+    """
     if args.stage != "layout":
         print(f"stage '{args.stage}' arrives with {STAGES[args.stage]}", file=sys.stderr)
         return 1
@@ -53,7 +65,11 @@ def command_plot(args: argparse.Namespace) -> int:
 
 
 def command_render(args: argparse.Namespace) -> int:
-    """Write the unrouted chip as GDSII or OASIS."""
+    """Write the unrouted chip as GDSII or OASIS.
+
+    Returns:
+        The exit code.
+    """
     chip_bytes, _ = _load(args.config)
     summary = write_layout(decode_chip(chip_bytes), args.output)
     print(f"wrote {summary.path} as {summary.format}: {summary.polygons} polygons, {summary.ports} ports")
@@ -61,7 +77,11 @@ def command_render(args: argparse.Namespace) -> int:
 
 
 def command_inspect(args: argparse.Namespace) -> int:
-    """Print a stage artifact as JSON."""
+    """Print a stage artifact as JSON.
+
+    Returns:
+        The exit code.
+    """
     text = artifact_to_json(args.artifact.read_bytes())
     if args.output is None:
         sys.stdout.write(text)

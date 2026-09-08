@@ -78,48 +78,54 @@ std::map<UnassignedRole, std::size_t> roleCounts(const ChipT& chip) {
   return counts;
 }
 
-const std::string BENCHMARKS = MQT_SCPD_BENCHMARK_DIR;
+std::string benchmarks() { return MQT_SCPD_BENCHMARK_DIR; }
 
 // The driver pins every outer port, so the fixed sequence is the whole ring.
-const std::vector<std::string> FOUR_QUBIT_RING = {
-    "Q1.port0", "Q1.port1", "C12.port0", "Q2.port1", "Q2.port0", "C23.port0",
-    "Q3.port0", "Q3.port1", "C34.port0", "Q4.port0", "Q4.port1", "C14.port0",
-};
+std::vector<std::string> fourQubitRing() {
+  return {
+      "Q1.port0", "Q1.port1", "C12.port0", "Q2.port1", "Q2.port0", "C23.port0",
+      "Q3.port0", "Q3.port1", "C34.port0", "Q4.port0", "Q4.port1", "C14.port0",
+  };
+}
 
-const std::vector<std::string> NINE_QUBIT_ALL_OUTER = {
-    "Qb1.port1",        "Qb1.port0",        "Coupler1_2.port1",
-    "Coupler1_2.port0", "Coupler1_2.port3", "Qb2.port1",
-    "Qb2.port0",        "Coupler2_3.port3", "Coupler2_3.port0",
-    "Coupler2_3.port1", "Qb3.port0",        "Qb3.port1",
-    "Coupler3_6.port1", "Coupler3_6.port0", "Coupler3_6.port3",
-    "Qb6.port1",        "Qb6.port0",        "Coupler6_9.port1",
-    "Coupler6_9.port0", "Coupler6_9.port3", "Qb9.port0",
-    "Qb9.port1",        "Coupler8_9.port1", "Coupler8_9.port0",
-    "Coupler8_9.port3", "Qb8.port0",        "Qb8.port1",
-    "Coupler7_8.port3", "Coupler7_8.port0", "Coupler7_8.port1",
-    "Qb7.port1",        "Qb7.port0",        "Coupler4_7.port3",
-    "Coupler4_7.port0", "Coupler4_7.port1", "Qb4.port0",
-    "Qb4.port1",        "Coupler1_4.port3", "Coupler1_4.port0",
-    "Coupler1_4.port1",
-};
+std::vector<std::string> nineQubitAllOuter() {
+  return {
+      "Qb1.port1",        "Qb1.port0",        "Coupler1_2.port1",
+      "Coupler1_2.port0", "Coupler1_2.port3", "Qb2.port1",
+      "Qb2.port0",        "Coupler2_3.port3", "Coupler2_3.port0",
+      "Coupler2_3.port1", "Qb3.port0",        "Qb3.port1",
+      "Coupler3_6.port1", "Coupler3_6.port0", "Coupler3_6.port3",
+      "Qb6.port1",        "Qb6.port0",        "Coupler6_9.port1",
+      "Coupler6_9.port0", "Coupler6_9.port3", "Qb9.port0",
+      "Qb9.port1",        "Coupler8_9.port1", "Coupler8_9.port0",
+      "Coupler8_9.port3", "Qb8.port0",        "Qb8.port1",
+      "Coupler7_8.port3", "Coupler7_8.port0", "Coupler7_8.port1",
+      "Qb7.port1",        "Qb7.port0",        "Coupler4_7.port3",
+      "Coupler4_7.port0", "Coupler4_7.port1", "Qb4.port0",
+      "Qb4.port1",        "Coupler1_4.port3", "Coupler1_4.port0",
+      "Coupler1_4.port1",
+  };
+}
 
 // The driver's fixed sequence stops three entries short of the ring: it omits
 // Qb4 and Coupler1_4, which its own all_outer still lists.
-const std::vector<std::string> NINE_QUBIT_FIXED_OUTER = {
-    "Qb1.port1", "Qb1.port0", "Coupler1_2.port0",
-    "Qb2.port1", "Qb2.port0", "Coupler2_3.port0",
-    "Qb3.port0", "Qb3.port1", "Coupler3_6.port0",
-    "Qb6.port1", "Qb6.port0", "Coupler6_9.port0",
-    "Qb9.port0", "Qb9.port1", "Coupler8_9.port0",
-    "Qb8.port0", "Qb8.port1", "Coupler7_8.port0",
-    "Qb7.port1", "Qb7.port0", "Coupler4_7.port0",
-};
+std::vector<std::string> nineQubitFixedOuter() {
+  return {
+      "Qb1.port1", "Qb1.port0", "Coupler1_2.port0",
+      "Qb2.port1", "Qb2.port0", "Coupler2_3.port0",
+      "Qb3.port0", "Qb3.port1", "Coupler3_6.port0",
+      "Qb6.port1", "Qb6.port0", "Coupler6_9.port0",
+      "Qb9.port0", "Qb9.port1", "Coupler8_9.port0",
+      "Qb8.port0", "Qb8.port1", "Coupler7_8.port0",
+      "Qb7.port1", "Qb7.port0", "Coupler4_7.port0",
+  };
+}
 
 TEST(BenchmarkFixtures, FourQubitChipLoadsWithItsSequences) {
-  const ChipT chip = loadChip(readFile(BENCHMARKS + "/4q/routing_config.json"),
-                              configFor(R"(^Q\d+\.port0$)",
-                                        R"(^(Q\d+\.port1|C\d+\.port[0-2])$)",
-                                        FOUR_QUBIT_RING, FOUR_QUBIT_RING));
+  const ChipT chip = loadChip(
+      readFile(benchmarks() + "/4q/routing_config.json"),
+      configFor(R"(^Q\d+\.port0$)", R"(^(Q\d+\.port1|C\d+\.port[0-2])$)",
+                fourQubitRing(), fourQubitRing()));
 
   EXPECT_EQ(chip.obstacles.size(), 28U);
   EXPECT_EQ(roleCounts(chip), (std::map<UnassignedRole, std::size_t>{
@@ -130,10 +136,10 @@ TEST(BenchmarkFixtures, FourQubitChipLoadsWithItsSequences) {
 
 TEST(BenchmarkFixtures, NineQubitChipLoadsWithItsSequences) {
   const ChipT chip =
-      loadChip(readFile(BENCHMARKS + "/9q/routing_config.json"),
+      loadChip(readFile(benchmarks() + "/9q/routing_config.json"),
                configFor(R"(^Qb\d+\.port0$)",
                          R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port[0-4])$)",
-                         NINE_QUBIT_ALL_OUTER, NINE_QUBIT_FIXED_OUTER));
+                         nineQubitAllOuter(), nineQubitFixedOuter()));
 
   EXPECT_EQ(roleCounts(chip), (std::map<UnassignedRole, std::size_t>{
                                   {UnassignedRole::Launcher, 24},
@@ -142,13 +148,13 @@ TEST(BenchmarkFixtures, NineQubitChipLoadsWithItsSequences) {
 }
 
 TEST(BenchmarkFixtures, ASequenceLabelTheChipLacksIsRefused) {
-  std::vector<std::string> ring = FOUR_QUBIT_RING;
+  std::vector<std::string> ring = fourQubitRing();
   ring.emplace_back("Q9.port0");
   EXPECT_THROW(
       static_cast<void>(loadChip(
-          readFile(BENCHMARKS + "/4q/routing_config.json"),
+          readFile(benchmarks() + "/4q/routing_config.json"),
           configFor(R"(^Q\d+\.port0$)", R"(^(Q\d+\.port1|C\d+\.port[0-2])$)",
-                    ring, FOUR_QUBIT_RING))),
+                    ring, fourQubitRing()))),
       std::invalid_argument);
 }
 

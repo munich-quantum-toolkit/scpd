@@ -89,13 +89,21 @@ def simplify(points: Sequence[tuple[float, float]], tolerance: float) -> list[tu
 
 
 def _number(value: float) -> str:
-    """A coordinate with the three decimals the inputs carry, without trailing zeros."""
+    """A coordinate with the three decimals the inputs carry, without trailing zeros.
+
+    Returns:
+        The number as text.
+    """
     text = f"{value:.3f}".rstrip("0").rstrip(".")
     return "0" if text == "-0" else text
 
 
 def _dedupe(points: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
-    """Drop a vertex that repeats its predecessor, and a closing vertex that repeats the first."""
+    """Drop a vertex that repeats its predecessor, and a closing vertex that repeats the first.
+
+    Returns:
+        The remaining vertices, in order.
+    """
     kept: list[tuple[float, float]] = []
     for point in points:
         if not kept or point != kept[-1]:
@@ -106,7 +114,11 @@ def _dedupe(points: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
 
 
 def _path_data(points: Sequence[tuple[float, float]]) -> str:
-    """One closed subpath: an absolute move, then relative lines, which keeps the numbers short."""
+    """One closed subpath: an absolute move, then relative lines, which keeps the numbers short.
+
+    Returns:
+        The path data.
+    """
     (x0, y0), *rest = points
     parts = [f"M{_number(x0)} {_number(y0)}"]
     x, y = x0, y0

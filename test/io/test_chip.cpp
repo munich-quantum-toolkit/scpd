@@ -13,9 +13,11 @@
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/io/Chip.hpp"
 
+#include <flatbuffers/flatbuffer_builder.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -25,6 +27,7 @@
 namespace {
 
 using namespace mqt::scpd::flatbuffers::config;
+using mqt::scpd::flatbuffers::design::Chip;
 using mqt::scpd::flatbuffers::design::ChipT;
 using mqt::scpd::flatbuffers::design::DesignRulesT;
 using mqt::scpd::flatbuffers::design::UnassignedRole;
@@ -108,6 +111,15 @@ TEST(ChipJson, RejectsWhatTheLoaderDoesNotRead) {
                         "unknown key 'layers'");
   expectThrowMentioning(R"({"ports": {}})", "obstacles are missing");
   expectThrowMentioning(R"({"obstacles": []})", "ports are missing");
+  expectThrowMentioning(R"({"obstacles": {}, "ports": {}})",
+                        "obstacles is not an array");
+  expectThrowMentioning(R"({"obstacles": [], "ports": []})",
+                        "ports is not an object");
+  expectThrowMentioning(
+      R"({"obstacles": [], "ports": {}, "sampleSpacing": "fine"})",
+      "sampleSpacing is not a number");
+  expectThrowMentioning(R"({"obstacles": [], "ports": {}, "nets": {}})",
+                        "nets is not an array");
 }
 
 TEST(ChipJson, NamesTheOffendingObstacleOrPort) {
@@ -129,6 +141,15 @@ TEST(ChipJson, NamesTheOffendingObstacleOrPort) {
   expectThrowMentioning(
       R"({"obstacles": [], "ports": {"Qb1.port0": {"center": [0, 0], "width": 1}}})",
       "port 'Qb1.port0' has the unknown key 'width'");
+  expectThrowMentioning(R"({"obstacles": [1], "ports": {}})",
+                        "obstacle 0 is not an object");
+  expectThrowMentioning(R"({"obstacles": [{}], "ports": {}})",
+                        "obstacle 0 has no polygon array");
+  expectThrowMentioning(R"({"obstacles": [], "ports": {"Qb1.port0": 5}})",
+                        "port 'Qb1.port0' is not an object");
+  expectThrowMentioning(
+      R"({"obstacles": [], "ports": {"": {"center": [0, 0]}}})",
+      "a port has an empty label");
 }
 
 TEST(ChipJson, ReportsManyProblemsUpToALimit) {
@@ -195,6 +216,21 @@ TEST(ChipBuffer, RoundTripsAClassifiedChipAndRefusesTheRest) {
 
   const std::vector<std::uint8_t> garbage = {1, 2, 3, 4, 5, 6, 7, 8};
   EXPECT_THROW(static_cast<void>(readChip(garbage)), std::invalid_argument);
+
+  // A well-formed buffer whose port has no role passes the verifier and fails
+  // the semantic check.
+  flatbuffers::FlatBufferBuilder builder;
+  builder.Finish(Chip::Pack(builder, &unclassified));
+  const std::vector<std::uint8_t> unset(
+      builder.GetBufferPointer(),
+      std::next(builder.GetBufferPointer(), builder.GetSize()));
+  try {
+    static_cast<void>(readChip(unset));
+    FAIL();
+  } catch (const std::invalid_argument& error) {
+    EXPECT_NE(std::string_view(error.what()).find("role is unset"),
+              std::string_view::npos);
+  }
 }
 
 } // namespace

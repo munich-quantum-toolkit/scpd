@@ -17,7 +17,7 @@ is added here.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, TypeVar
 
 from .artifacts import read_artifact, write_artifact
 from .flatbuffers.artifacts.Artifact import ArtifactT
@@ -56,6 +56,8 @@ class InspectionError(ValueError):
 # A field is described by its kind: a scalar type, ("enum", class), ("table", class),
 # ("list", inner field), or ("union", tag field, {tag: class}).
 Field = Any
+
+T = TypeVar("T")
 
 _POINT: Field = ("table", PointT)
 FIELDS: dict[type, dict[str, Field]] = {
@@ -135,22 +137,22 @@ def _enum_names(enum: type) -> dict[int, str]:
     return {value: name for name, value in vars(enum).items() if isinstance(value, int) and not name.startswith("_")}
 
 
-def _to_value(value: Any, kind: Field, owner: Any) -> Any:
+def _to_value(value: object, kind: Field, owner: object) -> object:
     if value is None:
         return None
-    if kind in {float, int, str}:
+    if isinstance(kind, type):
         return value
     tag, *rest = kind
     if tag == "enum":
-        return _enum_names(rest[0]).get(value, value)
+        return _enum_names(rest[0]).get(value, value) if isinstance(value, int) else value
     if tag == "table":
         return to_dict(value)
     if tag == "list":
-        return [_to_value(item, rest[0], owner) for item in value]
+        return [_to_value(item, rest[0], owner) for item in value] if isinstance(value, list) else value
     return to_dict(value)
 
 
-def to_dict(obj: Any) -> dict[str, Any]:
+def to_dict(obj: object) -> dict[str, Any]:
     """Convert an object of the generated model to a JSON-ready dictionary.
 
     Returns:
@@ -160,10 +162,10 @@ def to_dict(obj: Any) -> dict[str, Any]:
     return {name: _to_value(getattr(obj, name), kind, obj) for name, kind in fields.items()}
 
 
-def _from_value(value: Any, kind: Field, where: str, owner: dict[str, Any]) -> Any:
+def _from_value(value: object, kind: Field, where: str, owner: dict[str, object]) -> object:
     if value is None:
         return None
-    if kind in {float, int, str}:
+    if isinstance(kind, type):
         if not isinstance(value, kind) or (kind is not str and isinstance(value, bool)):
             msg = f"{where} must be {kind.__name__}"
             raise InspectionError(msg)
@@ -198,7 +200,7 @@ def _union_enum(classes: dict[int, type]) -> type:
     return StageOutput if AssignmentT in classes.values() else SegmentShape
 
 
-def from_dict(data: Any, cls: type, where: str = "artifact") -> Any:
+def from_dict(data: object, cls: type[T], where: str = "artifact") -> T:
     """Rebuild an object of the generated model from its dictionary.
 
     Args:
@@ -230,11 +232,10 @@ def from_dict(data: Any, cls: type, where: str = "artifact") -> Any:
 def artifact_to_json(data: bytes) -> str:
     """Print the bytes of a stage artifact as JSON.
 
+    ``read_artifact`` raises ``ArtifactError`` when the bytes are not a complete artifact.
+
     Returns:
         The JSON text, indented.
-
-    Raises:
-        ArtifactError: If the bytes are not a complete artifact.
     """
     return json.dumps(to_dict(read_artifact(data)), indent=2) + "\n"
 
@@ -245,9 +246,10 @@ def artifact_from_json(text: str) -> bytes:
     Returns:
         The artifact bytes.
 
+    ``write_artifact`` raises ``ArtifactError`` when the described artifact is not complete.
+
     Raises:
         InspectionError: If the text is not JSON that describes an artifact.
-        ArtifactError: If the described artifact is not complete.
     """
     try:
         data = json.loads(text)

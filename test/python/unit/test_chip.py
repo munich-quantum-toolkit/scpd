@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -57,14 +58,14 @@ def test_a_chip_that_does_not_fit_its_configuration_is_refused() -> None:
     assert config.ports.patterns is not None
     config.ports.patterns.conventional = r"^Q\d+\.port1$"
 
-    with pytest.raises(ChipError, match="'C12.port0' matches no role pattern"):
+    with pytest.raises(ChipError, match=re.escape("'C12.port0' matches no role pattern")):
         load_chip(config, config_path)
 
     config = load_config(config_path)
     assert config.ports is not None
     assert config.ports.sequences is not None
     config.ports.sequences.allOuter.append("Q9.port0")
-    with pytest.raises(ChipError, match="'Q9.port0' is not a port of the chip"):
+    with pytest.raises(ChipError, match=re.escape("'Q9.port0' is not a port of the chip")):
         load_chip(config, config_path)
 
     config = load_config(config_path)
