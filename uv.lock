@@ -1184,7 +1184,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "flatbuffers", specifier = "~=25.12.19" },
-    { name = "klayout", marker = "extra == 'klayout'", specifier = ">=0.30.3" },
+    { name = "klayout", marker = "extra == 'klayout'", specifier = ">=0.30.6" },
     { name = "nanobind-backend", specifier = ">=1.0" },
 ]
 provides-extras = ["klayout"]
@@ -1199,7 +1199,7 @@ build = [
 dev = [
     { name = "cmake", specifier = ">=4.4.1" },
     { name = "flatbuffers", specifier = "~=25.12.19" },
-    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or (python_full_version < '3.15' and sys_platform != 'win32')", specifier = ">=0.30.3" },
+    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or (python_full_version < '3.15' and sys_platform != 'win32')", specifier = ">=0.30.6" },
     { name = "nanobind", specifier = "~=3.0.1" },
     { name = "nox", specifier = ">=2025.11.12" },
     { name = "pytest", specifier = ">=9.0.1" },
@@ -1224,7 +1224,7 @@ docs = [
 ]
 test = [
     { name = "flatbuffers", specifier = "~=25.12.19" },
-    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or (python_full_version < '3.15' and sys_platform != 'win32')", specifier = ">=0.30.3" },
+    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or (python_full_version < '3.15' and sys_platform != 'win32')", specifier = ">=0.30.6" },
     { name = "pytest", specifier = ">=9.0.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-sugar", specifier = ">=1.1.1" },

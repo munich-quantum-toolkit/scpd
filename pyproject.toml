@@ -56,8 +56,8 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 # KLayout writes GDSII and OASIS. It is an extra because it ships no wheels for Windows on ARM.
-# 0.30.3 is the first release with wheels for CPython 3.14, for aarch64 Linux and for manylinux_2_28.
-klayout = ["klayout>=0.30.3"]
+# 0.30.6 is the first release with wheels for CPython 3.14 on every platform the CI covers.
+klayout = ["klayout>=0.30.6"]
 
 [project.scripts]
 mqt-scpd = "mqt.scpd.cli:main"
@@ -320,7 +320,7 @@ docs = [
 test = [
   "flatbuffers~=25.12.19",
   # KLayout ships no wheels for Windows on ARM or for CPython 3.15; the export tests skip without it.
-  "klayout>=0.30.3; python_version < '3.15' and (sys_platform != 'win32' or platform_machine != 'ARM64')",
+  "klayout>=0.30.6; python_version < '3.15' and (sys_platform != 'win32' or platform_machine != 'ARM64')",
   "pytest>=9.0.1",
   "pytest-cov>=7.1.0",
   "pytest-sugar>=1.1.1",
