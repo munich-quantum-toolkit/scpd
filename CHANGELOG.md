@@ -16,8 +16,8 @@ releases may include breaking changes.
   `inspect`: the `config.toml` and chip loaders, the port-role classification,
   the layout SVG, the KLayout adapter and the JSON view of the artifacts
   ([#105]) ([**@FeldmeierMichael**])
-- ✨ Add the eight benchmark configurations and the two committed chip inputs
-  ([#105]) ([**@FeldmeierMichael**])
+- ✨ Add the eight benchmark configurations and their chip inputs ([#105])
+  ([**@FeldmeierMichael**])
 - 👷 Fail CI when the committed schema-generated code is stale ([#98])
   ([**@FeldmeierMichael**])
 - ✨ Add semantic validation of the data model in the core and a checked

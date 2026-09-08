@@ -280,7 +280,7 @@ mqt-scpd/
   test/<module>/*.cpp                    GoogleTest, per module
   test/python/{unit,property,integration}/
   benchmarks/<n>q/config.toml            one per benchmark chip
-  benchmarks/<n>q/routing_config.json    4Q and 9Q only; larger ones by path
+  benchmarks/<n>q/routing_config.json    the chip input, one per benchmark chip
   docs/design/                           these documents
 ```
 

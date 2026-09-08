@@ -1,28 +1,12 @@
 # Benchmark chips
 
-One directory per benchmark chip. Each holds the chip's `config.toml` and, for
-the two smallest chips, its input. The inputs are the prototype's
-`routing_config.json` files in the same format; see
+One directory per benchmark chip, each holding the chip's `config.toml` and its
+input `routing_config.json`. The inputs are the prototype's files in the same
+format; see
 [decision 0020](../docs/design/decisions/0020-legacy-routing-config-as-input.md).
 On 2026-09-08 they were reduced to the routable ports and a consolidated
 obstacle set, so every port of every chip matches one of the three role
 patterns.
-
-| Chip  | Qubits | Prototype checkout | Input file                               |   Size | Committed |
-| ----- | -----: | ------------------ | ---------------------------------------- | -----: | --------- |
-| `4q`  |      4 | FridgeCAD          | `4Q_layout/routing_config_4q.json`       | 0.2 MB | yes       |
-| `9q`  |      9 | FridgeCAD          | `9Q_layout/routing_config_9q.json`       | 0.5 MB | yes       |
-| `17q` |     17 | FridgeCAD          | `src/routing_config.json`                | 1.1 MB | no        |
-| `21q` |     21 | FridgeCAD-0fails   | `21Q_layout/routing_config_21q.json`     | 1.3 MB | no        |
-| `33q` |     33 | FridgeCAD-0fails   | `33Q_layout/routing_config_33q.json`     | 2.0 MB | no        |
-| `45q` |     45 | FridgeCAD-0fails   | `45Q_layout/routing_config_45q.json`     | 2.6 MB | no        |
-| `57q` |     57 | FridgeCAD-0fails   | `57Q_layout/routing_config_57q.json`     | 3.3 MB | no        |
-| `69q` |     69 | FridgeCAD-0fails   | `69Q_layout/routing_config_69q_new.json` | 4.1 MB | no        |
-
-The table names the prototype file each input derives from. Every configuration
-names its input as `routing_config.json` next to it. To work with one of the six
-larger chips, copy its file there; `.gitignore` keeps the copies out of the
-repository.
 
 ## What the configurations carry
 
