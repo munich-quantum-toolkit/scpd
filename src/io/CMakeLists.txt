@@ -15,4 +15,6 @@ add_mqt_scpd_library(
   LINK_LIBRARIES
   MQT::ScpdDesign
   MQT::ScpdGeometry
-  MQT::ScpdDrc)
+  MQT::ScpdDrc
+  PRIVATE_LINK_LIBRARIES
+  mqt-scpd-json)

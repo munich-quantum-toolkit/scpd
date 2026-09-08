@@ -34,6 +34,16 @@ constraints of superconducting quantum technologies.
 > MQT SCPD is still under development. This section will be expanded in the
 > future.
 
+The command line is the product. Each benchmark chip under `benchmarks/` has a
+`config.toml`; the doctor checks it and its chip, `plot` draws the chip, and
+`render` writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that).
+
+```bash
+mqt-scpd doctor -c benchmarks/9q/config.toml
+mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg
+mqt-scpd render -c benchmarks/9q/config.toml -o 9q.gds
+```
+
 If you have any questions, feel free to create a
 [discussion](https://github.com/munich-quantum-toolkit/scpd/discussions) or an
 [issue](https://github.com/munich-quantum-toolkit/scpd/issues) on
@@ -98,6 +108,16 @@ uv pip install mqt.scpd
 > MQT SCPD is still under development. This section will be expanded in the
 > future.
 
+The command line is the product. Each benchmark chip under `benchmarks/` has a
+`config.toml`; the doctor checks it and its chip, `plot` draws the chip, and
+`render` writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that).
+
+```bash
+mqt-scpd doctor -c benchmarks/9q/config.toml
+mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg
+mqt-scpd render -c benchmarks/9q/config.toml -o 9q.gds
+```
+
 **Detailed documentation and examples are available at
 [ReadTheDocs](https://mqt.readthedocs.io/projects/scpd).**
 
@@ -138,6 +158,16 @@ When discussing the overall MQT project or its ecosystem, cite the MQT Handbook:
 > [!NOTE]
 > MQT SCPD is still under development. This section will be expanded in the
 > future.
+
+The command line is the product. Each benchmark chip under `benchmarks/` has a
+`config.toml`; the doctor checks it and its chip, `plot` draws the chip, and
+`render` writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that).
+
+```bash
+mqt-scpd doctor -c benchmarks/9q/config.toml
+mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg
+mqt-scpd render -c benchmarks/9q/config.toml -o 9q.gds
+```
 
 ---
 

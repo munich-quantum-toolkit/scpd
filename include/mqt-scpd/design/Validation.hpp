@@ -11,6 +11,7 @@
 #pragma once
 
 #include "mqt-scpd/design/mqt_scpd_design_export.hpp"
+#include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 
 #include <string>
@@ -54,5 +55,28 @@ validate(const flatbuffers::design::CpwCouplerT& coupler);
 /// Problems of a bridge: an unset rotation or a dimension that is not positive.
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::BridgeT& bridge);
+
+/// Problems of the role patterns: an expression that is empty or does not
+/// compile, named by its key.
+[[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
+validate(const flatbuffers::config::PortPatternsT& patterns);
+
+/// Problems of the port section: missing patterns and their problems, and
+/// missing sequences.
+[[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
+validate(const flatbuffers::config::PortConfigT& ports);
+
+/// Problems of a configuration that can be seen without the chip: an empty
+/// chip input, a missing port section or rules, the problems of both, and a
+/// capacity grid without columns.
+[[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
+validate(const flatbuffers::config::ConfigT& config);
+
+/// Problems of a configuration against the classified chip it names: a
+/// sequence label that is not a port of the chip, that is not routable, or
+/// that appears twice, and a fixed port that is not in all_outer.
+[[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
+validate(const flatbuffers::config::ConfigT& config,
+         const flatbuffers::design::ChipT& chip);
 
 } // namespace mqt::scpd::design
