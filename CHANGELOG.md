@@ -14,8 +14,9 @@ releases may include breaking changes.
 
 - ✨ Add the `mqt-scpd` command line with `doctor`, `plot`, `render` and
   `inspect`: the `config.toml` and chip loaders, the port-role classification,
-  the layout SVG, the KLayout adapter and the JSON view of the artifacts
-  ([#105]) ([**@FeldmeierMichael**])
+  the layout SVG, the KLayout adapter and the JSON view of the artifacts, which
+  the core renders from the schema's own type tables ([#105])
+  ([**@FeldmeierMichael**])
 - ✨ Add the eight benchmark configurations and their chip inputs ([#105])
   ([**@FeldmeierMichael**])
 - 👷 Fail CI when the committed schema-generated code is stale ([#98])

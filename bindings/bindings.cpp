@@ -9,6 +9,7 @@
  */
 
 #include "mqt-scpd/design/Validation.hpp"
+#include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/io/Chip.hpp"
 #include "mqt-scpd/io/Config.hpp"
 
@@ -69,4 +70,15 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "config"_a,
       "The problems of a configuration that can be seen without the chip, "
       "empty when there are none.");
+
+  m.def(
+      "artifact_to_json",
+      [](const nb::bytes& artifact) {
+        return mqt::scpd::io::artifactToJson(asSpan(artifact));
+      },
+      "artifact"_a,
+      "Render a stage artifact as JSON. The field names, the enum names and "
+      "the union tags come from the schema, so the JSON follows it without a "
+      "second description of the model. Raises ValueError when the bytes are "
+      "not a complete artifact of this schema version.");
 }

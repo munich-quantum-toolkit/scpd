@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace mqt::scpd::io {
@@ -58,5 +59,22 @@ writeArtifact(const flatbuffers::artifacts::ArtifactT& artifact);
  */
 [[nodiscard]] MQT_SCPD_IO_EXPORT flatbuffers::artifacts::ArtifactT
 readArtifact(std::span<const std::uint8_t> bytes);
+
+/**
+ * @brief Renders a stored artifact as JSON.
+ *
+ * The field names, the enum names and the union tags come from the type tables
+ * that the schema compiler emits, so the JSON follows the schema without a
+ * second description of the model. Names are the ones the schema spells, which
+ * are snake_case.
+ *
+ * @param bytes The stored artifact.
+ * @return The artifact as indented JSON, ending in a newline.
+ * @throws std::invalid_argument If @p bytes is not a well-formed artifact with
+ * the identifier of this schema version, or if the artifact it holds has a
+ * problem.
+ */
+[[nodiscard]] MQT_SCPD_IO_EXPORT std::string
+artifactToJson(std::span<const std::uint8_t> bytes);
 
 } // namespace mqt::scpd::io

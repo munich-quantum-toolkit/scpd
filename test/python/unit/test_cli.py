@@ -71,7 +71,7 @@ def test_inspect_prints_an_artifact_as_json(tmp_path: Path, capsys: pytest.Captu
 
     assert main(["inspect", str(artifact)]) == 0
     document = json.loads(capsys.readouterr().out)
-    assert document == {"producer": "test", "outputType": "GlobalRouting", "output": {}}
+    assert document == {"producer": "test", "output_type": "GlobalRouting", "output": {}}
 
     output = tmp_path / "03-global.json"
     assert main(["inspect", str(artifact), "-o", str(output)]) == 0

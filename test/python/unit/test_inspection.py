@@ -12,16 +12,24 @@ from __future__ import annotations
 
 import json
 
+import flatbuffers
 import pytest
 
-from mqt.scpd.artifacts import write_artifact
-from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
+from mqt.scpd.artifacts import IDENTIFIER, write_artifact
+from mqt.scpd.flatbuffers.artifacts.Artifact import (
+    ArtifactAddOutput,
+    ArtifactAddOutputType,
+    ArtifactAddProducer,
+    ArtifactEnd,
+    ArtifactStart,
+    ArtifactT,
+)
 from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
-from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
+from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingEnd, GlobalRoutingStart, GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.artifacts.Wire import WireT
 from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
@@ -39,11 +47,11 @@ from mqt.scpd.flatbuffers.geometry.Path import PathT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Segment import SegmentT
 from mqt.scpd.flatbuffers.geometry.SegmentShape import SegmentShape
-from mqt.scpd.inspection import InspectionError, artifact_from_json, artifact_to_json, from_dict, to_dict
+from mqt.scpd.inspection import InspectionError, artifact_to_json
 
 
 def coupler(connection: int) -> CpwCouplerT:
-    """A coupler that completes one connection.
+    """Build a coupler that completes one connection.
 
     Returns:
         The coupler.
@@ -60,17 +68,17 @@ def coupler(connection: int) -> CpwCouplerT:
     )
 
 
-def artifact(output_type: int, output: object) -> ArtifactT:
-    """An artifact around one stage output.
+def artifact(output_type: int, output: object) -> bytes:
+    """Serialize one stage output behind an artifact root.
 
     Returns:
-        The artifact.
+        The bytes of the artifact.
     """
-    return ArtifactT(producer="mqt-scpd test", outputType=output_type, output=output)
+    return write_artifact(ArtifactT(producer="mqt-scpd test", outputType=output_type, output=output))
 
 
 STAGE_OUTPUTS = [
-    pytest.param(StageOutput.CapacityPlan, CapacityPlanT(), id="capacity"),
+    pytest.param(StageOutput.CapacityPlan, CapacityPlanT(), {}, id="capacity"),
     pytest.param(
         StageOutput.Assignment,
         AssignmentT(
@@ -87,10 +95,22 @@ STAGE_OUTPUTS = [
             ],
             objective=132.68,
         ),
+        {
+            "connections": [
+                {"target": {"index": 3}, "source_role": "ResonatorSource", "target_role": "ResonatorTarget"},
+                {
+                    "source": {"index": 1},
+                    "target": {"index": 2},
+                    "source_role": "FeedlineSource",
+                    "target_role": "FeedlineTarget",
+                },
+            ],
+            "objective": 132.68,
+        },
         id="assignment",
     ),
-    pytest.param(StageOutput.GlobalRouting, GlobalRoutingT(), id="global"),
-    pytest.param(StageOutput.DetailRouting, DetailRoutingT(), id="detail"),
+    pytest.param(StageOutput.GlobalRouting, GlobalRoutingT(), {}, id="global"),
+    pytest.param(StageOutput.DetailRouting, DetailRoutingT(), {}, id="detail"),
     pytest.param(
         StageOutput.FinalRouting,
         FinalRoutingT(
@@ -98,6 +118,27 @@ STAGE_OUTPUTS = [
             bridges=[BridgeT(center=PointT(5.0, 6.0), rotation=Rotation.R45, width=60.0, height=60.0)],
             unresolved=[ConnectionRefT(7)],
         ),
+        {
+            "couplers": [
+                {
+                    "connection": {"index": 3},
+                    "port": {
+                        "label": "Coupler3.port0",
+                        "center": {"x": 1.0, "y": 2.0},
+                        "orientation": 90.0,
+                        "role": "Coupler",
+                    },
+                    "center": {"x": 1.0, "y": 2.0},
+                    "rotation": "R90",
+                    "length": 200.0,
+                    "height": 26.0,
+                }
+            ],
+            "bridges": [
+                {"center": {"x": 5.0, "y": 6.0}, "rotation": "R45", "width": 60.0, "height": 60.0},
+            ],
+            "unresolved": [{"index": 7}],
+        },
         id="final",
     ),
     pytest.param(
@@ -119,59 +160,73 @@ STAGE_OUTPUTS = [
                     ),
                 )
             ],
-            couplers=[coupler(0)],
+            couplers=[],
             bridges=[],
         ),
+        {
+            "wires": [
+                {
+                    "connection": {"index": 0},
+                    "path": {
+                        "segments": [
+                            {
+                                "shape_type": "Line",
+                                "shape": {"start": {"x": 0.0, "y": 0.0}, "end": {"x": 100.0, "y": 0.0}},
+                            },
+                            {
+                                "shape_type": "Arc",
+                                "shape": {"center": {"x": 100.0, "y": 50.0}, "radius": 50.0, "sweep": 1.5},
+                            },
+                        ]
+                    },
+                }
+            ],
+            "couplers": [],
+            "bridges": [],
+        },
         id="geometry",
     ),
 ]
 
 
-@pytest.mark.parametrize(("output_type", "output"), STAGE_OUTPUTS)
-def test_every_stage_output_round_trips_through_json(output_type: int, output: object) -> None:
-    """The JSON of an artifact rebuilds the same bytes, for each of the six stage outputs."""
-    data = write_artifact(artifact(output_type, output))
+@pytest.mark.parametrize(("output_type", "output", "expected"), STAGE_OUTPUTS)
+def test_every_stage_output_renders_the_fields_of_its_schema(output_type: int, output: object, expected: dict) -> None:
+    """The JSON of each of the six stage outputs carries the schema's own field names."""
+    document = json.loads(artifact_to_json(artifact(output_type, output)))
 
-    text = artifact_to_json(data)
-    assert artifact_from_json(text) == data
-
-    document = json.loads(text)
     assert document["producer"] == "mqt-scpd test"
-    assert document["outputType"] == {value: name for name, value in vars(StageOutput).items()}[output_type]
+    assert document["output_type"] == {value: name for name, value in vars(StageOutput).items()}[output_type]
+    assert document["output"] == expected
 
 
-def test_enums_and_union_tags_are_spelled_by_name() -> None:
-    """The JSON names roles, rotations and shapes instead of numbering them."""
-    document = to_dict(
-        artifact(StageOutput.FinalRouting, FinalRoutingT(couplers=[coupler(3)], bridges=[], unresolved=[]))
+def test_absent_fields_and_defaults_are_left_out() -> None:
+    """A field the artifact does not carry does not appear, so the JSON shows what was written."""
+    document = json.loads(
+        artifact_to_json(artifact(StageOutput.Assignment, AssignmentT(connections=[], objective=0.0)))
     )
 
-    assert document["outputType"] == "FinalRouting"
-    assert document["output"]["couplers"][0]["rotation"] == "R90"
-    assert document["output"]["couplers"][0]["port"]["role"] == "Coupler"
-    assert document["output"]["couplers"][0]["port"]["center"] == {"x": 1.0, "y": 2.0}
+    assert document["output"] == {"connections": []}
 
 
-@pytest.mark.parametrize(
-    ("document", "message"),
-    [
-        (
-            {"producer": "p", "outputType": "Assignment", "output": {"objective": "high"}},
-            "output.objective must be float",
-        ),
-        (
-            {"producer": "p", "outputType": "Assignment", "output": {"connections": 3}},
-            "output.connections must be a list",
-        ),
-        ({"producer": "p", "outputType": "Sideways", "output": {}}, "outputType must be one of"),
-        ({"producer": "p", "output": {}}, "output has no type tag in outputType"),
-        ({"producer": "p", "outputType": "GlobalRouting", "output": {}, "extra": 1}, "unknown fields: extra"),
-        ([], "artifact must be an object"),
-    ],
-)
-def test_json_that_does_not_fit_the_schema_is_refused(document: object, message: str) -> None:
-    """A wrong type, a wrong name and an unknown field are named with their position."""
-    with pytest.raises(InspectionError, match=message):
-        from_dict(document, ArtifactT)
-    with pytest.raises(InspectionError, match="not JSON"):
-        artifact_from_json("{")
+def test_bytes_that_are_not_an_artifact_are_refused() -> None:
+    """The identifier and the completeness of the artifact are checked before anything is rendered."""
+    data = bytearray(artifact(StageOutput.GlobalRouting, GlobalRoutingT()))
+    data[4:8] = b"XXXX"
+    with pytest.raises(InspectionError, match="identifier"):
+        artifact_to_json(bytes(data))
+    with pytest.raises(InspectionError, match="not an artifact"):
+        artifact_to_json(b"\xff\xff\xff\xffSCP1")
+
+    # A buffer whose producer is present but empty passes the verifier, and fails the check that
+    # every artifact names what wrote it.
+    builder = flatbuffers.Builder()
+    producer = builder.CreateString("")
+    GlobalRoutingStart(builder)
+    output = GlobalRoutingEnd(builder)
+    ArtifactStart(builder)
+    ArtifactAddProducer(builder, producer)
+    ArtifactAddOutputType(builder, StageOutput.GlobalRouting)
+    ArtifactAddOutput(builder, output)
+    builder.Finish(ArtifactEnd(builder), file_identifier=IDENTIFIER)
+    with pytest.raises(InspectionError, match="producer is empty"):
+        artifact_to_json(bytes(builder.Output()))

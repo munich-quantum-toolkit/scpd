@@ -270,7 +270,7 @@ mqt-scpd/
     config.py                            config.toml into the configuration schema
     chip.py                              the chip input, loaded and classified by the core
     doctor.py                            classification table, port ring, sequence diff
-    inspection.py                        artifacts as schema-driven JSON, and back
+    inspection.py                        artifacts as JSON, rendered by the core
     cli.py                               argparse subcommands
     solvers/gurobipy_backend.py          BYOK Gurobi via MPS
     export/klayout.py                    GDS and OASIS

@@ -51,6 +51,16 @@ bool operator!=(const GridParamsT &lhs, const GridParamsT &rhs);
 bool operator==(const ConfigT &lhs, const ConfigT &rhs);
 bool operator!=(const ConfigT &lhs, const ConfigT &rhs);
 
+inline const ::flatbuffers::TypeTable *PortPatternsTypeTable();
+
+inline const ::flatbuffers::TypeTable *PortSequencesTypeTable();
+
+inline const ::flatbuffers::TypeTable *PortConfigTypeTable();
+
+inline const ::flatbuffers::TypeTable *GridParamsTypeTable();
+
+inline const ::flatbuffers::TypeTable *ConfigTypeTable();
+
 struct PortPatternsT : public ::flatbuffers::NativeTable {
   typedef PortPatterns TableType;
   std::string launcher{};
@@ -63,6 +73,9 @@ struct PortPatterns FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PortPatternsT NativeTableType;
   typedef PortPatternsBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PortPatternsTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_LAUNCHER = 4,
     VT_RESONATOR = 6,
@@ -167,6 +180,9 @@ struct PortSequences FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PortSequencesT NativeTableType;
   typedef PortSequencesBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PortSequencesTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_ALL_OUTER = 4,
     VT_FIXED_OUTER = 6
@@ -259,6 +275,9 @@ struct PortConfig FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PortConfigT NativeTableType;
   typedef PortConfigBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PortConfigTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PATTERNS = 4,
     VT_SEQUENCES = 6
@@ -335,6 +354,9 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef GridParamsT NativeTableType;
   typedef GridParamsBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return GridParamsTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CAPACITY_CELLS_X = 4,
     VT_CAPACITY_CELLS_Y = 6,
@@ -433,6 +455,9 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ConfigT NativeTableType;
   typedef ConfigBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ConfigTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CHIP_INPUT = 4,
     VT_PORTS = 6,
@@ -785,6 +810,100 @@ inline ::flatbuffers::Offset<Config> Config::Pack(::flatbuffers::FlatBufferBuild
       _ports,
       _rules,
       _grid);
+}
+
+inline const ::flatbuffers::TypeTable *PortPatternsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 }
+  };
+  static const char * const names[] = {
+    "launcher",
+    "resonator",
+    "conventional"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PortSequencesTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 1, -1 },
+    { ::flatbuffers::ET_STRING, 1, -1 }
+  };
+  static const char * const names[] = {
+    "all_outer",
+    "fixed_outer"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PortConfigTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::config::PortPatternsTypeTable,
+    mqt::scpd::flatbuffers::config::PortSequencesTypeTable
+  };
+  static const char * const names[] = {
+    "patterns",
+    "sequences"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *GridParamsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const char * const names[] = {
+    "capacity_cells_x",
+    "capacity_cells_y",
+    "launcher_offset_x",
+    "launcher_offset_y"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ConfigTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 2 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::config::PortConfigTypeTable,
+    mqt::scpd::flatbuffers::design::DesignRulesTypeTable,
+    mqt::scpd::flatbuffers::config::GridParamsTypeTable
+  };
+  static const char * const names[] = {
+    "chip_input",
+    "ports",
+    "rules",
+    "grid"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
 }
 
 }  // namespace config
