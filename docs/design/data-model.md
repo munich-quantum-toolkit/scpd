@@ -148,7 +148,7 @@ routing request in one place and a `NodeKind` on a graph node in another.
 
 | `AssignedRole`                              | Where it comes from                                                                       |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `FeedlineSource` / `FeedlineTarget`         | The two launcher-terminated ends of a feedline chain                                      |
+| `FeedlineSource` / `FeedlineTarget`         | A launcher and the conventional port it feeds                                             |
 | `ResonatorTarget`                           | A `Resonator` port that the assignment gave a launcher                                    |
 | `ResonatorSource`                           | **Only ever a CPW coupler port** — see below                                              |
 | `ConventionalSource` / `ConventionalTarget` | The endpoints of a non-resonator connection                                               |

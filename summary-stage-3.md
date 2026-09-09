@@ -89,6 +89,27 @@ the amendment to
 `AssignmentInputs::edgeWeight` is gone. It was filled with ones and read
 nowhere; the chord weights are worked out in `ringEdgesOf`.
 
+### The tests
+
+`TEST_P(BenchmarkAssignment, FollowsTheRulesOfTheRing)` runs capacity, global
+and assign once per chip and then checks the three rules, so every chip is its
+own ctest entry with its own failure message. Five of the eight had no fixture.
+A `readScalar` beside the existing `readArray` now reads `capacity_cells_x`,
+`capacity_cells_y`, both launcher offsets, `launcher_target`,
+`max_feedline_utilization` and `feedline_terminations` out of the shipped
+`config.toml`, so no fixture copies a per-chip figure by hand. The role patterns
+stay fixture arguments: the 4-qubit chip names its parts `Q1` and `C12` where
+the other seven use `Qb1` and `Coupler1_2`, and that difference is what the
+patterns are configuration for.
+
+Reading the scalars also corrected the 17-qubit fixture, which held
+`capacity_cells_y` at zero where the chip ships 25. That chip's grid is square
+either way, so no figure moved.
+
+`AssignsTheFourQubitChip` keeps what is chip-specific about 4Q — its ring is the
+configured sequence, because it has no inner circuit to extend it — and calls
+the same rule-1 check as the parameterized test.
+
 ### What the figures did
 
 | chip | assign | objective | crossings | connections | feed points |

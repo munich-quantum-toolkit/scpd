@@ -1471,6 +1471,11 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_LAUNCHERS = 10,
     VT_FEEDS = 12
   };
+  /// One connection per node of `ring`, in the order of `ring`. A
+  /// conventional port runs from the launcher it was given, as
+  /// `FeedlineSource` to `FeedlineTarget`. A resonator carries
+  /// `ResonatorSource` to `ResonatorTarget` and no source port, because the
+  /// port that feeds it is the coupler the Final stage inserts.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
   }

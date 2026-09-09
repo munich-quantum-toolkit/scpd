@@ -139,6 +139,11 @@ table GlobalRouting {
 
 /// Output of the Assignment stage.
 table Assignment {
+  /// One connection per node of `ring`, in the order of `ring`. A
+  /// conventional port runs from the launcher it was given, as
+  /// `FeedlineSource` to `FeedlineTarget`. A resonator carries
+  /// `ResonatorSource` to `ResonatorTarget` and no source port, because the
+  /// port that feeds it is the coupler the Final stage inserts.
   connections: [design.Connection] (required);
   objective: double;
   /// The ring the model consumed, in the order it consumed it.

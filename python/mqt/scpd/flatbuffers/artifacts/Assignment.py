@@ -34,6 +34,11 @@ class Assignment(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
+    # One connection per node of `ring`, in the order of `ring`. A
+    # conventional port runs from the launcher it was given, as
+    # `FeedlineSource` to `FeedlineTarget`. A resonator carries
+    # `ResonatorSource` to `ResonatorTarget` and no source port, because the
+    # port that feeds it is the coupler the Final stage inserts.
     # Assignment
     def Connections(self, j: int) -> Optional[Connection]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
