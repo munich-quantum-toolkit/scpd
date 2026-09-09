@@ -22,22 +22,40 @@ namespace mqt::scpd::io {
 
 using design::Problems;
 
-/// Problems of an artifact: an empty producer, a missing output, and the
-/// problems of the components its output carries.
+/**
+ * @brief Validates a stage artifact.
+ * @param artifact The artifact to check.
+ * @return A problem for an empty producer, one for a missing output, and every
+ * problem of the components the output carries, empty when the artifact is
+ * valid.
+ */
 [[nodiscard]] MQT_SCPD_IO_EXPORT Problems
 validate(const flatbuffers::artifacts::ArtifactT& artifact);
 
-/// Serialize an artifact as a run directory stores it.
-///
-/// @throws std::invalid_argument when the artifact has a problem. The message
-/// lists every problem.
+/**
+ * @brief Serializes a stage artifact as a run directory stores it.
+ * @param artifact The artifact to serialize.
+ * @pre @p artifact is valid, so validate() reports no problem for it.
+ * @return The bytes of the artifact, beginning with the file identifier that
+ * records the schema version.
+ * @throws std::invalid_argument If @p artifact has a problem. The message
+ * names every problem.
+ */
 [[nodiscard]] MQT_SCPD_IO_EXPORT std::vector<std::uint8_t>
 writeArtifact(const flatbuffers::artifacts::ArtifactT& artifact);
 
-/// Verify stored bytes, structurally and then semantically, and unpack them.
-///
-/// @throws std::invalid_argument when the bytes are not a well-formed artifact
-/// with the identifier of this schema, or when the artifact has a problem.
+/**
+ * @brief Reads back the bytes that a run directory stores.
+ *
+ * The bytes are verified structurally, by the FlatBuffers verifier, and then
+ * semantically, by validate().
+ *
+ * @param bytes The stored artifact.
+ * @return The artifact.
+ * @throws std::invalid_argument If @p bytes is not a well-formed artifact with
+ * the identifier of this schema version, or if the artifact it holds has a
+ * problem.
+ */
 [[nodiscard]] MQT_SCPD_IO_EXPORT flatbuffers::artifacts::ArtifactT
 readArtifact(std::span<const std::uint8_t> bytes);
 
