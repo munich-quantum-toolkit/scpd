@@ -42,9 +42,6 @@ struct MQT_SCPD_PIPELINE_EXPORT AssignmentInputs {
   /// The launcher each ring node would reach most cheaply, as an index into
   /// `launchers`. This is the lookup that used to run inside the model.
   std::vector<std::uint32_t> nearestLauncher;
-  /// The ring distance between consecutive nodes, which is the weight of the
-  /// ring edge that joins them.
-  std::vector<double> edgeWeight;
 };
 
 /// Work out the assignment inputs from the solved capacity plan and the ring

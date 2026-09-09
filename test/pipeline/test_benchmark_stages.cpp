@@ -8,9 +8,9 @@
  * Licensed under the MIT License
  */
 
-// The three planning stages on the two benchmark inputs the repository
-// carries. These are the tests that say whether the stages run at all, on
-// real geometry rather than on a fixture built to make them run.
+// The three planning stages on the benchmark inputs the repository carries.
+// These are the tests that say whether the stages run at all, on real
+// geometry rather than on a fixture built to make them run.
 
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -84,15 +85,27 @@ std::vector<std::string> readArray(const std::string& text, const std::string& k
   return values;
 }
 
+/// Read one whole-number key out of a shipped configuration.
+///
+/// A key the file leaves out is one the chip takes at its default, so the
+/// default is what the fixture uses. Reading the scalars rather than copying
+/// them keeps the fixture on the figures the chip ships with, which is the
+/// reason the port sequences are read as well.
+std::uint32_t readScalar(const std::string& text, const std::string& key,
+                         const std::uint32_t fallback) {
+  const auto start = text.find(key + " = ");
+  if (start == std::string::npos) {
+    return fallback;
+  }
+  return static_cast<std::uint32_t>(std::stoul(text.substr(start + key.size() + 3)));
+}
+
 /// One declared bridge rule, as the two expressions the configuration pairs on.
 using RulePair = std::pair<std::string, std::string>;
 
 Benchmark load(const std::string& chip, const std::string& resonator,
                const std::string& conventional, const std::string& bridgePair,
-               const std::vector<RulePair>& bridgeRules, const std::uint32_t cells,
-               const std::uint32_t offset, const std::uint32_t launcherTarget,
-               const std::uint32_t utilization, const std::uint32_t terminations,
-               const bool internalBridges = false) {
+               const std::vector<RulePair>& bridgeRules, const bool internalBridges = false) {
   namespace fbc = flatbuffers::config;
   Benchmark benchmark;
   const auto configText = readFile(BENCHMARKS + "/" + chip + "/config.toml");
@@ -123,19 +136,19 @@ Benchmark load(const std::string& chip, const std::string& resonator,
   config.rules->min_straight_length = 100.0;
   config.rules->target_resonator_length = 2500.0;
   config.rules->resonator_length_tolerance = 100.0;
-  config.rules->max_feedline_utilization = utilization;
-  config.rules->feedline_terminations = terminations;
+  config.rules->max_feedline_utilization = readScalar(configText, "max_feedline_utilization", 0);
+  config.rules->feedline_terminations = readScalar(configText, "feedline_terminations", 0);
 
   config.grid = std::make_unique<fbc::GridParamsT>();
-  config.grid->capacity_cells_x = cells;
-  config.grid->capacity_cells_y = 0;
-  config.grid->launcher_offset_x = offset;
-  config.grid->launcher_offset_y = offset;
+  config.grid->capacity_cells_x = readScalar(configText, "capacity_cells_x", 50);
+  config.grid->capacity_cells_y = readScalar(configText, "capacity_cells_y", 0);
+  config.grid->launcher_offset_x = readScalar(configText, "launcher_offset_x", 15);
+  config.grid->launcher_offset_y = readScalar(configText, "launcher_offset_y", 15);
   config.grid->detail_factor = 30;
 
   config.stages = std::make_unique<fbc::StageParamsT>();
   config.stages->assignment = std::make_unique<fbc::AssignmentParamsT>();
-  config.stages->assignment->launcher_target = launcherTarget;
+  config.stages->assignment->launcher_target = readScalar(configText, "launcher_target", 0);
   config.stages->global = std::make_unique<fbc::GlobalParamsT>();
   config.stages->global->internal_bridges = internalBridges;
 
@@ -144,26 +157,111 @@ Benchmark load(const std::string& chip, const std::string& resonator,
   return benchmark;
 }
 
+/// The seven chips whose qubits are `Qb<n>` and whose couplers are
+/// `Coupler<a>_<b>` with five ports each.
+Benchmark qubitAndCouplerChip(const std::string& chip, const bool internalBridges = false) {
+  return load(chip, R"(^Qb\d+\.port0$)", R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$)",
+              R"(^Coupler\d+_\d+\.port[1-4]$)",
+              {{R"(^(Coupler\d+_\d+)\.port1$)", R"(^(Coupler\d+_\d+)\.port2$)"},
+               {R"(^(Coupler\d+_\d+)\.port3$)", R"(^(Coupler\d+_\d+)\.port4$)"}},
+              internalBridges);
+}
+
+/// The 4-qubit chip, whose qubits are `Q<n>` and whose couplers are `C<a><b>`
+/// with three ports each. That naming difference is what the role patterns are
+/// configuration for, so it stays in the fixture.
 Benchmark fourQubit() {
   return load("4q", R"(^Q\d+\.port0$)", R"(^(Q\d+\.port1|C\d+\.port0)$)",
-              R"(^C\d+\.port[12]$)", {{R"(^(C\d+)\.port1$)", R"(^(C\d+)\.port2$)"}}, 12, 5, 2, 4,
-              0);
+              R"(^C\d+\.port[12]$)", {{R"(^(C\d+)\.port1$)", R"(^(C\d+)\.port2$)"}});
 }
 
-Benchmark seventeenQubit() {
-  return load("17q", R"(^Qb\d+\.port0$)", R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$)",
-              R"(^Coupler\d+_\d+\.port[1-4]$)",
-              {{R"(^(Coupler\d+_\d+)\.port1$)", R"(^(Coupler\d+_\d+)\.port2$)"},
-               {R"(^(Coupler\d+_\d+)\.port3$)", R"(^(Coupler\d+_\d+)\.port4$)"}},
-              25, 20, 7, 5, 1);
-}
+Benchmark seventeenQubit() { return qubitAndCouplerChip("17q"); }
 
 Benchmark nineQubit(const bool internalBridges = false) {
-  return load("9q", R"(^Qb\d+\.port0$)", R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$)",
-              R"(^Coupler\d+_\d+\.port[1-4]$)",
-              {{R"(^(Coupler\d+_\d+)\.port1$)", R"(^(Coupler\d+_\d+)\.port2$)"},
-               {R"(^(Coupler\d+_\d+)\.port3$)", R"(^(Coupler\d+_\d+)\.port4$)"}},
-              12, 5, 3, 5, 1, internalBridges);
+  return qubitAndCouplerChip("9q", internalBridges);
+}
+
+/// The benchmark chip a directory name stands for.
+Benchmark benchmarkOf(const std::string& chip) {
+  return chip == "4q" ? fourQubit() : qubitAndCouplerChip(chip);
+}
+
+/// Rule 1: every ring node is reached. The assignment carries one connection
+/// per port of the ring, and no port twice.
+void expectEveryRingNodeIsReached(const Benchmark& benchmark, const AssignmentT& assignment) {
+  ASSERT_EQ(assignment.connections.size(), assignment.ring.size());
+  std::set<std::uint32_t> reached;
+  for (const auto& connection : assignment.connections) {
+    const auto port = connection->target.index();
+    EXPECT_TRUE(reached.insert(port).second)
+        << benchmark.chip.ports[port]->label << " is reached twice";
+  }
+  for (const auto& node : assignment.ring) {
+    EXPECT_TRUE(reached.contains(node.index()))
+        << benchmark.chip.ports[node.index()]->label << " carries no connection";
+  }
+}
+
+/// Rule 2: a launcher feeds conventional ports, at most one each. What stands
+/// on a launcher slot is a conventional port and nothing else, because every
+/// resonator moved onto the segment between two slots.
+void expectALauncherFeedsOneConventionalPort(const Benchmark& benchmark,
+                                             const CapacityPlanT& plan,
+                                             const GlobalRoutingT& global,
+                                             const AssignmentT& assignment) {
+  ASSERT_EQ(assignment.feeds.size(), assignment.ring.size());
+  std::set<std::uint32_t> resonators;
+  for (const auto& port : global.resonators) {
+    resonators.insert(port.index());
+  }
+
+  std::vector<std::size_t> fed(plan.launchers.size(), 0);
+  for (std::size_t index = 0; index < assignment.ring.size(); ++index) {
+    const auto& feed = assignment.feeds[index];
+    const auto slot = std::ranges::find_if(plan.launchers, [&](const auto& candidate) {
+      return geometry::distance(feed, candidate->position) < 1e-6;
+    });
+    const auto port = assignment.ring[index].index();
+    if (slot == plan.launchers.end()) {
+      EXPECT_TRUE(resonators.contains(port))
+          << benchmark.chip.ports[port]->label << " is a conventional port fed from no launcher";
+      continue;
+    }
+    EXPECT_FALSE(resonators.contains(port))
+        << benchmark.chip.ports[port]->label << " is a resonator left on a launcher";
+    ++fed[static_cast<std::size_t>(std::distance(plan.launchers.begin(), slot))];
+  }
+  for (std::size_t slot = 0; slot < fed.size(); ++slot) {
+    EXPECT_LE(fed[slot], 1U) << benchmark.chip.ports[plan.launchers[slot]->port.index()]->label
+                             << " feeds " << fed[slot] << " ports";
+  }
+}
+
+/// Rule 3: the ring keeps its cyclic order. The launcher slots along the ring
+/// fall, and come back up once where the walk closes its turn of the launcher
+/// ring. A second rise means the walk turned twice, and then two ring nodes
+/// share a launcher.
+void expectTheRingKeepsItsCyclicOrder(const CapacityPlanT& plan, const AssignmentT& assignment) {
+  ASSERT_FALSE(assignment.launchers.empty());
+  std::map<std::uint32_t, std::size_t> slotOf;
+  for (std::size_t index = 0; index < plan.launchers.size(); ++index) {
+    slotOf.emplace(plan.launchers[index]->port.index(), index);
+  }
+
+  std::vector<std::size_t> walk;
+  walk.reserve(assignment.launchers.size());
+  for (const auto& given : assignment.launchers) {
+    const auto slot = slotOf.find(given.index());
+    ASSERT_NE(slot, slotOf.end());
+    walk.push_back(slot->second);
+  }
+  std::size_t rises = 0;
+  for (std::size_t index = 0; index < walk.size(); ++index) {
+    if (walk[(index + 1) % walk.size()] > walk[index]) {
+      ++rises;
+    }
+  }
+  EXPECT_EQ(rises, 1U) << "the walk turns the launcher ring " << rises << " times, not once";
 }
 
 TEST(BenchmarkStages, PartitionsTheFourQubitChip) {
@@ -499,6 +597,8 @@ TEST(BenchmarkStages, KeepsTheInnerCircuitOffTheArtwork) {
 }
 
 TEST(BenchmarkStages, AssignsTheFourQubitChip) {
+  // The chip has no inner circuit, so nothing is added to the ring and the ring
+  // the assignment consumes is the configured sequence itself.
   const auto benchmark = fourQubit();
   const auto plan = capacityPlanners().make("watershed")->run(benchmark.chip, benchmark.config);
   const auto global =
@@ -506,34 +606,33 @@ TEST(BenchmarkStages, AssignsTheFourQubitChip) {
   const auto assignment =
       assigners().make("ordered-milp")->run(benchmark.chip, plan, global, benchmark.config);
 
-  // The chip asks for two launchers, so two resonators are fed.
-  EXPECT_EQ(assignment.connections.size(), 2U);
+  EXPECT_EQ(assignment.ring.size(), benchmark.config.ports->sequences->all_outer.size());
   EXPECT_EQ(assignment.launchers.size(), assignment.ring.size());
   EXPECT_GT(assignment.objective, 0.0);
-
-  // Every node is fed either at its launcher slot or halfway between two of
-  // them; nothing is fed from a point the chip has no launcher near.
-  ASSERT_EQ(assignment.feeds.size(), assignment.ring.size());
-  std::vector<geometry::Point> slots;
-  slots.reserve(plan.launchers.size());
-  for (const auto& slot : plan.launchers) {
-    slots.push_back(slot->position);
-  }
-  for (const auto& feed : assignment.feeds) {
-    const auto onASlot = std::ranges::any_of(
-        slots, [&](const geometry::Point& slot) { return geometry::distance(feed, slot) < 1e-6; });
-    if (onASlot) {
-      continue;
-    }
-    const auto betweenTwo = std::ranges::any_of(slots, [&](const geometry::Point& first) {
-      return std::ranges::any_of(slots, [&](const geometry::Point& second) {
-        return geometry::distance(feed, {(first.x() + second.x()) / 2.0,
-                                         (first.y() + second.y()) / 2.0}) < 1e-6;
-      });
-    });
-    EXPECT_TRUE(betweenTwo);
-  }
+  expectEveryRingNodeIsReached(benchmark, assignment);
 }
+
+/// The benchmark chips, by the directory each ships in.
+class BenchmarkAssignment : public testing::TestWithParam<std::string> {};
+
+TEST_P(BenchmarkAssignment, FollowsTheRulesOfTheRing) {
+  const auto benchmark = benchmarkOf(GetParam());
+  const auto plan = capacityPlanners().make("watershed")->run(benchmark.chip, benchmark.config);
+  const auto global =
+      globalRouters().make("hanan-milp")->run(benchmark.chip, plan, benchmark.config);
+  const auto assignment =
+      assigners().make("ordered-milp")->run(benchmark.chip, plan, global, benchmark.config);
+
+  expectEveryRingNodeIsReached(benchmark, assignment);
+  expectALauncherFeedsOneConventionalPort(benchmark, plan, global, assignment);
+  expectTheRingKeepsItsCyclicOrder(plan, assignment);
+}
+
+INSTANTIATE_TEST_SUITE_P(EveryChip, BenchmarkAssignment,
+                         testing::Values("4q", "9q", "17q", "21q", "33q", "45q", "57q", "69q"),
+                         [](const testing::TestParamInfo<std::string>& chip) {
+                           return chip.param;
+                         });
 
 } // namespace
 } // namespace mqt::scpd::pipeline

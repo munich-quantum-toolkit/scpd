@@ -68,12 +68,24 @@ releases may include breaking changes.
 - ✨ Give a bridge port twice the forward approach, worked out from the
   component's own port pairs rather than from its label ([#114])
   ([**@FeldmeierMichael**])
-- ✨ Feed a resonator that ends a feedline from a point between two launchers,
-  and carry it in the assignment as `feeds` so both renderers draw it ([#114])
+- 🐛 Give every port of the outer ring a connection in the assignment. Only the
+  resonators that ended a feedline carried one, so the artifact named
+  `launcher_target` ports of the ring and said nothing about the rest ([#114])
   ([**@FeldmeierMichael**])
-- 🐛 Run the assignment's ordering potential over the ring's own length rather
-  than the launcher count, so a ring may carry more ports than there are
-  launcher slots ([#114]) ([**@FeldmeierMichael**])
+- 🐛 Feed every resonator from a point between two launchers, not only one that
+  ends a feedline. What stands on a launcher slot is now a conventional port and
+  nothing else; the resonators a launcher was given divide the segment to the
+  next launcher along evenly, in ring order ([#114]) ([**@FeldmeierMichael**])
+- 🐛 Run the assignment's ordering potential over one turn of the launcher ring.
+  Over the ring's own length the walk could turn twice, which put two
+  conventional ports on one launcher on five of the eight benchmark chips and
+  broke the cyclic order of the ring ([#114]) ([**@FeldmeierMichael**])
+- 🐛 Charge a resonator's ordering step to its own launcher. The step was charged
+  to the next resonator along whenever the ring opened on a conventional port,
+  which is four of the eight benchmark chips ([#114]) ([**@FeldmeierMichael**])
+- ✨ Carry where each ring node is fed from in the assignment as `feeds`, so both
+  renderers draw the chord to the point the wire starts at ([#114])
+  ([**@FeldmeierMichael**])
 - ✨ Add the component a port belongs to, declared by one more configured
   pattern, and print the grouping in `mqt-scpd doctor` ([#114])
   ([**@FeldmeierMichael**])

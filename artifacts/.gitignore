@@ -1,0 +1,21 @@
+# A run directory is output, never input. `mqt-scpd plan -o artifacts/<chip>`
+# writes everything below, and re-running the stages reproduces all of it, so
+# none of it belongs in the repository. The 69-qubit capacity plan alone is
+# seven megabytes.
+#
+# This file lives here rather than in the root `.gitignore`, which an external
+# template owns.
+
+# Stage artifacts
+*.fb
+
+# Renderings of a stage or of the plain layout
+*.svg
+*.gds
+*.gds2
+*.oas
+
+# What `plan` copies in beside them: the chip input and the configuration the
+# run was made from
+00-chip.json
+config.toml

@@ -1487,10 +1487,12 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   /// Where each ring node is actually fed from, parallel to `ring`.
   ///
-  /// Usually the launcher slot `launchers` names. A resonator that ends a
-  /// feedline is not fed at a launcher at all: the run reaches it from one
-  /// side only, so the feed starts at a new slot on the segment between its
-  /// own launcher and the one its neighbour on the open side was given.
+  /// A conventional port is fed at the launcher slot `launchers` names, and
+  /// no two of them share one. A resonator is fed at no launcher at all: the
+  /// wire that reaches it comes past the slot, so its feed sits on the
+  /// segment from its own launcher to the next launcher along. Where a
+  /// launcher was given n resonators they divide that segment evenly, in
+  /// ring order.
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *feeds() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_FEEDS);
   }

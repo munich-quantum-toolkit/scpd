@@ -181,33 +181,48 @@ which the cycle is entered changes the model; the configured sequence carries
 that entry point. See
 [decision 0025](decisions/0025-port-ring-is-manual-input.md).
 
+**A connection per ring node.** The assignment reaches every port of the ring,
+so it writes one connection per node and `connections` is as long as `ring`. A
+conventional port is fed from the launcher the walk gave it, as `FeedlineSource`
+to `FeedlineTarget`. A resonator carries `ResonatorSource` to `ResonatorTarget`
+with no source port: the port that feeds it is the coupler the Final stage
+inserts.
+
 **This is where `AssignedRole` is set.** Every connection the assignment
 produces carries a source and target role. The one role it cannot place yet is
 `ResonatorSource`, whose port does not exist until the Final stage inserts the
 coupler that carries it; the assignment records that the resonator is fed, and
 the Final stage completes the pair.
 
-**A feedline end is fed between two launchers.** A resonator in the middle of a
-run is reached from both sides and sits at its launcher. One that ends a run is
-reached from one side only, and the feed comes past the other — from the stretch
-between its own launcher and the one its neighbour on that open side was given.
-The artifact carries that point per ring node in `feeds`, and both renderers
-draw the chord to it. See
+**A resonator is fed between two launchers.** What stands on a launcher slot is
+a conventional port. Every resonator the walk gave that launcher moves onto the
+segment that runs to the next launcher along; where a launcher was given `n` of
+them they land at `1/(n+1) … n/(n+1)` of that segment, in ring order, so the one
+the walk reaches first is the one nearest its own launcher. The artifact carries
+the point per ring node in `feeds`, and both renderers draw the chord to it. See
 [decision 0029](decisions/0029-a-feedline-end-is-fed-between-launchers.md).
 
-**The launcher index is a cycle.** The model walks the ring and lowers a
-potential at every port it passes, which is what makes two assignments that
-cross on the ring cross on the chip. Which launcher a value of that potential
-names is the value *modulo* the launcher count — the stage already read it back
-that way — so the potential runs over the ring's own length and a ring longer
-than the launcher ring simply comes round again. Bounding it by the launcher
-count instead capped how many ports a ring could carry, which is a limit of the
-formulation and not of the chip: the 17-qubit ring needs 49 steps out of 47
-slots and came out infeasible. The range is the length exactly: room above it
-would let a node reach the launcher it is nearest to rather than the next one
-along, which the proximity term would like, but a whole launcher ring of that
-room bought 0.05 on the 4-qubit chip and cost the 45-qubit chip minutes instead
-of seconds. The crossing count is the same either way.
+**The potential turns the launcher ring once.** The model walks the ring and
+lowers a potential at every port it passes, which is what makes two assignments
+that cross on the ring cross on the chip. Which launcher a value of that
+potential names is the value *modulo* the launcher count. The range is one turn
+of the launcher ring, one short of the launcher count, and that single turn is
+what gives the artifact its other two properties:
+
+- **A launcher feeds at most one conventional port.** The potential falls at
+  every conventional port, so two of them share a launcher only where they lie
+  a whole launcher ring apart, which no walk of one turn does.
+- **The ring keeps its cyclic order.** The launcher slots along the ring fall
+  and come back up exactly once, where the turn closes. A launcher later in the
+  cycle is therefore given a port later in the cycle.
+
+A ring that carries more conventional ports than the chip has launchers comes
+out infeasible. That is the chip saying it has no assignment, not the
+formulation capping the ring. The range is one turn exactly, with no room above
+it: room would let a node reach the launcher it is nearest to rather than the
+next one along, which the proximity term would like, but a whole launcher ring
+of that room bought 0.05 on the 4-qubit chip and cost the 45-qubit chip minutes
+instead of seconds. The crossing count is the same either way.
 
 **The model touches no grid.** In the prototype this stage called back into the
 capacity grid *during model construction*, running a graph search per node to
