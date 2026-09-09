@@ -11,3 +11,7 @@ class UnassignedRole(object):
     Conventional = 3
     # Created by the Final stage's coupler insertion. No pattern produces it.
     Coupler = 4
+    # A port where a coupler's artwork mates with a qubit's, or the matching
+    # end on the coupler. Never routed. Five benchmark inputs carry them; the
+    # others carry routable ports only.
+    Mating = 5

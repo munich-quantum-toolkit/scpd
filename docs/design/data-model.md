@@ -26,11 +26,9 @@ Two decisions remove all of it. Roles are **declared, not inferred** — see
 [decision 0018](decisions/0018-port-roles-unassigned-and-assigned.md) — and the
 one relationship those string parsers existed to recover, a coupler's qubit
 pair, is needed by nothing that survives. The port ring is the only thing that
-ever wanted it, and neither way of obtaining a ring asks for it now: under
-`port_detection = "manual"` the ring is configuration
-([decision 0020](decisions/0020-legacy-routing-config-as-input.md)), and under
-`"auto"` it comes from a geometric traversal that parses no names
-([decision 0023](decisions/0023-geometric-port-ring-detection.md)).
+ever wanted it, and the ring is configuration
+([decision 0020](decisions/0020-legacy-routing-config-as-input.md) and
+[decision 0025](decisions/0025-port-ring-is-manual-input.md)).
 
 ## Entities
 
@@ -52,6 +50,8 @@ classDiagram
     Launcher
     Resonator
     Conventional
+    Coupler
+    Mating
   }
   class AssignedRole {
     <<enum>>
@@ -114,7 +114,9 @@ Roles come in two enums, with a defined transition between them.
 ```fbs
 /// What a port is, before anything is decided. Set at load, from patterns,
 /// or by coupler insertion for a Coupler port.
-enum UnassignedRole : ubyte { Unset, Launcher, Resonator, Conventional, Coupler }
+enum UnassignedRole : ubyte {
+  Unset, Launcher, Resonator, Conventional, Coupler, Mating
+}
 
 /// What a port does in the solved design. Set by the Assignment stage.
 enum AssignedRole : ubyte {
@@ -134,6 +136,15 @@ absence is visible.
 expressions in `config.toml`. `AssignedRole` is a property of a
 **connection endpoint** and cannot exist before the assignment is solved,
 because until then no port is anyone's source or target.
+
+Two members of `UnassignedRole` never come from a pattern of a shipped chip's
+routable ports. `Coupler` is the role of the port that coupler insertion creates
+in the Final stage. `Mating` is the role of a port where a coupler's artwork
+mates with a qubit's, or of the matching end on the coupler: five of the eight
+benchmark inputs carry those besides the routable ports, as `Qb*.port2` to
+`port5` and `Coupler*.port5` to `port6`. A mating port is never routed. It
+exists in the model because the loader would otherwise have to drop ports it
+cannot classify, which is the silent behaviour the classification exists to end.
 
 The prototype conflated the two, which is why `is_resonator` was a `bool` on a
 routing request in one place and a `NodeKind` on a graph node in another.
@@ -166,8 +177,9 @@ expression per role, given per chip in `config.toml`:
 ```toml
 [ports.patterns]
 launcher     = '^Chip\.port\d+$'
-resonator    = '^Qb?\d+\.port0$'
-conventional = '^(Qb?\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
+resonator    = '^Qb\d+\.port0$'
+conventional = '^(Qb\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
+mating       = '^(Qb\d+\.port[2-5]|Coupler\d+_\d+\.port[5-6])$'   # only where the chip has them
 ```
 
 Every port must match **exactly one** pattern. A port matching none, or more
@@ -294,17 +306,34 @@ so each has a distinct type and conversions are explicit.
 | Detail grid | `DCoord` | pixel index             | Detail routing: the A* over partitions                              |
 | Router grid | `RCoord` | node index plus heading | Final routing: the Dubins A* state, heading `0..7`                  |
 
-Conversions live in `MQT::ScpdGrid` as named functions, never as inline
-arithmetic at the call site. The three grid types enter `geometry.fbs` together
-with that module in phase 2; until then the schema carries `Point` alone. The
-prototype re-derived `pad + x * px_w` in six separate renderers, each with its
-own y-flip convention.
+All four types live in `geometry.fbs`. Conversions live in `MQT::ScpdGrid` as
+named functions, never as inline arithmetic at the call site: one `GridMetrics`
+value describes a grid — its cell counts, the layout point of cell `(0, 0)` and
+its cell step along each axis — and every conversion between layout units and
+cells goes through it. The prototype re-derived `pad + x * px_w` in six separate
+renderers, each with its own y-flip convention.
+
+A `GridMetrics` puts cell `(0, 0)` on the minimum corner of the chip's box and
+the last cell on the maximum corner, so one cell step is the extent of the box
+divided by the number of steps and every point of the box rounds onto a cell.
+The same type describes all three grids; the coordinate structs say which grid a
+cell belongs to. The detail grid of a capacity grid is that grid refined by a
+whole factor, and the router grid divides every capacity cell into as many cells
+as it holds steps of the configured cell size, rounded up, so a router cell is
+never wider than that size.
 
 `Rotation` and the router heading are both eight-way. That assumption is baked
-into the A* state index and the flat primitive tables, where a heading is packed
-as `(ang << 10) | path_id`. It is named as `kNumAngles` rather than spelled `8`
-throughout, so it is greppable — but changing it is out of scope for the first
-release.
+into the search state index and the primitive tables, where a move identifier
+occupies ten bits beside the heading. It is named as `NUM_HEADINGS` rather than
+spelled `8` throughout, so it is greppable — but changing it is out of scope for
+the first release. See
+[decision 0015](decisions/0015-grid-and-memory-model.md).
+
+A heading is a direction of travel: heading `0` travels toward negative `y`, and
+the headings continue clockwise in eighth turns when `y` points up, so heading
+`2` travels toward negative `x` and heading `6` toward positive `x`. A port's
+heading is the one a wire has when it arrives there, so a wire leaving that port
+carries the reverse.
 
 ## Paths
 
@@ -332,18 +361,17 @@ the configuration.
 
 | File            | Holds                                                                                                          | Owner               |
 | --------------- | -------------------------------------------------------------------------------------------------------------- | ------------------- |
-| `geometry.fbs`  | `Point`, `Polygon`, `Line`, `Arc`, `Segment`, `Path`                                                           | `MQT::ScpdGeometry` |
+| `geometry.fbs`  | `Point`, `GCoord`, `DCoord`, `RCoord`, `Polygon`, `Line`, `Arc`, `Segment`, `Path`                             | `MQT::ScpdGeometry` |
 | `design.fbs`    | The two role enums, `Rotation`, `PortRef`, `Port`, `Chip`, `Connection`, `DesignRules`, `CpwCoupler`, `Bridge` | `MQT::ScpdDesign`   |
 | `config.fbs`    | `Config` with the port and grid sections, with the defaults the loader applies to absent keys                  | `MQT::ScpdDesign`   |
 | `artifacts.fbs` | The six stage outputs, each behind the one `Artifact` root                                                     | `MQT::ScpdIO`       |
 | `drc.fbs`       | `DrcReport` and its findings                                                                                   | `MQT::ScpdDrc`      |
 
 A schema holds what the implemented phases read. Each later stage appends its
-own tables and fields when it arrives: the grid coordinate types with
-`MQT::ScpdGrid`, the contents of the capacity, global and detail outputs with
-their stages, and the stage, component and DRC parameters of `Config` with the
-code that consumes them. FlatBuffers permits that growth without touching what
-exists.
+own tables and fields when it arrives: the contents of the capacity, global and
+detail outputs with their stages, and the stage, component and DRC parameters of
+`Config` with the code that consumes them. FlatBuffers permits that growth
+without touching what exists.
 
 Each schema declares its own namespace, `mqt.scpd.flatbuffers.<schema>`, so the
 generated code is grouped by the schema that owns it. In C++ that is one header
@@ -391,14 +419,10 @@ Python module.
 trust boundary. Both are validated on load, and both report actionable errors
 that name the offending field:
 
-- Every port matches exactly one role pattern.
-- `port_detection` is `"manual"` or `"auto"`. Under `"manual"` both `all_outer`
-  and `fixed_outer` are present; under `"auto"` neither is, and supplying one is
-  an error rather than a value that is quietly ignored.
-- Every label in `all_outer` and `fixed_outer` exists on the chip, and
-  `fixed_outer ⊆ all_outer`.
-- `start_component`, when set, names a component the chip actually carries. It
-  is accepted only under `"auto"`.
+- Every port matches exactly one role pattern. The `mating` pattern is optional;
+  the other three are required.
+- Both `all_outer` and `fixed_outer` are present. Every label in them is a
+  routable port of the chip and appears once, and `fixed_outer ⊆ all_outer`.
 - Every regular expression compiles.
 - Unknown configuration keys are an error, not a warning.
 - A chip file carrying a non-empty `nets` is rejected rather than silently

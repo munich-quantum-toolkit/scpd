@@ -48,8 +48,16 @@ class PortPatterns(object):
             return self._tab.String(o + self._tab.Pos)
         return None
 
+    # Absent when the chip input carries no mating ports.
+    # PortPatterns
+    def Mating(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
 def PortPatternsStart(builder: flatbuffers.Builder):
-    builder.StartObject(3)
+    builder.StartObject(4)
 
 def Start(builder: flatbuffers.Builder):
     PortPatternsStart(builder)
@@ -72,6 +80,12 @@ def PortPatternsAddConventional(builder: flatbuffers.Builder, conventional: int)
 def AddConventional(builder: flatbuffers.Builder, conventional: int):
     PortPatternsAddConventional(builder, conventional)
 
+def PortPatternsAddMating(builder: flatbuffers.Builder, mating: int):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(mating), 0)
+
+def AddMating(builder: flatbuffers.Builder, mating: int):
+    PortPatternsAddMating(builder, mating)
+
 def PortPatternsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -87,10 +101,12 @@ class PortPatternsT(object):
         launcher = None,
         resonator = None,
         conventional = None,
+        mating = None,
     ):
         self.launcher = launcher  # type: Optional[str]
         self.resonator = resonator  # type: Optional[str]
         self.conventional = conventional  # type: Optional[str]
+        self.mating = mating  # type: Optional[str]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -122,6 +138,9 @@ class PortPatternsT(object):
         self.conventional = portPatterns.Conventional()
         if self.conventional is not None:
             self.conventional = self.conventional.decode('utf-8')
+        self.mating = portPatterns.Mating()
+        if self.mating is not None:
+            self.mating = self.mating.decode('utf-8')
 
     # PortPatternsT
     def Pack(self, builder):
@@ -131,6 +150,8 @@ class PortPatternsT(object):
             resonator = builder.CreateString(self.resonator)
         if self.conventional is not None:
             conventional = builder.CreateString(self.conventional)
+        if self.mating is not None:
+            mating = builder.CreateString(self.mating)
         PortPatternsStart(builder)
         if self.launcher is not None:
             PortPatternsAddLauncher(builder, launcher)
@@ -138,5 +159,7 @@ class PortPatternsT(object):
             PortPatternsAddResonator(builder, resonator)
         if self.conventional is not None:
             PortPatternsAddConventional(builder, conventional)
+        if self.mating is not None:
+            PortPatternsAddMating(builder, mating)
         portPatterns = PortPatternsEnd(builder)
         return portPatterns

@@ -1,0 +1,4 @@
+# The six larger chip inputs are not committed; README.md names their source.
+routing_config.json
+!4q/routing_config.json
+!9q/routing_config.json

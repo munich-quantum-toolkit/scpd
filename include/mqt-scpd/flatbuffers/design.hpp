@@ -74,35 +74,41 @@ enum class UnassignedRole : uint8_t {
   Conventional = 3,
   /// Created by the Final stage's coupler insertion. No pattern produces it.
   Coupler = 4,
+  /// A port where a coupler's artwork mates with a qubit's, or the matching
+  /// end on the coupler. Never routed. Five benchmark inputs carry them; the
+  /// others carry routable ports only.
+  Mating = 5,
   MIN = Unset,
-  MAX = Coupler
+  MAX = Mating
 };
 
-inline const UnassignedRole (&EnumValuesUnassignedRole())[5] {
+inline const UnassignedRole (&EnumValuesUnassignedRole())[6] {
   static const UnassignedRole values[] = {
     UnassignedRole::Unset,
     UnassignedRole::Launcher,
     UnassignedRole::Resonator,
     UnassignedRole::Conventional,
-    UnassignedRole::Coupler
+    UnassignedRole::Coupler,
+    UnassignedRole::Mating
   };
   return values;
 }
 
 inline const char * const *EnumNamesUnassignedRole() {
-  static const char * const names[6] = {
+  static const char * const names[7] = {
     "Unset",
     "Launcher",
     "Resonator",
     "Conventional",
     "Coupler",
+    "Mating",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameUnassignedRole(UnassignedRole e) {
-  if (::flatbuffers::IsOutRange(e, UnassignedRole::Unset, UnassignedRole::Coupler)) return "";
+  if (::flatbuffers::IsOutRange(e, UnassignedRole::Unset, UnassignedRole::Mating)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesUnassignedRole()[index];
 }

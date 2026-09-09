@@ -1,0 +1,54 @@
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
+# The 9-qubit benchmark chip. The chip input is the prototype's own
+# routing_config.json, unchanged; README.md in this directory names its
+# source. Every design rule is written out; every other key is present only
+# when it differs from the default.
+
+[chip]
+input = "routing_config.json"
+
+[ports.patterns]
+launcher = '^Chip\.port\d+$'
+resonator = '^Qb\d+\.port0$'
+conventional = '^(Qb\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
+mating = '^(Qb\d+\.port[2-5]|Coupler\d+_\d+\.port[5-6])$'
+
+[ports.sequences]
+all_outer = [
+  "Qb1.port1", "Qb1.port0", "Coupler1_2.port1", "Coupler1_2.port0", "Coupler1_2.port3",
+  "Qb2.port1", "Qb2.port0", "Coupler2_3.port3", "Coupler2_3.port0", "Coupler2_3.port1",
+  "Qb3.port0", "Qb3.port1", "Coupler3_6.port1", "Coupler3_6.port0", "Coupler3_6.port3",
+  "Qb6.port1", "Qb6.port0", "Coupler6_9.port1", "Coupler6_9.port0", "Coupler6_9.port3",
+  "Qb9.port0", "Qb9.port1", "Coupler8_9.port1", "Coupler8_9.port0", "Coupler8_9.port3",
+  "Qb8.port0", "Qb8.port1", "Coupler7_8.port3", "Coupler7_8.port0", "Coupler7_8.port1",
+  "Qb7.port1", "Qb7.port0", "Coupler4_7.port3", "Coupler4_7.port0", "Coupler4_7.port1",
+  "Qb4.port0", "Qb4.port1", "Coupler1_4.port3", "Coupler1_4.port0", "Coupler1_4.port1",
+]
+fixed_outer = [
+  "Qb1.port1", "Qb1.port0", "Coupler1_2.port0", "Qb2.port1", "Qb2.port0", "Coupler2_3.port0",
+  "Qb3.port0", "Qb3.port1", "Coupler3_6.port0", "Qb6.port1", "Qb6.port0", "Coupler6_9.port0",
+  "Qb9.port0", "Qb9.port1", "Coupler8_9.port0", "Qb8.port0", "Qb8.port1", "Coupler7_8.port0",
+  "Qb7.port1", "Qb7.port0", "Coupler4_7.port0",
+]
+
+[design_rules]
+min_wire_spacing = 185.0
+min_obstacle_spacing = 25.0
+min_bend_radius = 50.0
+min_straight_length = 100.0
+target_resonator_length = 2500.0
+resonator_length_tolerance = 100.0
+max_feedline_utilization = 5
+feedline_terminations = 1
+
+[grid]
+capacity_cells_x = 12
+launcher_offset_x = 5
+launcher_offset_y = 5

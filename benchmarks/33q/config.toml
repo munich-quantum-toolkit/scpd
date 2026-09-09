@@ -1,0 +1,99 @@
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
+# The 33-qubit benchmark chip. The chip input is the prototype's own
+# routing_config.json, unchanged; README.md in this directory names its
+# source. Every design rule is written out; every other key is present only
+# when it differs from the default.
+
+[chip]
+input = "routing_config.json"
+
+[ports.patterns]
+launcher = '^Chip\.port\d+$'
+resonator = '^Qb\d+\.port0$'
+conventional = '^(Qb\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
+mating = '^(Qb\d+\.port[2-5]|Coupler\d+_\d+\.port[5-6])$'
+
+[ports.sequences]
+all_outer = [
+  "Qb1.port1", "Qb1.port0", "Coupler1_2.port1", "Coupler1_2.port0", "Coupler1_2.port3",
+  "Qb2.port1", "Qb2.port0", "Coupler2_6.port1", "Coupler2_6.port0", "Coupler2_6.port3",
+  "Qb6.port0", "Coupler6_7.port3", "Coupler6_7.port0", "Coupler6_7.port1", "Qb7.port1",
+  "Qb7.port0", "Coupler7_12.port1", "Coupler7_12.port0", "Coupler7_12.port3", "Qb12.port0",
+  "Coupler12_13.port3", "Coupler12_13.port0", "Coupler12_13.port1", "Qb13.port0", "Qb13.port1",
+  "Coupler13_14.port3", "Coupler13_14.port0", "Coupler13_14.port1", "Qb14.port0",
+  "Coupler8_14.port3", "Coupler8_14.port0", "Coupler8_14.port1", "Qb8.port1", "Qb8.port0",
+  "Coupler8_9.port1", "Coupler8_9.port0", "Coupler8_9.port3", "Qb9.port0", "Coupler3_9.port1",
+  "Coupler3_9.port0", "Coupler3_9.port3", "Qb3.port1", "Qb3.port0", "Coupler3_4.port3",
+  "Coupler3_4.port0", "Coupler3_4.port1", "Qb4.port0", "Qb4.port1", "Coupler4_10.port1",
+  "Coupler4_10.port0", "Coupler4_10.port3", "Qb10.port1", "Qb10.port0", "Coupler9_10.port3",
+  "Coupler9_10.port0", "Coupler9_10.port1", "Qb9.port1", "Coupler9_15.port3", "Coupler9_15.port0",
+  "Coupler9_15.port1", "Qb15.port0", "Qb15.port1", "Coupler14_15.port3", "Coupler14_15.port0",
+  "Coupler14_15.port1", "Qb14.port1", "Coupler14_18.port3", "Coupler14_18.port0",
+  "Coupler14_18.port1", "Qb18.port0", "Qb18.port1", "Coupler18_22.port3", "Coupler18_22.port0",
+  "Coupler18_22.port1", "Qb22.port0", "Coupler22_23.port3", "Coupler22_23.port0",
+  "Coupler22_23.port1", "Qb23.port1", "Qb23.port0", "Coupler23_28.port1", "Coupler23_28.port0",
+  "Coupler23_28.port3", "Qb28.port0", "Coupler28_29.port1", "Coupler28_29.port0",
+  "Coupler28_29.port3", "Qb29.port1", "Qb29.port0", "Coupler29_33.port1", "Coupler29_33.port0",
+  "Coupler29_33.port3", "Qb33.port1", "Qb33.port0", "Coupler32_33.port1", "Coupler32_33.port0",
+  "Coupler32_33.port3", "Qb32.port0", "Qb32.port1", "Coupler28_32.port1", "Coupler28_32.port0",
+  "Coupler28_32.port3", "Qb28.port1", "Coupler27_28.port3", "Coupler27_28.port0",
+  "Coupler27_28.port1", "Qb27.port0", "Qb27.port1", "Coupler22_27.port1", "Coupler22_27.port0",
+  "Coupler22_27.port3", "Coupler21_22.port3", "Coupler21_22.port0", "Coupler21_22.port1",
+  "Qb21.port0", "Qb21.port1", "Coupler20_21.port3", "Coupler20_21.port0", "Coupler20_21.port1",
+  "Coupler20_26.port3", "Coupler20_26.port0", "Coupler20_26.port1", "Qb26.port0", "Qb26.port1",
+  "Coupler25_26.port3", "Coupler25_26.port0", "Coupler25_26.port1", "Qb25.port1",
+  "Coupler25_31.port3", "Coupler25_31.port0", "Coupler25_31.port1", "Qb31.port0", "Qb31.port1",
+  "Coupler30_31.port3", "Coupler30_31.port0", "Coupler30_31.port1", "Qb30.port1", "Qb30.port0",
+  "Coupler24_30.port3", "Coupler24_30.port0", "Coupler24_30.port1", "Qb24.port1", "Qb24.port0",
+  "Coupler24_25.port3", "Coupler24_25.port0", "Coupler24_25.port1", "Qb25.port0",
+  "Coupler19_25.port3", "Coupler19_25.port0", "Coupler19_25.port1", "Qb19.port1", "Qb19.port0",
+  "Coupler19_20.port3", "Coupler19_20.port0", "Coupler19_20.port1", "Qb20.port0",
+  "Coupler16_20.port3", "Coupler16_20.port0", "Coupler16_20.port1", "Qb16.port0", "Qb16.port1",
+  "Coupler12_16.port3", "Coupler12_16.port0", "Coupler12_16.port1", "Qb12.port1",
+  "Coupler11_12.port3", "Coupler11_12.port0", "Coupler11_12.port1", "Qb11.port0", "Qb11.port1",
+  "Coupler6_11.port1", "Coupler6_11.port0", "Coupler6_11.port3", "Qb6.port1", "Coupler5_6.port3",
+  "Coupler5_6.port0", "Coupler5_6.port1", "Qb5.port0", "Qb5.port1", "Coupler1_5.port3",
+  "Coupler1_5.port0", "Coupler1_5.port1",
+]
+fixed_outer = [
+  "Qb1.port1", "Qb1.port0", "Coupler1_2.port0", "Qb2.port1", "Qb2.port0", "Coupler2_6.port0",
+  "Qb6.port0", "Coupler6_7.port0", "Qb7.port1", "Qb7.port0", "Coupler7_12.port0", "Qb12.port0",
+  "Coupler12_13.port0", "Qb13.port0", "Qb13.port1", "Coupler13_14.port0", "Qb14.port0",
+  "Coupler8_14.port0", "Qb8.port1", "Qb8.port0", "Coupler8_9.port0", "Qb9.port0",
+  "Coupler3_9.port0", "Qb3.port1", "Qb3.port0", "Coupler3_4.port0", "Qb4.port0", "Qb4.port1",
+  "Coupler4_10.port0", "Qb10.port1", "Qb10.port0", "Coupler9_10.port0", "Qb9.port1",
+  "Coupler9_15.port0", "Qb15.port0", "Qb15.port1", "Coupler14_15.port0", "Qb14.port1",
+  "Coupler14_18.port0", "Qb18.port0", "Qb18.port1", "Coupler18_22.port0", "Qb22.port0",
+  "Coupler22_23.port0", "Qb23.port1", "Qb23.port0", "Coupler23_28.port0", "Qb28.port0",
+  "Coupler28_29.port0", "Qb29.port1", "Qb29.port0", "Coupler29_33.port0", "Qb33.port1",
+  "Qb33.port0", "Coupler32_33.port0", "Qb32.port0", "Qb32.port1", "Coupler28_32.port0",
+  "Qb28.port1", "Coupler27_28.port0", "Qb27.port0", "Qb27.port1", "Coupler22_27.port0",
+  "Coupler21_22.port0", "Qb21.port0", "Qb21.port1", "Coupler20_21.port0", "Coupler20_26.port0",
+  "Qb26.port0", "Qb26.port1", "Coupler25_26.port0", "Qb25.port1", "Coupler25_31.port0",
+  "Qb31.port0", "Qb31.port1", "Coupler30_31.port0", "Qb30.port1", "Qb30.port0",
+  "Coupler24_30.port0", "Qb24.port1", "Qb24.port0", "Coupler24_25.port0", "Qb25.port0",
+  "Coupler19_25.port0", "Qb19.port1", "Qb19.port0", "Coupler19_20.port0", "Qb20.port0",
+  "Coupler16_20.port0", "Qb16.port0", "Qb16.port1", "Coupler12_16.port0", "Qb12.port1",
+  "Coupler11_12.port0", "Qb11.port0", "Qb11.port1", "Coupler6_11.port0", "Qb6.port1",
+  "Coupler5_6.port0", "Qb5.port0", "Qb5.port1", "Coupler1_5.port0",
+]
+
+[design_rules]
+min_wire_spacing = 185.0
+min_obstacle_spacing = 25.0
+min_bend_radius = 50.0
+min_straight_length = 100.0
+target_resonator_length = 2500.0
+resonator_length_tolerance = 100.0
+max_feedline_utilization = 5
+feedline_terminations = 0
+
+[grid]
+capacity_cells_x = 26

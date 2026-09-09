@@ -59,6 +59,15 @@ coupler insertion in the Final stage.
 
 No entity model, no stored qubit-coupler relationships, no converter.
 
+> **Amended 2026-09-06.** The enum gained two members. `Coupler` is the role of
+> the port that coupler insertion creates in the Final stage. `Mating` is the
+> role of the coupler-mating ports that five of the eight benchmark inputs carry
+> besides their routable ports; `config.toml` classifies them with an optional
+> fourth pattern, `mating`. The rule that every port matches exactly one pattern
+> stands. Without the role, those inputs could not be loaded at all, or the
+> loader would have to drop the ports it cannot name. See
+> [the data model](../data-model.md#roles-unassigned-in-assigned-out).
+
 ## Alternatives considered
 
 **The full entity model.** Strictly better typing, and the right long-term
