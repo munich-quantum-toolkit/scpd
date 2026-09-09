@@ -11,8 +11,8 @@
 // a shipped configuration carries only what differs from them, except
 // [design_rules], which is always written out in full.
 //
-// The stage, component and DRC parameters of that section arrive with the
-// stages that read them, appended to Config.
+// The component and DRC parameters of that section arrive with the stages
+// that read them, appended to Config.
 
 include "design.fbs";
 
@@ -23,6 +23,26 @@ table PortPatterns {
   launcher: string (required);
   resonator: string (required);
   conventional: string (required);
+  /// The ports a wire crosses a component at, rather than ends at. Optional:
+  /// a chip whose components carry no crossing declares none. Which two of
+  /// these ports pair is PortConfig.bridge_pairs.
+  bridge_pair: string;
+  /// The component a port belongs to, as one capture group over the label.
+  /// A port whose label the pattern does not match carries no component.
+  component: string;
+}
+
+/// One rule that pairs the two ports a wire crosses a component between.
+/// Each side is a regular expression with exactly one capture group, and two
+/// ports pair when they belong to one component and their captures are equal.
+///
+/// The pairing is declared rather than measured. Opposite orientation and
+/// shortest distance do pick the right two ports on the benchmark chips, but
+/// they are a property of the artwork and not a statement of intent, and
+/// nothing checked that the two agreed.
+table BridgeRule {
+  first: string (required);
+  second: string (required);
 }
 
 /// The two ordered outer port sequences of the chip. all_outer is the ring
@@ -36,6 +56,9 @@ table PortSequences {
 table PortConfig {
   patterns: PortPatterns (required);
   sequences: PortSequences (required);
+  /// How the ports the bridge_pair pattern names pair off, in the order the
+  /// rules are applied. Empty when the chip declares no bridge ports.
+  bridge_pairs: [BridgeRule];
 }
 
 table GridParams {
@@ -44,6 +67,66 @@ table GridParams {
   capacity_cells_y: uint32 = 0;
   launcher_offset_x: uint32 = 15;
   launcher_offset_y: uint32 = 15;
+  /// Cells of the detail grid per cell of the capacity grid, along each axis.
+  detail_factor: uint32 = 30;
+}
+
+/// What the Capacity stage is allowed to do.
+table CapacityParams {
+  /// The implementation, by the name it is registered under.
+  planner: string;
+  /// A place on the medial axis is a bottleneck only where the free radius
+  /// around it is below this many wire pitches, a pitch being one wire
+  /// spacing plus one obstacle spacing.
+  ///
+  /// The prototype used a fixed count of grid cells here, which is not a
+  /// length: the same literal admitted a radius of 235 layout units on the
+  /// 4-qubit grid and 484 on the 9-qubit one, purely because the two grids
+  /// have different cell sizes. The default below is the middle of that
+  /// range as a physical distance, and reproduces the prototype's own
+  /// bottleneck count on both.
+  bottleneck_clearance: double = 1.5;
+}
+
+/// What the Global stage is allowed to do.
+table GlobalParams {
+  /// The implementation, by the name it is registered under.
+  router: string;
+  /// Whether an inner wire may cross a component the outer ring does not
+  /// reach, through one of that component's own bridges.
+  ///
+  /// Off by default. Such a crossing is a wire that enters a coupler the
+  /// assignment never sees and leaves on the far side, so where it runs is
+  /// decided by nothing the later stages can read back. The prototype allows
+  /// it and has no way to say otherwise.
+  internal_bridges: bool = false;
+}
+
+/// What the Assignment stage is allowed to do.
+table AssignmentParams {
+  /// The implementation, by the name it is registered under.
+  assigner: string;
+  /// How many launchers the assignment activates. Per chip.
+  launcher_target: uint32 = 0;
+}
+
+/// How the mixed-integer programs of the planning stages are solved.
+table SolverParams {
+  /// "auto", "highs" or "gurobi". The environment variable SCPD_SOLVER
+  /// overrides it for one run.
+  backend: string;
+  /// Seconds one solve may take, or zero for no limit.
+  time_limit: double = 0.0;
+  /// The relative gap a solve may stop at, or zero for the backend's own.
+  relative_gap: double = 0.0;
+}
+
+/// The parameters of the stages that are implemented.
+table StageParams {
+  capacity: CapacityParams;
+  global: GlobalParams;
+  assignment: AssignmentParams;
+  solver: SolverParams;
 }
 
 /// The whole run configuration.
@@ -53,4 +136,5 @@ table Config {
   ports: PortConfig (required);
   rules: design.DesignRules (required);
   grid: GridParams;
+  stages: StageParams;
 }

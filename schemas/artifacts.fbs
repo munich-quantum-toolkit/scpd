@@ -14,20 +14,145 @@
 // so the tables of stages that do not exist yet are empty on purpose.
 
 include "design.fbs";
+include "geometry.fbs";
 
 namespace mqt.scpd.flatbuffers.artifacts;
 
+/// A grid of a run, as the numbers that convert between its cells and layout
+/// units. The grid itself is derived state and is rebuilt; these six numbers
+/// are what a reader needs to place what the artifact does carry.
+table GridExtent {
+  width: uint32;
+  height: uint32;
+  origin: geometry.Point (required, native_inline);
+  cell_width: double;
+  cell_height: double;
+}
+
+/// One partition of the free space, as the watershed left it.
+table Partition {
+  label: uint32;
+  /// Closed rings in layout units. More than one where the partition has a
+  /// hole, or the watershed left it in pieces.
+  outlines: [geometry.Polygon] (required);
+}
+
+/// Where two partitions meet, and how many wires may cross there.
+table PartitionBorder {
+  first: uint32;
+  second: uint32;
+  /// The cell edges the border runs along, in layout units.
+  samples: [geometry.Point] (required);
+  center: geometry.Point (required, native_inline);
+  budget: uint32;
+}
+
+/// The narrowest place of a corridor: the two obstacle points that face each
+/// other across it, and how many wires fit between them.
+table Bottleneck {
+  from: geometry.Point (required, native_inline);
+  to: geometry.Point (required, native_inline);
+  capacity: uint32;
+}
+
+/// A launcher and the point at which its wires enter the chip.
+table LauncherSlot {
+  port: design.PortRef (required, native_inline);
+  position: geometry.Point (required, native_inline);
+}
+
+/// What one link of a capacity chain stands for.
+enum CapacityElement : ubyte {
+  Unset,
+  /// A port the chain has to serve.
+  Target,
+  /// A gate the wires beyond it have to pass.
+  Bottleneck,
+  /// The launcher the chain is rooted at.
+  Launcher,
+}
+
+/// One link of a capacity chain.
+///
+/// A chain is a tree and FlatBuffers has no recursive table, so the nodes are
+/// stored flat and a link names its branches by index. That also lets two
+/// chains share a subtree without storing it twice.
+table CapacityNode {
+  kind: CapacityElement;
+  /// The port for a Target and the index into `bottlenecks` for a
+  /// Bottleneck. Unused for a Launcher.
+  id: uint32;
+  /// How many wires this link lets through. Only a Bottleneck limits.
+  capacity: uint32;
+  /// Indices into CapacityPlan.nodes.
+  next: [uint32] (required);
+}
+
 /// Output of the Capacity stage.
-table CapacityPlan {}
+table CapacityPlan {
+  capacity_grid: GridExtent (required);
+  detail_grid: GridExtent (required);
+  partitions: [Partition] (required);
+  borders: [PartitionBorder] (required);
+  bottlenecks: [Bottleneck] (required);
+  launchers: [LauncherSlot] (required);
+  nodes: [CapacityNode] (required);
+  /// The index in `nodes` of each chain's root.
+  chains: [uint32] (required);
+  /// What the ports' own approaches keep clear, as closed rings in layout
+  /// units: the strip a wire leaves each routable port along, extended
+  /// forward and backward, and the square each launcher sweeps.
+  ///
+  /// These are obstacles to everything the stages route, and they are not
+  /// chip artwork, which is why they are a layer of their own rather than
+  /// more polygons in the chip. Only the cells that were free before a band
+  /// took them are here; where a band merely covered artwork the artwork is
+  /// already drawn. The rings follow the cells, so a band along a diagonal
+  /// is the staircase the grid actually blocks.
+  port_keepout: [geometry.Polygon];
+}
+
+/// One lattice the inner circuit is solved on: the Hanan grid that the ports
+/// of one capacity chain induce.
+table Lattice {
+  points: [geometry.Point] (required);
+  /// Two point indices per edge, flat.
+  edges: [uint32] (required);
+  /// The edges the solution selected, as indices into `edges` divided by two.
+  selected: [uint32] (required);
+}
+
+/// Output of the Global stage. The lattices are empty when the chip has no
+/// inner circuit, which is a valid state rather than a skipped stage.
+table GlobalRouting {
+  lattices: [Lattice] (required);
+  /// The inner-circuit connections the solved flow implies.
+  connections: [design.Connection] (required);
+  /// The outer port ring the Assignment stage consumes. The inner circuit
+  /// extends the configured ring with the coupler ports it surfaces at, so
+  /// this is what the assignment reads and not the configuration.
+  outer_ring: [design.PortRef] (required);
+  /// The resonator ports the assignment has to give a launcher.
+  resonators: [design.PortRef] (required);
+  objective: double;
+}
 
 /// Output of the Assignment stage.
 table Assignment {
   connections: [design.Connection] (required);
   objective: double;
+  /// The ring the model consumed, in the order it consumed it.
+  ring: [design.PortRef] (required);
+  /// The launcher each ring node was given, parallel to `ring`.
+  launchers: [design.PortRef] (required);
+  /// Where each ring node is actually fed from, parallel to `ring`.
+  ///
+  /// Usually the launcher slot `launchers` names. A resonator that ends a
+  /// feedline is not fed at a launcher at all: the run reaches it from one
+  /// side only, so the feed starts at a new slot on the segment between its
+  /// own launcher and the one its neighbour on the open side was given.
+  feeds: [geometry.Point] (required);
 }
-
-/// Output of the Global stage. Empty when the chip has no inner circuit.
-table GlobalRouting {}
 
 /// Output of the Detail stage.
 table DetailRouting {}

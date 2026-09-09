@@ -16,6 +16,7 @@ object model when Python needs to look inside.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from . import pyscpd
@@ -36,9 +37,18 @@ class ChipError(ValueError):
     """A chip input that cannot be loaded, or that does not fit its configuration."""
 
 
-#: The names of the roles, by schema value.
+def _role_key(name: str) -> str:
+    """One schema enum member as the configuration key that produces it.
+
+    Returns:
+        The name in snake case, so ``BridgePair`` reads as ``bridge_pair``.
+    """
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+#: The names of the roles, by schema value. They are the keys of ``[ports.patterns]``.
 ROLE_NAMES: dict[int, str] = {
-    value: name.lower() for name, value in vars(UnassignedRole).items() if isinstance(value, int)
+    value: _role_key(name) for name, value in vars(UnassignedRole).items() if isinstance(value, int)
 }
 
 
@@ -49,6 +59,27 @@ def chip_input_path(config: ConfigT, config_path: Path) -> Path:
         The path of the chip input.
     """
     return config_path.parent / (config.chipInput or "")
+
+
+def classify_chip(text: str, config: ConfigT, source: str = "the chip input") -> bytes:
+    """Classify the text of a chip input against a configuration.
+
+    Args:
+        text: The chip input as JSON.
+        config: The loaded configuration.
+        source: How to name the input in a message.
+
+    Returns:
+        The classified chip as bytes of the ``design.fbs`` schema.
+
+    Raises:
+        ChipError: If the text is not a valid chip input, or does not fit the configuration.
+    """
+    try:
+        return pyscpd.load_chip(text, write_config(config))
+    except ValueError as error:
+        msg = f"{source}: {error}"
+        raise ChipError(msg) from error
 
 
 def load_chip(config: ConfigT, config_path: Path) -> bytes:
@@ -71,11 +102,7 @@ def load_chip(config: ConfigT, config_path: Path) -> bytes:
     except OSError as error:
         msg = f"cannot read the chip input {path}: {error}"
         raise ChipError(msg) from error
-    try:
-        return pyscpd.load_chip(text, write_config(config))
-    except ValueError as error:
-        msg = f"{path}: {error}"
-        raise ChipError(msg) from error
+    return classify_chip(text, config, str(path))
 
 
 def decode_chip(data: bytes) -> ChipT:

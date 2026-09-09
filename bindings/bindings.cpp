@@ -9,19 +9,30 @@
  */
 
 #include "mqt-scpd/design/Validation.hpp"
+#include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/io/Chip.hpp"
 #include "mqt-scpd/io/Config.hpp"
+#include "mqt-scpd/milp/Backend.hpp"
+#include "mqt-scpd/milp/Model.hpp"
+#include "mqt-scpd/pipeline/Registry.hpp"
+#include "mqt-scpd/pipeline/Stages.hpp"
 
 #include <nanobind/nanobind.h>
 // The type casters below take part through the conversions they enable, not
 // through a name the code spells out.
+#include <nanobind/stl/pair.h>        // IWYU pragma: keep
 #include <nanobind/stl/string.h>      // IWYU pragma: keep
 #include <nanobind/stl/string_view.h> // IWYU pragma: keep
 #include <nanobind/stl/vector.h>      // IWYU pragma: keep
 
 #include <cstdint>
+#include <memory>
 #include <span>
+#include <stdexcept>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace nb = nanobind;
@@ -35,6 +46,38 @@ std::span<const std::uint8_t> asSpan(const nb::bytes& bytes) {
 
 nb::bytes asBytes(const std::vector<std::uint8_t>& bytes) {
   return nb::bytes(bytes.data(), bytes.size());
+}
+
+/// One stage output, wrapped as the artifact a run directory stores.
+///
+/// The producer comes from the caller because the version of the package is
+/// what Python knows; the core has no build-time version stamped into it.
+template <typename Output>
+nb::bytes asArtifact(Output&& output, const std::string_view producer) {
+  mqt::scpd::flatbuffers::artifacts::ArtifactT artifact;
+  artifact.producer = producer;
+  artifact.output.Set(std::forward<Output>(output));
+  return asBytes(mqt::scpd::io::writeArtifact(artifact));
+}
+
+/// The capacity plan an artifact carries.
+const mqt::scpd::flatbuffers::artifacts::CapacityPlanT&
+capacityOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
+  const auto* output = artifact.output.AsCapacityPlan();
+  if (output == nullptr) {
+    throw std::invalid_argument("the artifact is not a capacity plan");
+  }
+  return *output;
+}
+
+/// The global routing an artifact carries.
+const mqt::scpd::flatbuffers::artifacts::GlobalRoutingT&
+globalOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
+  const auto* output = artifact.output.AsGlobalRouting();
+  if (output == nullptr) {
+    throw std::invalid_argument("the artifact is not a global routing");
+  }
+  return *output;
 }
 
 } // namespace
@@ -59,6 +102,120 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "patterns and check the configured port sequences against the chip. "
       "Returns the classified chip as bytes of the design schema. Raises "
       "ValueError naming every problem.");
+
+  m.def(
+      "plan_capacity",
+      [](const nb::bytes& chip, const nb::bytes& config,
+         const std::string_view producer) {
+        const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
+        const auto design = mqt::scpd::io::readChip(asSpan(chip));
+        const auto name =
+            mqt::scpd::pipeline::selectedCapacityPlanner(configuration);
+        return asArtifact(
+            mqt::scpd::pipeline::capacityPlanners().make(name)->run(
+                design, configuration),
+            producer);
+      },
+      "chip"_a, "config"_a, "producer"_a,
+      "Run the Capacity stage. Returns 01-capacity.fb as bytes.");
+
+  m.def(
+      "route_global",
+      [](const nb::bytes& chip, const nb::bytes& capacity,
+         const nb::bytes& config, const std::string_view producer) {
+        const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
+        const auto design = mqt::scpd::io::readChip(asSpan(chip));
+        const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
+        const auto name =
+            mqt::scpd::pipeline::selectedGlobalRouter(configuration);
+        return asArtifact(mqt::scpd::pipeline::globalRouters().make(name)->run(
+                              design, capacityOf(plan), configuration),
+                          producer);
+      },
+      "chip"_a, "capacity"_a, "config"_a, "producer"_a,
+      "Run the Global stage. Returns 02-global.fb as bytes.");
+
+  m.def(
+      "assign",
+      [](const nb::bytes& chip, const nb::bytes& capacity,
+         const nb::bytes& global, const nb::bytes& config,
+         const std::string_view producer) {
+        const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
+        const auto design = mqt::scpd::io::readChip(asSpan(chip));
+        const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
+        const auto routing = mqt::scpd::io::readArtifact(asSpan(global));
+        const auto name = mqt::scpd::pipeline::selectedAssigner(configuration);
+        return asArtifact(
+            mqt::scpd::pipeline::assigners().make(name)->run(
+                design, capacityOf(plan), globalOf(routing), configuration),
+            producer);
+      },
+      "chip"_a, "capacity"_a, "global"_a, "config"_a, "producer"_a,
+      "Run the Assignment stage. Returns 03-assign.fb as bytes.");
+
+  m.def(
+      "algorithms",
+      [] {
+        std::vector<std::pair<std::string, std::vector<std::string>>>
+            registered;
+        registered.emplace_back(
+            "capacity-planner",
+            mqt::scpd::pipeline::capacityPlanners().names());
+        registered.emplace_back("global-router",
+                                mqt::scpd::pipeline::globalRouters().names());
+        registered.emplace_back("assigner",
+                                mqt::scpd::pipeline::assigners().names());
+        return registered;
+      },
+      "The implementations this build ships, one list per stage.");
+
+  m.def(
+      "set_solver",
+      [](const nb::object& solve) {
+        if (solve.is_none()) {
+          mqt::scpd::milp::setExternalBackend(nullptr);
+          return;
+        }
+        // The external solver never sees the model, only the MPS text of it.
+        // That is the whole contract, and it is what makes the two backends
+        // interchangeable rather than merely both present.
+        mqt::scpd::milp::setExternalBackend(mqt::scpd::milp::makeMpsBackend(
+            "gurobi", [solve](const std::string_view mps,
+                              const std::vector<std::string>& names,
+                              const mqt::scpd::milp::SolveOptions& options) {
+              const nb::gil_scoped_acquire gil;
+              const auto answer = nb::cast<
+                  std::tuple<std::string, double, std::vector<double>>>(
+                  solve(nb::str(mps.data(), mps.size()), names,
+                        options.timeLimit, options.relativeGap));
+              const auto& [status, objective, values] = answer;
+              mqt::scpd::milp::Solution solution;
+              solution.backend = "gurobi";
+              if (status == "optimal") {
+                solution.status = mqt::scpd::milp::SolveStatus::Optimal;
+              } else if (status == "feasible") {
+                solution.status = mqt::scpd::milp::SolveStatus::Feasible;
+              } else if (status == "infeasible") {
+                solution.status = mqt::scpd::milp::SolveStatus::Infeasible;
+              } else if (status == "unbounded") {
+                solution.status = mqt::scpd::milp::SolveStatus::Unbounded;
+              } else {
+                solution.status = mqt::scpd::milp::SolveStatus::Error;
+                solution.message = status;
+              }
+              solution.objective = objective;
+              if (solution.hasValues()) {
+                solution.values = values;
+              }
+              return solution;
+            }));
+      },
+      "solve"_a.none(),
+      "Register the external solver of this process, or clear it with None. "
+      "The callable "
+      "receives the MPS text, the variable names in model order, a time limit "
+      "and a relative "
+      "gap, and returns (status, objective, values).");
 
   m.def(
       "validate_config",

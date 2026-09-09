@@ -32,28 +32,149 @@ incidental:
 The third property is what makes resume meaningful and property tests
 reproducible. It is also what will make the phase-2 threading tractable.
 
-| Stage      | Interface          | Reads            | Writes           |
-| ---------- | ------------------ | ---------------- | ---------------- |
-| Capacity   | `ICapacityPlanner` | chip             | `01-capacity.fb` |
-| Assignment | `IAssigner`        | chip, capacity   | `02-assign.fb`   |
-| Global     | `IGlobalRouter`    | chip, assignment | `03-global.fb`   |
-| Detail     | `IDetailRouter`    | chip, global     | `04-detail.fb`   |
-| Final      | `IFinalRouter`     | chip, detail     | `05-final.fb`    |
-| Finalize   | `IFinalizer`       | chip, final      | `06-geometry.fb` |
+| Stage      | Interface          | Reads                  | Writes           |
+| ---------- | ------------------ | ---------------------- | ---------------- |
+| Capacity   | `ICapacityPlanner` | chip                   | `01-capacity.fb` |
+| Global     | `IGlobalRouter`    | chip, capacity         | `02-global.fb`   |
+| Assignment | `IAssigner`        | chip, capacity, global | `03-assign.fb`   |
+| Detail     | `IDetailRouter`    | chip, assignment       | `04-detail.fb`   |
+| Final      | `IFinalRouter`     | chip, detail           | `05-final.fb`    |
+| Finalize   | `IFinalizer`       | chip, final            | `06-geometry.fb` |
+
+**Global runs before Assignment.** Which outer port an inner wire surfaces at is
+a fact about the solved inner circuit, and it decides both which outer ports
+carry a wire at all and which of them a launcher has to feed. An assignment made
+before that is an assignment over the wrong ring. See
+[decision 0026](decisions/0026-global-runs-before-the-assignment.md).
 
 ### Capacity
 
-Rasterizes the chip, computes a Euclidean distance transform, partitions free
-space by watershed over that transform, and budgets how many wires may cross
-each partition border. Produces the capacity chains that later stages route
-along.
+Rasterizes the chip, computes a Euclidean distance transform, and finds the
+bottlenecks along the medial axis of the free space: the places where a corridor
+narrows enough that how many wires fit through it is a constraint. From every
+target it then walks outward through those gates, which produces the capacity
+chains the later stages route along.
+
+**One narrowing is one gate.** The saddle search reports a candidate wherever
+the clearance stops falling, so a narrowing whose clearance is flat over a few
+cells comes back as several lines that share a wall and end a cell or two apart
+on the other. They describe one place, and the model would read them as several
+corridors: a chamber that two of them lead out of is credited with twice the
+room the chip has. Candidates that share a wall and end within one wire pitch of
+each other are therefore one gate, and the narrowest of them is what is kept,
+because that is the one that binds. Two openings on either side of a pillar end
+on the pillar together; what tells them apart is that their far ends are nowhere
+near each other.
+
+**The gates are pruned, and only the pruned set is an artifact.** The saddle
+search finds every place that looks narrow — a few hundred on the smallest chip
+and a few thousand on the largest — and most of them separate nothing. Two
+shapes are removed, each to a fixpoint because removing one exposes the other:
+
+- A gate with nothing beyond it is a place the walk could not get past, so no
+  wire ever passes it.
+- A gate whose only child is another gate is two gates in a line. The wires that
+  pass the first are exactly the wires that reach the second, so only the
+  narrower of the two binds and keeping both would count one constraint twice.
+
+What survives is what some chain actually crosses: 15 gates of 352 on the
+4-qubit chip, 185 of 2452 on the 69-qubit one.
+
+**A gate is hidden only when the chamber cannot see it at all.** Two gates in a
+line are one gate to the chain, so the far one is dropped — but the test for
+that is whether *one* cell of the chamber has a clear line to it, not whether
+every cell does. A gate is a line of cells; the sight line from one of its own
+ends to its middle runs almost along it, and a gate beside it lies across that
+line. Asking every cell therefore dropped every gate of a chamber that several
+corridors meet, the chain ended at its own target, and the pruning then took the
+gate leading into that chamber away as well, so the free space beyond a
+branching corridor fell out of the plan. The prototype's own comment says "a
+single valid observation point suffices" and its code breaks on the first
+blocked one; the intent is what is implemented here.
+
+**The plan also reports what the ports' own approaches keep clear**: the strip a
+wire leaves each routable port along, extended forward and backward, and the
+square each launcher sweeps. These are obstacles to everything the stages route
+and they are not chip artwork, so a picture drawn from the chip alone cannot
+show them and the corridors between them look wider than they are. The rings
+follow the cells, so a band along a diagonal is the staircase the grid actually
+blocks. Only the cells that were free before a band took them are reported;
+where a band merely covered artwork, the artwork is already drawn.
+
+**The partitioning comes from the gates, not from the grid.** Each chain is
+walked a second time with only its own gates closed, and every chamber it enters
+— the free space reachable without passing a gate — becomes one partition. A
+border between two partitions is therefore a place wires have to cross, which is
+what makes budgeting it meaningful. Only afterwards does a watershed grow from
+the middle of every capacity cell that has no obstacle in it, and it fills what
+no chamber claimed.
+
+A gate has to be a barrier for that walk to mean anything. Its line is drawn
+four-connected: a Bresenham line between two diagonally offset points is
+eight-connected, and a walk that also moves diagonally steps straight through
+the gap between two of its cells.
+
+### Global
+
+Solves the inner circuit as a binary flow model on the Hanan lattice induced by
+each capacity chain's port set, and reports the outer port ring the assignment
+then consumes. Mixed-integer program.
+
+The ring it reports is `[ports.sequences].all_outer` from the configuration,
+minus the far side of every coupler bridge that no inner wire surfaced at. A
+coupler's artwork carries routable ports on opposite sides; which of them an
+inner wire leaves through is what this stage decides, and only a port that
+carries one is something the outer assignment has to route. Which ports belong
+to one coupler is declared by the configuration's component pattern, and which
+two of them a wire crosses between by its bridge rules — neither is parsed out
+of a label or measured off the artwork. See
+[decision 0027](decisions/0027-components-are-declared.md) and
+[decision 0030](decisions/0030-bridge-pairs-are-declared.md).
+
+**A crossing the outer ring cannot see is shut.** A bridge whose far end the
+ring does not name lets a wire enter a component the assignment never sees and
+leave on the other side, and nothing downstream can say where it goes from
+there. Both of its ports carry no flow at all unless
+`[stages.global] internal_bridges` grants the crossing; the nodes stay in the
+lattice, so the picture still shows the ports. The prototype allows every such
+crossing and has no way to say otherwise.
+
+**A lattice edge does not grant the room to use it.** Each capacity chain that
+describes outer free space carries an integer flow of its own beside the binary
+flow on the lattices: its launcher supplies it, each gate passes at most its
+capacity, and each of its targets draws one wire. Where a target is the outer
+end of a coupler bridge, what it draws is exactly what the inner circuit sends
+out through that bridge — so a wire may surface at an outer port only where the
+free space behind that port carries it to a launcher. A demand exists only where
+a supply can reach it: the walk starts at every launcher of the chain and stops
+at a gate with no room, and a target it does not reach draws nothing and may not
+be surfaced at. See
+[decision 0028](decisions/0028-the-inner-circuit-pays-for-free-space.md).
+
+**A target draws one wire, over every lattice at once.** A chamber border runs
+between two capacity chains, so a target beside one is a node of both lattices.
+Its demand is a constraint on the port and not on a lattice node — asking each
+lattice for a wire of its own puts two wires on a port that takes one, and the
+supply that second wire consumes is then missing from a target that has none.
+
+Whether a target is reached at all is a variable rather than a constraint. A
+chip that cannot serve one of its targets is a fact about it and the grid it was
+partitioned on, and the stage says which target that was instead of reporting
+"infeasible" and losing the rest of the circuit with it. The penalty on an
+unreached target is above the cost of every lattice edge together, so a circuit
+that reaches all of them has exactly the objective a hard constraint would have
+given.
+
+A chip with no inner circuit — the 4-qubit benchmark, whose outer ring is its
+entire port ring — makes this stage a no-op. That is a valid pipeline state and
+`02-global.fb` is written empty, not skipped.
 
 ### Assignment
 
 Assigns resonators to launchers as a minimum-overlap problem on the ring of
-outer ports. That ring is `[ports.sequences].all_outer` from the configuration.
-Mixed-integer program, bounded by `max_feedline_utilization` and permitted
-`feedline_terminations` extra endpoints.
+outer ports that the Global stage reported. Mixed-integer program, bounded by
+`max_feedline_utilization` and permitted `feedline_terminations` extra
+endpoints.
 
 The ring is a closed cycle, and this stage consumes it in order, so the point at
 which the cycle is entered changes the model; the configured sequence carries
@@ -66,21 +187,34 @@ produces carries a source and target role. The one role it cannot place yet is
 coupler that carries it; the assignment records that the resonator is fed, and
 the Final stage completes the pair.
 
-**Note for implementers.** In the prototype this stage called back into the
+**A feedline end is fed between two launchers.** A resonator in the middle of a
+run is reached from both sides and sits at its launcher. One that ends a run is
+reached from one side only, and the feed comes past the other — from the stretch
+between its own launcher and the one its neighbour on that open side was given.
+The artifact carries that point per ring node in `feeds`, and both renderers
+draw the chord to it. See
+[decision 0029](decisions/0029-a-feedline-end-is-fed-between-launchers.md).
+
+**The launcher index is a cycle.** The model walks the ring and lowers a
+potential at every port it passes, which is what makes two assignments that
+cross on the ring cross on the chip. Which launcher a value of that potential
+names is the value *modulo* the launcher count — the stage already read it back
+that way — so the potential runs over the ring's own length and a ring longer
+than the launcher ring simply comes round again. Bounding it by the launcher
+count instead capped how many ports a ring could carry, which is a limit of the
+formulation and not of the chip: the 17-qubit ring needs 49 steps out of 47
+slots and came out infeasible. The range is the length exactly: room above it
+would let a node reach the launcher it is nearest to rather than the next one
+along, which the proximity term would like, but a whole launcher ring of that
+room bought 0.05 on the 4-qubit chip and cost the 45-qubit chip minutes instead
+of seconds. The crossing count is the same either way.
+
+**The model touches no grid.** In the prototype this stage called back into the
 capacity grid *during model construction*, running a graph search per node to
 find each port's nearest launcher, and mutated the capacity grid after solving.
-Those lookups must be precomputed into a plain `AssignmentInputs` value before
-the model builder runs. Until that is done the model is not separable from the
+Those lookups are a plain `AssignmentInputs` value here, worked out before the
+model builder runs. Until that is done the model is not separable from the
 geometry engine, and the solver abstraction cannot work.
-
-### Global
-
-Solves the inner circuit as a binary flow model on the Hanan lattice induced by
-each capacity chain's port set. Mixed-integer program.
-
-A chip with no inner circuit — the 4-qubit benchmark, whose outer ring is its
-entire port ring — makes this stage a no-op. That is a valid pipeline state and
-`03-global.fb` is written empty, not skipped.
 
 ### Detail
 
@@ -130,8 +264,8 @@ run/
   00-chip.json        the routing config, copied for provenance
   config.toml         input, copied for provenance
   01-capacity.fb
-  02-assign.fb
-  03-global.fb
+  02-global.fb
+  03-assign.fb
   04-detail.fb
   05-final.fb
   06-geometry.fb
@@ -157,31 +291,53 @@ and `mqt-scpd plot run/ --stage detail` renders it as SVG.
 
 `plot` reads artifacts and nothing else, so it works on a partial run directory
 — which is the point, since it is the instrument for watching the port make
-progress stage by stage. Until `route` exists, the layout stage is rendered from
-the configuration directly:
-`mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg`.
+progress stage by stage. The layout stage needs no run at all and is rendered
+from the configuration directly:
+`mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg`. Every
+other stage is read from a run directory, which `--run-dir` names.
 
-| `--stage`  | Reads            | Renders                                               |
-| ---------- | ---------------- | ----------------------------------------------------- |
-| `layout`   | `00-chip.json`   | obstacles, ports colored by `UnassignedRole`          |
-| `capacity` | `01-capacity.fb` | + partitions, bottlenecks, budgets, routed chains     |
-| `detail`   | `04-detail.fb`   | + pixel paths                                         |
-| `final`    | `05-final.fb`    | + Dubins paths, couplers, bridges                     |
-| `aligned`  | `06-geometry.fb` | fitted analytic wires, real coupler/bridge footprints |
+| `--stage`  | Reads            | Renders                                                  |
+| ---------- | ---------------- | -------------------------------------------------------- |
+| `layout`   | `00-chip.json`   | obstacles, ports colored by `UnassignedRole`             |
+| `capacity` | `01-capacity.fb` | + partitions, borders, bottlenecks, launchers, chains    |
+| `global`   | `02-global.fb`   | + the Hanan lattice and the selected inner-circuit edges |
+| `assign`   | `03-assign.fb`   | + the ring, and each node's chord to the launcher it got |
+| `detail`   | `04-detail.fb`   | + pixel paths                                            |
+| `final`    | `05-final.fb`    | + Dubins paths, couplers, bridges                        |
+| `aligned`  | `06-geometry.fb` | fitted analytic wires, real coupler/bridge footprints    |
+
+`mqt-scpd render --stage <name>` takes the same names and writes the same
+content as GDSII or OASIS. The chip artwork keeps the layers it has; every
+planning element goes on a named layer of its own from layer 10 up, so KLayout
+can switch the overlay off. `render` with no `--stage` renders the unrouted
+chip, unchanged.
+
+The planning layers carry no manufacturing intent and are not part of any
+exported design. They are there because a partition border that exists only in
+an SVG cannot be measured against the artwork it has to respect, and KLayout is
+where that measuring happens. What genuinely does not survive the trip is a
+pixel field, and it is written as the partition polygons it induces rather than
+as pixels.
 
 Pixel fields are rendered as one downsampled raster, never one element per
 pixel. The prototype's equivalent 4-qubit capacity view is 17.8 MB because it
-did the latter; the budget here is 2 MB per snapshot on every benchmark. The
+did the latter; the budget here is 10 MB per snapshot on every benchmark. The
 layout view is the exception: it keeps every vertex of the input in layout
 units, so that zooming in shows what the GDS shows, and `--tolerance` trades
 that detail for a smaller file.
 
 ### What is never an artifact
 
-Grids and router containers are **derived state**. On the largest benchmark the
-capacity grid alone holds around 500 MB and each router context holds up to 1.87
-GB. None of it is serialized. It is rebuilt deterministically from the chip and
-the configuration when a stage starts.
+Grids and router containers are **derived state**. None of it is serialized. It
+is rebuilt deterministically from the chip and the configuration when a stage
+starts.
+
+That is also what keeps a run inside its memory budget. The obstacle mask and
+the corridor of a routing stage are one bit per cell and are shared, read-only,
+by every thread; what a thread owns is its own search scratch, eight bytes per
+cell and heading. On the largest benchmark that is about 650 MB per thread,
+against the 1.87 GB per router context the prototype held. See
+[decision 0015](decisions/0015-grid-and-memory-model.md).
 
 This rule is what keeps every artifact small, and it is why the choice of
 encoding is a detail rather than a constraint.

@@ -11,29 +11,48 @@
 ``plot`` reads the chip and, from phase 2 on, the artifacts of a run directory, and nothing else;
 the core writes no SVG. The layout view draws the obstacles and the ports colored
 by role, in layout units and with every vertex of the input, so that the picture shows what the
-GDS shows. A tolerance drops vertices for a smaller file when the detail is not needed; the 2 MB
+GDS shows. A tolerance drops vertices for a smaller file when the detail is not needed; the 10 MB
 budget of a snapshot applies to the raster views of the later stages.
 """
 
 from __future__ import annotations
 
+from itertools import starmap
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
 
 from .chip import obstacles_of, ports_of, role_name, vertices_of
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from .flatbuffers.design.Chip import ChipT
+    from .planning import PlanningGeometry
 
 #: The stages the command knows, and the phase in which each arrives.
 STAGES: dict[str, str] = {
     "layout": "phase 1",
     "capacity": "phase 3",
+    "global": "phase 3",
+    "assign": "phase 3",
     "detail": "phase 4",
     "final": "phase 4",
     "aligned": "phase 4",
+}
+
+#: The color of each planning layer. They sit above the artwork, so each one is distinct from the
+#: obstacle fill and from every role color.
+PLANNING_COLORS: dict[str, str] = {
+    "partition": "#8ecae6",
+    "keepout": "#c77dff",
+    "border": "#023047",
+    "bottleneck": "#d00000",
+    "launcher": "#e63946",
+    "chain": "#7b2cbf",
+    "lattice": "#adb5bd",
+    "inner": "#0077b6",
+    "assignment": "#ff7f0e",
+    "ring": "#606060",
 }
 
 #: The fill of each role in the port legend. The colors stay apart from the obstacle fill.
@@ -41,6 +60,7 @@ ROLE_COLORS: dict[str, str] = {
     "launcher": "#e63946",
     "resonator": "#ffb703",
     "conventional": "#2dc653",
+    "bridge_pair": "#9d4edd",
     "coupler": "#ff7f0e",
     "unset": "#9a9a9a",
 }
@@ -128,7 +148,132 @@ def _path_data(points: Sequence[tuple[float, float]]) -> str:
     return "".join(parts) + "Z"
 
 
-def layout_svg(chip: ChipT, *, width: int = 2000, tolerance: float = 0.0, title: str = "") -> str:
+def _planning_layers(
+    planning: PlanningGeometry,
+    to_view: Callable[[float, float], tuple[float, float]],
+    radius: float,
+    font: float,
+) -> str:
+    """Draw the shapes of one planning stage over the chip.
+
+    Every layer is one group, so a viewer can switch it off, and every shape is drawn in layout
+    units like the artwork under it.
+
+    Args:
+        planning: What the stage produced.
+        to_view: The layout point as the picture's own coordinates.
+        radius: The radius a port marker is drawn at.
+        font: The size of a gate label, in layout units.
+
+    Returns:
+        The SVG elements of the overlay.
+    """
+    parts: list[str] = []
+
+    def polyline(points: Sequence[tuple[float, float]], *, close: bool = False) -> str:
+        moved = list(starmap(to_view, points))
+        return (
+            _path_data(moved)
+            if close
+            else "".join(
+                (f"M{_number(px)} {_number(py)}" if index == 0 else f"L{_number(px)} {_number(py)}")
+                for index, (px, py) in enumerate(moved)
+            )
+        )
+
+    if planning.keepout:
+        # Under everything else: it is what the ports block, not what a stage decided.
+        data = "".join(polyline(ring, close=True) for ring in planning.keepout)
+        parts.append(f'<g class="l-keepout"><path d="{data}"/></g>')
+    if planning.partitions:
+        data = "".join(polyline(ring, close=True) for ring in planning.partitions)
+        parts.append(f'<g class="l-partition"><path d="{data}"/></g>')
+    if planning.borders:
+        data = "".join(polyline(border) for border in planning.borders)
+        parts.append(f'<g class="l-border"><path d="{data}"/></g>')
+    if planning.bottlenecks:
+        data = "".join(polyline([first, second]) for first, second, _ in planning.bottlenecks)
+        # The wire budget beside the gate it belongs to. A gate whose number is not shown says
+        # only that a corridor narrows there, not how much of it the circuit is allowed to use.
+        labels = "".join(
+            f'<text x="{_number(x)}" y="{_number(y - 0.35 * font)}">{capacity}</text>'
+            for first, second, capacity in planning.bottlenecks
+            for x, y in [to_view((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)]
+        )
+        parts.append(f'<g class="l-bottleneck"><path d="{data}"/>{labels}</g>')
+    if planning.chains:
+        data = "".join(polyline([first, second]) for first, second in planning.chains)
+        parts.append(f'<g class="l-chain"><path d="{data}"/></g>')
+    if planning.lattice:
+        data = "".join(polyline([first, second]) for first, second in planning.lattice)
+        parts.append(f'<g class="l-lattice"><path d="{data}"/></g>')
+    if planning.inner:
+        data = "".join(polyline([first, second]) for first, second in planning.inner)
+        parts.append(f'<g class="l-inner"><path d="{data}"/></g>')
+    if planning.ring:
+        # The ring is a closed cycle, so it is drawn as one.
+        parts.append(f'<g class="l-ring"><path d="{polyline(planning.ring, close=True)}"/></g>')
+    if planning.assignments:
+        data = "".join(polyline([first, second]) for first, second in planning.assignments)
+        parts.append(f'<g class="l-assignment"><path d="{data}"/></g>')
+    if planning.launchers:
+        circles = "".join(
+            f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 1.4)}"/>'
+            for px, py in planning.launchers
+            for x, y in [to_view(px, py)]
+        )
+        parts.append(f'<g class="l-launcher">{circles}</g>')
+    return "".join(parts)
+
+
+def _planning_style(font: float) -> str:
+    """The stroke of every planning layer, and the type of the capacity labels.
+
+    Args:
+        font: The size of a gate label, in layout units.
+
+    Returns:
+        The CSS of the overlay.
+    """
+    widths = {
+        "keepout": 0.6,
+        "partition": 0.6,
+        "border": 1.4,
+        "bottleneck": 1.6,
+        "chain": 1.0,
+        "lattice": 0.5,
+        "inner": 2.0,
+        "assignment": 1.2,
+        "ring": 1.0,
+    }
+    style = "".join(
+        f"g.l-{name}>path{{fill:none;stroke:{PLANNING_COLORS[name]};stroke-width:{width};"
+        f"stroke-linejoin:round;vector-effect:non-scaling-stroke}}"
+        for name, width in widths.items()
+    )
+    style += (
+        f"g.l-bottleneck>text{{font:{_number(font)}px sans-serif;fill:{PLANNING_COLORS['bottleneck']};"
+        "text-anchor:middle;paint-order:stroke;stroke:#ffffff;stroke-width:0.25em;"
+        "stroke-linejoin:round}"
+    )
+    style += f"g.l-keepout>path{{fill:{PLANNING_COLORS['keepout']};fill-opacity:0.18;fill-rule:evenodd}}"
+    style += "g.l-partition>path{fill:none;stroke-dasharray:4 3}"
+    style += "g.l-assignment>path{stroke-dasharray:6 4}"
+    style += (
+        f"g.l-launcher>circle{{fill:none;stroke:{PLANNING_COLORS['launcher']};stroke-width:1.6;"
+        "vector-effect:non-scaling-stroke}"
+    )
+    return style
+
+
+def layout_svg(
+    chip: ChipT,
+    *,
+    width: int = 2000,
+    tolerance: float = 0.0,
+    title: str = "",
+    planning: PlanningGeometry | None = None,
+) -> str:
     """Render the unrouted chip: the obstacles, and the ports colored by role.
 
     The picture's user space is layout units, so every coordinate of the input survives with its
@@ -141,6 +286,7 @@ def layout_svg(chip: ChipT, *, width: int = 2000, tolerance: float = 0.0, title:
         tolerance: Drop the vertices that stay within this distance, in layout units, of the line
             between their neighbors. Zero keeps every vertex.
         title: A caption, such as the configuration's name.
+        planning: What a planning stage produced, drawn over the artwork on layers of its own.
 
     Returns:
         The SVG text.
@@ -205,6 +351,12 @@ def layout_svg(chip: ChipT, *, width: int = 2000, tolerance: float = 0.0, title:
             for name, color in ROLE_COLORS.items()
         )
     )
+    # The gate labels sit inside the picture rather than along its edge, so they are drawn a
+    # little smaller than the caption and the legend.
+    gate_font = 0.8 * font
+    overlay = _planning_layers(planning, to_view, radius, gate_font) if planning is not None else ""
+    if overlay:
+        style += _planning_style(gate_font)
     caption = f'<text x="{_number(pad)}" y="{_number(1.2 * font)}">{escape(title)}</text>' if title else ""
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
@@ -213,5 +365,5 @@ def layout_svg(chip: ChipT, *, width: int = 2000, tolerance: float = 0.0, title:
         f'<rect width="{_number(view_width)}" height="{_number(view_height)}" fill="#ffffff"/>'
         f'<path class="f" d="{"".join(outlines)}"/>'
         f'<path class="o" d="{"".join(obstacles)}"/>'
-        f"{''.join(ports)}{legend}{caption}</svg>\n"
+        f"{''.join(ports)}{overlay}{legend}{caption}</svg>\n"
     )

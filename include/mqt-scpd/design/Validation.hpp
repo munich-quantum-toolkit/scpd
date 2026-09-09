@@ -61,8 +61,14 @@ validate(const flatbuffers::design::BridgeT& bridge);
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::PortPatternsT& patterns);
 
-/// Problems of the port section: missing patterns and their problems, and
-/// missing sequences.
+/// Problems of a bridge rule: a side that is empty, does not compile, or does
+/// not capture exactly the component name the two sides pair on.
+[[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
+validate(const flatbuffers::config::BridgeRuleT& rule);
+
+/// Problems of the port section: missing patterns and their problems, missing
+/// sequences, the problems of every bridge rule, and a bridge rule declared
+/// without a bridge_pair pattern to select the ports it may pair.
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::PortConfigT& ports);
 

@@ -21,8 +21,11 @@ from mqt.scpd.flatbuffers.design.Port import PortT
 from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.design.Rotation import Rotation
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
+from mqt.scpd.flatbuffers.geometry.DCoord import DCoordT
+from mqt.scpd.flatbuffers.geometry.GCoord import GCoordT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
+from mqt.scpd.flatbuffers.geometry.RCoord import RCoordT
 
 
 def test_role_enums_match_the_wire_format() -> None:
@@ -107,3 +110,19 @@ def test_config_defaults_are_the_documented_defaults() -> None:
     grid = GridParamsT()
     assert (grid.capacityCellsX, grid.capacityCellsY) == (50, 0)
     assert (grid.launcherOffsetX, grid.launcherOffsetY) == (15, 15)
+
+
+def test_the_grid_coordinates_carry_a_cell_and_a_heading() -> None:
+    """The three grid spaces are distinct types, so a cell of one is never read as a cell of another."""
+    coarse = GCoordT()
+    coarse.x, coarse.y = 4, 7
+    detail = DCoordT()
+    detail.x, detail.y = 120, 210
+    router = RCoordT()
+    router.x, router.y, router.heading = 1500, 900, 6
+
+    assert (coarse.x, coarse.y) == (4, 7)
+    assert (detail.x, detail.y) == (120, 210)
+    # A router state is a cell and the eight-way heading of the wire in it.
+    assert (router.x, router.y) == (1500, 900)
+    assert router.heading == 6

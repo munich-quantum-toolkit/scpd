@@ -10,6 +10,7 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 
+#include "mqt-scpd/design/Bridges.hpp"
 #include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
@@ -50,6 +51,22 @@ void requireRotation(const Rotation rotation, Problems& problems) {
 void append(Problems& into, const Problems& from, const std::string& prefix) {
   for (const auto& problem : from) {
     into.push_back(prefix + problem);
+  }
+}
+
+/// A pattern that names one thing has to capture it, or it says which labels
+/// have the thing without saying which one.
+void requireOneCapture(const std::string& expression, const std::string& key,
+                       Problems& problems) {
+  try {
+    const std::regex compiled(expression, std::regex::ECMAScript);
+    if (compiled.mark_count() != 1) {
+      problems.push_back(key +
+                         " pattern must have exactly one capture group, not " +
+                         std::to_string(compiled.mark_count()));
+    }
+  } catch (const std::regex_error&) {
+    // The compile failure is reported by requirePattern.
   }
 }
 
@@ -182,6 +199,28 @@ Problems validate(const PortPatternsT& patterns) {
   requirePattern(patterns.launcher, "launcher", problems);
   requirePattern(patterns.resonator, "resonator", problems);
   requirePattern(patterns.conventional, "conventional", problems);
+  // The bridge pattern is optional, like the component one: a chip whose
+  // components carry no crossing declares none.
+  if (!patterns.bridge_pair.empty()) {
+    requirePattern(patterns.bridge_pair, "bridge_pair", problems);
+  }
+  // The component pattern is optional: a chip whose planning stages need no
+  // component grouping does not have to declare one. Where it is given it
+  // must capture the name, or it would say which labels have a component
+  // without saying what it is called.
+  if (!patterns.component.empty()) {
+    requirePattern(patterns.component, "component", problems);
+    requireOneCapture(patterns.component, "component", problems);
+  }
+  return problems;
+}
+
+Problems validate(const flatbuffers::config::BridgeRuleT& rule) {
+  Problems problems;
+  requirePattern(rule.first, "first", problems);
+  requireOneCapture(rule.first, "first", problems);
+  requirePattern(rule.second, "second", problems);
+  requireOneCapture(rule.second, "second", problems);
   return problems;
 }
 
@@ -194,6 +233,22 @@ Problems validate(const PortConfigT& ports) {
   }
   if (ports.sequences == nullptr) {
     problems.emplace_back("[ports.sequences] is missing");
+  }
+  for (std::size_t i = 0; i < ports.bridge_pairs.size(); ++i) {
+    const auto& rule = ports.bridge_pairs[i];
+    const auto where = "bridge_pairs[" + std::to_string(i) + "]: ";
+    if (rule == nullptr) {
+      problems.push_back(where + "is missing");
+      continue;
+    }
+    append(problems, validate(*rule), where);
+  }
+  // A rule may only pair ports the bridge_pair pattern selected, so a rule
+  // without that pattern can pair nothing and says the opposite.
+  if (!ports.bridge_pairs.empty() && ports.patterns != nullptr &&
+      ports.patterns->bridge_pair.empty()) {
+    problems.emplace_back(
+        "bridge_pairs are declared without a bridge_pair pattern");
   }
   return problems;
 }
@@ -230,6 +285,32 @@ Problems validate(const ConfigT& config, const ChipT& chip) {
   for (const auto& port : chip.ports) {
     if (port != nullptr) {
       roleOf.emplace(port->label, port->role);
+    }
+  }
+
+  // The two declarations of a bridge have to agree. The pattern says which
+  // ports are ends of a crossing and the rules say which two of them pair, so
+  // a port either declaration knows and the other does not is a configuration
+  // that has drifted apart, and the pairing it produces is not the one it
+  // reads as.
+  const auto matches = bridgeMatchesOf(chip, ports.bridge_pairs);
+  for (std::size_t index = 0; index < chip.ports.size(); ++index) {
+    const auto& port = chip.ports[index];
+    if (port == nullptr) {
+      continue;
+    }
+    const auto bridging = port->role == UnassignedRole::BridgePair;
+    const auto claimed = matches[index].size();
+    if (bridging && claimed == 0) {
+      problems.push_back("port '" + port->label +
+                         "' is a bridge_pair port that no bridge rule pairs");
+    } else if (!bridging && claimed > 0) {
+      problems.push_back("port '" + port->label +
+                         "' is paired by a bridge rule but its role is " +
+                         std::string(roleName(port->role)));
+    } else if (claimed > 1) {
+      problems.push_back("port '" + port->label + "' is paired by " +
+                         std::to_string(claimed) + " bridge rule sides");
     }
   }
 

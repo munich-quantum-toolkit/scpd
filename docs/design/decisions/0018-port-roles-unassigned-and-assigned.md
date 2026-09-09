@@ -64,6 +64,12 @@ No entity model, no stored qubit-coupler relationships, no converter.
 > port matches exactly one pattern stands; the benchmark inputs carry routable
 > ports only. See
 > [the data model](../data-model.md#roles-unassigned-in-assigned-out).
+>
+> **Amended 2026-09-09.** The enum gained the member `BridgePair` and one more
+> pattern to produce it: the ports a wire crosses a component at rather than
+> ends at. It is routable, like `Resonator` and `Conventional`. The pattern is
+> optional, because a chip whose components carry no crossing declares none. See
+> [decision 0030](0030-bridge-pairs-are-declared.md).
 
 ## Alternatives considered
 
@@ -80,6 +86,14 @@ which is the same defect in a new place.
 **Keep prefix matching, but in one function.** Cheapest possible change.
 Rejected: it leaves the semantics in C++ where a new chip's naming convention
 means a code change, and the 4Q/69Q naming split already proves that happens.
+
+> **Amended 2026-09-08.** The claim that a coupler's qubit pair "is needed by
+> nothing that survives" holds; the claim that no grouping of a component's
+> ports is needed does not. The Global stage needs to know which ports belong to
+> one coupler, because a wire crosses its artwork between two of them.
+> [Decision 0027](0027-components-are-declared.md) adds that grouping as one
+> more thing the configuration declares, in the same way it already declares the
+> roles. The rule below is unchanged: a label is looked up, never parsed.
 
 ## Consequences
 

@@ -6,4 +6,6 @@
 #
 # Licensed under the MIT License
 
-add_mqt_scpd_library(milp)
+# HiGHS is a private dependency: it is what the module solves with, and nothing above the module
+# sees a HiGHS type.
+add_mqt_scpd_library(milp PRIVATE_LINK_LIBRARIES mqt-scpd-highs)

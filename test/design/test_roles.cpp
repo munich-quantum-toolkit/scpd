@@ -64,14 +64,48 @@ TEST(Roles, NamesFollowTheConfigurationKeys) {
   EXPECT_EQ(roleName(UnassignedRole::Launcher), "launcher");
   EXPECT_EQ(roleName(UnassignedRole::Resonator), "resonator");
   EXPECT_EQ(roleName(UnassignedRole::Conventional), "conventional");
+  EXPECT_EQ(roleName(UnassignedRole::BridgePair), "bridge_pair");
   EXPECT_EQ(roleName(UnassignedRole::Coupler), "coupler");
   EXPECT_EQ(roleName(UnassignedRole::Unset), "unset");
 
   EXPECT_TRUE(isRoutable(UnassignedRole::Resonator));
   EXPECT_TRUE(isRoutable(UnassignedRole::Conventional));
+  // A bridge port is routable: a wire runs to it, crosses the component and
+  // leaves through the port paired with it, so the grid, the ring and the
+  // lattices all have to carry it.
+  EXPECT_TRUE(isRoutable(UnassignedRole::BridgePair));
   EXPECT_FALSE(isRoutable(UnassignedRole::Launcher));
   EXPECT_FALSE(isRoutable(UnassignedRole::Coupler));
   EXPECT_FALSE(isRoutable(UnassignedRole::Unset));
+}
+
+TEST(Roles, TheBridgePatternIsOptionalAndClassifiesWhenItIsThere) {
+  // Without it a coupler's crossing ports are conventional, which is what a
+  // chip whose components carry no crossing declares.
+  auto patterns = benchmarkPatterns();
+  ChipT chip = chipWith({"Coupler1_2.port0", "Coupler1_2.port1"});
+  EXPECT_TRUE(classifyPorts(chip, patterns).empty());
+  EXPECT_EQ(rolesOf(chip), (std::vector{UnassignedRole::Conventional,
+                                        UnassignedRole::Conventional}));
+
+  patterns.conventional = R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$)";
+  patterns.bridge_pair = R"(^Coupler\d+_\d+\.port[1-4]$)";
+  ChipT declared = chipWith({"Coupler1_2.port0", "Coupler1_2.port1"});
+  EXPECT_TRUE(classifyPorts(declared, patterns).empty());
+  EXPECT_EQ(rolesOf(declared), (std::vector{UnassignedRole::Conventional,
+                                            UnassignedRole::BridgePair}));
+}
+
+TEST(Roles, APortTheBridgeAndConventionalPatternsBothClaimIsAProblem) {
+  auto patterns = benchmarkPatterns();
+  patterns.bridge_pair = R"(^Coupler\d+_\d+\.port[1-4]$)";
+  ChipT chip = chipWith({"Coupler1_2.port1"});
+
+  const Problems problems = classifyPorts(chip, patterns);
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_NE(problems[0].find("conventional, bridge_pair"), std::string::npos);
+  EXPECT_EQ(chip.ports[0]->role, UnassignedRole::Unset);
 }
 
 TEST(Roles, EveryPortTakesTheRoleOfItsOnePattern) {

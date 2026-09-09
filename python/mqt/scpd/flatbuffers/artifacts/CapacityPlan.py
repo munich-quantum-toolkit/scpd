@@ -5,6 +5,14 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
+from mqt.scpd.flatbuffers.artifacts.Bottleneck import Bottleneck
+from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNode
+from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtent
+from mqt.scpd.flatbuffers.artifacts.LauncherSlot import LauncherSlot
+from mqt.scpd.flatbuffers.artifacts.Partition import Partition
+from mqt.scpd.flatbuffers.artifacts.PartitionBorder import PartitionBorder
+from mqt.scpd.flatbuffers.geometry.Polygon import Polygon
+from typing import Optional
 np = import_numpy()
 
 # Output of the Capacity stage.
@@ -30,11 +38,309 @@ class CapacityPlan(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
+    # CapacityPlan
+    def CapacityGrid(self) -> Optional[GridExtent]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = GridExtent()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # CapacityPlan
+    def DetailGrid(self) -> Optional[GridExtent]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = GridExtent()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # CapacityPlan
+    def Partitions(self, j: int) -> Optional[Partition]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = Partition()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # CapacityPlan
+    def PartitionsLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # CapacityPlan
+    def PartitionsIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        return o == 0
+
+    # CapacityPlan
+    def Borders(self, j: int) -> Optional[PartitionBorder]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = PartitionBorder()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # CapacityPlan
+    def BordersLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # CapacityPlan
+    def BordersIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        return o == 0
+
+    # CapacityPlan
+    def Bottlenecks(self, j: int) -> Optional[Bottleneck]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = Bottleneck()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # CapacityPlan
+    def BottlenecksLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # CapacityPlan
+    def BottlenecksIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        return o == 0
+
+    # CapacityPlan
+    def Launchers(self, j: int) -> Optional[LauncherSlot]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = LauncherSlot()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # CapacityPlan
+    def LaunchersLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # CapacityPlan
+    def LaunchersIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        return o == 0
+
+    # CapacityPlan
+    def Nodes(self, j: int) -> Optional[CapacityNode]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = CapacityNode()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # CapacityPlan
+    def NodesLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # CapacityPlan
+    def NodesIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+        return o == 0
+
+    # The index in `nodes` of each chain's root.
+    # CapacityPlan
+    def Chains(self, j: int):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
+        return 0
+
+    # CapacityPlan
+    def ChainsAsNumpy(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        if o != 0:
+            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Uint32Flags, o)
+        return 0
+
+    # CapacityPlan
+    def ChainsLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # CapacityPlan
+    def ChainsIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        return o == 0
+
+    # What the ports' own approaches keep clear, as closed rings in layout
+    # units: the strip a wire leaves each routable port along, extended
+    # forward and backward, and the square each launcher sweeps.
+    #
+    # These are obstacles to everything the stages route, and they are not
+    # chip artwork, which is why they are a layer of their own rather than
+    # more polygons in the chip. Only the cells that were free before a band
+    # took them are here; where a band merely covered artwork the artwork is
+    # already drawn. The rings follow the cells, so a band along a diagonal
+    # is the staircase the grid actually blocks.
+    # CapacityPlan
+    def PortKeepout(self, j: int) -> Optional[Polygon]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = Polygon()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # CapacityPlan
+    def PortKeepoutLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # CapacityPlan
+    def PortKeepoutIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
+        return o == 0
+
 def CapacityPlanStart(builder: flatbuffers.Builder):
-    builder.StartObject(0)
+    builder.StartObject(9)
 
 def Start(builder: flatbuffers.Builder):
     CapacityPlanStart(builder)
+
+def CapacityPlanAddCapacityGrid(builder: flatbuffers.Builder, capacityGrid: int):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(capacityGrid), 0)
+
+def AddCapacityGrid(builder: flatbuffers.Builder, capacityGrid: int):
+    CapacityPlanAddCapacityGrid(builder, capacityGrid)
+
+def CapacityPlanAddDetailGrid(builder: flatbuffers.Builder, detailGrid: int):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(detailGrid), 0)
+
+def AddDetailGrid(builder: flatbuffers.Builder, detailGrid: int):
+    CapacityPlanAddDetailGrid(builder, detailGrid)
+
+def CapacityPlanAddPartitions(builder: flatbuffers.Builder, partitions: int):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(partitions), 0)
+
+def AddPartitions(builder: flatbuffers.Builder, partitions: int):
+    CapacityPlanAddPartitions(builder, partitions)
+
+def CapacityPlanStartPartitionsVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartPartitionsVector(builder, numElems: int) -> int:
+    return CapacityPlanStartPartitionsVector(builder, numElems)
+
+def CapacityPlanAddBorders(builder: flatbuffers.Builder, borders: int):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(borders), 0)
+
+def AddBorders(builder: flatbuffers.Builder, borders: int):
+    CapacityPlanAddBorders(builder, borders)
+
+def CapacityPlanStartBordersVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartBordersVector(builder, numElems: int) -> int:
+    return CapacityPlanStartBordersVector(builder, numElems)
+
+def CapacityPlanAddBottlenecks(builder: flatbuffers.Builder, bottlenecks: int):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(bottlenecks), 0)
+
+def AddBottlenecks(builder: flatbuffers.Builder, bottlenecks: int):
+    CapacityPlanAddBottlenecks(builder, bottlenecks)
+
+def CapacityPlanStartBottlenecksVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartBottlenecksVector(builder, numElems: int) -> int:
+    return CapacityPlanStartBottlenecksVector(builder, numElems)
+
+def CapacityPlanAddLaunchers(builder: flatbuffers.Builder, launchers: int):
+    builder.PrependUOffsetTRelativeSlot(5, flatbuffers.number_types.UOffsetTFlags.py_type(launchers), 0)
+
+def AddLaunchers(builder: flatbuffers.Builder, launchers: int):
+    CapacityPlanAddLaunchers(builder, launchers)
+
+def CapacityPlanStartLaunchersVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartLaunchersVector(builder, numElems: int) -> int:
+    return CapacityPlanStartLaunchersVector(builder, numElems)
+
+def CapacityPlanAddNodes(builder: flatbuffers.Builder, nodes: int):
+    builder.PrependUOffsetTRelativeSlot(6, flatbuffers.number_types.UOffsetTFlags.py_type(nodes), 0)
+
+def AddNodes(builder: flatbuffers.Builder, nodes: int):
+    CapacityPlanAddNodes(builder, nodes)
+
+def CapacityPlanStartNodesVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartNodesVector(builder, numElems: int) -> int:
+    return CapacityPlanStartNodesVector(builder, numElems)
+
+def CapacityPlanAddChains(builder: flatbuffers.Builder, chains: int):
+    builder.PrependUOffsetTRelativeSlot(7, flatbuffers.number_types.UOffsetTFlags.py_type(chains), 0)
+
+def AddChains(builder: flatbuffers.Builder, chains: int):
+    CapacityPlanAddChains(builder, chains)
+
+def CapacityPlanStartChainsVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartChainsVector(builder, numElems: int) -> int:
+    return CapacityPlanStartChainsVector(builder, numElems)
+
+def CapacityPlanAddPortKeepout(builder: flatbuffers.Builder, portKeepout: int):
+    builder.PrependUOffsetTRelativeSlot(8, flatbuffers.number_types.UOffsetTFlags.py_type(portKeepout), 0)
+
+def AddPortKeepout(builder: flatbuffers.Builder, portKeepout: int):
+    CapacityPlanAddPortKeepout(builder, portKeepout)
+
+def CapacityPlanStartPortKeepoutVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartPortKeepoutVector(builder, numElems: int) -> int:
+    return CapacityPlanStartPortKeepoutVector(builder, numElems)
 
 def CapacityPlanEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -42,14 +348,42 @@ def CapacityPlanEnd(builder: flatbuffers.Builder) -> int:
 def End(builder: flatbuffers.Builder) -> int:
     return CapacityPlanEnd(builder)
 
+import mqt.scpd.flatbuffers.artifacts.Bottleneck
+import mqt.scpd.flatbuffers.artifacts.CapacityNode
+import mqt.scpd.flatbuffers.artifacts.GridExtent
+import mqt.scpd.flatbuffers.artifacts.LauncherSlot
+import mqt.scpd.flatbuffers.artifacts.Partition
+import mqt.scpd.flatbuffers.artifacts.PartitionBorder
+import mqt.scpd.flatbuffers.geometry.Polygon
+try:
+    from typing import List, Optional
+except:
+    pass
 
 class CapacityPlanT(object):
 
     # CapacityPlanT
     def __init__(
         self,
+        capacityGrid = None,
+        detailGrid = None,
+        partitions = None,
+        borders = None,
+        bottlenecks = None,
+        launchers = None,
+        nodes = None,
+        chains = None,
+        portKeepout = None,
     ):
-        pass
+        self.capacityGrid = capacityGrid  # type: Optional[mqt.scpd.flatbuffers.artifacts.GridExtent.GridExtentT]
+        self.detailGrid = detailGrid  # type: Optional[mqt.scpd.flatbuffers.artifacts.GridExtent.GridExtentT]
+        self.partitions = partitions  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.Partition.PartitionT]]
+        self.borders = borders  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.PartitionBorder.PartitionBorderT]]
+        self.bottlenecks = bottlenecks  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.Bottleneck.BottleneckT]]
+        self.launchers = launchers  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.LauncherSlot.LauncherSlotT]]
+        self.nodes = nodes  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.CapacityNode.CapacityNodeT]]
+        self.chains = chains  # type: Optional[List[int]]
+        self.portKeepout = portKeepout  # type: Optional[List[mqt.scpd.flatbuffers.geometry.Polygon.PolygonT]]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -72,9 +406,146 @@ class CapacityPlanT(object):
     def _UnPack(self, capacityPlan):
         if capacityPlan is None:
             return
+        if capacityPlan.CapacityGrid() is not None:
+            self.capacityGrid = mqt.scpd.flatbuffers.artifacts.GridExtent.GridExtentT.InitFromObj(capacityPlan.CapacityGrid())
+        if capacityPlan.DetailGrid() is not None:
+            self.detailGrid = mqt.scpd.flatbuffers.artifacts.GridExtent.GridExtentT.InitFromObj(capacityPlan.DetailGrid())
+        if not capacityPlan.PartitionsIsNone():
+            self.partitions = []
+            for i in range(capacityPlan.PartitionsLength()):
+                if capacityPlan.Partitions(i) is None:
+                    self.partitions.append(None)
+                else:
+                    partition_ = mqt.scpd.flatbuffers.artifacts.Partition.PartitionT.InitFromObj(capacityPlan.Partitions(i))
+                    self.partitions.append(partition_)
+        if not capacityPlan.BordersIsNone():
+            self.borders = []
+            for i in range(capacityPlan.BordersLength()):
+                if capacityPlan.Borders(i) is None:
+                    self.borders.append(None)
+                else:
+                    partitionBorder_ = mqt.scpd.flatbuffers.artifacts.PartitionBorder.PartitionBorderT.InitFromObj(capacityPlan.Borders(i))
+                    self.borders.append(partitionBorder_)
+        if not capacityPlan.BottlenecksIsNone():
+            self.bottlenecks = []
+            for i in range(capacityPlan.BottlenecksLength()):
+                if capacityPlan.Bottlenecks(i) is None:
+                    self.bottlenecks.append(None)
+                else:
+                    bottleneck_ = mqt.scpd.flatbuffers.artifacts.Bottleneck.BottleneckT.InitFromObj(capacityPlan.Bottlenecks(i))
+                    self.bottlenecks.append(bottleneck_)
+        if not capacityPlan.LaunchersIsNone():
+            self.launchers = []
+            for i in range(capacityPlan.LaunchersLength()):
+                if capacityPlan.Launchers(i) is None:
+                    self.launchers.append(None)
+                else:
+                    launcherSlot_ = mqt.scpd.flatbuffers.artifacts.LauncherSlot.LauncherSlotT.InitFromObj(capacityPlan.Launchers(i))
+                    self.launchers.append(launcherSlot_)
+        if not capacityPlan.NodesIsNone():
+            self.nodes = []
+            for i in range(capacityPlan.NodesLength()):
+                if capacityPlan.Nodes(i) is None:
+                    self.nodes.append(None)
+                else:
+                    capacityNode_ = mqt.scpd.flatbuffers.artifacts.CapacityNode.CapacityNodeT.InitFromObj(capacityPlan.Nodes(i))
+                    self.nodes.append(capacityNode_)
+        if not capacityPlan.ChainsIsNone():
+            if np is None:
+                self.chains = []
+                for i in range(capacityPlan.ChainsLength()):
+                    self.chains.append(capacityPlan.Chains(i))
+            else:
+                self.chains = capacityPlan.ChainsAsNumpy()
+        if not capacityPlan.PortKeepoutIsNone():
+            self.portKeepout = []
+            for i in range(capacityPlan.PortKeepoutLength()):
+                if capacityPlan.PortKeepout(i) is None:
+                    self.portKeepout.append(None)
+                else:
+                    polygon_ = mqt.scpd.flatbuffers.geometry.Polygon.PolygonT.InitFromObj(capacityPlan.PortKeepout(i))
+                    self.portKeepout.append(polygon_)
 
     # CapacityPlanT
     def Pack(self, builder):
+        if self.capacityGrid is not None:
+            capacityGrid = self.capacityGrid.Pack(builder)
+        if self.detailGrid is not None:
+            detailGrid = self.detailGrid.Pack(builder)
+        if self.partitions is not None:
+            partitionslist = []
+            for i in range(len(self.partitions)):
+                partitionslist.append(self.partitions[i].Pack(builder))
+            CapacityPlanStartPartitionsVector(builder, len(self.partitions))
+            for i in reversed(range(len(self.partitions))):
+                builder.PrependUOffsetTRelative(partitionslist[i])
+            partitions = builder.EndVector()
+        if self.borders is not None:
+            borderslist = []
+            for i in range(len(self.borders)):
+                borderslist.append(self.borders[i].Pack(builder))
+            CapacityPlanStartBordersVector(builder, len(self.borders))
+            for i in reversed(range(len(self.borders))):
+                builder.PrependUOffsetTRelative(borderslist[i])
+            borders = builder.EndVector()
+        if self.bottlenecks is not None:
+            bottleneckslist = []
+            for i in range(len(self.bottlenecks)):
+                bottleneckslist.append(self.bottlenecks[i].Pack(builder))
+            CapacityPlanStartBottlenecksVector(builder, len(self.bottlenecks))
+            for i in reversed(range(len(self.bottlenecks))):
+                builder.PrependUOffsetTRelative(bottleneckslist[i])
+            bottlenecks = builder.EndVector()
+        if self.launchers is not None:
+            launcherslist = []
+            for i in range(len(self.launchers)):
+                launcherslist.append(self.launchers[i].Pack(builder))
+            CapacityPlanStartLaunchersVector(builder, len(self.launchers))
+            for i in reversed(range(len(self.launchers))):
+                builder.PrependUOffsetTRelative(launcherslist[i])
+            launchers = builder.EndVector()
+        if self.nodes is not None:
+            nodeslist = []
+            for i in range(len(self.nodes)):
+                nodeslist.append(self.nodes[i].Pack(builder))
+            CapacityPlanStartNodesVector(builder, len(self.nodes))
+            for i in reversed(range(len(self.nodes))):
+                builder.PrependUOffsetTRelative(nodeslist[i])
+            nodes = builder.EndVector()
+        if self.chains is not None:
+            if np is not None and type(self.chains) is np.ndarray:
+                chains = builder.CreateNumpyVector(self.chains)
+            else:
+                CapacityPlanStartChainsVector(builder, len(self.chains))
+                for i in reversed(range(len(self.chains))):
+                    builder.PrependUint32(self.chains[i])
+                chains = builder.EndVector()
+        if self.portKeepout is not None:
+            portKeepoutlist = []
+            for i in range(len(self.portKeepout)):
+                portKeepoutlist.append(self.portKeepout[i].Pack(builder))
+            CapacityPlanStartPortKeepoutVector(builder, len(self.portKeepout))
+            for i in reversed(range(len(self.portKeepout))):
+                builder.PrependUOffsetTRelative(portKeepoutlist[i])
+            portKeepout = builder.EndVector()
         CapacityPlanStart(builder)
+        if self.capacityGrid is not None:
+            CapacityPlanAddCapacityGrid(builder, capacityGrid)
+        if self.detailGrid is not None:
+            CapacityPlanAddDetailGrid(builder, detailGrid)
+        if self.partitions is not None:
+            CapacityPlanAddPartitions(builder, partitions)
+        if self.borders is not None:
+            CapacityPlanAddBorders(builder, borders)
+        if self.bottlenecks is not None:
+            CapacityPlanAddBottlenecks(builder, bottlenecks)
+        if self.launchers is not None:
+            CapacityPlanAddLaunchers(builder, launchers)
+        if self.nodes is not None:
+            CapacityPlanAddNodes(builder, nodes)
+        if self.chains is not None:
+            CapacityPlanAddChains(builder, chains)
+        if self.portKeepout is not None:
+            CapacityPlanAddPortKeepout(builder, portKeepout)
         capacityPlan = CapacityPlanEnd(builder)
         return capacityPlan

@@ -74,16 +74,16 @@ flowchart TD
 
   subgraph core["C++ core"]
     cap[Capacity<br/>watershed / EDT / budgets]
-    asg[Assignment<br/>resonator to launcher, MILP]
     glb[Global<br/>Hanan inner circuit, MILP]
+    asg[Assignment<br/>resonator to launcher, MILP]
     det[Detail<br/>A* on pixel grid]
     fin[Final<br/>Dubins routing, CPW, feedlines]
     geo[Finalize<br/>curve fit, meander, bridges]
   end
 
   a1[01-capacity.fb]
-  a2[02-assign.fb]
-  a3[03-global.fb]
+  a2[02-global.fb]
+  a3[03-assign.fb]
   a4[04-detail.fb]
   a5[05-final.fb]
   a6[06-geometry.fb<br/>analytic line and arc]
@@ -93,12 +93,13 @@ flowchart TD
 
   svg[["mqt-scpd plot<br/>per-stage SVG"]]
 
-  chip --> cap --> a1 --> asg --> a2 --> glb --> a3 --> det --> a4 --> fin --> a5 --> geo --> a6
-  cfg -.-> cap & asg & glb & det & fin & geo
+  chip --> cap --> a1 --> glb --> a2 --> asg --> a3 --> det --> a4 --> fin --> a5 --> geo --> a6
+  cfg -.-> cap & glb & asg & det & fin & geo
   core --> met
   a5 & a6 -->|DRCPolice| drc
   a6 -->|KLayout adapter| gds
-  a1 & a4 & a5 & a6 -.-> svg
+  a1 & a2 & a3 & a4 & a5 & a6 -.-> svg
+  a1 & a2 & a3 -.->|KLayout adapter<br/>planning layers| gds
   drc -.-> svg
 ```
 
@@ -147,16 +148,16 @@ graph TD
 
 The dependency graph is acyclic. Nothing depends on `pipeline`; it is the top.
 
-| Target              | Alias               | Responsibility                                                                                                            |
-| ------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `mqt-scpd-geometry` | `MQT::ScpdGeometry` | Point, polygon, path with line and arc segments, transforms, unit handling                                                |
-| `mqt-scpd-design`   | `MQT::ScpdDesign`   | Chip ports and obstacles, the two port-role enums, the port sequences, design rules, the run configuration                |
-| `mqt-scpd-grid`     | `MQT::ScpdGrid`     | Rasterization, distance transform, watershed, packed obstacle grids, rule-to-cell conversion                              |
-| `mqt-scpd-routing`  | `MQT::ScpdRouting`  | Curvature-constrained A* over Dubins primitives                                                                           |
-| `mqt-scpd-milp`     | `MQT::ScpdMilp`     | Solver-neutral model assembly, HiGHS backend, MPS emission for the BYOK path                                              |
-| `mqt-scpd-drc`      | `MQT::ScpdDrc`      | DRCPolice: the eight design rules — five active, three advisory — checked in both the router and layout coordinate spaces |
-| `mqt-scpd-pipeline` | `MQT::ScpdPipeline` | Stage interfaces, the implementation registry, and the six stage implementations                                          |
-| `mqt-scpd-io`       | `MQT::ScpdIO`       | Artifact read and write, metrics, serialization of the DRC report                                                         |
+| Target              | Alias               | Responsibility                                                                                                              |
+| ------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `mqt-scpd-geometry` | `MQT::ScpdGeometry` | Point, polygon, path with line and arc segments, transforms, unit handling                                                  |
+| `mqt-scpd-design`   | `MQT::ScpdDesign`   | Chip ports and obstacles, the two port-role enums, the port sequences, design rules, the run configuration                  |
+| `mqt-scpd-grid`     | `MQT::ScpdGrid`     | Grid metrics and rule-to-cell conversion, rasterization with the obstacle keepout, distance transform, watershed, bit grids |
+| `mqt-scpd-routing`  | `MQT::ScpdRouting`  | Curvature-constrained A* over Dubins primitives, path geometry, self-intersection, coupler dogleg insertion                 |
+| `mqt-scpd-milp`     | `MQT::ScpdMilp`     | Solver-neutral model assembly, HiGHS backend, MPS emission for the BYOK path                                                |
+| `mqt-scpd-drc`      | `MQT::ScpdDrc`      | DRCPolice: the eight design rules — five active, three advisory — checked in both the router and layout coordinate spaces   |
+| `mqt-scpd-pipeline` | `MQT::ScpdPipeline` | Stage interfaces, the implementation registry, and the six stage implementations                                            |
+| `mqt-scpd-io`       | `MQT::ScpdIO`       | Artifact read and write, metrics, serialization of the DRC report                                                           |
 
 Each is declared through `cmake/AddMQTScpdLibrary.cmake`, adapted from MQT
 Core's `AddMQTCoreLibrary.cmake`: `FILE_SET HEADERS`, `generate_export_header`,
@@ -177,13 +178,13 @@ classDiagram
     <<interface>>
     +run(Chip, Config) CapacityPlan
   }
-  class IAssigner {
-    <<interface>>
-    +run(Chip, CapacityPlan, Config) Assignment
-  }
   class IGlobalRouter {
     <<interface>>
-    +run(Chip, Assignment, Config) GlobalRouting
+    +run(Chip, CapacityPlan, Config) GlobalRouting
+  }
+  class IAssigner {
+    <<interface>>
+    +run(Chip, CapacityPlan, GlobalRouting, Config) Assignment
   }
   class IDetailRouter {
     <<interface>>
@@ -204,8 +205,8 @@ classDiagram
   }
 
   ICapacityPlanner <|.. WatershedPlanner
-  IAssigner <|.. OrderedMilpAssigner
   IGlobalRouter <|.. HananMilpRouter
+  IAssigner <|.. OrderedMilpAssigner
   IDetailRouter <|.. AStarDetailRouter
   IFinalRouter <|.. DubinsFinalRouter
   IFinalizer <|.. CurveFitFinalizer
@@ -214,7 +215,13 @@ classDiagram
 Every `run` is `const` and takes inputs by `const&`. That single constraint
 removes three prototype defects at once: the chip is no longer copied by value
 into three stages, no stage writes into another's queue mid-solve, and the
-signatures are already shaped for the threading work in phase 2.
+signatures are already shaped for the later threading work.
+
+The Global stage runs **before** the Assignment stage, which is why it takes the
+capacity plan rather than an assignment. Which outer port an inner wire surfaces
+at is a fact about the solved inner circuit, and it is what the assignment's
+ring is made of. See
+[decision 0026](docs/design/decisions/0026-global-runs-before-the-assignment.md).
 
 The registry is a `map<string, factory>` — roughly thirty lines. It exists
 because algorithm swapping is a stated requirement of a research tool, not on
@@ -286,20 +293,20 @@ mqt-scpd/
 
 ## Dependencies
 
-| Layer         | Dependency    | Acquisition                      | Why                                                                                      |
-| ------------- | ------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
-| C++           | FlatBuffers   | FetchContent                     | Schema-generated data model and stage artifacts. Runtime only, no parser library         |
-| C++           | nlohmann/json | FetchContent                     | The chip input, metrics and logs                                                         |
-| C++           | spdlog        | FetchContent                     | Structured logging; replaces scattered `std::cout`                                       |
-| C++           | HiGHS         | FetchContent                     | Default solver; makes an unlicensed install fully functional                             |
-| C++           | Boost.Polygon | FetchContent or vendored headers | One Voronoi construction. Never a user-installed Boost                                   |
-| C++           | GoogleTest    | FetchContent                     | Existing repository convention                                                           |
-| Python        | flatbuffers   | PyPI                             | Runtime for the generated artifact readers behind `plot`, `inspect` and `report`         |
-| Python        | klayout       | PyPI, extra `mqt-scpd[klayout]`  | GDS and OASIS writing and rendering. It provides no DRC, and no wheel for Windows on ARM |
-| Python        | rich          | PyPI                             | Progress over long runs, and result tables                                               |
-| Python (test) | hypothesis    | PyPI                             | Property-based tests                                                                     |
-| Optional      | gurobipy      | user-installed                   | Bring-your-own-license solver path                                                       |
-| Optional      | gdsfactory    | `mqt-scpd[gdsfactory]`           | Adapter over the same geometry IR                                                        |
+| Layer         | Dependency    | Acquisition                             | Why                                                                                      |
+| ------------- | ------------- | --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| C++           | FlatBuffers   | FetchContent                            | Schema-generated data model and stage artifacts. Runtime only, no parser library         |
+| C++           | nlohmann/json | FetchContent                            | The chip input, metrics and logs                                                         |
+| C++           | spdlog        | FetchContent                            | Structured logging; replaces scattered `std::cout`                                       |
+| C++           | HiGHS         | FetchContent                            | Default solver; makes an unlicensed install fully functional                             |
+| C++           | Boost.Polygon | FetchContent, `BOOST_INCLUDE_LIBRARIES` | One Voronoi construction. Never a user-installed Boost                                   |
+| C++           | GoogleTest    | FetchContent                            | Existing repository convention                                                           |
+| Python        | flatbuffers   | PyPI                                    | Runtime for the generated artifact readers behind `plot`, `inspect` and `report`         |
+| Python        | klayout       | PyPI, extra `mqt-scpd[klayout]`         | GDS and OASIS writing and rendering. It provides no DRC, and no wheel for Windows on ARM |
+| Python        | rich          | PyPI                                    | Progress over long runs, and result tables                                               |
+| Python (test) | hypothesis    | PyPI                                    | Property-based tests                                                                     |
+| Optional      | gurobipy      | user-installed                          | Bring-your-own-license solver path                                                       |
+| Optional      | gdsfactory    | `mqt-scpd[gdsfactory]`                  | Adapter over the same geometry IR                                                        |
 
 The CLI uses the standard library's `argparse`. Dependencies are declared in
 `cmake/ExternalDependencies.cmake`, never inline in a target.

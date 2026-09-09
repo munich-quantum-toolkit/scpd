@@ -61,8 +61,23 @@ class Port(object):
             return self._tab.Get(flatbuffers.number_types.Uint8Flags, o + self._tab.Pos)
         return 0
 
+    # The component the port belongs to, as the configured component pattern
+    # captures it. Empty for a port created during a run.
+    #
+    # This is declared, never inferred: the pattern says which part of a
+    # label names the component, and no algorithm reads a label itself. The
+    # planning stages need the grouping because a coupler's opposite ports
+    # let an inner wire cross its artwork, and because a qubit's own ports
+    # are what the inner circuit has to reach.
+    # Port
+    def Component(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
 def PortStart(builder: flatbuffers.Builder):
-    builder.StartObject(4)
+    builder.StartObject(5)
 
 def Start(builder: flatbuffers.Builder):
     PortStart(builder)
@@ -91,6 +106,12 @@ def PortAddRole(builder: flatbuffers.Builder, role: int):
 def AddRole(builder: flatbuffers.Builder, role: int):
     PortAddRole(builder, role)
 
+def PortAddComponent(builder: flatbuffers.Builder, component: int):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(component), 0)
+
+def AddComponent(builder: flatbuffers.Builder, component: int):
+    PortAddComponent(builder, component)
+
 def PortEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -112,11 +133,13 @@ class PortT(object):
         center = None,
         orientation = 0.0,
         role = 0,
+        component = None,
     ):
         self.label = label  # type: Optional[str]
         self.center = center  # type: Optional[mqt.scpd.flatbuffers.geometry.Point.PointT]
         self.orientation = orientation  # type: float
         self.role = role  # type: int
+        self.component = component  # type: Optional[str]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -146,11 +169,16 @@ class PortT(object):
             self.center = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(port.Center())
         self.orientation = port.Orientation()
         self.role = port.Role()
+        self.component = port.Component()
+        if self.component is not None:
+            self.component = self.component.decode('utf-8')
 
     # PortT
     def Pack(self, builder):
         if self.label is not None:
             label = builder.CreateString(self.label)
+        if self.component is not None:
+            component = builder.CreateString(self.component)
         PortStart(builder)
         if self.label is not None:
             PortAddLabel(builder, label)
@@ -159,5 +187,7 @@ class PortT(object):
             PortAddCenter(builder, center)
         PortAddOrientation(builder, self.orientation)
         PortAddRole(builder, self.role)
+        if self.component is not None:
+            PortAddComponent(builder, component)
         port = PortEnd(builder)
         return port

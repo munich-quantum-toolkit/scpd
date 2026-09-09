@@ -7,6 +7,7 @@ from flatbuffers.compat import import_numpy
 from typing import Any
 from mqt.scpd.flatbuffers.config.GridParams import GridParams
 from mqt.scpd.flatbuffers.config.PortConfig import PortConfig
+from mqt.scpd.flatbuffers.config.StageParams import StageParams
 from mqt.scpd.flatbuffers.design.DesignRules import DesignRules
 from typing import Optional
 np = import_numpy()
@@ -68,8 +69,18 @@ class Config(object):
             return obj
         return None
 
+    # Config
+    def Stages(self) -> Optional[StageParams]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = StageParams()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
 def ConfigStart(builder: flatbuffers.Builder):
-    builder.StartObject(4)
+    builder.StartObject(5)
 
 def Start(builder: flatbuffers.Builder):
     ConfigStart(builder)
@@ -98,6 +109,12 @@ def ConfigAddGrid(builder: flatbuffers.Builder, grid: int):
 def AddGrid(builder: flatbuffers.Builder, grid: int):
     ConfigAddGrid(builder, grid)
 
+def ConfigAddStages(builder: flatbuffers.Builder, stages: int):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(stages), 0)
+
+def AddStages(builder: flatbuffers.Builder, stages: int):
+    ConfigAddStages(builder, stages)
+
 def ConfigEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -106,6 +123,7 @@ def End(builder: flatbuffers.Builder) -> int:
 
 import mqt.scpd.flatbuffers.config.GridParams
 import mqt.scpd.flatbuffers.config.PortConfig
+import mqt.scpd.flatbuffers.config.StageParams
 import mqt.scpd.flatbuffers.design.DesignRules
 try:
     from typing import Optional
@@ -121,11 +139,13 @@ class ConfigT(object):
         ports = None,
         rules = None,
         grid = None,
+        stages = None,
     ):
         self.chipInput = chipInput  # type: Optional[str]
         self.ports = ports  # type: Optional[mqt.scpd.flatbuffers.config.PortConfig.PortConfigT]
         self.rules = rules  # type: Optional[mqt.scpd.flatbuffers.design.DesignRules.DesignRulesT]
         self.grid = grid  # type: Optional[mqt.scpd.flatbuffers.config.GridParams.GridParamsT]
+        self.stages = stages  # type: Optional[mqt.scpd.flatbuffers.config.StageParams.StageParamsT]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -157,6 +177,8 @@ class ConfigT(object):
             self.rules = mqt.scpd.flatbuffers.design.DesignRules.DesignRulesT.InitFromObj(config.Rules())
         if config.Grid() is not None:
             self.grid = mqt.scpd.flatbuffers.config.GridParams.GridParamsT.InitFromObj(config.Grid())
+        if config.Stages() is not None:
+            self.stages = mqt.scpd.flatbuffers.config.StageParams.StageParamsT.InitFromObj(config.Stages())
 
     # ConfigT
     def Pack(self, builder):
@@ -168,6 +190,8 @@ class ConfigT(object):
             rules = self.rules.Pack(builder)
         if self.grid is not None:
             grid = self.grid.Pack(builder)
+        if self.stages is not None:
+            stages = self.stages.Pack(builder)
         ConfigStart(builder)
         if self.chipInput is not None:
             ConfigAddChipInput(builder, chipInput)
@@ -177,5 +201,7 @@ class ConfigT(object):
             ConfigAddRules(builder, rules)
         if self.grid is not None:
             ConfigAddGrid(builder, grid)
+        if self.stages is not None:
+            ConfigAddStages(builder, stages)
         config = ConfigEnd(builder)
         return config

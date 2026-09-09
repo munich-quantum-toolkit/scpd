@@ -76,7 +76,9 @@ def make_coupler(connection: int) -> CpwCouplerT:
 
 def test_round_trip_keeps_the_producer_and_the_identifier() -> None:
     """A written artifact starts with the identifier and reads back complete."""
-    data = write_artifact(wrap(StageOutput.GlobalRouting, GlobalRoutingT()))
+    data = write_artifact(
+        wrap(StageOutput.GlobalRouting, GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[]))
+    )
 
     assert data[4:8] == IDENTIFIER
     back = read_artifact(data)
@@ -137,7 +139,12 @@ def test_geometry_keeps_analytic_segments() -> None:
 def test_write_rejects_a_missing_producer_or_output() -> None:
     """The checked layer refuses to write what the core would refuse to read."""
     with pytest.raises(ArtifactError, match="producer is missing"):
-        write_artifact(ArtifactT(outputType=StageOutput.GlobalRouting, output=GlobalRoutingT()))
+        write_artifact(
+            ArtifactT(
+                outputType=StageOutput.GlobalRouting,
+                output=GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[]),
+            )
+        )
     with pytest.raises(ArtifactError, match="output is missing"):
         write_artifact(ArtifactT(producer="mqt-scpd test"))
 
@@ -168,7 +175,11 @@ def test_read_rejects_a_buffer_without_its_producer() -> None:
 
 def test_read_rejects_foreign_bytes() -> None:
     """Bytes without the identifier, or too short to decode, are not an artifact."""
-    data = bytearray(write_artifact(wrap(StageOutput.GlobalRouting, GlobalRoutingT())))
+    data = bytearray(
+        write_artifact(
+            wrap(StageOutput.GlobalRouting, GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[]))
+        )
+    )
     data[4:8] = b"XXXX"
     with pytest.raises(ArtifactError, match="identifier"):
         read_artifact(bytes(data))
@@ -187,6 +198,8 @@ def test_assignment_round_trips() -> None:
             )
         ],
         objective=132.68,
+        ring=[PortRefT(index=3)],
+        launchers=[PortRefT(index=9)],
     )
 
     back = read_artifact(write_artifact(wrap(StageOutput.Assignment, assignment)))
@@ -225,7 +238,11 @@ def _without_port_center() -> CpwCouplerT:
 
 INCOMPLETE_ARTIFACTS = [
     pytest.param(
-        ArtifactT(producer="p", outputType=StageOutput.Assignment, output=GlobalRoutingT()),
+        ArtifactT(
+            producer="p",
+            outputType=StageOutput.Assignment,
+            output=GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[]),
+        ),
         "output does not match its type tag",
         id="type-tag",
     ),

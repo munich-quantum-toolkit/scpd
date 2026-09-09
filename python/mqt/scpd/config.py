@@ -21,11 +21,17 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import flatbuffers
 
+from .flatbuffers.config.AssignmentParams import AssignmentParamsT
+from .flatbuffers.config.BridgeRule import BridgeRuleT
+from .flatbuffers.config.CapacityParams import CapacityParamsT
 from .flatbuffers.config.Config import ConfigT
+from .flatbuffers.config.GlobalParams import GlobalParamsT
 from .flatbuffers.config.GridParams import GridParamsT
 from .flatbuffers.config.PortConfig import PortConfigT
 from .flatbuffers.config.PortPatterns import PortPatternsT
 from .flatbuffers.config.PortSequences import PortSequencesT
+from .flatbuffers.config.SolverParams import SolverParamsT
+from .flatbuffers.config.StageParams import StageParamsT
 from .flatbuffers.design.DesignRules import DesignRulesT
 
 if TYPE_CHECKING:
@@ -57,6 +63,16 @@ GRID_DEFAULTS: dict[str, int] = {
     "capacity_cells_y": 0,
     "launcher_offset_x": 15,
     "launcher_offset_y": 15,
+    "detail_factor": 30,
+}
+
+#: The defaults of the stage sections, by section and key. A shipped configuration carries only
+#: what differs from them, the same rule the grid section follows.
+STAGE_DEFAULTS: dict[str, dict[str, object]] = {
+    "capacity": {"planner": "", "bottleneck_clearance": 1.5},
+    "global": {"router": "", "internal_bridges": False},
+    "assignment": {"assigner": "", "launcher_target": 0},
+    "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0},
 }
 
 
@@ -101,6 +117,21 @@ class _Section:
             return None
         return value
 
+    def subtables(self, key: str) -> list[dict[str, Any]]:
+        """Read an array of nested tables.
+
+        Returns:
+            The tables, empty when the key is absent or does not hold an array of tables.
+        """
+        self.seen.add(key)
+        value = self.table.get(key)
+        if value is None:
+            return []
+        if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+            self.problems.append(f"[{self.name}] {key} must be an array of tables")
+            return []
+        return cast("list[dict[str, Any]]", value)
+
     def finish(self) -> None:
         """Report every key the section does not know."""
         for key in self.table:
@@ -118,7 +149,13 @@ def _is_kind(value: object, kind: type) -> bool:
     return isinstance(value, kind)
 
 
-_KIND_NAMES: dict[type, str] = {float: "a number", int: "an integer", str: "a string", list: "an array of strings"}
+_KIND_NAMES: dict[type, str] = {
+    float: "a number",
+    int: "an integer",
+    bool: "true or false",
+    str: "a string",
+    list: "an array of strings",
+}
 
 
 def _kind_name(kind: type) -> str:
@@ -128,6 +165,7 @@ def _kind_name(kind: type) -> str:
 def _read_ports(table: dict[str, Any], problems: list[str]) -> PortConfigT:
     ports = _Section("ports", table, problems)
     config = PortConfigT()
+    config.bridgePairs = []
 
     patterns_table = ports.subtable("patterns")
     if patterns_table is None:
@@ -138,6 +176,13 @@ def _read_ports(table: dict[str, Any], problems: list[str]) -> PortConfigT:
         config.patterns.launcher = patterns.take("launcher", str, required=True, default="")
         config.patterns.resonator = patterns.take("resonator", str, required=True, default="")
         config.patterns.conventional = patterns.take("conventional", str, required=True, default="")
+        # The component grouping is declared rather than parsed out of a label. It is optional
+        # because a chip whose planning stages need no grouping does not have to state one.
+        # A bridge port is one a wire crosses the component at rather than ends at. The pattern
+        # says which ports those are; [[ports.bridge_pairs]] below says which two of them pair.
+        # Both are optional, because a chip whose components carry no crossing declares neither.
+        config.patterns.bridgePair = patterns.take("bridge_pair", str, default="")
+        config.patterns.component = patterns.take("component", str, default="")
         patterns.finish()
 
     sequences_table = ports.subtable("sequences")
@@ -149,6 +194,15 @@ def _read_ports(table: dict[str, Any], problems: list[str]) -> PortConfigT:
         config.sequences.allOuter = list(sequences.take("all_outer", list, required=True, default=[]))
         config.sequences.fixedOuter = list(sequences.take("fixed_outer", list, required=True, default=[]))
         sequences.finish()
+
+    for index, rule_table in enumerate(ports.subtables("bridge_pairs")):
+        rule_section = _Section(f"ports.bridge_pairs[{index}]", rule_table, problems)
+        rule = BridgeRuleT()
+        rule.first = rule_section.take("first", str, required=True, default="")
+        rule.second = rule_section.take("second", str, required=True, default="")
+        rule_section.finish()
+        config.bridgePairs.append(rule)
+
     ports.finish()
     return config
 
@@ -175,8 +229,56 @@ def _read_grid(table: dict[str, Any], problems: list[str]) -> GridParamsT:
     grid.capacityCellsY = section.take("capacity_cells_y", int, default=GRID_DEFAULTS["capacity_cells_y"])
     grid.launcherOffsetX = section.take("launcher_offset_x", int, default=GRID_DEFAULTS["launcher_offset_x"])
     grid.launcherOffsetY = section.take("launcher_offset_y", int, default=GRID_DEFAULTS["launcher_offset_y"])
+    grid.detailFactor = section.take("detail_factor", int, default=GRID_DEFAULTS["detail_factor"])
     section.finish()
     return grid
+
+
+def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
+    """Read the stage sections, applying the defaults to everything a file leaves out.
+
+    Every section is built whether or not the file carries it, so that an absent section behaves
+    exactly like one that states only defaults. A stage that reads a parameter therefore never has
+    to know whether the file mentioned it.
+
+    Returns:
+        The stage parameters.
+    """
+    section = _Section("stages", table, problems)
+    stages = StageParamsT()
+    defaults = STAGE_DEFAULTS
+
+    capacity = _Section("stages.capacity", section.subtable("capacity") or {}, problems)
+    stages.capacity = CapacityParamsT()
+    stages.capacity.planner = capacity.take("planner", str, default="")
+    stages.capacity.bottleneckClearance = capacity.take(
+        "bottleneck_clearance", float, default=defaults["capacity"]["bottleneck_clearance"]
+    )
+    capacity.finish()
+
+    router = _Section("stages.global", section.subtable("global") or {}, problems)
+    stages.global_ = GlobalParamsT()
+    stages.global_.router = router.take("router", str, default="")
+    stages.global_.internalBridges = router.take(
+        "internal_bridges", bool, default=defaults["global"]["internal_bridges"]
+    )
+    router.finish()
+
+    assignment = _Section("stages.assignment", section.subtable("assignment") or {}, problems)
+    stages.assignment = AssignmentParamsT()
+    stages.assignment.assigner = assignment.take("assigner", str, default="")
+    stages.assignment.launcherTarget = assignment.take("launcher_target", int, default=0)
+    assignment.finish()
+
+    solver = _Section("stages.solver", section.subtable("solver") or {}, problems)
+    stages.solver = SolverParamsT()
+    stages.solver.backend = solver.take("backend", str, default="")
+    stages.solver.timeLimit = solver.take("time_limit", float, default=0.0)
+    stages.solver.relativeGap = solver.take("relative_gap", float, default=0.0)
+    solver.finish()
+
+    section.finish()
+    return stages
 
 
 def shipped_config_problems(document: dict[str, Any]) -> list[str]:
@@ -198,6 +300,22 @@ def shipped_config_problems(document: dict[str, Any]) -> list[str]:
         )
         if not grid:
             problems.append("[grid] is empty; remove it")
+
+    stages = document.get("stages")
+    if isinstance(stages, dict):
+        for name, defaults in STAGE_DEFAULTS.items():
+            section = stages.get(name)
+            if not isinstance(section, dict):
+                continue
+            problems.extend(
+                f"[stages.{name}] {key} is set to its default {defaults[key]}; remove it"
+                for key, value in section.items()
+                if key in defaults and value == defaults[key]
+            )
+            if not section:
+                problems.append(f"[stages.{name}] is empty; remove it")
+        if not stages:
+            problems.append("[stages] is empty; remove it")
     return problems
 
 
@@ -245,12 +363,13 @@ def parse_config(text: str, *, source: str = "config.toml", strict: bool = False
     else:
         config.rules = _read_rules(rules, problems)
 
-    grid = root.subtable("grid")
-    config.grid = _read_grid(grid, problems) if grid is not None else None
+    config.grid = _read_grid(root.subtable("grid") or {}, problems)
 
-    problems.extend(
-        f"unknown section [{key}]" for key in document if key not in {"chip", "ports", "design_rules", "grid"}
-    )
+    # The stage sections are always built, so an absent one is the defaults rather than nothing.
+    config.stages = _read_stages(root.subtable("stages") or {}, problems)
+
+    known = {"chip", "ports", "design_rules", "grid", "stages"}
+    problems.extend(f"unknown section [{key}]" for key in document if key not in known)
     if strict:
         problems.extend(shipped_config_problems(document))
     if problems:

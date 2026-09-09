@@ -35,7 +35,8 @@ def test_the_report_carries_the_table_the_ring_and_the_ports() -> None:
     report = run_doctor(BENCHMARKS / "9q" / "config.toml", list_ports=True)
 
     text = report.text()
-    assert "conventional     69" in text
+    assert "conventional     21" in text
+    assert "bridge_pair      48" in text
     assert "all_outer: 40 ports, entering at Qb1.port1" in text
     assert "fixed_outer: 21 ports" in text
     assert "  Qb1.port0                resonator" in text

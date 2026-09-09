@@ -22,11 +22,19 @@ from typing import Any, TypeVar
 from .artifacts import read_artifact, write_artifact
 from .flatbuffers.artifacts.Artifact import ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
+from .flatbuffers.artifacts.Bottleneck import BottleneckT
+from .flatbuffers.artifacts.CapacityElement import CapacityElement
+from .flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
+from .flatbuffers.artifacts.GridExtent import GridExtentT
+from .flatbuffers.artifacts.Lattice import LatticeT
+from .flatbuffers.artifacts.LauncherSlot import LauncherSlotT
+from .flatbuffers.artifacts.Partition import PartitionT
+from .flatbuffers.artifacts.PartitionBorder import PartitionBorderT
 from .flatbuffers.artifacts.StageOutput import StageOutput
 from .flatbuffers.artifacts.Wire import WireT
 from .flatbuffers.design.AssignedRole import AssignedRole
@@ -72,7 +80,13 @@ FIELDS: dict[type, dict[str, Field]] = {
     PathT: {"segments": ("list", ("table", SegmentT))},
     PortRefT: {"index": int},
     ConnectionRefT: {"index": int},
-    PortT: {"label": str, "center": _POINT, "orientation": float, "role": ("enum", UnassignedRole)},
+    PortT: {
+        "label": str,
+        "center": _POINT,
+        "orientation": float,
+        "role": ("enum", UnassignedRole),
+        "component": str,
+    },
     ChipT: {"obstacles": ("list", ("table", PolygonT)), "ports": ("list", ("table", PortT))},
     ConnectionT: {
         "source": ("table", PortRefT),
@@ -99,9 +113,58 @@ FIELDS: dict[type, dict[str, Field]] = {
         "height": float,
     },
     BridgeT: {"center": _POINT, "rotation": ("enum", Rotation), "width": float, "height": float},
-    CapacityPlanT: {},
-    AssignmentT: {"connections": ("list", ("table", ConnectionT)), "objective": float},
-    GlobalRoutingT: {},
+    GridExtentT: {
+        "width": int,
+        "height": int,
+        "origin": _POINT,
+        "cellWidth": float,
+        "cellHeight": float,
+    },
+    PartitionT: {"label": int, "outlines": ("list", ("table", PolygonT))},
+    PartitionBorderT: {
+        "first": int,
+        "second": int,
+        "samples": ("list", _POINT),
+        "center": _POINT,
+        "budget": int,
+    },
+    BottleneckT: {"from_": _POINT, "to": _POINT, "capacity": int},
+    LauncherSlotT: {"port": ("table", PortRefT), "position": _POINT},
+    CapacityNodeT: {
+        "kind": ("enum", CapacityElement),
+        "id": int,
+        "capacity": int,
+        "next": ("list", int),
+    },
+    CapacityPlanT: {
+        "capacityGrid": ("table", GridExtentT),
+        "detailGrid": ("table", GridExtentT),
+        "partitions": ("list", ("table", PartitionT)),
+        "borders": ("list", ("table", PartitionBorderT)),
+        "bottlenecks": ("list", ("table", BottleneckT)),
+        "launchers": ("list", ("table", LauncherSlotT)),
+        "nodes": ("list", ("table", CapacityNodeT)),
+        "chains": ("list", int),
+    },
+    AssignmentT: {
+        "connections": ("list", ("table", ConnectionT)),
+        "objective": float,
+        "ring": ("list", ("table", PortRefT)),
+        "launchers": ("list", ("table", PortRefT)),
+        "feeds": ("list", _POINT),
+    },
+    LatticeT: {
+        "points": ("list", _POINT),
+        "edges": ("list", int),
+        "selected": ("list", int),
+    },
+    GlobalRoutingT: {
+        "lattices": ("list", ("table", LatticeT)),
+        "connections": ("list", ("table", ConnectionT)),
+        "outerRing": ("list", ("table", PortRefT)),
+        "resonators": ("list", ("table", PortRefT)),
+        "objective": float,
+    },
     DetailRoutingT: {},
     FinalRoutingT: {
         "couplers": ("list", ("table", CpwCouplerT)),

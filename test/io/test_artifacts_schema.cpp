@@ -95,10 +95,19 @@ TEST(ArtifactSchema, EveryStageOutputIsAnArtifact) {
   EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 6U);
 }
 
+/// A capacity plan that carries nothing, but carries every field the schema
+/// requires. A stage that produced nothing still writes a complete artifact.
+CapacityPlanT emptyPlan() {
+  CapacityPlanT plan;
+  plan.capacity_grid = std::make_unique<GridExtentT>();
+  plan.detail_grid = std::make_unique<GridExtentT>();
+  return plan;
+}
+
 TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   // The outputs of the stages that are not implemented yet are empty tables.
   // Each still travels behind the Artifact root with its own tag.
-  const ArtifactT capacity = readArtifact(writeArtifact(wrap(CapacityPlanT{})));
+  const ArtifactT capacity = readArtifact(writeArtifact(wrap(emptyPlan())));
   EXPECT_EQ(capacity.output.type, StageOutput::CapacityPlan);
   EXPECT_NE(capacity.output.AsCapacityPlan(), nullptr);
   EXPECT_EQ(capacity.producer, "mqt-scpd test");
@@ -120,6 +129,10 @@ TEST(ArtifactSchema, AssignmentRoundTrips) {
   assignment.connections.back()->source_role = AssignedRole::ResonatorSource;
   assignment.connections.back()->target_role = AssignedRole::ResonatorTarget;
   assignment.objective = 132.68;
+  assignment.ring.emplace_back(3);
+  assignment.launchers.emplace_back(9);
+  // A feed that is not on its launcher: the point a feedline end starts at.
+  assignment.feeds.emplace_back(120.5, -40.25);
 
   const ArtifactT back = readArtifact(writeArtifact(wrap(assignment)));
   ASSERT_NE(back.output.AsAssignment(), nullptr);
@@ -225,7 +238,16 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnArtifactWithoutItsProducer) {
   for (const bool withProducer : {true, false}) {
     flatbuffers::FlatBufferBuilder builder;
     const auto producer = builder.CreateString("mqt-scpd test");
-    const auto output = CreateGlobalRouting(builder);
+    // Every required vector is present, so that the only thing the artifact is
+    // missing is the producer this test is about. A null vector would leave
+    // the field out, which is a different problem.
+    const std::vector<::flatbuffers::Offset<Lattice>> noLattices;
+    const std::vector<
+        ::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>
+        noConnections;
+    const std::vector<PortRef> noPorts;
+    const auto output = CreateGlobalRoutingDirect(
+        builder, &noLattices, &noConnections, &noPorts, &noPorts);
     const auto table = builder.StartTable();
     if (withProducer) {
       builder.AddOffset(Artifact::VT_PRODUCER, producer);

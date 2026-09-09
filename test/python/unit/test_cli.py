@@ -64,16 +64,32 @@ def test_render_writes_a_layout_file(tmp_path: Path, capsys: pytest.CaptureFixtu
 
 def test_inspect_prints_an_artifact_as_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """An artifact file prints as JSON to stdout or to a file."""
-    artifact = tmp_path / "03-global.fb"
+    artifact = tmp_path / "02-global.fb"
     artifact.write_bytes(
-        write_artifact(ArtifactT(producer="test", outputType=StageOutput.GlobalRouting, output=GlobalRoutingT()))
+        write_artifact(
+            ArtifactT(
+                producer="test",
+                outputType=StageOutput.GlobalRouting,
+                output=GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[]),
+            )
+        )
     )
 
     assert main(["inspect", str(artifact)]) == 0
     document = json.loads(capsys.readouterr().out)
-    assert document == {"producer": "test", "outputType": "GlobalRouting", "output": {}}
+    assert document == {
+        "producer": "test",
+        "outputType": "GlobalRouting",
+        "output": {
+            "lattices": [],
+            "connections": [],
+            "outerRing": [],
+            "resonators": [],
+            "objective": 0.0,
+        },
+    }
 
-    output = tmp_path / "03-global.json"
+    output = tmp_path / "02-global.json"
     assert main(["inspect", str(artifact), "-o", str(output)]) == 0
     assert json.loads(output.read_text(encoding="utf-8")) == document
 
@@ -90,3 +106,113 @@ def test_problems_exit_with_one(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
     assert main(["doctor", "-c", str(tmp_path / "absent.toml")]) == 1
     assert "doctor: 1 problem(s)" in capsys.readouterr().out
+
+
+def test_plan_fills_a_run_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`plan` runs the three planning stages and names each artifact it wrote."""
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run)]) == 0
+
+    captured = capsys.readouterr().out
+    assert "01-capacity.fb" in captured
+    assert "02-global.fb" in captured
+    assert "03-assign.fb" in captured
+    assert (run / "00-chip.json").is_file()
+
+
+def test_plan_runs_one_stage_and_resumes(tmp_path: Path) -> None:
+    """A single stage continues a run instead of starting one over."""
+    run = tmp_path / "run"
+    config = str(BENCHMARKS / "4q" / "config.toml")
+    assert main(["plan", "-c", config, "-o", str(run)]) == 0
+    before = (run / "01-capacity.fb").read_bytes()
+
+    assert main(["plan", "-c", config, "-o", str(run), "--stage", "assign"]) == 0
+
+    assert (run / "01-capacity.fb").read_bytes() == before
+    assert (run / "03-assign.fb").is_file()
+
+
+def test_plotting_a_stage_needs_a_run_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A stage other than layout is read from a run, and the message says so."""
+    assert (
+        main([
+            "plot",
+            "-c",
+            str(BENCHMARKS / "4q" / "config.toml"),
+            "--stage",
+            "capacity",
+            "-o",
+            str(tmp_path / "out.svg"),
+        ])
+        == 1
+    )
+    assert "pass --run-dir" in capsys.readouterr().err
+
+
+def test_plotting_a_stage_that_was_not_run_says_what_to_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A missing artifact names the command that produces it."""
+    run = tmp_path / "run"
+    run.mkdir()
+    assert (
+        main([
+            "plot",
+            "-c",
+            str(BENCHMARKS / "4q" / "config.toml"),
+            "--stage",
+            "capacity",
+            "--run-dir",
+            str(run),
+            "-o",
+            str(tmp_path / "out.svg"),
+        ])
+        == 1
+    )
+    assert "mqt-scpd plan" in capsys.readouterr().err
+
+
+def test_plotting_a_stage_of_a_later_phase_says_which(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A stage that has not been built yet is named with the phase it arrives in."""
+    assert (
+        main([
+            "plot",
+            "-c",
+            str(BENCHMARKS / "4q" / "config.toml"),
+            "--stage",
+            "final",
+            "-o",
+            str(tmp_path / "out.svg"),
+        ])
+        == 1
+    )
+    assert "phase 4" in capsys.readouterr().err
+
+
+def test_plot_draws_a_planning_stage_over_the_chip(tmp_path: Path) -> None:
+    """`plot --stage` puts what a stage produced on top of the artwork."""
+    run = tmp_path / "run"
+    config = str(BENCHMARKS / "4q" / "config.toml")
+    assert main(["plan", "-c", config, "-o", str(run)]) == 0
+
+    output = tmp_path / "capacity.svg"
+    assert main(["plot", "-c", config, "--stage", "capacity", "--run-dir", str(run), "-o", str(output)]) == 0
+
+    svg = output.read_text(encoding="utf-8")
+    assert 'class="l-bottleneck"' in svg
+    assert "(capacity)" in svg
+
+    # The global picture is drawn over the gates the circuit had to pay for, which the run
+    # directory still carries, so the same layer is there.
+    picture = tmp_path / "global.svg"
+    assert main(["plot", "-c", config, "--stage", "global", "--run-dir", str(run), "-o", str(picture)]) == 0
+    assert 'class="l-bottleneck"' in picture.read_text(encoding="utf-8")
+
+
+def test_list_algorithms_names_one_implementation_per_stage(capsys: pytest.CaptureFixture[str]) -> None:
+    """The registry ships one entry per stage, which is what the command exists to show."""
+    assert main(["list-algorithms"]) == 0
+
+    captured = capsys.readouterr().out
+    assert "capacity-planner: watershed" in captured
+    assert "global-router:    hanan-milp" in captured
+    assert "assigner:         ordered-milp" in captured

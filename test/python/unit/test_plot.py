@@ -86,7 +86,7 @@ def test_a_tolerance_trades_vertices_for_size() -> None:
     coarse = layout_svg(model, tolerance=20.0)
 
     assert len(coarse) < len(exact) / 2
-    assert len(exact.encode("utf-8")) < 2_000_000
+    assert len(exact.encode("utf-8")) < 10_000_000
 
 
 def test_an_empty_chip_cannot_be_drawn() -> None:

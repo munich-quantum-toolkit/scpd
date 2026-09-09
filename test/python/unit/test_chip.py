@@ -33,7 +33,13 @@ def test_the_four_qubit_chip_loads_and_classifies() -> None:
 
     assert len(obstacles_of(chip)) == 28
     ports = ports_of(chip)
-    assert Counter(role_name(port.role) for port in ports) == {"launcher": 16, "resonator": 4, "conventional": 16}
+    # Its couplers carry three ports, so one pair of each bridges and the third ends a wire.
+    assert Counter(role_name(port.role) for port in ports) == {
+        "launcher": 16,
+        "resonator": 4,
+        "conventional": 8,
+        "bridge_pair": 8,
+    }
     assert ports[0].label
     assert ports[0].center is not None
 
@@ -46,7 +52,8 @@ def test_the_nine_qubit_chip_loads_with_its_sequences() -> None:
     assert Counter(role_name(port.role) for port in ports_of(chip)) == {
         "launcher": 24,
         "resonator": 9,
-        "conventional": 69,
+        "conventional": 21,
+        "bridge_pair": 48,
     }
 
 
@@ -78,4 +85,6 @@ def test_role_names_follow_the_schema() -> None:
     """Every role has the name the configuration keys use."""
     assert role_name(UnassignedRole.Launcher) == "launcher"
     assert role_name(UnassignedRole.Coupler) == "coupler"
+    # A name in more than one word is the configuration key, not the schema spelling.
+    assert role_name(UnassignedRole.BridgePair) == "bridge_pair"
     assert role_name(99) == "unset"

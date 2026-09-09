@@ -113,7 +113,9 @@ Roles come in two enums, with a defined transition between them.
 ```fbs
 /// What a port is, before anything is decided. Set at load, from patterns,
 /// or by coupler insertion for a Coupler port.
-enum UnassignedRole : ubyte { Unset, Launcher, Resonator, Conventional, Coupler }
+enum UnassignedRole : ubyte {
+  Unset, Launcher, Resonator, Conventional, Coupler, BridgePair
+}
 
 /// What a port does in the solved design. Set by the Assignment stage.
 enum AssignedRole : ubyte {
@@ -136,6 +138,10 @@ because until then no port is anyone's source or target.
 
 One member of `UnassignedRole` never comes from a pattern: `Coupler` is the role
 of the port that coupler insertion creates in the Final stage.
+
+`Launcher` and `Coupler` are the two roles a wire never runs to. The other three
+are **routable**: `Resonator` and `Conventional` end a wire, and `BridgePair`
+carries it on across the component and out of the port paired with it.
 
 The prototype conflated the two, which is why `is_resonator` was a `bool` on a
 routing request in one place and a `NodeKind` on a graph node in another.
@@ -169,7 +175,8 @@ expression per role, given per chip in `config.toml`:
 [ports.patterns]
 launcher     = '^Chip\.port\d+$'
 resonator    = '^Qb\d+\.port0$'
-conventional = '^(Qb\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
+conventional = '^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$'
+bridge_pair  = '^Coupler\d+_\d+\.port[1-4]$'
 ```
 
 Every port must match **exactly one** pattern. A port matching none, or more
@@ -178,8 +185,56 @@ what turns the prototype's silent misclassification into a message.
 `mqt-scpd doctor` prints the resulting classification table, so a wrong regex is
 visible in a second rather than after a 456-second run.
 
+`bridge_pair` is optional, because a chip whose components carry no crossing
+declares none. Where it is given, **which two of those ports pair** is one rule
+per crossing, each side capturing the component the two must share:
+
+```toml
+[[ports.bridge_pairs]]
+first  = '^(Coupler\d+_\d+)\.port1$'
+second = '^(Coupler\d+_\d+)\.port2$'
+
+[[ports.bridge_pairs]]
+first  = '^(Coupler\d+_\d+)\.port3$'
+second = '^(Coupler\d+_\d+)\.port4$'
+```
+
+The two declarations have to agree: a port the pattern names and no rule pairs
+is a load problem, and so is a port a rule pairs whose role is something else.
+The pairing is declared rather than measured from the artwork — the two ends of
+a crossing do face opposite ways a coupler's width apart, but that says what the
+artwork happens to be, not what the crossing is meant to be. See
+[decision 0030](decisions/0030-bridge-pairs-are-declared.md).
+
 The 4-qubit chip's `Q1.port0` and the 69-qubit chip's `Qb1.port0` are handled by
 two different config files, not by a prefix test that has to satisfy both.
+
+### The component a port belongs to
+
+A port also carries the **component** it belongs to, filled at load from one
+more configured pattern, whose single capture group is the name:
+
+```toml
+[ports.patterns]
+component = '^([^.]+)\.port\d+$'
+```
+
+This is declared in exactly the sense the roles are: the pattern says which part
+of a label names the component, and no algorithm reads a label itself. It exists
+because the planning stages need the grouping and cannot get it any other way. A
+coupler's artwork carries routable ports on opposite sides and an inner wire
+crosses between them, so which two ports those are is a property of the
+component; and what the inner circuit has to reach is a qubit's own routing
+ports, which the role does not separate from a coupler's because both classify
+as `Conventional`.
+
+Everything past the grouping is geometry rather than another name test. A
+component that carries a `Resonator` port is a qubit; every other component with
+routable ports is a coupler, and a coupler's ports bridge in pairs whose
+orientations are opposite. `mqt-scpd doctor` prints the grouping, so a pattern
+that captures nothing is visible at once rather than as a Global stage with no
+bridges. See
+[decision 0027](decisions/0027-components-are-declared.md).
 
 ### Geometry
 
@@ -296,17 +351,45 @@ so each has a distinct type and conversions are explicit.
 | Detail grid | `DCoord` | pixel index             | Detail routing: the A* over partitions                              |
 | Router grid | `RCoord` | node index plus heading | Final routing: the Dubins A* state, heading `0..7`                  |
 
-Conversions live in `MQT::ScpdGrid` as named functions, never as inline
-arithmetic at the call site. The three grid types enter `geometry.fbs` together
-with that module in phase 2; until then the schema carries `Point` alone. The
-prototype re-derived `pad + x * px_w` in six separate renderers, each with its
-own y-flip convention.
+All four types live in `geometry.fbs`. Conversions live in `MQT::ScpdGrid` as
+named functions, never as inline arithmetic at the call site: one `GridMetrics`
+value describes a grid — its cell counts, the layout point of cell `(0, 0)` and
+its cell step along each axis — and every conversion between layout units and
+cells goes through it. The prototype re-derived `pad + x * px_w` in six separate
+renderers, each with its own y-flip convention.
+
+A `GridMetrics` puts cell `(0, 0)` on the minimum corner of the chip's box and
+the last cell on the maximum corner, so one cell step is the extent of the box
+divided by the number of steps and every point of the box rounds onto a cell.
+
+That is a **node** convention: a cell is a point. A raster convention would make
+a cell an area covering `[k, k + 1)` and test it at its center, and the two
+frames differ by half a cell. The prototype uses the raster one, so its grids
+and ours do not agree cell for cell: on the 9-qubit chip the difference moves 28
+of 102 port cells by one cell and, through the port bands, 43 of 78 routing
+targets by three cells along their own direction, which changes which
+bottlenecks the capacity stage's target filter rejects. The node convention is
+kept because the whole grid module is built on it and because a cell of the
+router grid is a search state rather than an area; the cost is that the capacity
+chains are not the prototype's, and it is recorded here rather than worked
+around. The same type describes all three grids; the coordinate structs say
+which grid a cell belongs to. The detail grid of a capacity grid is that grid
+refined by a whole factor, and the router grid divides every capacity cell into
+as many cells as it holds steps of the configured cell size, rounded up, so a
+router cell is never wider than that size.
 
 `Rotation` and the router heading are both eight-way. That assumption is baked
-into the A* state index and the flat primitive tables, where a heading is packed
-as `(ang << 10) | path_id`. It is named as `kNumAngles` rather than spelled `8`
-throughout, so it is greppable — but changing it is out of scope for the first
-release.
+into the search state index and the primitive tables, where a move identifier
+occupies ten bits beside the heading. It is named as `NUM_HEADINGS` rather than
+spelled `8` throughout, so it is greppable — but changing it is out of scope for
+the first release. See
+[decision 0015](decisions/0015-grid-and-memory-model.md).
+
+A heading is a direction of travel: heading `0` travels toward negative `y`, and
+the headings continue clockwise in eighth turns when `y` points up, so heading
+`2` travels toward negative `x` and heading `6` toward positive `x`. A port's
+heading is the one a wire has when it arrives there, so a wire leaving that port
+carries the reverse.
 
 ## Paths
 
@@ -334,18 +417,17 @@ the configuration.
 
 | File            | Holds                                                                                                          | Owner               |
 | --------------- | -------------------------------------------------------------------------------------------------------------- | ------------------- |
-| `geometry.fbs`  | `Point`, `Polygon`, `Line`, `Arc`, `Segment`, `Path`                                                           | `MQT::ScpdGeometry` |
+| `geometry.fbs`  | `Point`, `GCoord`, `DCoord`, `RCoord`, `Polygon`, `Line`, `Arc`, `Segment`, `Path`                             | `MQT::ScpdGeometry` |
 | `design.fbs`    | The two role enums, `Rotation`, `PortRef`, `Port`, `Chip`, `Connection`, `DesignRules`, `CpwCoupler`, `Bridge` | `MQT::ScpdDesign`   |
 | `config.fbs`    | `Config` with the port and grid sections, with the defaults the loader applies to absent keys                  | `MQT::ScpdDesign`   |
 | `artifacts.fbs` | The six stage outputs, each behind the one `Artifact` root                                                     | `MQT::ScpdIO`       |
 | `drc.fbs`       | `DrcReport` and its findings                                                                                   | `MQT::ScpdDrc`      |
 
 A schema holds what the implemented phases read. Each later stage appends its
-own tables and fields when it arrives: the grid coordinate types with
-`MQT::ScpdGrid`, the contents of the capacity, global and detail outputs with
-their stages, and the stage, component and DRC parameters of `Config` with the
-code that consumes them. FlatBuffers permits that growth without touching what
-exists.
+own tables and fields when it arrives: the contents of the capacity, global and
+detail outputs with their stages, and the stage, component and DRC parameters of
+`Config` with the code that consumes them. FlatBuffers permits that growth
+without touching what exists.
 
 Each schema declares its own namespace, `mqt.scpd.flatbuffers.<schema>`, so the
 generated code is grouped by the schema that owns it. In C++ that is one header
@@ -394,6 +476,9 @@ trust boundary. Both are validated on load, and both report actionable errors
 that name the offending field:
 
 - Every port matches exactly one role pattern.
+- The `component` pattern, where it is given, compiles and has exactly one
+  capture group. A pattern that says which labels have a component without
+  saying what it is called is a mistake rather than a choice.
 - Both `all_outer` and `fixed_outer` are present. Every label in them is a
   routable port of the chip and appears once, and `fixed_outer ⊆ all_outer`.
 - Every regular expression compiles.

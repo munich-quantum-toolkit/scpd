@@ -43,6 +43,26 @@ max_feedline_utilization = 5
 feedline_terminations = 1
 """
 
+WITH_BRIDGES = (
+    MANUAL.replace(
+        "conventional = '^(Qb\\d+\\.port1|Coupler\\d+_\\d+\\.port[0-4])$'",
+        "conventional = '^(Qb\\d+\\.port1|Coupler\\d+_\\d+\\.port0)$'\nbridge_pair = '^Coupler\\d+_\\d+\\.port[1-4]$'",
+    ).replace(
+        "[ports.sequences]",
+        "[[ports.bridge_pairs]]\n"
+        "first = '^(Coupler\\d+_\\d+)\\.port1$'\n"
+        "second = '^(Coupler\\d+_\\d+)\\.port2$'\n\n"
+        "[[ports.bridge_pairs]]\n"
+        "first = '^(Coupler\\d+_\\d+)\\.port3$'\n"
+        "second = '^(Coupler\\d+_\\d+)\\.port4$'\n\n"
+        "[ports.sequences]",
+    )
+    + """
+[stages.global]
+internal_bridges = true
+"""
+)
+
 WITH_GRID = (
     MANUAL
     + """
@@ -67,7 +87,43 @@ def test_manual_configuration_loads_with_the_schema_defaults() -> None:
     assert config.rules is not None
     assert config.rules.targetResonatorLength == pytest.approx(2500.0)
     assert config.rules.maxFeedlineUtilization == 5
-    assert config.grid is None
+    # The grid and the stage sections are built whether or not the file carries them, so that an
+    # absent section is the defaults rather than nothing for the stage that reads it.
+    assert config.grid is not None
+    assert config.grid.capacityCellsX == 50
+    assert config.grid.detailFactor == 30
+    assert config.stages is not None
+    assert config.stages.capacity is not None
+    assert config.stages.capacity.bottleneckClearance == pytest.approx(1.5)
+    assert config.stages.assignment is not None
+    assert config.stages.assignment.launcherTarget == 0
+    assert config.stages.solver is not None
+    assert not config.stages.solver.backend
+
+
+def test_the_bridge_declaration_is_optional_and_loads_in_two_parts() -> None:
+    """The pattern names the ports a wire crosses at; the rules say which two of them pair."""
+    plain = parse_config(MANUAL)
+    assert plain.ports is not None
+    assert plain.ports.patterns is not None
+    assert not plain.ports.patterns.bridgePair
+    assert plain.ports.bridgePairs == []
+    assert plain.stages is not None
+    assert plain.stages.global_ is not None
+    # A crossing of a component the ring does not reach is not taken unless a run asks for it.
+    assert plain.stages.global_.internalBridges is False
+
+    declared = parse_config(WITH_BRIDGES)
+    assert declared.ports is not None
+    assert declared.ports.patterns is not None
+    assert declared.ports.patterns.bridgePair == r"^Coupler\d+_\d+\.port[1-4]$"
+    assert [(rule.first, rule.second) for rule in declared.ports.bridgePairs] == [
+        (r"^(Coupler\d+_\d+)\.port1$", r"^(Coupler\d+_\d+)\.port2$"),
+        (r"^(Coupler\d+_\d+)\.port3$", r"^(Coupler\d+_\d+)\.port4$"),
+    ]
+    assert declared.stages is not None
+    assert declared.stages.global_ is not None
+    assert declared.stages.global_.internalBridges is True
 
 
 def test_the_grid_section_is_optional_and_partial() -> None:
@@ -95,6 +151,12 @@ def test_the_grid_section_is_optional_and_partial() -> None:
         ),
         (MANUAL.replace('[chip]\ninput = "routing_config.json"\n', ""), "[chip] is missing"),
         (MANUAL.replace('fixed_outer = ["Qb1.port0"]', "fixed_outer = [1]"), "must be an array of strings"),
+        (
+            MANUAL.replace("[ports.sequences]", "[[ports.bridge_pairs]]\nfirst = '^(C)$'\n\n[ports.sequences]"),
+            "[ports.bridge_pairs[0]] lacks the required key 'second'",
+        ),
+        (MANUAL + "\n[ports.bridge_pairs]\nfirst = 1\n", "must be an array of tables"),
+        (MANUAL + "\n[stages.global]\ninternal_bridges = 1\n", "internal_bridges must be true or false"),
         ("not = [toml", "is not TOML"),
     ],
 )

@@ -62,6 +62,50 @@ set(JSON_Install
 FetchContent_Declare(nlohmann_json URL ${NLOHMANN_JSON_URL})
 list(APPEND FETCH_PACKAGES nlohmann_json)
 
+# HiGHS solves the mixed-integer programs of the planning stages. It is linked in, so an
+# installation without a commercial solver licence is fully functional. Gurobi is reached at run
+# time through gurobipy over an MPS round trip and is never a build dependency.
+set(HIGHS_VERSION
+    1.11.0
+    CACHE STRING "HiGHS version")
+set(HIGHS_URL https://github.com/ERGO-Code/HiGHS/archive/refs/tags/v${HIGHS_VERSION}.tar.gz)
+set(BUILD_EXAMPLES
+    OFF
+    CACHE BOOL "" FORCE)
+set(HIGHSINT64
+    OFF
+    CACHE BOOL "" FORCE)
+set(ZLIB
+    OFF
+    CACHE BOOL "" FORCE)
+set(BUILD_CXX_EXAMPLE
+    OFF
+    CACHE BOOL "" FORCE)
+FetchContent_Declare(highs URL ${HIGHS_URL} DOWNLOAD_EXTRACT_TIMESTAMP ON)
+list(APPEND FETCH_PACKAGES highs)
+
+# Boost.Polygon supplies the one Voronoi construction of the capacity stage. Only that library is
+# configured, and a user-installed Boost is never required. Boost's own CMake declares
+# BUILD_SHARED_LIBS as a cache option, which would otherwise turn every target of this project and
+# of HiGHS into a shared library and leave the wheel with a runtime dependency to ship.
+set(BUILD_SHARED_LIBS
+    OFF
+    CACHE BOOL "" FORCE)
+set(BOOST_VERSION
+    1.89.0
+    CACHE STRING "Boost version")
+set(BOOST_URL
+    https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-cmake.tar.xz
+)
+set(BOOST_INCLUDE_LIBRARIES
+    polygon
+    CACHE STRING "" FORCE)
+set(BOOST_ENABLE_CMAKE
+    ON
+    CACHE BOOL "" FORCE)
+FetchContent_Declare(Boost URL ${BOOST_URL} DOWNLOAD_EXTRACT_TIMESTAMP ON)
+list(APPEND FETCH_PACKAGES Boost)
+
 if(BUILD_MQT_SCPD_TESTS)
   set(gtest_force_shared_crt
       ON
@@ -90,4 +134,23 @@ if(NOT TARGET mqt-scpd-json)
   add_library(mqt-scpd-json INTERFACE)
   target_include_directories(mqt-scpd-json SYSTEM
                              INTERFACE $<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/include>)
+endif()
+
+# HiGHS ships its headers across several directories and builds with warnings the project treats as
+# errors, so it is reached through a system include as well.
+if(NOT TARGET mqt-scpd-highs)
+  add_library(mqt-scpd-highs INTERFACE)
+  target_link_libraries(mqt-scpd-highs INTERFACE highs::highs)
+  get_target_property(MQT_SCPD_HIGHS_INCLUDES highs::highs INTERFACE_INCLUDE_DIRECTORIES)
+  if(MQT_SCPD_HIGHS_INCLUDES)
+    target_include_directories(mqt-scpd-highs SYSTEM INTERFACE ${MQT_SCPD_HIGHS_INCLUDES})
+  endif()
+endif()
+
+# Boost.Polygon, likewise as a system include.
+if(NOT TARGET mqt-scpd-polygon)
+  add_library(mqt-scpd-polygon INTERFACE)
+  target_include_directories(mqt-scpd-polygon SYSTEM
+                             INTERFACE $<BUILD_INTERFACE:${boost_polygon_SOURCE_DIR}/include>)
+  target_link_libraries(mqt-scpd-polygon INTERFACE Boost::polygon)
 endif()

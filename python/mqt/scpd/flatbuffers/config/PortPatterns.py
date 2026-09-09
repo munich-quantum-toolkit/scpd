@@ -48,8 +48,27 @@ class PortPatterns(object):
             return self._tab.String(o + self._tab.Pos)
         return None
 
+    # The ports a wire crosses a component at, rather than ends at. Optional:
+    # a chip whose components carry no crossing declares none. Which two of
+    # these ports pair is PortConfig.bridge_pairs.
+    # PortPatterns
+    def BridgePair(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # The component a port belongs to, as one capture group over the label.
+    # A port whose label the pattern does not match carries no component.
+    # PortPatterns
+    def Component(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
 def PortPatternsStart(builder: flatbuffers.Builder):
-    builder.StartObject(3)
+    builder.StartObject(5)
 
 def Start(builder: flatbuffers.Builder):
     PortPatternsStart(builder)
@@ -72,6 +91,18 @@ def PortPatternsAddConventional(builder: flatbuffers.Builder, conventional: int)
 def AddConventional(builder: flatbuffers.Builder, conventional: int):
     PortPatternsAddConventional(builder, conventional)
 
+def PortPatternsAddBridgePair(builder: flatbuffers.Builder, bridgePair: int):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(bridgePair), 0)
+
+def AddBridgePair(builder: flatbuffers.Builder, bridgePair: int):
+    PortPatternsAddBridgePair(builder, bridgePair)
+
+def PortPatternsAddComponent(builder: flatbuffers.Builder, component: int):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(component), 0)
+
+def AddComponent(builder: flatbuffers.Builder, component: int):
+    PortPatternsAddComponent(builder, component)
+
 def PortPatternsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -87,10 +118,14 @@ class PortPatternsT(object):
         launcher = None,
         resonator = None,
         conventional = None,
+        bridgePair = None,
+        component = None,
     ):
         self.launcher = launcher  # type: Optional[str]
         self.resonator = resonator  # type: Optional[str]
         self.conventional = conventional  # type: Optional[str]
+        self.bridgePair = bridgePair  # type: Optional[str]
+        self.component = component  # type: Optional[str]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -122,6 +157,12 @@ class PortPatternsT(object):
         self.conventional = portPatterns.Conventional()
         if self.conventional is not None:
             self.conventional = self.conventional.decode('utf-8')
+        self.bridgePair = portPatterns.BridgePair()
+        if self.bridgePair is not None:
+            self.bridgePair = self.bridgePair.decode('utf-8')
+        self.component = portPatterns.Component()
+        if self.component is not None:
+            self.component = self.component.decode('utf-8')
 
     # PortPatternsT
     def Pack(self, builder):
@@ -131,6 +172,10 @@ class PortPatternsT(object):
             resonator = builder.CreateString(self.resonator)
         if self.conventional is not None:
             conventional = builder.CreateString(self.conventional)
+        if self.bridgePair is not None:
+            bridgePair = builder.CreateString(self.bridgePair)
+        if self.component is not None:
+            component = builder.CreateString(self.component)
         PortPatternsStart(builder)
         if self.launcher is not None:
             PortPatternsAddLauncher(builder, launcher)
@@ -138,5 +183,9 @@ class PortPatternsT(object):
             PortPatternsAddResonator(builder, resonator)
         if self.conventional is not None:
             PortPatternsAddConventional(builder, conventional)
+        if self.bridgePair is not None:
+            PortPatternsAddBridgePair(builder, bridgePair)
+        if self.component is not None:
+            PortPatternsAddComponent(builder, component)
         portPatterns = PortPatternsEnd(builder)
         return portPatterns

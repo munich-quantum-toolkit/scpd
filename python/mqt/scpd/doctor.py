@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from . import pyscpd
 from .chip import ChipError, chip_input_path, decode_chip, load_chip, obstacles_of, ports_of, role_name
 from .config import ConfigError, load_config, write_config
+from .solvers import available
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -72,6 +73,7 @@ def classification_table(chip: ChipT, config: ConfigT) -> list[str]:
         "launcher": patterns.launcher if patterns else "",
         "resonator": patterns.resonator if patterns else "",
         "conventional": patterns.conventional if patterns else "",
+        "bridge_pair": (patterns.bridgePair or "") if patterns else "",
     }
     counts: Counter[str] = Counter()
     examples: dict[str, list[str]] = {}
@@ -82,7 +84,7 @@ def classification_table(chip: ChipT, config: ConfigT) -> list[str]:
         if len(examples[name]) < 3:
             examples[name].append(port.label or "")
     lines = [f"{'role':<13}{'ports':>6}  pattern / first labels"]
-    for name in ("launcher", "resonator", "conventional"):
+    for name in ("launcher", "resonator", "conventional", "bridge_pair"):
         if name not in counts and not pattern_of[name]:
             continue
         lines.append(f"{name:<13}{counts.get(name, 0):>6}  {pattern_of[name]}")
@@ -90,6 +92,52 @@ def classification_table(chip: ChipT, config: ConfigT) -> list[str]:
             lines.append(f"{'':<19}  {', '.join(examples[name])}")
     lines.extend(f"{name:<13}{counts[name]:>6}" for name in counts if name not in pattern_of)
     return lines
+
+
+def component_summary(chip: ChipT, config: ConfigT) -> list[str]:
+    """The component grouping the configured pattern produced.
+
+    A wrong component pattern is as invisible as a wrong role pattern was, and costs as much: the
+    inner circuit groups a coupler's ports by it, so a pattern that captures nothing leaves the
+    global stage with no bridges and no inner targets at all.
+
+    Returns:
+        The lines.
+    """
+    patterns = config.ports.patterns if config.ports is not None else None
+    pattern = patterns.component if patterns is not None else ""
+    if not pattern:
+        return ["components: no pattern; the planning stages see no component grouping"]
+
+    counts: Counter[str] = Counter()
+    unmatched = 0
+    for port in ports_of(chip):
+        name = port.component.decode() if isinstance(port.component, bytes) else (port.component or "")
+        if name:
+            counts[name] += 1
+        else:
+            unmatched += 1
+    lines = [f"components: {len(counts)} from {pattern}"]
+    if counts:
+        shown = ", ".join(f"{name} ({size})" for name, size in sorted(counts.items())[:6])
+        lines.append(f"  {shown}" + (", ..." if len(counts) > 6 else ""))
+    if unmatched:
+        lines.append(f"  {unmatched} port(s) match no component")
+    return lines
+
+
+def solver_summary() -> list[str]:
+    """Which solvers this installation can reach, and why not where it cannot.
+
+    Returns:
+        The lines.
+    """
+    usable, why = available()
+    return [
+        "solvers",
+        "  highs:  linked in, always available",
+        "  gurobi: " + ("available through gurobipy" if usable else why),
+    ]
 
 
 def ring_summary(config: ConfigT) -> list[str]:
@@ -147,5 +195,7 @@ def run_doctor(config_path: Path, *, list_ports: bool = False) -> DoctorReport:
     report.say(*classification_table(chip, config))
     if list_ports:
         report.say("", *(f"  {port.label or '':<24} {role_name(port.role)}" for port in ports_of(chip)))
+    report.say("", *component_summary(chip, config))
     report.say("", *ring_summary(config))
+    report.say("", *solver_summary())
     return report

@@ -5,6 +5,7 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
+from mqt.scpd.flatbuffers.config.BridgeRule import BridgeRule
 from mqt.scpd.flatbuffers.config.PortPatterns import PortPatterns
 from mqt.scpd.flatbuffers.config.PortSequences import PortSequences
 from typing import Optional
@@ -48,8 +49,34 @@ class PortConfig(object):
             return obj
         return None
 
+    # How the ports the bridge_pair pattern names pair off, in the order the
+    # rules are applied. Empty when the chip declares no bridge ports.
+    # PortConfig
+    def BridgePairs(self, j: int) -> Optional[BridgeRule]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = BridgeRule()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # PortConfig
+    def BridgePairsLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # PortConfig
+    def BridgePairsIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        return o == 0
+
 def PortConfigStart(builder: flatbuffers.Builder):
-    builder.StartObject(2)
+    builder.StartObject(3)
 
 def Start(builder: flatbuffers.Builder):
     PortConfigStart(builder)
@@ -66,16 +93,29 @@ def PortConfigAddSequences(builder: flatbuffers.Builder, sequences: int):
 def AddSequences(builder: flatbuffers.Builder, sequences: int):
     PortConfigAddSequences(builder, sequences)
 
+def PortConfigAddBridgePairs(builder: flatbuffers.Builder, bridgePairs: int):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(bridgePairs), 0)
+
+def AddBridgePairs(builder: flatbuffers.Builder, bridgePairs: int):
+    PortConfigAddBridgePairs(builder, bridgePairs)
+
+def PortConfigStartBridgePairsVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartBridgePairsVector(builder, numElems: int) -> int:
+    return PortConfigStartBridgePairsVector(builder, numElems)
+
 def PortConfigEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
 def End(builder: flatbuffers.Builder) -> int:
     return PortConfigEnd(builder)
 
+import mqt.scpd.flatbuffers.config.BridgeRule
 import mqt.scpd.flatbuffers.config.PortPatterns
 import mqt.scpd.flatbuffers.config.PortSequences
 try:
-    from typing import Optional
+    from typing import List, Optional
 except:
     pass
 
@@ -86,9 +126,11 @@ class PortConfigT(object):
         self,
         patterns = None,
         sequences = None,
+        bridgePairs = None,
     ):
         self.patterns = patterns  # type: Optional[mqt.scpd.flatbuffers.config.PortPatterns.PortPatternsT]
         self.sequences = sequences  # type: Optional[mqt.scpd.flatbuffers.config.PortSequences.PortSequencesT]
+        self.bridgePairs = bridgePairs  # type: Optional[List[mqt.scpd.flatbuffers.config.BridgeRule.BridgeRuleT]]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -115,6 +157,14 @@ class PortConfigT(object):
             self.patterns = mqt.scpd.flatbuffers.config.PortPatterns.PortPatternsT.InitFromObj(portConfig.Patterns())
         if portConfig.Sequences() is not None:
             self.sequences = mqt.scpd.flatbuffers.config.PortSequences.PortSequencesT.InitFromObj(portConfig.Sequences())
+        if not portConfig.BridgePairsIsNone():
+            self.bridgePairs = []
+            for i in range(portConfig.BridgePairsLength()):
+                if portConfig.BridgePairs(i) is None:
+                    self.bridgePairs.append(None)
+                else:
+                    bridgeRule_ = mqt.scpd.flatbuffers.config.BridgeRule.BridgeRuleT.InitFromObj(portConfig.BridgePairs(i))
+                    self.bridgePairs.append(bridgeRule_)
 
     # PortConfigT
     def Pack(self, builder):
@@ -122,10 +172,20 @@ class PortConfigT(object):
             patterns = self.patterns.Pack(builder)
         if self.sequences is not None:
             sequences = self.sequences.Pack(builder)
+        if self.bridgePairs is not None:
+            bridgePairslist = []
+            for i in range(len(self.bridgePairs)):
+                bridgePairslist.append(self.bridgePairs[i].Pack(builder))
+            PortConfigStartBridgePairsVector(builder, len(self.bridgePairs))
+            for i in reversed(range(len(self.bridgePairs))):
+                builder.PrependUOffsetTRelative(bridgePairslist[i])
+            bridgePairs = builder.EndVector()
         PortConfigStart(builder)
         if self.patterns is not None:
             PortConfigAddPatterns(builder, patterns)
         if self.sequences is not None:
             PortConfigAddSequences(builder, sequences)
+        if self.bridgePairs is not None:
+            PortConfigAddBridgePairs(builder, bridgePairs)
         portConfig = PortConfigEnd(builder)
         return portConfig

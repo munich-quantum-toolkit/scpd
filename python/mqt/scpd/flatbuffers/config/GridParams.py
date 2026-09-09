@@ -54,8 +54,16 @@ class GridParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 15
 
+    # Cells of the detail grid per cell of the capacity grid, along each axis.
+    # GridParams
+    def DetailFactor(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 30
+
 def GridParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(4)
+    builder.StartObject(5)
 
 def Start(builder: flatbuffers.Builder):
     GridParamsStart(builder)
@@ -84,6 +92,12 @@ def GridParamsAddLauncherOffsetY(builder: flatbuffers.Builder, launcherOffsetY: 
 def AddLauncherOffsetY(builder: flatbuffers.Builder, launcherOffsetY: int):
     GridParamsAddLauncherOffsetY(builder, launcherOffsetY)
 
+def GridParamsAddDetailFactor(builder: flatbuffers.Builder, detailFactor: int):
+    builder.PrependUint32Slot(4, detailFactor, 30)
+
+def AddDetailFactor(builder: flatbuffers.Builder, detailFactor: int):
+    GridParamsAddDetailFactor(builder, detailFactor)
+
 def GridParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -100,11 +114,13 @@ class GridParamsT(object):
         capacityCellsY = 0,
         launcherOffsetX = 15,
         launcherOffsetY = 15,
+        detailFactor = 30,
     ):
         self.capacityCellsX = capacityCellsX  # type: int
         self.capacityCellsY = capacityCellsY  # type: int
         self.launcherOffsetX = launcherOffsetX  # type: int
         self.launcherOffsetY = launcherOffsetY  # type: int
+        self.detailFactor = detailFactor  # type: int
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -131,6 +147,7 @@ class GridParamsT(object):
         self.capacityCellsY = gridParams.CapacityCellsY()
         self.launcherOffsetX = gridParams.LauncherOffsetX()
         self.launcherOffsetY = gridParams.LauncherOffsetY()
+        self.detailFactor = gridParams.DetailFactor()
 
     # GridParamsT
     def Pack(self, builder):
@@ -139,5 +156,6 @@ class GridParamsT(object):
         GridParamsAddCapacityCellsY(builder, self.capacityCellsY)
         GridParamsAddLauncherOffsetX(builder, self.launcherOffsetX)
         GridParamsAddLauncherOffsetY(builder, self.launcherOffsetY)
+        GridParamsAddDetailFactor(builder, self.detailFactor)
         gridParams = GridParamsEnd(builder)
         return gridParams

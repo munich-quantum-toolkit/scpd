@@ -5,9 +5,14 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
+from mqt.scpd.flatbuffers.artifacts.Lattice import Lattice
+from mqt.scpd.flatbuffers.design.Connection import Connection
+from mqt.scpd.flatbuffers.design.PortRef import PortRef
+from typing import Optional
 np = import_numpy()
 
-# Output of the Global stage. Empty when the chip has no inner circuit.
+# Output of the Global stage. The lattices are empty when the chip has no
+# inner circuit, which is a valid state rather than a skipped stage.
 class GlobalRouting(object):
     __slots__ = ['_tab']
 
@@ -30,11 +35,171 @@ class GlobalRouting(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
+    # GlobalRouting
+    def Lattices(self, j: int) -> Optional[Lattice]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = Lattice()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # GlobalRouting
+    def LatticesLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # GlobalRouting
+    def LatticesIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        return o == 0
+
+    # The inner-circuit connections the solved flow implies.
+    # GlobalRouting
+    def Connections(self, j: int) -> Optional[Connection]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = Connection()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # GlobalRouting
+    def ConnectionsLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # GlobalRouting
+    def ConnectionsIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        return o == 0
+
+    # The outer port ring the Assignment stage consumes. The inner circuit
+    # extends the configured ring with the coupler ports it surfaces at, so
+    # this is what the assignment reads and not the configuration.
+    # GlobalRouting
+    def OuterRing(self, j: int) -> Optional[PortRef]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            obj = PortRef()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # GlobalRouting
+    def OuterRingLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # GlobalRouting
+    def OuterRingIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        return o == 0
+
+    # The resonator ports the assignment has to give a launcher.
+    # GlobalRouting
+    def Resonators(self, j: int) -> Optional[PortRef]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            obj = PortRef()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # GlobalRouting
+    def ResonatorsLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # GlobalRouting
+    def ResonatorsIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        return o == 0
+
+    # GlobalRouting
+    def Objective(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
 def GlobalRoutingStart(builder: flatbuffers.Builder):
-    builder.StartObject(0)
+    builder.StartObject(5)
 
 def Start(builder: flatbuffers.Builder):
     GlobalRoutingStart(builder)
+
+def GlobalRoutingAddLattices(builder: flatbuffers.Builder, lattices: int):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(lattices), 0)
+
+def AddLattices(builder: flatbuffers.Builder, lattices: int):
+    GlobalRoutingAddLattices(builder, lattices)
+
+def GlobalRoutingStartLatticesVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartLatticesVector(builder, numElems: int) -> int:
+    return GlobalRoutingStartLatticesVector(builder, numElems)
+
+def GlobalRoutingAddConnections(builder: flatbuffers.Builder, connections: int):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(connections), 0)
+
+def AddConnections(builder: flatbuffers.Builder, connections: int):
+    GlobalRoutingAddConnections(builder, connections)
+
+def GlobalRoutingStartConnectionsVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartConnectionsVector(builder, numElems: int) -> int:
+    return GlobalRoutingStartConnectionsVector(builder, numElems)
+
+def GlobalRoutingAddOuterRing(builder: flatbuffers.Builder, outerRing: int):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(outerRing), 0)
+
+def AddOuterRing(builder: flatbuffers.Builder, outerRing: int):
+    GlobalRoutingAddOuterRing(builder, outerRing)
+
+def GlobalRoutingStartOuterRingVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartOuterRingVector(builder, numElems: int) -> int:
+    return GlobalRoutingStartOuterRingVector(builder, numElems)
+
+def GlobalRoutingAddResonators(builder: flatbuffers.Builder, resonators: int):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(resonators), 0)
+
+def AddResonators(builder: flatbuffers.Builder, resonators: int):
+    GlobalRoutingAddResonators(builder, resonators)
+
+def GlobalRoutingStartResonatorsVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartResonatorsVector(builder, numElems: int) -> int:
+    return GlobalRoutingStartResonatorsVector(builder, numElems)
+
+def GlobalRoutingAddObjective(builder: flatbuffers.Builder, objective: float):
+    builder.PrependFloat64Slot(4, objective, 0.0)
+
+def AddObjective(builder: flatbuffers.Builder, objective: float):
+    GlobalRoutingAddObjective(builder, objective)
 
 def GlobalRoutingEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -42,14 +207,30 @@ def GlobalRoutingEnd(builder: flatbuffers.Builder) -> int:
 def End(builder: flatbuffers.Builder) -> int:
     return GlobalRoutingEnd(builder)
 
+import mqt.scpd.flatbuffers.artifacts.Lattice
+import mqt.scpd.flatbuffers.design.Connection
+import mqt.scpd.flatbuffers.design.PortRef
+try:
+    from typing import List
+except:
+    pass
 
 class GlobalRoutingT(object):
 
     # GlobalRoutingT
     def __init__(
         self,
+        lattices = None,
+        connections = None,
+        outerRing = None,
+        resonators = None,
+        objective = 0.0,
     ):
-        pass
+        self.lattices = lattices  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.Lattice.LatticeT]]
+        self.connections = connections  # type: Optional[List[mqt.scpd.flatbuffers.design.Connection.ConnectionT]]
+        self.outerRing = outerRing  # type: Optional[List[mqt.scpd.flatbuffers.design.PortRef.PortRefT]]
+        self.resonators = resonators  # type: Optional[List[mqt.scpd.flatbuffers.design.PortRef.PortRefT]]
+        self.objective = objective  # type: float
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -72,9 +253,77 @@ class GlobalRoutingT(object):
     def _UnPack(self, globalRouting):
         if globalRouting is None:
             return
+        if not globalRouting.LatticesIsNone():
+            self.lattices = []
+            for i in range(globalRouting.LatticesLength()):
+                if globalRouting.Lattices(i) is None:
+                    self.lattices.append(None)
+                else:
+                    lattice_ = mqt.scpd.flatbuffers.artifacts.Lattice.LatticeT.InitFromObj(globalRouting.Lattices(i))
+                    self.lattices.append(lattice_)
+        if not globalRouting.ConnectionsIsNone():
+            self.connections = []
+            for i in range(globalRouting.ConnectionsLength()):
+                if globalRouting.Connections(i) is None:
+                    self.connections.append(None)
+                else:
+                    connection_ = mqt.scpd.flatbuffers.design.Connection.ConnectionT.InitFromObj(globalRouting.Connections(i))
+                    self.connections.append(connection_)
+        if not globalRouting.OuterRingIsNone():
+            self.outerRing = []
+            for i in range(globalRouting.OuterRingLength()):
+                if globalRouting.OuterRing(i) is None:
+                    self.outerRing.append(None)
+                else:
+                    portRef_ = mqt.scpd.flatbuffers.design.PortRef.PortRefT.InitFromObj(globalRouting.OuterRing(i))
+                    self.outerRing.append(portRef_)
+        if not globalRouting.ResonatorsIsNone():
+            self.resonators = []
+            for i in range(globalRouting.ResonatorsLength()):
+                if globalRouting.Resonators(i) is None:
+                    self.resonators.append(None)
+                else:
+                    portRef_ = mqt.scpd.flatbuffers.design.PortRef.PortRefT.InitFromObj(globalRouting.Resonators(i))
+                    self.resonators.append(portRef_)
+        self.objective = globalRouting.Objective()
 
     # GlobalRoutingT
     def Pack(self, builder):
+        if self.lattices is not None:
+            latticeslist = []
+            for i in range(len(self.lattices)):
+                latticeslist.append(self.lattices[i].Pack(builder))
+            GlobalRoutingStartLatticesVector(builder, len(self.lattices))
+            for i in reversed(range(len(self.lattices))):
+                builder.PrependUOffsetTRelative(latticeslist[i])
+            lattices = builder.EndVector()
+        if self.connections is not None:
+            connectionslist = []
+            for i in range(len(self.connections)):
+                connectionslist.append(self.connections[i].Pack(builder))
+            GlobalRoutingStartConnectionsVector(builder, len(self.connections))
+            for i in reversed(range(len(self.connections))):
+                builder.PrependUOffsetTRelative(connectionslist[i])
+            connections = builder.EndVector()
+        if self.outerRing is not None:
+            GlobalRoutingStartOuterRingVector(builder, len(self.outerRing))
+            for i in reversed(range(len(self.outerRing))):
+                self.outerRing[i].Pack(builder)
+            outerRing = builder.EndVector()
+        if self.resonators is not None:
+            GlobalRoutingStartResonatorsVector(builder, len(self.resonators))
+            for i in reversed(range(len(self.resonators))):
+                self.resonators[i].Pack(builder)
+            resonators = builder.EndVector()
         GlobalRoutingStart(builder)
+        if self.lattices is not None:
+            GlobalRoutingAddLattices(builder, lattices)
+        if self.connections is not None:
+            GlobalRoutingAddConnections(builder, connections)
+        if self.outerRing is not None:
+            GlobalRoutingAddOuterRing(builder, outerRing)
+        if self.resonators is not None:
+            GlobalRoutingAddResonators(builder, resonators)
+        GlobalRoutingAddObjective(builder, self.objective)
         globalRouting = GlobalRoutingEnd(builder)
         return globalRouting

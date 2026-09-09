@@ -25,8 +25,10 @@ import flatbuffers
 
 from .flatbuffers.artifacts.Artifact import Artifact, ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
+from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
+from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from .flatbuffers.artifacts.StageOutput import StageOutput
 from .flatbuffers.geometry.Arc import ArcT
 from .flatbuffers.geometry.Line import LineT
@@ -43,7 +45,9 @@ if TYPE_CHECKING:
 IDENTIFIER = b"SCP1"
 
 _OUTPUT_TYPES: dict[int, type] = {
+    StageOutput.CapacityPlan: CapacityPlanT,
     StageOutput.Assignment: AssignmentT,
+    StageOutput.GlobalRouting: GlobalRoutingT,
     StageOutput.FinalRouting: FinalRoutingT,
     StageOutput.Geometry: GeometryT,
 }
@@ -118,8 +122,27 @@ def _problems(artifact: ArtifactT) -> list[str]:
     if expected is not None and not isinstance(artifact.output, expected):
         problems.append("output does not match its type tag")
         return problems
-    if isinstance(artifact.output, AssignmentT):
+    if isinstance(artifact.output, CapacityPlanT):
+        problems.extend(
+            f"{name} is missing" for name in ("capacityGrid", "detailGrid") if getattr(artifact.output, name) is None
+        )
+        problems.extend(
+            f"{name} is missing"
+            for name in ("partitions", "borders", "bottlenecks", "launchers", "nodes", "chains")
+            if getattr(artifact.output, name) is None
+        )
+    elif isinstance(artifact.output, GlobalRoutingT):
+        problems.extend(
+            f"{name} is missing"
+            for name in ("lattices", "outerRing", "resonators")
+            if getattr(artifact.output, name) is None
+        )
         _check_list(artifact.output.connections, "connections", _connection_problems, problems)
+    elif isinstance(artifact.output, AssignmentT):
+        _check_list(artifact.output.connections, "connections", _connection_problems, problems)
+        problems.extend(
+            f"{name} is missing" for name in ("ring", "launchers") if getattr(artifact.output, name) is None
+        )
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)

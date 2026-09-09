@@ -20,11 +20,16 @@
 namespace mqt::scpd::design {
 
 /// The name of a role as the configuration keys and the doctor table spell
-/// it: "launcher", "resonator", "conventional", "coupler", or "unset".
+/// it: "launcher", "resonator", "conventional", "bridge_pair", "coupler", or
+/// "unset".
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT std::string_view
 roleName(flatbuffers::design::UnassignedRole role);
 
-/// Whether a wire may end at a port of this role: Resonator or Conventional.
+/// Whether a wire may run to a port of this role: Resonator, Conventional or
+/// BridgePair. A bridge port is the one of the three a wire does not end at —
+/// it crosses the component and leaves through the port paired with it — but
+/// it is a place a wire goes, so the grid, the ring and the lattices all
+/// carry it.
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT bool
 isRoutable(flatbuffers::design::UnassignedRole role);
 

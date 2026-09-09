@@ -24,7 +24,10 @@ from .config import ConfigError, load_config
 from .doctor import run_doctor
 from .export.klayout import ExportError, write_layout
 from .inspection import InspectionError, artifact_to_json
+from .planning import PLANNING_STAGES, PlanningError, planning_geometry
 from .plot import STAGES, PlotError, layout_svg
+from .run import IMPLEMENTED, RunDirectory, RunError
+from .solvers import register as register_external_solver
 
 
 def _load(config_path: Path) -> tuple[bytes, Path]:
@@ -48,31 +51,101 @@ def command_doctor(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def _planning_for(args: argparse.Namespace, chip_bytes: bytes):  # ruff: ignore[missing-return-type-private-function]
+    """What a planning stage produced, or None for the plain layout view.
+
+    Returns:
+        The geometry of the stage, or None when the stage is ``layout``.
+
+    Raises:
+        RunError: If the stage is asked for without a run directory, or its artifact is missing.
+    """
+    if args.stage == "layout":
+        return None
+    if args.stage not in PLANNING_STAGES:
+        msg = f"stage '{args.stage}' arrives with {STAGES[args.stage]}"
+        raise RunError(msg)
+    if args.run_dir is None:
+        msg = f"stage '{args.stage}' is read from a run directory; pass --run-dir"
+        raise RunError(msg)
+    directory = RunDirectory(args.run_dir)
+    artifact = directory.artifact(args.stage)
+    if not artifact.is_file():
+        msg = f"{artifact} is missing; run `mqt-scpd plan -c ... -o {args.run_dir}` first"
+        raise RunError(msg)
+    # The global picture is drawn over the gates the circuit had to pay for, so the capacity
+    # artifact of the same run is read beside it when the run still carries one.
+    plan = directory.artifact("capacity") if args.stage == "global" else None
+    capacity = plan.read_bytes() if plan is not None and plan.is_file() else None
+    return planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity)
+
+
 def command_plot(args: argparse.Namespace) -> int:
     """Render one stage of a run as SVG.
 
     Returns:
         The exit code.
     """
-    if args.stage != "layout":
-        print(f"stage '{args.stage}' arrives with {STAGES[args.stage]}", file=sys.stderr)
-        return 1
     chip_bytes, config_path = _load(args.config)
-    svg = layout_svg(decode_chip(chip_bytes), width=args.width, tolerance=args.tolerance, title=str(config_path))
+    planning = _planning_for(args, chip_bytes)
+    svg = layout_svg(
+        decode_chip(chip_bytes),
+        width=args.width,
+        tolerance=args.tolerance,
+        title=f"{config_path} ({args.stage})",
+        planning=planning,
+    )
     args.output.write_text(svg, encoding="utf-8")
     print(f"wrote {args.output} ({len(svg.encode('utf-8')) / 1e6:.2f} MB)")
     return 0
 
 
 def command_render(args: argparse.Namespace) -> int:
-    """Write the unrouted chip as GDSII or OASIS.
+    """Write the chip, and optionally one planning stage, as GDSII or OASIS.
 
     Returns:
         The exit code.
     """
     chip_bytes, _ = _load(args.config)
-    summary = write_layout(decode_chip(chip_bytes), args.output)
-    print(f"wrote {summary.path} as {summary.format}: {summary.polygons} polygons, {summary.ports} ports")
+    planning = _planning_for(args, chip_bytes)
+    summary = write_layout(decode_chip(chip_bytes), args.output, planning=planning)
+    extra = f", {summary.planning} planning shapes" if summary.planning else ""
+    print(f"wrote {summary.path} as {summary.format}: {summary.polygons} polygons, {summary.ports} ports{extra}")
+    return 0
+
+
+def command_plan(args: argparse.Namespace) -> int:
+    """Run the planning stages into a run directory.
+
+    Returns:
+        The exit code.
+    """
+    # An installed and licensed gurobipy becomes the external backend of this process; without
+    # one the linked-in HiGHS is used, and a run works either way.
+    register_external_solver()
+
+    directory = RunDirectory(args.output)
+    # Running one stage resumes a run, so the inputs are re-copied only when the whole set runs.
+    config = (
+        directory.load() if args.stage is not None and directory.config.is_file() else directory.prepare(args.config)
+    )
+    for stage in list(IMPLEMENTED) if args.stage is None else [args.stage]:
+        result = directory.run_stage(stage, config)
+        print(f"{result.stage:9s} -> {result.path.name} ({result.size} bytes)")
+    return 0
+
+
+def command_list_algorithms(args: argparse.Namespace) -> int:
+    """Print the implementations this build ships.
+
+    Returns:
+        The exit code.
+    """
+    del args
+    from . import pyscpd  # ruff: ignore[import-outside-top-level]
+
+    for stage, names in pyscpd.algorithms():
+        print(f"{stage + ':':18s}{', '.join(names)}")
     return 0
 
 
@@ -108,6 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
     plot = commands.add_parser("plot", help="render a stage as SVG")
     plot.add_argument("-c", "--config", type=Path, required=True, help="the config.toml of the chip")
     plot.add_argument("--stage", choices=list(STAGES), default="layout", help="the stage to render")
+    plot.add_argument("--run-dir", type=Path, help="the run directory a stage other than layout is read from")
     plot.add_argument("-o", "--output", type=Path, required=True, help="the SVG file to write")
     plot.add_argument("--width", type=int, default=2000, help="the display width of the picture in pixels")
     plot.add_argument(
@@ -118,10 +192,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plot.set_defaults(run=command_plot)
 
-    render = commands.add_parser("render", help="write the unrouted chip as GDSII or OASIS")
+    render = commands.add_parser("render", help="write the chip, and optionally a stage, as GDSII or OASIS")
     render.add_argument("-c", "--config", type=Path, required=True, help="the config.toml of the chip")
+    render.add_argument("--stage", choices=list(STAGES), default="layout", help="the stage to write beside the artwork")
+    render.add_argument("--run-dir", type=Path, help="the run directory a stage other than layout is read from")
     render.add_argument("-o", "--output", type=Path, required=True, help="the .gds or .oas file to write")
     render.set_defaults(run=command_render)
+
+    plan = commands.add_parser("plan", help="run the planning stages into a run directory")
+    plan.add_argument("-c", "--config", type=Path, required=True, help="the config.toml to run")
+    plan.add_argument("-o", "--output", type=Path, required=True, help="the run directory to write")
+    plan.add_argument("--stage", choices=list(IMPLEMENTED), help="run only this stage, resuming the run")
+    plan.set_defaults(run=command_plan)
+
+    algorithms = commands.add_parser("list-algorithms", help="list the implementations of every stage")
+    algorithms.set_defaults(run=command_list_algorithms)
 
     inspect = commands.add_parser("inspect", help="print a stage artifact as JSON")
     inspect.add_argument("artifact", type=Path, help="the .fb artifact")
@@ -142,7 +227,17 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.run(args))
-    except (ConfigError, ChipError, PlotError, ExportError, ArtifactError, InspectionError, OSError) as error:
+    except (
+        ConfigError,
+        ChipError,
+        PlotError,
+        ExportError,
+        ArtifactError,
+        InspectionError,
+        PlanningError,
+        RunError,
+        OSError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

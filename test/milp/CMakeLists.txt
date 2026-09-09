@@ -9,6 +9,8 @@
 if(TARGET MQT::ScpdMilp)
   file(GLOB_RECURSE MILP_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(MILP_TEST_SOURCES)
-    package_add_test(mqt-scpd-milp-test MQT::ScpdMilp ${MILP_TEST_SOURCES})
+    # The tests read the emitted MPS text back with a solver, so they reach HiGHS directly. The
+    # module itself keeps it private.
+    package_add_test(mqt-scpd-milp-test "MQT::ScpdMilp;mqt-scpd-highs" ${MILP_TEST_SOURCES})
   endif()
 endif()

@@ -24,6 +24,10 @@ struct PortPatterns;
 struct PortPatternsBuilder;
 struct PortPatternsT;
 
+struct BridgeRule;
+struct BridgeRuleBuilder;
+struct BridgeRuleT;
+
 struct PortSequences;
 struct PortSequencesBuilder;
 struct PortSequencesT;
@@ -36,18 +40,50 @@ struct GridParams;
 struct GridParamsBuilder;
 struct GridParamsT;
 
+struct CapacityParams;
+struct CapacityParamsBuilder;
+struct CapacityParamsT;
+
+struct GlobalParams;
+struct GlobalParamsBuilder;
+struct GlobalParamsT;
+
+struct AssignmentParams;
+struct AssignmentParamsBuilder;
+struct AssignmentParamsT;
+
+struct SolverParams;
+struct SolverParamsBuilder;
+struct SolverParamsT;
+
+struct StageParams;
+struct StageParamsBuilder;
+struct StageParamsT;
+
 struct Config;
 struct ConfigBuilder;
 struct ConfigT;
 
 bool operator==(const PortPatternsT &lhs, const PortPatternsT &rhs);
 bool operator!=(const PortPatternsT &lhs, const PortPatternsT &rhs);
+bool operator==(const BridgeRuleT &lhs, const BridgeRuleT &rhs);
+bool operator!=(const BridgeRuleT &lhs, const BridgeRuleT &rhs);
 bool operator==(const PortSequencesT &lhs, const PortSequencesT &rhs);
 bool operator!=(const PortSequencesT &lhs, const PortSequencesT &rhs);
 bool operator==(const PortConfigT &lhs, const PortConfigT &rhs);
 bool operator!=(const PortConfigT &lhs, const PortConfigT &rhs);
 bool operator==(const GridParamsT &lhs, const GridParamsT &rhs);
 bool operator!=(const GridParamsT &lhs, const GridParamsT &rhs);
+bool operator==(const CapacityParamsT &lhs, const CapacityParamsT &rhs);
+bool operator!=(const CapacityParamsT &lhs, const CapacityParamsT &rhs);
+bool operator==(const GlobalParamsT &lhs, const GlobalParamsT &rhs);
+bool operator!=(const GlobalParamsT &lhs, const GlobalParamsT &rhs);
+bool operator==(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs);
+bool operator!=(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs);
+bool operator==(const SolverParamsT &lhs, const SolverParamsT &rhs);
+bool operator!=(const SolverParamsT &lhs, const SolverParamsT &rhs);
+bool operator==(const StageParamsT &lhs, const StageParamsT &rhs);
+bool operator!=(const StageParamsT &lhs, const StageParamsT &rhs);
 bool operator==(const ConfigT &lhs, const ConfigT &rhs);
 bool operator!=(const ConfigT &lhs, const ConfigT &rhs);
 
@@ -56,6 +92,8 @@ struct PortPatternsT : public ::flatbuffers::NativeTable {
   std::string launcher{};
   std::string resonator{};
   std::string conventional{};
+  std::string bridge_pair{};
+  std::string component{};
 };
 
 /// One regular expression per role. Every port must match exactly one.
@@ -66,7 +104,9 @@ struct PortPatterns FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_LAUNCHER = 4,
     VT_RESONATOR = 6,
-    VT_CONVENTIONAL = 8
+    VT_CONVENTIONAL = 8,
+    VT_BRIDGE_PAIR = 10,
+    VT_COMPONENT = 12
   };
   const ::flatbuffers::String *launcher() const {
     return GetPointer<const ::flatbuffers::String *>(VT_LAUNCHER);
@@ -77,6 +117,17 @@ struct PortPatterns FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *conventional() const {
     return GetPointer<const ::flatbuffers::String *>(VT_CONVENTIONAL);
   }
+  /// The ports a wire crosses a component at, rather than ends at. Optional:
+  /// a chip whose components carry no crossing declares none. Which two of
+  /// these ports pair is PortConfig.bridge_pairs.
+  const ::flatbuffers::String *bridge_pair() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_BRIDGE_PAIR);
+  }
+  /// The component a port belongs to, as one capture group over the label.
+  /// A port whose label the pattern does not match carries no component.
+  const ::flatbuffers::String *component() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_COMPONENT);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -86,6 +137,10 @@ struct PortPatterns FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyString(resonator()) &&
            VerifyOffsetRequired(verifier, VT_CONVENTIONAL) &&
            verifier.VerifyString(conventional()) &&
+           VerifyOffset(verifier, VT_BRIDGE_PAIR) &&
+           verifier.VerifyString(bridge_pair()) &&
+           VerifyOffset(verifier, VT_COMPONENT) &&
+           verifier.VerifyString(component()) &&
            verifier.EndTable();
   }
   PortPatternsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -106,6 +161,12 @@ struct PortPatternsBuilder {
   void add_conventional(::flatbuffers::Offset<::flatbuffers::String> conventional) {
     fbb_.AddOffset(PortPatterns::VT_CONVENTIONAL, conventional);
   }
+  void add_bridge_pair(::flatbuffers::Offset<::flatbuffers::String> bridge_pair) {
+    fbb_.AddOffset(PortPatterns::VT_BRIDGE_PAIR, bridge_pair);
+  }
+  void add_component(::flatbuffers::Offset<::flatbuffers::String> component) {
+    fbb_.AddOffset(PortPatterns::VT_COMPONENT, component);
+  }
   explicit PortPatternsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -124,8 +185,12 @@ inline ::flatbuffers::Offset<PortPatterns> CreatePortPatterns(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<::flatbuffers::String> launcher = 0,
     ::flatbuffers::Offset<::flatbuffers::String> resonator = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> conventional = 0) {
+    ::flatbuffers::Offset<::flatbuffers::String> conventional = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> bridge_pair = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> component = 0) {
   PortPatternsBuilder builder_(_fbb);
+  builder_.add_component(component);
+  builder_.add_bridge_pair(bridge_pair);
   builder_.add_conventional(conventional);
   builder_.add_resonator(resonator);
   builder_.add_launcher(launcher);
@@ -141,18 +206,118 @@ inline ::flatbuffers::Offset<PortPatterns> CreatePortPatternsDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const char *launcher = nullptr,
     const char *resonator = nullptr,
-    const char *conventional = nullptr) {
+    const char *conventional = nullptr,
+    const char *bridge_pair = nullptr,
+    const char *component = nullptr) {
   auto launcher__ = launcher ? _fbb.CreateString(launcher) : 0;
   auto resonator__ = resonator ? _fbb.CreateString(resonator) : 0;
   auto conventional__ = conventional ? _fbb.CreateString(conventional) : 0;
+  auto bridge_pair__ = bridge_pair ? _fbb.CreateString(bridge_pair) : 0;
+  auto component__ = component ? _fbb.CreateString(component) : 0;
   return mqt::scpd::flatbuffers::config::CreatePortPatterns(
       _fbb,
       launcher__,
       resonator__,
-      conventional__);
+      conventional__,
+      bridge_pair__,
+      component__);
 }
 
 ::flatbuffers::Offset<PortPatterns> CreatePortPatterns(::flatbuffers::FlatBufferBuilder &_fbb, const PortPatternsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct BridgeRuleT : public ::flatbuffers::NativeTable {
+  typedef BridgeRule TableType;
+  std::string first{};
+  std::string second{};
+};
+
+/// One rule that pairs the two ports a wire crosses a component between.
+/// Each side is a regular expression with exactly one capture group, and two
+/// ports pair when they belong to one component and their captures are equal.
+///
+/// The pairing is declared rather than measured. Opposite orientation and
+/// shortest distance do pick the right two ports on the benchmark chips, but
+/// they are a property of the artwork and not a statement of intent, and
+/// nothing checked that the two agreed.
+struct BridgeRule FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef BridgeRuleT NativeTableType;
+  typedef BridgeRuleBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_FIRST = 4,
+    VT_SECOND = 6
+  };
+  const ::flatbuffers::String *first() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_FIRST);
+  }
+  const ::flatbuffers::String *second() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_SECOND);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_FIRST) &&
+           verifier.VerifyString(first()) &&
+           VerifyOffsetRequired(verifier, VT_SECOND) &&
+           verifier.VerifyString(second()) &&
+           verifier.EndTable();
+  }
+  BridgeRuleT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(BridgeRuleT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<BridgeRule> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const BridgeRuleT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct BridgeRuleBuilder {
+  typedef BridgeRule Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_first(::flatbuffers::Offset<::flatbuffers::String> first) {
+    fbb_.AddOffset(BridgeRule::VT_FIRST, first);
+  }
+  void add_second(::flatbuffers::Offset<::flatbuffers::String> second) {
+    fbb_.AddOffset(BridgeRule::VT_SECOND, second);
+  }
+  explicit BridgeRuleBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<BridgeRule> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<BridgeRule>(end);
+    fbb_.Required(o, BridgeRule::VT_FIRST);
+    fbb_.Required(o, BridgeRule::VT_SECOND);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<BridgeRule> CreateBridgeRule(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> first = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> second = 0) {
+  BridgeRuleBuilder builder_(_fbb);
+  builder_.add_second(second);
+  builder_.add_first(first);
+  return builder_.Finish();
+}
+
+struct BridgeRule::Traits {
+  using type = BridgeRule;
+  static auto constexpr Create = CreateBridgeRule;
+};
+
+inline ::flatbuffers::Offset<BridgeRule> CreateBridgeRuleDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *first = nullptr,
+    const char *second = nullptr) {
+  auto first__ = first ? _fbb.CreateString(first) : 0;
+  auto second__ = second ? _fbb.CreateString(second) : 0;
+  return mqt::scpd::flatbuffers::config::CreateBridgeRule(
+      _fbb,
+      first__,
+      second__);
+}
+
+::flatbuffers::Offset<BridgeRule> CreateBridgeRule(::flatbuffers::FlatBufferBuilder &_fbb, const BridgeRuleT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 struct PortSequencesT : public ::flatbuffers::NativeTable {
   typedef PortSequences TableType;
@@ -249,6 +414,7 @@ struct PortConfigT : public ::flatbuffers::NativeTable {
   typedef PortConfig TableType;
   std::unique_ptr<mqt::scpd::flatbuffers::config::PortPatternsT> patterns{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::PortSequencesT> sequences{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::config::BridgeRuleT>> bridge_pairs{};
   PortConfigT() = default;
   PortConfigT(const PortConfigT &o);
   PortConfigT(PortConfigT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -261,13 +427,19 @@ struct PortConfig FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   struct Traits;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PATTERNS = 4,
-    VT_SEQUENCES = 6
+    VT_SEQUENCES = 6,
+    VT_BRIDGE_PAIRS = 8
   };
   const mqt::scpd::flatbuffers::config::PortPatterns *patterns() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::PortPatterns *>(VT_PATTERNS);
   }
   const mqt::scpd::flatbuffers::config::PortSequences *sequences() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::PortSequences *>(VT_SEQUENCES);
+  }
+  /// How the ports the bridge_pair pattern names pair off, in the order the
+  /// rules are applied. Empty when the chip declares no bridge ports.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::config::BridgeRule>> *bridge_pairs() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::config::BridgeRule>> *>(VT_BRIDGE_PAIRS);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -276,6 +448,9 @@ struct PortConfig FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(patterns()) &&
            VerifyOffsetRequired(verifier, VT_SEQUENCES) &&
            verifier.VerifyTable(sequences()) &&
+           VerifyOffset(verifier, VT_BRIDGE_PAIRS) &&
+           verifier.VerifyVector(bridge_pairs()) &&
+           verifier.VerifyVectorOfTables(bridge_pairs()) &&
            verifier.EndTable();
   }
   PortConfigT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -293,6 +468,9 @@ struct PortConfigBuilder {
   void add_sequences(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortSequences> sequences) {
     fbb_.AddOffset(PortConfig::VT_SEQUENCES, sequences);
   }
+  void add_bridge_pairs(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::config::BridgeRule>>> bridge_pairs) {
+    fbb_.AddOffset(PortConfig::VT_BRIDGE_PAIRS, bridge_pairs);
+  }
   explicit PortConfigBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -309,8 +487,10 @@ struct PortConfigBuilder {
 inline ::flatbuffers::Offset<PortConfig> CreatePortConfig(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortPatterns> patterns = 0,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortSequences> sequences = 0) {
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortSequences> sequences = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::config::BridgeRule>>> bridge_pairs = 0) {
   PortConfigBuilder builder_(_fbb);
+  builder_.add_bridge_pairs(bridge_pairs);
   builder_.add_sequences(sequences);
   builder_.add_patterns(patterns);
   return builder_.Finish();
@@ -321,6 +501,19 @@ struct PortConfig::Traits {
   static auto constexpr Create = CreatePortConfig;
 };
 
+inline ::flatbuffers::Offset<PortConfig> CreatePortConfigDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortPatterns> patterns = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortSequences> sequences = 0,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::config::BridgeRule>> *bridge_pairs = nullptr) {
+  auto bridge_pairs__ = bridge_pairs ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::config::BridgeRule>>(*bridge_pairs) : 0;
+  return mqt::scpd::flatbuffers::config::CreatePortConfig(
+      _fbb,
+      patterns,
+      sequences,
+      bridge_pairs__);
+}
+
 ::flatbuffers::Offset<PortConfig> CreatePortConfig(::flatbuffers::FlatBufferBuilder &_fbb, const PortConfigT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 struct GridParamsT : public ::flatbuffers::NativeTable {
@@ -329,6 +522,7 @@ struct GridParamsT : public ::flatbuffers::NativeTable {
   uint32_t capacity_cells_y = 0;
   uint32_t launcher_offset_x = 15;
   uint32_t launcher_offset_y = 15;
+  uint32_t detail_factor = 30;
 };
 
 struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -339,7 +533,8 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_CAPACITY_CELLS_X = 4,
     VT_CAPACITY_CELLS_Y = 6,
     VT_LAUNCHER_OFFSET_X = 8,
-    VT_LAUNCHER_OFFSET_Y = 10
+    VT_LAUNCHER_OFFSET_Y = 10,
+    VT_DETAIL_FACTOR = 12
   };
   uint32_t capacity_cells_x() const {
     return GetField<uint32_t>(VT_CAPACITY_CELLS_X, 50);
@@ -354,6 +549,10 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t launcher_offset_y() const {
     return GetField<uint32_t>(VT_LAUNCHER_OFFSET_Y, 15);
   }
+  /// Cells of the detail grid per cell of the capacity grid, along each axis.
+  uint32_t detail_factor() const {
+    return GetField<uint32_t>(VT_DETAIL_FACTOR, 30);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -361,6 +560,7 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_CAPACITY_CELLS_Y, 4) &&
            VerifyField<uint32_t>(verifier, VT_LAUNCHER_OFFSET_X, 4) &&
            VerifyField<uint32_t>(verifier, VT_LAUNCHER_OFFSET_Y, 4) &&
+           VerifyField<uint32_t>(verifier, VT_DETAIL_FACTOR, 4) &&
            verifier.EndTable();
   }
   GridParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -384,6 +584,9 @@ struct GridParamsBuilder {
   void add_launcher_offset_y(uint32_t launcher_offset_y) {
     fbb_.AddElement<uint32_t>(GridParams::VT_LAUNCHER_OFFSET_Y, launcher_offset_y, 15);
   }
+  void add_detail_factor(uint32_t detail_factor) {
+    fbb_.AddElement<uint32_t>(GridParams::VT_DETAIL_FACTOR, detail_factor, 30);
+  }
   explicit GridParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -400,8 +603,10 @@ inline ::flatbuffers::Offset<GridParams> CreateGridParams(
     uint32_t capacity_cells_x = 50,
     uint32_t capacity_cells_y = 0,
     uint32_t launcher_offset_x = 15,
-    uint32_t launcher_offset_y = 15) {
+    uint32_t launcher_offset_y = 15,
+    uint32_t detail_factor = 30) {
   GridParamsBuilder builder_(_fbb);
+  builder_.add_detail_factor(detail_factor);
   builder_.add_launcher_offset_y(launcher_offset_y);
   builder_.add_launcher_offset_x(launcher_offset_x);
   builder_.add_capacity_cells_y(capacity_cells_y);
@@ -416,12 +621,484 @@ struct GridParams::Traits {
 
 ::flatbuffers::Offset<GridParams> CreateGridParams(::flatbuffers::FlatBufferBuilder &_fbb, const GridParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct CapacityParamsT : public ::flatbuffers::NativeTable {
+  typedef CapacityParams TableType;
+  std::string planner{};
+  double bottleneck_clearance = 1.5;
+};
+
+/// What the Capacity stage is allowed to do.
+struct CapacityParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CapacityParamsT NativeTableType;
+  typedef CapacityParamsBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_PLANNER = 4,
+    VT_BOTTLENECK_CLEARANCE = 6
+  };
+  /// The implementation, by the name it is registered under.
+  const ::flatbuffers::String *planner() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_PLANNER);
+  }
+  /// A place on the medial axis is a bottleneck only where the free radius
+  /// around it is below this many wire pitches, a pitch being one wire
+  /// spacing plus one obstacle spacing.
+  ///
+  /// The prototype used a fixed count of grid cells here, which is not a
+  /// length: the same literal admitted a radius of 235 layout units on the
+  /// 4-qubit grid and 484 on the 9-qubit one, purely because the two grids
+  /// have different cell sizes. The default below is the middle of that
+  /// range as a physical distance, and reproduces the prototype's own
+  /// bottleneck count on both.
+  double bottleneck_clearance() const {
+    return GetField<double>(VT_BOTTLENECK_CLEARANCE, 1.5);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_PLANNER) &&
+           verifier.VerifyString(planner()) &&
+           VerifyField<double>(verifier, VT_BOTTLENECK_CLEARANCE, 8) &&
+           verifier.EndTable();
+  }
+  CapacityParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CapacityParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<CapacityParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CapacityParamsBuilder {
+  typedef CapacityParams Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_planner(::flatbuffers::Offset<::flatbuffers::String> planner) {
+    fbb_.AddOffset(CapacityParams::VT_PLANNER, planner);
+  }
+  void add_bottleneck_clearance(double bottleneck_clearance) {
+    fbb_.AddElement<double>(CapacityParams::VT_BOTTLENECK_CLEARANCE, bottleneck_clearance, 1.5);
+  }
+  explicit CapacityParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<CapacityParams> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<CapacityParams>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<CapacityParams> CreateCapacityParams(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> planner = 0,
+    double bottleneck_clearance = 1.5) {
+  CapacityParamsBuilder builder_(_fbb);
+  builder_.add_bottleneck_clearance(bottleneck_clearance);
+  builder_.add_planner(planner);
+  return builder_.Finish();
+}
+
+struct CapacityParams::Traits {
+  using type = CapacityParams;
+  static auto constexpr Create = CreateCapacityParams;
+};
+
+inline ::flatbuffers::Offset<CapacityParams> CreateCapacityParamsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *planner = nullptr,
+    double bottleneck_clearance = 1.5) {
+  auto planner__ = planner ? _fbb.CreateString(planner) : 0;
+  return mqt::scpd::flatbuffers::config::CreateCapacityParams(
+      _fbb,
+      planner__,
+      bottleneck_clearance);
+}
+
+::flatbuffers::Offset<CapacityParams> CreateCapacityParams(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct GlobalParamsT : public ::flatbuffers::NativeTable {
+  typedef GlobalParams TableType;
+  std::string router{};
+  bool internal_bridges = false;
+};
+
+/// What the Global stage is allowed to do.
+struct GlobalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef GlobalParamsT NativeTableType;
+  typedef GlobalParamsBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ROUTER = 4,
+    VT_INTERNAL_BRIDGES = 6
+  };
+  /// The implementation, by the name it is registered under.
+  const ::flatbuffers::String *router() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_ROUTER);
+  }
+  /// Whether an inner wire may cross a component the outer ring does not
+  /// reach, through one of that component's own bridges.
+  ///
+  /// Off by default. Such a crossing is a wire that enters a coupler the
+  /// assignment never sees and leaves on the far side, so where it runs is
+  /// decided by nothing the later stages can read back. The prototype allows
+  /// it and has no way to say otherwise.
+  bool internal_bridges() const {
+    return GetField<uint8_t>(VT_INTERNAL_BRIDGES, 0) != 0;
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_ROUTER) &&
+           verifier.VerifyString(router()) &&
+           VerifyField<uint8_t>(verifier, VT_INTERNAL_BRIDGES, 1) &&
+           verifier.EndTable();
+  }
+  GlobalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(GlobalParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<GlobalParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct GlobalParamsBuilder {
+  typedef GlobalParams Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_router(::flatbuffers::Offset<::flatbuffers::String> router) {
+    fbb_.AddOffset(GlobalParams::VT_ROUTER, router);
+  }
+  void add_internal_bridges(bool internal_bridges) {
+    fbb_.AddElement<uint8_t>(GlobalParams::VT_INTERNAL_BRIDGES, static_cast<uint8_t>(internal_bridges), 0);
+  }
+  explicit GlobalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<GlobalParams> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<GlobalParams>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<GlobalParams> CreateGlobalParams(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> router = 0,
+    bool internal_bridges = false) {
+  GlobalParamsBuilder builder_(_fbb);
+  builder_.add_router(router);
+  builder_.add_internal_bridges(internal_bridges);
+  return builder_.Finish();
+}
+
+struct GlobalParams::Traits {
+  using type = GlobalParams;
+  static auto constexpr Create = CreateGlobalParams;
+};
+
+inline ::flatbuffers::Offset<GlobalParams> CreateGlobalParamsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *router = nullptr,
+    bool internal_bridges = false) {
+  auto router__ = router ? _fbb.CreateString(router) : 0;
+  return mqt::scpd::flatbuffers::config::CreateGlobalParams(
+      _fbb,
+      router__,
+      internal_bridges);
+}
+
+::flatbuffers::Offset<GlobalParams> CreateGlobalParams(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct AssignmentParamsT : public ::flatbuffers::NativeTable {
+  typedef AssignmentParams TableType;
+  std::string assigner{};
+  uint32_t launcher_target = 0;
+};
+
+/// What the Assignment stage is allowed to do.
+struct AssignmentParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef AssignmentParamsT NativeTableType;
+  typedef AssignmentParamsBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ASSIGNER = 4,
+    VT_LAUNCHER_TARGET = 6
+  };
+  /// The implementation, by the name it is registered under.
+  const ::flatbuffers::String *assigner() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_ASSIGNER);
+  }
+  /// How many launchers the assignment activates. Per chip.
+  uint32_t launcher_target() const {
+    return GetField<uint32_t>(VT_LAUNCHER_TARGET, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_ASSIGNER) &&
+           verifier.VerifyString(assigner()) &&
+           VerifyField<uint32_t>(verifier, VT_LAUNCHER_TARGET, 4) &&
+           verifier.EndTable();
+  }
+  AssignmentParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(AssignmentParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<AssignmentParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct AssignmentParamsBuilder {
+  typedef AssignmentParams Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_assigner(::flatbuffers::Offset<::flatbuffers::String> assigner) {
+    fbb_.AddOffset(AssignmentParams::VT_ASSIGNER, assigner);
+  }
+  void add_launcher_target(uint32_t launcher_target) {
+    fbb_.AddElement<uint32_t>(AssignmentParams::VT_LAUNCHER_TARGET, launcher_target, 0);
+  }
+  explicit AssignmentParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<AssignmentParams> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<AssignmentParams>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<AssignmentParams> CreateAssignmentParams(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> assigner = 0,
+    uint32_t launcher_target = 0) {
+  AssignmentParamsBuilder builder_(_fbb);
+  builder_.add_launcher_target(launcher_target);
+  builder_.add_assigner(assigner);
+  return builder_.Finish();
+}
+
+struct AssignmentParams::Traits {
+  using type = AssignmentParams;
+  static auto constexpr Create = CreateAssignmentParams;
+};
+
+inline ::flatbuffers::Offset<AssignmentParams> CreateAssignmentParamsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *assigner = nullptr,
+    uint32_t launcher_target = 0) {
+  auto assigner__ = assigner ? _fbb.CreateString(assigner) : 0;
+  return mqt::scpd::flatbuffers::config::CreateAssignmentParams(
+      _fbb,
+      assigner__,
+      launcher_target);
+}
+
+::flatbuffers::Offset<AssignmentParams> CreateAssignmentParams(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct SolverParamsT : public ::flatbuffers::NativeTable {
+  typedef SolverParams TableType;
+  std::string backend{};
+  double time_limit = 0.0;
+  double relative_gap = 0.0;
+};
+
+/// How the mixed-integer programs of the planning stages are solved.
+struct SolverParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef SolverParamsT NativeTableType;
+  typedef SolverParamsBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_BACKEND = 4,
+    VT_TIME_LIMIT = 6,
+    VT_RELATIVE_GAP = 8
+  };
+  /// "auto", "highs" or "gurobi". The environment variable SCPD_SOLVER
+  /// overrides it for one run.
+  const ::flatbuffers::String *backend() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_BACKEND);
+  }
+  /// Seconds one solve may take, or zero for no limit.
+  double time_limit() const {
+    return GetField<double>(VT_TIME_LIMIT, 0.0);
+  }
+  /// The relative gap a solve may stop at, or zero for the backend's own.
+  double relative_gap() const {
+    return GetField<double>(VT_RELATIVE_GAP, 0.0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_BACKEND) &&
+           verifier.VerifyString(backend()) &&
+           VerifyField<double>(verifier, VT_TIME_LIMIT, 8) &&
+           VerifyField<double>(verifier, VT_RELATIVE_GAP, 8) &&
+           verifier.EndTable();
+  }
+  SolverParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(SolverParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<SolverParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SolverParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct SolverParamsBuilder {
+  typedef SolverParams Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_backend(::flatbuffers::Offset<::flatbuffers::String> backend) {
+    fbb_.AddOffset(SolverParams::VT_BACKEND, backend);
+  }
+  void add_time_limit(double time_limit) {
+    fbb_.AddElement<double>(SolverParams::VT_TIME_LIMIT, time_limit, 0.0);
+  }
+  void add_relative_gap(double relative_gap) {
+    fbb_.AddElement<double>(SolverParams::VT_RELATIVE_GAP, relative_gap, 0.0);
+  }
+  explicit SolverParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<SolverParams> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<SolverParams>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<SolverParams> CreateSolverParams(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> backend = 0,
+    double time_limit = 0.0,
+    double relative_gap = 0.0) {
+  SolverParamsBuilder builder_(_fbb);
+  builder_.add_relative_gap(relative_gap);
+  builder_.add_time_limit(time_limit);
+  builder_.add_backend(backend);
+  return builder_.Finish();
+}
+
+struct SolverParams::Traits {
+  using type = SolverParams;
+  static auto constexpr Create = CreateSolverParams;
+};
+
+inline ::flatbuffers::Offset<SolverParams> CreateSolverParamsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *backend = nullptr,
+    double time_limit = 0.0,
+    double relative_gap = 0.0) {
+  auto backend__ = backend ? _fbb.CreateString(backend) : 0;
+  return mqt::scpd::flatbuffers::config::CreateSolverParams(
+      _fbb,
+      backend__,
+      time_limit,
+      relative_gap);
+}
+
+::flatbuffers::Offset<SolverParams> CreateSolverParams(::flatbuffers::FlatBufferBuilder &_fbb, const SolverParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct StageParamsT : public ::flatbuffers::NativeTable {
+  typedef StageParams TableType;
+  std::unique_ptr<mqt::scpd::flatbuffers::config::CapacityParamsT> capacity{};
+  std::unique_ptr<mqt::scpd::flatbuffers::config::GlobalParamsT> global{};
+  std::unique_ptr<mqt::scpd::flatbuffers::config::AssignmentParamsT> assignment{};
+  std::unique_ptr<mqt::scpd::flatbuffers::config::SolverParamsT> solver{};
+  StageParamsT() = default;
+  StageParamsT(const StageParamsT &o);
+  StageParamsT(StageParamsT&&) FLATBUFFERS_NOEXCEPT = default;
+  StageParamsT &operator=(StageParamsT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// The parameters of the stages that are implemented.
+struct StageParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef StageParamsT NativeTableType;
+  typedef StageParamsBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_CAPACITY = 4,
+    VT_GLOBAL = 6,
+    VT_ASSIGNMENT = 8,
+    VT_SOLVER = 10
+  };
+  const mqt::scpd::flatbuffers::config::CapacityParams *capacity() const {
+    return GetPointer<const mqt::scpd::flatbuffers::config::CapacityParams *>(VT_CAPACITY);
+  }
+  const mqt::scpd::flatbuffers::config::GlobalParams *global() const {
+    return GetPointer<const mqt::scpd::flatbuffers::config::GlobalParams *>(VT_GLOBAL);
+  }
+  const mqt::scpd::flatbuffers::config::AssignmentParams *assignment() const {
+    return GetPointer<const mqt::scpd::flatbuffers::config::AssignmentParams *>(VT_ASSIGNMENT);
+  }
+  const mqt::scpd::flatbuffers::config::SolverParams *solver() const {
+    return GetPointer<const mqt::scpd::flatbuffers::config::SolverParams *>(VT_SOLVER);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_CAPACITY) &&
+           verifier.VerifyTable(capacity()) &&
+           VerifyOffset(verifier, VT_GLOBAL) &&
+           verifier.VerifyTable(global()) &&
+           VerifyOffset(verifier, VT_ASSIGNMENT) &&
+           verifier.VerifyTable(assignment()) &&
+           VerifyOffset(verifier, VT_SOLVER) &&
+           verifier.VerifyTable(solver()) &&
+           verifier.EndTable();
+  }
+  StageParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(StageParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<StageParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct StageParamsBuilder {
+  typedef StageParams Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_capacity(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::CapacityParams> capacity) {
+    fbb_.AddOffset(StageParams::VT_CAPACITY, capacity);
+  }
+  void add_global(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GlobalParams> global) {
+    fbb_.AddOffset(StageParams::VT_GLOBAL, global);
+  }
+  void add_assignment(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::AssignmentParams> assignment) {
+    fbb_.AddOffset(StageParams::VT_ASSIGNMENT, assignment);
+  }
+  void add_solver(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::SolverParams> solver) {
+    fbb_.AddOffset(StageParams::VT_SOLVER, solver);
+  }
+  explicit StageParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<StageParams> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<StageParams>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<StageParams> CreateStageParams(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::CapacityParams> capacity = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GlobalParams> global = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::AssignmentParams> assignment = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::SolverParams> solver = 0) {
+  StageParamsBuilder builder_(_fbb);
+  builder_.add_solver(solver);
+  builder_.add_assignment(assignment);
+  builder_.add_global(global);
+  builder_.add_capacity(capacity);
+  return builder_.Finish();
+}
+
+struct StageParams::Traits {
+  using type = StageParams;
+  static auto constexpr Create = CreateStageParams;
+};
+
+::flatbuffers::Offset<StageParams> CreateStageParams(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct ConfigT : public ::flatbuffers::NativeTable {
   typedef Config TableType;
   std::string chip_input{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::PortConfigT> ports{};
   std::unique_ptr<mqt::scpd::flatbuffers::design::DesignRulesT> rules{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::GridParamsT> grid{};
+  std::unique_ptr<mqt::scpd::flatbuffers::config::StageParamsT> stages{};
   ConfigT() = default;
   ConfigT(const ConfigT &o);
   ConfigT(ConfigT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -437,7 +1114,8 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_CHIP_INPUT = 4,
     VT_PORTS = 6,
     VT_RULES = 8,
-    VT_GRID = 10
+    VT_GRID = 10,
+    VT_STAGES = 12
   };
   /// The chip input path, relative to the configuration file.
   const ::flatbuffers::String *chip_input() const {
@@ -452,6 +1130,9 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const mqt::scpd::flatbuffers::config::GridParams *grid() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::GridParams *>(VT_GRID);
   }
+  const mqt::scpd::flatbuffers::config::StageParams *stages() const {
+    return GetPointer<const mqt::scpd::flatbuffers::config::StageParams *>(VT_STAGES);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -463,6 +1144,8 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(rules()) &&
            VerifyOffset(verifier, VT_GRID) &&
            verifier.VerifyTable(grid()) &&
+           VerifyOffset(verifier, VT_STAGES) &&
+           verifier.VerifyTable(stages()) &&
            verifier.EndTable();
   }
   ConfigT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -486,6 +1169,9 @@ struct ConfigBuilder {
   void add_grid(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GridParams> grid) {
     fbb_.AddOffset(Config::VT_GRID, grid);
   }
+  void add_stages(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::StageParams> stages) {
+    fbb_.AddOffset(Config::VT_STAGES, stages);
+  }
   explicit ConfigBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -505,8 +1191,10 @@ inline ::flatbuffers::Offset<Config> CreateConfig(
     ::flatbuffers::Offset<::flatbuffers::String> chip_input = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortConfig> ports = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::design::DesignRules> rules = 0,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GridParams> grid = 0) {
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GridParams> grid = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::StageParams> stages = 0) {
   ConfigBuilder builder_(_fbb);
+  builder_.add_stages(stages);
   builder_.add_grid(grid);
   builder_.add_rules(rules);
   builder_.add_ports(ports);
@@ -524,14 +1212,16 @@ inline ::flatbuffers::Offset<Config> CreateConfigDirect(
     const char *chip_input = nullptr,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortConfig> ports = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::design::DesignRules> rules = 0,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GridParams> grid = 0) {
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GridParams> grid = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::StageParams> stages = 0) {
   auto chip_input__ = chip_input ? _fbb.CreateString(chip_input) : 0;
   return mqt::scpd::flatbuffers::config::CreateConfig(
       _fbb,
       chip_input__,
       ports,
       rules,
-      grid);
+      grid,
+      stages);
 }
 
 ::flatbuffers::Offset<Config> CreateConfig(::flatbuffers::FlatBufferBuilder &_fbb, const ConfigT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -541,7 +1231,9 @@ inline bool operator==(const PortPatternsT &lhs, const PortPatternsT &rhs) {
   return
       (lhs.launcher == rhs.launcher) &&
       (lhs.resonator == rhs.resonator) &&
-      (lhs.conventional == rhs.conventional);
+      (lhs.conventional == rhs.conventional) &&
+      (lhs.bridge_pair == rhs.bridge_pair) &&
+      (lhs.component == rhs.component);
 }
 
 inline bool operator!=(const PortPatternsT &lhs, const PortPatternsT &rhs) {
@@ -561,6 +1253,8 @@ inline void PortPatterns::UnPackTo(PortPatternsT *_o, const ::flatbuffers::resol
   { auto _e = launcher(); if (_e) _o->launcher = _e->str(); }
   { auto _e = resonator(); if (_e) _o->resonator = _e->str(); }
   { auto _e = conventional(); if (_e) _o->conventional = _e->str(); }
+  { auto _e = bridge_pair(); if (_e) _o->bridge_pair = _e->str(); }
+  { auto _e = component(); if (_e) _o->component = _e->str(); }
 }
 
 inline ::flatbuffers::Offset<PortPatterns> CreatePortPatterns(::flatbuffers::FlatBufferBuilder &_fbb, const PortPatternsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -574,11 +1268,56 @@ inline ::flatbuffers::Offset<PortPatterns> PortPatterns::Pack(::flatbuffers::Fla
   auto _launcher = _fbb.CreateString(_o->launcher);
   auto _resonator = _fbb.CreateString(_o->resonator);
   auto _conventional = _fbb.CreateString(_o->conventional);
+  auto _bridge_pair = _o->bridge_pair.empty() ? 0 : _fbb.CreateString(_o->bridge_pair);
+  auto _component = _o->component.empty() ? 0 : _fbb.CreateString(_o->component);
   return mqt::scpd::flatbuffers::config::CreatePortPatterns(
       _fbb,
       _launcher,
       _resonator,
-      _conventional);
+      _conventional,
+      _bridge_pair,
+      _component);
+}
+
+
+inline bool operator==(const BridgeRuleT &lhs, const BridgeRuleT &rhs) {
+  return
+      (lhs.first == rhs.first) &&
+      (lhs.second == rhs.second);
+}
+
+inline bool operator!=(const BridgeRuleT &lhs, const BridgeRuleT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline BridgeRuleT *BridgeRule::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<BridgeRuleT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void BridgeRule::UnPackTo(BridgeRuleT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = first(); if (_e) _o->first = _e->str(); }
+  { auto _e = second(); if (_e) _o->second = _e->str(); }
+}
+
+inline ::flatbuffers::Offset<BridgeRule> CreateBridgeRule(::flatbuffers::FlatBufferBuilder &_fbb, const BridgeRuleT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return BridgeRule::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<BridgeRule> BridgeRule::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const BridgeRuleT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const BridgeRuleT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _first = _fbb.CreateString(_o->first);
+  auto _second = _fbb.CreateString(_o->second);
+  return mqt::scpd::flatbuffers::config::CreateBridgeRule(
+      _fbb,
+      _first,
+      _second);
 }
 
 
@@ -626,7 +1365,8 @@ inline ::flatbuffers::Offset<PortSequences> PortSequences::Pack(::flatbuffers::F
 inline bool operator==(const PortConfigT &lhs, const PortConfigT &rhs) {
   return
       ((lhs.patterns == rhs.patterns) || (lhs.patterns && rhs.patterns && *lhs.patterns == *rhs.patterns)) &&
-      ((lhs.sequences == rhs.sequences) || (lhs.sequences && rhs.sequences && *lhs.sequences == *rhs.sequences));
+      ((lhs.sequences == rhs.sequences) || (lhs.sequences && rhs.sequences && *lhs.sequences == *rhs.sequences)) &&
+      (lhs.bridge_pairs.size() == rhs.bridge_pairs.size() && std::equal(lhs.bridge_pairs.cbegin(), lhs.bridge_pairs.cend(), rhs.bridge_pairs.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::config::BridgeRuleT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::config::BridgeRuleT> const &b) { return (a == b) || (a && b && *a == *b); }));
 }
 
 inline bool operator!=(const PortConfigT &lhs, const PortConfigT &rhs) {
@@ -637,11 +1377,14 @@ inline bool operator!=(const PortConfigT &lhs, const PortConfigT &rhs) {
 inline PortConfigT::PortConfigT(const PortConfigT &o)
       : patterns((o.patterns) ? new mqt::scpd::flatbuffers::config::PortPatternsT(*o.patterns) : nullptr),
         sequences((o.sequences) ? new mqt::scpd::flatbuffers::config::PortSequencesT(*o.sequences) : nullptr) {
+  bridge_pairs.reserve(o.bridge_pairs.size());
+  for (const auto &bridge_pairs_ : o.bridge_pairs) { bridge_pairs.emplace_back((bridge_pairs_) ? new mqt::scpd::flatbuffers::config::BridgeRuleT(*bridge_pairs_) : nullptr); }
 }
 
 inline PortConfigT &PortConfigT::operator=(PortConfigT o) FLATBUFFERS_NOEXCEPT {
   std::swap(patterns, o.patterns);
   std::swap(sequences, o.sequences);
+  std::swap(bridge_pairs, o.bridge_pairs);
   return *this;
 }
 
@@ -656,6 +1399,7 @@ inline void PortConfig::UnPackTo(PortConfigT *_o, const ::flatbuffers::resolver_
   (void)_resolver;
   { auto _e = patterns(); if (_e) { if(_o->patterns) { _e->UnPackTo(_o->patterns.get(), _resolver); } else { _o->patterns = std::unique_ptr<mqt::scpd::flatbuffers::config::PortPatternsT>(_e->UnPack(_resolver)); } } else if (_o->patterns) { _o->patterns.reset(); } }
   { auto _e = sequences(); if (_e) { if(_o->sequences) { _e->UnPackTo(_o->sequences.get(), _resolver); } else { _o->sequences = std::unique_ptr<mqt::scpd::flatbuffers::config::PortSequencesT>(_e->UnPack(_resolver)); } } else if (_o->sequences) { _o->sequences.reset(); } }
+  { auto _e = bridge_pairs(); if (_e) { _o->bridge_pairs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->bridge_pairs[_i]) { _e->Get(_i)->UnPackTo(_o->bridge_pairs[_i].get(), _resolver); } else { _o->bridge_pairs[_i] = std::unique_ptr<mqt::scpd::flatbuffers::config::BridgeRuleT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->bridge_pairs.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<PortConfig> CreatePortConfig(::flatbuffers::FlatBufferBuilder &_fbb, const PortConfigT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -668,10 +1412,12 @@ inline ::flatbuffers::Offset<PortConfig> PortConfig::Pack(::flatbuffers::FlatBuf
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const PortConfigT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _patterns = _o->patterns ? CreatePortPatterns(_fbb, _o->patterns.get(), _rehasher) : 0;
   auto _sequences = _o->sequences ? CreatePortSequences(_fbb, _o->sequences.get(), _rehasher) : 0;
+  auto _bridge_pairs = _o->bridge_pairs.size() ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::config::BridgeRule>> (_o->bridge_pairs.size(), [](size_t i, _VectorArgs *__va) { return CreateBridgeRule(*__va->__fbb, __va->__o->bridge_pairs[i].get(), __va->__rehasher); }, &_va ) : 0;
   return mqt::scpd::flatbuffers::config::CreatePortConfig(
       _fbb,
       _patterns,
-      _sequences);
+      _sequences,
+      _bridge_pairs);
 }
 
 
@@ -680,7 +1426,8 @@ inline bool operator==(const GridParamsT &lhs, const GridParamsT &rhs) {
       (lhs.capacity_cells_x == rhs.capacity_cells_x) &&
       (lhs.capacity_cells_y == rhs.capacity_cells_y) &&
       (lhs.launcher_offset_x == rhs.launcher_offset_x) &&
-      (lhs.launcher_offset_y == rhs.launcher_offset_y);
+      (lhs.launcher_offset_y == rhs.launcher_offset_y) &&
+      (lhs.detail_factor == rhs.detail_factor);
 }
 
 inline bool operator!=(const GridParamsT &lhs, const GridParamsT &rhs) {
@@ -701,6 +1448,7 @@ inline void GridParams::UnPackTo(GridParamsT *_o, const ::flatbuffers::resolver_
   { auto _e = capacity_cells_y(); _o->capacity_cells_y = _e; }
   { auto _e = launcher_offset_x(); _o->launcher_offset_x = _e; }
   { auto _e = launcher_offset_y(); _o->launcher_offset_y = _e; }
+  { auto _e = detail_factor(); _o->detail_factor = _e; }
 }
 
 inline ::flatbuffers::Offset<GridParams> CreateGridParams(::flatbuffers::FlatBufferBuilder &_fbb, const GridParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -715,12 +1463,246 @@ inline ::flatbuffers::Offset<GridParams> GridParams::Pack(::flatbuffers::FlatBuf
   auto _capacity_cells_y = _o->capacity_cells_y;
   auto _launcher_offset_x = _o->launcher_offset_x;
   auto _launcher_offset_y = _o->launcher_offset_y;
+  auto _detail_factor = _o->detail_factor;
   return mqt::scpd::flatbuffers::config::CreateGridParams(
       _fbb,
       _capacity_cells_x,
       _capacity_cells_y,
       _launcher_offset_x,
-      _launcher_offset_y);
+      _launcher_offset_y,
+      _detail_factor);
+}
+
+
+inline bool operator==(const CapacityParamsT &lhs, const CapacityParamsT &rhs) {
+  return
+      (lhs.planner == rhs.planner) &&
+      (lhs.bottleneck_clearance == rhs.bottleneck_clearance);
+}
+
+inline bool operator!=(const CapacityParamsT &lhs, const CapacityParamsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline CapacityParamsT *CapacityParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<CapacityParamsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void CapacityParams::UnPackTo(CapacityParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = planner(); if (_e) _o->planner = _e->str(); }
+  { auto _e = bottleneck_clearance(); _o->bottleneck_clearance = _e; }
+}
+
+inline ::flatbuffers::Offset<CapacityParams> CreateCapacityParams(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CapacityParams::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<CapacityParams> CapacityParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CapacityParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _planner = _o->planner.empty() ? 0 : _fbb.CreateString(_o->planner);
+  auto _bottleneck_clearance = _o->bottleneck_clearance;
+  return mqt::scpd::flatbuffers::config::CreateCapacityParams(
+      _fbb,
+      _planner,
+      _bottleneck_clearance);
+}
+
+
+inline bool operator==(const GlobalParamsT &lhs, const GlobalParamsT &rhs) {
+  return
+      (lhs.router == rhs.router) &&
+      (lhs.internal_bridges == rhs.internal_bridges);
+}
+
+inline bool operator!=(const GlobalParamsT &lhs, const GlobalParamsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline GlobalParamsT *GlobalParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<GlobalParamsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void GlobalParams::UnPackTo(GlobalParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = router(); if (_e) _o->router = _e->str(); }
+  { auto _e = internal_bridges(); _o->internal_bridges = _e; }
+}
+
+inline ::flatbuffers::Offset<GlobalParams> CreateGlobalParams(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return GlobalParams::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<GlobalParams> GlobalParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GlobalParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _router = _o->router.empty() ? 0 : _fbb.CreateString(_o->router);
+  auto _internal_bridges = _o->internal_bridges;
+  return mqt::scpd::flatbuffers::config::CreateGlobalParams(
+      _fbb,
+      _router,
+      _internal_bridges);
+}
+
+
+inline bool operator==(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs) {
+  return
+      (lhs.assigner == rhs.assigner) &&
+      (lhs.launcher_target == rhs.launcher_target);
+}
+
+inline bool operator!=(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline AssignmentParamsT *AssignmentParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<AssignmentParamsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void AssignmentParams::UnPackTo(AssignmentParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = assigner(); if (_e) _o->assigner = _e->str(); }
+  { auto _e = launcher_target(); _o->launcher_target = _e; }
+}
+
+inline ::flatbuffers::Offset<AssignmentParams> CreateAssignmentParams(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return AssignmentParams::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<AssignmentParams> AssignmentParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const AssignmentParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _assigner = _o->assigner.empty() ? 0 : _fbb.CreateString(_o->assigner);
+  auto _launcher_target = _o->launcher_target;
+  return mqt::scpd::flatbuffers::config::CreateAssignmentParams(
+      _fbb,
+      _assigner,
+      _launcher_target);
+}
+
+
+inline bool operator==(const SolverParamsT &lhs, const SolverParamsT &rhs) {
+  return
+      (lhs.backend == rhs.backend) &&
+      (lhs.time_limit == rhs.time_limit) &&
+      (lhs.relative_gap == rhs.relative_gap);
+}
+
+inline bool operator!=(const SolverParamsT &lhs, const SolverParamsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline SolverParamsT *SolverParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<SolverParamsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void SolverParams::UnPackTo(SolverParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = backend(); if (_e) _o->backend = _e->str(); }
+  { auto _e = time_limit(); _o->time_limit = _e; }
+  { auto _e = relative_gap(); _o->relative_gap = _e; }
+}
+
+inline ::flatbuffers::Offset<SolverParams> CreateSolverParams(::flatbuffers::FlatBufferBuilder &_fbb, const SolverParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return SolverParams::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<SolverParams> SolverParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SolverParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const SolverParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _backend = _o->backend.empty() ? 0 : _fbb.CreateString(_o->backend);
+  auto _time_limit = _o->time_limit;
+  auto _relative_gap = _o->relative_gap;
+  return mqt::scpd::flatbuffers::config::CreateSolverParams(
+      _fbb,
+      _backend,
+      _time_limit,
+      _relative_gap);
+}
+
+
+inline bool operator==(const StageParamsT &lhs, const StageParamsT &rhs) {
+  return
+      ((lhs.capacity == rhs.capacity) || (lhs.capacity && rhs.capacity && *lhs.capacity == *rhs.capacity)) &&
+      ((lhs.global == rhs.global) || (lhs.global && rhs.global && *lhs.global == *rhs.global)) &&
+      ((lhs.assignment == rhs.assignment) || (lhs.assignment && rhs.assignment && *lhs.assignment == *rhs.assignment)) &&
+      ((lhs.solver == rhs.solver) || (lhs.solver && rhs.solver && *lhs.solver == *rhs.solver));
+}
+
+inline bool operator!=(const StageParamsT &lhs, const StageParamsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline StageParamsT::StageParamsT(const StageParamsT &o)
+      : capacity((o.capacity) ? new mqt::scpd::flatbuffers::config::CapacityParamsT(*o.capacity) : nullptr),
+        global((o.global) ? new mqt::scpd::flatbuffers::config::GlobalParamsT(*o.global) : nullptr),
+        assignment((o.assignment) ? new mqt::scpd::flatbuffers::config::AssignmentParamsT(*o.assignment) : nullptr),
+        solver((o.solver) ? new mqt::scpd::flatbuffers::config::SolverParamsT(*o.solver) : nullptr) {
+}
+
+inline StageParamsT &StageParamsT::operator=(StageParamsT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(capacity, o.capacity);
+  std::swap(global, o.global);
+  std::swap(assignment, o.assignment);
+  std::swap(solver, o.solver);
+  return *this;
+}
+
+inline StageParamsT *StageParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<StageParamsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void StageParams::UnPackTo(StageParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = capacity(); if (_e) { if(_o->capacity) { _e->UnPackTo(_o->capacity.get(), _resolver); } else { _o->capacity = std::unique_ptr<mqt::scpd::flatbuffers::config::CapacityParamsT>(_e->UnPack(_resolver)); } } else if (_o->capacity) { _o->capacity.reset(); } }
+  { auto _e = global(); if (_e) { if(_o->global) { _e->UnPackTo(_o->global.get(), _resolver); } else { _o->global = std::unique_ptr<mqt::scpd::flatbuffers::config::GlobalParamsT>(_e->UnPack(_resolver)); } } else if (_o->global) { _o->global.reset(); } }
+  { auto _e = assignment(); if (_e) { if(_o->assignment) { _e->UnPackTo(_o->assignment.get(), _resolver); } else { _o->assignment = std::unique_ptr<mqt::scpd::flatbuffers::config::AssignmentParamsT>(_e->UnPack(_resolver)); } } else if (_o->assignment) { _o->assignment.reset(); } }
+  { auto _e = solver(); if (_e) { if(_o->solver) { _e->UnPackTo(_o->solver.get(), _resolver); } else { _o->solver = std::unique_ptr<mqt::scpd::flatbuffers::config::SolverParamsT>(_e->UnPack(_resolver)); } } else if (_o->solver) { _o->solver.reset(); } }
+}
+
+inline ::flatbuffers::Offset<StageParams> CreateStageParams(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return StageParams::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<StageParams> StageParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const StageParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _capacity = _o->capacity ? CreateCapacityParams(_fbb, _o->capacity.get(), _rehasher) : 0;
+  auto _global = _o->global ? CreateGlobalParams(_fbb, _o->global.get(), _rehasher) : 0;
+  auto _assignment = _o->assignment ? CreateAssignmentParams(_fbb, _o->assignment.get(), _rehasher) : 0;
+  auto _solver = _o->solver ? CreateSolverParams(_fbb, _o->solver.get(), _rehasher) : 0;
+  return mqt::scpd::flatbuffers::config::CreateStageParams(
+      _fbb,
+      _capacity,
+      _global,
+      _assignment,
+      _solver);
 }
 
 
@@ -729,7 +1711,8 @@ inline bool operator==(const ConfigT &lhs, const ConfigT &rhs) {
       (lhs.chip_input == rhs.chip_input) &&
       ((lhs.ports == rhs.ports) || (lhs.ports && rhs.ports && *lhs.ports == *rhs.ports)) &&
       ((lhs.rules == rhs.rules) || (lhs.rules && rhs.rules && *lhs.rules == *rhs.rules)) &&
-      ((lhs.grid == rhs.grid) || (lhs.grid && rhs.grid && *lhs.grid == *rhs.grid));
+      ((lhs.grid == rhs.grid) || (lhs.grid && rhs.grid && *lhs.grid == *rhs.grid)) &&
+      ((lhs.stages == rhs.stages) || (lhs.stages && rhs.stages && *lhs.stages == *rhs.stages));
 }
 
 inline bool operator!=(const ConfigT &lhs, const ConfigT &rhs) {
@@ -741,7 +1724,8 @@ inline ConfigT::ConfigT(const ConfigT &o)
       : chip_input(o.chip_input),
         ports((o.ports) ? new mqt::scpd::flatbuffers::config::PortConfigT(*o.ports) : nullptr),
         rules((o.rules) ? new mqt::scpd::flatbuffers::design::DesignRulesT(*o.rules) : nullptr),
-        grid((o.grid) ? new mqt::scpd::flatbuffers::config::GridParamsT(*o.grid) : nullptr) {
+        grid((o.grid) ? new mqt::scpd::flatbuffers::config::GridParamsT(*o.grid) : nullptr),
+        stages((o.stages) ? new mqt::scpd::flatbuffers::config::StageParamsT(*o.stages) : nullptr) {
 }
 
 inline ConfigT &ConfigT::operator=(ConfigT o) FLATBUFFERS_NOEXCEPT {
@@ -749,6 +1733,7 @@ inline ConfigT &ConfigT::operator=(ConfigT o) FLATBUFFERS_NOEXCEPT {
   std::swap(ports, o.ports);
   std::swap(rules, o.rules);
   std::swap(grid, o.grid);
+  std::swap(stages, o.stages);
   return *this;
 }
 
@@ -765,6 +1750,7 @@ inline void Config::UnPackTo(ConfigT *_o, const ::flatbuffers::resolver_function
   { auto _e = ports(); if (_e) { if(_o->ports) { _e->UnPackTo(_o->ports.get(), _resolver); } else { _o->ports = std::unique_ptr<mqt::scpd::flatbuffers::config::PortConfigT>(_e->UnPack(_resolver)); } } else if (_o->ports) { _o->ports.reset(); } }
   { auto _e = rules(); if (_e) { if(_o->rules) { _e->UnPackTo(_o->rules.get(), _resolver); } else { _o->rules = std::unique_ptr<mqt::scpd::flatbuffers::design::DesignRulesT>(_e->UnPack(_resolver)); } } else if (_o->rules) { _o->rules.reset(); } }
   { auto _e = grid(); if (_e) { if(_o->grid) { _e->UnPackTo(_o->grid.get(), _resolver); } else { _o->grid = std::unique_ptr<mqt::scpd::flatbuffers::config::GridParamsT>(_e->UnPack(_resolver)); } } else if (_o->grid) { _o->grid.reset(); } }
+  { auto _e = stages(); if (_e) { if(_o->stages) { _e->UnPackTo(_o->stages.get(), _resolver); } else { _o->stages = std::unique_ptr<mqt::scpd::flatbuffers::config::StageParamsT>(_e->UnPack(_resolver)); } } else if (_o->stages) { _o->stages.reset(); } }
 }
 
 inline ::flatbuffers::Offset<Config> CreateConfig(::flatbuffers::FlatBufferBuilder &_fbb, const ConfigT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -779,12 +1765,14 @@ inline ::flatbuffers::Offset<Config> Config::Pack(::flatbuffers::FlatBufferBuild
   auto _ports = _o->ports ? CreatePortConfig(_fbb, _o->ports.get(), _rehasher) : 0;
   auto _rules = _o->rules ? CreateDesignRules(_fbb, _o->rules.get(), _rehasher) : 0;
   auto _grid = _o->grid ? CreateGridParams(_fbb, _o->grid.get(), _rehasher) : 0;
+  auto _stages = _o->stages ? CreateStageParams(_fbb, _o->stages.get(), _rehasher) : 0;
   return mqt::scpd::flatbuffers::config::CreateConfig(
       _fbb,
       _chip_input,
       _ports,
       _rules,
-      _grid);
+      _grid,
+      _stages);
 }
 
 }  // namespace config
