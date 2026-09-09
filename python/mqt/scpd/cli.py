@@ -22,7 +22,7 @@ from .artifacts import ArtifactError
 from .chip import ChipError, decode_chip, load_chip
 from .config import ConfigError, load_config
 from .doctor import run_doctor
-from .export.klayout import ExportError, write_layout
+from .export import HAS_KLAYOUT
 from .inspection import InspectionError, artifact_to_json
 from .plot import STAGES, PlotError, layout_svg
 
@@ -70,8 +70,20 @@ def command_render(args: argparse.Namespace) -> int:
     Returns:
         The exit code.
     """
+    if not HAS_KLAYOUT:
+        print("render needs KLayout; install it with 'mqt-scpd[klayout]'", file=sys.stderr)
+        return 1
+    from .export import (  # ruff: ignore[import-outside-top-level]  # needs the optional dependency
+        ExportError,
+        write_layout,
+    )
+
     chip_bytes, _ = _load(args.config)
-    summary = write_layout(decode_chip(chip_bytes), args.output)
+    try:
+        summary = write_layout(decode_chip(chip_bytes), args.output)
+    except ExportError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     print(f"wrote {summary.path} as {summary.format}: {summary.polygons} polygons, {summary.ports} ports")
     return 0
 
@@ -142,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.run(args))
-    except (ConfigError, ChipError, PlotError, ExportError, ArtifactError, InspectionError, OSError) as error:
+    except (ConfigError, ChipError, PlotError, ArtifactError, InspectionError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

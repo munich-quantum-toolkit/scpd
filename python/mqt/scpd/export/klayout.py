@@ -8,14 +8,17 @@
 
 """The KLayout adapter: GDSII and OASIS from the chip model.
 
-KLayout is imported when a file is written, so that the package imports without it. Install
-``mqt-scpd[klayout]`` to render layouts.
+The module needs KLayout and therefore imports it, so importing the module fails without it.
+Ask :data:`mqt.scpd.export.HAS_KLAYOUT` before importing when the dependency may be absent;
+install ``mqt-scpd[klayout]`` to have it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import klayout.db as kdb
 
 from ..chip import obstacles_of, ports_of, role_name, vertices_of
 
@@ -37,8 +40,8 @@ FORMATS: dict[str, str] = {".gds": "GDS2", ".gds2": "GDS2", ".oas": "OASIS"}
 DATABASE_UNIT = 0.001
 
 
-class ExportError(RuntimeError):
-    """A layout that cannot be written."""
+class ExportError(ValueError):
+    """A layout that cannot be written, because the file names no supported format."""
 
 
 @dataclass(frozen=True)
@@ -66,17 +69,12 @@ def write_layout(chip: ChipT, path: Path, *, cell: str = "chip") -> ExportSummar
         A summary of what was written.
 
     Raises:
-        ExportError: If KLayout is not installed or the suffix names no supported format.
+        ExportError: If the suffix names no supported format.
     """
     suffix = path.suffix.lower()
     if suffix not in FORMATS:
         msg = f"{path}: the suffix must be one of {', '.join(FORMATS)}"
         raise ExportError(msg)
-    try:
-        import klayout.db as kdb  # ruff: ignore[import-outside-top-level]
-    except ImportError as error:
-        msg = "KLayout is not installed; install mqt-scpd[klayout] to write layouts"
-        raise ExportError(msg) from error
 
     layout = kdb.Layout()
     layout.dbu = DATABASE_UNIT

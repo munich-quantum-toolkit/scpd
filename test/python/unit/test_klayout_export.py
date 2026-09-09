@@ -6,7 +6,7 @@
 #
 # Licensed under the MIT License
 
-"""Tests of the KLayout adapter. They skip where KLayout has no wheel."""
+"""Tests of the KLayout adapter. They skip where the optional KLayout dependency is absent."""
 
 from __future__ import annotations
 
@@ -16,11 +16,16 @@ import pytest
 
 from mqt.scpd.chip import decode_chip, load_chip
 from mqt.scpd.config import load_config
-from mqt.scpd.export.klayout import OBSTACLE_LAYER, PORT_LAYER, ExportError, write_layout
+from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.design.Chip import ChipT
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 
-kdb = pytest.importorskip("klayout.db")
+pytestmark = pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")
+
+if HAS_KLAYOUT:
+    import klayout.db as kdb
+
+    from mqt.scpd.export import OBSTACLE_LAYER, PORT_LAYER, ExportError, write_layout
 
 BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
 

@@ -10,13 +10,13 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mqt.scpd.artifacts import write_artifact
 from mqt.scpd.cli import main
+from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
@@ -53,13 +53,16 @@ def test_render_writes_a_layout_file(tmp_path: Path, capsys: pytest.CaptureFixtu
     output = tmp_path / "chip.gds"
     code = main(["render", "-c", CONFIG, "-o", str(output)])
     captured = capsys.readouterr()
-    if importlib.util.find_spec("klayout") is None:
+    if not HAS_KLAYOUT:
         assert code == 1
         assert "mqt-scpd[klayout]" in captured.err
-    else:
-        assert code == 0
-        assert output.stat().st_size > 0
-        assert "28 polygons, 36 ports" in captured.out
+        return
+    assert code == 0
+    assert output.stat().st_size > 0
+    assert "28 polygons, 36 ports" in captured.out
+
+    assert main(["render", "-c", CONFIG, "-o", str(tmp_path / "chip.svg")]) == 1
+    assert "the suffix must be one of" in capsys.readouterr().err
 
 
 def test_inspect_prints_an_artifact_as_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
