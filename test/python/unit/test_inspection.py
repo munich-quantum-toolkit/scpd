@@ -148,7 +148,7 @@ STAGE_OUTPUTS = [
 
 @pytest.mark.parametrize(("output_type", "output"), STAGE_OUTPUTS)
 def test_every_stage_output_round_trips_through_json(output_type: int, output: object) -> None:
-    """The JSON of an artifact rebuilds the same bytes, for each of the six stage outputs."""
+    """The JSON of an artifact rebuilds the same bytes, for each of the seven stage outputs."""
     data = write_artifact(artifact(output_type, output))
 
     text = artifact_to_json(data)

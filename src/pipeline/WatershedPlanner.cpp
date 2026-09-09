@@ -71,16 +71,18 @@ fbg::Point layoutOf(const grid::GridMetrics& grid, const std::size_t cell) {
 
 /// The cells a bottleneck's line runs through, which is where a chain is
 /// seeded once the gate is open.
-std::vector<std::vector<std::size_t>> bottleneckLines(
-    const std::vector<grid::Bottleneck>& bottlenecks, const grid::GridMetrics& grid) {
+std::vector<std::vector<std::size_t>>
+bottleneckLines(const std::vector<grid::Bottleneck>& bottlenecks,
+                const grid::GridMetrics& grid) {
   std::vector<std::vector<std::size_t>> lines;
   lines.reserve(bottlenecks.size());
   for (const auto& bottleneck : bottlenecks) {
-    lines.push_back(grid::lineCells(static_cast<std::int64_t>(bottleneck.first % grid.width),
-                                    static_cast<std::int64_t>(bottleneck.first / grid.width),
-                                    static_cast<std::int64_t>(bottleneck.second % grid.width),
-                                    static_cast<std::int64_t>(bottleneck.second / grid.width),
-                                    grid.width, grid.height));
+    lines.push_back(grid::lineCells(
+        static_cast<std::int64_t>(bottleneck.first % grid.width),
+        static_cast<std::int64_t>(bottleneck.first / grid.width),
+        static_cast<std::int64_t>(bottleneck.second % grid.width),
+        static_cast<std::int64_t>(bottleneck.second / grid.width), grid.width,
+        grid.height));
   }
   return lines;
 }
@@ -95,10 +97,11 @@ struct BlockedMove {
 };
 
 /// Whether two segments cross, strictly.
-bool segmentsCrossStrictly(const double ax, const double ay, const double bx, const double by,
-                           const double cx, const double cy, const double dx, const double dy) {
-  const auto side = [](const double px, const double py, const double qx, const double qy,
-                       const double rx, const double ry) {
+bool segmentsCrossStrictly(const double ax, const double ay, const double bx,
+                           const double by, const double cx, const double cy,
+                           const double dx, const double dy) {
+  const auto side = [](const double px, const double py, const double qx,
+                       const double qy, const double rx, const double ry) {
     return ((qx - px) * (ry - py)) - ((qy - py) * (rx - px));
   };
   const auto first = side(ax, ay, bx, by, cx, cy);
@@ -110,8 +113,8 @@ bool segmentsCrossStrictly(const double ax, const double ay, const double bx, co
 }
 
 /// Whether a point lies on a segment.
-bool pointOnSegment(const double px, const double py, const double x0, const double y0,
-                    const double x1, const double y1) {
+bool pointOnSegment(const double px, const double py, const double x0,
+                    const double y0, const double x1, const double y1) {
   constexpr double EPSILON = 1.0e-6;
   if (std::abs(((py - y0) * (x1 - x0)) - ((px - x0) * (y1 - y0))) > EPSILON) {
     return false;
@@ -134,8 +137,9 @@ bool pointOnSegment(const double px, const double py, const double x0, const dou
 /// chambers come out smaller and more numerous than they are; and a Bresenham
 /// line is eight-connected, so a walk that also moves diagonally steps
 /// straight through it anyway.
-std::vector<std::vector<BlockedMove>> bottleneckMoves(
-    const std::vector<grid::Bottleneck>& bottlenecks, const grid::GridMetrics& grid) {
+std::vector<std::vector<BlockedMove>>
+bottleneckMoves(const std::vector<grid::Bottleneck>& bottlenecks,
+                const grid::GridMetrics& grid) {
   std::vector<std::vector<BlockedMove>> moves(bottlenecks.size());
   const auto width = static_cast<std::int64_t>(grid.width);
   const auto height = static_cast<std::int64_t>(grid.height);
@@ -147,23 +151,24 @@ std::vector<std::vector<BlockedMove>> bottleneckMoves(
     const auto x1 = static_cast<double>(gate.second % grid.width) + 0.5;
     const auto y1 = static_cast<double>(gate.second / grid.width) + 0.5;
 
-    const auto minX =
-        std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(std::min(x0, x1))) - 1);
+    const auto minX = std::max<std::int64_t>(
+        0, static_cast<std::int64_t>(std::floor(std::min(x0, x1))) - 1);
     const auto maxX = std::min<std::int64_t>(
         width - 1, static_cast<std::int64_t>(std::ceil(std::max(x0, x1))) + 1);
-    const auto minY =
-        std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(std::min(y0, y1))) - 1);
+    const auto minY = std::max<std::int64_t>(
+        0, static_cast<std::int64_t>(std::floor(std::min(y0, y1))) - 1);
     const auto maxY = std::min<std::int64_t>(
         height - 1, static_cast<std::int64_t>(std::ceil(std::max(y0, y1))) + 1);
 
     auto& blocked = moves[index];
     for (std::int64_t y = minY; y <= maxY; ++y) {
       for (std::int64_t x = minX; x <= maxX; ++x) {
-        const auto cell = grid.index(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+        const auto cell = grid.index(static_cast<std::uint32_t>(x),
+                                     static_cast<std::uint32_t>(y));
         const auto ax = static_cast<double>(x) + 0.5;
         const auto ay = static_cast<double>(y) + 0.5;
-        const auto onLine =
-            pointOnSegment(ax, ay, x0, y0, x1, y1) && cell != gate.first && cell != gate.second;
+        const auto onLine = pointOnSegment(ax, ay, x0, y0, x1, y1) &&
+                            cell != gate.first && cell != gate.second;
 
         for (std::size_t step = 0; step < STEP_X.size(); ++step) {
           const auto nx = x + STEP_X[step];
@@ -171,20 +176,22 @@ std::vector<std::vector<BlockedMove>> bottleneckMoves(
           if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
             continue;
           }
-          const auto neighbor =
-              grid.index(static_cast<std::uint32_t>(nx), static_cast<std::uint32_t>(ny));
+          const auto neighbor = grid.index(static_cast<std::uint32_t>(nx),
+                                           static_cast<std::uint32_t>(ny));
           if (!onLine) {
             // Each edge is decided once, from its lower cell.
             if (cell > neighbor) {
               continue;
             }
             if (!segmentsCrossStrictly(ax, ay, static_cast<double>(nx) + 0.5,
-                                       static_cast<double>(ny) + 0.5, x0, y0, x1, y1)) {
+                                       static_cast<double>(ny) + 0.5, x0, y0,
+                                       x1, y1)) {
               continue;
             }
           }
           blocked.push_back({.cell = cell, .direction = step});
-          blocked.push_back({.cell = neighbor, .direction = REVERSE_STEP[step]});
+          blocked.push_back(
+              {.cell = neighbor, .direction = REVERSE_STEP[step]});
         }
       }
     }
@@ -193,11 +200,12 @@ std::vector<std::vector<BlockedMove>> bottleneckMoves(
 }
 
 /// Whether two segments cross, for the visibility test below.
-bool segmentsCross(const fbg::Point& a0, const fbg::Point& a1, const fbg::Point& b0,
-                   const fbg::Point& b1) {
-  const auto side = [](const fbg::Point& p, const fbg::Point& q, const fbg::Point& r) {
-    const auto value =
-        ((q.x() - p.x()) * (r.y() - p.y())) - ((q.y() - p.y()) * (r.x() - p.x()));
+bool segmentsCross(const fbg::Point& a0, const fbg::Point& a1,
+                   const fbg::Point& b0, const fbg::Point& b1) {
+  const auto side = [](const fbg::Point& p, const fbg::Point& q,
+                       const fbg::Point& r) {
+    const auto value = ((q.x() - p.x()) * (r.y() - p.y())) -
+                       ((q.y() - p.y()) * (r.x() - p.x()));
     constexpr double EPSILON = 1.0e-9;
     if (value > EPSILON) {
       return 1;
@@ -217,9 +225,11 @@ class ChainBuilder {
 public:
   using NodeList = std::vector<std::unique_ptr<fba::CapacityNodeT>>;
 
-  ChainBuilder(const CapacityScene& scene, const std::vector<grid::Bottleneck>& bottlenecks,
+  ChainBuilder(const CapacityScene& scene,
+               const std::vector<grid::Bottleneck>& bottlenecks,
                NodeList& nodes)
-      : scene_(scene), bottlenecks_(bottlenecks), lines_(bottleneckLines(bottlenecks, scene.detail)),
+      : scene_(scene), bottlenecks_(bottlenecks),
+        lines_(bottleneckLines(bottlenecks, scene.detail)),
         moves_(bottleneckMoves(bottlenecks, scene.detail)), nodes_(nodes),
         closed_(bottlenecks.size(), false) {
     for (std::size_t index = 0; index < scene.targetCell.size(); ++index) {
@@ -273,7 +283,8 @@ public:
   /// region the border budgets apply within, and every gate the chain crosses
   /// starts a new one. The watershed over the clear capacity cells runs
   /// afterwards and only fills what no chamber claimed.
-  void stampChambers(const std::size_t targetCell, const std::vector<std::size_t>& gates,
+  void stampChambers(const std::size_t targetCell,
+                     const std::vector<std::size_t>& gates,
                      std::vector<grid::PartitionLabel>& labels,
                      grid::PartitionLabel& nextLabel) {
     visited_.clear();
@@ -297,7 +308,9 @@ public:
   }
 
   /// The targets some chain has already served.
-  [[nodiscard]] const std::unordered_set<std::size_t>& served() const { return covered_; }
+  [[nodiscard]] const std::unordered_set<std::size_t>& served() const {
+    return covered_;
+  }
 
 private:
   std::uint32_t addNode(const fba::CapacityElement kind, const std::uint32_t id,
@@ -317,7 +330,8 @@ private:
   }
 
   /// A move, as one number.
-  [[nodiscard]] static std::uint64_t key(const std::size_t cell, const std::size_t direction) {
+  [[nodiscard]] static std::uint64_t key(const std::size_t cell,
+                                         const std::size_t direction) {
     return (static_cast<std::uint64_t>(cell) << 3U) | direction;
   }
 
@@ -340,14 +354,15 @@ private:
   }
 
   /// Whether a step out of a cell crosses a closed gate.
-  [[nodiscard]] bool crossesAGate(const std::size_t cell, const std::size_t direction) const {
+  [[nodiscard]] bool crossesAGate(const std::size_t cell,
+                                  const std::size_t direction) const {
     const auto found = blocked_.find(key(cell, direction));
     return found != blocked_.end() && found->second > 0;
   }
 
   /// The gates that refuse a step, whether or not they are closed.
-  [[nodiscard]] const std::vector<std::size_t>* gatesOn(const std::size_t cell,
-                                                        const std::size_t direction) const {
+  [[nodiscard]] const std::vector<std::size_t>*
+  gatesOn(const std::size_t cell, const std::size_t direction) const {
     const auto found = gatesAt_.find(key(cell, direction));
     return found == gatesAt_.end() ? nullptr : &found->second;
   }
@@ -404,18 +419,21 @@ private:
             ny >= static_cast<std::int64_t>(grid.height)) {
           continue;
         }
-        const auto cell = grid.index(static_cast<std::uint32_t>(nx), static_cast<std::uint32_t>(ny));
+        const auto cell = grid.index(static_cast<std::uint32_t>(nx),
+                                     static_cast<std::uint32_t>(ny));
 
         // A gate this step would cross is a branch of the chain, whether or
         // not it is passable from here.
         if (const auto* gates = gatesOn(current, step); gates != nullptr) {
           for (const auto gate : *gates) {
-            if (closed_[gate] && takesPart(gate) && !openedGates_.contains(gate)) {
+            if (closed_[gate] && takesPart(gate) &&
+                !openedGates_.contains(gate)) {
               touchedGates.insert(gate);
             }
           }
         }
-        if (local.contains(cell) || visited_.contains(cell) || scene_.blocked.test(cell)) {
+        if (local.contains(cell) || visited_.contains(cell) ||
+            scene_.blocked.test(cell)) {
           continue;
         }
         // A diagonal step between two obstacle corners is a passage the
@@ -458,7 +476,8 @@ private:
   /// end, so every one of them was dropped, the chamber ended the chain, and
   /// the pruning then took the gate that led into it away as well — the free
   /// space beyond a branching corridor fell out of the plan entirely.
-  [[nodiscard]] std::vector<std::size_t> visibleGates(const Chamber& chamber) const {
+  [[nodiscard]] std::vector<std::size_t>
+  visibleGates(const Chamber& chamber) const {
     if (chamber.gates.size() < 2) {
       return chamber.gates;
     }
@@ -468,7 +487,8 @@ private:
     for (const auto candidate : chamber.gates) {
       const auto from = layoutOf(grid, bottlenecks_[candidate].first);
       const auto to = layoutOf(grid, bottlenecks_[candidate].second);
-      const fbg::Point middle{(from.x() + to.x()) / 2.0, (from.y() + to.y()) / 2.0};
+      const fbg::Point middle{(from.x() + to.x()) / 2.0,
+                              (from.y() + to.y()) / 2.0};
 
       // A gate's own cells are blocked while it is closed, so the chamber
       // never contains them. It sees the gate from the cells beside it. A
@@ -482,7 +502,8 @@ private:
           if (other == candidate) {
             continue;
           }
-          if (segmentsCross(seenFrom, middle, layoutOf(grid, bottlenecks_[other].first),
+          if (segmentsCross(seenFrom, middle,
+                            layoutOf(grid, bottlenecks_[other].first),
                             layoutOf(grid, bottlenecks_[other].second))) {
             clear = false;
             break;
@@ -501,10 +522,11 @@ private:
   }
 
   /// The cells of a chamber that look onto a gate: the ones beside its line.
-  [[nodiscard]] std::vector<std::size_t> observersOf(const std::size_t gate,
-                                                     const Chamber& chamber) const {
+  [[nodiscard]] std::vector<std::size_t>
+  observersOf(const std::size_t gate, const Chamber& chamber) const {
     const auto& grid = scene_.detail;
-    const std::unordered_set<std::size_t> seen(chamber.cells.begin(), chamber.cells.end());
+    const std::unordered_set<std::size_t> seen(chamber.cells.begin(),
+                                               chamber.cells.end());
     std::vector<std::size_t> observers;
     std::unordered_set<std::size_t> taken;
     for (const auto cell : lines_[gate]) {
@@ -520,8 +542,8 @@ private:
             ny >= static_cast<std::int64_t>(grid.height)) {
           continue;
         }
-        const auto neighbor =
-            grid.index(static_cast<std::uint32_t>(nx), static_cast<std::uint32_t>(ny));
+        const auto neighbor = grid.index(static_cast<std::uint32_t>(nx),
+                                         static_cast<std::uint32_t>(ny));
         if (seen.contains(neighbor) && taken.insert(neighbor).second) {
           observers.push_back(neighbor);
         }
@@ -560,8 +582,8 @@ private:
       }
       openedGates_.insert(gate);
       const auto node =
-          addNode(fba::CapacityElement::Bottleneck, static_cast<std::uint32_t>(gate),
-                  capacityOf(gate));
+          addNode(fba::CapacityElement::Bottleneck,
+                  static_cast<std::uint32_t>(gate), capacityOf(gate));
 
       setClosed(gate, false);
       expand(node, seedsBeyond(gate, chamber), siblings);
@@ -572,7 +594,8 @@ private:
   }
 
   /// One chamber of a chain, labelled, then the chambers beyond its gates.
-  void stamp(const std::size_t targetCell, const std::vector<std::size_t>& seeds,
+  void stamp(const std::size_t targetCell,
+             const std::vector<std::size_t>& seeds,
              const std::unordered_set<std::size_t>& skip) {
     const auto chamber = flood(seeds);
     if (chamber.reachesALauncher) {
@@ -611,10 +634,11 @@ private:
 
   /// The cells a chain continues from once a gate is open: the cells of the
   /// gate itself and the ones beside it that the chamber has already seen.
-  [[nodiscard]] std::vector<std::size_t> seedsBeyond(const std::size_t gate,
-                                                     const Chamber& chamber) const {
+  [[nodiscard]] std::vector<std::size_t>
+  seedsBeyond(const std::size_t gate, const Chamber& chamber) const {
     const auto& grid = scene_.detail;
-    const std::unordered_set<std::size_t> seen(chamber.cells.begin(), chamber.cells.end());
+    const std::unordered_set<std::size_t> seen(chamber.cells.begin(),
+                                               chamber.cells.end());
     std::vector<std::size_t> seeds;
     std::unordered_set<std::size_t> taken;
 
@@ -631,8 +655,8 @@ private:
             ny >= static_cast<std::int64_t>(grid.height)) {
           continue;
         }
-        const auto neighbor =
-            grid.index(static_cast<std::uint32_t>(nx), static_cast<std::uint32_t>(ny));
+        const auto neighbor = grid.index(static_cast<std::uint32_t>(nx),
+                                         static_cast<std::uint32_t>(ny));
         if (seen.contains(neighbor) && taken.insert(neighbor).second) {
           seeds.push_back(neighbor);
         }
@@ -641,7 +665,9 @@ private:
     return seeds;
   }
 
-  [[nodiscard]] std::uint32_t capacityOf(const std::size_t gate) const { return capacity_[gate]; }
+  [[nodiscard]] std::uint32_t capacityOf(const std::size_t gate) const {
+    return capacity_[gate];
+  }
 
 public:
   /// The wire budget of every bottleneck, filled by the stage before the
@@ -767,7 +793,8 @@ private:
 /// The capacity planner of the first release.
 class WatershedPlanner final : public ICapacityPlanner {
 public:
-  [[nodiscard]] CapacityPlanT run(const ChipT& chip, const ConfigT& config) const override {
+  [[nodiscard]] CapacityPlanT run(const ChipT& chip,
+                                  const ConfigT& config) const override {
     const auto scene = buildScene(chip, config);
     const auto& rules = *config.rules;
 
@@ -776,18 +803,19 @@ public:
     plan.detail_grid = extentOf(scene.detail);
 
     const auto distance = grid::squaredDistanceTransform(scene.blocked);
-    const auto axis =
-        grid::rasterizeMedialAxis(scene.blocked, scene.detail, grid::medialAxis(scene.blocked));
+    const auto axis = grid::rasterizeMedialAxis(
+        scene.blocked, scene.detail, grid::medialAxis(scene.blocked));
 
     // A place is a bottleneck only where the free radius around it is below
     // the configured fraction of the chip. The threshold is a squared cell
     // count because that is what the distance transform holds.
     const auto pitch = rules.min_wire_spacing + rules.min_obstacle_spacing;
     const auto clearance = clearanceLimit(config, scene, pitch);
-    const auto candidates = grid::findBottlenecks(scene.blocked, axis, distance, scene.detail,
-                                                  {.maximumSquaredClearance = clearance,
-                                                   .sameNarrowing = pitch,
-                                                   .targets = scene.targetCell});
+    const auto candidates =
+        grid::findBottlenecks(scene.blocked, axis, distance, scene.detail,
+                              {.maximumSquaredClearance = clearance,
+                               .sameNarrowing = pitch,
+                               .targets = scene.targetCell});
 
     // The chains come first: which gates matter is decided by walking them,
     // and a gate that no chain crosses constrains nothing and is dropped.
@@ -796,7 +824,8 @@ public:
     // The partitioning is what the gates carve out. Every chamber a chain
     // walks through is one partition, and the watershed over the clear
     // capacity cells only fills what no chamber claimed.
-    std::vector<grid::PartitionLabel> labels(scene.detail.cells(), grid::LABEL_NONE);
+    std::vector<grid::PartitionLabel> labels(scene.detail.cells(),
+                                             grid::LABEL_NONE);
     for (std::size_t cell = 0; cell < labels.size(); ++cell) {
       if (scene.reserved.test(cell)) {
         labels[cell] = grid::LABEL_RESERVED;
@@ -812,13 +841,16 @@ public:
       }
     }
 
-    const auto seeds = grid::freeCellSeeds(scene.blocked, scene.detail, scene.capacity);
+    const auto seeds =
+        grid::freeCellSeeds(scene.blocked, scene.detail, scene.capacity);
     nextLabel = grid::runWatershed(scene.blocked, seeds, labels, nextLabel);
-    grid::smoothPartitionBorders(scene.blocked, labels, grid::FIRST_PARTITION_LABEL,
-                                 SMOOTHING_RADIUS, SMOOTHING_ROUNDS);
+    grid::smoothPartitionBorders(scene.blocked, labels,
+                                 grid::FIRST_PARTITION_LABEL, SMOOTHING_RADIUS,
+                                 SMOOTHING_ROUNDS);
 
-    const auto partitions = grid::extractPartitions(scene.blocked, labels, scene.detail);
-    fillPartitions(plan, partitions, scene);
+    const auto partitions =
+        grid::extractPartitions(scene.blocked, labels, scene.detail);
+    fillPartitions(plan, partitions, scene, crossingPitch(config));
     fillBottlenecks(plan, candidates, chains, scene, rules);
     fillLaunchers(plan, scene);
     fillPortKeepout(plan, scene);
@@ -844,9 +876,10 @@ private:
                                                     const CapacityScene& scene,
                                                     const double pitch) {
     const flatbuffers::config::CapacityParamsT defaults;
-    const auto* params = config.stages != nullptr && config.stages->capacity != nullptr
-                             ? config.stages->capacity.get()
-                             : &defaults;
+    const auto* params =
+        config.stages != nullptr && config.stages->capacity != nullptr
+            ? config.stages->capacity.get()
+            : &defaults;
     const auto fraction = params->bottleneck_clearance;
     if (fraction <= 0.0) {
       return 0;
@@ -870,7 +903,8 @@ private:
   /// cells and a band along a diagonal comes out as the staircase the grid
   /// actually blocks. One ring per connected piece, and one more per hole.
   static void fillPortKeepout(CapacityPlanT& plan, const CapacityScene& scene) {
-    std::vector<grid::PartitionLabel> labels(scene.detail.cells(), grid::LABEL_NONE);
+    std::vector<grid::PartitionLabel> labels(scene.detail.cells(),
+                                             grid::LABEL_NONE);
     grid::BitGrid outside(scene.detail.width, scene.detail.height);
     for (std::size_t cell = 0; cell < labels.size(); ++cell) {
       if (scene.keepout.test(cell)) {
@@ -879,7 +913,8 @@ private:
         outside.set(cell, true);
       }
     }
-    for (const auto& outline : grid::extractPartitions(outside, labels, scene.detail).outlines) {
+    for (const auto& outline :
+         grid::extractPartitions(outside, labels, scene.detail).outlines) {
       auto ring = std::make_unique<fbg::PolygonT>();
       ring->vertices.reserve(outline.ring.size());
       for (const auto& corner : outline.ring) {
@@ -889,8 +924,10 @@ private:
     }
   }
 
-  static void fillPartitions(CapacityPlanT& plan, const grid::Partitions& partitions,
-                             const CapacityScene& scene) {
+  static void fillPartitions(CapacityPlanT& plan,
+                             const grid::Partitions& partitions,
+                             const CapacityScene& scene,
+                             const double pitch) {
     std::unordered_map<grid::PartitionLabel, std::size_t> position;
     for (const auto& outline : partitions.outlines) {
       auto found = position.find(outline.label);
@@ -898,7 +935,8 @@ private:
         auto partition = std::make_unique<fba::PartitionT>();
         partition->label = outline.label;
         plan.partitions.push_back(std::move(partition));
-        found = position.emplace(outline.label, plan.partitions.size() - 1).first;
+        found =
+            position.emplace(outline.label, plan.partitions.size() - 1).first;
       }
       auto ring = std::make_unique<fbg::PolygonT>();
       ring->vertices.reserve(outline.ring.size());
@@ -918,9 +956,13 @@ private:
       }
       const auto center = border.center();
       entry->center = scene.detail.toLayout(center.x(), center.y());
-      // The border carries as many wires as its length allows, which is what
-      // the assignment may commit across it.
-      entry->budget = static_cast<std::uint32_t>(border.samples.size());
+      // The border carries as many wires as its length allows: one per
+      // crossing slot, and the slots sit one crossing pitch apart along it.
+      // The Corridor stage draws its slots from the same function and the
+      // same pitch, so the budget and what is routed across it cannot
+      // disagree.
+      entry->budget = static_cast<std::uint32_t>(
+          grid::borderSlots(border, scene.detail, pitch).size());
       plan.borders.push_back(std::move(entry));
     }
   }
@@ -933,7 +975,8 @@ private:
   /// it would put a line in every picture that nothing routes around.
   static void fillBottlenecks(CapacityPlanT& plan,
                               const std::vector<grid::Bottleneck>& candidates,
-                              const std::vector<Chain>& chains, const CapacityScene& scene,
+                              const std::vector<Chain>& chains,
+                              const CapacityScene& scene,
                               const flatbuffers::design::DesignRulesT& rules) {
     std::vector<std::size_t> kept;
     for (const auto& chain : chains) {
@@ -947,7 +990,8 @@ private:
     const auto capacities = capacitiesOf(candidates, scene, rules);
     plan.bottlenecks.reserve(kept.size());
     for (const auto candidate : kept) {
-      renumbered.emplace(candidate, static_cast<std::uint32_t>(plan.bottlenecks.size()));
+      renumbered.emplace(candidate,
+                         static_cast<std::uint32_t>(plan.bottlenecks.size()));
       auto entry = std::make_unique<fba::BottleneckT>();
       entry->from = layoutOf(scene.detail, candidates[candidate].first);
       entry->to = layoutOf(scene.detail, candidates[candidate].second);
@@ -974,14 +1018,17 @@ private:
 
   /// The wire budget of every candidate gate.
   [[nodiscard]] static std::vector<std::uint32_t>
-  capacitiesOf(const std::vector<grid::Bottleneck>& candidates, const CapacityScene& scene,
+  capacitiesOf(const std::vector<grid::Bottleneck>& candidates,
+               const CapacityScene& scene,
                const flatbuffers::design::DesignRulesT& rules) {
     std::vector<std::uint32_t> capacities;
     capacities.reserve(candidates.size());
     for (const auto& gate : candidates) {
-      const auto roundDown = scene.reserved.test(gate.first) || scene.reserved.test(gate.second);
-      capacities.push_back(grid::bottleneckCapacity(gate, scene.detail, rules.min_wire_spacing,
-                                                    rules.min_obstacle_spacing, roundDown));
+      const auto roundDown =
+          scene.reserved.test(gate.first) || scene.reserved.test(gate.second);
+      capacities.push_back(
+          grid::bottleneckCapacity(gate, scene.detail, rules.min_wire_spacing,
+                                   rules.min_obstacle_spacing, roundDown));
     }
     return capacities;
   }
@@ -1001,8 +1048,10 @@ private:
   /// Build one chain per target that no other chain already serves, then
   /// reduce each to the gates that bind.
   [[nodiscard]] static std::vector<Chain>
-  buildChains(CapacityPlanT& plan, const std::vector<grid::Bottleneck>& candidates,
-              const CapacityScene& scene, const flatbuffers::design::DesignRulesT& rules) {
+  buildChains(CapacityPlanT& plan,
+              const std::vector<grid::Bottleneck>& candidates,
+              const CapacityScene& scene,
+              const flatbuffers::design::DesignRulesT& rules) {
     ChainBuilder builder(scene, candidates, plan.nodes);
     builder.capacity_ = capacitiesOf(candidates, scene, rules);
 
@@ -1011,7 +1060,8 @@ private:
       if (builder.served().contains(scene.targetCell[index])) {
         continue;
       }
-      chains.push_back({.root = builder.build(scene.targetCell[index], scene.targetPort[index]),
+      chains.push_back({.root = builder.build(scene.targetCell[index],
+                                              scene.targetPort[index]),
                         .cell = scene.targetCell[index]});
     }
 

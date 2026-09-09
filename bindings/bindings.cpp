@@ -80,6 +80,16 @@ globalOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
   return *output;
 }
 
+/// The assignment an artifact carries.
+const mqt::scpd::flatbuffers::artifacts::AssignmentT&
+assignmentOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
+  const auto* output = artifact.output.AsAssignment();
+  if (output == nullptr) {
+    throw std::invalid_argument("the artifact is not an assignment");
+  }
+  return *output;
+}
+
 } // namespace
 
 // The bindings expose what the command-line interface needs and nothing else.
@@ -154,6 +164,26 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "Run the Assignment stage. Returns 03-assign.fb as bytes.");
 
   m.def(
+      "route_corridor",
+      [](const nb::bytes& chip, const nb::bytes& capacity,
+         const nb::bytes& assignment, const nb::bytes& config,
+         const std::string_view producer) {
+        const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
+        const auto design = mqt::scpd::io::readChip(asSpan(chip));
+        const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
+        const auto assigned = mqt::scpd::io::readArtifact(asSpan(assignment));
+        const auto name =
+            mqt::scpd::pipeline::selectedCorridorRouter(configuration);
+        return asArtifact(
+            mqt::scpd::pipeline::corridorRouters().make(name)->run(
+                design, capacityOf(plan), assignmentOf(assigned),
+                configuration),
+            producer);
+      },
+      "chip"_a, "capacity"_a, "assignment"_a, "config"_a, "producer"_a,
+      "Run the Corridor stage. Returns 04-corridor.fb as bytes.");
+
+  m.def(
       "algorithms",
       [] {
         std::vector<std::pair<std::string, std::vector<std::string>>>
@@ -165,6 +195,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                                 mqt::scpd::pipeline::globalRouters().names());
         registered.emplace_back("assigner",
                                 mqt::scpd::pipeline::assigners().names());
+        registered.emplace_back("corridor-router",
+                                mqt::scpd::pipeline::corridorRouters().names());
         return registered;
       },
       "The implementations this build ships, one list per stage.");

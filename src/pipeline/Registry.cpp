@@ -12,6 +12,7 @@
 
 #include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
+#include "mqt-scpd/pipeline/CorridorRouter.hpp"
 #include "mqt-scpd/pipeline/GlobalRouter.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 
@@ -26,9 +27,11 @@ namespace {
 constexpr std::string_view DEFAULT_CAPACITY_PLANNER = "watershed";
 constexpr std::string_view DEFAULT_GLOBAL_ROUTER = "hanan-milp";
 constexpr std::string_view DEFAULT_ASSIGNER = "ordered-milp";
+constexpr std::string_view DEFAULT_CORRIDOR_ROUTER = "partition-astar";
 
 /// A configured name, or the default when the configuration leaves it empty.
-std::string_view orDefault(const std::string& configured, const std::string_view fallback) {
+std::string_view orDefault(const std::string& configured,
+                           const std::string_view fallback) {
   return configured.empty() ? fallback : std::string_view(configured);
 }
 
@@ -61,9 +64,19 @@ const Registry<IAssigner>& assigners() {
   return registry;
 }
 
+const Registry<ICorridorRouter>& corridorRouters() {
+  static const auto registry = [] {
+    Registry<ICorridorRouter> made;
+    made.add(std::string(DEFAULT_CORRIDOR_ROUTER), makePartitionAStarRouter);
+    return made;
+  }();
+  return registry;
+}
+
 std::string_view selectedCapacityPlanner(const ConfigT& config) {
   if (config.stages != nullptr && config.stages->capacity != nullptr) {
-    return orDefault(config.stages->capacity->planner, DEFAULT_CAPACITY_PLANNER);
+    return orDefault(config.stages->capacity->planner,
+                     DEFAULT_CAPACITY_PLANNER);
   }
   return DEFAULT_CAPACITY_PLANNER;
 }
@@ -80,6 +93,13 @@ std::string_view selectedAssigner(const ConfigT& config) {
     return orDefault(config.stages->assignment->assigner, DEFAULT_ASSIGNER);
   }
   return DEFAULT_ASSIGNER;
+}
+
+std::string_view selectedCorridorRouter(const ConfigT& config) {
+  if (config.stages != nullptr && config.stages->corridor != nullptr) {
+    return orDefault(config.stages->corridor->router, DEFAULT_CORRIDOR_ROUTER);
+  }
+  return DEFAULT_CORRIDOR_ROUTER;
 }
 
 } // namespace mqt::scpd::pipeline

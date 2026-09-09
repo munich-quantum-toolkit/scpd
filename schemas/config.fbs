@@ -86,6 +86,20 @@ table CapacityParams {
   /// range as a physical distance, and reproduces the prototype's own
   /// bottleneck count on both.
   bottleneck_clearance: double = 1.5;
+  /// How far apart the places a wire may cross a partition border sit, in
+  /// layout units.
+  ///
+  /// This is a planning pitch and **not** a clearance rule. It decides how
+  /// finely a border is divided for the Corridor stage and therefore how many
+  /// wires `PartitionBorder.budget` says it carries; where a wire actually
+  /// runs, and how far it keeps from its neighbour, the detail router decides
+  /// and the design-rule check verifies.
+  ///
+  /// The default is the prototype's own figure. It divides a border at its
+  /// wire spacing less twenty units and records no reason for the twenty; on
+  /// the 45-qubit chip the difference is one wire that has a way through and
+  /// one that has none.
+  crossing_pitch: double = 165.0;
 }
 
 /// What the Global stage is allowed to do.
@@ -110,6 +124,22 @@ table AssignmentParams {
   launcher_target: uint32 = 0;
 }
 
+/// What the Corridor stage is allowed to do.
+table CorridorParams {
+  /// The implementation, by the name it is registered under.
+  router: string;
+  /// Sweeps over the connection list, alternating forward and backward.
+  ///
+  /// A wire that routes stays where it is; the sweeps exist so that a wire
+  /// which found no way through can take the room a later one has not
+  /// claimed yet, and so that the order the connections are tried in does
+  /// not decide the result on its own.
+  rounds: uint32 = 12;
+  /// How many neighbouring connections a failed one may rip up, counted
+  /// along the sweep direction.
+  max_relaxation: uint32 = 30;
+}
+
 /// How the mixed-integer programs of the planning stages are solved.
 table SolverParams {
   /// "auto", "highs" or "gurobi". The environment variable SCPD_SOLVER
@@ -127,6 +157,7 @@ table StageParams {
   global: GlobalParams;
   assignment: AssignmentParams;
   solver: SolverParams;
+  corridor: CorridorParams;
 }
 
 /// The whole run configuration.

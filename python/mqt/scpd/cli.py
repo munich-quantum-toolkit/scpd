@@ -51,7 +51,7 @@ def command_doctor(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
-def _planning_for(args: argparse.Namespace, chip_bytes: bytes):  # ruff: ignore[missing-return-type-private-function]
+def _planning_for(args: argparse.Namespace, chip_bytes: bytes):  # noqa: ANN202
     """What a planning stage produced, or None for the plain layout view.
 
     Returns:
@@ -73,9 +73,10 @@ def _planning_for(args: argparse.Namespace, chip_bytes: bytes):  # ruff: ignore[
     if not artifact.is_file():
         msg = f"{artifact} is missing; run `mqt-scpd plan -c ... -o {args.run_dir}` first"
         raise RunError(msg)
-    # The global picture is drawn over the gates the circuit had to pay for, so the capacity
-    # artifact of the same run is read beside it when the run still carries one.
-    plan = directory.artifact("capacity") if args.stage == "global" else None
+    # The global picture is drawn over the gates the circuit had to pay for and the corridor
+    # picture over the partitions its wires run through, so the capacity artifact of the same
+    # run is read beside them when the run still carries one.
+    plan = directory.artifact("capacity") if args.stage in {"global", "corridor"} else None
     capacity = plan.read_bytes() if plan is not None and plan.is_file() else None
     return planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity)
 
@@ -142,7 +143,7 @@ def command_list_algorithms(args: argparse.Namespace) -> int:
         The exit code.
     """
     del args
-    from . import pyscpd  # ruff: ignore[import-outside-top-level]
+    from . import pyscpd  # noqa: PLC0415
 
     for stage, names in pyscpd.algorithms():
         print(f"{stage + ':':18s}{', '.join(names)}")

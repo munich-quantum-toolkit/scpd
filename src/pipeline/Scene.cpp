@@ -63,6 +63,10 @@ constexpr double BRIDGE_FORWARD_FACTOR = 2.0;
 /// detail grid.
 constexpr std::uint32_t LAUNCHER_SWEEP_CELLS = 6;
 
+/// The crossing pitch a configuration that names none falls back to, which is
+/// the default the schema declares.
+constexpr double DEFAULT_CROSSING_PITCH = 165.0;
+
 /// The capacity grid a configuration asks for.
 grid::GridMetrics capacityGrid(const geometry::BoundingBox& box,
                                const flatbuffers::config::GridParamsT& params) {
@@ -73,6 +77,13 @@ grid::GridMetrics capacityGrid(const geometry::BoundingBox& box,
 }
 
 } // namespace
+
+double crossingPitch(const ConfigT& config) {
+  if (config.stages != nullptr && config.stages->capacity != nullptr) {
+    return config.stages->capacity->crossing_pitch;
+  }
+  return DEFAULT_CROSSING_PITCH;
+}
 
 CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
   if (config.grid == nullptr) {

@@ -49,6 +49,8 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "inner": (16, 0, "plan.inner-circuit"),
     "assignments": (17, 0, "plan.assignment"),
     "ring": (18, 0, "plan.ring"),
+    "corridors": (19, 0, "plan.corridor"),
+    "slots": (20, 0, "plan.slot"),
 }
 
 #: How wide a planning line is drawn, in layout units. A path needs a width to be a shape at all;
@@ -112,7 +114,7 @@ def write_layout(
         msg = f"{path}: the suffix must be one of {', '.join(FORMATS)}"
         raise ExportError(msg)
     try:
-        import klayout.db as kdb  # ruff: ignore[import-outside-top-level]
+        import klayout.db as kdb  # noqa: PLC0415
     except ImportError as error:
         msg = "KLayout is not installed; install mqt-scpd[klayout] to write layouts"
         raise ExportError(msg) from error
@@ -142,7 +144,7 @@ def write_layout(
     return ExportSummary(path, FORMATS[suffix], polygons, ports, shapes)
 
 
-def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # ruff: ignore[missing-type-function-argument]
+def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # noqa: ANN001
     """Write the shapes of one planning stage onto their own layers.
 
     A partition is a polygon and everything else is a path, because that is what each of them
@@ -198,5 +200,21 @@ def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # ruf
                 written += 1
     if len(planning.ring) >= 2:
         top.shapes(layer("ring")).insert(path([*planning.ring, planning.ring[0]]))
+        written += 1
+    for route in planning.corridors:
+        if len(route) >= 2:
+            top.shapes(layer("corridors")).insert(path(route))
+            written += 1
+    for x, y in planning.slots:
+        top.shapes(layer("slots")).insert(
+            kdb.DPolygon(
+                kdb.DBox(
+                    x - PLANNING_MARKER_RADIUS / 3,
+                    y - PLANNING_MARKER_RADIUS / 3,
+                    x + PLANNING_MARKER_RADIUS / 3,
+                    y + PLANNING_MARKER_RADIUS / 3,
+                )
+            )
+        )
         written += 1
     return written

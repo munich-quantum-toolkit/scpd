@@ -44,7 +44,8 @@ public:
       throw std::invalid_argument("a registered implementation needs a name");
     }
     if (factories_.contains(name)) {
-      throw std::invalid_argument(std::format("'{}' is already registered", name));
+      throw std::invalid_argument(
+          std::format("'{}' is already registered", name));
     }
     factories_.emplace(std::move(name), std::move(factory));
   }
@@ -53,7 +54,8 @@ public:
   ///
   /// @throws std::invalid_argument when the name is not registered. The
   /// message lists what is.
-  [[nodiscard]] std::unique_ptr<Interface> make(const std::string_view name) const {
+  [[nodiscard]] std::unique_ptr<Interface>
+  make(const std::string_view name) const {
     const auto found = factories_.find(std::string(name));
     if (found == factories_.end()) {
       std::string known;
@@ -61,9 +63,9 @@ public:
         known += known.empty() ? "" : ", ";
         known += registered;
       }
-      throw std::invalid_argument(
-          std::format("'{}' is no known implementation; the registered ones are {}", name,
-                      known.empty() ? "none" : known));
+      throw std::invalid_argument(std::format(
+          "'{}' is no known implementation; the registered ones are {}", name,
+          known.empty() ? "none" : known));
     }
     return found->second();
   }
@@ -88,15 +90,27 @@ private:
 };
 
 /// The implementations this build ships, one registry per stage.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<ICapacityPlanner>& capacityPlanners();
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IGlobalRouter>& globalRouters();
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<ICapacityPlanner>&
+capacityPlanners();
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IGlobalRouter>&
+globalRouters();
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IAssigner>& assigners();
+
+/// The corridor routers this build ships.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<ICorridorRouter>&
+corridorRouters();
 
 /// The name a configuration selects for a stage, or the stage's default when
 /// the configuration names none.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
 selectedCapacityPlanner(const ConfigT& config);
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view selectedGlobalRouter(const ConfigT& config);
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view selectedAssigner(const ConfigT& config);
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
+selectedGlobalRouter(const ConfigT& config);
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
+selectedAssigner(const ConfigT& config);
+
+/// The corridor router a configuration selects, or the default.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
+selectedCorridorRouter(const ConfigT& config);
 
 } // namespace mqt::scpd::pipeline

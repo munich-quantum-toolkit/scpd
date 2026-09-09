@@ -23,6 +23,7 @@ from .artifacts import read_artifact
 from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityElement import CapacityElement
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ PLANNING_STAGES: dict[str, str] = {
     "capacity": "01-capacity.fb",
     "global": "02-global.fb",
     "assign": "03-assign.fb",
+    "corridor": "04-corridor.fb",
 }
 
 #: A point in layout units.
@@ -73,6 +75,10 @@ class PlanningGeometry:
     assignments: list[tuple[Point, Point]] = field(default_factory=list)
     #: The outer ring, in the order the assignment consumed it.
     ring: list[Point] = field(default_factory=list)
+    #: Each wire's coarse route, from its feed through its crossings to its target.
+    corridors: list[list[Point]] = field(default_factory=list)
+    #: Every crossing slot a border offers, taken or not.
+    slots: list[Point] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         """Whether the stage produced nothing to draw.
@@ -91,6 +97,8 @@ class PlanningGeometry:
             self.inner,
             self.assignments,
             self.ring,
+            self.corridors,
+            self.slots,
         ))
 
 
@@ -241,6 +249,19 @@ def _assignment(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry
                 geometry.launchers.append(target)
 
 
+def _corridor(routing: CorridorRoutingT, geometry: PlanningGeometry) -> None:
+    """Fill the layers a corridor routing carries."""
+    for border in _entries(routing.slots):
+        geometry.slots.extend(_point(position) for position in _entries(border.positions))
+    for corridor in _entries(routing.corridors):
+        if not corridor.partitions or corridor.source is None or corridor.target is None:
+            continue
+        route = [_point(corridor.source)]
+        route.extend(_point(crossing) for crossing in _entries(corridor.crossings))
+        route.append(_point(corridor.target))
+        geometry.corridors.append(route)
+
+
 def planning_geometry(data: bytes, chip: ChipT, stage: str, capacity: bytes | None = None) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
@@ -249,7 +270,8 @@ def planning_geometry(data: bytes, chip: ChipT, stage: str, capacity: bytes | No
         chip: The chip the run was made from, for the positions of the ports an artifact names.
         stage: Which stage the artifact is expected to be from.
         capacity: The capacity artifact of the same run, for the stages that are drawn over the
-            gates they had to pay for. Only the global stage reads it, and only its bottlenecks.
+            free space they had to fit into. The global stage reads its gates, and the corridor
+            stage the partitions its wires run through.
 
     Returns:
         The geometry, in layout units.
@@ -291,6 +313,19 @@ def planning_geometry(data: bytes, chip: ChipT, stage: str, capacity: bytes | No
             msg = "the artifact is not an assignment"
             raise PlanningError(msg)
         _assignment(output, chip, geometry)
+    elif stage == "corridor":
+        if not isinstance(output, CorridorRoutingT):
+            msg = "the artifact is not a corridor routing"
+            raise PlanningError(msg)
+        _corridor(output, geometry)
+        # A corridor is a way through the partitions, so the partitions are what makes the
+        # picture readable at all.
+        if capacity is not None:
+            plan = read_artifact(capacity).output
+            if not isinstance(plan, CapacityPlanT):
+                msg = "the capacity artifact is not a capacity plan"
+                raise PlanningError(msg)
+            _capacity(plan, geometry)
     else:
         msg = f"'{stage}' is no planning stage; they are {', '.join(PLANNING_STAGES)}"
         raise PlanningError(msg)

@@ -1,8 +1,8 @@
 # Pipeline
 
-Six stages, each a typed interface with one implementation in the first release.
-This document defines what each stage promises, what it writes, and how a run is
-resumed.
+Seven stages, each a typed interface with one implementation in the first
+release. This document defines what each stage promises, what it writes, and how
+a run is resumed.
 
 ## Stage contracts
 
@@ -32,14 +32,15 @@ incidental:
 The third property is what makes resume meaningful and property tests
 reproducible. It is also what will make the phase-2 threading tractable.
 
-| Stage      | Interface          | Reads                  | Writes           |
-| ---------- | ------------------ | ---------------------- | ---------------- |
-| Capacity   | `ICapacityPlanner` | chip                   | `01-capacity.fb` |
-| Global     | `IGlobalRouter`    | chip, capacity         | `02-global.fb`   |
-| Assignment | `IAssigner`        | chip, capacity, global | `03-assign.fb`   |
-| Detail     | `IDetailRouter`    | chip, assignment       | `04-detail.fb`   |
-| Final      | `IFinalRouter`     | chip, detail           | `05-final.fb`    |
-| Finalize   | `IFinalizer`       | chip, final            | `06-geometry.fb` |
+| Stage      | Interface          | Reads                     | Writes            |
+| ---------- | ------------------ | ------------------------- | ----------------- |
+| Capacity   | `ICapacityPlanner` | chip                      | `01-capacity.fb`  |
+| Global     | `IGlobalRouter`    | chip, capacity            | `02-global.fb`    |
+| Assignment | `IAssigner`        | chip, capacity, global    | `03-assign.fb`    |
+| Corridor   | `ICorridorRouter`  | chip, capacity, assign    | `04-corridor.fb`  |
+| Detail     | `IDetailRouter`    | chip, corridor            | `05-detail.fb`    |
+| Final      | `IFinalRouter`     | chip, detail              | `06-final.fb`     |
+| Finalize   | `IFinalizer`       | chip, final               | `07-geometry.fb`  |
 
 **Global runs before Assignment.** Which outer port an inner wire surfaces at is
 a fact about the solved inner circuit, and it decides both which outer ports
@@ -210,8 +211,8 @@ of the launcher ring, one short of the launcher count, and that single turn is
 what gives the artifact its other two properties:
 
 - **A launcher feeds at most one conventional port.** The potential falls at
-  every conventional port, so two of them share a launcher only where they lie
-  a whole launcher ring apart, which no walk of one turn does.
+  every conventional port, so two of them share a launcher only where they lie a
+  whole launcher ring apart, which no walk of one turn does.
 - **The ring keeps its cyclic order.** The launcher slots along the ring fall
   and come back up exactly once, where the turn closes. A launcher later in the
   cycle is therefore given a port later in the cycle.
@@ -230,6 +231,121 @@ find each port's nearest launcher, and mutated the capacity grid after solving.
 Those lookups are a plain `AssignmentInputs` value here, worked out before the
 model builder runs. Until that is done the model is not separable from the
 geometry engine, and the solver abstraction cannot work.
+
+### Corridor
+
+Routes every assigned connection through the partitions, coarsely: from the
+point the assignment feeds it at, across a border at a time, to the cell its
+target port is reached at. The search runs on the partition graph rather than on
+pixels, so what it decides is which corridors a wire uses, not where inside one
+it runs. See
+[decision 0031](decisions/0031-coarse-routing-is-its-own-stage.md).
+
+**This is the stage that makes a wire budget bind.** A border is crossed at one
+of a fixed set of slots, one crossing pitch apart along it, and no two wires take
+the same slot; a border therefore carries no more wires than
+`PartitionBorder.budget` says, because the budget counts those very slots. One
+function places them and both stages call it, so what is counted and what is
+crossed cannot drift apart.
+
+The slots are placed by **walking the border**, each one a pitch past the last,
+which is what the prototype does. Spacing them against every slot already placed
+instead would lose the ones on a border that bends back towards itself, and those
+are exactly the ones a wire coming from that side needs.
+
+**The pitch is a planning figure, not a clearance rule.** It says how finely a
+border is divided; how far two wires actually keep apart is the detail router's
+answer and the design-rule check's verdict. `[stages.capacity] crossing_pitch`
+carries it, and the default is the prototype's own.
+
+**Two wires may not meet inside a partition.** Crossing is what the plan has to
+rule out for the detail router to realise it, and running along each other is
+ruled out with it, because two wires in one place is what that would mean.
+Grazing at a single point is allowed where that point is a crossing slot: the
+chords are a schematic of which partitions a wire uses, and the detail router
+crosses a border a little to either side of a slot as it sees fit, so there is
+still room. A slot is a **place**, not an entry in a list — where three
+partitions meet, one point is a slot of each border and still one place, so one
+wire crosses there and no more.
+
+**A wire may not run over a point another wire is pinned to.** A wire is pinned
+at two places: the point the assignment feeds it at, and the cell its target
+port is reached at. Neither can be moved, so a second wire drawn over one is
+two wires on one point of the chip, whatever room the corridor around them has.
+The crossing test cannot see this case at all — a chord that stops on another
+one never gets to the far side of it, so the two never cross properly. Without
+the rule the eight chips carry eleven of these, on four of them, and on the
+69-qubit chip three wires in a row run down one line of feed points with not a
+single crossing reported. The prototype allows it: its
+`check_edge_crossing` tests proper crossings only, and the occupancy it keeps
+beside that is a set of pixels, never the lines between them. A wire's pins
+reach the plan through the chords it draws, so a wire that has no corridor
+protects nothing; on all eight chips every wire has one.
+
+**No wire crosses out of the ring the ports feed from.** Every wire starts at a
+point on the launcher ring, so the rectangle those points span is the outside of
+the chip as far as this stage is concerned, and a border is offered as a place
+to cross only strictly inside it. On the rectangle is not inside: such a place
+sits beside some port's own feed point, and a wire crossing there has slipped
+behind that port — out through the ring, along the back of it, and in again
+somewhere else. Without the rule the eight chips route twenty-seven crossings
+that way, on four of them. The prototype draws the same line, clamping every
+border pixel to the box its launcher slots span
+(`CapacityGrid.cpp:7342`).
+
+**A target that no border reaches leaves along its own port's approach.** The
+capacity grid places a target on the first cell beyond its port's band that was
+free before the bands were stamped; it does not open the band, because nothing
+searches on that grid. Where the band and the artwork close around a port, what
+is left is a pocket no border reaches, and a wire could never leave it. The band
+is not artwork — it is the strip that port's own wire runs along — so it is a way
+out, and it carries exactly one wire. The artifact marks those ways, because a
+step over one joins two partitions that share no border of the plan and a reader
+would otherwise take it for a mistake.
+
+**Rip-up, and then the wires that are actually in the way.** The stage sweeps the
+connection list, alternating forward and backward, and re-routes every wire in
+each sweep. A wire that finds no way rips up its neighbours along the sweep
+direction, up to `max_relaxation` of them, which is what the prototype does and
+what opens a large enough hole to matter. Only when that fails does it ask which
+wires are actually in its way — the route it would take on an empty chip names
+them — and take those out one at a time. Measured over all eight chips, the
+wires in the way are almost never the ring neighbours, and neither mechanism
+replaces the other: the sweep alone leaves fifteen connections of the 968
+unrouted, the targeted rip alone thirty-two, the two together none.
+
+**A slot remembers being wanted.** Two wires that both need one slot take it from
+each other, every round undoes the last, and neither ever routes. A wire that
+finds no way charges the slots it wanted, and the charge is part of what any wire
+pays for them afterwards, so the wire standing on one eventually finds its own
+way cheaper elsewhere.
+
+After the last sweep two passes finish the plan. Every wire still without a way
+is offered the room the others left, which takes nothing from anyone; then each
+one that is left is offered a **swap** with the wires on its route, and the swap
+is undone unless it leaves fewer wires over.
+
+**A route that is a short is not the end of the search.** Crossing itself, or
+coming back to a place it already used, is a property of the whole route rather
+than of any step, so the search cannot rule it out as it goes. Throwing the
+search away with it would leave a wire unrouted where a second-best way is there
+for the taking, so the slots of the way that failed are set aside and the search
+runs again.
+
+**A wire may not turn straight back into the partition it just left.** The detour
+is short, so it costs the search almost nothing — and it costs the chip two slots
+every time. Without the rule one 57-qubit wire crossed 368 borders where 25 is
+the most any wire needs now. The prototype refuses the same move.
+
+Only the connections of the assignment are routed here. The inner circuit already
+paid for the free space it crosses while it was solved
+([decision 0028](decisions/0028-the-inner-circuit-pays-for-free-space.md)), so it
+goes to the detail router directly.
+
+What the picture draws is the sequence, not the wire: a straight line from one
+crossing to the next says which partitions the wire uses and in what order. Where
+inside a partition it actually runs is the detail router's answer, and a chord
+that passes over artwork here is a chord the detail router has to route around.
 
 ### Detail
 
@@ -281,9 +397,10 @@ run/
   01-capacity.fb
   02-global.fb
   03-assign.fb
-  04-detail.fb
-  05-final.fb
-  06-geometry.fb
+  04-corridor.fb
+  05-detail.fb
+  06-final.fb
+  07-geometry.fb
   metrics.json
   drc.json            DRCPolice findings, one report per checked stage
   log.jsonl
@@ -294,12 +411,12 @@ run/
 | Artifact                      | Format                                   | Why                                                                                  |
 | ----------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------ |
 | `00-chip.json`, `config.toml` | The prototype's JSON, and validated TOML | Human-authored; the chip format is unchanged so the routing baseline is unchanged    |
-| `01-` through `06-`           | Binary FlatBuffers                       | Machine state. Typed, compact, versioned                                             |
+| `01-` through `07-`           | Binary FlatBuffers                       | Machine state. Typed, compact, versioned                                             |
 | `metrics.json`, `log.jsonl`   | JSON                                     | Consumed by `jq`, pandas and the report command. Deliberately not schema-constrained |
 | `drc.json`                    | JSON from a schema-defined `DrcReport`   | A violation must be machine-readable to be overlaid, diffed and gated on             |
 
 Binary does not mean opaque, and it does not mean unviewable.
-`mqt-scpd inspect run/04-detail.fb` prints the artifact as schema-driven JSON,
+`mqt-scpd inspect run/05-detail.fb` prints the artifact as schema-driven JSON,
 and `mqt-scpd plot run/ --stage detail` renders it as SVG.
 
 ### Rendering a run
@@ -317,9 +434,10 @@ other stage is read from a run directory, which `--run-dir` names.
 | `capacity` | `01-capacity.fb` | + partitions, borders, bottlenecks, launchers, chains    |
 | `global`   | `02-global.fb`   | + the Hanan lattice and the selected inner-circuit edges |
 | `assign`   | `03-assign.fb`   | + the ring, and each node's chord to the launcher it got |
-| `detail`   | `04-detail.fb`   | + pixel paths                                            |
-| `final`    | `05-final.fb`    | + Dubins paths, couplers, bridges                        |
-| `aligned`  | `06-geometry.fb` | fitted analytic wires, real coupler/bridge footprints    |
+| `corridor` | `04-corridor.fb` | + the partitions each wire uses, and every crossing slot |
+| `detail`   | `05-detail.fb`   | + pixel paths                                            |
+| `final`    | `06-final.fb`    | + Dubins paths, couplers, bridges                        |
+| `aligned`  | `07-geometry.fb` | fitted analytic wires, real coupler/bridge footprints    |
 
 `mqt-scpd render --stage <name>` takes the same names and writes the same
 content as GDSII or OASIS. The chip artwork keeps the layers it has; every

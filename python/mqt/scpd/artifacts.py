@@ -26,6 +26,7 @@ import flatbuffers
 from .flatbuffers.artifacts.Artifact import Artifact, ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
@@ -34,6 +35,8 @@ from .flatbuffers.geometry.Arc import ArcT
 from .flatbuffers.geometry.Line import LineT
 
 if TYPE_CHECKING:
+    from .flatbuffers.artifacts.BorderSlots import BorderSlotsT
+    from .flatbuffers.artifacts.Corridor import CorridorT
     from .flatbuffers.artifacts.Wire import WireT
     from .flatbuffers.design.Bridge import BridgeT
     from .flatbuffers.design.Connection import ConnectionT
@@ -48,6 +51,7 @@ _OUTPUT_TYPES: dict[int, type] = {
     StageOutput.CapacityPlan: CapacityPlanT,
     StageOutput.Assignment: AssignmentT,
     StageOutput.GlobalRouting: GlobalRoutingT,
+    StageOutput.CorridorRouting: CorridorRoutingT,
     StageOutput.FinalRouting: FinalRoutingT,
     StageOutput.Geometry: GeometryT,
 }
@@ -143,6 +147,9 @@ def _problems(artifact: ArtifactT) -> list[str]:
         problems.extend(
             f"{name} is missing" for name in ("ring", "launchers") if getattr(artifact.output, name) is None
         )
+    elif isinstance(artifact.output, CorridorRoutingT):
+        _check_list(artifact.output.corridors, "corridors", _corridor_problems, problems)
+        _check_list(artifact.output.slots, "slots", _border_slots_problems, problems)
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)
@@ -155,7 +162,29 @@ def _problems(artifact: ArtifactT) -> list[str]:
     return problems
 
 
-def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # ruff: ignore[missing-type-function-argument]
+def _corridor_problems(corridor: CorridorT) -> list[str]:
+    """The required fields one corridor is missing.
+
+    Returns:
+        One message per missing field.
+    """
+    problems = [name for name in ("partitions", "crossings") if getattr(corridor, name) is None]
+    if corridor.partitions is not None and corridor.crossings is not None and corridor.partitions:
+        if len(corridor.crossings) + 1 != len(corridor.partitions):
+            problems.append("crossings")
+    return [f"{name} is missing" for name in problems]
+
+
+def _border_slots_problems(slots: BorderSlotsT) -> list[str]:
+    """The required fields one border's slots are missing.
+
+    Returns:
+        One message per missing field.
+    """
+    return ["positions is missing"] if slots.positions is None else []
+
+
+def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # noqa: ANN001
     """Report a missing list, then the problems of each of its items with the item's index."""
     if items is None:
         problems.append(f"{name} is missing")

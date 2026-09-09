@@ -19,6 +19,7 @@ namespace mqt::scpd::pipeline {
 
 using flatbuffers::artifacts::AssignmentT;
 using flatbuffers::artifacts::CapacityPlanT;
+using flatbuffers::artifacts::CorridorRoutingT;
 using flatbuffers::artifacts::GlobalRoutingT;
 using flatbuffers::config::ConfigT;
 using flatbuffers::design::ChipT;
@@ -48,7 +49,8 @@ public:
   ICapacityPlanner& operator=(ICapacityPlanner&&) = delete;
   virtual ~ICapacityPlanner() = default;
 
-  [[nodiscard]] virtual CapacityPlanT run(const ChipT& chip, const ConfigT& config) const = 0;
+  [[nodiscard]] virtual CapacityPlanT run(const ChipT& chip,
+                                          const ConfigT& config) const = 0;
 };
 
 /// Solves the inner circuit on the lattice each capacity chain induces, and
@@ -67,7 +69,8 @@ public:
   IGlobalRouter& operator=(IGlobalRouter&&) = delete;
   virtual ~IGlobalRouter() = default;
 
-  [[nodiscard]] virtual GlobalRoutingT run(const ChipT& chip, const CapacityPlanT& capacity,
+  [[nodiscard]] virtual GlobalRoutingT run(const ChipT& chip,
+                                           const CapacityPlanT& capacity,
                                            const ConfigT& config) const = 0;
 };
 
@@ -82,9 +85,37 @@ public:
   IAssigner& operator=(IAssigner&&) = delete;
   virtual ~IAssigner() = default;
 
-  [[nodiscard]] virtual AssignmentT run(const ChipT& chip, const CapacityPlanT& capacity,
+  [[nodiscard]] virtual AssignmentT run(const ChipT& chip,
+                                        const CapacityPlanT& capacity,
                                         const GlobalRoutingT& global,
                                         const ConfigT& config) const = 0;
+};
+
+/// Routes every assigned connection through the partitions, coarsely.
+///
+/// This is where a wire is told which corridors it runs through and where it
+/// crosses from one into the next, and it is the stage that makes the wire
+/// budgets binding: a border is crossed at one of a fixed set of slots, one
+/// wire spacing apart, and no two wires take the same one. Inside a
+/// partition two wires may not cross each other either, so what comes out is
+/// a plan the detail router can follow without unpicking it again.
+///
+/// Only the connections of the assignment are routed here. The inner circuit
+/// paid for the free space it crosses while it was solved, so it goes to the
+/// detail router directly.
+class MQT_SCPD_PIPELINE_EXPORT ICorridorRouter {
+public:
+  ICorridorRouter() = default;
+  ICorridorRouter(const ICorridorRouter&) = delete;
+  ICorridorRouter& operator=(const ICorridorRouter&) = delete;
+  ICorridorRouter(ICorridorRouter&&) = delete;
+  ICorridorRouter& operator=(ICorridorRouter&&) = delete;
+  virtual ~ICorridorRouter() = default;
+
+  [[nodiscard]] virtual CorridorRoutingT run(const ChipT& chip,
+                                             const CapacityPlanT& capacity,
+                                             const AssignmentT& assignment,
+                                             const ConfigT& config) const = 0;
 };
 
 } // namespace mqt::scpd::pipeline

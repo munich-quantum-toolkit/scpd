@@ -6,8 +6,8 @@
 //
 // Licensed under the MIT License
 
-// The six stage artifacts of a run directory, 01-capacity.fb through
-// 06-geometry.fb. Owned by MQT::ScpdIO. Grids and router containers are
+// The seven stage artifacts of a run directory, 01-capacity.fb through
+// 07-geometry.fb. Owned by MQT::ScpdIO. Grids and router containers are
 // derived state and never appear here.
 //
 // Each stage appends the fields of its output when the stage is implemented,
@@ -161,6 +161,61 @@ table Assignment {
   feeds: [geometry.Point] (required);
 }
 
+/// The crossing slots of one partition border.
+///
+/// A wire leaves one partition for another at one of these, and no two wires
+/// take the same one. The slots sit one wire spacing apart along the border,
+/// so their count is what the border can carry, which is what
+/// `PartitionBorder.budget` reports.
+table BorderSlots {
+  /// The border they belong to, as an index into CapacityPlan.borders, or
+  /// zero when `pocket` is set and they are on no border at all.
+  border: uint32;
+  /// The slots in layout units, in the order the border runs.
+  positions: [geometry.Point] (required);
+  /// Whether these are ways out of a port's own pocket rather than slots of a
+  /// border.
+  ///
+  /// The capacity grid places a target on the first cell beyond its port's
+  /// band that was free before the bands, and does not open the band. Where
+  /// the band and the artwork close around a port, the free space left is a
+  /// pocket that no border reaches; the band is that port's own approach, so
+  /// it is a way out, and it carries the one wire.
+  pocket: bool = false;
+}
+
+/// The coarse route of one connection: which partitions it passes through,
+/// and where it crosses from each into the next.
+table Corridor {
+  /// The labels of the partitions, from the one the wire is fed in to the
+  /// one its target sits in. These are `Partition.label` values, not indices
+  /// into `CapacityPlan.partitions`.
+  partitions: [uint32] (required);
+  /// The crossing slots between them, in layout units. One shorter than
+  /// `partitions`.
+  crossings: [geometry.Point] (required);
+  /// Where the wire starts: the cell the feed of the assignment was placed
+  /// at. Absent when the connection has no feed the grid can reach.
+  source: geometry.Point;
+  /// Where it ends: the cell its target port is reached at. Absent when the
+  /// chip has no such cell.
+  target: geometry.Point;
+}
+
+/// Output of the Corridor stage.
+///
+/// One entry per connection of the Assignment, in its order. A connection
+/// the stage could not route carries no partitions, so a reader counts the
+/// failures rather than being handed a separate list that can disagree with
+/// the routes beside it.
+table CorridorRouting {
+  corridors: [Corridor] (required);
+  /// The slots of every border a wire could cross, so a picture can show
+  /// which of them are taken. Parallel to nothing: a border with no free
+  /// space on either side has no entry.
+  slots: [BorderSlots] (required);
+}
+
 /// Output of the Detail stage.
 table DetailRouting {}
 
@@ -195,6 +250,7 @@ union StageOutput {
   DetailRouting,
   FinalRouting,
   Geometry,
+  CorridorRouting,
 }
 
 /// The root of every stage artifact.

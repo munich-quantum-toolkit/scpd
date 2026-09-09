@@ -109,7 +109,7 @@ def test_problems_exit_with_one(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
 
 def test_plan_fills_a_run_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """`plan` runs the three planning stages and names each artifact it wrote."""
+    """`plan` runs every implemented stage and names each artifact it wrote."""
     run = tmp_path / "run"
     assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run)]) == 0
 
@@ -117,6 +117,7 @@ def test_plan_fills_a_run_directory(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert "01-capacity.fb" in captured
     assert "02-global.fb" in captured
     assert "03-assign.fb" in captured
+    assert "04-corridor.fb" in captured
     assert (run / "00-chip.json").is_file()
 
 

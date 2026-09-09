@@ -35,6 +35,7 @@ STAGES: dict[str, str] = {
     "capacity": "phase 3",
     "global": "phase 3",
     "assign": "phase 3",
+    "corridor": "phase 4",
     "detail": "phase 4",
     "final": "phase 4",
     "aligned": "phase 4",
@@ -53,6 +54,8 @@ PLANNING_COLORS: dict[str, str] = {
     "inner": "#0077b6",
     "assignment": "#ff7f0e",
     "ring": "#606060",
+    "corridor": "#e85d04",
+    "slot": "#495057",
 }
 
 #: The fill of each role in the port legend. The colors stay apart from the obstacle fill.
@@ -216,6 +219,17 @@ def _planning_layers(
     if planning.assignments:
         data = "".join(polyline([first, second]) for first, second in planning.assignments)
         parts.append(f'<g class="l-assignment"><path d="{data}"/></g>')
+    if planning.slots:
+        # Every place a wire may cross a border, so a taken slot can be told from a free one.
+        ticks = "".join(
+            f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 0.5)}"/>'
+            for px, py in planning.slots
+            for x, y in [to_view(px, py)]
+        )
+        parts.append(f'<g class="l-slot">{ticks}</g>')
+    if planning.corridors:
+        data = "".join(polyline(route) for route in planning.corridors)
+        parts.append(f'<g class="l-corridor"><path d="{data}"/></g>')
     if planning.launchers:
         circles = "".join(
             f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 1.4)}"/>'
@@ -245,6 +259,7 @@ def _planning_style(font: float) -> str:
         "inner": 2.0,
         "assignment": 1.2,
         "ring": 1.0,
+        "corridor": 1.8,
     }
     style = "".join(
         f"g.l-{name}>path{{fill:none;stroke:{PLANNING_COLORS[name]};stroke-width:{width};"
@@ -263,6 +278,7 @@ def _planning_style(font: float) -> str:
         f"g.l-launcher>circle{{fill:none;stroke:{PLANNING_COLORS['launcher']};stroke-width:1.6;"
         "vector-effect:non-scaling-stroke}"
     )
+    style += f"g.l-slot>circle{{fill:{PLANNING_COLORS['slot']};fill-opacity:0.55;stroke:none}}"
     return style
 
 

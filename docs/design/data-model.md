@@ -420,7 +420,7 @@ the configuration.
 | `geometry.fbs`  | `Point`, `GCoord`, `DCoord`, `RCoord`, `Polygon`, `Line`, `Arc`, `Segment`, `Path`                             | `MQT::ScpdGeometry` |
 | `design.fbs`    | The two role enums, `Rotation`, `PortRef`, `Port`, `Chip`, `Connection`, `DesignRules`, `CpwCoupler`, `Bridge` | `MQT::ScpdDesign`   |
 | `config.fbs`    | `Config` with the port and grid sections, with the defaults the loader applies to absent keys                  | `MQT::ScpdDesign`   |
-| `artifacts.fbs` | The six stage outputs, each behind the one `Artifact` root                                                     | `MQT::ScpdIO`       |
+| `artifacts.fbs` | The seven stage outputs, each behind the one `Artifact` root                                                   | `MQT::ScpdIO`       |
 | `drc.fbs`       | `DrcReport` and its findings                                                                                   | `MQT::ScpdDrc`      |
 
 A schema holds what the implemented phases read. Each later stage appends its

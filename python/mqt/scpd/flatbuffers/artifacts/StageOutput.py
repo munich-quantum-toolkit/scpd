@@ -11,6 +11,7 @@ class StageOutput(object):
     DetailRouting = 4
     FinalRouting = 5
     Geometry = 6
+    CorridorRouting = 7
 
 def StageOutputCreator(unionType, table):
     from flatbuffers.table import Table
@@ -34,4 +35,7 @@ def StageOutputCreator(unionType, table):
     if unionType == StageOutput.Geometry:
         import mqt.scpd.flatbuffers.artifacts.Geometry
         return mqt.scpd.flatbuffers.artifacts.Geometry.GeometryT.InitFromBuf(table.Bytes, table.Pos)
+    if unionType == StageOutput.CorridorRouting:
+        import mqt.scpd.flatbuffers.artifacts.CorridorRouting
+        return mqt.scpd.flatbuffers.artifacts.CorridorRouting.CorridorRoutingT.InitFromBuf(table.Bytes, table.Pos)
     return None

@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import pyscpd
@@ -30,6 +29,8 @@ from .chip import chip_input_path, classify_chip
 from .config import load_config, write_config
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .flatbuffers.config.Config import ConfigT
 
 __all__ = ["STAGE_FILES", "RunDirectory", "RunError", "stages_before"]
@@ -45,17 +46,22 @@ class RunError(RuntimeError):
 #: The Global stage comes before the Assignment stage. Which outer ports the inner circuit
 #: surfaces at is what the assignment consumes, so the inner circuit has to be solved first; the
 #: prototype's own drivers run the two in this order for the same reason.
+#:
+#: The Corridor stage stands between the assignment and the detail routing. It decides which
+#: corridors a wire runs through and where it crosses from one into the next; the detail router
+#: then fills in the pixels inside each.
 STAGE_FILES: dict[str, str] = {
     "capacity": "01-capacity.fb",
     "global": "02-global.fb",
     "assign": "03-assign.fb",
-    "detail": "04-detail.fb",
-    "final": "05-final.fb",
-    "geometry": "06-geometry.fb",
+    "corridor": "04-corridor.fb",
+    "detail": "05-detail.fb",
+    "final": "06-final.fb",
+    "geometry": "07-geometry.fb",
 }
 
 #: The stages this release implements, in order.
-IMPLEMENTED: tuple[str, ...] = ("capacity", "global", "assign")
+IMPLEMENTED: tuple[str, ...] = ("capacity", "global", "assign", "corridor")
 
 
 def stages_before(stage: str) -> list[str]:
@@ -200,8 +206,10 @@ class RunDirectory:
             data = pyscpd.plan_capacity(chip, packed, __version__)
         elif stage == "global":
             data = pyscpd.route_global(chip, self._read("capacity"), packed, __version__)
-        else:
+        elif stage == "assign":
             data = pyscpd.assign(chip, self._read("capacity"), self._read("global"), packed, __version__)
+        else:
+            data = pyscpd.route_corridor(chip, self._read("capacity"), self._read("assign"), packed, __version__)
 
         path = self.artifact(stage)
         path.write_bytes(data)

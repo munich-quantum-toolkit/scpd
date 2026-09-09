@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <iterator>
 #include <memory>
 #include <span>
@@ -120,6 +121,22 @@ Problems validate(const ArtifactT& artifact) {
     validateWires(geometry.wires, problems);
     validateEach(geometry.couplers, "coupler", problems);
     validateEach(geometry.bridges, "bridge", problems);
+    break;
+  }
+  case StageOutput::CorridorRouting: {
+    // A corridor names one more partition than it has crossings, because a
+    // crossing is what carries the wire from one into the next. Anything
+    // else is a route no reader can follow.
+    const auto& routing = *artifact.output.AsCorridorRouting();
+    for (std::size_t index = 0; index < routing.corridors.size(); ++index) {
+      const auto& corridor = *routing.corridors[index];
+      if (!corridor.partitions.empty() &&
+          corridor.crossings.size() + 1 != corridor.partitions.size()) {
+        problems.push_back(std::format(
+            "corridor {} names {} partitions and {} crossings", index,
+            corridor.partitions.size(), corridor.crossings.size()));
+      }
+    }
     break;
   }
   case StageOutput::CapacityPlan:

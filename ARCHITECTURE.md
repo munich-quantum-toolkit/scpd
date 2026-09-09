@@ -76,6 +76,7 @@ flowchart TD
     cap[Capacity<br/>watershed / EDT / budgets]
     glb[Global<br/>Hanan inner circuit, MILP]
     asg[Assignment<br/>resonator to launcher, MILP]
+    cor[Corridor<br/>A* on the partition graph]
     det[Detail<br/>A* on pixel grid]
     fin[Final<br/>Dubins routing, CPW, feedlines]
     geo[Finalize<br/>curve fit, meander, bridges]
@@ -84,22 +85,23 @@ flowchart TD
   a1[01-capacity.fb]
   a2[02-global.fb]
   a3[03-assign.fb]
-  a4[04-detail.fb]
-  a5[05-final.fb]
-  a6[06-geometry.fb<br/>analytic line and arc]
+  a4[04-corridor.fb]
+  a5[05-detail.fb]
+  a6[06-final.fb]
+  a7[07-geometry.fb<br/>analytic line and arc]
   met[metrics.json<br/>log.jsonl]
   drc[drc.json<br/>DRCPolice findings]
   gds[(out.gds / out.oas)]
 
   svg[["mqt-scpd plot<br/>per-stage SVG"]]
 
-  chip --> cap --> a1 --> glb --> a2 --> asg --> a3 --> det --> a4 --> fin --> a5 --> geo --> a6
-  cfg -.-> cap & glb & asg & det & fin & geo
+  chip --> cap --> a1 --> glb --> a2 --> asg --> a3 --> cor --> a4 --> det --> a5 --> fin --> a6 --> geo --> a7
+  cfg -.-> cap & glb & asg & cor & det & fin & geo
   core --> met
-  a5 & a6 -->|DRCPolice| drc
-  a6 -->|KLayout adapter| gds
-  a1 & a2 & a3 & a4 & a5 & a6 -.-> svg
-  a1 & a2 & a3 -.->|KLayout adapter<br/>planning layers| gds
+  a6 & a7 -->|DRCPolice| drc
+  a7 -->|KLayout adapter| gds
+  a1 & a2 & a3 & a4 & a5 & a6 & a7 -.-> svg
+  a1 & a2 & a3 & a4 -.->|KLayout adapter<br/>planning layers| gds
   drc -.-> svg
 ```
 
@@ -127,7 +129,7 @@ graph TD
   routing[MQT::ScpdRouting<br/>Dubins A*, move primitives]
   milp[MQT::ScpdMilp<br/>Model, HiGHS backend, MPS emit]
   drc[MQT::ScpdDrc<br/>DrcPolice, eight rules, DrcReport]
-  pipeline[MQT::ScpdPipeline<br/>stage interfaces, registry, six stages]
+  pipeline[MQT::ScpdPipeline<br/>stage interfaces, registry, seven stages]
   io[MQT::ScpdIO<br/>artifacts, metrics, report writing]
 
   design --> geometry
@@ -156,7 +158,7 @@ The dependency graph is acyclic. Nothing depends on `pipeline`; it is the top.
 | `mqt-scpd-routing`  | `MQT::ScpdRouting`  | Curvature-constrained A* over Dubins primitives, path geometry, self-intersection, coupler dogleg insertion                 |
 | `mqt-scpd-milp`     | `MQT::ScpdMilp`     | Solver-neutral model assembly, HiGHS backend, MPS emission for the BYOK path                                                |
 | `mqt-scpd-drc`      | `MQT::ScpdDrc`      | DRCPolice: the eight design rules — five active, three advisory — checked in both the router and layout coordinate spaces   |
-| `mqt-scpd-pipeline` | `MQT::ScpdPipeline` | Stage interfaces, the implementation registry, and the six stage implementations                                            |
+| `mqt-scpd-pipeline` | `MQT::ScpdPipeline` | Stage interfaces, the implementation registry, and the seven stage implementations                                          |
 | `mqt-scpd-io`       | `MQT::ScpdIO`       | Artifact read and write, metrics, serialization of the DRC report                                                           |
 
 Each is declared through `cmake/AddMQTScpdLibrary.cmake`, adapted from MQT
@@ -186,9 +188,13 @@ classDiagram
     <<interface>>
     +run(Chip, CapacityPlan, GlobalRouting, Config) Assignment
   }
+  class ICorridorRouter {
+    <<interface>>
+    +run(Chip, CapacityPlan, Assignment, Config) CorridorRouting
+  }
   class IDetailRouter {
     <<interface>>
-    +run(Chip, GlobalRouting, Config) DetailRouting
+    +run(Chip, CapacityPlan, GlobalRouting, Assignment, CorridorRouting, Config) DetailRouting
   }
   class IFinalRouter {
     <<interface>>
@@ -207,7 +213,8 @@ classDiagram
   ICapacityPlanner <|.. WatershedPlanner
   IGlobalRouter <|.. HananMilpRouter
   IAssigner <|.. OrderedMilpAssigner
-  IDetailRouter <|.. AStarDetailRouter
+  ICorridorRouter <|.. PartitionAStarRouter
+  IDetailRouter <|.. PixelAStarRouter
   IFinalRouter <|.. DubinsFinalRouter
   IFinalizer <|.. CurveFitFinalizer
 ```

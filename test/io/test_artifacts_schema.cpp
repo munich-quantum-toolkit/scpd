@@ -92,7 +92,9 @@ TEST(ArtifactSchema, EveryStageOutputIsAnArtifact) {
                "DetailRouting");
   EXPECT_STREQ(EnumNameStageOutput(StageOutput::FinalRouting), "FinalRouting");
   EXPECT_STREQ(EnumNameStageOutput(StageOutput::Geometry), "Geometry");
-  EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 6U);
+  EXPECT_STREQ(EnumNameStageOutput(StageOutput::CorridorRouting),
+               "CorridorRouting");
+  EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 7U);
 }
 
 /// A capacity plan that carries nothing, but carries every field the schema
@@ -120,6 +122,55 @@ TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   EXPECT_EQ(detail.output.type, StageOutput::DetailRouting);
   EXPECT_NE(detail.output.AsDetailRouting(), nullptr);
   EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
+}
+
+TEST(ArtifactSchema, CorridorRoutingRoundTrips) {
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4, 7, 9};
+  corridor->crossings.emplace_back(10.5, 20.25);
+  corridor->crossings.emplace_back(30.75, 40.0);
+  corridor->source = std::make_unique<Point>(0.5, 1.5);
+  corridor->target = std::make_unique<Point>(50.0, 60.0);
+  routing.corridors.push_back(std::move(corridor));
+  // A connection that found no way carries no partitions, which is how a
+  // reader counts the failures.
+  routing.corridors.push_back(std::make_unique<CorridorT>());
+  auto slots = std::make_unique<BorderSlotsT>();
+  slots->border = 2;
+  slots->positions.emplace_back(10.5, 20.25);
+  routing.slots.push_back(std::move(slots));
+
+  const ArtifactT back = readArtifact(writeArtifact(wrap(std::move(routing))));
+
+  ASSERT_EQ(back.output.type, StageOutput::CorridorRouting);
+  const auto& read = *back.output.AsCorridorRouting();
+  ASSERT_EQ(read.corridors.size(), 2U);
+  EXPECT_EQ(read.corridors[0]->partitions,
+            (std::vector<std::uint32_t>{4, 7, 9}));
+  EXPECT_EQ(read.corridors[0]->crossings.size(), 2U);
+  EXPECT_EQ(read.corridors[0]->source->x(), 0.5);
+  EXPECT_TRUE(read.corridors[1]->partitions.empty());
+  ASSERT_EQ(read.slots.size(), 1U);
+  EXPECT_EQ(read.slots[0]->border, 2U);
+}
+
+TEST(ArtifactSchema, RefusesACorridorThatNamesTheWrongNumberOfPartitions) {
+  // A crossing is what carries a wire from one partition into the next, so a
+  // corridor names one more partition than it has crossings.
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4, 7};
+  routing.corridors.push_back(std::move(corridor));
+
+  ArtifactT artifact;
+  artifact.producer = "mqt-scpd test";
+  artifact.output.Set(std::move(routing));
+
+  const auto problems = validate(artifact);
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_NE(problems[0].find("2 partitions and 0 crossings"),
+            std::string::npos);
 }
 
 TEST(ArtifactSchema, AssignmentRoundTrips) {

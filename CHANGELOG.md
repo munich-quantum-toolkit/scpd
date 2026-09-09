@@ -12,6 +12,36 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Add the Corridor stage: every assigned connection is routed through the
+  partitions before any pixel is drawn, crossing a border only at a slot of its
+  own and never meeting another wire inside a partition — neither crossing it
+  nor running along it ([#115]) ([**@FeldmeierMichael**])
+- ✨ Confine the coarse routing to the ring the ports feed from: a border is a
+  place to cross only strictly inside the rectangle the feed points span, so no
+  wire leaves through the ring and comes back in behind another port ([#115])
+  ([**@FeldmeierMichael**])
+- 🐛 Refuse a wire that runs over a point another wire is pinned to: the point
+  it is fed at, or the cell of its target port. Neither can be moved aside, and
+  the crossing test cannot see the case at all — a chord that stops on another
+  one never reaches its far side — so a wire could run down a whole line of
+  feed points with no crossing reported ([#115]) ([**@FeldmeierMichael**])
+- ✨ Render the Corridor stage: `plot --stage corridor` draws every wire's way
+  through the partitions and every crossing slot, taken or free, and
+  `render --stage corridor` writes the same on layers of its own ([#115])
+  ([**@FeldmeierMichael**])
+- ✨ Fill the cells of a partition back in from its outlines, so a routing stage
+  can work inside one without growing the watershed a second time ([#115])
+  ([**@FeldmeierMichael**])
+- 🐛 Report the wire budget of a partition border as the number of wires it can
+  carry. It was the length of the border in detail cells, which is what its own
+  comment already denied ([#115]) ([**@FeldmeierMichael**])
+- ✨ Let a target that no partition border reaches leave along its own port's
+  approach. The capacity grid does not open the band it stamps, so a port the
+  band and the artwork close around sat in a pocket no wire could leave
+  ([#115]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.capacity] crossing_pitch`: how finely a partition border is
+  divided into places a wire may cross. It is a planning figure and not a
+  clearance rule ([#115]) ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd plan`, the resumable run directory, and
   `mqt-scpd list-algorithms` ([#114]) ([**@FeldmeierMichael**])
 - ✨ Render the planning stages through the existing commands:
@@ -80,11 +110,12 @@ releases may include breaking changes.
   Over the ring's own length the walk could turn twice, which put two
   conventional ports on one launcher on five of the eight benchmark chips and
   broke the cyclic order of the ring ([#114]) ([**@FeldmeierMichael**])
-- 🐛 Charge a resonator's ordering step to its own launcher. The step was charged
-  to the next resonator along whenever the ring opened on a conventional port,
-  which is four of the eight benchmark chips ([#114]) ([**@FeldmeierMichael**])
-- ✨ Carry where each ring node is fed from in the assignment as `feeds`, so both
-  renderers draw the chord to the point the wire starts at ([#114])
+- 🐛 Charge a resonator's ordering step to its own launcher. The step was
+  charged to the next resonator along whenever the ring opened on a conventional
+  port, which is four of the eight benchmark chips ([#114])
+  ([**@FeldmeierMichael**])
+- ✨ Carry where each ring node is fed from in the assignment as `feeds`, so
+  both renderers draw the chord to the point the wire starts at ([#114])
   ([**@FeldmeierMichael**])
 - ✨ Add the component a port belongs to, declared by one more configured
   pattern, and print the grouping in `mqt-scpd doctor` ([#114])
@@ -142,6 +173,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#115]: https://github.com/munich-quantum-toolkit/scpd/pull/115
 [#114]: https://github.com/munich-quantum-toolkit/scpd/pull/114
 [#113]: https://github.com/munich-quantum-toolkit/scpd/pull/113
 [#105]: https://github.com/munich-quantum-toolkit/scpd/pull/105

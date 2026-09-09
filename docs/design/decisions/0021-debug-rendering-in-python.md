@@ -34,9 +34,12 @@ writes SVG.
 | `capacity` | `01-capacity.fb` | + partitions, bottlenecks, budgets, routed chains          |
 | `assign`   | `02-assign.fb`   | + each connection as a chord, source and target role apart |
 | `global`   | `03-global.fb`   | + the Hanan lattice and the selected inner-circuit edges   |
-| `detail`   | `04-detail.fb`   | + pixel paths                                              |
-| `final`    | `05-final.fb`    | + Dubins paths, couplers, bridges                          |
-| `aligned`  | `06-geometry.fb` | fitted analytic wires, real coupler/bridge footprints      |
+| `detail`   | `05-detail.fb`   | + pixel paths                                              |
+| `final`    | `06-final.fb`    | + Dubins paths, couplers, bridges                          |
+| `aligned`  | `07-geometry.fb` | fitted analytic wires, real coupler/bridge footprints      |
+
+The Corridor stage of [decision 0031](0031-coarse-routing-is-its-own-stage.md)
+took `04` and moved every number after it up by one; it renders as `corridor`.
 
 `mqt-scpd render --stage <name>` takes the same names and writes the same
 content as GDSII or OASIS. The chip artwork keeps the layers it has; every

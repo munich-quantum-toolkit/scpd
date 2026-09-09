@@ -86,7 +86,8 @@ def test_the_global_picture_carries_the_gates_when_the_capacity_plan_is_given(
     chip,  # noqa: ANN001
 ) -> None:
     """Where a wire may surface is decided by the free space behind the port, so the gates
-    that measure it are drawn with the circuit that paid for them."""
+    that measure it are drawn with the circuit that paid for them.
+    """
     alone = planning_geometry(run.artifact("global").read_bytes(), chip, "global")
     assert not alone.bottlenecks
     assert not alone.keepout
@@ -99,9 +100,9 @@ def test_the_global_picture_carries_the_gates_when_the_capacity_plan_is_given(
     )
     assert withgates.bottlenecks
     assert withgates.keepout
-    assert withgates.bottlenecks == planning_geometry(
-        run.artifact("capacity").read_bytes(), chip, "capacity"
-    ).bottlenecks
+    assert (
+        withgates.bottlenecks == planning_geometry(run.artifact("capacity").read_bytes(), chip, "capacity").bottlenecks
+    )
     # Only the gates and the port keepout, not the rest of the capacity plan.
     assert not withgates.partitions
     assert not withgates.chains
@@ -138,6 +139,33 @@ def test_the_assignment_carries_a_chord_per_ring_node(run: RunDirectory, chip) -
     assert geometry.ring
     assert len(geometry.assignments) == len(geometry.ring)
     assert not geometry.bottlenecks
+
+
+def test_the_corridor_routing_carries_a_way_per_connection(run: RunDirectory, chip) -> None:  # noqa: ANN001
+    """Each wire is drawn from its feed through its crossings to its target."""
+    geometry = planning_geometry(
+        run.artifact("corridor").read_bytes(), chip, "corridor", run.artifact("capacity").read_bytes()
+    )
+
+    assert geometry.corridors
+    # A way names at least where it starts and where it ends.
+    assert all(len(route) >= 2 for route in geometry.corridors)
+    # Every crossing of every way is one of the slots the borders offer.
+    slots = set(geometry.slots)
+    assert all(point in slots for route in geometry.corridors for point in route[1:-1])
+    # The partitions are drawn under it, because a way through them is what it is.
+    assert geometry.partitions
+
+
+def test_the_corridor_picture_draws_nothing_of_the_partitions_without_a_plan(
+    run: RunDirectory,
+    chip,  # noqa: ANN001
+) -> None:
+    """The capacity artifact is what carries the partitions; without it the ways stand alone."""
+    geometry = planning_geometry(run.artifact("corridor").read_bytes(), chip, "corridor")
+
+    assert geometry.corridors
+    assert not geometry.partitions
 
 
 def test_an_artifact_of_the_wrong_stage_is_refused(run: RunDirectory, chip) -> None:  # noqa: ANN001
@@ -198,6 +226,8 @@ def test_every_planning_stage_renders_to_svg(run: RunDirectory, chip, stage: str
         ("bottleneck", geometry.bottlenecks),
         ("inner", geometry.inner),
         ("assignment", geometry.assignments),
+        ("corridor", geometry.corridors),
+        ("slot", geometry.slots),
     ):
         assert (f'class="l-{name}"' in svg) == bool(shapes)
     assert len(svg.encode("utf-8")) < 10_000_000

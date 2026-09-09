@@ -61,7 +61,7 @@ build.
 
 ## Consequences
 
-- Binary state stays inspectable: `mqt-scpd inspect run/04-detail.fb` prints
+- Binary state stays inspectable: `mqt-scpd inspect run/05-detail.fb` prints
   schema-driven JSON, and `mqt-scpd plot` renders it as SVG.
 - `ScpdIO` links the header-only FlatBuffers runtime only. The parser library is
   not needed, because no text input is parsed against the schema.

@@ -22,10 +22,18 @@ BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
 
 def test_the_stage_order_puts_global_before_the_assignment() -> None:
     """Which outer ports the inner circuit surfaces at is what the assignment consumes."""
-    assert IMPLEMENTED == ("capacity", "global", "assign")
-    assert list(STAGE_FILES)[:3] == ["capacity", "global", "assign"]
+    assert IMPLEMENTED == ("capacity", "global", "assign", "corridor")
+    assert list(STAGE_FILES)[:4] == ["capacity", "global", "assign", "corridor"]
     assert STAGE_FILES["global"] == "02-global.fb"
     assert STAGE_FILES["assign"] == "03-assign.fb"
+
+
+def test_the_corridor_stage_stands_between_the_assignment_and_the_detail_routing() -> None:
+    """It plans the way through the partitions that the detail router then fills in."""
+    assert STAGE_FILES["corridor"] == "04-corridor.fb"
+    assert STAGE_FILES["detail"] == "05-detail.fb"
+    assert STAGE_FILES["final"] == "06-final.fb"
+    assert STAGE_FILES["geometry"] == "07-geometry.fb"
 
 
 def test_a_stage_names_the_stages_it_reads() -> None:
@@ -33,11 +41,12 @@ def test_a_stage_names_the_stages_it_reads() -> None:
     assert stages_before("capacity") == []
     assert stages_before("global") == ["capacity"]
     assert stages_before("assign") == ["capacity", "global"]
+    assert stages_before("corridor") == ["capacity", "global", "assign"]
 
 
 def test_an_unimplemented_stage_says_which_ones_run() -> None:
     """A stage of a later phase is refused with the list of the ones that exist."""
-    with pytest.raises(RunError, match="capacity, global, assign"):
+    with pytest.raises(RunError, match="capacity, global, assign, corridor"):
         stages_before("detail")
 
 
@@ -77,7 +86,13 @@ def test_running_a_stage_invalidates_everything_after_it(tmp_path: Path) -> None
 
     removed = run.invalidate_after("global")
 
-    assert {path.name for path in removed} == {"03-assign.fb", "04-detail.fb", "05-final.fb", "06-geometry.fb"}
+    assert {path.name for path in removed} == {
+        "03-assign.fb",
+        "04-corridor.fb",
+        "05-detail.fb",
+        "06-final.fb",
+        "07-geometry.fb",
+    }
     assert run.artifact("capacity").is_file()
     assert run.artifact("global").is_file()
     assert not run.artifact("assign").is_file()
@@ -104,7 +119,7 @@ def test_a_run_without_its_chip_copy_is_incomplete(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("chip", ["4q", "9q"])
 def test_the_planning_stages_fill_a_run_directory(tmp_path: Path, chip: str) -> None:
-    """All three stages run on the two chip inputs the repository carries."""
+    """Every implemented stage runs on the two chip inputs the repository carries."""
     run = RunDirectory(tmp_path / "run")
     config = run.prepare(BENCHMARKS / chip / "config.toml")
 
@@ -118,6 +133,7 @@ def test_the_planning_stages_fill_a_run_directory(tmp_path: Path, chip: str) -> 
         "01-capacity.fb",
         "02-global.fb",
         "03-assign.fb",
+        "04-corridor.fb",
     }
 
 
@@ -128,11 +144,11 @@ def test_resuming_a_stage_reproduces_the_same_artifact(tmp_path: Path) -> None:
     for stage in IMPLEMENTED:
         run.run_stage(stage, config)
 
-    first = run.artifact("assign").read_bytes()
+    first = run.artifact("corridor").read_bytes()
     kept = tmp_path / "kept.fb"
-    shutil.copyfile(run.artifact("assign"), kept)
+    shutil.copyfile(run.artifact("corridor"), kept)
 
-    run.run_stage("assign", config)
+    run.run_stage("corridor", config)
 
-    assert run.artifact("assign").read_bytes() == first
+    assert run.artifact("corridor").read_bytes() == first
     assert kept.read_bytes() == first

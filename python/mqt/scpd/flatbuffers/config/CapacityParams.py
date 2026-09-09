@@ -52,8 +52,28 @@ class CapacityParams(object):
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 1.5
 
+    # How far apart the places a wire may cross a partition border sit, in
+    # layout units.
+    #
+    # This is a planning pitch and **not** a clearance rule. It decides how
+    # finely a border is divided for the Corridor stage and therefore how many
+    # wires `PartitionBorder.budget` says it carries; where a wire actually
+    # runs, and how far it keeps from its neighbour, the detail router decides
+    # and the design-rule check verifies.
+    #
+    # The default is the prototype's own figure. It divides a border at its
+    # wire spacing less twenty units and records no reason for the twenty; on
+    # the 45-qubit chip the difference is one wire that has a way through and
+    # one that has none.
+    # CapacityParams
+    def CrossingPitch(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 165.0
+
 def CapacityParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(2)
+    builder.StartObject(3)
 
 def Start(builder: flatbuffers.Builder):
     CapacityParamsStart(builder)
@@ -70,6 +90,12 @@ def CapacityParamsAddBottleneckClearance(builder: flatbuffers.Builder, bottlenec
 def AddBottleneckClearance(builder: flatbuffers.Builder, bottleneckClearance: float):
     CapacityParamsAddBottleneckClearance(builder, bottleneckClearance)
 
+def CapacityParamsAddCrossingPitch(builder: flatbuffers.Builder, crossingPitch: float):
+    builder.PrependFloat64Slot(2, crossingPitch, 165.0)
+
+def AddCrossingPitch(builder: flatbuffers.Builder, crossingPitch: float):
+    CapacityParamsAddCrossingPitch(builder, crossingPitch)
+
 def CapacityParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -84,9 +110,11 @@ class CapacityParamsT(object):
         self,
         planner = None,
         bottleneckClearance = 1.5,
+        crossingPitch = 165.0,
     ):
         self.planner = planner  # type: Optional[str]
         self.bottleneckClearance = bottleneckClearance  # type: float
+        self.crossingPitch = crossingPitch  # type: float
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -113,6 +141,7 @@ class CapacityParamsT(object):
         if self.planner is not None:
             self.planner = self.planner.decode('utf-8')
         self.bottleneckClearance = capacityParams.BottleneckClearance()
+        self.crossingPitch = capacityParams.CrossingPitch()
 
     # CapacityParamsT
     def Pack(self, builder):
@@ -122,5 +151,6 @@ class CapacityParamsT(object):
         if self.planner is not None:
             CapacityParamsAddPlanner(builder, planner)
         CapacityParamsAddBottleneckClearance(builder, self.bottleneckClearance)
+        CapacityParamsAddCrossingPitch(builder, self.crossingPitch)
         capacityParams = CapacityParamsEnd(builder)
         return capacityParams

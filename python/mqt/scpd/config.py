@@ -25,6 +25,7 @@ from .flatbuffers.config.AssignmentParams import AssignmentParamsT
 from .flatbuffers.config.BridgeRule import BridgeRuleT
 from .flatbuffers.config.CapacityParams import CapacityParamsT
 from .flatbuffers.config.Config import ConfigT
+from .flatbuffers.config.CorridorParams import CorridorParamsT
 from .flatbuffers.config.GlobalParams import GlobalParamsT
 from .flatbuffers.config.GridParams import GridParamsT
 from .flatbuffers.config.PortConfig import PortConfigT
@@ -69,9 +70,10 @@ GRID_DEFAULTS: dict[str, int] = {
 #: The defaults of the stage sections, by section and key. A shipped configuration carries only
 #: what differs from them, the same rule the grid section follows.
 STAGE_DEFAULTS: dict[str, dict[str, object]] = {
-    "capacity": {"planner": "", "bottleneck_clearance": 1.5},
+    "capacity": {"planner": "", "bottleneck_clearance": 1.5, "crossing_pitch": 165.0},
     "global": {"router": "", "internal_bridges": False},
     "assignment": {"assigner": "", "launcher_target": 0},
+    "corridor": {"router": "", "rounds": 12, "max_relaxation": 30},
     "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0},
 }
 
@@ -251,6 +253,9 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     capacity = _Section("stages.capacity", section.subtable("capacity") or {}, problems)
     stages.capacity = CapacityParamsT()
     stages.capacity.planner = capacity.take("planner", str, default="")
+    stages.capacity.crossingPitch = capacity.take(
+        "crossing_pitch", float, default=defaults["capacity"]["crossing_pitch"]
+    )
     stages.capacity.bottleneckClearance = capacity.take(
         "bottleneck_clearance", float, default=defaults["capacity"]["bottleneck_clearance"]
     )
@@ -269,6 +274,13 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     stages.assignment.assigner = assignment.take("assigner", str, default="")
     stages.assignment.launcherTarget = assignment.take("launcher_target", int, default=0)
     assignment.finish()
+
+    corridor = _Section("stages.corridor", section.subtable("corridor") or {}, problems)
+    stages.corridor = CorridorParamsT()
+    stages.corridor.router = corridor.take("router", str, default="")
+    stages.corridor.rounds = corridor.take("rounds", int, default=defaults["corridor"]["rounds"])
+    stages.corridor.maxRelaxation = corridor.take("max_relaxation", int, default=defaults["corridor"]["max_relaxation"])
+    corridor.finish()
 
     solver = _Section("stages.solver", section.subtable("solver") or {}, problems)
     stages.solver = SolverParamsT()

@@ -64,6 +64,13 @@ struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
 ///
 /// @throws std::invalid_argument when the configuration describes no usable
 /// grid, or the chip has neither obstacles nor ports.
+/// How far apart the places a wire may cross a partition border sit.
+///
+/// The Capacity stage counts them into `PartitionBorder.budget` and the
+/// Corridor stage crosses at them, so both read the figure here rather than
+/// each deciding for itself.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT double crossingPitch(const ConfigT& config);
+
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT CapacityScene buildScene(const ChipT& chip,
                                                                 const ConfigT& config);
 

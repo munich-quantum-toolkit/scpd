@@ -22,10 +22,13 @@ from typing import Any, TypeVar
 from .artifacts import read_artifact, write_artifact
 from .flatbuffers.artifacts.Artifact import ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
+from .flatbuffers.artifacts.BorderSlots import BorderSlotsT
 from .flatbuffers.artifacts.Bottleneck import BottleneckT
 from .flatbuffers.artifacts.CapacityElement import CapacityElement
 from .flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from .flatbuffers.artifacts.Corridor import CorridorT
+from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
@@ -165,6 +168,17 @@ FIELDS: dict[type, dict[str, Field]] = {
         "resonators": ("list", ("table", PortRefT)),
         "objective": float,
     },
+    BorderSlotsT: {"border": int, "positions": ("list", _POINT), "pocket": bool},
+    CorridorT: {
+        "partitions": ("list", int),
+        "crossings": ("list", _POINT),
+        "source": _POINT,
+        "target": _POINT,
+    },
+    CorridorRoutingT: {
+        "corridors": ("list", ("table", CorridorT)),
+        "slots": ("list", ("table", BorderSlotsT)),
+    },
     DetailRoutingT: {},
     FinalRoutingT: {
         "couplers": ("list", ("table", CpwCouplerT)),
@@ -187,6 +201,7 @@ FIELDS: dict[type, dict[str, Field]] = {
                 StageOutput.CapacityPlan: CapacityPlanT,
                 StageOutput.Assignment: AssignmentT,
                 StageOutput.GlobalRouting: GlobalRoutingT,
+                StageOutput.CorridorRouting: CorridorRoutingT,
                 StageOutput.DetailRouting: DetailRoutingT,
                 StageOutput.FinalRouting: FinalRoutingT,
                 StageOutput.Geometry: GeometryT,
