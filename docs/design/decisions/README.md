@@ -6,6 +6,9 @@ why. They exist so that settled questions are not silently reopened.
 A record is not immutable. If a decision is revisited, supersede it with a new
 record and mark the old one `Superseded by NNNN` rather than editing history.
 
+What a decision puts in the repository only for the duration of the port is
+listed in [the cleanup checklist](../cleanup-after-the-port.md).
+
 | #                                                  | Decision                                                             |
 | -------------------------------------------------- | -------------------------------------------------------------------- |
 | [0002](0002-cli-is-the-product.md)                 | The CLI is the product                                               |
