@@ -44,7 +44,7 @@ def test_plot_writes_the_layout_and_refuses_later_stages(tmp_path: Path, capsys:
     assert output.read_text(encoding="utf-8").startswith("<svg")
     assert "wrote" in capsys.readouterr().out
 
-    assert main(["plot", "-c", CONFIG, "--stage", "final", "-o", str(output)]) == 1
+    assert main(["plot", "-c", CONFIG, "--stage", "aligned", "-o", str(output)]) == 1
     assert "phase 4" in capsys.readouterr().err
 
 
@@ -134,6 +134,51 @@ def test_plan_runs_one_stage_and_resumes(tmp_path: Path) -> None:
     assert (run / "03-assign.fb").is_file()
 
 
+def test_plan_says_what_a_stage_is_doing_with_verbose(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`-v` prints one line per round of the stages that report, while they run."""
+    run = tmp_path / "run"
+    config = str(BENCHMARKS / "4q" / "config.toml")
+    assert main(["plan", "-c", config, "-o", str(run), "-v"]) == 0
+
+    captured = capsys.readouterr().out
+    # Every reporting stage names itself, and the Final stage says what its
+    # rounds came to, which is what makes a stuck run visible while it is stuck.
+    assert "[corridor]" in captured
+    assert "[detail]" in captured
+    assert "[final]" in captured
+    assert "outer routing round 0" in captured
+    assert "drawn" in captured
+
+
+def test_plan_is_quiet_without_verbose(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Without it a run says only which artifact each stage wrote."""
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run)]) == 0
+
+    assert "[final]" not in capsys.readouterr().out
+
+
+def test_drc_writes_a_report_of_a_finished_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`drc` checks a run without routing it again, and the exit code says whether it holds."""
+    run = tmp_path / "run"
+    config = str(BENCHMARKS / "4q" / "config.toml")
+    assert main(["plan", "-c", config, "-o", str(run)]) == 0
+
+    code = main(["drc", str(run)])
+
+    report = run / "drc.json"
+    assert report.is_file()
+    written = json.loads(report.read_text(encoding="utf-8"))
+    assert written["reports"][0]["stage"] == "final"
+    # The 4-qubit chip holds every rule, so the report is empty and the command
+    # succeeds. A finding of an active rule would make it exit nonzero.
+    assert written["reports"][0]["findings"] == []
+    assert code == 0
+    assert "0 active findings" in capsys.readouterr().out
+
+
 def test_plotting_a_stage_needs_a_run_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A stage other than layout is read from a run, and the message says so."""
     assert (
@@ -180,7 +225,7 @@ def test_plotting_a_stage_of_a_later_phase_says_which(tmp_path: Path, capsys: py
             "-c",
             str(BENCHMARKS / "4q" / "config.toml"),
             "--stage",
-            "final",
+            "aligned",
             "-o",
             str(tmp_path / "out.svg"),
         ])

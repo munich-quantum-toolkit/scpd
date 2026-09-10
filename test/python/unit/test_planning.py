@@ -23,7 +23,7 @@ from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.geometry.Point import PointT
-from mqt.scpd.planning import PLANNING_STAGES, PlanningError, blockade, planning_geometry
+from mqt.scpd.planning import FINAL_PHASES, PLANNING_STAGES, PlanningError, blockade, planning_geometry
 from mqt.scpd.plot import layout_svg
 from mqt.scpd.run import IMPLEMENTED, RunDirectory
 
@@ -229,6 +229,38 @@ def test_an_artifact_of_the_wrong_stage_is_refused(run: RunDirectory, chip) -> N
         planning_geometry(run.artifact("capacity").read_bytes(), chip, "assign")
 
 
+def test_the_final_routing_carries_a_snapshot_of_every_phase(run: RunDirectory, chip) -> None:  # noqa: ANN001
+    """Each of the five phases draws what it had at its end, and the two that are built carry wires."""
+    data = run.artifact("final").read_bytes()
+    geometry = planning_geometry(data, chip, "final", clearance=185.0)
+
+    assert set(geometry.phases) == set(FINAL_PHASES)
+    assert geometry.phases["outer"], "the outer routing drew nothing"
+    # The end state is what a caller sees without naming a phase.
+    assert len(geometry.wires) + len(geometry.inner_wires) == len(geometry.phases["refined"])
+    # The clearance drawn is the whole number of cells the rule spans on the router grid, which
+    # is a little more than the rule itself, because that is what the router keeps.
+    assert geometry.clearance > 185.0
+    assert geometry.clearance < 2 * 185.0
+
+
+def test_one_phase_of_the_final_routing_is_drawn_on_its_own(run: RunDirectory, chip) -> None:  # noqa: ANN001
+    """Each phase draws the state it left, and the inner circuit alone before the ring is routed."""
+    data = run.artifact("final").read_bytes()
+    inner = planning_geometry(data, chip, "final", phase="inner")
+    outer = planning_geometry(data, chip, "final", phase="outer")
+
+    # The first phase draws the inner circuit and nothing of the ring.
+    assert not inner.wires
+    assert inner.inner_wires
+    assert outer.wires
+
+    # A phase that changes nothing leaves the state of the phase before it, which is what a
+    # snapshot is. The three that are not built yet are therefore the outer routing again.
+    couplers = planning_geometry(data, chip, "final", phase="couplers")
+    assert couplers.wires == outer.wires
+
+
 def test_a_stage_that_is_not_a_planning_stage_is_refused(chip) -> None:  # noqa: ANN001
     """The message lists the stages that can be drawn."""
     empty = write_artifact(
@@ -239,7 +271,7 @@ def test_a_stage_that_is_not_a_planning_stage_is_refused(chip) -> None:  # noqa:
         )
     )
     with pytest.raises(PlanningError, match=", ".join(PLANNING_STAGES)):
-        planning_geometry(empty, chip, "final")
+        planning_geometry(empty, chip, "aligned")
 
 
 def test_an_empty_plan_draws_nothing(chip) -> None:  # noqa: ANN001

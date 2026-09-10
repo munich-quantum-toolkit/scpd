@@ -241,10 +241,50 @@ table DetailRouting {
   inner: [DetailWire] (required);
 }
 
+/// One wire's path on the router grid, cell by cell.
+///
+/// The cells run from the point the wire is fed at to the cell its target port
+/// is reached at, and each one carries the heading the search held in it, so
+/// the bend structure survives into the geometry. A wire the stage could not
+/// draw carries no cells, so a reader counts the failures rather than being
+/// handed a separate list that can disagree with the paths beside it.
+table FinalWire {
+  path: [geometry.RCoord] (required);
+}
+
+/// What the Final stage had drawn at the end of one of its phases.
+///
+/// The stage runs five phases and each changes what the phase before it
+/// produced: the coupler insertion cuts a resonator back to its coupler, and
+/// the feedline passes re-route wires that are already drawn. A picture of one
+/// phase therefore cannot be derived from the end state, so each phase leaves
+/// its own snapshot here and the renderers draw the one they are asked for. A
+/// phase that has not been implemented yet carries no wires.
+table FinalPhase {
+  /// "inner", "outer", "couplers", "feedlines" or "refined".
+  name: string (required);
+  wires: [FinalWire] (required);
+  inner: [FinalWire] (required);
+  feedlines: [FinalWire] (required);
+  couplers: [design.CpwCoupler] (required);
+}
+
 /// Output of the Final stage. The couplers carry the ports they create and
 /// the connections they complete, so a reloaded run can rebuild the grown
 /// port list and the completed connections without the stage.
 table FinalRouting {
+  /// The router grid the cells are counted on, so a reader can place them
+  /// without rebuilding the run.
+  grid: GridExtent (required);
+  /// One entry per connection of the Assignment, in its order, so it lines up
+  /// with `DetailRouting.wires` without a key.
+  wires: [FinalWire] (required);
+  /// One entry per connection of the Global stage, in its order.
+  inner: [FinalWire] (required);
+  /// The edges of the feedline chains, in chain order.
+  feedlines: [FinalWire] (required);
+  /// What the stage had drawn at the end of each of its phases.
+  phases: [FinalPhase] (required);
   couplers: [design.CpwCoupler] (required);
   bridges: [design.Bridge] (required);
   /// The connections that did not route.

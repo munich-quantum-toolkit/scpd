@@ -14,6 +14,7 @@
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/CorridorRouter.hpp"
 #include "mqt-scpd/pipeline/DetailRouter.hpp"
+#include "mqt-scpd/pipeline/FinalRouter.hpp"
 #include "mqt-scpd/pipeline/GlobalRouter.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 
@@ -30,6 +31,7 @@ constexpr std::string_view DEFAULT_GLOBAL_ROUTER = "hanan-milp";
 constexpr std::string_view DEFAULT_ASSIGNER = "ordered-milp";
 constexpr std::string_view DEFAULT_CORRIDOR_ROUTER = "partition-astar";
 constexpr std::string_view DEFAULT_DETAIL_ROUTER = "pixel-astar";
+constexpr std::string_view DEFAULT_FINAL_ROUTER = "dubins";
 
 /// A configured name, or the default when the configuration leaves it empty.
 std::string_view orDefault(const std::string& configured,
@@ -84,6 +86,15 @@ const Registry<IDetailRouter>& detailRouters() {
   return registry;
 }
 
+const Registry<IFinalRouter>& finalRouters() {
+  static const auto registry = [] {
+    Registry<IFinalRouter> made;
+    made.add(std::string(DEFAULT_FINAL_ROUTER), makeDubinsFinalRouter);
+    return made;
+  }();
+  return registry;
+}
+
 std::string_view selectedCapacityPlanner(const ConfigT& config) {
   if (config.stages != nullptr && config.stages->capacity != nullptr) {
     return orDefault(config.stages->capacity->planner,
@@ -118,6 +129,13 @@ std::string_view selectedDetailRouter(const ConfigT& config) {
     return orDefault(config.stages->detail->router, DEFAULT_DETAIL_ROUTER);
   }
   return DEFAULT_DETAIL_ROUTER;
+}
+
+std::string_view selectedFinalRouter(const ConfigT& config) {
+  if (config.stages != nullptr && config.stages->final != nullptr) {
+    return orDefault(config.stages->final->router, DEFAULT_FINAL_ROUTER);
+  }
+  return DEFAULT_FINAL_ROUTER;
 }
 
 } // namespace mqt::scpd::pipeline

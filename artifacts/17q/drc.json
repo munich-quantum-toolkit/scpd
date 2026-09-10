@@ -1,0 +1,12 @@
+{
+  "reports": [
+    {
+      "stage": "final",
+      "feedlines_skipped": 0,
+      "findings": [
+        {"rule": "wire-clearance", "severity": "active", "wires": [29, 30], "location": {"x": 2639.0449438202245, "y": -222.8932584269663}, "measured": 178.38295101402818, "limit": 185, "clearance_kind": "near-miss", "message": "wires 29 and 30 come within 178.4 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [41, 42], "location": {"x": 325.56179775280896, "y": 6518.11797752809}, "measured": 176.4210992864808, "limit": 185, "clearance_kind": "near-miss", "message": "wires 41 and 42 come within 176.4 layout units of each other"}
+      ]
+    }
+  ]
+}

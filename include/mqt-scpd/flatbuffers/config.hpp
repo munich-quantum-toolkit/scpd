@@ -60,6 +60,10 @@ struct DetailParams;
 struct DetailParamsBuilder;
 struct DetailParamsT;
 
+struct FinalParams;
+struct FinalParamsBuilder;
+struct FinalParamsT;
+
 struct SolverParams;
 struct SolverParamsBuilder;
 struct SolverParamsT;
@@ -92,6 +96,8 @@ bool operator==(const CorridorParamsT &lhs, const CorridorParamsT &rhs);
 bool operator!=(const CorridorParamsT &lhs, const CorridorParamsT &rhs);
 bool operator==(const DetailParamsT &lhs, const DetailParamsT &rhs);
 bool operator!=(const DetailParamsT &lhs, const DetailParamsT &rhs);
+bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs);
+bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs);
 bool operator==(const SolverParamsT &lhs, const SolverParamsT &rhs);
 bool operator!=(const SolverParamsT &lhs, const SolverParamsT &rhs);
 bool operator==(const StageParamsT &lhs, const StageParamsT &rhs);
@@ -535,6 +541,7 @@ struct GridParamsT : public ::flatbuffers::NativeTable {
   uint32_t launcher_offset_x = 15;
   uint32_t launcher_offset_y = 15;
   uint32_t detail_factor = 30;
+  double router_cell_size = 10.0;
 };
 
 struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -546,7 +553,8 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_CAPACITY_CELLS_Y = 6,
     VT_LAUNCHER_OFFSET_X = 8,
     VT_LAUNCHER_OFFSET_Y = 10,
-    VT_DETAIL_FACTOR = 12
+    VT_DETAIL_FACTOR = 12,
+    VT_ROUTER_CELL_SIZE = 14
   };
   uint32_t capacity_cells_x() const {
     return GetField<uint32_t>(VT_CAPACITY_CELLS_X, 50);
@@ -565,6 +573,17 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t detail_factor() const {
     return GetField<uint32_t>(VT_DETAIL_FACTOR, 30);
   }
+  /// How wide a cell of the router grid may be, in layout units.
+  ///
+  /// Every capacity cell is divided into as many router cells as it holds
+  /// steps of this size, rounded up, so a router cell is never wider than it.
+  /// The prototype passes the same figure to `FinalGrid`'s constructor as
+  /// `unit_division_factor`; it comes out as 9.91 to 10.00 layout units on
+  /// every benchmark chip, which is what makes the wire spacing 19 cells
+  /// everywhere.
+  double router_cell_size() const {
+    return GetField<double>(VT_ROUTER_CELL_SIZE, 10.0);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -573,6 +592,7 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_LAUNCHER_OFFSET_X, 4) &&
            VerifyField<uint32_t>(verifier, VT_LAUNCHER_OFFSET_Y, 4) &&
            VerifyField<uint32_t>(verifier, VT_DETAIL_FACTOR, 4) &&
+           VerifyField<double>(verifier, VT_ROUTER_CELL_SIZE, 8) &&
            verifier.EndTable();
   }
   GridParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -599,6 +619,9 @@ struct GridParamsBuilder {
   void add_detail_factor(uint32_t detail_factor) {
     fbb_.AddElement<uint32_t>(GridParams::VT_DETAIL_FACTOR, detail_factor, 30);
   }
+  void add_router_cell_size(double router_cell_size) {
+    fbb_.AddElement<double>(GridParams::VT_ROUTER_CELL_SIZE, router_cell_size, 10.0);
+  }
   explicit GridParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -616,8 +639,10 @@ inline ::flatbuffers::Offset<GridParams> CreateGridParams(
     uint32_t capacity_cells_y = 0,
     uint32_t launcher_offset_x = 15,
     uint32_t launcher_offset_y = 15,
-    uint32_t detail_factor = 30) {
+    uint32_t detail_factor = 30,
+    double router_cell_size = 10.0) {
   GridParamsBuilder builder_(_fbb);
+  builder_.add_router_cell_size(router_cell_size);
   builder_.add_detail_factor(detail_factor);
   builder_.add_launcher_offset_y(launcher_offset_y);
   builder_.add_launcher_offset_x(launcher_offset_x);
@@ -1222,6 +1247,291 @@ inline ::flatbuffers::Offset<DetailParams> CreateDetailParamsDirect(
 
 ::flatbuffers::Offset<DetailParams> CreateDetailParams(::flatbuffers::FlatBufferBuilder &_fbb, const DetailParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct FinalParamsT : public ::flatbuffers::NativeTable {
+  typedef FinalParams TableType;
+  std::string router{};
+  uint32_t corridor_spacings = 11;
+  uint32_t inner_corridor_spacings = 11;
+  uint32_t rounds = 30;
+  uint32_t inner_rounds = 4;
+  uint32_t max_relaxation = 10;
+  uint32_t refinement_rounds = 2;
+  double meander_length = 3000.0;
+  double bend_penalty_norm = 2.5;
+  double wire_proximity_penalty_norm = 0.00125;
+  double static_proximity_penalty_norm = 0.00033;
+  double obstacle_penalty_reach = 100.0;
+  double coupler_length = 200.0;
+  double coupler_height = 26.0;
+};
+
+/// What the Final stage is allowed to do.
+///
+/// No clearance is here, for the reason `DetailParams` gives: a clearance is a
+/// length in layout units and a cell count is a property of the grid. The
+/// stage keeps `cells_for(min_wire_spacing, router)` between two wires and
+/// `cells_for(min_straight_length, router)` as its straight stub, and it bakes
+/// `min_obstacle_spacing` into the obstacle mask. The prototype writes all
+/// three as the literals 19, 9 and 2, and none of them records a reason.
+struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef FinalParamsT NativeTableType;
+  typedef FinalParamsBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ROUTER = 4,
+    VT_CORRIDOR_SPACINGS = 6,
+    VT_INNER_CORRIDOR_SPACINGS = 8,
+    VT_ROUNDS = 10,
+    VT_INNER_ROUNDS = 12,
+    VT_MAX_RELAXATION = 14,
+    VT_REFINEMENT_ROUNDS = 16,
+    VT_MEANDER_LENGTH = 18,
+    VT_BEND_PENALTY_NORM = 20,
+    VT_WIRE_PROXIMITY_PENALTY_NORM = 22,
+    VT_STATIC_PROXIMITY_PENALTY_NORM = 24,
+    VT_OBSTACLE_PENALTY_REACH = 26,
+    VT_COUPLER_LENGTH = 28,
+    VT_COUPLER_HEIGHT = 30
+  };
+  /// The implementation, by the name it is registered under.
+  const ::flatbuffers::String *router() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_ROUTER);
+  }
+  /// How far to either side of the way it already has a wire may be moved when
+  /// it is routed again, in wire spacings.
+  ///
+  /// The prototype's `outer_expansion` is 200 cells of the router grid in the
+  /// drivers that ship, which is 2000 layout units and therefore a different
+  /// distance on every chip. Counted in spacings the same number is the same
+  /// room everywhere.
+  uint32_t corridor_spacings() const {
+    return GetField<uint32_t>(VT_CORRIDOR_SPACINGS, 11);
+  }
+  /// The same, for the wires of the inner circuit, which run inside one unit
+  /// cell and need far less room.
+  uint32_t inner_corridor_spacings() const {
+    return GetField<uint32_t>(VT_INNER_CORRIDOR_SPACINGS, 11);
+  }
+  /// Sweeps over the wire list, alternating forward and backward. A wire that
+  /// has been routed is left alone; the sweeps exist so that a wire which
+  /// found no way through can take the room a later one has not claimed yet.
+  uint32_t rounds() const {
+    return GetField<uint32_t>(VT_ROUNDS, 30);
+  }
+  /// The same, for the inner circuit.
+  uint32_t inner_rounds() const {
+    return GetField<uint32_t>(VT_INNER_ROUNDS, 4);
+  }
+  /// How many neighbouring wires a failed route may let go of, counted along
+  /// the sweep direction.
+  uint32_t max_relaxation() const {
+    return GetField<uint32_t>(VT_MAX_RELAXATION, 10);
+  }
+  /// Rounds that route every wire again against a proximity price, to widen
+  /// the room around it. A wire that does not route keeps the way it had.
+  uint32_t refinement_rounds() const {
+    return GetField<uint32_t>(VT_REFINEMENT_ROUNDS, 2);
+  }
+  /// How long a resonator's way is made before the coupler is spliced into
+  /// it, in layout units. Zero switches the meander off.
+  ///
+  /// This is not `target_resonator_length`. The wire is fed from the segment
+  /// between two launchers and the coupler is spliced where the way left to
+  /// the qubit port reaches the target length, so the whole way has to be
+  /// longer than the target. The prototype's own figures are 3000 layout units
+  /// on the 17-qubit chip and 6000 on the 69-qubit one.
+  double meander_length() const {
+    return GetField<double>(VT_MEANDER_LENGTH, 3000.0);
+  }
+  /// What one eighth turn costs, in hundredths of a cell.
+  ///
+  /// A price and not a distance, but it is still normalised: a bend costs a
+  /// fixed amount while a way's cost grows with the grid, so the prototype had
+  /// to retune it per chip from 8000 to 30000. It is quoted here against the
+  /// sum of the grid's two extents, as the prototype's own `_norm` fields do,
+  /// and multiplied by that sum at the point of use.
+  double bend_penalty_norm() const {
+    return GetField<double>(VT_BEND_PENALTY_NORM, 2.5);
+  }
+  /// What running beside another wire costs, on the same scale.
+  double wire_proximity_penalty_norm() const {
+    return GetField<double>(VT_WIRE_PROXIMITY_PENALTY_NORM, 0.00125);
+  }
+  /// What running beside an obstacle costs, on the same scale.
+  double static_proximity_penalty_norm() const {
+    return GetField<double>(VT_STATIC_PROXIMITY_PENALTY_NORM, 0.00033);
+  }
+  /// How far the cost of running close to an obstacle reaches, in layout
+  /// units. Zero switches the penalty off.
+  double obstacle_penalty_reach() const {
+    return GetField<double>(VT_OBSTACLE_PENALTY_REACH, 100.0);
+  }
+  /// The physical size of the coupler body the stage instantiates, in layout
+  /// units. The prototype carries it as 20 by 3 cells.
+  double coupler_length() const {
+    return GetField<double>(VT_COUPLER_LENGTH, 200.0);
+  }
+  double coupler_height() const {
+    return GetField<double>(VT_COUPLER_HEIGHT, 26.0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_ROUTER) &&
+           verifier.VerifyString(router()) &&
+           VerifyField<uint32_t>(verifier, VT_CORRIDOR_SPACINGS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_INNER_CORRIDOR_SPACINGS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_ROUNDS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_INNER_ROUNDS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_MAX_RELAXATION, 4) &&
+           VerifyField<uint32_t>(verifier, VT_REFINEMENT_ROUNDS, 4) &&
+           VerifyField<double>(verifier, VT_MEANDER_LENGTH, 8) &&
+           VerifyField<double>(verifier, VT_BEND_PENALTY_NORM, 8) &&
+           VerifyField<double>(verifier, VT_WIRE_PROXIMITY_PENALTY_NORM, 8) &&
+           VerifyField<double>(verifier, VT_STATIC_PROXIMITY_PENALTY_NORM, 8) &&
+           VerifyField<double>(verifier, VT_OBSTACLE_PENALTY_REACH, 8) &&
+           VerifyField<double>(verifier, VT_COUPLER_LENGTH, 8) &&
+           VerifyField<double>(verifier, VT_COUPLER_HEIGHT, 8) &&
+           verifier.EndTable();
+  }
+  FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<FinalParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct FinalParamsBuilder {
+  typedef FinalParams Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_router(::flatbuffers::Offset<::flatbuffers::String> router) {
+    fbb_.AddOffset(FinalParams::VT_ROUTER, router);
+  }
+  void add_corridor_spacings(uint32_t corridor_spacings) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CORRIDOR_SPACINGS, corridor_spacings, 11);
+  }
+  void add_inner_corridor_spacings(uint32_t inner_corridor_spacings) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_INNER_CORRIDOR_SPACINGS, inner_corridor_spacings, 11);
+  }
+  void add_rounds(uint32_t rounds) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_ROUNDS, rounds, 30);
+  }
+  void add_inner_rounds(uint32_t inner_rounds) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_INNER_ROUNDS, inner_rounds, 4);
+  }
+  void add_max_relaxation(uint32_t max_relaxation) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_MAX_RELAXATION, max_relaxation, 10);
+  }
+  void add_refinement_rounds(uint32_t refinement_rounds) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_REFINEMENT_ROUNDS, refinement_rounds, 2);
+  }
+  void add_meander_length(double meander_length) {
+    fbb_.AddElement<double>(FinalParams::VT_MEANDER_LENGTH, meander_length, 3000.0);
+  }
+  void add_bend_penalty_norm(double bend_penalty_norm) {
+    fbb_.AddElement<double>(FinalParams::VT_BEND_PENALTY_NORM, bend_penalty_norm, 2.5);
+  }
+  void add_wire_proximity_penalty_norm(double wire_proximity_penalty_norm) {
+    fbb_.AddElement<double>(FinalParams::VT_WIRE_PROXIMITY_PENALTY_NORM, wire_proximity_penalty_norm, 0.00125);
+  }
+  void add_static_proximity_penalty_norm(double static_proximity_penalty_norm) {
+    fbb_.AddElement<double>(FinalParams::VT_STATIC_PROXIMITY_PENALTY_NORM, static_proximity_penalty_norm, 0.00033);
+  }
+  void add_obstacle_penalty_reach(double obstacle_penalty_reach) {
+    fbb_.AddElement<double>(FinalParams::VT_OBSTACLE_PENALTY_REACH, obstacle_penalty_reach, 100.0);
+  }
+  void add_coupler_length(double coupler_length) {
+    fbb_.AddElement<double>(FinalParams::VT_COUPLER_LENGTH, coupler_length, 200.0);
+  }
+  void add_coupler_height(double coupler_height) {
+    fbb_.AddElement<double>(FinalParams::VT_COUPLER_HEIGHT, coupler_height, 26.0);
+  }
+  explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<FinalParams> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<FinalParams>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> router = 0,
+    uint32_t corridor_spacings = 11,
+    uint32_t inner_corridor_spacings = 11,
+    uint32_t rounds = 30,
+    uint32_t inner_rounds = 4,
+    uint32_t max_relaxation = 10,
+    uint32_t refinement_rounds = 2,
+    double meander_length = 3000.0,
+    double bend_penalty_norm = 2.5,
+    double wire_proximity_penalty_norm = 0.00125,
+    double static_proximity_penalty_norm = 0.00033,
+    double obstacle_penalty_reach = 100.0,
+    double coupler_length = 200.0,
+    double coupler_height = 26.0) {
+  FinalParamsBuilder builder_(_fbb);
+  builder_.add_coupler_height(coupler_height);
+  builder_.add_coupler_length(coupler_length);
+  builder_.add_obstacle_penalty_reach(obstacle_penalty_reach);
+  builder_.add_static_proximity_penalty_norm(static_proximity_penalty_norm);
+  builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
+  builder_.add_bend_penalty_norm(bend_penalty_norm);
+  builder_.add_meander_length(meander_length);
+  builder_.add_refinement_rounds(refinement_rounds);
+  builder_.add_max_relaxation(max_relaxation);
+  builder_.add_inner_rounds(inner_rounds);
+  builder_.add_rounds(rounds);
+  builder_.add_inner_corridor_spacings(inner_corridor_spacings);
+  builder_.add_corridor_spacings(corridor_spacings);
+  builder_.add_router(router);
+  return builder_.Finish();
+}
+
+struct FinalParams::Traits {
+  using type = FinalParams;
+  static auto constexpr Create = CreateFinalParams;
+};
+
+inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *router = nullptr,
+    uint32_t corridor_spacings = 11,
+    uint32_t inner_corridor_spacings = 11,
+    uint32_t rounds = 30,
+    uint32_t inner_rounds = 4,
+    uint32_t max_relaxation = 10,
+    uint32_t refinement_rounds = 2,
+    double meander_length = 3000.0,
+    double bend_penalty_norm = 2.5,
+    double wire_proximity_penalty_norm = 0.00125,
+    double static_proximity_penalty_norm = 0.00033,
+    double obstacle_penalty_reach = 100.0,
+    double coupler_length = 200.0,
+    double coupler_height = 26.0) {
+  auto router__ = router ? _fbb.CreateString(router) : 0;
+  return mqt::scpd::flatbuffers::config::CreateFinalParams(
+      _fbb,
+      router__,
+      corridor_spacings,
+      inner_corridor_spacings,
+      rounds,
+      inner_rounds,
+      max_relaxation,
+      refinement_rounds,
+      meander_length,
+      bend_penalty_norm,
+      wire_proximity_penalty_norm,
+      static_proximity_penalty_norm,
+      obstacle_penalty_reach,
+      coupler_length,
+      coupler_height);
+}
+
+::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct SolverParamsT : public ::flatbuffers::NativeTable {
   typedef SolverParams TableType;
   std::string backend{};
@@ -1330,6 +1640,7 @@ struct StageParamsT : public ::flatbuffers::NativeTable {
   std::unique_ptr<mqt::scpd::flatbuffers::config::SolverParamsT> solver{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::CorridorParamsT> corridor{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::DetailParamsT> detail{};
+  std::unique_ptr<mqt::scpd::flatbuffers::config::FinalParamsT> final{};
   StageParamsT() = default;
   StageParamsT(const StageParamsT &o);
   StageParamsT(StageParamsT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -1347,7 +1658,8 @@ struct StageParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_ASSIGNMENT = 8,
     VT_SOLVER = 10,
     VT_CORRIDOR = 12,
-    VT_DETAIL = 14
+    VT_DETAIL = 14,
+    VT_FINAL = 16
   };
   const mqt::scpd::flatbuffers::config::CapacityParams *capacity() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::CapacityParams *>(VT_CAPACITY);
@@ -1367,6 +1679,9 @@ struct StageParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const mqt::scpd::flatbuffers::config::DetailParams *detail() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::DetailParams *>(VT_DETAIL);
   }
+  const mqt::scpd::flatbuffers::config::FinalParams *final() const {
+    return GetPointer<const mqt::scpd::flatbuffers::config::FinalParams *>(VT_FINAL);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1382,6 +1697,8 @@ struct StageParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(corridor()) &&
            VerifyOffset(verifier, VT_DETAIL) &&
            verifier.VerifyTable(detail()) &&
+           VerifyOffset(verifier, VT_FINAL) &&
+           verifier.VerifyTable(final()) &&
            verifier.EndTable();
   }
   StageParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1411,6 +1728,9 @@ struct StageParamsBuilder {
   void add_detail(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::DetailParams> detail) {
     fbb_.AddOffset(StageParams::VT_DETAIL, detail);
   }
+  void add_final(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::FinalParams> final) {
+    fbb_.AddOffset(StageParams::VT_FINAL, final);
+  }
   explicit StageParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1429,8 +1749,10 @@ inline ::flatbuffers::Offset<StageParams> CreateStageParams(
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::AssignmentParams> assignment = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::SolverParams> solver = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::CorridorParams> corridor = 0,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::DetailParams> detail = 0) {
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::DetailParams> detail = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::FinalParams> final = 0) {
   StageParamsBuilder builder_(_fbb);
+  builder_.add_final(final);
   builder_.add_detail(detail);
   builder_.add_corridor(corridor);
   builder_.add_solver(solver);
@@ -1782,7 +2104,8 @@ inline bool operator==(const GridParamsT &lhs, const GridParamsT &rhs) {
       (lhs.capacity_cells_y == rhs.capacity_cells_y) &&
       (lhs.launcher_offset_x == rhs.launcher_offset_x) &&
       (lhs.launcher_offset_y == rhs.launcher_offset_y) &&
-      (lhs.detail_factor == rhs.detail_factor);
+      (lhs.detail_factor == rhs.detail_factor) &&
+      (lhs.router_cell_size == rhs.router_cell_size);
 }
 
 inline bool operator!=(const GridParamsT &lhs, const GridParamsT &rhs) {
@@ -1804,6 +2127,7 @@ inline void GridParams::UnPackTo(GridParamsT *_o, const ::flatbuffers::resolver_
   { auto _e = launcher_offset_x(); _o->launcher_offset_x = _e; }
   { auto _e = launcher_offset_y(); _o->launcher_offset_y = _e; }
   { auto _e = detail_factor(); _o->detail_factor = _e; }
+  { auto _e = router_cell_size(); _o->router_cell_size = _e; }
 }
 
 inline ::flatbuffers::Offset<GridParams> CreateGridParams(::flatbuffers::FlatBufferBuilder &_fbb, const GridParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1819,13 +2143,15 @@ inline ::flatbuffers::Offset<GridParams> GridParams::Pack(::flatbuffers::FlatBuf
   auto _launcher_offset_x = _o->launcher_offset_x;
   auto _launcher_offset_y = _o->launcher_offset_y;
   auto _detail_factor = _o->detail_factor;
+  auto _router_cell_size = _o->router_cell_size;
   return mqt::scpd::flatbuffers::config::CreateGridParams(
       _fbb,
       _capacity_cells_x,
       _capacity_cells_y,
       _launcher_offset_x,
       _launcher_offset_y,
-      _detail_factor);
+      _detail_factor,
+      _router_cell_size);
 }
 
 
@@ -2062,6 +2388,95 @@ inline ::flatbuffers::Offset<DetailParams> DetailParams::Pack(::flatbuffers::Fla
 }
 
 
+inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
+  return
+      (lhs.router == rhs.router) &&
+      (lhs.corridor_spacings == rhs.corridor_spacings) &&
+      (lhs.inner_corridor_spacings == rhs.inner_corridor_spacings) &&
+      (lhs.rounds == rhs.rounds) &&
+      (lhs.inner_rounds == rhs.inner_rounds) &&
+      (lhs.max_relaxation == rhs.max_relaxation) &&
+      (lhs.refinement_rounds == rhs.refinement_rounds) &&
+      (lhs.meander_length == rhs.meander_length) &&
+      (lhs.bend_penalty_norm == rhs.bend_penalty_norm) &&
+      (lhs.wire_proximity_penalty_norm == rhs.wire_proximity_penalty_norm) &&
+      (lhs.static_proximity_penalty_norm == rhs.static_proximity_penalty_norm) &&
+      (lhs.obstacle_penalty_reach == rhs.obstacle_penalty_reach) &&
+      (lhs.coupler_length == rhs.coupler_length) &&
+      (lhs.coupler_height == rhs.coupler_height);
+}
+
+inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline FinalParamsT *FinalParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<FinalParamsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = router(); if (_e) _o->router = _e->str(); }
+  { auto _e = corridor_spacings(); _o->corridor_spacings = _e; }
+  { auto _e = inner_corridor_spacings(); _o->inner_corridor_spacings = _e; }
+  { auto _e = rounds(); _o->rounds = _e; }
+  { auto _e = inner_rounds(); _o->inner_rounds = _e; }
+  { auto _e = max_relaxation(); _o->max_relaxation = _e; }
+  { auto _e = refinement_rounds(); _o->refinement_rounds = _e; }
+  { auto _e = meander_length(); _o->meander_length = _e; }
+  { auto _e = bend_penalty_norm(); _o->bend_penalty_norm = _e; }
+  { auto _e = wire_proximity_penalty_norm(); _o->wire_proximity_penalty_norm = _e; }
+  { auto _e = static_proximity_penalty_norm(); _o->static_proximity_penalty_norm = _e; }
+  { auto _e = obstacle_penalty_reach(); _o->obstacle_penalty_reach = _e; }
+  { auto _e = coupler_length(); _o->coupler_length = _e; }
+  { auto _e = coupler_height(); _o->coupler_height = _e; }
+}
+
+inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return FinalParams::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const FinalParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _router = _o->router.empty() ? 0 : _fbb.CreateString(_o->router);
+  auto _corridor_spacings = _o->corridor_spacings;
+  auto _inner_corridor_spacings = _o->inner_corridor_spacings;
+  auto _rounds = _o->rounds;
+  auto _inner_rounds = _o->inner_rounds;
+  auto _max_relaxation = _o->max_relaxation;
+  auto _refinement_rounds = _o->refinement_rounds;
+  auto _meander_length = _o->meander_length;
+  auto _bend_penalty_norm = _o->bend_penalty_norm;
+  auto _wire_proximity_penalty_norm = _o->wire_proximity_penalty_norm;
+  auto _static_proximity_penalty_norm = _o->static_proximity_penalty_norm;
+  auto _obstacle_penalty_reach = _o->obstacle_penalty_reach;
+  auto _coupler_length = _o->coupler_length;
+  auto _coupler_height = _o->coupler_height;
+  return mqt::scpd::flatbuffers::config::CreateFinalParams(
+      _fbb,
+      _router,
+      _corridor_spacings,
+      _inner_corridor_spacings,
+      _rounds,
+      _inner_rounds,
+      _max_relaxation,
+      _refinement_rounds,
+      _meander_length,
+      _bend_penalty_norm,
+      _wire_proximity_penalty_norm,
+      _static_proximity_penalty_norm,
+      _obstacle_penalty_reach,
+      _coupler_length,
+      _coupler_height);
+}
+
+
 inline bool operator==(const SolverParamsT &lhs, const SolverParamsT &rhs) {
   return
       (lhs.backend == rhs.backend) &&
@@ -2114,7 +2529,8 @@ inline bool operator==(const StageParamsT &lhs, const StageParamsT &rhs) {
       ((lhs.assignment == rhs.assignment) || (lhs.assignment && rhs.assignment && *lhs.assignment == *rhs.assignment)) &&
       ((lhs.solver == rhs.solver) || (lhs.solver && rhs.solver && *lhs.solver == *rhs.solver)) &&
       ((lhs.corridor == rhs.corridor) || (lhs.corridor && rhs.corridor && *lhs.corridor == *rhs.corridor)) &&
-      ((lhs.detail == rhs.detail) || (lhs.detail && rhs.detail && *lhs.detail == *rhs.detail));
+      ((lhs.detail == rhs.detail) || (lhs.detail && rhs.detail && *lhs.detail == *rhs.detail)) &&
+      ((lhs.final == rhs.final) || (lhs.final && rhs.final && *lhs.final == *rhs.final));
 }
 
 inline bool operator!=(const StageParamsT &lhs, const StageParamsT &rhs) {
@@ -2128,7 +2544,8 @@ inline StageParamsT::StageParamsT(const StageParamsT &o)
         assignment((o.assignment) ? new mqt::scpd::flatbuffers::config::AssignmentParamsT(*o.assignment) : nullptr),
         solver((o.solver) ? new mqt::scpd::flatbuffers::config::SolverParamsT(*o.solver) : nullptr),
         corridor((o.corridor) ? new mqt::scpd::flatbuffers::config::CorridorParamsT(*o.corridor) : nullptr),
-        detail((o.detail) ? new mqt::scpd::flatbuffers::config::DetailParamsT(*o.detail) : nullptr) {
+        detail((o.detail) ? new mqt::scpd::flatbuffers::config::DetailParamsT(*o.detail) : nullptr),
+        final((o.final) ? new mqt::scpd::flatbuffers::config::FinalParamsT(*o.final) : nullptr) {
 }
 
 inline StageParamsT &StageParamsT::operator=(StageParamsT o) FLATBUFFERS_NOEXCEPT {
@@ -2138,6 +2555,7 @@ inline StageParamsT &StageParamsT::operator=(StageParamsT o) FLATBUFFERS_NOEXCEP
   std::swap(solver, o.solver);
   std::swap(corridor, o.corridor);
   std::swap(detail, o.detail);
+  std::swap(final, o.final);
   return *this;
 }
 
@@ -2156,6 +2574,7 @@ inline void StageParams::UnPackTo(StageParamsT *_o, const ::flatbuffers::resolve
   { auto _e = solver(); if (_e) { if(_o->solver) { _e->UnPackTo(_o->solver.get(), _resolver); } else { _o->solver = std::unique_ptr<mqt::scpd::flatbuffers::config::SolverParamsT>(_e->UnPack(_resolver)); } } else if (_o->solver) { _o->solver.reset(); } }
   { auto _e = corridor(); if (_e) { if(_o->corridor) { _e->UnPackTo(_o->corridor.get(), _resolver); } else { _o->corridor = std::unique_ptr<mqt::scpd::flatbuffers::config::CorridorParamsT>(_e->UnPack(_resolver)); } } else if (_o->corridor) { _o->corridor.reset(); } }
   { auto _e = detail(); if (_e) { if(_o->detail) { _e->UnPackTo(_o->detail.get(), _resolver); } else { _o->detail = std::unique_ptr<mqt::scpd::flatbuffers::config::DetailParamsT>(_e->UnPack(_resolver)); } } else if (_o->detail) { _o->detail.reset(); } }
+  { auto _e = final(); if (_e) { if(_o->final) { _e->UnPackTo(_o->final.get(), _resolver); } else { _o->final = std::unique_ptr<mqt::scpd::flatbuffers::config::FinalParamsT>(_e->UnPack(_resolver)); } } else if (_o->final) { _o->final.reset(); } }
 }
 
 inline ::flatbuffers::Offset<StageParams> CreateStageParams(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -2172,6 +2591,7 @@ inline ::flatbuffers::Offset<StageParams> StageParams::Pack(::flatbuffers::FlatB
   auto _solver = _o->solver ? CreateSolverParams(_fbb, _o->solver.get(), _rehasher) : 0;
   auto _corridor = _o->corridor ? CreateCorridorParams(_fbb, _o->corridor.get(), _rehasher) : 0;
   auto _detail = _o->detail ? CreateDetailParams(_fbb, _o->detail.get(), _rehasher) : 0;
+  auto _final = _o->final ? CreateFinalParams(_fbb, _o->final.get(), _rehasher) : 0;
   return mqt::scpd::flatbuffers::config::CreateStageParams(
       _fbb,
       _capacity,
@@ -2179,7 +2599,8 @@ inline ::flatbuffers::Offset<StageParams> StageParams::Pack(::flatbuffers::FlatB
       _assignment,
       _solver,
       _corridor,
-      _detail);
+      _detail,
+      _final);
 }
 
 

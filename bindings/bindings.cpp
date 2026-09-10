@@ -9,7 +9,9 @@
  */
 
 #include "mqt-scpd/design/Validation.hpp"
+#include "mqt-scpd/drc/Rules.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/drc.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/io/Chip.hpp"
 #include "mqt-scpd/io/Config.hpp"
@@ -100,6 +102,87 @@ corridorOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
   return *output;
 }
 
+/// The Python callable a stage reports its progress to, or nothing.
+mqt::scpd::pipeline::Progress sayTo(const nb::object& progress) {
+  if (progress.is_none()) {
+    return {};
+  }
+  return [&progress](const std::string_view line) {
+    progress(nb::str(line.data(), line.size()));
+  };
+}
+
+/// The detail routing an artifact carries.
+const mqt::scpd::flatbuffers::artifacts::DetailRoutingT&
+detailOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
+  const auto* output = artifact.output.AsDetailRouting();
+  if (output == nullptr) {
+    throw std::invalid_argument("the artifact is not a detail routing");
+  }
+  return *output;
+}
+
+/// What the design-rule check sees of a final routing: every wire as the cells
+/// it runs over, with the components its two ends sit on.
+mqt::scpd::drc::CellView
+viewOf(const mqt::scpd::flatbuffers::design::ChipT& chip,
+       const mqt::scpd::flatbuffers::artifacts::GlobalRoutingT& global,
+       const mqt::scpd::flatbuffers::artifacts::AssignmentT& assignment,
+       const mqt::scpd::flatbuffers::artifacts::FinalRoutingT& routing) {
+  const auto componentOf =
+      [&chip](const std::uint32_t port) -> std::string_view {
+    return port < chip.ports.size() ? chip.ports[port]->component
+                                    : std::string_view{};
+  };
+  mqt::scpd::drc::CellView view;
+  if (routing.grid != nullptr) {
+    view.grid = {.width = routing.grid->width,
+                 .height = routing.grid->height,
+                 .origin = routing.grid->origin,
+                 .cellWidth = routing.grid->cell_width,
+                 .cellHeight = routing.grid->cell_height};
+  }
+  view.chip = &chip;
+  for (std::size_t index = 0; index < routing.wires.size(); ++index) {
+    if (routing.wires[index]->path.empty() ||
+        index >= assignment.connections.size()) {
+      continue;
+    }
+    const auto& connection = *assignment.connections[index];
+    view.wires.push_back(
+        {.connection = static_cast<std::uint32_t>(index),
+         .cells = routing.wires[index]->path,
+         .components = {std::string_view{},
+                        componentOf(connection.target.index())},
+         .feedline = false});
+  }
+  for (std::size_t index = 0; index < routing.inner.size(); ++index) {
+    if (routing.inner[index]->path.empty() ||
+        index >= global.connections.size()) {
+      continue;
+    }
+    const auto& connection = *global.connections[index];
+    view.wires.push_back(
+        {.connection = static_cast<std::uint32_t>(routing.wires.size() + index),
+         .cells = routing.inner[index]->path,
+         .components = {connection.source == nullptr
+                            ? std::string_view{}
+                            : componentOf(connection.source->index()),
+                        componentOf(connection.target.index())},
+         .feedline = false});
+  }
+  return view;
+}
+
+/// One report as the text of drc.json.
+std::string asReports(mqt::scpd::flatbuffers::drc::DrcReportT report) {
+  mqt::scpd::flatbuffers::drc::DrcReportsT reports;
+  reports.reports.push_back(
+      std::make_unique<mqt::scpd::flatbuffers::drc::DrcReportT>(
+          std::move(report)));
+  return mqt::scpd::drc::toJson(reports);
+}
+
 } // namespace
 
 // The bindings expose what the command-line interface needs and nothing else.
@@ -177,7 +260,7 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "route_corridor",
       [](const nb::bytes& chip, const nb::bytes& capacity,
          const nb::bytes& assignment, const nb::bytes& config,
-         const std::string_view producer) {
+         const std::string_view producer, const nb::object& progress) {
         const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
         const auto design = mqt::scpd::io::readChip(asSpan(chip));
         const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
@@ -186,19 +269,21 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
             mqt::scpd::pipeline::selectedCorridorRouter(configuration);
         return asArtifact(
             mqt::scpd::pipeline::corridorRouters().make(name)->run(
-                design, capacityOf(plan), assignmentOf(assigned),
-                configuration),
+                design, capacityOf(plan), assignmentOf(assigned), configuration,
+                sayTo(progress)),
             producer);
       },
       "chip"_a, "capacity"_a, "assignment"_a, "config"_a, "producer"_a,
-      "Run the Corridor stage. Returns 04-corridor.fb as bytes.");
+      "progress"_a = nb::none(),
+      "Run the Corridor stage. Returns 04-corridor.fb as bytes. progress, when "
+      "given, is called with one line per round while the stage runs.");
 
   m.def(
       "route_detail",
       [](const nb::bytes& chip, const nb::bytes& capacity,
          const nb::bytes& global, const nb::bytes& assignment,
          const nb::bytes& corridor, const nb::bytes& config,
-         const std::string_view producer) {
+         const std::string_view producer, const nb::object& progress) {
         const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
         const auto design = mqt::scpd::io::readChip(asSpan(chip));
         const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
@@ -210,12 +295,60 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
         return asArtifact(mqt::scpd::pipeline::detailRouters().make(name)->run(
                               design, capacityOf(plan), globalOf(circuit),
                               assignmentOf(assigned), corridorOf(routed),
-                              configuration),
+                              configuration, sayTo(progress)),
                           producer);
       },
       "chip"_a, "capacity"_a, "global"_a, "assignment"_a, "corridor"_a,
-      "config"_a, "producer"_a,
-      "Run the Detail stage. Returns 05-detail.fb as bytes.");
+      "config"_a, "producer"_a, "progress"_a = nb::none(),
+      "Run the Detail stage. Returns 05-detail.fb as bytes. progress, when "
+      "given, is called with one line per pass while the stage runs.");
+
+  m.def(
+      "route_final",
+      [](const nb::bytes& chip, const nb::bytes& capacity,
+         const nb::bytes& global, const nb::bytes& assignment,
+         const nb::bytes& detail, const nb::bytes& config,
+         const std::string_view producer, const nb::object& progress) {
+        const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
+        const auto design = mqt::scpd::io::readChip(asSpan(chip));
+        const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
+        const auto circuit = mqt::scpd::io::readArtifact(asSpan(global));
+        const auto assigned = mqt::scpd::io::readArtifact(asSpan(assignment));
+        const auto drawn = mqt::scpd::io::readArtifact(asSpan(detail));
+        const auto name =
+            mqt::scpd::pipeline::selectedFinalRouter(configuration);
+        return asArtifact(mqt::scpd::pipeline::finalRouters().make(name)->run(
+                              design, capacityOf(plan), globalOf(circuit),
+                              assignmentOf(assigned), detailOf(drawn),
+                              configuration, sayTo(progress)),
+                          producer);
+      },
+      "chip"_a, "capacity"_a, "global"_a, "assignment"_a, "detail"_a,
+      "config"_a, "producer"_a, "progress"_a = nb::none(),
+      "Run the Final stage. Returns 06-final.fb as bytes. progress, when "
+      "given, is called with one line per round while the stage runs.");
+
+  m.def(
+      "check_final",
+      [](const nb::bytes& chip, const nb::bytes& global,
+         const nb::bytes& assignment, const nb::bytes& final,
+         const nb::bytes& config) {
+        const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
+        const auto design = mqt::scpd::io::readChip(asSpan(chip));
+        const auto circuit = mqt::scpd::io::readArtifact(asSpan(global));
+        const auto assigned = mqt::scpd::io::readArtifact(asSpan(assignment));
+        const auto routed = mqt::scpd::io::readArtifact(asSpan(final));
+        const auto* const routing = routed.output.AsFinalRouting();
+        if (routing == nullptr) {
+          throw std::invalid_argument("the artifact is not a final routing");
+        }
+        return asReports(mqt::scpd::drc::checkCells(
+            viewOf(design, globalOf(circuit), assignmentOf(assigned), *routing),
+            *configuration.rules));
+      },
+      "chip"_a, "global"_a, "assignment"_a, "final"_a, "config"_a,
+      "Check a final routing against the design rules. Returns the text of "
+      "drc.json.");
 
   m.def(
       "algorithms",
@@ -233,6 +366,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                                 mqt::scpd::pipeline::corridorRouters().names());
         registered.emplace_back("detail-router",
                                 mqt::scpd::pipeline::detailRouters().names());
+        registered.emplace_back("final-router",
+                                mqt::scpd::pipeline::finalRouters().names());
         return registered;
       },
       "The implementations this build ships, one list per stage.");

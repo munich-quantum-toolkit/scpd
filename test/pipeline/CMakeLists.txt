@@ -9,7 +9,7 @@
 if(TARGET MQT::ScpdPipeline)
   file(GLOB_RECURSE PIPELINE_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(PIPELINE_TEST_SOURCES)
-    package_add_test(mqt-scpd-pipeline-test "MQT::ScpdPipeline;MQT::ScpdIO"
+    package_add_test(mqt-scpd-pipeline-test "MQT::ScpdPipeline;MQT::ScpdIO;MQT::ScpdDrc"
                      ${PIPELINE_TEST_SOURCES})
     # The stage tests run on the benchmark inputs the repository carries.
     target_compile_definitions(mqt-scpd-pipeline-test

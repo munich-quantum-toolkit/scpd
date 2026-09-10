@@ -26,6 +26,7 @@ from .flatbuffers.artifacts.CapacityElement import CapacityElement
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
+from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 
 if TYPE_CHECKING:
@@ -33,15 +34,20 @@ if TYPE_CHECKING:
 
     from .flatbuffers.design.Chip import ChipT
 
-__all__ = ["PLANNING_STAGES", "PlanningError", "PlanningGeometry", "planning_geometry"]
+__all__ = ["FINAL_PHASES", "PLANNING_STAGES", "PlanningError", "PlanningGeometry", "planning_geometry"]
 
 #: The planning stages that can be drawn, and the artifact each one is read from.
+#: The five phases of the Final stage, in the order it runs them. Each one changes what the phase
+#: before it produced, so each leaves its own snapshot in the artifact and gets its own picture.
+FINAL_PHASES: tuple[str, ...] = ("inner", "outer", "couplers", "feedlines", "refined")
+
 PLANNING_STAGES: dict[str, str] = {
     "capacity": "01-capacity.fb",
     "global": "02-global.fb",
     "assign": "03-assign.fb",
     "corridor": "04-corridor.fb",
     "detail": "05-detail.fb",
+    "final": "06-final.fb",
 }
 
 #: A point in layout units.
@@ -88,6 +94,12 @@ class PlanningGeometry:
     wires: list[list[Point]] = field(default_factory=list)
     #: Each wire of the inner circuit, likewise.
     inner_wires: list[list[Point]] = field(default_factory=list)
+    #: What the Final stage had drawn at the end of each of its five phases, by phase name.
+    #:
+    #: A phase changes what the phase before it produced, so a picture of one cannot be derived
+    #: from the end state. ``wires`` and ``inner_wires`` carry the phase the caller asked for;
+    #: this carries all five, so that one GDS shows every phase on a layer of its own.
+    phases: dict[str, list[list[Point]]] = field(default_factory=dict)
     #: The clearance the stage actually keeps between two wires, in layout units, or zero when
     #: the caller named no design rule.
     #:
@@ -119,6 +131,7 @@ class PlanningGeometry:
             self.slots,
             self.wires,
             self.inner_wires,
+            self.phases,
         ))
 
 
@@ -320,6 +333,62 @@ def blockade(wire_spacing: float, cell: float) -> float:
     return max(0.0, math.ceil(wire_spacing / cell) - 1) * cell
 
 
+def spacing_cells(wire_spacing: float, cell: float) -> float:
+    """The clearance the Final stage keeps for a rule of ``wire_spacing``, in layout units.
+
+    The final grid is fine enough to span the rule outright, so the conversion is the whole number
+    of cells the rule spans and not one less: 19 cells of about ten layout units against a rule of
+    185. That is what the router keeps and what the design-rule check asks for.
+
+    Returns:
+        The clearance in layout units, or zero when the rule or the cell is not positive.
+    """
+    if wire_spacing <= 0 or cell <= 0:
+        return 0.0
+    return math.ceil(wire_spacing / cell) * cell
+
+
+def _final(
+    routing: FinalRoutingT, geometry: PlanningGeometry, wire_spacing: float, phase: str | None
+) -> None:
+    """Fill the layers a final routing carries, for one phase or for the end state."""
+    grid = routing.grid
+    if grid is None or grid.origin is None:
+        return
+    geometry.clearance = spacing_cells(wire_spacing, min(float(grid.cellWidth), float(grid.cellHeight)))
+
+    def to_layout(x: int, y: int) -> Point:
+        # A cell of the router grid is a point and not an area: cell (0, 0) sits on the corner of
+        # the chip box. So there is no half step here, unlike on the detail grid.
+        return (
+            float(grid.origin.x) + x * float(grid.cellWidth),
+            float(grid.origin.y) + y * float(grid.cellHeight),
+        )
+
+    def drawn(wires: list[Any] | None) -> list[list[Point]]:
+        found = []
+        for wire in _entries(wires):
+            points = _bends(_entries(wire.path), to_layout)
+            if len(points) >= 2:
+                found.append(points)
+        return found
+
+    for snapshot in _entries(routing.phases):
+        name = snapshot.name or ""
+        geometry.phases[name] = drawn(snapshot.wires) + drawn(snapshot.inner) + drawn(snapshot.feedlines)
+
+    chosen = None
+    for snapshot in _entries(routing.phases):
+        if (snapshot.name or "") == phase:
+            chosen = snapshot
+    if chosen is not None:
+        geometry.wires = drawn(chosen.wires)
+        geometry.inner_wires = drawn(chosen.inner) + drawn(chosen.feedlines)
+    else:
+        geometry.wires = drawn(routing.wires)
+        geometry.inner_wires = drawn(routing.inner) + drawn(routing.feedlines)
+
+
 def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: float) -> None:
     """Fill the layers a detail routing carries."""
     grid = routing.grid
@@ -349,7 +418,12 @@ def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: f
 
 
 def planning_geometry(
-    data: bytes, chip: ChipT, stage: str, capacity: bytes | None = None, clearance: float = 0.0
+    data: bytes,
+    chip: ChipT,
+    stage: str,
+    capacity: bytes | None = None,
+    clearance: float = 0.0,
+    phase: str | None = None,
 ) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
@@ -431,6 +505,11 @@ def planning_geometry(
                 msg = "the capacity artifact is not a capacity plan"
                 raise PlanningError(msg)
             _capacity(plan, geometry)
+    elif stage == "final":
+        if not isinstance(output, FinalRoutingT):
+            msg = "the artifact is not a final routing"
+            raise PlanningError(msg)
+        _final(output, geometry, clearance, phase)
     else:
         msg = f"'{stage}' is no planning stage; they are {', '.join(PLANNING_STAGES)}"
         raise PlanningError(msg)

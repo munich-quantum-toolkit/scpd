@@ -1,0 +1,20 @@
+{
+  "reports": [
+    {
+      "stage": "final",
+      "feedlines_skipped": 0,
+      "findings": [
+        {"rule": "wire-clearance", "severity": "active", "wires": [33, 34], "location": {"x": 25096.603158686386, "y": 28277.400350965152}, "measured": 10.002506893958385, "limit": 185, "message": "wires 33 and 34 come within 10.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [38, 39], "location": {"x": 27367.17222361494, "y": 30627.989471045374}, "measured": 10.002506893958385, "limit": 185, "message": "wires 38 and 39 come within 10.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [41, 42], "location": {"x": 29157.62095763349, "y": 30858.047129606417}, "measured": 80.02005515166708, "limit": 185, "message": "wires 41 and 42 come within 80.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [41, 43], "location": {"x": 29157.62095763349, "y": 31048.094760591626}, "measured": 150.03760340937578, "limit": 185, "message": "wires 41 and 43 come within 150.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [42, 43], "location": {"x": 29827.788919528703, "y": 33328.666332414134}, "measured": 10.002506893958385, "limit": 185, "message": "wires 42 and 43 come within 10.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [42, 44], "location": {"x": 29237.641012785156, "y": 31998.332915517673}, "measured": 120.03008272750063, "limit": 185, "message": "wires 42 and 44 come within 120.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [43, 44], "location": {"x": 29307.658561042866, "y": 31998.332915517673}, "measured": 50.01253446979192, "limit": 185, "message": "wires 43 and 44 come within 50.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [44, 45], "location": {"x": 29907.80897468037, "y": 33108.61118074705}, "measured": 10.002506893958385, "limit": 185, "message": "wires 44 and 45 come within 10.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [137, 138], "location": {"x": 11153.108548508397, "y": 7332.150915016295}, "measured": 134.5699672795791, "limit": 185, "message": "wires 137 and 138 come within 134.6 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [144, 145], "location": {"x": 7372.160942592128, "y": 10903.045876159438}, "measured": 183.62161796248787, "limit": 185, "message": "wires 144 and 145 come within 183.6 layout units of each other"}
+      ]
+    }
+  ]
+}

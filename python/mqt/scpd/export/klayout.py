@@ -54,6 +54,14 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "wires": (21, 0, "plan.wire"),
     "inner_wires": (22, 0, "plan.inner-wire"),
     "clearance": (23, 0, "plan.clearance"),
+    # One layer per phase of the Final stage, so that a single GDS shows all five and each can be
+    # switched off on its own. A phase changes what the phase before it produced, so none of the
+    # five can be derived from another.
+    "phase.inner": (24, 0, "final.inner-routing"),
+    "phase.outer": (25, 0, "final.outer-routing"),
+    "phase.couplers": (26, 0, "final.coupler-insertion"),
+    "phase.feedlines": (27, 0, "final.feedline-routing"),
+    "phase.refined": (28, 0, "final.feedline-refinement"),
 }
 
 #: How wide a planning line is drawn, in layout units. A path needs a width to be a shape at all;
@@ -208,6 +216,15 @@ def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # noq
         if len(route) >= 2:
             top.shapes(layer("corridors")).insert(path(route))
             written += 1
+    for name, drawn in planning.phases.items():
+        key = f"phase.{name}"
+        if key not in PLANNING_LAYERS:
+            continue
+        target = layer(key)
+        for route in drawn:
+            if len(route) >= 2:
+                top.shapes(target).insert(path(route))
+                written += 1
     for name, routes in (("wires", planning.wires), ("inner_wires", planning.inner_wires)):
         target = layer(name)
         for route in routes:

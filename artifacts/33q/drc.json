@@ -1,0 +1,14 @@
+{
+  "reports": [
+    {
+      "stage": "final",
+      "feedlines_skipped": 0,
+      "findings": [
+        {"rule": "wire-clearance", "severity": "active", "wires": [47, 48], "location": {"x": 20647.32351957176, "y": 11024.105051856808}, "measured": 10.003345600535296, "limit": 185, "clearance_kind": "short", "message": "wires 47 and 48 come within 10.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [49, 50], "location": {"x": 21757.69488123118, "y": 9483.589829374372}, "measured": 10.003345600535296, "limit": 185, "clearance_kind": "short", "message": "wires 49 and 50 come within 10.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [49, 51], "location": {"x": 21037.453997992638, "y": 10363.884242221478}, "measured": 10.003345600535296, "limit": 185, "clearance_kind": "short", "message": "wires 49 and 51 come within 10.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [50, 51], "location": {"x": 21027.450652392105, "y": 10353.880896620944}, "measured": 10.003345600535296, "limit": 185, "clearance_kind": "short", "message": "wires 50 and 51 come within 10.0 layout units of each other"}
+      ]
+    }
+  ]
+}

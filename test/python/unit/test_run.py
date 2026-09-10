@@ -22,7 +22,7 @@ BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
 
 def test_the_stage_order_puts_global_before_the_assignment() -> None:
     """Which outer ports the inner circuit surfaces at is what the assignment consumes."""
-    assert IMPLEMENTED == ("capacity", "global", "assign", "corridor", "detail")
+    assert IMPLEMENTED == ("capacity", "global", "assign", "corridor", "detail", "final")
     assert list(STAGE_FILES)[:4] == ["capacity", "global", "assign", "corridor"]
     assert STAGE_FILES["global"] == "02-global.fb"
     assert STAGE_FILES["assign"] == "03-assign.fb"
@@ -43,12 +43,13 @@ def test_a_stage_names_the_stages_it_reads() -> None:
     assert stages_before("assign") == ["capacity", "global"]
     assert stages_before("corridor") == ["capacity", "global", "assign"]
     assert stages_before("detail") == ["capacity", "global", "assign", "corridor"]
+    assert stages_before("final") == ["capacity", "global", "assign", "corridor", "detail"]
 
 
 def test_an_unimplemented_stage_says_which_ones_run() -> None:
     """A stage of a later phase is refused with the list of the ones that exist."""
-    with pytest.raises(RunError, match="capacity, global, assign, corridor, detail"):
-        stages_before("final")
+    with pytest.raises(RunError, match="capacity, global, assign, corridor, detail, final"):
+        stages_before("geometry")
 
 
 def test_an_unknown_stage_has_no_artifact(tmp_path: Path) -> None:
@@ -136,6 +137,7 @@ def test_the_planning_stages_fill_a_run_directory(tmp_path: Path, chip: str) -> 
         "03-assign.fb",
         "04-corridor.fb",
         "05-detail.fb",
+        "06-final.fb",
     }
 
 

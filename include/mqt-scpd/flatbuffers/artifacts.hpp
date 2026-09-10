@@ -81,6 +81,14 @@ struct DetailRouting;
 struct DetailRoutingBuilder;
 struct DetailRoutingT;
 
+struct FinalWire;
+struct FinalWireBuilder;
+struct FinalWireT;
+
+struct FinalPhase;
+struct FinalPhaseBuilder;
+struct FinalPhaseT;
+
 struct FinalRouting;
 struct FinalRoutingBuilder;
 struct FinalRoutingT;
@@ -127,6 +135,10 @@ bool operator==(const DetailWireT &lhs, const DetailWireT &rhs);
 bool operator!=(const DetailWireT &lhs, const DetailWireT &rhs);
 bool operator==(const DetailRoutingT &lhs, const DetailRoutingT &rhs);
 bool operator!=(const DetailRoutingT &lhs, const DetailRoutingT &rhs);
+bool operator==(const FinalWireT &lhs, const FinalWireT &rhs);
+bool operator!=(const FinalWireT &lhs, const FinalWireT &rhs);
+bool operator==(const FinalPhaseT &lhs, const FinalPhaseT &rhs);
+bool operator!=(const FinalPhaseT &lhs, const FinalPhaseT &rhs);
 bool operator==(const FinalRoutingT &lhs, const FinalRoutingT &rhs);
 bool operator!=(const FinalRoutingT &lhs, const FinalRoutingT &rhs);
 bool operator==(const WireT &lhs, const WireT &rhs);
@@ -2178,8 +2190,241 @@ inline ::flatbuffers::Offset<DetailRouting> CreateDetailRoutingDirect(
 
 ::flatbuffers::Offset<DetailRouting> CreateDetailRouting(::flatbuffers::FlatBufferBuilder &_fbb, const DetailRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct FinalWireT : public ::flatbuffers::NativeTable {
+  typedef FinalWire TableType;
+  std::vector<mqt::scpd::flatbuffers::geometry::RCoord> path{};
+};
+
+/// One wire's path on the router grid, cell by cell.
+///
+/// The cells run from the point the wire is fed at to the cell its target port
+/// is reached at, and each one carries the heading the search held in it, so
+/// the bend structure survives into the geometry. A wire the stage could not
+/// draw carries no cells, so a reader counts the failures rather than being
+/// handed a separate list that can disagree with the paths beside it.
+struct FinalWire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef FinalWireT NativeTableType;
+  typedef FinalWireBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_PATH = 4
+  };
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *> *path() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *> *>(VT_PATH);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_PATH) &&
+           verifier.VerifyVector(path()) &&
+           verifier.EndTable();
+  }
+  FinalWireT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(FinalWireT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<FinalWire> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FinalWireT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct FinalWireBuilder {
+  typedef FinalWire Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_path(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *>> path) {
+    fbb_.AddOffset(FinalWire::VT_PATH, path);
+  }
+  explicit FinalWireBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<FinalWire> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<FinalWire>(end);
+    fbb_.Required(o, FinalWire::VT_PATH);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<FinalWire> CreateFinalWire(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *>> path = 0) {
+  FinalWireBuilder builder_(_fbb);
+  builder_.add_path(path);
+  return builder_.Finish();
+}
+
+struct FinalWire::Traits {
+  using type = FinalWire;
+  static auto constexpr Create = CreateFinalWire;
+};
+
+inline ::flatbuffers::Offset<FinalWire> CreateFinalWireDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<mqt::scpd::flatbuffers::geometry::RCoord> *path = nullptr) {
+  auto path__ = path ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::RCoord>(*path) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateFinalWire(
+      _fbb,
+      path__);
+}
+
+::flatbuffers::Offset<FinalWire> CreateFinalWire(::flatbuffers::FlatBufferBuilder &_fbb, const FinalWireT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct FinalPhaseT : public ::flatbuffers::NativeTable {
+  typedef FinalPhase TableType;
+  std::string name{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>> wires{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>> inner{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>> feedlines{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT>> couplers{};
+  FinalPhaseT() = default;
+  FinalPhaseT(const FinalPhaseT &o);
+  FinalPhaseT(FinalPhaseT&&) FLATBUFFERS_NOEXCEPT = default;
+  FinalPhaseT &operator=(FinalPhaseT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// What the Final stage had drawn at the end of one of its phases.
+///
+/// The stage runs five phases and each changes what the phase before it
+/// produced: the coupler insertion cuts a resonator back to its coupler, and
+/// the feedline passes re-route wires that are already drawn. A picture of one
+/// phase therefore cannot be derived from the end state, so each phase leaves
+/// its own snapshot here and the renderers draw the one they are asked for. A
+/// phase that has not been implemented yet carries no wires.
+struct FinalPhase FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef FinalPhaseT NativeTableType;
+  typedef FinalPhaseBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_NAME = 4,
+    VT_WIRES = 6,
+    VT_INNER = 8,
+    VT_FEEDLINES = 10,
+    VT_COUPLERS = 12
+  };
+  /// "inner", "outer", "couplers", "feedlines" or "refined".
+  const ::flatbuffers::String *name() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_NAME);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *wires() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *>(VT_WIRES);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *inner() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *>(VT_INNER);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *feedlines() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *>(VT_FEEDLINES);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> *couplers() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> *>(VT_COUPLERS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_NAME) &&
+           verifier.VerifyString(name()) &&
+           VerifyOffsetRequired(verifier, VT_WIRES) &&
+           verifier.VerifyVector(wires()) &&
+           verifier.VerifyVectorOfTables(wires()) &&
+           VerifyOffsetRequired(verifier, VT_INNER) &&
+           verifier.VerifyVector(inner()) &&
+           verifier.VerifyVectorOfTables(inner()) &&
+           VerifyOffsetRequired(verifier, VT_FEEDLINES) &&
+           verifier.VerifyVector(feedlines()) &&
+           verifier.VerifyVectorOfTables(feedlines()) &&
+           VerifyOffsetRequired(verifier, VT_COUPLERS) &&
+           verifier.VerifyVector(couplers()) &&
+           verifier.VerifyVectorOfTables(couplers()) &&
+           verifier.EndTable();
+  }
+  FinalPhaseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(FinalPhaseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<FinalPhase> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FinalPhaseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct FinalPhaseBuilder {
+  typedef FinalPhase Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_name(::flatbuffers::Offset<::flatbuffers::String> name) {
+    fbb_.AddOffset(FinalPhase::VT_NAME, name);
+  }
+  void add_wires(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> wires) {
+    fbb_.AddOffset(FinalPhase::VT_WIRES, wires);
+  }
+  void add_inner(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> inner) {
+    fbb_.AddOffset(FinalPhase::VT_INNER, inner);
+  }
+  void add_feedlines(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> feedlines) {
+    fbb_.AddOffset(FinalPhase::VT_FEEDLINES, feedlines);
+  }
+  void add_couplers(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>>> couplers) {
+    fbb_.AddOffset(FinalPhase::VT_COUPLERS, couplers);
+  }
+  explicit FinalPhaseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<FinalPhase> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<FinalPhase>(end);
+    fbb_.Required(o, FinalPhase::VT_NAME);
+    fbb_.Required(o, FinalPhase::VT_WIRES);
+    fbb_.Required(o, FinalPhase::VT_INNER);
+    fbb_.Required(o, FinalPhase::VT_FEEDLINES);
+    fbb_.Required(o, FinalPhase::VT_COUPLERS);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<FinalPhase> CreateFinalPhase(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> name = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> wires = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> inner = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> feedlines = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>>> couplers = 0) {
+  FinalPhaseBuilder builder_(_fbb);
+  builder_.add_couplers(couplers);
+  builder_.add_feedlines(feedlines);
+  builder_.add_inner(inner);
+  builder_.add_wires(wires);
+  builder_.add_name(name);
+  return builder_.Finish();
+}
+
+struct FinalPhase::Traits {
+  using type = FinalPhase;
+  static auto constexpr Create = CreateFinalPhase;
+};
+
+inline ::flatbuffers::Offset<FinalPhase> CreateFinalPhaseDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *name = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *wires = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *inner = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *feedlines = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> *couplers = nullptr) {
+  auto name__ = name ? _fbb.CreateString(name) : 0;
+  auto wires__ = wires ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>(*wires) : 0;
+  auto inner__ = inner ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>(*inner) : 0;
+  auto feedlines__ = feedlines ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>(*feedlines) : 0;
+  auto couplers__ = couplers ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>>(*couplers) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateFinalPhase(
+      _fbb,
+      name__,
+      wires__,
+      inner__,
+      feedlines__,
+      couplers__);
+}
+
+::flatbuffers::Offset<FinalPhase> CreateFinalPhase(::flatbuffers::FlatBufferBuilder &_fbb, const FinalPhaseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct FinalRoutingT : public ::flatbuffers::NativeTable {
   typedef FinalRouting TableType;
+  std::unique_ptr<mqt::scpd::flatbuffers::artifacts::GridExtentT> grid{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>> wires{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>> inner{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>> feedlines{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalPhaseT>> phases{};
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT>> couplers{};
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::BridgeT>> bridges{};
   std::vector<mqt::scpd::flatbuffers::design::ConnectionRef> unresolved{};
@@ -2197,10 +2442,37 @@ struct FinalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FinalRoutingBuilder Builder;
   struct Traits;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_COUPLERS = 4,
-    VT_BRIDGES = 6,
-    VT_UNRESOLVED = 8
+    VT_GRID = 4,
+    VT_WIRES = 6,
+    VT_INNER = 8,
+    VT_FEEDLINES = 10,
+    VT_PHASES = 12,
+    VT_COUPLERS = 14,
+    VT_BRIDGES = 16,
+    VT_UNRESOLVED = 18
   };
+  /// The router grid the cells are counted on, so a reader can place them
+  /// without rebuilding the run.
+  const mqt::scpd::flatbuffers::artifacts::GridExtent *grid() const {
+    return GetPointer<const mqt::scpd::flatbuffers::artifacts::GridExtent *>(VT_GRID);
+  }
+  /// One entry per connection of the Assignment, in its order, so it lines up
+  /// with `DetailRouting.wires` without a key.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *wires() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *>(VT_WIRES);
+  }
+  /// One entry per connection of the Global stage, in its order.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *inner() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *>(VT_INNER);
+  }
+  /// The edges of the feedline chains, in chain order.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *feedlines() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *>(VT_FEEDLINES);
+  }
+  /// What the stage had drawn at the end of each of its phases.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalPhase>> *phases() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalPhase>> *>(VT_PHASES);
+  }
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> *couplers() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> *>(VT_COUPLERS);
   }
@@ -2214,6 +2486,20 @@ struct FinalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_GRID) &&
+           verifier.VerifyTable(grid()) &&
+           VerifyOffsetRequired(verifier, VT_WIRES) &&
+           verifier.VerifyVector(wires()) &&
+           verifier.VerifyVectorOfTables(wires()) &&
+           VerifyOffsetRequired(verifier, VT_INNER) &&
+           verifier.VerifyVector(inner()) &&
+           verifier.VerifyVectorOfTables(inner()) &&
+           VerifyOffsetRequired(verifier, VT_FEEDLINES) &&
+           verifier.VerifyVector(feedlines()) &&
+           verifier.VerifyVectorOfTables(feedlines()) &&
+           VerifyOffsetRequired(verifier, VT_PHASES) &&
+           verifier.VerifyVector(phases()) &&
+           verifier.VerifyVectorOfTables(phases()) &&
            VerifyOffsetRequired(verifier, VT_COUPLERS) &&
            verifier.VerifyVector(couplers()) &&
            verifier.VerifyVectorOfTables(couplers()) &&
@@ -2233,6 +2519,21 @@ struct FinalRoutingBuilder {
   typedef FinalRouting Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
+  void add_grid(::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> grid) {
+    fbb_.AddOffset(FinalRouting::VT_GRID, grid);
+  }
+  void add_wires(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> wires) {
+    fbb_.AddOffset(FinalRouting::VT_WIRES, wires);
+  }
+  void add_inner(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> inner) {
+    fbb_.AddOffset(FinalRouting::VT_INNER, inner);
+  }
+  void add_feedlines(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> feedlines) {
+    fbb_.AddOffset(FinalRouting::VT_FEEDLINES, feedlines);
+  }
+  void add_phases(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalPhase>>> phases) {
+    fbb_.AddOffset(FinalRouting::VT_PHASES, phases);
+  }
   void add_couplers(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>>> couplers) {
     fbb_.AddOffset(FinalRouting::VT_COUPLERS, couplers);
   }
@@ -2249,6 +2550,11 @@ struct FinalRoutingBuilder {
   ::flatbuffers::Offset<FinalRouting> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<FinalRouting>(end);
+    fbb_.Required(o, FinalRouting::VT_GRID);
+    fbb_.Required(o, FinalRouting::VT_WIRES);
+    fbb_.Required(o, FinalRouting::VT_INNER);
+    fbb_.Required(o, FinalRouting::VT_FEEDLINES);
+    fbb_.Required(o, FinalRouting::VT_PHASES);
     fbb_.Required(o, FinalRouting::VT_COUPLERS);
     fbb_.Required(o, FinalRouting::VT_BRIDGES);
     fbb_.Required(o, FinalRouting::VT_UNRESOLVED);
@@ -2258,6 +2564,11 @@ struct FinalRoutingBuilder {
 
 inline ::flatbuffers::Offset<FinalRouting> CreateFinalRouting(
     ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> grid = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> wires = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> inner = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>> feedlines = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalPhase>>> phases = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>>> couplers = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>>> bridges = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::ConnectionRef *>> unresolved = 0) {
@@ -2265,6 +2576,11 @@ inline ::flatbuffers::Offset<FinalRouting> CreateFinalRouting(
   builder_.add_unresolved(unresolved);
   builder_.add_bridges(bridges);
   builder_.add_couplers(couplers);
+  builder_.add_phases(phases);
+  builder_.add_feedlines(feedlines);
+  builder_.add_inner(inner);
+  builder_.add_wires(wires);
+  builder_.add_grid(grid);
   return builder_.Finish();
 }
 
@@ -2275,14 +2591,28 @@ struct FinalRouting::Traits {
 
 inline ::flatbuffers::Offset<FinalRouting> CreateFinalRoutingDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> grid = 0,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *wires = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *inner = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> *feedlines = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalPhase>> *phases = nullptr,
     const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> *couplers = nullptr,
     const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>> *bridges = nullptr,
     const std::vector<mqt::scpd::flatbuffers::design::ConnectionRef> *unresolved = nullptr) {
+  auto wires__ = wires ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>(*wires) : 0;
+  auto inner__ = inner ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>(*inner) : 0;
+  auto feedlines__ = feedlines ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>>(*feedlines) : 0;
+  auto phases__ = phases ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalPhase>>(*phases) : 0;
   auto couplers__ = couplers ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>>(*couplers) : 0;
   auto bridges__ = bridges ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>>(*bridges) : 0;
   auto unresolved__ = unresolved ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::ConnectionRef>(*unresolved) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateFinalRouting(
       _fbb,
+      grid,
+      wires__,
+      inner__,
+      feedlines__,
+      phases__,
       couplers__,
       bridges__,
       unresolved__);
@@ -3470,8 +3800,124 @@ inline ::flatbuffers::Offset<DetailRouting> DetailRouting::Pack(::flatbuffers::F
 }
 
 
+inline bool operator==(const FinalWireT &lhs, const FinalWireT &rhs) {
+  return
+      (lhs.path == rhs.path);
+}
+
+inline bool operator!=(const FinalWireT &lhs, const FinalWireT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline FinalWireT *FinalWire::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<FinalWireT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void FinalWire::UnPackTo(FinalWireT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = path(); if (_e) { _o->path.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->path[_i] = *_e->Get(_i); } } else { _o->path.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<FinalWire> CreateFinalWire(::flatbuffers::FlatBufferBuilder &_fbb, const FinalWireT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return FinalWire::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<FinalWire> FinalWire::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FinalWireT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const FinalWireT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _path = _fbb.CreateVectorOfStructs(_o->path);
+  return mqt::scpd::flatbuffers::artifacts::CreateFinalWire(
+      _fbb,
+      _path);
+}
+
+
+inline bool operator==(const FinalPhaseT &lhs, const FinalPhaseT &rhs) {
+  return
+      (lhs.name == rhs.name) &&
+      (lhs.wires.size() == rhs.wires.size() && std::equal(lhs.wires.cbegin(), lhs.wires.cend(), rhs.wires.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.inner.size() == rhs.inner.size() && std::equal(lhs.inner.cbegin(), lhs.inner.cend(), rhs.inner.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.feedlines.size() == rhs.feedlines.size() && std::equal(lhs.feedlines.cbegin(), lhs.feedlines.cend(), rhs.feedlines.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.couplers.size() == rhs.couplers.size() && std::equal(lhs.couplers.cbegin(), lhs.couplers.cend(), rhs.couplers.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT> const &b) { return (a == b) || (a && b && *a == *b); }));
+}
+
+inline bool operator!=(const FinalPhaseT &lhs, const FinalPhaseT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline FinalPhaseT::FinalPhaseT(const FinalPhaseT &o)
+      : name(o.name) {
+  wires.reserve(o.wires.size());
+  for (const auto &wires_ : o.wires) { wires.emplace_back((wires_) ? new mqt::scpd::flatbuffers::artifacts::FinalWireT(*wires_) : nullptr); }
+  inner.reserve(o.inner.size());
+  for (const auto &inner_ : o.inner) { inner.emplace_back((inner_) ? new mqt::scpd::flatbuffers::artifacts::FinalWireT(*inner_) : nullptr); }
+  feedlines.reserve(o.feedlines.size());
+  for (const auto &feedlines_ : o.feedlines) { feedlines.emplace_back((feedlines_) ? new mqt::scpd::flatbuffers::artifacts::FinalWireT(*feedlines_) : nullptr); }
+  couplers.reserve(o.couplers.size());
+  for (const auto &couplers_ : o.couplers) { couplers.emplace_back((couplers_) ? new mqt::scpd::flatbuffers::design::CpwCouplerT(*couplers_) : nullptr); }
+}
+
+inline FinalPhaseT &FinalPhaseT::operator=(FinalPhaseT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(name, o.name);
+  std::swap(wires, o.wires);
+  std::swap(inner, o.inner);
+  std::swap(feedlines, o.feedlines);
+  std::swap(couplers, o.couplers);
+  return *this;
+}
+
+inline FinalPhaseT *FinalPhase::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<FinalPhaseT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void FinalPhase::UnPackTo(FinalPhaseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = name(); if (_e) _o->name = _e->str(); }
+  { auto _e = wires(); if (_e) { _o->wires.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->wires[_i]) { _e->Get(_i)->UnPackTo(_o->wires[_i].get(), _resolver); } else { _o->wires[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->wires.resize(0); } }
+  { auto _e = inner(); if (_e) { _o->inner.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->inner[_i]) { _e->Get(_i)->UnPackTo(_o->inner[_i].get(), _resolver); } else { _o->inner[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->inner.resize(0); } }
+  { auto _e = feedlines(); if (_e) { _o->feedlines.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->feedlines[_i]) { _e->Get(_i)->UnPackTo(_o->feedlines[_i].get(), _resolver); } else { _o->feedlines[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->feedlines.resize(0); } }
+  { auto _e = couplers(); if (_e) { _o->couplers.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->couplers[_i]) { _e->Get(_i)->UnPackTo(_o->couplers[_i].get(), _resolver); } else { _o->couplers[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->couplers.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<FinalPhase> CreateFinalPhase(::flatbuffers::FlatBufferBuilder &_fbb, const FinalPhaseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return FinalPhase::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<FinalPhase> FinalPhase::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FinalPhaseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const FinalPhaseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _name = _fbb.CreateString(_o->name);
+  auto _wires = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> (_o->wires.size(), [](size_t i, _VectorArgs *__va) { return CreateFinalWire(*__va->__fbb, __va->__o->wires[i].get(), __va->__rehasher); }, &_va );
+  auto _inner = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> (_o->inner.size(), [](size_t i, _VectorArgs *__va) { return CreateFinalWire(*__va->__fbb, __va->__o->inner[i].get(), __va->__rehasher); }, &_va );
+  auto _feedlines = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> (_o->feedlines.size(), [](size_t i, _VectorArgs *__va) { return CreateFinalWire(*__va->__fbb, __va->__o->feedlines[i].get(), __va->__rehasher); }, &_va );
+  auto _couplers = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> (_o->couplers.size(), [](size_t i, _VectorArgs *__va) { return CreateCpwCoupler(*__va->__fbb, __va->__o->couplers[i].get(), __va->__rehasher); }, &_va );
+  return mqt::scpd::flatbuffers::artifacts::CreateFinalPhase(
+      _fbb,
+      _name,
+      _wires,
+      _inner,
+      _feedlines,
+      _couplers);
+}
+
+
 inline bool operator==(const FinalRoutingT &lhs, const FinalRoutingT &rhs) {
   return
+      ((lhs.grid == rhs.grid) || (lhs.grid && rhs.grid && *lhs.grid == *rhs.grid)) &&
+      (lhs.wires.size() == rhs.wires.size() && std::equal(lhs.wires.cbegin(), lhs.wires.cend(), rhs.wires.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.inner.size() == rhs.inner.size() && std::equal(lhs.inner.cbegin(), lhs.inner.cend(), rhs.inner.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.feedlines.size() == rhs.feedlines.size() && std::equal(lhs.feedlines.cbegin(), lhs.feedlines.cend(), rhs.feedlines.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.phases.size() == rhs.phases.size() && std::equal(lhs.phases.cbegin(), lhs.phases.cend(), rhs.phases.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalPhaseT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalPhaseT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
       (lhs.couplers.size() == rhs.couplers.size() && std::equal(lhs.couplers.cbegin(), lhs.couplers.cend(), rhs.couplers.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
       (lhs.bridges.size() == rhs.bridges.size() && std::equal(lhs.bridges.cbegin(), lhs.bridges.cend(), rhs.bridges.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::BridgeT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::BridgeT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
       (lhs.unresolved == rhs.unresolved);
@@ -3483,7 +3929,16 @@ inline bool operator!=(const FinalRoutingT &lhs, const FinalRoutingT &rhs) {
 
 
 inline FinalRoutingT::FinalRoutingT(const FinalRoutingT &o)
-      : unresolved(o.unresolved) {
+      : grid((o.grid) ? new mqt::scpd::flatbuffers::artifacts::GridExtentT(*o.grid) : nullptr),
+        unresolved(o.unresolved) {
+  wires.reserve(o.wires.size());
+  for (const auto &wires_ : o.wires) { wires.emplace_back((wires_) ? new mqt::scpd::flatbuffers::artifacts::FinalWireT(*wires_) : nullptr); }
+  inner.reserve(o.inner.size());
+  for (const auto &inner_ : o.inner) { inner.emplace_back((inner_) ? new mqt::scpd::flatbuffers::artifacts::FinalWireT(*inner_) : nullptr); }
+  feedlines.reserve(o.feedlines.size());
+  for (const auto &feedlines_ : o.feedlines) { feedlines.emplace_back((feedlines_) ? new mqt::scpd::flatbuffers::artifacts::FinalWireT(*feedlines_) : nullptr); }
+  phases.reserve(o.phases.size());
+  for (const auto &phases_ : o.phases) { phases.emplace_back((phases_) ? new mqt::scpd::flatbuffers::artifacts::FinalPhaseT(*phases_) : nullptr); }
   couplers.reserve(o.couplers.size());
   for (const auto &couplers_ : o.couplers) { couplers.emplace_back((couplers_) ? new mqt::scpd::flatbuffers::design::CpwCouplerT(*couplers_) : nullptr); }
   bridges.reserve(o.bridges.size());
@@ -3491,6 +3946,11 @@ inline FinalRoutingT::FinalRoutingT(const FinalRoutingT &o)
 }
 
 inline FinalRoutingT &FinalRoutingT::operator=(FinalRoutingT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(grid, o.grid);
+  std::swap(wires, o.wires);
+  std::swap(inner, o.inner);
+  std::swap(feedlines, o.feedlines);
+  std::swap(phases, o.phases);
   std::swap(couplers, o.couplers);
   std::swap(bridges, o.bridges);
   std::swap(unresolved, o.unresolved);
@@ -3506,6 +3966,11 @@ inline FinalRoutingT *FinalRouting::UnPack(const ::flatbuffers::resolver_functio
 inline void FinalRouting::UnPackTo(FinalRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
+  { auto _e = grid(); if (_e) { if(_o->grid) { _e->UnPackTo(_o->grid.get(), _resolver); } else { _o->grid = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::GridExtentT>(_e->UnPack(_resolver)); } } else if (_o->grid) { _o->grid.reset(); } }
+  { auto _e = wires(); if (_e) { _o->wires.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->wires[_i]) { _e->Get(_i)->UnPackTo(_o->wires[_i].get(), _resolver); } else { _o->wires[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->wires.resize(0); } }
+  { auto _e = inner(); if (_e) { _o->inner.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->inner[_i]) { _e->Get(_i)->UnPackTo(_o->inner[_i].get(), _resolver); } else { _o->inner[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->inner.resize(0); } }
+  { auto _e = feedlines(); if (_e) { _o->feedlines.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->feedlines[_i]) { _e->Get(_i)->UnPackTo(_o->feedlines[_i].get(), _resolver); } else { _o->feedlines[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalWireT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->feedlines.resize(0); } }
+  { auto _e = phases(); if (_e) { _o->phases.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->phases[_i]) { _e->Get(_i)->UnPackTo(_o->phases[_i].get(), _resolver); } else { _o->phases[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FinalPhaseT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->phases.resize(0); } }
   { auto _e = couplers(); if (_e) { _o->couplers.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->couplers[_i]) { _e->Get(_i)->UnPackTo(_o->couplers[_i].get(), _resolver); } else { _o->couplers[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::CpwCouplerT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->couplers.resize(0); } }
   { auto _e = bridges(); if (_e) { _o->bridges.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->bridges[_i]) { _e->Get(_i)->UnPackTo(_o->bridges[_i].get(), _resolver); } else { _o->bridges[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::BridgeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->bridges.resize(0); } }
   { auto _e = unresolved(); if (_e) { _o->unresolved.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->unresolved[_i] = *_e->Get(_i); } } else { _o->unresolved.resize(0); } }
@@ -3519,11 +3984,21 @@ inline ::flatbuffers::Offset<FinalRouting> FinalRouting::Pack(::flatbuffers::Fla
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const FinalRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _grid = _o->grid ? CreateGridExtent(_fbb, _o->grid.get(), _rehasher) : 0;
+  auto _wires = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> (_o->wires.size(), [](size_t i, _VectorArgs *__va) { return CreateFinalWire(*__va->__fbb, __va->__o->wires[i].get(), __va->__rehasher); }, &_va );
+  auto _inner = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> (_o->inner.size(), [](size_t i, _VectorArgs *__va) { return CreateFinalWire(*__va->__fbb, __va->__o->inner[i].get(), __va->__rehasher); }, &_va );
+  auto _feedlines = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalWire>> (_o->feedlines.size(), [](size_t i, _VectorArgs *__va) { return CreateFinalWire(*__va->__fbb, __va->__o->feedlines[i].get(), __va->__rehasher); }, &_va );
+  auto _phases = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FinalPhase>> (_o->phases.size(), [](size_t i, _VectorArgs *__va) { return CreateFinalPhase(*__va->__fbb, __va->__o->phases[i].get(), __va->__rehasher); }, &_va );
   auto _couplers = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::CpwCoupler>> (_o->couplers.size(), [](size_t i, _VectorArgs *__va) { return CreateCpwCoupler(*__va->__fbb, __va->__o->couplers[i].get(), __va->__rehasher); }, &_va );
   auto _bridges = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Bridge>> (_o->bridges.size(), [](size_t i, _VectorArgs *__va) { return CreateBridge(*__va->__fbb, __va->__o->bridges[i].get(), __va->__rehasher); }, &_va );
   auto _unresolved = _fbb.CreateVectorOfStructs(_o->unresolved);
   return mqt::scpd::flatbuffers::artifacts::CreateFinalRouting(
       _fbb,
+      _grid,
+      _wires,
+      _inner,
+      _feedlines,
+      _phases,
       _couplers,
       _bridges,
       _unresolved);

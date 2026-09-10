@@ -582,11 +582,12 @@ this stage is judged on.
 
 ### Final
 
-Curvature-constrained A* over Dubins primitives, coplanar-waveguide coupler
+Curvature-constrained A\* over Dubins primitives, coplanar-waveguide coupler
 insertion, feedline routing, and design-rule enforcement. This is the expensive
 stage: roughly 78 percent of wall time on the largest benchmark.
 
-The prototype's live sequence, which the port reproduces:
+The prototype's sequence, which the port reproduces, and which the artifact
+carries a snapshot of after each of its five phases:
 
 ```text
 inner routing        stubs inside each unit cell
@@ -596,18 +597,60 @@ feedline routing     the launcher-to-launcher chains, with rip-up repair
 feedline refinement
 ```
 
-with a clearance check and a wire-loop check after every routing pass.
+with a clearance check and a wire-loop check after every routing pass. Each
+phase changes what the phase before it produced — the coupler insertion cuts a
+resonator back to its coupler, and the feedline passes route wires that are
+already drawn again — so a picture of one phase cannot be derived from the end
+state, and every phase leaves its own snapshot. A phase that changes nothing
+leaves the state of the phase before it, which is what a snapshot is.
+
+**One driver runs every routing phase.** The prototype writes the loop out four
+times, once per phase, and the four differ only in their parameters: sweep the
+wires alternating direction, offer each a way inside a band around the way it
+has, let go of the wires beside it one at a time when it finds none, and roll
+them back when nothing came of it.
+
+What the relaxation steers by is the prototype's own corridor polygon: the
+closed shape that runs from the wire's source along the way of its ring
+predecessor, back to its target, and along the way of its successor. Everything
+outside it is priced and nothing is forbidden, so a wire that has to leave its
+lane may and a wire that need not, does not. On top of it the wires further
+along the sweep are priced at growing distances.
+
+Four things the port does that the prototype does not, and each is the answer
+to a defect its own pictures show:
+
+- **The clearance holds against every wire.** The prototype keeps a wire clear
+  of the two beside it in the ring, per search, and knows nothing of the other
+  two hundred. Here the grid carries how many wires guard each cell; a wire
+  charges its own room when it is put down and gives it up when it is taken
+  off, so the rule against two hundred wires costs what the rule against two
+  cost, and letting a wire go is exactly "its room stops standing in the way,
+  its copper stays".
+- **A wire is judged against the full field, not against the one its search
+  was given.** Everything let go of for a search stands in the way again before
+  the wire is put down, and a wire counts as routed only when the way it found
+  holds the rule against every other wire. A way that exists only because a
+  neighbour was lifted leaves the wire open, and the next round tries it again.
+  Without that the wire keeps room it took from a neighbour, the neighbour
+  cannot get it back, and no later round undoes it.
+- **The relaxation runs both ways along the sweep.** The prototype only ever
+  goes one way, so a wire blocked by the wire behind it has no move at all.
+- **Everything outside the ring of sources is blocked.** Every wire starts on
+  the ring of launcher slots, which is a rectangle set in from the chip
+  outline; the strip beyond it is free space a wire can slip through to come
+  back in somewhere else, which is a crossing the plan never allowed.
 
 The obstacle keepout is not a check at all. It is baked into the raster mask
 before any search runs, so every cell the router may enter already satisfies the
-obstacle clearance. Rule 3 verifies the committed result separately, because the
+obstacle clearance. Rule 4 verifies the committed result separately, because the
 committed result is not always what the search produced.
 
 **Coupler placement and feedline routing are one fixpoint, not two steps.** The
 feedline repair loop re-orients an already-placed coupler when doing so is what
 lets a chain route, so the stage cannot be split into "place couplers, then
 route feedlines" without losing the mechanism that reaches zero failures. The
-`IFinalRouter` implementation must be shaped around that.
+`IFinalRouter` implementation is shaped around that.
 
 ### Finalize
 
@@ -920,9 +963,9 @@ launcher_offset_y = 15
 launcher_target = 24
 
 [stages.final]
-meander_length    = 600.0
-expansion         = 200
-rounds            = 10
+meander_length    = 6000.0             # layout units, not cells
+corridor_spacings = 11                 # wire spacings, not cells
+rounds            = 30
 refinement_rounds = 15
 ```
 

@@ -62,8 +62,23 @@ class GridParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 30
 
+    # How wide a cell of the router grid may be, in layout units.
+    #
+    # Every capacity cell is divided into as many router cells as it holds
+    # steps of this size, rounded up, so a router cell is never wider than it.
+    # The prototype passes the same figure to `FinalGrid`'s constructor as
+    # `unit_division_factor`; it comes out as 9.91 to 10.00 layout units on
+    # every benchmark chip, which is what makes the wire spacing 19 cells
+    # everywhere.
+    # GridParams
+    def RouterCellSize(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 10.0
+
 def GridParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(5)
+    builder.StartObject(6)
 
 def Start(builder: flatbuffers.Builder):
     GridParamsStart(builder)
@@ -98,6 +113,12 @@ def GridParamsAddDetailFactor(builder: flatbuffers.Builder, detailFactor: int):
 def AddDetailFactor(builder: flatbuffers.Builder, detailFactor: int):
     GridParamsAddDetailFactor(builder, detailFactor)
 
+def GridParamsAddRouterCellSize(builder: flatbuffers.Builder, routerCellSize: float):
+    builder.PrependFloat64Slot(5, routerCellSize, 10.0)
+
+def AddRouterCellSize(builder: flatbuffers.Builder, routerCellSize: float):
+    GridParamsAddRouterCellSize(builder, routerCellSize)
+
 def GridParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -115,12 +136,14 @@ class GridParamsT(object):
         launcherOffsetX = 15,
         launcherOffsetY = 15,
         detailFactor = 30,
+        routerCellSize = 10.0,
     ):
         self.capacityCellsX = capacityCellsX  # type: int
         self.capacityCellsY = capacityCellsY  # type: int
         self.launcherOffsetX = launcherOffsetX  # type: int
         self.launcherOffsetY = launcherOffsetY  # type: int
         self.detailFactor = detailFactor  # type: int
+        self.routerCellSize = routerCellSize  # type: float
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -148,6 +171,7 @@ class GridParamsT(object):
         self.launcherOffsetX = gridParams.LauncherOffsetX()
         self.launcherOffsetY = gridParams.LauncherOffsetY()
         self.detailFactor = gridParams.DetailFactor()
+        self.routerCellSize = gridParams.RouterCellSize()
 
     # GridParamsT
     def Pack(self, builder):
@@ -157,5 +181,6 @@ class GridParamsT(object):
         GridParamsAddLauncherOffsetX(builder, self.launcherOffsetX)
         GridParamsAddLauncherOffsetY(builder, self.launcherOffsetY)
         GridParamsAddDetailFactor(builder, self.detailFactor)
+        GridParamsAddRouterCellSize(builder, self.routerCellSize)
         gridParams = GridParamsEnd(builder)
         return gridParams

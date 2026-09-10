@@ -113,6 +113,40 @@ void validateDetailWires(
   }
 }
 
+void validateFinalWires(
+    const std::vector<std::unique_ptr<flatbuffers::artifacts::FinalWireT>>&
+        wires,
+    const std::string& what, Problems& problems) {
+  for (std::size_t index = 0; index < wires.size(); ++index) {
+    if (wires[index] == nullptr) {
+      problems.push_back(std::format("{} {}: missing", what, index));
+      continue;
+    }
+    const auto& path = wires[index]->path;
+    for (std::size_t step = 0; step < path.size(); ++step) {
+      if (path[step].heading() >= 8) {
+        problems.push_back(std::format("{} {} holds the heading {} at step {}",
+                                       what, index, path[step].heading(),
+                                       step));
+      }
+      if (step == 0) {
+        continue;
+      }
+      const auto& before = path[step - 1];
+      const auto& after = path[step];
+      const auto dx =
+          std::max(before.x(), after.x()) - std::min(before.x(), after.x());
+      const auto dy =
+          std::max(before.y(), after.y()) - std::min(before.y(), after.y());
+      if (dx > 1 || dy > 1) {
+        problems.push_back(std::format("{} {} jumps from ({}, {}) to ({}, {})",
+                                       what, index, before.x(), before.y(),
+                                       after.x(), after.y()));
+      }
+    }
+  }
+}
+
 std::string join(const Problems& problems) {
   std::string joined;
   for (const auto& problem : problems) {
@@ -138,9 +172,28 @@ Problems validate(const ArtifactT& artifact) {
                  problems);
     break;
   case StageOutput::FinalRouting: {
+    // A wire of the router grid is the cells it runs over with the heading it
+    // held in each, so two consecutive cells differ by at most one along each
+    // axis and every heading names one of the eight directions.
     const auto& routing = *artifact.output.AsFinalRouting();
     validateEach(routing.couplers, "coupler", problems);
     validateEach(routing.bridges, "bridge", problems);
+    validateFinalWires(routing.wires, "wire", problems);
+    validateFinalWires(routing.inner, "inner wire", problems);
+    validateFinalWires(routing.feedlines, "feedline", problems);
+    for (std::size_t index = 0; index < routing.phases.size(); ++index) {
+      if (routing.phases[index] == nullptr) {
+        problems.push_back(std::format("phase {}: missing", index));
+        continue;
+      }
+      const auto& phase = *routing.phases[index];
+      if (phase.name.empty()) {
+        problems.push_back(std::format("phase {} has no name", index));
+      }
+      validateFinalWires(phase.wires, phase.name + " wire", problems);
+      validateFinalWires(phase.inner, phase.name + " inner wire", problems);
+      validateFinalWires(phase.feedlines, phase.name + " feedline", problems);
+    }
     break;
   }
   case StageOutput::Geometry: {

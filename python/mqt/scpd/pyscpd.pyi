@@ -22,13 +22,42 @@ def route_global(chip: bytes, capacity: bytes, config: bytes, producer: str) -> 
 def assign(chip: bytes, capacity: bytes, global_: bytes, config: bytes, producer: str) -> bytes:
     """Run the Assignment stage. Returns 03-assign.fb as bytes."""
 
-def route_corridor(chip: bytes, capacity: bytes, assignment: bytes, config: bytes, producer: str) -> bytes:
-    """Run the Corridor stage. Returns 04-corridor.fb as bytes."""
+def route_corridor(
+    chip: bytes,
+    capacity: bytes,
+    assignment: bytes,
+    config: bytes,
+    producer: str,
+    progress: Callable[[str], None] | None = None,
+) -> bytes:
+    """Run the Corridor stage. Returns 04-corridor.fb as bytes. progress, when given, is called with one line per round while the stage runs."""
 
 def route_detail(
-    chip: bytes, capacity: bytes, global_: bytes, assignment: bytes, corridor: bytes, config: bytes, producer: str
+    chip: bytes,
+    capacity: bytes,
+    global_: bytes,
+    assignment: bytes,
+    corridor: bytes,
+    config: bytes,
+    producer: str,
+    progress: Callable[[str], None] | None = None,
 ) -> bytes:
-    """Run the Detail stage. Returns 05-detail.fb as bytes."""
+    """Run the Detail stage. Returns 05-detail.fb as bytes. progress, when given, is called with one line per pass while the stage runs."""
+
+def route_final(
+    chip: bytes,
+    capacity: bytes,
+    global_: bytes,
+    assignment: bytes,
+    detail: bytes,
+    config: bytes,
+    producer: str,
+    progress: Callable[[str], None] | None = None,
+) -> bytes:
+    """Run the Final stage. Returns 06-final.fb as bytes. progress, when given, is called with one line per round while the stage runs."""
+
+def check_final(chip: bytes, global_: bytes, assignment: bytes, final: bytes, config: bytes) -> str:
+    """Check a final routing against the design rules. Returns the text of drc.json."""
 
 def algorithms() -> list[tuple[str, list[str]]]:
     """The implementations this build ships, one list per stage."""

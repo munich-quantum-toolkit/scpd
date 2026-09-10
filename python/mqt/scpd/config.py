@@ -27,6 +27,7 @@ from .flatbuffers.config.CapacityParams import CapacityParamsT
 from .flatbuffers.config.Config import ConfigT
 from .flatbuffers.config.CorridorParams import CorridorParamsT
 from .flatbuffers.config.DetailParams import DetailParamsT
+from .flatbuffers.config.FinalParams import FinalParamsT
 from .flatbuffers.config.GlobalParams import GlobalParamsT
 from .flatbuffers.config.GridParams import GridParamsT
 from .flatbuffers.config.PortConfig import PortConfigT
@@ -60,12 +61,14 @@ DESIGN_RULES: dict[str, type] = {
 }
 
 #: The keys of ``[grid]`` with the defaults of the schema, which the loader applies to absent keys.
-GRID_DEFAULTS: dict[str, int] = {
+#: ``router_cell_size`` is a length in layout units; every other key is a count.
+GRID_DEFAULTS: dict[str, float] = {
     "capacity_cells_x": 50,
     "capacity_cells_y": 0,
     "launcher_offset_x": 15,
     "launcher_offset_y": 15,
     "detail_factor": 30,
+    "router_cell_size": 10.0,
 }
 
 #: The defaults of the stage sections, by section and key. A shipped configuration carries only
@@ -83,6 +86,22 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "obstacle_penalty_reach": 185.0,
         "obstacle_penalty": 10,
         "orderings": 16,
+    },
+    "final": {
+        "router": "",
+        "corridor_spacings": 11,
+        "inner_corridor_spacings": 11,
+        "rounds": 30,
+        "inner_rounds": 4,
+        "max_relaxation": 10,
+        "refinement_rounds": 2,
+        "meander_length": 3000.0,
+        "bend_penalty_norm": 2.5,
+        "wire_proximity_penalty_norm": 0.00125,
+        "static_proximity_penalty_norm": 0.00033,
+        "obstacle_penalty_reach": 100.0,
+        "coupler_length": 200.0,
+        "coupler_height": 26.0,
     },
     "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0},
 }
@@ -237,11 +256,12 @@ def _read_rules(table: dict[str, Any], problems: list[str]) -> DesignRulesT:
 def _read_grid(table: dict[str, Any], problems: list[str]) -> GridParamsT:
     section = _Section("grid", table, problems)
     grid = GridParamsT()
-    grid.capacityCellsX = section.take("capacity_cells_x", int, default=GRID_DEFAULTS["capacity_cells_x"])
-    grid.capacityCellsY = section.take("capacity_cells_y", int, default=GRID_DEFAULTS["capacity_cells_y"])
-    grid.launcherOffsetX = section.take("launcher_offset_x", int, default=GRID_DEFAULTS["launcher_offset_x"])
-    grid.launcherOffsetY = section.take("launcher_offset_y", int, default=GRID_DEFAULTS["launcher_offset_y"])
-    grid.detailFactor = section.take("detail_factor", int, default=GRID_DEFAULTS["detail_factor"])
+    grid.capacityCellsX = section.take("capacity_cells_x", int, default=int(GRID_DEFAULTS["capacity_cells_x"]))
+    grid.capacityCellsY = section.take("capacity_cells_y", int, default=int(GRID_DEFAULTS["capacity_cells_y"]))
+    grid.launcherOffsetX = section.take("launcher_offset_x", int, default=int(GRID_DEFAULTS["launcher_offset_x"]))
+    grid.launcherOffsetY = section.take("launcher_offset_y", int, default=int(GRID_DEFAULTS["launcher_offset_y"]))
+    grid.detailFactor = section.take("detail_factor", int, default=int(GRID_DEFAULTS["detail_factor"]))
+    grid.routerCellSize = section.take("router_cell_size", float, default=GRID_DEFAULTS["router_cell_size"])
     section.finish()
     return grid
 
@@ -309,6 +329,32 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         "obstacle_penalty_reach", float, default=defaults["detail"]["obstacle_penalty_reach"]
     )
     detail.finish()
+
+    final = _Section("stages.final", section.subtable("final") or {}, problems)
+    stages.final = FinalParamsT()
+    stages.final.router = final.take("router", str, default="")
+    for key, field in (
+        ("corridor_spacings", "corridorSpacings"),
+        ("inner_corridor_spacings", "innerCorridorSpacings"),
+        ("rounds", "rounds"),
+        ("inner_rounds", "innerRounds"),
+        ("max_relaxation", "maxRelaxation"),
+        ("refinement_rounds", "refinementRounds"),
+    ):
+        setattr(stages.final, field, final.take(key, int, default=defaults["final"][key]))
+    # Lengths in layout units and prices against the grid extent. None of them is a cell
+    # count: the same count is a different distance on every one of the eight grids.
+    for key, field in (
+        ("meander_length", "meanderLength"),
+        ("bend_penalty_norm", "bendPenaltyNorm"),
+        ("wire_proximity_penalty_norm", "wireProximityPenaltyNorm"),
+        ("static_proximity_penalty_norm", "staticProximityPenaltyNorm"),
+        ("obstacle_penalty_reach", "obstaclePenaltyReach"),
+        ("coupler_length", "couplerLength"),
+        ("coupler_height", "couplerHeight"),
+    ):
+        setattr(stages.final, field, final.take(key, float, default=defaults["final"][key]))
+    final.finish()
 
     solver = _Section("stages.solver", section.subtable("solver") or {}, problems)
     stages.solver = SolverParamsT()

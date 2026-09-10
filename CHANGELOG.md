@@ -12,6 +12,52 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Add the Final stage: every wire of the plan drawn again as
+  curvature-constrained copper over the Dubins primitives of one bend radius,
+  on a grid whose cell is about ten layout units. The stage runs five phases —
+  the inner circuit, the ring, the couplers, the feedline chains and their
+  refinement — and leaves a snapshot after each, so that one artifact carries
+  what every phase drew ([#117]) ([**@FeldmeierMichael**])
+- ✨ Run every routing phase from one driver. The prototype writes the same
+  rip-up-and-reroute loop out four times, once per phase, and the four differ
+  only in their parameters ([#117]) ([**@FeldmeierMichael**])
+- ✨ Hold the wire spacing between **every** pair of wires the Final stage
+  draws. The prototype keeps a wire clear of the two beside it in the ring and
+  of nothing else, per search, which is why its own pictures show wires
+  touching ([#117]) ([**@FeldmeierMichael**])
+- 🐛 Judge a wire against the whole field rather than against the one its own
+  search was given: everything let go of for a search stands in the way again
+  before the wire is put down, and a wire counts as routed only when the way it
+  found holds the rule against every other wire ([#117])
+  ([**@FeldmeierMichael**])
+- 🐛 Let go of the wires behind a wire as well as the wires ahead of it. The
+  prototype only ever relaxes along the sweep, so a wire blocked by the wire
+  behind it has no move at all ([#117]) ([**@FeldmeierMichael**])
+- ✨ Block everything between the chip outline and the rectangle the launcher
+  slots stand on. A wire that enters that strip comes back in somewhere else
+  and has gone around the sources of the wires beside it, which is a crossing
+  the plan never allowed; where the edge of the routable space is, is derived
+  from the sources rather than given as a cell count ([#117])
+  ([**@FeldmeierMichael**])
+- ✨ Bake the obstacle keepout into the router grid's mask, so that every cell
+  a search may enter satisfies `min_obstacle_spacing` by construction. The
+  distance is measured exactly, from the cell to the polygon edge in layout
+  units, and the prototype's `FG_OBSTACLE_INFLATE` override is not carried
+  over ([#117]) ([**@FeldmeierMichael**])
+- ✨ Add the design-rule check in the cell view: wire clearance, wire loop and
+  obstacle clearance, each written once and called by the stage's own tests, so
+  that what the stage is judged by and what the checker reports cannot drift
+  apart ([#117]) ([**@FeldmeierMichael**])
+- ✨ Report what a routing stage is doing while it runs: `mqt-scpd plan -v`
+  prints one line per round of the Corridor, Detail and Final stages, with how
+  many wires were tried, how many settled, how many are still open and how many
+  have no way at all. It is a callback and not a report, because on the largest
+  chip the Final stage is minutes of work and what it is doing is only useful
+  live; nothing is printed from the core ([#117]) ([**@FeldmeierMichael**])
+- ✨ Render the Final stage: `plot --stage final --phase <name>` draws one
+  phase, and `render --stage final` writes all five on layers of their own, so
+  one GDS shows every phase ([#117]) ([**@FeldmeierMichael**])
+
 - ✨ Add the Detail stage: every wire of the plan is drawn cell by cell on the
   detail grid, eight-connected, inside the partitions its corridor names, and no
   two wires share a cell ([#116]) ([**@FeldmeierMichael**])
@@ -249,6 +295,7 @@ releases may include breaking changes.
 <!-- PR links -->
 
 [#116]: https://github.com/munich-quantum-toolkit/scpd/pull/116
+[#117]: https://github.com/munich-quantum-toolkit/scpd/pull/117
 [#115]: https://github.com/munich-quantum-toolkit/scpd/pull/115
 [#114]: https://github.com/munich-quantum-toolkit/scpd/pull/114
 [#113]: https://github.com/munich-quantum-toolkit/scpd/pull/113

@@ -69,6 +69,15 @@ table GridParams {
   launcher_offset_y: uint32 = 15;
   /// Cells of the detail grid per cell of the capacity grid, along each axis.
   detail_factor: uint32 = 30;
+  /// How wide a cell of the router grid may be, in layout units.
+  ///
+  /// Every capacity cell is divided into as many router cells as it holds
+  /// steps of this size, rounded up, so a router cell is never wider than it.
+  /// The prototype passes the same figure to `FinalGrid`'s constructor as
+  /// `unit_division_factor`; it comes out as 9.91 to 10.00 layout units on
+  /// every benchmark chip, which is what makes the wire spacing 19 cells
+  /// everywhere.
+  router_cell_size: double = 10.0;
 }
 
 /// What the Capacity stage is allowed to do.
@@ -191,6 +200,70 @@ table DetailParams {
   orderings: uint32 = 16;
 }
 
+/// What the Final stage is allowed to do.
+///
+/// No clearance is here, for the reason `DetailParams` gives: a clearance is a
+/// length in layout units and a cell count is a property of the grid. The
+/// stage keeps `cells_for(min_wire_spacing, router)` between two wires and
+/// `cells_for(min_straight_length, router)` as its straight stub, and it bakes
+/// `min_obstacle_spacing` into the obstacle mask. The prototype writes all
+/// three as the literals 19, 9 and 2, and none of them records a reason.
+table FinalParams {
+  /// The implementation, by the name it is registered under.
+  router: string;
+  /// How far to either side of the way it already has a wire may be moved when
+  /// it is routed again, in wire spacings.
+  ///
+  /// The prototype's `outer_expansion` is 200 cells of the router grid in the
+  /// drivers that ship, which is 2000 layout units and therefore a different
+  /// distance on every chip. Counted in spacings the same number is the same
+  /// room everywhere.
+  corridor_spacings: uint32 = 11;
+  /// The same, for the wires of the inner circuit, which run inside one unit
+  /// cell and need far less room.
+  inner_corridor_spacings: uint32 = 11;
+  /// Sweeps over the wire list, alternating forward and backward. A wire that
+  /// has been routed is left alone; the sweeps exist so that a wire which
+  /// found no way through can take the room a later one has not claimed yet.
+  rounds: uint32 = 30;
+  /// The same, for the inner circuit.
+  inner_rounds: uint32 = 4;
+  /// How many neighbouring wires a failed route may let go of, counted along
+  /// the sweep direction.
+  max_relaxation: uint32 = 10;
+  /// Rounds that route every wire again against a proximity price, to widen
+  /// the room around it. A wire that does not route keeps the way it had.
+  refinement_rounds: uint32 = 2;
+  /// How long a resonator's way is made before the coupler is spliced into
+  /// it, in layout units. Zero switches the meander off.
+  ///
+  /// This is not `target_resonator_length`. The wire is fed from the segment
+  /// between two launchers and the coupler is spliced where the way left to
+  /// the qubit port reaches the target length, so the whole way has to be
+  /// longer than the target. The prototype's own figures are 3000 layout units
+  /// on the 17-qubit chip and 6000 on the 69-qubit one.
+  meander_length: double = 3000.0;
+  /// What one eighth turn costs, in hundredths of a cell.
+  ///
+  /// A price and not a distance, but it is still normalised: a bend costs a
+  /// fixed amount while a way's cost grows with the grid, so the prototype had
+  /// to retune it per chip from 8000 to 30000. It is quoted here against the
+  /// sum of the grid's two extents, as the prototype's own `_norm` fields do,
+  /// and multiplied by that sum at the point of use.
+  bend_penalty_norm: double = 2.5;
+  /// What running beside another wire costs, on the same scale.
+  wire_proximity_penalty_norm: double = 0.00125;
+  /// What running beside an obstacle costs, on the same scale.
+  static_proximity_penalty_norm: double = 0.00033;
+  /// How far the cost of running close to an obstacle reaches, in layout
+  /// units. Zero switches the penalty off.
+  obstacle_penalty_reach: double = 100.0;
+  /// The physical size of the coupler body the stage instantiates, in layout
+  /// units. The prototype carries it as 20 by 3 cells.
+  coupler_length: double = 200.0;
+  coupler_height: double = 26.0;
+}
+
 /// How the mixed-integer programs of the planning stages are solved.
 table SolverParams {
   /// "auto", "highs" or "gurobi". The environment variable SCPD_SOLVER
@@ -210,6 +283,7 @@ table StageParams {
   solver: SolverParams;
   corridor: CorridorParams;
   detail: DetailParams;
+  final: FinalParams;
 }
 
 /// The whole run configuration.

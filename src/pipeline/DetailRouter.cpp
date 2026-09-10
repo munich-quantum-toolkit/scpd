@@ -22,9 +22,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -781,7 +783,8 @@ public:
   [[nodiscard]] DetailRoutingT
   run(const ChipT& chip, const CapacityPlanT& capacity,
       const GlobalRoutingT& global, const AssignmentT& assignment,
-      const CorridorRoutingT& corridor, const ConfigT& config) const override {
+      const CorridorRoutingT& corridor, const ConfigT& config,
+      const Progress& progress) const override {
     const auto scene = buildScene(chip, config);
     const auto tuning = tuningOf(config);
 
@@ -794,18 +797,47 @@ public:
     // and nothing more — the corridor stage's route is a coarse way and not a
     // constraint, and the pass that follows is free to move a wire off it
     // entirely.
+    const auto began = std::chrono::steady_clock::now();
+    const auto say = [&progress, &began](const std::string& line) {
+      if (progress) {
+        progress(std::format("[detail] {:8.2f}s  {}",
+                             std::chrono::duration<double>(
+                                 std::chrono::steady_clock::now() - began)
+                                 .count(),
+                             line));
+      }
+    };
+
     auto wires = wiresOf(canvas, corridor, assignment.connections.size());
     const auto ring = static_cast<std::uint32_t>(wires.size());
+    say(std::format("grid {}x{} cells | {} connections of the ring | {} of the "
+                    "inner circuit",
+                    scene.detail.width, scene.detail.height, ring,
+                    global.connections.size()));
     auto drawing = drawInsidePartitions(canvas, wires, tuning);
+    say(std::format("pass 1, inside the partitions: {} pieces left undrawn",
+                    drawing.undrawn()));
     placeWhatIsLeft(canvas, drawing, tuning);
+    say(std::format("the rescue of pass 1: {} pieces left undrawn",
+                    drawing.undrawn()));
     joinPieces(canvas, wires, drawing);
     drawWhatIsLeftWhole(canvas, wires, tuning);
     seedInnerCircuit(canvas, scene, global, wires);
+    say(std::format("the seed: {} of {} wires drawn",
+                    std::ranges::count_if(
+                        wires, [](const Wire& wire) { return wire.drawn; }),
+                    wires.size()));
 
     // The design rule, held by taking wires out and drawing them again until
     // no wire is left within a wire spacing of another.
     const auto rule = ruleOf(config, scene.detail);
     canvas.armClearance(rule);
+    say(std::format(
+        "the rule is {} cells of this grid, which is {:.0f} layout "
+        "units against a rule of {:.0f}",
+        rule.pixels,
+        rule.pixels * std::min(scene.detail.cellWidth, scene.detail.cellHeight),
+        rule.spacing));
     // The band is a length and not a cell count: how many cells span four wire
     // spacings is what the grid decides, and it is 39 cells on the finest of
     // the eight grids and 21 on the coarsest. `corridor_half_width` is 40
@@ -814,7 +846,7 @@ public:
     const auto reach =
         std::max(1U, tuning.corridorSpacings *
                          grid::cellsFor(rule.spacing, scene.detail));
-    crossBoundaryRouting(canvas, wires, tuning, ring, reach);
+    crossBoundaryRouting(canvas, wires, tuning, ring, reach, say);
 
     return artifactOf(scene.detail, wires, ring, global.connections.size());
   }
@@ -1545,10 +1577,11 @@ private:
   /// it — its clearance stops standing in the way, and the wire is marked as
   /// one still to be drawn — with its copper left where it is, so that no two
   /// wires ever share a cell while the sweep is running.
+  template <typename Say>
   static void crossBoundaryRouting(Canvas& canvas, std::vector<Wire>& wires,
                                    const Tuning& tuning,
                                    const std::uint32_t ring,
-                                   const std::uint32_t reach) {
+                                   const std::uint32_t reach, const Say& say) {
     Mask mask(canvas.cells());
     std::vector<std::uint8_t> steering(canvas.cells(), 0);
     std::vector<std::uint8_t> settled(wires.size(), 0);
@@ -1569,11 +1602,18 @@ private:
           ++failed;
         }
       }
+      say(std::format("round {} {}: {} of {} wires still to settle", round,
+                      forward ? "forward " : "backward", failed, wires.size()));
       if (failed == 0) {
         break;
       }
     }
-    static_cast<void>(recount(canvas, wires));
+    const auto left = recount(canvas, wires);
+    say(std::format("{} of {} wires drawn, {} of them within the rule of "
+                    "another",
+                    std::ranges::count_if(
+                        wires, [](const Wire& wire) { return wire.drawn; }),
+                    wires.size(), left));
   }
 
   /// Draw one wire again: the prototype's two phases.

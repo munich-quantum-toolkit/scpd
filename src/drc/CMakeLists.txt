@@ -13,4 +13,5 @@ add_mqt_scpd_library(
   LINK_LIBRARIES
   MQT::ScpdGrid
   MQT::ScpdDesign
-  MQT::ScpdGeometry)
+  MQT::ScpdGeometry
+  MQT::ScpdRouting)

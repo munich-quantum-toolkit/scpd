@@ -21,9 +21,11 @@
 #include "mqt-scpd/pipeline/Stages.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <limits>
 #include <map>
@@ -781,7 +783,8 @@ public:
   [[nodiscard]] CorridorRoutingT run(const ChipT& chip,
                                      const CapacityPlanT& capacity,
                                      const AssignmentT& assignment,
-                                     const ConfigT& config) const override {
+                                     const ConfigT& config,
+                                     const Progress& progress) const override {
     const auto scene = buildScene(chip, config);
     const auto labels = labelsOf(capacity, scene.detail);
 
@@ -793,12 +796,32 @@ public:
 
     std::vector<std::optional<Route>> routes(requests.size());
     const auto sweeps = sweepsOf(config);
+    const auto began = std::chrono::steady_clock::now();
+    const auto say = [&progress, &began](const std::string& line) {
+      if (progress) {
+        progress(std::format("[corridor] {:8.2f}s  {}",
+                             std::chrono::duration<double>(
+                                 std::chrono::steady_clock::now() - began)
+                                 .count(),
+                             line));
+      }
+    };
+    say(std::format("{} connections over {} partitions, up to {} rounds, {} "
+                    "relaxations",
+                    requests.size(), capacity.partitions.size(), sweeps.rounds,
+                    sweeps.maxRelaxation));
     for (std::uint32_t round = 0; round < sweeps.rounds; ++round) {
       const auto forward = (round % 2) == 0;
       for (std::size_t step = 0; step < requests.size(); ++step) {
         const auto index = forward ? step : requests.size() - 1 - step;
         reroute(corridors, requests, routes, index, forward, sweeps);
       }
+      say(std::format(
+          "round {} {}: routed {} of {}", round,
+          forward ? "forward " : "backward",
+          std::ranges::count_if(
+              routes, [](const auto& route) { return route.has_value(); }),
+          requests.size()));
       // Only a round that routes everything ends the sweeps. A round in which
       // nothing moved is not the end: a wire that found no way charged the
       // slots it wanted, and it takes several such rounds before the charge
@@ -814,6 +837,8 @@ public:
     // without a way is therefore offered the room the others left, and only
     // that: this pass takes nothing from anyone, so it can be repeated until
     // it places nothing more.
+    const auto beforeRescue = std::ranges::count_if(
+        routes, [](const auto& route) { return route.has_value(); });
     for (auto placed = true; placed;) {
       placed = false;
       for (std::size_t index = 0; index < requests.size(); ++index) {
@@ -828,7 +853,16 @@ public:
       }
     }
 
+    const auto afterRescue = std::ranges::count_if(
+        routes, [](const auto& route) { return route.has_value(); });
+    if (afterRescue != beforeRescue) {
+      say(std::format("the rescue placed {} more", afterRescue - beforeRescue));
+    }
     exchange(corridors, requests, routes, sweeps);
+    const auto placed = std::ranges::count_if(
+        routes, [](const auto& route) { return route.has_value(); });
+    say(std::format("{} of {} connections have a way through the partitions",
+                    placed, requests.size()));
     return artifactOf(corridors, capacity, requests, routes, scene.detail);
   }
 

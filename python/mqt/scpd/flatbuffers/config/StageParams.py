@@ -9,6 +9,7 @@ from mqt.scpd.flatbuffers.config.AssignmentParams import AssignmentParams
 from mqt.scpd.flatbuffers.config.CapacityParams import CapacityParams
 from mqt.scpd.flatbuffers.config.CorridorParams import CorridorParams
 from mqt.scpd.flatbuffers.config.DetailParams import DetailParams
+from mqt.scpd.flatbuffers.config.FinalParams import FinalParams
 from mqt.scpd.flatbuffers.config.GlobalParams import GlobalParams
 from mqt.scpd.flatbuffers.config.SolverParams import SolverParams
 from typing import Optional
@@ -93,8 +94,18 @@ class StageParams(object):
             return obj
         return None
 
+    # StageParams
+    def Final(self) -> Optional[FinalParams]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = FinalParams()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
 def StageParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(6)
+    builder.StartObject(7)
 
 def Start(builder: flatbuffers.Builder):
     StageParamsStart(builder)
@@ -135,6 +146,12 @@ def StageParamsAddDetail(builder: flatbuffers.Builder, detail: int):
 def AddDetail(builder: flatbuffers.Builder, detail: int):
     StageParamsAddDetail(builder, detail)
 
+def StageParamsAddFinal(builder: flatbuffers.Builder, final: int):
+    builder.PrependUOffsetTRelativeSlot(6, flatbuffers.number_types.UOffsetTFlags.py_type(final), 0)
+
+def AddFinal(builder: flatbuffers.Builder, final: int):
+    StageParamsAddFinal(builder, final)
+
 def StageParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -145,6 +162,7 @@ import mqt.scpd.flatbuffers.config.AssignmentParams
 import mqt.scpd.flatbuffers.config.CapacityParams
 import mqt.scpd.flatbuffers.config.CorridorParams
 import mqt.scpd.flatbuffers.config.DetailParams
+import mqt.scpd.flatbuffers.config.FinalParams
 import mqt.scpd.flatbuffers.config.GlobalParams
 import mqt.scpd.flatbuffers.config.SolverParams
 try:
@@ -163,6 +181,7 @@ class StageParamsT(object):
         solver = None,
         corridor = None,
         detail = None,
+        final = None,
     ):
         self.capacity = capacity  # type: Optional[mqt.scpd.flatbuffers.config.CapacityParams.CapacityParamsT]
         self.global_ = global_  # type: Optional[mqt.scpd.flatbuffers.config.GlobalParams.GlobalParamsT]
@@ -170,6 +189,7 @@ class StageParamsT(object):
         self.solver = solver  # type: Optional[mqt.scpd.flatbuffers.config.SolverParams.SolverParamsT]
         self.corridor = corridor  # type: Optional[mqt.scpd.flatbuffers.config.CorridorParams.CorridorParamsT]
         self.detail = detail  # type: Optional[mqt.scpd.flatbuffers.config.DetailParams.DetailParamsT]
+        self.final = final  # type: Optional[mqt.scpd.flatbuffers.config.FinalParams.FinalParamsT]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -204,6 +224,8 @@ class StageParamsT(object):
             self.corridor = mqt.scpd.flatbuffers.config.CorridorParams.CorridorParamsT.InitFromObj(stageParams.Corridor())
         if stageParams.Detail() is not None:
             self.detail = mqt.scpd.flatbuffers.config.DetailParams.DetailParamsT.InitFromObj(stageParams.Detail())
+        if stageParams.Final() is not None:
+            self.final = mqt.scpd.flatbuffers.config.FinalParams.FinalParamsT.InitFromObj(stageParams.Final())
 
     # StageParamsT
     def Pack(self, builder):
@@ -219,6 +241,8 @@ class StageParamsT(object):
             corridor = self.corridor.Pack(builder)
         if self.detail is not None:
             detail = self.detail.Pack(builder)
+        if self.final is not None:
+            final = self.final.Pack(builder)
         StageParamsStart(builder)
         if self.capacity is not None:
             StageParamsAddCapacity(builder, capacity)
@@ -232,5 +256,7 @@ class StageParamsT(object):
             StageParamsAddCorridor(builder, corridor)
         if self.detail is not None:
             StageParamsAddDetail(builder, detail)
+        if self.final is not None:
+            StageParamsAddFinal(builder, final)
         stageParams = StageParamsEnd(builder)
         return stageParams

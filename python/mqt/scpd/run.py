@@ -29,6 +29,8 @@ from .chip import chip_input_path, classify_chip
 from .config import load_config, write_config
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pathlib import Path
 
     from .flatbuffers.config.Config import ConfigT
@@ -61,7 +63,7 @@ STAGE_FILES: dict[str, str] = {
 }
 
 #: The stages this release implements, in order.
-IMPLEMENTED: tuple[str, ...] = ("capacity", "global", "assign", "corridor", "detail")
+IMPLEMENTED: tuple[str, ...] = ("capacity", "global", "assign", "corridor", "detail", "final")
 
 
 def stages_before(stage: str) -> list[str]:
@@ -113,6 +115,11 @@ class RunDirectory:
             msg = f"'{stage}' is no stage of the pipeline"
             raise RunError(msg)
         return self.path / STAGE_FILES[stage]
+
+    @property
+    def drc(self) -> Path:
+        """The design-rule report of the run."""
+        return self.path / "drc.json"
 
     @property
     def config(self) -> Path:
@@ -178,11 +185,12 @@ class RunDirectory:
             raise RunError(msg)
         return path.read_bytes()
 
-    def run_stage(self, stage: str, config: ConfigT) -> StageResult:
+    def run_stage(self, stage: str, config: ConfigT, progress: Callable[[str], None] | None = None) -> StageResult:
         """Run one stage and write its artifact.
 
         Args:
             stage: The stage to run.
+            progress: Called with one line at a time while a stage that reports its progress runs.
             config: The run configuration.
 
         Returns:
@@ -209,8 +217,10 @@ class RunDirectory:
         elif stage == "assign":
             data = pyscpd.assign(chip, self._read("capacity"), self._read("global"), packed, __version__)
         elif stage == "corridor":
-            data = pyscpd.route_corridor(chip, self._read("capacity"), self._read("assign"), packed, __version__)
-        else:
+            data = pyscpd.route_corridor(
+                chip, self._read("capacity"), self._read("assign"), packed, __version__, progress
+            )
+        elif stage == "detail":
             data = pyscpd.route_detail(
                 chip,
                 self._read("capacity"),
@@ -219,6 +229,18 @@ class RunDirectory:
                 self._read("corridor"),
                 packed,
                 __version__,
+                progress,
+            )
+        else:
+            data = pyscpd.route_final(
+                chip,
+                self._read("capacity"),
+                self._read("global"),
+                self._read("assign"),
+                self._read("detail"),
+                packed,
+                __version__,
+                progress,
             )
 
         path = self.artifact(stage)

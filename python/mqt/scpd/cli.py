@@ -20,12 +20,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .artifacts import ArtifactError
-from .chip import ChipError, decode_chip, load_chip
-from .config import ConfigError, load_config
+from .chip import ChipError, classify_chip, decode_chip, load_chip
+from .config import ConfigError, load_config, write_config
 from .doctor import run_doctor
 from .export.klayout import ExportError, write_layout
 from .inspection import InspectionError, artifact_to_json
-from .planning import PLANNING_STAGES, PlanningError, planning_geometry
+from .planning import FINAL_PHASES, PLANNING_STAGES, PlanningError, planning_geometry
 from .plot import STAGES, PlotError, layout_svg
 from .run import IMPLEMENTED, RunDirectory, RunError
 from .solvers import register as register_external_solver
@@ -85,7 +85,14 @@ def _planning_for(args: argparse.Namespace, chip_bytes: bytes, config: ConfigT):
     # The wires are drawn with the clearance the design rules demand around them, so that two
     # wires closer than the rule allows are two bands that overlap.
     spacing = config.rules.minWireSpacing if config.rules is not None else 0.0
-    return planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, clearance=spacing)
+    return planning_geometry(
+        artifact.read_bytes(),
+        decode_chip(chip_bytes),
+        args.stage,
+        capacity,
+        clearance=spacing,
+        phase=getattr(args, "phase", None),
+    )
 
 
 def command_plot(args: argparse.Namespace) -> int:
@@ -137,10 +144,41 @@ def command_plan(args: argparse.Namespace) -> int:
     config = (
         directory.load() if args.stage is not None and directory.config.is_file() else directory.prepare(args.config)
     )
+    # With --verbose a stage that reports its progress prints one line at a time while it runs.
+    # The Final stage is minutes of work on the largest chip, and what it is doing in that time is
+    # only useful live.
+    def say(line: str) -> None:
+        print(line, flush=True)
+
     for stage in list(IMPLEMENTED) if args.stage is None else [args.stage]:
-        result = directory.run_stage(stage, config)
+        result = directory.run_stage(stage, config, say if args.verbose else None)
         print(f"{result.stage:9s} -> {result.path.name} ({result.size} bytes)")
     return 0
+
+
+def command_drc(args: argparse.Namespace) -> int:
+    """Check a run against the design rules without routing it again.
+
+    Returns:
+        The exit code: nonzero when an active rule found something.
+    """
+    from . import pyscpd  # noqa: PLC0415
+    from .drc import summarize  # noqa: PLC0415
+
+    directory = RunDirectory(args.run_dir)
+    config = directory.load()
+    chip = classify_chip(directory.chip.read_text(encoding="utf-8"), config, str(directory.chip))
+    text = pyscpd.check_final(
+        chip,
+        directory.artifact("global").read_bytes(),
+        directory.artifact("assign").read_bytes(),
+        directory.artifact("final").read_bytes(),
+        write_config(config),
+    )
+    directory.drc.write_text(text, encoding="utf-8")
+    active, advisory = summarize(text)
+    print(f"wrote {directory.drc}: {active} active findings, {advisory} advisory")
+    return 1 if active else 0
 
 
 def command_list_algorithms(args: argparse.Namespace) -> int:
@@ -189,6 +227,11 @@ def build_parser() -> argparse.ArgumentParser:
     plot = commands.add_parser("plot", help="render a stage as SVG")
     plot.add_argument("-c", "--config", type=Path, required=True, help="the config.toml of the chip")
     plot.add_argument("--stage", choices=list(STAGES), default="layout", help="the stage to render")
+    plot.add_argument(
+        "--phase",
+        choices=list(FINAL_PHASES),
+        help="which phase of the final stage to draw; the end state by default",
+    )
     plot.add_argument("--run-dir", type=Path, help="the run directory a stage other than layout is read from")
     plot.add_argument("-o", "--output", type=Path, required=True, help="the SVG file to write")
     plot.add_argument("--width", type=int, default=2000, help="the display width of the picture in pixels")
@@ -203,6 +246,11 @@ def build_parser() -> argparse.ArgumentParser:
     render = commands.add_parser("render", help="write the chip, and optionally a stage, as GDSII or OASIS")
     render.add_argument("-c", "--config", type=Path, required=True, help="the config.toml of the chip")
     render.add_argument("--stage", choices=list(STAGES), default="layout", help="the stage to write beside the artwork")
+    render.add_argument(
+        "--phase",
+        choices=list(FINAL_PHASES),
+        help="which phase of the final stage to draw; the end state by default",
+    )
     render.add_argument("--run-dir", type=Path, help="the run directory a stage other than layout is read from")
     render.add_argument("-o", "--output", type=Path, required=True, help="the .gds or .oas file to write")
     render.set_defaults(run=command_render)
@@ -211,7 +259,17 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("-c", "--config", type=Path, required=True, help="the config.toml to run")
     plan.add_argument("-o", "--output", type=Path, required=True, help="the run directory to write")
     plan.add_argument("--stage", choices=list(IMPLEMENTED), help="run only this stage, resuming the run")
+    plan.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="print what a stage is doing while it runs, one line per round",
+    )
     plan.set_defaults(run=command_plan)
+
+    drc = commands.add_parser("drc", help="check a run against the design rules")
+    drc.add_argument("run_dir", type=Path, help="the run directory to check")
+    drc.set_defaults(run=command_drc)
 
     algorithms = commands.add_parser("list-algorithms", help="list the implementations of every stage")
     algorithms.set_defaults(run=command_list_algorithms)
