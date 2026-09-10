@@ -4,6 +4,9 @@ Written for whoever picks this up next. It says what the Corridor stage is,
 what was measured, what is deliberately different from the prototype, and what
 is still open.
 
+Step 2, the detail router, has its own briefing:
+[handover-detail-routing.md](handover-detail-routing.md).
+
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
 - Branch: `phase-4-routing-stages`, based on `8ef300a`
 - Prototype: `/Users/michaelfeldmeier/Documents/GitHub/FridgeCAD` (`0c5d6d9`)

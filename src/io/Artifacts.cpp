@@ -17,6 +17,7 @@
 #include <flatbuffers/flatbuffer_builder.h>
 #include <flatbuffers/verifier.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -86,6 +87,32 @@ void validateWires(
   }
 }
 
+void validateDetailWires(
+    const std::vector<std::unique_ptr<flatbuffers::artifacts::DetailWireT>>&
+        wires,
+    const std::string& what, Problems& problems) {
+  for (std::size_t index = 0; index < wires.size(); ++index) {
+    if (wires[index] == nullptr) {
+      problems.push_back(std::format("{} {}: missing", what, index));
+      continue;
+    }
+    const auto& path = wires[index]->path;
+    for (std::size_t step = 1; step < path.size(); ++step) {
+      const auto& before = path[step - 1];
+      const auto& after = path[step];
+      const auto dx =
+          std::max(before.x(), after.x()) - std::min(before.x(), after.x());
+      const auto dy =
+          std::max(before.y(), after.y()) - std::min(before.y(), after.y());
+      if (dx > 1 || dy > 1) {
+        problems.push_back(std::format("{} {} jumps from ({}, {}) to ({}, {})",
+                                       what, index, before.x(), before.y(),
+                                       after.x(), after.y()));
+      }
+    }
+  }
+}
+
 std::string join(const Problems& problems) {
   std::string joined;
   for (const auto& problem : problems) {
@@ -139,9 +166,18 @@ Problems validate(const ArtifactT& artifact) {
     }
     break;
   }
+  case StageOutput::DetailRouting: {
+    // A wire is drawn as the cells it runs over, so two consecutive cells
+    // differ by at most one along each axis. A path that steps further is not
+    // a way a wire could take, and nothing downstream can tell which of the
+    // two ends the gap belongs to.
+    const auto& routing = *artifact.output.AsDetailRouting();
+    validateDetailWires(routing.wires, "wire", problems);
+    validateDetailWires(routing.inner, "inner wire", problems);
+    break;
+  }
   case StageOutput::CapacityPlan:
   case StageOutput::GlobalRouting:
-  case StageOutput::DetailRouting:
     break;
   }
   return problems;

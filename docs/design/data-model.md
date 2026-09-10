@@ -335,9 +335,16 @@ it drifting.
 Two of these are not constant across chips, and making them derived therefore
 changes behavior: the detail-grid blockade becomes 4–9 rather than a fixed 6,
 and the straight-start stub becomes 10–11 rather than a fixed 9. That is the
-point — one literal cannot be correct on eight differently-scaled grids. Both
-are validated by benchmark result in phase 4, and a chip that genuinely needs a
-different value gets a documented override rather than a reverted rule.
+point — one literal cannot be correct on eight differently-scaled grids. A chip
+that genuinely needs a different value gets a documented override rather than a
+reverted rule.
+
+The detail-grid blockade is now measured on the eight benchmarks: the detail
+cell is 18.96 to 39.90 layout units, so `ceil(185 / cell) - 1` is **9** on the
+4- and 17-qubit chips, **4** on the 9-, 21- and 33-qubit ones and **5** on the
+45-, 57- and 69-qubit ones. The prototype's literal 6 is right on none of them,
+and its own cross-boundary pass computes the same expression a few lines above
+the place where it reads the literal.
 
 ## Coordinate systems
 

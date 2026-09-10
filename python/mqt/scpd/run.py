@@ -48,8 +48,8 @@ class RunError(RuntimeError):
 #: prototype's own drivers run the two in this order for the same reason.
 #:
 #: The Corridor stage stands between the assignment and the detail routing. It decides which
-#: corridors a wire runs through and where it crosses from one into the next; the detail router
-#: then fills in the pixels inside each.
+#: corridors a wire runs through and where it crosses from one into the next; the Detail stage
+#: then draws the cells inside each.
 STAGE_FILES: dict[str, str] = {
     "capacity": "01-capacity.fb",
     "global": "02-global.fb",
@@ -61,7 +61,7 @@ STAGE_FILES: dict[str, str] = {
 }
 
 #: The stages this release implements, in order.
-IMPLEMENTED: tuple[str, ...] = ("capacity", "global", "assign", "corridor")
+IMPLEMENTED: tuple[str, ...] = ("capacity", "global", "assign", "corridor", "detail")
 
 
 def stages_before(stage: str) -> list[str]:
@@ -208,8 +208,18 @@ class RunDirectory:
             data = pyscpd.route_global(chip, self._read("capacity"), packed, __version__)
         elif stage == "assign":
             data = pyscpd.assign(chip, self._read("capacity"), self._read("global"), packed, __version__)
-        else:
+        elif stage == "corridor":
             data = pyscpd.route_corridor(chip, self._read("capacity"), self._read("assign"), packed, __version__)
+        else:
+            data = pyscpd.route_detail(
+                chip,
+                self._read("capacity"),
+                self._read("global"),
+                self._read("assign"),
+                self._read("corridor"),
+                packed,
+                __version__,
+            )
 
         path = self.artifact(stage)
         path.write_bytes(data)

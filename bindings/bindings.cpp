@@ -90,6 +90,16 @@ assignmentOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
   return *output;
 }
 
+/// The corridor routing an artifact carries.
+const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT&
+corridorOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
+  const auto* output = artifact.output.AsCorridorRouting();
+  if (output == nullptr) {
+    throw std::invalid_argument("the artifact is not a corridor routing");
+  }
+  return *output;
+}
+
 } // namespace
 
 // The bindings expose what the command-line interface needs and nothing else.
@@ -184,6 +194,30 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "Run the Corridor stage. Returns 04-corridor.fb as bytes.");
 
   m.def(
+      "route_detail",
+      [](const nb::bytes& chip, const nb::bytes& capacity,
+         const nb::bytes& global, const nb::bytes& assignment,
+         const nb::bytes& corridor, const nb::bytes& config,
+         const std::string_view producer) {
+        const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
+        const auto design = mqt::scpd::io::readChip(asSpan(chip));
+        const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
+        const auto circuit = mqt::scpd::io::readArtifact(asSpan(global));
+        const auto assigned = mqt::scpd::io::readArtifact(asSpan(assignment));
+        const auto routed = mqt::scpd::io::readArtifact(asSpan(corridor));
+        const auto name =
+            mqt::scpd::pipeline::selectedDetailRouter(configuration);
+        return asArtifact(mqt::scpd::pipeline::detailRouters().make(name)->run(
+                              design, capacityOf(plan), globalOf(circuit),
+                              assignmentOf(assigned), corridorOf(routed),
+                              configuration),
+                          producer);
+      },
+      "chip"_a, "capacity"_a, "global"_a, "assignment"_a, "corridor"_a,
+      "config"_a, "producer"_a,
+      "Run the Detail stage. Returns 05-detail.fb as bytes.");
+
+  m.def(
       "algorithms",
       [] {
         std::vector<std::pair<std::string, std::vector<std::string>>>
@@ -197,6 +231,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                                 mqt::scpd::pipeline::assigners().names());
         registered.emplace_back("corridor-router",
                                 mqt::scpd::pipeline::corridorRouters().names());
+        registered.emplace_back("detail-router",
+                                mqt::scpd::pipeline::detailRouters().names());
         return registered;
       },
       "The implementations this build ships, one list per stage.");

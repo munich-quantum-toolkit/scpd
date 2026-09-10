@@ -19,6 +19,7 @@ from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.DetailRouting import DetailRoutingT
+from mqt.scpd.flatbuffers.artifacts.DetailWire import DetailWireT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
@@ -35,6 +36,7 @@ from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.design.Rotation import Rotation
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Arc import ArcT
+from mqt.scpd.flatbuffers.geometry.DCoord import DCoordT
 from mqt.scpd.flatbuffers.geometry.Line import LineT
 from mqt.scpd.flatbuffers.geometry.Path import PathT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
@@ -109,7 +111,15 @@ STAGE_OUTPUTS = [
     pytest.param(
         StageOutput.GlobalRouting, GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[]), id="global"
     ),
-    pytest.param(StageOutput.DetailRouting, DetailRoutingT(), id="detail"),
+    pytest.param(
+        StageOutput.DetailRouting,
+        DetailRoutingT(
+            grid=GridExtentT(width=12, height=9, origin=PointT()),
+            wires=[DetailWireT(path=[DCoordT(1, 1), DCoordT(2, 2), DCoordT(3, 2)]), DetailWireT(path=[])],
+            inner=[DetailWireT(path=[DCoordT(5, 5), DCoordT(5, 6)])],
+        ),
+        id="detail",
+    ),
     pytest.param(
         StageOutput.FinalRouting,
         FinalRoutingT(

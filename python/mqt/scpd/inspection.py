@@ -30,6 +30,7 @@ from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.Corridor import CorridorT
 from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
+from .flatbuffers.artifacts.DetailWire import DetailWireT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
@@ -52,6 +53,7 @@ from .flatbuffers.design.PortRef import PortRefT
 from .flatbuffers.design.Rotation import Rotation
 from .flatbuffers.design.UnassignedRole import UnassignedRole
 from .flatbuffers.geometry.Arc import ArcT
+from .flatbuffers.geometry.DCoord import DCoordT
 from .flatbuffers.geometry.Line import LineT
 from .flatbuffers.geometry.Path import PathT
 from .flatbuffers.geometry.Point import PointT
@@ -179,7 +181,13 @@ FIELDS: dict[type, dict[str, Field]] = {
         "corridors": ("list", ("table", CorridorT)),
         "slots": ("list", ("table", BorderSlotsT)),
     },
-    DetailRoutingT: {},
+    DCoordT: {"x": int, "y": int},
+    DetailWireT: {"path": ("list", ("table", DCoordT))},
+    DetailRoutingT: {
+        "grid": ("table", GridExtentT),
+        "wires": ("list", ("table", DetailWireT)),
+        "inner": ("list", ("table", DetailWireT)),
+    },
     FinalRoutingT: {
         "couplers": ("list", ("table", CpwCouplerT)),
         "bridges": ("list", ("table", BridgeT)),

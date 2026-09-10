@@ -26,6 +26,7 @@ from .flatbuffers.config.BridgeRule import BridgeRuleT
 from .flatbuffers.config.CapacityParams import CapacityParamsT
 from .flatbuffers.config.Config import ConfigT
 from .flatbuffers.config.CorridorParams import CorridorParamsT
+from .flatbuffers.config.DetailParams import DetailParamsT
 from .flatbuffers.config.GlobalParams import GlobalParamsT
 from .flatbuffers.config.GridParams import GridParamsT
 from .flatbuffers.config.PortConfig import PortConfigT
@@ -74,6 +75,15 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
     "global": {"router": "", "internal_bridges": False},
     "assignment": {"assigner": "", "launcher_target": 0},
     "corridor": {"router": "", "rounds": 12, "max_relaxation": 30},
+    "detail": {
+        "router": "",
+        "corridor_spacings": 4,
+        "rounds": 30,
+        "max_relaxation": 30,
+        "obstacle_penalty_reach": 185.0,
+        "obstacle_penalty": 10,
+        "orderings": 16,
+    },
     "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0},
 }
 
@@ -281,6 +291,24 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     stages.corridor.rounds = corridor.take("rounds", int, default=defaults["corridor"]["rounds"])
     stages.corridor.maxRelaxation = corridor.take("max_relaxation", int, default=defaults["corridor"]["max_relaxation"])
     corridor.finish()
+
+    detail = _Section("stages.detail", section.subtable("detail") or {}, problems)
+    stages.detail = DetailParamsT()
+    stages.detail.router = detail.take("router", str, default="")
+    for key, field in (
+        ("corridor_spacings", "corridorSpacings"),
+        ("rounds", "rounds"),
+        ("max_relaxation", "maxRelaxation"),
+        ("obstacle_penalty", "obstaclePenalty"),
+        ("orderings", "orderings"),
+    ):
+        setattr(stages.detail, field, detail.take(key, int, default=defaults["detail"][key]))
+    # A length in layout units, unlike everything else here, because what it bounds is a
+    # distance on the chip and not a count of anything.
+    stages.detail.obstaclePenaltyReach = detail.take(
+        "obstacle_penalty_reach", float, default=defaults["detail"]["obstacle_penalty_reach"]
+    )
+    detail.finish()
 
     solver = _Section("stages.solver", section.subtable("solver") or {}, problems)
     stages.solver = SolverParamsT()

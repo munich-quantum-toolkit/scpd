@@ -5,9 +5,18 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
+from mqt.scpd.flatbuffers.artifacts.DetailWire import DetailWire
+from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtent
+from typing import Optional
 np = import_numpy()
 
 # Output of the Detail stage.
+#
+# `wires` has one entry per connection of the Assignment, in its order, so it
+# lines up with `CorridorRouting.corridors` without a key. `inner` has one
+# entry per connection of the Global stage, in its order: those never entered
+# the corridor stage, because they paid for the free space they cross while
+# the inner circuit was solved.
 class DetailRouting(object):
     __slots__ = ['_tab']
 
@@ -30,11 +39,101 @@ class DetailRouting(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
+    # The grid the cells are counted on, so a reader can place them without
+    # rebuilding the run.
+    # DetailRouting
+    def Grid(self) -> Optional[GridExtent]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = GridExtent()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # DetailRouting
+    def Wires(self, j: int) -> Optional[DetailWire]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = DetailWire()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # DetailRouting
+    def WiresLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # DetailRouting
+    def WiresIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        return o == 0
+
+    # DetailRouting
+    def Inner(self, j: int) -> Optional[DetailWire]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = DetailWire()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # DetailRouting
+    def InnerLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # DetailRouting
+    def InnerIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        return o == 0
+
 def DetailRoutingStart(builder: flatbuffers.Builder):
-    builder.StartObject(0)
+    builder.StartObject(3)
 
 def Start(builder: flatbuffers.Builder):
     DetailRoutingStart(builder)
+
+def DetailRoutingAddGrid(builder: flatbuffers.Builder, grid: int):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(grid), 0)
+
+def AddGrid(builder: flatbuffers.Builder, grid: int):
+    DetailRoutingAddGrid(builder, grid)
+
+def DetailRoutingAddWires(builder: flatbuffers.Builder, wires: int):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(wires), 0)
+
+def AddWires(builder: flatbuffers.Builder, wires: int):
+    DetailRoutingAddWires(builder, wires)
+
+def DetailRoutingStartWiresVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartWiresVector(builder, numElems: int) -> int:
+    return DetailRoutingStartWiresVector(builder, numElems)
+
+def DetailRoutingAddInner(builder: flatbuffers.Builder, inner: int):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(inner), 0)
+
+def AddInner(builder: flatbuffers.Builder, inner: int):
+    DetailRoutingAddInner(builder, inner)
+
+def DetailRoutingStartInnerVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartInnerVector(builder, numElems: int) -> int:
+    return DetailRoutingStartInnerVector(builder, numElems)
 
 def DetailRoutingEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -42,14 +141,25 @@ def DetailRoutingEnd(builder: flatbuffers.Builder) -> int:
 def End(builder: flatbuffers.Builder) -> int:
     return DetailRoutingEnd(builder)
 
+import mqt.scpd.flatbuffers.artifacts.DetailWire
+import mqt.scpd.flatbuffers.artifacts.GridExtent
+try:
+    from typing import List, Optional
+except:
+    pass
 
 class DetailRoutingT(object):
 
     # DetailRoutingT
     def __init__(
         self,
+        grid = None,
+        wires = None,
+        inner = None,
     ):
-        pass
+        self.grid = grid  # type: Optional[mqt.scpd.flatbuffers.artifacts.GridExtent.GridExtentT]
+        self.wires = wires  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.DetailWire.DetailWireT]]
+        self.inner = inner  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.DetailWire.DetailWireT]]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -72,9 +182,51 @@ class DetailRoutingT(object):
     def _UnPack(self, detailRouting):
         if detailRouting is None:
             return
+        if detailRouting.Grid() is not None:
+            self.grid = mqt.scpd.flatbuffers.artifacts.GridExtent.GridExtentT.InitFromObj(detailRouting.Grid())
+        if not detailRouting.WiresIsNone():
+            self.wires = []
+            for i in range(detailRouting.WiresLength()):
+                if detailRouting.Wires(i) is None:
+                    self.wires.append(None)
+                else:
+                    detailWire_ = mqt.scpd.flatbuffers.artifacts.DetailWire.DetailWireT.InitFromObj(detailRouting.Wires(i))
+                    self.wires.append(detailWire_)
+        if not detailRouting.InnerIsNone():
+            self.inner = []
+            for i in range(detailRouting.InnerLength()):
+                if detailRouting.Inner(i) is None:
+                    self.inner.append(None)
+                else:
+                    detailWire_ = mqt.scpd.flatbuffers.artifacts.DetailWire.DetailWireT.InitFromObj(detailRouting.Inner(i))
+                    self.inner.append(detailWire_)
 
     # DetailRoutingT
     def Pack(self, builder):
+        if self.grid is not None:
+            grid = self.grid.Pack(builder)
+        if self.wires is not None:
+            wireslist = []
+            for i in range(len(self.wires)):
+                wireslist.append(self.wires[i].Pack(builder))
+            DetailRoutingStartWiresVector(builder, len(self.wires))
+            for i in reversed(range(len(self.wires))):
+                builder.PrependUOffsetTRelative(wireslist[i])
+            wires = builder.EndVector()
+        if self.inner is not None:
+            innerlist = []
+            for i in range(len(self.inner)):
+                innerlist.append(self.inner[i].Pack(builder))
+            DetailRoutingStartInnerVector(builder, len(self.inner))
+            for i in reversed(range(len(self.inner))):
+                builder.PrependUOffsetTRelative(innerlist[i])
+            inner = builder.EndVector()
         DetailRoutingStart(builder)
+        if self.grid is not None:
+            DetailRoutingAddGrid(builder, grid)
+        if self.wires is not None:
+            DetailRoutingAddWires(builder, wires)
+        if self.inner is not None:
+            DetailRoutingAddInner(builder, inner)
         detailRouting = DetailRoutingEnd(builder)
         return detailRouting

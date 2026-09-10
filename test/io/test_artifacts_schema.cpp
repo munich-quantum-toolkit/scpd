@@ -118,10 +118,61 @@ TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   EXPECT_EQ(global.output.type, StageOutput::GlobalRouting);
   EXPECT_NE(global.output.AsGlobalRouting(), nullptr);
 
-  const ArtifactT detail = readArtifact(writeArtifact(wrap(DetailRoutingT{})));
+  DetailRoutingT empty;
+  empty.grid = std::make_unique<GridExtentT>();
+  const ArtifactT detail = readArtifact(writeArtifact(wrap(std::move(empty))));
   EXPECT_EQ(detail.output.type, StageOutput::DetailRouting);
   EXPECT_NE(detail.output.AsDetailRouting(), nullptr);
   EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
+}
+
+TEST(ArtifactSchema, DetailRoutingRoundTrips) {
+  DetailRoutingT routing;
+  routing.grid = std::make_unique<GridExtentT>();
+  routing.grid->width = 12;
+  routing.grid->height = 9;
+  auto wire = std::make_unique<DetailWireT>();
+  wire->path.emplace_back(1, 1);
+  wire->path.emplace_back(2, 2);
+  wire->path.emplace_back(3, 2);
+  routing.wires.push_back(std::move(wire));
+  // A connection that was not drawn carries no cells, which is how a reader
+  // counts the failures rather than being handed a list beside the paths.
+  routing.wires.push_back(std::make_unique<DetailWireT>());
+  auto inner = std::make_unique<DetailWireT>();
+  inner->path.emplace_back(5, 5);
+  inner->path.emplace_back(5, 6);
+  routing.inner.push_back(std::move(inner));
+
+  const ArtifactT back = readArtifact(writeArtifact(wrap(std::move(routing))));
+
+  ASSERT_EQ(back.output.type, StageOutput::DetailRouting);
+  const auto& read = *back.output.AsDetailRouting();
+  ASSERT_NE(read.grid, nullptr);
+  EXPECT_EQ(read.grid->width, 12U);
+  ASSERT_EQ(read.wires.size(), 2U);
+  ASSERT_EQ(read.wires[0]->path.size(), 3U);
+  EXPECT_EQ(read.wires[0]->path[1].x(), 2U);
+  EXPECT_TRUE(read.wires[1]->path.empty());
+  ASSERT_EQ(read.inner.size(), 1U);
+  EXPECT_EQ(read.inner[0]->path.size(), 2U);
+}
+
+TEST(ArtifactSchema, RefusesAWireThatJumps) {
+  // A wire is the cells it runs over, so two of them in a row differ by at
+  // most one along each axis. Anything else is a gap no reader can close.
+  DetailRoutingT routing;
+  routing.grid = std::make_unique<GridExtentT>();
+  auto wire = std::make_unique<DetailWireT>();
+  wire->path.emplace_back(1, 1);
+  wire->path.emplace_back(4, 1);
+  routing.wires.push_back(std::move(wire));
+
+  ArtifactT artifact;
+  artifact.producer = "mqt-scpd test";
+  artifact.output.Set(std::move(routing));
+  EXPECT_THROW(static_cast<void>(writeArtifact(artifact)),
+               std::invalid_argument);
 }
 
 TEST(ArtifactSchema, CorridorRoutingRoundTrips) {

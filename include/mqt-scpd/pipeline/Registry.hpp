@@ -100,6 +100,10 @@ globalRouters();
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<ICorridorRouter>&
 corridorRouters();
 
+/// The detail routers this build ships.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IDetailRouter>&
+detailRouters();
+
 /// The name a configuration selects for a stage, or the stage's default when
 /// the configuration names none.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
@@ -112,5 +116,9 @@ selectedAssigner(const ConfigT& config);
 /// The corridor router a configuration selects, or the default.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
 selectedCorridorRouter(const ConfigT& config);
+
+/// The detail router a configuration selects, or the default.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
+selectedDetailRouter(const ConfigT& config);
 
 } // namespace mqt::scpd::pipeline

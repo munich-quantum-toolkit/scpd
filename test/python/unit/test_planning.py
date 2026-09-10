@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from mqt.scpd.artifacts import write_artifact
+from mqt.scpd.artifacts import read_artifact, write_artifact
 from mqt.scpd.chip import decode_chip
 from mqt.scpd.export.klayout import PLANNING_LAYERS, write_layout
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
@@ -23,7 +23,7 @@ from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.geometry.Point import PointT
-from mqt.scpd.planning import PLANNING_STAGES, PlanningError, planning_geometry
+from mqt.scpd.planning import PLANNING_STAGES, PlanningError, blockade, planning_geometry
 from mqt.scpd.plot import layout_svg
 from mqt.scpd.run import IMPLEMENTED, RunDirectory
 
@@ -166,6 +166,61 @@ def test_the_corridor_picture_draws_nothing_of_the_partitions_without_a_plan(
 
     assert geometry.corridors
     assert not geometry.partitions
+
+
+def test_the_detail_routing_carries_a_drawn_wire_per_connection(run: RunDirectory, chip) -> None:  # noqa: ANN001
+    """Each wire is the polyline of its bends, from its feed to its target."""
+    geometry = planning_geometry(
+        run.artifact("detail").read_bytes(), chip, "detail", run.artifact("capacity").read_bytes()
+    )
+
+    assert geometry.wires
+    # A wire names at least where it starts and where it ends, and no bend repeats its neighbour.
+    for wire in geometry.wires:
+        assert len(wire) >= 2
+        assert all(before != after for before, after in zip(wire, wire[1:], strict=False))
+    # The way the corridor planned is what the wire had to follow, so the two ends agree.
+    corridor = planning_geometry(
+        run.artifact("corridor").read_bytes(), chip, "corridor", run.artifact("capacity").read_bytes()
+    )
+    assert len(geometry.wires) == len(corridor.corridors)
+
+    def same(here: tuple[float, float], there: tuple[float, float]) -> bool:
+        # The two artifacts reach the same place by different arithmetic — one stores the layout
+        # point, the other multiplies the cell out again — so they agree to the last bit but one.
+        return abs(here[0] - there[0]) < 1e-6 and abs(here[1] - there[1]) < 1e-6
+
+    for wire, route in zip(geometry.wires, corridor.corridors, strict=True):
+        assert same(wire[0], route[0])
+        assert same(wire[-1], route[-1])
+    # The partitions are drawn under it, because a way through them is what it is.
+    assert geometry.partitions
+
+
+def test_the_detail_picture_draws_the_clearance_the_router_actually_keeps(
+    run: RunDirectory,
+    chip,  # noqa: ANN001
+) -> None:
+    """The band is the design rule as the router converted it to whole cells, not the rule itself.
+
+    A router that works in cells cannot keep 185 layout units; it keeps
+    ``ceil(185 / cell) - 1`` cells, which is a little less. Drawing the rule would draw a clearance
+    nothing keeps.
+    """
+    without = planning_geometry(run.artifact("detail").read_bytes(), chip, "detail")
+    assert without.clearance == 0.0
+    assert "l-clearance" not in layout_svg(chip, planning=without)
+
+    with_rule = planning_geometry(run.artifact("detail").read_bytes(), chip, "detail", clearance=185.0)
+    grid = read_artifact(run.artifact("detail").read_bytes()).output.grid
+    cell = min(float(grid.cellWidth), float(grid.cellHeight))
+    assert with_rule.clearance == blockade(185.0, cell)
+    assert 0 < with_rule.clearance < 185.0
+    assert with_rule.clearance % cell == pytest.approx(0.0, abs=1e-9)
+
+    svg = layout_svg(chip, planning=with_rule)
+    assert "l-clearance" in svg
+    assert f"stroke-width:{with_rule.clearance:.3f}".rstrip("0").rstrip(".") in svg
 
 
 def test_an_artifact_of_the_wrong_stage_is_refused(run: RunDirectory, chip) -> None:  # noqa: ANN001

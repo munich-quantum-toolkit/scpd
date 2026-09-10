@@ -12,6 +12,67 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Add the Detail stage: every wire of the plan is drawn cell by cell on the
+  detail grid, eight-connected, inside the partitions its corridor names, and no
+  two wires share a cell ([#116]) ([**@FeldmeierMichael**])
+- 🐛 Refuse the one crossing that shares no cell: a diagonal step past a corner
+  both of whose cells belong to one wire. The prototype's occupancy is a set of
+  pixels and never records the lines between them, so two eight-connected paths
+  can cross there without either noticing ([#116]) ([**@FeldmeierMichael**])
+- ✨ Draw a wire the per-partition pieces could not join in one search from the
+  point it is fed at to its target. A piece has to begin and end exactly at the
+  crossings the plan names, and where two wires both have to pass a narrow place
+  neither order fits; what is binding is which partitions the wire runs through,
+  not where along a border it crosses ([#116]) ([**@FeldmeierMichael**])
+- ✨ Derive the clearance the detail stage keeps between two wires from
+  `min_wire_spacing` on the detail grid. The prototype carries the same quantity
+  twice, computed in one pass and as the literal 6 in the other, and the two
+  disagree on every benchmark ([#116]) ([**@FeldmeierMichael**])
+- ✨ Render the Detail stage: `plot --stage detail` draws every wire as the
+  polyline of its bends, and `render --stage detail` writes the same on layers
+  of its own ([#116]) ([**@FeldmeierMichael**])
+- ✨ Draw the clearance a wire is entitled to: a band around every routed wire,
+  translucent in the SVG and a path on a layer of its own in the GDS, so that two
+  wires closer than the clearance are two bands that overlap. The band is
+  `min_wire_spacing` as the router converts it to whole cells, not the rule
+  itself, because a router that works in cells cannot keep a distance the cells
+  do not divide ([#116]) ([**@FeldmeierMichael**])
+- ✨ Hold the wire spacing between **every** pair of wires the Detail stage
+  draws, the inner circuit included, rather than between a wire and the two
+  beside it in the ring. The prototype cuts its clearance out of the search mask
+  and can only afford to do it for two neighbours; here the canvas carries a
+  field of how many wire cells lie within the rule of each cell, so the rule
+  against 240 wires costs what the rule against two cost. Over the eight
+  benchmarks this takes the places where the rule does not hold from 457 to zero
+  ([#116]) ([**@FeldmeierMichael**])
+- 🐛 Keep a wire's two fixed places charged with their clearance while the wire
+  is off the canvas. The point the assignment feeds a wire at and the cell of
+  its target port are where it has to be, and a wire drawn while another one was
+  lifted could settle within a wire spacing of where that other one had to
+  return to — a violation no later round can undo, because neither wire can move
+  the place ([#116]) ([**@FeldmeierMichael**])
+- 🐛 Count how close a wire runs to another with the wire itself off the
+  clearance field. Its own two ends are within the rule of the cells beside
+  them, so a wire that was charged before the count was always too close to
+  itself, and no wire was ever finished ([#116]) ([**@FeldmeierMichael**])
+- ✨ Treat the Corridor stage's crossings as a seed and not as a constraint: a
+  wire is drawn again from the point it is fed at to its target and crosses
+  where it can. The crossings a plan names sit as little as 13 layout units
+  apart on the benchmark chips, and no arrangement that runs through them can
+  hold a rule of 185 ([#116]) ([**@FeldmeierMichael**])
+- ✨ Let go of the wires behind a wire as well as ahead of it when its re-route
+  fails. The prototype's `back_count` loop describes the escalation and its
+  `back_count <= 0` runs the body exactly once; running it is what takes the
+  last three places on the 57-qubit chip ([#116]) ([**@FeldmeierMichael**])
+- ✨ Relax the corridor a wire is re-routed in, letting go of the wire ahead of
+  it one place further along each time and steering the search with the price of
+  leaving the room between its two neighbours rather than forbidding it. Without
+  it the clearance around those two covers the way most wires have, and they keep
+  the corners their pieces met at ([#116]) ([**@FeldmeierMichael**])
+- ✅ Check, over every benchmark chip, that every connection is drawn and that no
+  two wires come within the design rule of each other — the inner circuit
+  included. A wire that runs too close counts exactly as a wire that was never
+  drawn ([#116]) ([**@FeldmeierMichael**])
 - ✨ Add the Corridor stage: every assigned connection is routed through the
   partitions before any pixel is drawn, crossing a border only at a slot of its
   own and never meeting another wire inside a partition — neither crossing it
@@ -42,6 +103,20 @@ releases may include breaking changes.
 - ✨ Add `[stages.capacity] crossing_pitch`: how finely a partition border is
   divided into places a wire may cross. It is a planning figure and not a
   clearance rule ([#115]) ([**@FeldmeierMichael**])
+
+### Changed
+
+- ♻️ Quote every figure of the Detail stage against the grid rather than in
+  cells of it. `[stages.detail] corridor_half_width`, 40 cells, becomes
+  `corridor_spacings`, 4 wire spacings; `obstacle_penalty_radius`, 6 cells,
+  becomes `obstacle_penalty_reach`, 185 layout units. A cell is 19 layout units
+  on the 17-qubit grid and 40 on the 9-qubit one, so the same cell count stood
+  for two different distances ([#116]) ([**@FeldmeierMichael**])
+- ♻️ Raise `[stages.detail] rounds` to 30 and `max_relaxation` to 30, from the
+  prototype's 8 and 10. Its figures are enough for the clearance it holds — to
+  two wires — and holding it against every wire takes more sweeps to settle: at
+  8 and 10 the eight benchmarks leave 46 places where the rule does not hold
+  ([#116]) ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd plan`, the resumable run directory, and
   `mqt-scpd list-algorithms` ([#114]) ([**@FeldmeierMichael**])
 - ✨ Render the planning stages through the existing commands:
@@ -173,6 +248,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#116]: https://github.com/munich-quantum-toolkit/scpd/pull/116
 [#115]: https://github.com/munich-quantum-toolkit/scpd/pull/115
 [#114]: https://github.com/munich-quantum-toolkit/scpd/pull/114
 [#113]: https://github.com/munich-quantum-toolkit/scpd/pull/113

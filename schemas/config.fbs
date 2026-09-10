@@ -140,6 +140,57 @@ table CorridorParams {
   max_relaxation: uint32 = 30;
 }
 
+/// What the Detail stage is allowed to do.
+///
+/// The clearance the stage keeps between two wires is **not** here. It is
+/// derived from `min_wire_spacing` on the detail grid, because a clearance is
+/// a length in layout units and a cell count is a property of the grid; the
+/// prototype carries the same quantity twice, once computed and once as the
+/// literal 6, and the two disagree on every benchmark.
+table DetailParams {
+  /// The implementation, by the name it is registered under.
+  router: string;
+  /// How far to either side of its own path a wire may be moved when it is
+  /// re-routed across the partition borders, in wire spacings.
+  ///
+  /// This is the prototype's `K`, and its `K` is 40 cells of the detail grid:
+  /// a cell count and therefore not a distance, because one cell is 19 layout
+  /// units on the 17-qubit grid and 40 on the 9-qubit one. The same 40 stands
+  /// for 760 units on the one and 1600 on the other, which is four wire
+  /// spacings there and eight here. Counted in spacings it is the same
+  /// distance on all eight chips: room for the wire and for the wires either
+  /// side of it to move over by one.
+  corridor_spacings: uint32 = 4;
+  /// Sweeps over the wire list, alternating forward and backward. A wire that
+  /// has been re-routed is left alone; the sweeps exist so that a wire which
+  /// found no way through can take the room a later one has not claimed yet.
+  ///
+  /// The prototype's own figure is 8, and 8 is enough for what it asks: it
+  /// holds the clearance between a wire and the two beside it in the ring and
+  /// against nothing else. Holding it against every wire is a harder question
+  /// and takes more sweeps to settle — measured over the eight benchmarks, 8
+  /// sweeps leave 46 places where the rule does not hold and 30 leave three.
+  rounds: uint32 = 30;
+  /// How many neighbouring wires a failed re-route may let go of, counted
+  /// along the sweep direction first and then against it.
+  max_relaxation: uint32 = 30;
+  /// How far the cost of running close to an obstacle reaches, in layout
+  /// units. Zero switches the penalty off.
+  ///
+  /// A distance and not a cell count, for the same reason as
+  /// `corridor_spacings`: the prototype's 6 cells is 114 layout units on the
+  /// 17-qubit chip and 240 on the 9-qubit one.
+  obstacle_penalty_reach: double = 185.0;
+  /// What running right beside an obstacle costs, falling off linearly to
+  /// nothing at `obstacle_penalty_reach`. A price per step, against the ten a
+  /// step along an axis costs, so it is the same price on every grid.
+  obstacle_penalty: uint32 = 10;
+  /// How many orders the wires of one partition are tried in before the best
+  /// of them is kept. One means the wires are routed in the order they are
+  /// given.
+  orderings: uint32 = 16;
+}
+
 /// How the mixed-integer programs of the planning stages are solved.
 table SolverParams {
   /// "auto", "highs" or "gurobi". The environment variable SCPD_SOLVER
@@ -158,6 +209,7 @@ table StageParams {
   assignment: AssignmentParams;
   solver: SolverParams;
   corridor: CorridorParams;
+  detail: DetailParams;
 }
 
 /// The whole run configuration.

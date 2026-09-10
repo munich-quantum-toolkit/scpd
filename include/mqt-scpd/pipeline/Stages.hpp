@@ -20,6 +20,7 @@ namespace mqt::scpd::pipeline {
 using flatbuffers::artifacts::AssignmentT;
 using flatbuffers::artifacts::CapacityPlanT;
 using flatbuffers::artifacts::CorridorRoutingT;
+using flatbuffers::artifacts::DetailRoutingT;
 using flatbuffers::artifacts::GlobalRoutingT;
 using flatbuffers::config::ConfigT;
 using flatbuffers::design::ChipT;
@@ -116,6 +117,34 @@ public:
                                              const CapacityPlanT& capacity,
                                              const AssignmentT& assignment,
                                              const ConfigT& config) const = 0;
+};
+
+/// Draws every wire on the detail grid, cell by cell.
+///
+/// The corridor stage said which partitions a wire runs through and where it
+/// crosses from one into the next; this is where the copper goes. A wire is
+/// cut at its crossings into one piece per partition, each piece is searched
+/// for inside that partition alone, the pieces are joined in corridor order,
+/// and the joined wire is then offered a way of its own through the same
+/// partitions.
+///
+/// It takes the global routing as well as the corridor routing because the
+/// inner circuit never entered the corridor stage: those connections paid for
+/// the free space they cross while the inner circuit was solved, so they come
+/// here unrouted and are drawn last, against the wires of the ring.
+class MQT_SCPD_PIPELINE_EXPORT IDetailRouter {
+public:
+  IDetailRouter() = default;
+  IDetailRouter(const IDetailRouter&) = delete;
+  IDetailRouter& operator=(const IDetailRouter&) = delete;
+  IDetailRouter(IDetailRouter&&) = delete;
+  IDetailRouter& operator=(IDetailRouter&&) = delete;
+  virtual ~IDetailRouter() = default;
+
+  [[nodiscard]] virtual DetailRoutingT
+  run(const ChipT& chip, const CapacityPlanT& capacity,
+      const GlobalRoutingT& global, const AssignmentT& assignment,
+      const CorridorRoutingT& corridor, const ConfigT& config) const = 0;
 };
 
 } // namespace mqt::scpd::pipeline

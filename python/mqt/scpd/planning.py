@@ -16,6 +16,7 @@ directory holds, which is what lets either of them run against a half-finished r
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -24,9 +25,12 @@ from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityElement import CapacityElement
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .flatbuffers.design.Chip import ChipT
 
 __all__ = ["PLANNING_STAGES", "PlanningError", "PlanningGeometry", "planning_geometry"]
@@ -37,6 +41,7 @@ PLANNING_STAGES: dict[str, str] = {
     "global": "02-global.fb",
     "assign": "03-assign.fb",
     "corridor": "04-corridor.fb",
+    "detail": "05-detail.fb",
 }
 
 #: A point in layout units.
@@ -79,6 +84,19 @@ class PlanningGeometry:
     corridors: list[list[Point]] = field(default_factory=list)
     #: Every crossing slot a border offers, taken or not.
     slots: list[Point] = field(default_factory=list)
+    #: Each wire of the ring as it is actually drawn, at its bends.
+    wires: list[list[Point]] = field(default_factory=list)
+    #: Each wire of the inner circuit, likewise.
+    inner_wires: list[list[Point]] = field(default_factory=list)
+    #: The clearance the stage actually keeps between two wires, in layout units, or zero when
+    #: the caller named no design rule.
+    #:
+    #: This is **not** ``min_wire_spacing``. The router works in cells, so the rule is first
+    #: converted to a whole number of them — the prototype's own
+    #: ``ceil(min_wire_spacing / cell) - 1`` — and what it then enforces is that many cells, which
+    #: is a little less than the rule asked for. Drawing the rule instead of the conversion would
+    #: draw a clearance nothing keeps.
+    clearance: float = 0.0
 
     def is_empty(self) -> bool:
         """Whether the stage produced nothing to draw.
@@ -99,6 +117,8 @@ class PlanningGeometry:
             self.ring,
             self.corridors,
             self.slots,
+            self.wires,
+            self.inner_wires,
         ))
 
 
@@ -262,7 +282,75 @@ def _corridor(routing: CorridorRoutingT, geometry: PlanningGeometry) -> None:
         geometry.corridors.append(route)
 
 
-def planning_geometry(data: bytes, chip: ChipT, stage: str, capacity: bytes | None = None) -> PlanningGeometry:
+def _bends(path: list[Any], to_layout: Callable[[int, int], Point]) -> list[Point]:
+    """One drawn wire as its bends, in layout units.
+
+    A wire is stored cell by cell, and a run of cells in one direction is a straight line: keeping
+    only the cell where the direction changes turns a few thousand cells into a few dozen points
+    and draws exactly the same polyline. Without it the largest chip's picture is megabytes of
+    coordinates that no viewer can tell apart.
+
+    Returns:
+        The corners of the polyline, ends included.
+    """
+    if not path:
+        return []
+    kept = [0]
+    for index in range(1, len(path) - 1):
+        before, here, after = path[index - 1], path[index], path[index + 1]
+        if (here.x - before.x, here.y - before.y) != (after.x - here.x, after.y - here.y):
+            kept.append(index)
+    if len(path) > 1:
+        kept.append(len(path) - 1)
+    return [to_layout(path[index].x, path[index].y) for index in kept]
+
+
+def blockade(wire_spacing: float, cell: float) -> float:
+    """The clearance a router on cells of ``cell`` layout units keeps for a rule of ``wire_spacing``.
+
+    The conversion is the prototype's own, and it is a conversion and not a rounding: the rule is
+    how many cells it spans, rounded up, less one, and the clearance that is then enforced is that
+    many cells. On the eight benchmark chips it comes to 158 to 180 layout units for a rule of 185.
+
+    Returns:
+        The clearance in layout units, or zero when the rule or the cell is not positive.
+    """
+    if wire_spacing <= 0 or cell <= 0:
+        return 0.0
+    return max(0.0, math.ceil(wire_spacing / cell) - 1) * cell
+
+
+def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: float) -> None:
+    """Fill the layers a detail routing carries."""
+    grid = routing.grid
+    if grid is None or grid.origin is None:
+        return
+    # The grid the wires were drawn on is what decides the clearance, and the artifact carries it,
+    # so the picture converts the rule exactly as the stage did.
+    geometry.clearance = blockade(wire_spacing, min(float(grid.cellWidth), float(grid.cellHeight)))
+
+    def to_layout(x: int, y: int) -> Point:
+        # A cell is named by its corner in the frame the partition geometry uses, so the middle of
+        # the cell is half a step on. That is where the corridor stage puts its own places, which
+        # is what makes the two pictures line up.
+        return (
+            float(grid.origin.x) + (x + 0.5) * float(grid.cellWidth),
+            float(grid.origin.y) + (y + 0.5) * float(grid.cellHeight),
+        )
+
+    for wire in _entries(routing.wires):
+        points = _bends(_entries(wire.path), to_layout)
+        if len(points) >= 2:
+            geometry.wires.append(points)
+    for wire in _entries(routing.inner):
+        points = _bends(_entries(wire.path), to_layout)
+        if len(points) >= 2:
+            geometry.inner_wires.append(points)
+
+
+def planning_geometry(
+    data: bytes, chip: ChipT, stage: str, capacity: bytes | None = None, clearance: float = 0.0
+) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
     Args:
@@ -271,7 +359,11 @@ def planning_geometry(data: bytes, chip: ChipT, stage: str, capacity: bytes | No
         stage: Which stage the artifact is expected to be from.
         capacity: The capacity artifact of the same run, for the stages that are drawn over the
             free space they had to fit into. The global stage reads its gates, and the corridor
-            stage the partitions its wires run through.
+            and detail stages the partitions their wires run through.
+        clearance: The design rule ``min_wire_spacing``, in layout units. The detail stage converts
+            it to the whole number of cells its router works in and draws a band of *that* width
+            around every wire, so that two wires closer than the router's own clearance are two
+            bands that overlap.
 
     Returns:
         The geometry, in layout units.
@@ -320,6 +412,19 @@ def planning_geometry(data: bytes, chip: ChipT, stage: str, capacity: bytes | No
         _corridor(output, geometry)
         # A corridor is a way through the partitions, so the partitions are what makes the
         # picture readable at all.
+        if capacity is not None:
+            plan = read_artifact(capacity).output
+            if not isinstance(plan, CapacityPlanT):
+                msg = "the capacity artifact is not a capacity plan"
+                raise PlanningError(msg)
+            _capacity(plan, geometry)
+    elif stage == "detail":
+        if not isinstance(output, DetailRoutingT):
+            msg = "the artifact is not a detail routing"
+            raise PlanningError(msg)
+        _detail(output, geometry, clearance)
+        # The partitions are what a wire had to stay inside, so they are what makes a drawn wire
+        # readable as a route rather than as a squiggle.
         if capacity is not None:
             plan = read_artifact(capacity).output
             if not isinstance(plan, CapacityPlanT):

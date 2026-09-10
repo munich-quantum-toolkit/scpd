@@ -25,6 +25,11 @@ def assign(chip: bytes, capacity: bytes, global_: bytes, config: bytes, producer
 def route_corridor(chip: bytes, capacity: bytes, assignment: bytes, config: bytes, producer: str) -> bytes:
     """Run the Corridor stage. Returns 04-corridor.fb as bytes."""
 
+def route_detail(
+    chip: bytes, capacity: bytes, global_: bytes, assignment: bytes, corridor: bytes, config: bytes, producer: str
+) -> bytes:
+    """Run the Detail stage. Returns 05-detail.fb as bytes."""
+
 def algorithms() -> list[tuple[str, list[str]]]:
     """The implementations this build ships, one list per stage."""
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .artifacts import ArtifactError
 from .chip import ChipError, decode_chip, load_chip
@@ -29,15 +30,18 @@ from .plot import STAGES, PlotError, layout_svg
 from .run import IMPLEMENTED, RunDirectory, RunError
 from .solvers import register as register_external_solver
 
+if TYPE_CHECKING:
+    from .flatbuffers.config.Config import ConfigT
 
-def _load(config_path: Path) -> tuple[bytes, Path]:
+
+def _load(config_path: Path) -> tuple[bytes, ConfigT, Path]:
     """Load the configuration and its chip, for the commands that draw the chip.
 
     Returns:
-        The classified chip bytes and the configuration path.
+        The classified chip bytes, the configuration and its path.
     """
     config = load_config(config_path)
-    return load_chip(config, config_path), config_path
+    return load_chip(config, config_path), config, config_path
 
 
 def command_doctor(args: argparse.Namespace) -> int:
@@ -51,7 +55,7 @@ def command_doctor(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
-def _planning_for(args: argparse.Namespace, chip_bytes: bytes):  # noqa: ANN202
+def _planning_for(args: argparse.Namespace, chip_bytes: bytes, config: ConfigT):  # noqa: ANN202
     """What a planning stage produced, or None for the plain layout view.
 
     Returns:
@@ -76,9 +80,12 @@ def _planning_for(args: argparse.Namespace, chip_bytes: bytes):  # noqa: ANN202
     # The global picture is drawn over the gates the circuit had to pay for and the corridor
     # picture over the partitions its wires run through, so the capacity artifact of the same
     # run is read beside them when the run still carries one.
-    plan = directory.artifact("capacity") if args.stage in {"global", "corridor"} else None
+    plan = directory.artifact("capacity") if args.stage in {"global", "corridor", "detail"} else None
     capacity = plan.read_bytes() if plan is not None and plan.is_file() else None
-    return planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity)
+    # The wires are drawn with the clearance the design rules demand around them, so that two
+    # wires closer than the rule allows are two bands that overlap.
+    spacing = config.rules.minWireSpacing if config.rules is not None else 0.0
+    return planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, clearance=spacing)
 
 
 def command_plot(args: argparse.Namespace) -> int:
@@ -87,8 +94,8 @@ def command_plot(args: argparse.Namespace) -> int:
     Returns:
         The exit code.
     """
-    chip_bytes, config_path = _load(args.config)
-    planning = _planning_for(args, chip_bytes)
+    chip_bytes, config, config_path = _load(args.config)
+    planning = _planning_for(args, chip_bytes, config)
     svg = layout_svg(
         decode_chip(chip_bytes),
         width=args.width,
@@ -107,8 +114,8 @@ def command_render(args: argparse.Namespace) -> int:
     Returns:
         The exit code.
     """
-    chip_bytes, _ = _load(args.config)
-    planning = _planning_for(args, chip_bytes)
+    chip_bytes, config, _ = _load(args.config)
+    planning = _planning_for(args, chip_bytes, config)
     summary = write_layout(decode_chip(chip_bytes), args.output, planning=planning)
     extra = f", {summary.planning} planning shapes" if summary.planning else ""
     print(f"wrote {summary.path} as {summary.format}: {summary.polygons} polygons, {summary.ports} ports{extra}")

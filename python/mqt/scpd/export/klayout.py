@@ -51,6 +51,9 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "ring": (18, 0, "plan.ring"),
     "corridors": (19, 0, "plan.corridor"),
     "slots": (20, 0, "plan.slot"),
+    "wires": (21, 0, "plan.wire"),
+    "inner_wires": (22, 0, "plan.inner-wire"),
+    "clearance": (23, 0, "plan.clearance"),
 }
 
 #: How wide a planning line is drawn, in layout units. A path needs a width to be a shape at all;
@@ -205,6 +208,22 @@ def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # noq
         if len(route) >= 2:
             top.shapes(layer("corridors")).insert(path(route))
             written += 1
+    for name, routes in (("wires", planning.wires), ("inner_wires", planning.inner_wires)):
+        target = layer(name)
+        for route in routes:
+            if len(route) >= 2:
+                top.shapes(target).insert(path(route))
+                written += 1
+    # The room every wire is entitled to, as a path one clearance wide — the design rule as the
+    # router converted it to whole cells, not the rule itself. Two wires closer than that are two
+    # of these that overlap, which is what a boolean on this layer finds; the layer carries no
+    # manufacturing intent, like the rest of the overlay.
+    if planning.clearance > 0:
+        target = layer("clearance")
+        for route in (*planning.wires, *planning.inner_wires):
+            if len(route) >= 2:
+                top.shapes(target).insert(kdb.DPath(list(starmap(kdb.DPoint, route)), planning.clearance))
+                written += 1
     for x, y in planning.slots:
         top.shapes(layer("slots")).insert(
             kdb.DPolygon(

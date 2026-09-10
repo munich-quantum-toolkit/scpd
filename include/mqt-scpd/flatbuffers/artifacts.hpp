@@ -73,6 +73,10 @@ struct CorridorRouting;
 struct CorridorRoutingBuilder;
 struct CorridorRoutingT;
 
+struct DetailWire;
+struct DetailWireBuilder;
+struct DetailWireT;
+
 struct DetailRouting;
 struct DetailRoutingBuilder;
 struct DetailRoutingT;
@@ -119,6 +123,8 @@ bool operator==(const CorridorT &lhs, const CorridorT &rhs);
 bool operator!=(const CorridorT &lhs, const CorridorT &rhs);
 bool operator==(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs);
 bool operator!=(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs);
+bool operator==(const DetailWireT &lhs, const DetailWireT &rhs);
+bool operator!=(const DetailWireT &lhs, const DetailWireT &rhs);
 bool operator==(const DetailRoutingT &lhs, const DetailRoutingT &rhs);
 bool operator!=(const DetailRoutingT &lhs, const DetailRoutingT &rhs);
 bool operator==(const FinalRoutingT &lhs, const FinalRoutingT &rhs);
@@ -1980,18 +1986,131 @@ inline ::flatbuffers::Offset<CorridorRouting> CreateCorridorRoutingDirect(
 
 ::flatbuffers::Offset<CorridorRouting> CreateCorridorRouting(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct DetailWireT : public ::flatbuffers::NativeTable {
+  typedef DetailWire TableType;
+  std::vector<mqt::scpd::flatbuffers::geometry::DCoord> path{};
+};
+
+/// One wire's path on the detail grid, cell by cell.
+///
+/// The cells are eight-connected and run from the point the wire is fed at to
+/// the cell its target port is reached at. A wire the stage could not draw
+/// carries no cells, so a reader counts the failures rather than being handed
+/// a separate list that can disagree with the paths beside it.
+struct DetailWire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DetailWireT NativeTableType;
+  typedef DetailWireBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_PATH = 4
+  };
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::DCoord *> *path() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::DCoord *> *>(VT_PATH);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_PATH) &&
+           verifier.VerifyVector(path()) &&
+           verifier.EndTable();
+  }
+  DetailWireT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DetailWireT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DetailWire> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DetailWireT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DetailWireBuilder {
+  typedef DetailWire Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_path(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::DCoord *>> path) {
+    fbb_.AddOffset(DetailWire::VT_PATH, path);
+  }
+  explicit DetailWireBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DetailWire> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DetailWire>(end);
+    fbb_.Required(o, DetailWire::VT_PATH);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DetailWire> CreateDetailWire(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::DCoord *>> path = 0) {
+  DetailWireBuilder builder_(_fbb);
+  builder_.add_path(path);
+  return builder_.Finish();
+}
+
+struct DetailWire::Traits {
+  using type = DetailWire;
+  static auto constexpr Create = CreateDetailWire;
+};
+
+inline ::flatbuffers::Offset<DetailWire> CreateDetailWireDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<mqt::scpd::flatbuffers::geometry::DCoord> *path = nullptr) {
+  auto path__ = path ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::DCoord>(*path) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateDetailWire(
+      _fbb,
+      path__);
+}
+
+::flatbuffers::Offset<DetailWire> CreateDetailWire(::flatbuffers::FlatBufferBuilder &_fbb, const DetailWireT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct DetailRoutingT : public ::flatbuffers::NativeTable {
   typedef DetailRouting TableType;
+  std::unique_ptr<mqt::scpd::flatbuffers::artifacts::GridExtentT> grid{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::DetailWireT>> wires{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::DetailWireT>> inner{};
+  DetailRoutingT() = default;
+  DetailRoutingT(const DetailRoutingT &o);
+  DetailRoutingT(DetailRoutingT&&) FLATBUFFERS_NOEXCEPT = default;
+  DetailRoutingT &operator=(DetailRoutingT o) FLATBUFFERS_NOEXCEPT;
 };
 
 /// Output of the Detail stage.
+///
+/// `wires` has one entry per connection of the Assignment, in its order, so it
+/// lines up with `CorridorRouting.corridors` without a key. `inner` has one
+/// entry per connection of the Global stage, in its order: those never entered
+/// the corridor stage, because they paid for the free space they cross while
+/// the inner circuit was solved.
 struct DetailRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef DetailRoutingT NativeTableType;
   typedef DetailRoutingBuilder Builder;
   struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_GRID = 4,
+    VT_WIRES = 6,
+    VT_INNER = 8
+  };
+  /// The grid the cells are counted on, so a reader can place them without
+  /// rebuilding the run.
+  const mqt::scpd::flatbuffers::artifacts::GridExtent *grid() const {
+    return GetPointer<const mqt::scpd::flatbuffers::artifacts::GridExtent *>(VT_GRID);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> *wires() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> *>(VT_WIRES);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> *inner() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> *>(VT_INNER);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_GRID) &&
+           verifier.VerifyTable(grid()) &&
+           VerifyOffsetRequired(verifier, VT_WIRES) &&
+           verifier.VerifyVector(wires()) &&
+           verifier.VerifyVectorOfTables(wires()) &&
+           VerifyOffsetRequired(verifier, VT_INNER) &&
+           verifier.VerifyVector(inner()) &&
+           verifier.VerifyVectorOfTables(inner()) &&
            verifier.EndTable();
   }
   DetailRoutingT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -2003,6 +2122,15 @@ struct DetailRoutingBuilder {
   typedef DetailRouting Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
+  void add_grid(::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> grid) {
+    fbb_.AddOffset(DetailRouting::VT_GRID, grid);
+  }
+  void add_wires(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>>> wires) {
+    fbb_.AddOffset(DetailRouting::VT_WIRES, wires);
+  }
+  void add_inner(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>>> inner) {
+    fbb_.AddOffset(DetailRouting::VT_INNER, inner);
+  }
   explicit DetailRoutingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -2010,13 +2138,22 @@ struct DetailRoutingBuilder {
   ::flatbuffers::Offset<DetailRouting> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<DetailRouting>(end);
+    fbb_.Required(o, DetailRouting::VT_GRID);
+    fbb_.Required(o, DetailRouting::VT_WIRES);
+    fbb_.Required(o, DetailRouting::VT_INNER);
     return o;
   }
 };
 
 inline ::flatbuffers::Offset<DetailRouting> CreateDetailRouting(
-    ::flatbuffers::FlatBufferBuilder &_fbb) {
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> grid = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>>> wires = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>>> inner = 0) {
   DetailRoutingBuilder builder_(_fbb);
+  builder_.add_inner(inner);
+  builder_.add_wires(wires);
+  builder_.add_grid(grid);
   return builder_.Finish();
 }
 
@@ -2024,6 +2161,20 @@ struct DetailRouting::Traits {
   using type = DetailRouting;
   static auto constexpr Create = CreateDetailRouting;
 };
+
+inline ::flatbuffers::Offset<DetailRouting> CreateDetailRoutingDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> grid = 0,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> *wires = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> *inner = nullptr) {
+  auto wires__ = wires ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>>(*wires) : 0;
+  auto inner__ = inner ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>>(*inner) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateDetailRouting(
+      _fbb,
+      grid,
+      wires__,
+      inner__);
+}
 
 ::flatbuffers::Offset<DetailRouting> CreateDetailRouting(::flatbuffers::FlatBufferBuilder &_fbb, const DetailRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
@@ -3222,14 +3373,69 @@ inline ::flatbuffers::Offset<CorridorRouting> CorridorRouting::Pack(::flatbuffer
 }
 
 
-inline bool operator==(const DetailRoutingT &, const DetailRoutingT &) {
-  return true;
+inline bool operator==(const DetailWireT &lhs, const DetailWireT &rhs) {
+  return
+      (lhs.path == rhs.path);
+}
+
+inline bool operator!=(const DetailWireT &lhs, const DetailWireT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline DetailWireT *DetailWire::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<DetailWireT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DetailWire::UnPackTo(DetailWireT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = path(); if (_e) { _o->path.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->path[_i] = *_e->Get(_i); } } else { _o->path.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<DetailWire> CreateDetailWire(::flatbuffers::FlatBufferBuilder &_fbb, const DetailWireT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DetailWire::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DetailWire> DetailWire::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DetailWireT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DetailWireT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _path = _fbb.CreateVectorOfStructs(_o->path);
+  return mqt::scpd::flatbuffers::artifacts::CreateDetailWire(
+      _fbb,
+      _path);
+}
+
+
+inline bool operator==(const DetailRoutingT &lhs, const DetailRoutingT &rhs) {
+  return
+      ((lhs.grid == rhs.grid) || (lhs.grid && rhs.grid && *lhs.grid == *rhs.grid)) &&
+      (lhs.wires.size() == rhs.wires.size() && std::equal(lhs.wires.cbegin(), lhs.wires.cend(), rhs.wires.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::DetailWireT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::DetailWireT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.inner.size() == rhs.inner.size() && std::equal(lhs.inner.cbegin(), lhs.inner.cend(), rhs.inner.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::DetailWireT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::DetailWireT> const &b) { return (a == b) || (a && b && *a == *b); }));
 }
 
 inline bool operator!=(const DetailRoutingT &lhs, const DetailRoutingT &rhs) {
     return !(lhs == rhs);
 }
 
+
+inline DetailRoutingT::DetailRoutingT(const DetailRoutingT &o)
+      : grid((o.grid) ? new mqt::scpd::flatbuffers::artifacts::GridExtentT(*o.grid) : nullptr) {
+  wires.reserve(o.wires.size());
+  for (const auto &wires_ : o.wires) { wires.emplace_back((wires_) ? new mqt::scpd::flatbuffers::artifacts::DetailWireT(*wires_) : nullptr); }
+  inner.reserve(o.inner.size());
+  for (const auto &inner_ : o.inner) { inner.emplace_back((inner_) ? new mqt::scpd::flatbuffers::artifacts::DetailWireT(*inner_) : nullptr); }
+}
+
+inline DetailRoutingT &DetailRoutingT::operator=(DetailRoutingT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(grid, o.grid);
+  std::swap(wires, o.wires);
+  std::swap(inner, o.inner);
+  return *this;
+}
 
 inline DetailRoutingT *DetailRouting::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::make_unique<DetailRoutingT>();
@@ -3240,6 +3446,9 @@ inline DetailRoutingT *DetailRouting::UnPack(const ::flatbuffers::resolver_funct
 inline void DetailRouting::UnPackTo(DetailRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
+  { auto _e = grid(); if (_e) { if(_o->grid) { _e->UnPackTo(_o->grid.get(), _resolver); } else { _o->grid = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::GridExtentT>(_e->UnPack(_resolver)); } } else if (_o->grid) { _o->grid.reset(); } }
+  { auto _e = wires(); if (_e) { _o->wires.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->wires[_i]) { _e->Get(_i)->UnPackTo(_o->wires[_i].get(), _resolver); } else { _o->wires[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::DetailWireT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->wires.resize(0); } }
+  { auto _e = inner(); if (_e) { _o->inner.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->inner[_i]) { _e->Get(_i)->UnPackTo(_o->inner[_i].get(), _resolver); } else { _o->inner[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::DetailWireT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->inner.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<DetailRouting> CreateDetailRouting(::flatbuffers::FlatBufferBuilder &_fbb, const DetailRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -3250,8 +3459,14 @@ inline ::flatbuffers::Offset<DetailRouting> DetailRouting::Pack(::flatbuffers::F
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DetailRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _grid = _o->grid ? CreateGridExtent(_fbb, _o->grid.get(), _rehasher) : 0;
+  auto _wires = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> (_o->wires.size(), [](size_t i, _VectorArgs *__va) { return CreateDetailWire(*__va->__fbb, __va->__o->wires[i].get(), __va->__rehasher); }, &_va );
+  auto _inner = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> (_o->inner.size(), [](size_t i, _VectorArgs *__va) { return CreateDetailWire(*__va->__fbb, __va->__o->inner[i].get(), __va->__rehasher); }, &_va );
   return mqt::scpd::flatbuffers::artifacts::CreateDetailRouting(
-      _fbb);
+      _fbb,
+      _grid,
+      _wires,
+      _inner);
 }
 
 

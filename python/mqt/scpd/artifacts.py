@@ -27,6 +27,7 @@ from .flatbuffers.artifacts.Artifact import Artifact, ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
@@ -37,6 +38,7 @@ from .flatbuffers.geometry.Line import LineT
 if TYPE_CHECKING:
     from .flatbuffers.artifacts.BorderSlots import BorderSlotsT
     from .flatbuffers.artifacts.Corridor import CorridorT
+    from .flatbuffers.artifacts.DetailWire import DetailWireT
     from .flatbuffers.artifacts.Wire import WireT
     from .flatbuffers.design.Bridge import BridgeT
     from .flatbuffers.design.Connection import ConnectionT
@@ -52,6 +54,7 @@ _OUTPUT_TYPES: dict[int, type] = {
     StageOutput.Assignment: AssignmentT,
     StageOutput.GlobalRouting: GlobalRoutingT,
     StageOutput.CorridorRouting: CorridorRoutingT,
+    StageOutput.DetailRouting: DetailRoutingT,
     StageOutput.FinalRouting: FinalRoutingT,
     StageOutput.Geometry: GeometryT,
 }
@@ -150,6 +153,11 @@ def _problems(artifact: ArtifactT) -> list[str]:
     elif isinstance(artifact.output, CorridorRoutingT):
         _check_list(artifact.output.corridors, "corridors", _corridor_problems, problems)
         _check_list(artifact.output.slots, "slots", _border_slots_problems, problems)
+    elif isinstance(artifact.output, DetailRoutingT):
+        if artifact.output.grid is None:
+            problems.append("grid is missing")
+        _check_list(artifact.output.wires, "wires", _detail_wire_problems, problems)
+        _check_list(artifact.output.inner, "inner", _detail_wire_problems, problems)
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)
@@ -173,6 +181,15 @@ def _corridor_problems(corridor: CorridorT) -> list[str]:
         if len(corridor.crossings) + 1 != len(corridor.partitions):
             problems.append("crossings")
     return [f"{name} is missing" for name in problems]
+
+
+def _detail_wire_problems(wire: DetailWireT) -> list[str]:
+    """The required fields one drawn wire is missing.
+
+    Returns:
+        One message per missing field.
+    """
+    return ["path is missing"] if wire.path is None else []
 
 
 def _border_slots_problems(slots: BorderSlotsT) -> list[str]:

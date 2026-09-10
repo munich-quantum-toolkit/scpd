@@ -56,6 +56,9 @@ PLANNING_COLORS: dict[str, str] = {
     "ring": "#606060",
     "corridor": "#e85d04",
     "slot": "#495057",
+    "wire": "#c1121f",
+    "innerwire": "#0077b6",
+    "clearance": "#c1121f",
 }
 
 #: The fill of each role in the port legend. The colors stay apart from the obstacle fill.
@@ -230,6 +233,22 @@ def _planning_layers(
     if planning.corridors:
         data = "".join(polyline(route) for route in planning.corridors)
         parts.append(f'<g class="l-corridor"><path d="{data}"/></g>')
+    if planning.clearance > 0 and (planning.wires or planning.inner_wires):
+        # The room every wire is entitled to: a band one clearance wide around it, drawn under
+        # the wires themselves. Each wire is its own element and the band is translucent, so two
+        # wires closer than the clearance are two bands whose overlap is darker — which is the
+        # whole point of drawing it. The width is in layout units, not on screen, because a
+        # clearance is a physical distance; it is the design rule as the router converted it to
+        # whole cells, not the rule itself, so what is drawn is what is kept.
+        bands = "".join(f'<path d="{polyline(wire)}"/>' for wire in [*planning.wires, *planning.inner_wires])
+        parts.append(f'<g class="l-clearance">{bands}</g>')
+    if planning.wires:
+        # The drawn copper, over the plan it followed.
+        data = "".join(polyline(wire) for wire in planning.wires)
+        parts.append(f'<g class="l-wire"><path d="{data}"/></g>')
+    if planning.inner_wires:
+        data = "".join(polyline(wire) for wire in planning.inner_wires)
+        parts.append(f'<g class="l-innerwire"><path d="{data}"/></g>')
     if planning.launchers:
         circles = "".join(
             f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 1.4)}"/>'
@@ -240,11 +259,12 @@ def _planning_layers(
     return "".join(parts)
 
 
-def _planning_style(font: float) -> str:
+def _planning_style(font: float, clearance: float = 0.0) -> str:
     """The stroke of every planning layer, and the type of the capacity labels.
 
     Args:
         font: The size of a gate label, in layout units.
+        clearance: The width of the band drawn around every wire, in layout units. Zero draws none.
 
     Returns:
         The CSS of the overlay.
@@ -260,6 +280,8 @@ def _planning_style(font: float) -> str:
         "assignment": 1.2,
         "ring": 1.0,
         "corridor": 1.8,
+        "wire": 1.6,
+        "innerwire": 1.6,
     }
     style = "".join(
         f"g.l-{name}>path{{fill:none;stroke:{PLANNING_COLORS[name]};stroke-width:{width};"
@@ -274,11 +296,18 @@ def _planning_style(font: float) -> str:
     style += f"g.l-keepout>path{{fill:{PLANNING_COLORS['keepout']};fill-opacity:0.18;fill-rule:evenodd}}"
     style += "g.l-partition>path{fill:none;stroke-dasharray:4 3}"
     style += "g.l-assignment>path{stroke-dasharray:6 4}"
+    style += "g.l-corridor>path{stroke-dasharray:5 4}"
     style += (
         f"g.l-launcher>circle{{fill:none;stroke:{PLANNING_COLORS['launcher']};stroke-width:1.6;"
         "vector-effect:non-scaling-stroke}"
     )
     style += f"g.l-slot>circle{{fill:{PLANNING_COLORS['slot']};fill-opacity:0.55;stroke:none}}"
+    if clearance > 0:
+        style += (
+            f"g.l-clearance>path{{fill:none;stroke:{PLANNING_COLORS['clearance']};"
+            f"stroke-width:{_number(clearance)};stroke-opacity:0.13;"
+            "stroke-linejoin:round;stroke-linecap:round}"
+        )
     return style
 
 
@@ -372,7 +401,7 @@ def layout_svg(
     gate_font = 0.8 * font
     overlay = _planning_layers(planning, to_view, radius, gate_font) if planning is not None else ""
     if overlay:
-        style += _planning_style(gate_font)
+        style += _planning_style(gate_font, planning.clearance if planning is not None else 0.0)
     caption = f'<text x="{_number(pad)}" y="{_number(1.2 * font)}">{escape(title)}</text>' if title else ""
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '

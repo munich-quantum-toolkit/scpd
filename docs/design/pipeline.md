@@ -11,8 +11,9 @@ Every stage entry point has the same shape:
 ```cpp
 struct IDetailRouter {
   virtual ~IDetailRouter() = default;
-  virtual DetailRouting run(const Chip&, const GlobalRouting&,
-                            const Config&) const = 0;
+  virtual DetailRouting run(const Chip&, const CapacityPlan&,
+                            const GlobalRouting&, const Assignment&,
+                            const CorridorRouting&, const Config&) const = 0;
 };
 ```
 
@@ -38,7 +39,7 @@ reproducible. It is also what will make the phase-2 threading tractable.
 | Global     | `IGlobalRouter`    | chip, capacity            | `02-global.fb`    |
 | Assignment | `IAssigner`        | chip, capacity, global    | `03-assign.fb`    |
 | Corridor   | `ICorridorRouter`  | chip, capacity, assign    | `04-corridor.fb`  |
-| Detail     | `IDetailRouter`    | chip, corridor            | `05-detail.fb`    |
+| Detail     | `IDetailRouter`    | chip, capacity, global, assign, corridor | `05-detail.fb` |
 | Final      | `IFinalRouter`     | chip, detail              | `06-final.fb`     |
 | Finalize   | `IFinalizer`       | chip, final               | `07-geometry.fb`  |
 
@@ -349,8 +350,235 @@ that passes over artwork here is a chord the detail router has to route around.
 
 ### Detail
 
-A* on the pixel grid, one partition at a time, then stitching of per-partition
-fragments into wires, then re-routing of wires that cross partition borders.
+Where the copper goes. Eight-connected A\* on the detail grid, costs 10 along an
+axis and 14 along a diagonal, with the octile distance as the heuristic — the
+prototype's own figures, in `DetailedGrid`. The stage keeps the prototype's four
+passes and its two names for them, `detailed_pre_routing` and
+`detailed_cross_boundary_routing`, and corrects one thing in the second: the
+clearance.
+
+**First, a coarse way for every wire, inside each partition.** A corridor cuts
+its wire into one piece per partition it names, and every piece is searched for
+inside that partition alone: the two ends of a piece are the crossings the plan
+gave it, and everything between them carries that partition's label. The pieces
+of one partition are tried in several orders, because the first one drawn takes
+the room the next one wanted, and the order that draws the most of them is kept.
+The label grid this needs is derived state and appears in no artifact; it is
+filled back in from the partition outlines (`grid::rasterizePartitions`) rather
+than grown again, which on the largest benchmark would be most of the capacity
+stage's runtime.
+
+**This is the only pass that knows about partitions**, exactly as in the
+prototype, and it is the only pass that knows about crossings.
+
+**The pieces are then joined by concatenation, not by a search.** The corridor
+already says which piece belongs to which wire. The prototype has to recover
+that by walking out from every launcher and matching endpoints
+(`reconstruct_wires`), and it loses a cell at each end of every wire doing it.
+
+**All of that is a seed and none of it is a constraint.** The corridor stage's
+route is a coarse way: which partitions a wire passes through and roughly where.
+It is not where the copper has to run, and the pass below is free to move a wire
+off it entirely. It has to be: the crossings a plan names sit as little as 13
+layout units apart on the benchmark chips, and no arrangement that runs through
+them can hold a rule of 185.
+
+**Then every wire is drawn again from end to end, across the borders.** This is
+`detailed_cross_boundary_routing`, and it keeps the prototype's shape — sweeps
+over the wire list alternating direction, a wire that has been re-routed left
+alone, and for a wire that has not two phases:
+
+1. **The corridor.** The band `corridor_spacings` wire spacings to either side
+   of the way the wire has, with every cell within the rule of another wire cut
+   out of it.
+2. **The relaxation.** Where that finds nothing, the wires ahead of this one in
+   the sweep are let go of one place further along each time, and then the wires
+   behind it, one at a time. Letting go of a wire is letting go of *its
+   clearance*: its copper stays where it is until it is drawn again, so nothing
+   the search finds can run over it, and it is marked as a wire still to be
+   drawn. While it relaxes, the search is steered rather than confined:
+   everything outside the closed ring made of the wire's own two ends and the
+   ways its two neighbours take costs, and so does coming within a wire spacing
+   of either of them. Both are prices, so a wire that has to leave the corridor
+   still can.
+
+A wire that finds nothing either way keeps the way it had, exactly as the
+prototype does — `wire.path` is replaced on success alone — and the next sweep
+asks again.
+
+**The clearance is held against every wire.** This is the correction. The
+prototype's `astar_in_corridor` knows nothing about where the other wires are:
+what keeps them apart is `build_corridor` alone, and that cuts a disc of the
+wire spacing around the ways of the wire before this one in the ring and the
+wire after it. Against the other two hundred wires the only rule is that no cell
+is shared, which is one cell. Here the same disc is cut for every wire.
+
+Cutting it per search would cost the whole chip's copper per attempt, so it is
+not in the mask: the canvas carries a field that says how many wire cells lie
+within the rule of each cell, every wire charges its own when it is put down and
+discharges it when it is taken off, and a search that must hold the rule cannot
+enter a charged cell. That makes the rule against 240 wires cost what the
+prototype's rule against two costs.
+
+**A wire's two ends keep their clearance while it is off the canvas.** The point
+the assignment feeds a wire at and the cell of its target port are where it has
+to be; no later round can move them. So they stay charged while the wire is
+lifted, and only the wire being drawn is let out of its own two places. Without
+that, a wire drawn while another is lifted may settle within a wire spacing of
+where that other one has to return to, and neither of them can ever fix it.
+
+**The inner circuit joins the same list.** Its connections never entered the
+corridor stage — they paid for the free space they cross while the inner circuit
+was solved
+([decision 0028](decisions/0028-the-inner-circuit-pays-for-free-space.md)) — so
+they have no coarse way to follow and are seeded over whatever free space the
+ring has left. From there on they are wires like any other: one canvas, one
+rule, and the pass that holds it does not care which of the two a wire belongs
+to. The prototype draws them against nothing at all, so an inner wire may be
+laid straight over a feedline.
+
+**No two wires share a cell, and no two cross between cells.** Sharing a cell is
+a short; so is the one crossing that shares none, two diagonal steps through one
+two-by-two block. A crossing there needs the other wire to hold *both* cells
+beside the step, so that is exactly when the step is refused — two different
+wires there are two wires passing close, which is a clearance question and not a
+short. The prototype sees neither case: there is no occupancy test in
+`astar_in_cell` at all, a wire pixel merely costs 50 to run over, and the
+crossing test it keeps beside that is only built when some wire pixel is
+reachable from both ends.
+
+#### The rule, on a grid
+
+`min_wire_spacing` is a length in layout units and the router works in cells, so
+the rule has to be converted, and the conversion is the prototype's own: the rule
+spans `ceil(spacing / cell)` cells and what is kept clear is one less than that.
+Two wires are far enough apart when the distance between their cells is more
+than that many cells.
+
+The conversion is where the rule stops being 185, and it cannot be anything
+else. A cell is 19 layout units across on the 17-qubit chip and 40 on the
+9-qubit one, so where a wire runs is only known to half a cell in the first
+place; asking the grid for a distance it cannot express asks it to tell apart
+two answers that are the same drawing. What the stage keeps, and what the check
+and the picture are made against, is the converted figure:
+
+| chip | 4q | 9q | 17q | 21q | 33q | 45q | 57q | 69q |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cells | 9 | 4 | 9 | 4 | 4 | 5 | 5 | 5 |
+| layout units | 173 | 158 | 171 | 160 | 154 | 182 | 158 | 180 |
+
+The prototype carries the same quantity twice, computed in the cross-boundary
+pass and as the literal 6 a few hundred lines below in the inner one, and the
+two disagree on every chip ([data model](data-model.md)).
+
+#### Every figure is normalised to the grid
+
+Nothing in this stage is a cell count that stands for a distance. A price is
+quoted per **step**, against the ten a step along an axis costs; a reach is
+quoted as a length, or as a multiple of the wire spacing, and converted through
+the grid. That is what makes it the same figure on all eight benchmarks: one
+cell is 19 layout units on the finest grid and 40 on the coarsest, so a way of a
+given length is twice as many steps on the one as on the other, and only a price
+per step is the same fraction of it either way.
+
+- `corridor_spacings` is 4 wire spacings. The prototype's `K` is 40 *cells*,
+  which is 760 layout units on the 17-qubit grid and 1600 on the 9-qubit one —
+  four spacings there and eight here.
+- `obstacle_penalty_reach` is 185 layout units. The prototype's is 6 *cells*,
+  which is 114 units on the one chip and 240 on the other.
+- The clearance itself is the design rule, converted as above.
+
+#### What the figures say
+
+All eight chips, at the shipped defaults:
+
+| chip | connections | drawn | inner | cells | bends | longest | detail | SVG | GDS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4q  |  12 |  12 |   0/0 |    550 |   41 |  64 | 0.38 s | 0.17 MB | 0.07 MB |
+| 9q  |  30 |  30 |   6/6 |   2644 |  116 |  98 | 0.09 s | 0.35 MB | 0.15 MB |
+| 17q |  58 |  58 | 14/14 |   7891 |  553 | 202 | 0.33 s | 1.06 MB | 0.43 MB |
+| 21q |  70 |  70 |   8/8 |  12454 |  717 | 221 | 0.60 s | 0.92 MB | 0.42 MB |
+| 33q | 110 | 110 |   8/8 |  25916 | 1346 | 308 | 1.63 s | 1.73 MB | 0.69 MB |
+| 45q | 150 | 150 |   7/7 |  42869 | 2744 | 396 | 4.58 s | 2.65 MB | 1.03 MB |
+| 57q | 190 | 190 | 11/11 |  71230 | 4555 | 575 | 9.66 s | 4.34 MB | 1.57 MB |
+| 69q | 230 | 230 | 11/11 | 111345 | 5478 | 700 | 15.50 s | 6.27 MB | 2.17 MB |
+
+**All 968 connections are drawn**, all 65 of the inner circuit, and **no two
+wires anywhere on any of the eight chips come within the rule of each other.**
+Both are checked over every chip in `test/pipeline/test_detail_router.cpp`, and a
+wire that comes too close counts exactly as a wire that was never drawn. Two runs
+of the same input produce the same bytes.
+
+What each mechanism is worth, measured over the eight chips as places where the
+rule does not hold — as shipped **0**; without letting go of the wires *behind*
+this one as well as ahead of it, 3; at the prototype's own 8 sweeps and 10
+relaxations rather than 30 and 30, 46; holding the clearance to the two
+neighbours in the ring rather than to every wire, and to the corridor stage's
+crossings, **457**.
+
+`rounds` and `max_relaxation` are 30 where the prototype's are 8 and 10. Its
+figures are enough for what it asks — the clearance to two wires settles in a
+couple of sweeps — and holding it against every wire is a harder question that
+takes more of them.
+
+The obstacle penalty is on, as in the prototype. Measured with the clearance in
+force it is neither better nor worse on any chip; what it buys is a wire that
+keeps off the artwork where there is room to.
+
+#### The design-rule check
+
+`plot --stage detail` draws every wire with a band of the clearance the router
+keeps, so two wires closer than that are two bands whose overlap is darker, and
+`render --stage detail` writes the same band on GDS layer 23 `plan.clearance`,
+where a boolean finds the overlaps exactly. The number is checked in the test
+suite, over every pair of wires on every chip; the pictures are how a failure is
+seen.
+
+#### Deliberate deviations from the prototype
+
+- **The clearance is held against every wire**, not against the two beside it in
+  the ring.
+- **The corridor's crossings are a seed, not a constraint.** They sit as little
+  as 13 layout units apart, and the rule cannot be held through them.
+- **Two wires never share a cell**, and never cross between cells either. The
+  prototype allows both.
+- **Per-connection identity survives the stage**, so the pieces are joined by
+  concatenation and the two ends of a wire are exact.
+- **The clearance is derived from the design rule**, not read as a literal.
+- **The inner circuit is drawn against the ring**, and holds the same rule. The
+  prototype blocks nothing at all there.
+- **`back_count` runs.** Its loop is described in the prototype and its body
+  executes exactly once; letting go of the wires behind a wire as well as ahead
+  of it is what takes the last three places on the 57-qubit chip.
+- **Single-threaded.** The prototype spreads its pre-routing over
+  `hardware_concurrency()` threads and gets an order-dependent fragment list;
+  determinism is a stage contract, and concurrency is phase 6.
+
+#### What is in the prototype and does not run
+
+Read the call graph, not only the function.
+
+- `DetailedGridParams::I` is read in two passes and used in neither, and so is
+  `neighbor_path_proximity_penalty`: both calls that look like they use it pass
+  `corridor_polygon_penalty` instead.
+- `for (back_count = 0; back_count <= 0 && !success; ++back_count)`
+  (`DetailedGrid.cpp:1587`) runs its body exactly once; the comment above it
+  describes an escalation that never happens. Here it happens.
+- `run_inner_routing_requests` wraps its search in the same rounds and rip-up
+  relaxation as the pass before it, and the loop cannot do anything: what it
+  rips changes neither the mask nor the costs, so every attempt repeats the
+  search that just failed. One search per connection is what it comes to.
+
+#### What the prototype's own failure count means
+
+Its benchmark table reports `DetailFail` 0 on all eight, and that is not the
+same claim as the one above. The number is scraped from
+`[Boundary Optimize] … Failed N` of the **last round** of the cross-boundary
+pass; a wire with no path is skipped there before it can be counted, and a
+failure there only means a wire kept the way it already had. Its own logs show
+the pass starting at 37 failures on the 69-qubit chip and reaching 0 in the
+second round. It says nothing at all about the clearance, which is the thing
+this stage is judged on.
 
 ### Final
 
@@ -435,7 +663,7 @@ other stage is read from a run directory, which `--run-dir` names.
 | `global`   | `02-global.fb`   | + the Hanan lattice and the selected inner-circuit edges |
 | `assign`   | `03-assign.fb`   | + the ring, and each node's chord to the launcher it got |
 | `corridor` | `04-corridor.fb` | + the partitions each wire uses, and every crossing slot |
-| `detail`   | `05-detail.fb`   | + pixel paths                                            |
+| `detail`   | `05-detail.fb`   | + every wire as its bends, and the clearance around it   |
 | `final`    | `06-final.fb`    | + Dubins paths, couplers, bridges                        |
 | `aligned`  | `07-geometry.fb` | fitted analytic wires, real coupler/bridge footprints    |
 

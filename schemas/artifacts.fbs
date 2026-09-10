@@ -216,8 +216,30 @@ table CorridorRouting {
   slots: [BorderSlots] (required);
 }
 
+/// One wire's path on the detail grid, cell by cell.
+///
+/// The cells are eight-connected and run from the point the wire is fed at to
+/// the cell its target port is reached at. A wire the stage could not draw
+/// carries no cells, so a reader counts the failures rather than being handed
+/// a separate list that can disagree with the paths beside it.
+table DetailWire {
+  path: [geometry.DCoord] (required);
+}
+
 /// Output of the Detail stage.
-table DetailRouting {}
+///
+/// `wires` has one entry per connection of the Assignment, in its order, so it
+/// lines up with `CorridorRouting.corridors` without a key. `inner` has one
+/// entry per connection of the Global stage, in its order: those never entered
+/// the corridor stage, because they paid for the free space they cross while
+/// the inner circuit was solved.
+table DetailRouting {
+  /// The grid the cells are counted on, so a reader can place them without
+  /// rebuilding the run.
+  grid: GridExtent (required);
+  wires: [DetailWire] (required);
+  inner: [DetailWire] (required);
+}
 
 /// Output of the Final stage. The couplers carry the ports they create and
 /// the connections they complete, so a reloaded run can rebuild the grown
