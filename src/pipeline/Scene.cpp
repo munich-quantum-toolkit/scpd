@@ -59,10 +59,6 @@ constexpr double BACKWARD_BAND_FACTOR = 3.0;
 /// that no free space surrounds takes no part in the capacity chains.
 constexpr double BRIDGE_FORWARD_FACTOR = 2.0;
 
-/// How far a launcher's sweep reaches along its orientation, in cells of the
-/// detail grid.
-constexpr std::uint32_t LAUNCHER_SWEEP_CELLS = 6;
-
 /// The crossing pitch a configuration that names none falls back to, which is
 /// the default the schema declares.
 constexpr double DEFAULT_CROSSING_PITCH = 165.0;
@@ -175,7 +171,20 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
     }
   }
 
-  const auto beforeSweeps = scene.blocked;
+  // A launcher's slot is the launcher, and nothing is blocked around it.
+  //
+  // It used to be neither. The slot was set a fixed number of cells along the
+  // orientation and then one half band width further, and the squares it swept
+  // on the way were blocked at the wire spacing — so every wire of the design
+  // started at a point some two hundred layout units in front of the port that
+  // feeds it, on a contour of its own, and the free space near the ring was
+  // the ring less those squares. Neither figure was a length: the sweep was
+  // six cells of the detail grid, which is 114 layout units on the 17-qubit
+  // chip and 240 on the 9-qubit one.
+  //
+  // The slot is the cell the port's centre rounds to. The cell is freed,
+  // because a wire has to be able to stand where it starts, and that is the
+  // only cell this loop touches.
   for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
     const auto& port = *chip.ports[index];
     if (port.role != UnassignedRole::Launcher) {
@@ -186,21 +195,11 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
       continue;
     }
     const auto center = scene.detail.clampToCell(port.center);
-    const auto halfWidth =
-        grid::bandHalfWidth(rules.min_wire_spacing, scene.detail, step.diagonal());
-    const auto slot = grid::stampLauncherSweep(scene.blocked, center, step,
-                                               LAUNCHER_SWEEP_CELLS, halfWidth);
+    const auto slot = scene.detail.index(center.x(), center.y());
+    scene.blocked.set(slot, false);
+    scene.reserved.set(slot, false);
     scene.launcherCell.push_back(slot);
     scene.launcherPort.push_back(index);
-  }
-
-  // What the sweeps took from the free space, for the picture. A sweep, unlike
-  // a band, does not say which cells it changed, so the mask is compared with
-  // the one before the whole loop; nothing else writes to it in between.
-  for (std::size_t cell = 0; cell < scene.blocked.size(); ++cell) {
-    if (scene.blocked.test(cell) && !beforeSweeps.test(cell)) {
-      scene.keepout.set(cell, true);
-    }
   }
 
   if (scene.launcherCell.empty()) {

@@ -73,8 +73,8 @@ feedline_terminations = 1
 [grid]
 capacity_cells_x = 25
 capacity_cells_y = 25
-launcher_offset_x = 20
-launcher_offset_y = 20
+launcher_offset_x = 0
+launcher_offset_y = 0
 
 [stages.assignment]
 # How many launchers this chip's assignment activates. A per-chip figure with no

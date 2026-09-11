@@ -175,6 +175,13 @@ resonator_length_tolerance = 100.0
 max_feedline_utilization = 6
 feedline_terminations = 0
 
+[grid]
+# The launcher slot sits on the launcher port, so the border must not cover it: a
+# port inside the blocked border is a freed cell in a wall that no chain reaches,
+# and the partitioning collapses.
+launcher_offset_x = 0
+launcher_offset_y = 0
+
 [stages.assignment]
 # How many launchers this chip's assignment activates. A per-chip figure with no
 # default, taken from the driver of the same benchmark.
