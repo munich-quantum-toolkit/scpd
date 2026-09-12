@@ -49,7 +49,6 @@ set(MQT_SCPD_TARGET_NAME mqt-scpd)
 
 include(cmake/AddMQTPythonBinding.cmake)
 include(cmake/AddMQTScpdLibrary.cmake)
-include(cmake/Cache.cmake)
 include(cmake/ExternalDependencies.cmake)
 include(cmake/PackageAddTest.cmake)
 include(cmake/StandardProjectSettings.cmake)
