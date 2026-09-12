@@ -27,8 +27,6 @@ releases may include breaking changes.
 
 ### Changed
 
-- 🔧 Use Ninja and shared CMake presets on all platforms, removing `-windows`
-  from preset names ([#112]) ([**@denialhaag**])
 - 💥 Drop support for x86 macOS and stop publishing the respective wheels
   ([#89]) ([**@denialhaag**])
 - ⬆️ Raise the macOS deployment target to 13.3 to enable `std::format` in libc++
@@ -42,7 +40,6 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
-[#112]: https://github.com/munich-quantum-toolkit/scpd/pull/112
 [#98]: https://github.com/munich-quantum-toolkit/scpd/pull/98
 [#89]: https://github.com/munich-quantum-toolkit/scpd/pull/89
 [#83]: https://github.com/munich-quantum-toolkit/scpd/pull/83
