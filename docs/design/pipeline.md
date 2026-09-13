@@ -51,16 +51,14 @@ along.
 ### Assignment
 
 Assigns resonators to launchers as a minimum-overlap problem on the ring of
-outer ports. That ring is `[ports.sequences].all_outer` from the configuration
-under `port_detection = "manual"`, the default, or the outer-boundary walk over
-the chip geometry under `"auto"`. Mixed-integer program, bounded by
-`max_feedline_utilization` and permitted `feedline_terminations` extra
-endpoints.
+outer ports. That ring is `[ports.sequences].all_outer` from the configuration.
+Mixed-integer program, bounded by `max_feedline_utilization` and permitted
+`feedline_terminations` extra endpoints.
 
 The ring is a closed cycle, and this stage consumes it in order, so the point at
-which the cycle is entered changes the model. Under `"auto"` that entry point is
-`start_component`. See
-[decision 0023](decisions/0023-geometric-port-ring-detection.md).
+which the cycle is entered changes the model; the configured sequence carries
+that entry point. See
+[decision 0025](decisions/0025-port-ring-is-manual-input.md).
 
 **This is where `AssignedRole` is set.** Every connection the assignment
 produces carries a source and target role. The one role it cannot place yet is
@@ -159,7 +157,9 @@ and `mqt-scpd plot run/ --stage detail` renders it as SVG.
 
 `plot` reads artifacts and nothing else, so it works on a partial run directory
 — which is the point, since it is the instrument for watching the port make
-progress stage by stage.
+progress stage by stage. Until `route` exists, the layout stage is rendered from
+the configuration directly:
+`mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg`.
 
 | `--stage`  | Reads            | Renders                                               |
 | ---------- | ---------------- | ----------------------------------------------------- |
@@ -171,7 +171,10 @@ progress stage by stage.
 
 Pixel fields are rendered as one downsampled raster, never one element per
 pixel. The prototype's equivalent 4-qubit capacity view is 17.8 MB because it
-did the latter; the budget here is 2 MB per snapshot on every benchmark.
+did the latter; the budget here is 2 MB per snapshot on every benchmark. The
+layout view is the exception: it keeps every vertex of the input in layout
+units, so that zooming in shows what the GDS shows, and `--tolerance` trades
+that detail for a smaller file.
 
 ### What is never an artifact
 
@@ -372,18 +375,12 @@ tuning parameter.
 [chip]
 input = "routing_config.json"
 
-[ports.patterns]                     # first match wins; every port matches one
+[ports.patterns]                     # every port matches exactly one
 launcher     = '^Chip\.port\d+$'
-resonator    = '^Qb?\d+\.port0$'
-conventional = '^(Qb?\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
+resonator    = '^Qb\d+\.port0$'
+conventional = '^(Qb\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
 
-[ports]
-detection       = "manual"           # "manual" (default) or "auto"
-start_component = ""                 # "auto" only; "" takes the walk's own
-                                     # start. 17Q is the one chip that sets
-                                     # it, to "Qb15"
-
-[ports.sequences]                    # "manual" only; both are required there
+[ports.sequences]                    # both are required
 all_outer   = ["Qb1.port0", "Qb1.port1", "Coupler1_2.port3", "..."]
 fixed_outer = []
 
@@ -412,22 +409,16 @@ rounds            = 10
 refinement_rounds = 15
 ```
 
-**A shipped config carries only what differs from the defaults**, with two
-exceptions: `[design_rules]` and `[ports].detection`.
+**A shipped config carries only what differs from the defaults**, with one
+exception: `[design_rules]`.
 
 Every design rule is written out every time, because the rules are the physical
 contract a run is judged against and a reviewer should not have to
 cross-reference a table to see the clearances a chip was built to.
 
-`detection` is written out for the same reason. It decides where the port ring
-comes from, which is the one input that changes the assignment model without
-changing a single number in the file. Under `"manual"` both sequences are
-required. Under `"auto"` supplying either one is an error rather than a silent
-override, so a configuration can never appear to pin a ring it does not use.
-
-`mqt-scpd doctor --config` enforces all of it — it fails on a key outside those
-two exceptions set to its own default, on a missing `[design_rules]` key, and on
-a missing `detection` — and CI runs it over every benchmark config.
+`mqt-scpd doctor` enforces all of it — it fails on a key outside that exception
+set to its own default and on a missing `[design_rules]` key — and CI runs it
+over every benchmark config.
 
 The rule has teeth: five of the eight prototype drivers set
 `outer_max_relaxation = 5`, which is already the default, and two set

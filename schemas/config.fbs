@@ -9,7 +9,7 @@
 // The run configuration, as loaded and validated from config.toml. Owned by
 // MQT::ScpdDesign. Scalar defaults here are the defaults the loader applies;
 // a shipped configuration carries only what differs from them, except
-// [design_rules] and [ports].detection, which are always written out.
+// [design_rules], which is always written out in full.
 //
 // The stage, component and DRC parameters of that section arrive with the
 // stages that read them, appended to Config.
@@ -18,14 +18,6 @@ include "design.fbs";
 
 namespace mqt.scpd.flatbuffers.config;
 
-/// Where the outer port ring comes from.
-enum PortDetection : ubyte {
-  /// The configuration supplies all_outer and fixed_outer.
-  Manual,
-  /// The outer-boundary walk derives both sequences from the chip geometry.
-  Auto,
-}
-
 /// One regular expression per role. Every port must match exactly one.
 table PortPatterns {
   launcher: string (required);
@@ -33,8 +25,9 @@ table PortPatterns {
   conventional: string (required);
 }
 
-/// The two ordered outer port sequences. Required under Manual, an error
-/// under Auto.
+/// The two ordered outer port sequences of the chip. all_outer is the ring
+/// the assignment consumes in order; fixed_outer is the subset a run pins, and
+/// is only ever read as a set.
 table PortSequences {
   all_outer: [string] (required);
   fixed_outer: [string] (required);
@@ -42,12 +35,7 @@ table PortSequences {
 
 table PortConfig {
   patterns: PortPatterns (required);
-  detection: PortDetection = Manual;
-  /// Auto only. The component at which the closed ring is entered; empty
-  /// takes the walk's own start.
-  start_component: string;
-  /// Manual only.
-  sequences: PortSequences;
+  sequences: PortSequences (required);
 }
 
 table GridParams {

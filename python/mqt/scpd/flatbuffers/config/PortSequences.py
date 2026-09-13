@@ -7,8 +7,9 @@ from flatbuffers.compat import import_numpy
 from typing import Any
 np = import_numpy()
 
-# The two ordered outer port sequences. Required under Manual, an error
-# under Auto.
+# The two ordered outer port sequences of the chip. all_outer is the ring
+# the assignment consumes in order; fixed_outer is the subset a run pins, and
+# is only ever read as a set.
 class PortSequences(object):
     __slots__ = ['_tab']
 

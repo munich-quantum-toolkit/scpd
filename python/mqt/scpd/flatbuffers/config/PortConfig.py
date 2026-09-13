@@ -39,25 +39,8 @@ class PortConfig(object):
         return None
 
     # PortConfig
-    def Detection(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint8Flags, o + self._tab.Pos)
-        return 0
-
-    # Auto only. The component at which the closed ring is entered; empty
-    # takes the walk's own start.
-    # PortConfig
-    def StartComponent(self) -> Optional[str]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return self._tab.String(o + self._tab.Pos)
-        return None
-
-    # Manual only.
-    # PortConfig
     def Sequences(self) -> Optional[PortSequences]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         if o != 0:
             x = self._tab.Indirect(o + self._tab.Pos)
             obj = PortSequences()
@@ -66,7 +49,7 @@ class PortConfig(object):
         return None
 
 def PortConfigStart(builder: flatbuffers.Builder):
-    builder.StartObject(4)
+    builder.StartObject(2)
 
 def Start(builder: flatbuffers.Builder):
     PortConfigStart(builder)
@@ -77,20 +60,8 @@ def PortConfigAddPatterns(builder: flatbuffers.Builder, patterns: int):
 def AddPatterns(builder: flatbuffers.Builder, patterns: int):
     PortConfigAddPatterns(builder, patterns)
 
-def PortConfigAddDetection(builder: flatbuffers.Builder, detection: int):
-    builder.PrependUint8Slot(1, detection, 0)
-
-def AddDetection(builder: flatbuffers.Builder, detection: int):
-    PortConfigAddDetection(builder, detection)
-
-def PortConfigAddStartComponent(builder: flatbuffers.Builder, startComponent: int):
-    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(startComponent), 0)
-
-def AddStartComponent(builder: flatbuffers.Builder, startComponent: int):
-    PortConfigAddStartComponent(builder, startComponent)
-
 def PortConfigAddSequences(builder: flatbuffers.Builder, sequences: int):
-    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(sequences), 0)
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(sequences), 0)
 
 def AddSequences(builder: flatbuffers.Builder, sequences: int):
     PortConfigAddSequences(builder, sequences)
@@ -114,13 +85,9 @@ class PortConfigT(object):
     def __init__(
         self,
         patterns = None,
-        detection = 0,
-        startComponent = None,
         sequences = None,
     ):
         self.patterns = patterns  # type: Optional[mqt.scpd.flatbuffers.config.PortPatterns.PortPatternsT]
-        self.detection = detection  # type: int
-        self.startComponent = startComponent  # type: Optional[str]
         self.sequences = sequences  # type: Optional[mqt.scpd.flatbuffers.config.PortSequences.PortSequencesT]
 
     @classmethod
@@ -146,10 +113,6 @@ class PortConfigT(object):
             return
         if portConfig.Patterns() is not None:
             self.patterns = mqt.scpd.flatbuffers.config.PortPatterns.PortPatternsT.InitFromObj(portConfig.Patterns())
-        self.detection = portConfig.Detection()
-        self.startComponent = portConfig.StartComponent()
-        if self.startComponent is not None:
-            self.startComponent = self.startComponent.decode('utf-8')
         if portConfig.Sequences() is not None:
             self.sequences = mqt.scpd.flatbuffers.config.PortSequences.PortSequencesT.InitFromObj(portConfig.Sequences())
 
@@ -157,16 +120,11 @@ class PortConfigT(object):
     def Pack(self, builder):
         if self.patterns is not None:
             patterns = self.patterns.Pack(builder)
-        if self.startComponent is not None:
-            startComponent = builder.CreateString(self.startComponent)
         if self.sequences is not None:
             sequences = self.sequences.Pack(builder)
         PortConfigStart(builder)
         if self.patterns is not None:
             PortConfigAddPatterns(builder, patterns)
-        PortConfigAddDetection(builder, self.detection)
-        if self.startComponent is not None:
-            PortConfigAddStartComponent(builder, startComponent)
         if self.sequences is not None:
             PortConfigAddSequences(builder, sequences)
         portConfig = PortConfigEnd(builder)

@@ -54,6 +54,15 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.optional-dependencies]
+# KLayout writes GDSII and OASIS. It is an extra because it ships no wheels for Windows on ARM.
+# 0.30.6 is the first release with wheels for CPython 3.14 on every platform the CI covers; the
+# upper bound keeps a new minor release of KLayout from breaking the adapter unnoticed.
+klayout = ["klayout~=0.30.6"]
+
+[project.scripts]
+mqt-scpd = "mqt.scpd.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/munich-quantum-toolkit/scpd"
 Documentation = "https://mqt.readthedocs.io/projects/scpd"
@@ -204,6 +213,7 @@ known-first-party = ["mqt.scpd"]
 
 [tool.ruff.lint.per-file-ignores]
 "test/python/**" = ["T20", "INP001"]
+"python/mqt/scpd/cli.py" = ["T20"]  # the command line prints its output
 "docs/**" = ["T20", "INP001"]
 "noxfile.py" = ["T20", "TID251"]
 "*.pyi" = ["D301", "D418", "E501", "PYI021"]
@@ -310,6 +320,8 @@ docs = [
 ]
 test = [
   "flatbuffers~=25.12.19",
+  # KLayout ships no wheels for Windows on ARM or for CPython 3.15; the export tests skip without it.
+  "klayout~=0.30.6; python_version < '3.15' and (sys_platform != 'win32' or platform_machine != 'ARM64')",
   "pytest>=9.0.1",
   "pytest-cov>=7.1.0",
   "pytest-sugar>=1.1.1",

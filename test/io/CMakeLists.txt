@@ -10,5 +10,8 @@ if(TARGET MQT::ScpdIO)
   file(GLOB_RECURSE IO_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(IO_TEST_SOURCES)
     package_add_test(mqt-scpd-io-test MQT::ScpdIO ${IO_TEST_SOURCES})
+    # The fixture tests read the two benchmark inputs the repository carries.
+    target_compile_definitions(mqt-scpd-io-test
+                               PRIVATE MQT_SCPD_BENCHMARK_DIR="${PROJECT_SOURCE_DIR}/benchmarks")
   endif()
 endif()

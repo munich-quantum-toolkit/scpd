@@ -59,6 +59,12 @@ coupler insertion in the Final stage.
 
 No entity model, no stored qubit-coupler relationships, no converter.
 
+> **Amended 2026-09-06.** The enum gained the member `Coupler`, the role of the
+> port that coupler insertion creates in the Final stage. The rule that every
+> port matches exactly one pattern stands; the benchmark inputs carry routable
+> ports only. See
+> [the data model](../data-model.md#roles-unassigned-in-assigned-out).
+
 ## Alternatives considered
 
 **The full entity model.** Strictly better typing, and the right long-term

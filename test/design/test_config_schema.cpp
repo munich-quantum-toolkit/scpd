@@ -48,13 +48,6 @@ std::unique_ptr<PortPatternsT> benchmarkPatterns() {
 
 // The schema defaults are the values the loader applies to keys a
 // configuration leaves out. They are the documented defaults of config.toml.
-TEST(ConfigSchema, PortDetectionDefaultsToManual) {
-  const PortConfigT ports;
-  EXPECT_EQ(ports.detection, PortDetection::Manual);
-  EXPECT_TRUE(ports.start_component.empty());
-  EXPECT_EQ(ports.sequences, nullptr);
-}
-
 TEST(ConfigSchema, GridDefaults) {
   const GridParamsT grid;
   EXPECT_EQ(grid.capacity_cells_x, 50U);
@@ -68,7 +61,6 @@ TEST(ConfigSchema, ManualConfigRoundTripsSequences) {
   config.chip_input = "routing_config.json";
   config.ports = std::make_unique<PortConfigT>();
   config.ports->patterns = benchmarkPatterns();
-  config.ports->detection = PortDetection::Manual;
   config.ports->sequences = std::make_unique<PortSequencesT>();
   config.ports->sequences->all_outer = {"Qb1.port0", "Qb1.port1",
                                         "Coupler1_2.port3"};
@@ -88,23 +80,6 @@ TEST(ConfigSchema, ManualConfigRoundTripsSequences) {
   ASSERT_NE(back.grid, nullptr);
   EXPECT_EQ(back.grid->capacity_cells_x, 60U);
   EXPECT_EQ(back.grid->launcher_offset_x, 15U);
-}
-
-TEST(ConfigSchema, AutoConfigRoundTripsStartComponent) {
-  ConfigT config;
-  config.chip_input = "routing_config.json";
-  config.ports = std::make_unique<PortConfigT>();
-  config.ports->patterns = benchmarkPatterns();
-  config.ports->detection = PortDetection::Auto;
-  config.ports->start_component = "Qb15";
-  config.rules = std::make_unique<DesignRulesT>();
-
-  const ConfigT back = roundTrip(config);
-  EXPECT_EQ(back, config);
-  EXPECT_EQ(back.ports->detection, PortDetection::Auto);
-  EXPECT_EQ(back.ports->start_component, "Qb15");
-  EXPECT_EQ(back.ports->sequences, nullptr);
-  EXPECT_EQ(back.grid, nullptr);
 }
 
 } // namespace

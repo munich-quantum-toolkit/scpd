@@ -150,7 +150,7 @@ The dependency graph is acyclic. Nothing depends on `pipeline`; it is the top.
 | Target              | Alias               | Responsibility                                                                                                            |
 | ------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `mqt-scpd-geometry` | `MQT::ScpdGeometry` | Point, polygon, path with line and arc segments, transforms, unit handling                                                |
-| `mqt-scpd-design`   | `MQT::ScpdDesign`   | Chip ports and obstacles, the two port-role enums, the outer-boundary walk, design rules, the run configuration           |
+| `mqt-scpd-design`   | `MQT::ScpdDesign`   | Chip ports and obstacles, the two port-role enums, the port sequences, design rules, the run configuration                |
 | `mqt-scpd-grid`     | `MQT::ScpdGrid`     | Rasterization, distance transform, watershed, packed obstacle grids, rule-to-cell conversion                              |
 | `mqt-scpd-routing`  | `MQT::ScpdRouting`  | Curvature-constrained A* over Dubins primitives                                                                           |
 | `mqt-scpd-milp`     | `MQT::ScpdMilp`     | Solver-neutral model assembly, HiGHS backend, MPS emission for the BYOK path                                              |
@@ -263,10 +263,14 @@ mqt-scpd/
   include/mqt-scpd/<module>/*.hpp        public headers
   include/mqt-scpd/flatbuffers/          committed, via nox -s schemas
   src/<module>/                          mirrors include/
-  bindings/bindings.cpp                  minimal: run pipeline, read metrics
+  bindings/bindings.cpp                  minimal: load the chip, walk the ring, run the pipeline
   python/mqt/scpd/
     flatbuffers/                         committed, via nox -s schemas
     artifacts.py                         checked read and write of the .fb artifacts
+    config.py                            config.toml into the configuration schema
+    chip.py                              the chip input, loaded and classified by the core
+    doctor.py                            classification table, port ring, sequence diff
+    inspection.py                        artifacts as JSON, rendered by the core
     cli.py                               argparse subcommands
     solvers/gurobipy_backend.py          BYOK Gurobi via MPS
     export/klayout.py                    GDS and OASIS
@@ -276,26 +280,26 @@ mqt-scpd/
   test/<module>/*.cpp                    GoogleTest, per module
   test/python/{unit,property,integration}/
   benchmarks/<n>q/config.toml            one per benchmark chip
-  benchmarks/<n>q/routing_config.json    4Q and 9Q only; larger ones by path
+  benchmarks/<n>q/routing_config.json    the chip input, one per benchmark chip
   docs/design/                           these documents
 ```
 
 ## Dependencies
 
-| Layer         | Dependency    | Acquisition                      | Why                                                                              |
-| ------------- | ------------- | -------------------------------- | -------------------------------------------------------------------------------- |
-| C++           | FlatBuffers   | FetchContent                     | Schema-generated data model and stage artifacts. Runtime only, no parser library |
-| C++           | nlohmann/json | FetchContent                     | The chip input, metrics and logs                                                 |
-| C++           | spdlog        | FetchContent                     | Structured logging; replaces scattered `std::cout`                               |
-| C++           | HiGHS         | FetchContent                     | Default solver; makes an unlicensed install fully functional                     |
-| C++           | Boost.Polygon | FetchContent or vendored headers | One Voronoi construction. Never a user-installed Boost                           |
-| C++           | GoogleTest    | FetchContent                     | Existing repository convention                                                   |
-| Python        | flatbuffers   | PyPI                             | Runtime for the generated artifact readers behind `plot`, `inspect` and `report` |
-| Python        | klayout       | PyPI                             | GDS and OASIS writing and rendering. It provides no DRC                          |
-| Python        | rich          | PyPI                             | Progress over long runs, and result tables                                       |
-| Python (test) | hypothesis    | PyPI                             | Property-based tests                                                             |
-| Optional      | gurobipy      | user-installed                   | Bring-your-own-license solver path                                               |
-| Optional      | gdsfactory    | `mqt-scpd[gdsfactory]`           | Adapter over the same geometry IR                                                |
+| Layer         | Dependency    | Acquisition                      | Why                                                                                                         |
+| ------------- | ------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| C++           | FlatBuffers   | FetchContent                     | Schema-generated data model and stage artifacts. Runtime only, no parser library                            |
+| C++           | nlohmann/json | FetchContent                     | The chip input, metrics and logs                                                                            |
+| C++           | spdlog        | FetchContent                     | Structured logging; replaces scattered `std::cout`                                                          |
+| C++           | HiGHS         | FetchContent                     | Default solver; makes an unlicensed install fully functional                                                |
+| C++           | Boost.Polygon | FetchContent or vendored headers | One Voronoi construction. Never a user-installed Boost                                                      |
+| C++           | GoogleTest    | FetchContent                     | Existing repository convention                                                                              |
+| Python        | flatbuffers   | PyPI                             | Runtime for the generated artifact readers behind `plot`, `inspect` and `report`                            |
+| Python        | klayout       | PyPI, extra `mqt-scpd[klayout]`  | GDS and OASIS writing and rendering. Optional: `mqt.scpd.export` imports without it and reports its absence |
+| Python        | rich          | PyPI                             | Progress over long runs, and result tables                                                                  |
+| Python (test) | hypothesis    | PyPI                             | Property-based tests                                                                                        |
+| Optional      | gurobipy      | user-installed                   | Bring-your-own-license solver path                                                                          |
+| Optional      | gdsfactory    | `mqt-scpd[gdsfactory]`           | Adapter over the same geometry IR                                                                           |
 
 The CLI uses the standard library's `argparse`. Dependencies are declared in
 `cmake/ExternalDependencies.cmake`, never inline in a target.
@@ -330,12 +334,10 @@ Recorded so that future contributors do not add them speculatively.
   with one entry each.
 - No entity model recovered from label strings, and equally no chip generator or
   format converter in the first release. Port roles come from configured
-  patterns; the chip input stays the prototype's own JSON. Deriving the outer
-  port ring does not reopen this: the walk reads geometry and tests one leading
-  character, so it never recovers a coupler's qubit pair. See
+  patterns; the chip input stays the prototype's own JSON; the outer port ring
+  is configuration. See
   [decision 0018](docs/design/decisions/0018-port-roles-unassigned-and-assigned.md),
   [decision 0020](docs/design/decisions/0020-legacy-routing-config-as-input.md)
-  and
-  [decision 0023](docs/design/decisions/0023-geometric-port-ring-detection.md).
+  and [decision 0025](docs/design/decisions/0025-port-ring-is-manual-input.md).
 - No environment-variable tuning. The prototype's 75 `getenv` sites are deleted
   outright; `config.toml` is the only tuning surface.
