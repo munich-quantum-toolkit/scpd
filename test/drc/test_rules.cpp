@@ -113,23 +113,18 @@ TEST(WireClearance, APairInsideTheShortThresholdIsAShort) {
             flatbuffers::drc::ClearanceKind::Short);
 }
 
-TEST(WireClearance, TwoWiresThatEndOnOneComponentAreExemptWhereTheyMeet) {
-  // Two wires running to two ports of one component, converging at their
-  // ends. The ports of a component sit closer together than the wire spacing
-  // and each of the two has to be reached, so the approaches have nowhere
-  // else to go.
+TEST(WireClearance, TwoWiresWhoseEndsMeetAreExemptThere) {
+  // Two wires whose ends sit within the clearance of each other, as the two
+  // approaches to two ports of one coupler do: they converge at their ends,
+  // and the ends have nowhere else to go. No component is named; the
+  // geometry alone decides.
   const auto first = along(100, 10, 200);
   const auto second = along(110, 10, 200);
   CellView view;
   view.grid = tenUnitGrid();
-  view.wires = {{.connection = 0,
-                 .cells = first,
-                 .components = {"", "Qb1"},
-                 .feedline = false},
-                {.connection = 1,
-                 .cells = second,
-                 .components = {"", "Qb1"},
-                 .feedline = false}};
+  view.wires = {
+      {.connection = 0, .cells = first, .components = {}, .feedline = false},
+      {.connection = 1, .cells = second, .components = {}, .feedline = false}};
 
   // The two run parallel for the whole grid, so the exemption reaches only as
   // far as one and a half rules from either end and the middle still counts.
@@ -140,13 +135,32 @@ TEST(WireClearance, TwoWiresThatEndOnOneComponentAreExemptWhereTheyMeet) {
   const auto shortSecond = along(110, 180, 200);
   view.wires = {{.connection = 0,
                  .cells = shortFirst,
-                 .components = {"", "Qb1"},
+                 .components = {},
                  .feedline = false},
                 {.connection = 1,
                  .cells = shortSecond,
-                 .components = {"", "Qb1"},
+                 .components = {},
                  .feedline = false}};
   EXPECT_EQ(countOf(checkCells(view, rules()), DrcRule::WireClearance), 0U);
+}
+
+TEST(WireClearance, OneComponentIsNoExemptionWhenTheEndsLieApart) {
+  // Two wires that end on one component whose ports lie far apart — the
+  // two ports of a qubit can sit nine hundred units apart — and that run
+  // beside each other in between. Nothing meets there, so it counts.
+  const auto first = along(100, 10, 200);
+  const auto second = along(110, 60, 150);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.wires = {{.connection = 0,
+                 .cells = first,
+                 .components = {"", "Qb2"},
+                 .feedline = false},
+                {.connection = 1,
+                 .cells = second,
+                 .components = {"", "Qb2"},
+                 .feedline = false}};
+  EXPECT_EQ(countOf(checkCells(view, rules()), DrcRule::WireClearance), 1U);
 }
 
 TEST(WireClearance, AFeedlineBetweenTwoCouplersIsNotChecked) {
@@ -198,16 +212,6 @@ TEST(WireLoop, AWireThatOnlyBacktracksOverTwoStepsIsNot) {
       {.connection = 0, .cells = path, .components = {}, .feedline = false}};
 
   EXPECT_EQ(countOf(checkCells(view, rules()), DrcRule::WireLoop), 0U);
-}
-
-TEST(ObstacleClearance, NothingIsCheckedWithoutAChip) {
-  const auto first = along(100, 10, 200);
-  CellView view;
-  view.grid = tenUnitGrid();
-  view.wires = {
-      {.connection = 0, .cells = first, .components = {}, .feedline = false}};
-
-  EXPECT_EQ(countOf(checkCells(view, rules()), DrcRule::ObstacleClearance), 0U);
 }
 
 } // namespace

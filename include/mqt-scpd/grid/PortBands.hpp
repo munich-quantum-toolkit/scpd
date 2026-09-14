@@ -34,15 +34,15 @@ struct Step {
 /// The step of an orientation in degrees, as the chip input carries it: the
 /// signs of its cosine and sine, where a component within a few hundredths
 /// of zero counts as zero.
-[[nodiscard]] MQT_SCPD_GRID_EXPORT Step orientationStep(double orientationDegrees);
+[[nodiscard]] MQT_SCPD_GRID_EXPORT Step
+orientationStep(double orientationDegrees);
 
 /// The half width in cells of a band that keeps a wire spacing free on both
 /// sides of a port: the spacing rounded up to an odd number of cells, halved.
 /// A diagonal band, whose width runs along the other diagonal, is narrower by
 /// the square root of two.
-[[nodiscard]] MQT_SCPD_GRID_EXPORT uint32_t bandHalfWidth(double spacing,
-                                                          const GridMetrics& grid,
-                                                          bool diagonal);
+[[nodiscard]] MQT_SCPD_GRID_EXPORT uint32_t
+bandHalfWidth(double spacing, const GridMetrics& grid, bool diagonal);
 
 /// A length in layout units as whole cells along a step: shorter by the
 /// square root of two along a diagonal step.
@@ -86,12 +86,14 @@ MQT_SCPD_GRID_EXPORT void unstampBand(BitGrid& mask, const StampedBand& band);
 
 /// The cell where a wire meets a port's band, for the router grid.
 ///
-/// The target is the first cell beyond the band along the step. From there
-/// the walk continues along the step, freeing every cell of the band it
-/// crosses, until it leaves the band's own cells; that cell and its eight
-/// neighbors are freed and the cell becomes the target. When the walk leaves
-/// the grid instead, the nearest free cell to the ideal target, by breadth
-/// first search over the eight-neighborhood, is the target.
+/// The target is the first cell beyond the band along the step: the cell
+/// after the last strip. Where that cell belongs to the band after all — a
+/// diagonal band's joining strip can reach it — the walk continues along the
+/// step, freeing every band cell it crosses, until it leaves the band's own
+/// cells. The target and its eight neighbors are freed, except the cells of
+/// this band, which stays whole. When the walk leaves the grid instead, the
+/// nearest free cell to the ideal target, by breadth first search over the
+/// eight-neighborhood, is the target.
 ///
 /// @returns The target cell, or nothing when the grid has no free cell.
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::optional<std::size_t>

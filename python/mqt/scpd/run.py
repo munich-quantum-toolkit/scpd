@@ -185,12 +185,28 @@ class RunDirectory:
             raise RunError(msg)
         return path.read_bytes()
 
-    def run_stage(self, stage: str, config: ConfigT, progress: Callable[[str], None] | None = None) -> StageResult:
+    @property
+    def debug(self) -> Path:
+        """Where the debug pictures of a run go."""
+        return self.path / "debug"
+
+    def run_stage(
+        self,
+        stage: str,
+        config: ConfigT,
+        progress: Callable[[str], None] | None = None,
+        debug: Callable[[str, str], str | None] | None = None,
+        verbosity: int = 0,
+    ) -> StageResult:
         """Run one stage and write its artifact.
 
         Args:
             stage: The stage to run.
             progress: Called with one line at a time while a stage that reports its progress runs.
+            debug: Called with the name and the text of every debug picture a stage draws, and
+                answers with where it put the picture, so the progress can name it; only the Final
+                stage draws any.
+            verbosity: 0 for one progress line per round, 1 for one per wire and search as well.
             config: The run configuration.
 
         Returns:
@@ -241,6 +257,8 @@ class RunDirectory:
                 packed,
                 __version__,
                 progress,
+                debug,
+                verbosity,
             )
 
         path = self.artifact(stage)

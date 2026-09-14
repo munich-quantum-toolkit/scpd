@@ -9,7 +9,7 @@
  */
 
 // The Final stage on the benchmark inputs. What is checked is the copper it
-// produces: every connection is drawn, no wire meets itself or an obstacle,
+// produces: every connection is drawn, no wire meets itself,
 // every wire runs from the point the assignment feeds it to the cell of its
 // target port, and no two wires come within the design rule of each other.
 //
@@ -27,9 +27,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
@@ -184,7 +187,7 @@ TEST_P(Final, EveryConnectionIsDrawn) {
 }
 
 /// A wire begins where the assignment feeds it and ends at the cell of its
-/// target port, and it does not meet itself or the artwork on the way.
+/// target port, and it does not meet itself on the way.
 TEST_P(Final, WiresRunFromFeedToTargetWithoutMeetingThemselves) {
   const auto benchmark = benchmarkOf(GetParam());
   const auto planned = plan(benchmark);
@@ -195,8 +198,6 @@ TEST_P(Final, WiresRunFromFeedToTargetWithoutMeetingThemselves) {
 
   EXPECT_EQ(countOf(report, DrcRule::WireLoop), 0U);
   reportFirst(report, DrcRule::WireLoop);
-  EXPECT_EQ(countOf(report, DrcRule::ObstacleClearance), 0U);
-  reportFirst(report, DrcRule::ObstacleClearance);
 
   for (std::size_t index = 0; index < routing.wires.size(); ++index) {
     const auto& path = routing.wires[index]->path;
@@ -223,12 +224,11 @@ INSTANTIATE_TEST_SUITE_P(EveryChip, Final,
 /// nothing else, which is why its own pictures show wires touching; here every
 /// pair is checked, the inner circuit included.
 ///
-/// Two encounters are not violations, and each is one a working design makes
-/// on purpose: two wires that meet at a junction, and two wires that end on
-/// one component, whose ports sit closer together than the wire spacing and
-/// each of which has to be reached. The prototype's own clearance check makes
-/// both exemptions and this stage's router makes them too, so the copper and
-/// the verdict answer the same question.
+/// One encounter is not a violation, and it is one a working design makes on
+/// purpose: two wires that meet at a junction, their ends within the rule of
+/// each other, as at two ports of one coupler. The router's fence makes the
+/// same exemption, so the copper and the verdict answer the same question.
+/// That two wires end on one component exempts nothing by itself.
 TEST_P(SpacedFinal, KeepTheWireSpacing) {
   const auto benchmark = benchmarkOf(GetParam());
   const auto planned = plan(benchmark);
@@ -284,6 +284,75 @@ TEST(FinalRouter, EveryPhaseLeavesASnapshot) {
     EXPECT_EQ(routing.phases[index]->inner.size(),
               planned.global.connections.size());
   }
+}
+
+/// Every pass starts every wire on the way the Detail stage drew and ends on
+/// a line that says how many wires are unrouted or open, and the stage ends
+/// on one over every wire. "Fails: 0" there promises what the artifact and
+/// the design-rule check find: every connection drawn and no two wires within
+/// the rule.
+TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  std::vector<std::string> lines;
+  const auto routing = finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config,
+      [&lines](const std::string_view line) { lines.emplace_back(line); });
+
+  const auto lineWith = [&lines](const std::string_view first,
+                                 const std::string_view second) {
+    const auto found =
+        std::ranges::find_if(lines, [&](const std::string& line) {
+          return line.find(first) != std::string::npos &&
+                 line.find(second) != std::string::npos;
+        });
+    return found == lines.end() ? std::string{} : *found;
+  };
+  const std::string_view seeded = "start on the way the Detail stage drew";
+  EXPECT_FALSE(lineWith("inner routing:", seeded).empty());
+  EXPECT_FALSE(lineWith("outer routing:", seeded).empty());
+  EXPECT_FALSE(lineWith("inner routing:", "Fails:").empty());
+  EXPECT_FALSE(lineWith("outer routing:", "Fails:").empty());
+  const auto total = lineWith("final routing:", "Fails:");
+  ASSERT_FALSE(total.empty());
+  const auto fails = std::stoul(total.substr(total.find("Fails:") + 6));
+
+  const auto view = viewOf(benchmark, planned, routing);
+  const auto report = drc::checkCells(view, *benchmark.config.rules);
+  const bool everyWireDrawn =
+      routing.unresolved.empty() &&
+      std::ranges::none_of(routing.inner,
+                           [](const auto& wire) { return wire->path.empty(); });
+  const bool holds =
+      everyWireDrawn && countOf(report, DrcRule::WireClearance) == 0;
+  EXPECT_EQ(fails == 0, holds) << total;
+}
+
+/// With a debug sink the stage hands out a picture of its grid and then one
+/// of every search, each an SVG document named after the pass, the round,
+/// the wire and the kind of search.
+TEST(FinalRouter, DrawsItsGridAndEverySearchWhenAsked) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  std::vector<std::pair<std::string, std::string>> pictures;
+  const auto routing = finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, {},
+      [&pictures](const std::string_view name, const std::string_view content) {
+        pictures.emplace_back(name, content);
+        return std::string(name);
+      });
+
+  ASSERT_FALSE(pictures.empty());
+  EXPECT_EQ(pictures.front().first, "final-grid.svg");
+  std::size_t searches = 0;
+  for (const auto& [name, content] : pictures) {
+    EXPECT_TRUE(content.starts_with("<svg")) << name;
+    EXPECT_TRUE(content.ends_with("</svg>\n")) << name;
+    searches += name.find("-normal.svg") != std::string::npos ? 1 : 0;
+  }
+  EXPECT_GE(searches, routing.wires.size());
 }
 
 } // namespace

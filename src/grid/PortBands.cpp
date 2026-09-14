@@ -34,10 +34,9 @@ constexpr int64_t DY8[8] = {0, 0, 1, -1, 1, 1, -1, -1};
 /// The nearest cell to start, by breadth-first search over the eight
 /// neighborhood, that satisfies the predicate.
 template <typename Predicate>
-std::optional<std::size_t> nearestCell(const uint32_t width,
-                                       const uint32_t height,
-                                       const std::size_t start,
-                                       Predicate&& accept) {
+std::optional<std::size_t>
+nearestCell(const uint32_t width, const uint32_t height,
+            const std::size_t start, Predicate&& accept) {
   std::queue<std::size_t> queue;
   std::unordered_set<std::size_t> seen;
   queue.push(start);
@@ -80,8 +79,10 @@ Step orientationStep(const double orientationDegrees) {
   const double dx = std::cos(radians);
   const double dy = std::sin(radians);
   constexpr double threshold = 0.05;
-  return {.x = static_cast<int8_t>(dx > threshold ? 1 : (dx < -threshold ? -1 : 0)),
-          .y = static_cast<int8_t>(dy > threshold ? 1 : (dy < -threshold ? -1 : 0))};
+  return {
+      .x = static_cast<int8_t>(dx > threshold ? 1 : (dx < -threshold ? -1 : 0)),
+      .y =
+          static_cast<int8_t>(dy > threshold ? 1 : (dy < -threshold ? -1 : 0))};
 }
 
 uint32_t bandHalfWidth(const double spacing, const GridMetrics& grid,
@@ -165,9 +166,9 @@ StampedBand stampBand(BitGrid& mask, const PortBand& band) {
     prevX = cx;
     prevY = cy;
   }
-  stamped.lastForwardCenter = DCoord(
-      static_cast<uint32_t>(std::clamp<int64_t>(lastX, 0, width - 1)),
-      static_cast<uint32_t>(std::clamp<int64_t>(lastY, 0, height - 1)));
+  stamped.lastForwardCenter =
+      DCoord(static_cast<uint32_t>(std::clamp<int64_t>(lastX, 0, width - 1)),
+             static_cast<uint32_t>(std::clamp<int64_t>(lastY, 0, height - 1)));
   return stamped;
 }
 
@@ -177,40 +178,48 @@ void unstampBand(BitGrid& mask, const StampedBand& band) {
   }
 }
 
-std::optional<std::size_t> digTargetBeyondBand(BitGrid& mask,
-                                               const StampedBand& band,
-                                               const Step step) {
+std::optional<std::size_t>
+digTargetBeyondBand(BitGrid& mask, const StampedBand& band, const Step step) {
   const uint32_t width = mask.width();
   const uint32_t height = mask.height();
-  const std::unordered_set<std::size_t> own(band.cells.begin(), band.cells.end());
+  const std::unordered_set<std::size_t> own(band.cells.begin(),
+                                            band.cells.end());
   const std::size_t ideal = clampedIndex(
       width, height, static_cast<int64_t>(band.lastForwardCenter.x()) + step.x,
       static_cast<int64_t>(band.lastForwardCenter.y()) + step.y);
 
   int64_t cx = static_cast<int64_t>(ideal % width);
   int64_t cy = static_cast<int64_t>(ideal / width);
-  while (true) {
-    cx += step.x;
-    cy += step.y;
-    if (cx < 0 || cy < 0 || cx >= width || cy >= height) {
-      break;
-    }
-    const std::size_t next =
+  // The ideal cell is tested before any step is taken: it is the first cell
+  // beyond the last strip, and the target when nothing of the band lies on
+  // it. Stepping first would put the target one cell further out than the
+  // straight length asks for.
+  while (cx >= 0 && cy >= 0 && cx < width && cy < height) {
+    const std::size_t here =
         (static_cast<std::size_t>(cy) * width) + static_cast<std::size_t>(cx);
-    if (!own.contains(next)) {
-      // Out of the band: this is the exit. Free it and its neighbors.
+    if (!own.contains(here)) {
+      // Out of the band: this is the exit. Free it and its neighbors, but
+      // not the band's own cells, so the approach stays closed to everyone
+      // else right up to the target.
       for (int64_t dy = -1; dy <= 1; ++dy) {
         for (int64_t dx = -1; dx <= 1; ++dx) {
           const int64_t nx = cx + dx;
           const int64_t ny = cy + dy;
-          if (nx >= 0 && ny >= 0 && nx < width && ny < height) {
-            mask.setCell(static_cast<uint32_t>(nx), static_cast<uint32_t>(ny), false);
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+            continue;
+          }
+          const std::size_t near = (static_cast<std::size_t>(ny) * width) +
+                                   static_cast<std::size_t>(nx);
+          if (!own.contains(near)) {
+            mask.set(near, false);
           }
         }
       }
-      return next;
+      return here;
     }
-    mask.set(next, false);
+    mask.set(here, false);
+    cx += step.x;
+    cy += step.y;
   }
   return nearestCell(width, height, ideal,
                      [&](const std::size_t cell) { return !mask.test(cell); });
@@ -264,8 +273,9 @@ std::optional<std::size_t> placeTargetBeyondBand(BitGrid& mask,
     }
   }
   if (!found) {
-    found = nearestCell(width, height, ideal,
-                        [&](const std::size_t cell) { return !before.test(cell); });
+    found = nearestCell(width, height, ideal, [&](const std::size_t cell) {
+      return !before.test(cell);
+    });
   }
   if (found) {
     mask.set(*found, false);
@@ -297,9 +307,9 @@ std::size_t stampLauncherSweep(BitGrid& mask, const DCoord center,
       }
     }
   }
-  const std::size_t slot =
-      clampedIndex(width, height, lastX + (step.x * (static_cast<int64_t>(halfWidth) + 1)),
-                   lastY + (step.y * (static_cast<int64_t>(halfWidth) + 1)));
+  const std::size_t slot = clampedIndex(
+      width, height, lastX + (step.x * (static_cast<int64_t>(halfWidth) + 1)),
+      lastY + (step.y * (static_cast<int64_t>(halfWidth) + 1)));
   mask.set(slot, false);
   return slot;
 }

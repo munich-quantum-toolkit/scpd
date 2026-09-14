@@ -15,6 +15,7 @@
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
+#include <cstdint>
 #include <functional>
 #include <string_view>
 
@@ -52,6 +53,17 @@ using flatbuffers::design::ChipT;
 /// to do with it. Nothing is printed from the core, which is what keeps every
 /// human-readable form of it in one place.
 using Progress = std::function<void(std::string_view)>;
+
+/// Where a stage hands out a picture of what it is doing, when asked to.
+///
+/// A debug run of the Final stage draws its grid once and then every search
+/// it makes: the band, the fence, the prices, the wires around it and the
+/// way it found. Like the progress it is a callback and not a file: the
+/// stage names a document and hands over its text, and the caller decides
+/// where it goes and says so in return, so that a progress line can point at
+/// the picture. Nothing is written from the core.
+using Debug =
+    std::function<std::string(std::string_view name, std::string_view content)>;
 
 /// Partitions the free space and budgets how many wires may cross between
 /// the partitions.
@@ -195,7 +207,8 @@ public:
   run(const ChipT& chip, const CapacityPlanT& capacity,
       const GlobalRoutingT& global, const AssignmentT& assignment,
       const DetailRoutingT& detail, const ConfigT& config,
-      const Progress& progress = {}) const = 0;
+      const Progress& progress = {}, const Debug& debug = {},
+      std::uint32_t verbosity = 0) const = 0;
 };
 
 } // namespace mqt::scpd::pipeline

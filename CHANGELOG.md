@@ -21,18 +21,12 @@ releases may include breaking changes.
 - ✨ Run every routing phase from one driver. The prototype writes the same
   rip-up-and-reroute loop out four times, once per phase, and the four differ
   only in their parameters ([#117]) ([**@FeldmeierMichael**])
-- ✨ Hold the wire spacing between **every** pair of wires the Final stage
-  draws. The prototype keeps a wire clear of the two beside it in the ring and
-  of nothing else, per search, which is why its own pictures show wires
-  touching ([#117]) ([**@FeldmeierMichael**])
-- 🐛 Judge a wire against the whole field rather than against the one its own
-  search was given: everything let go of for a search stands in the way again
-  before the wire is put down, and a wire counts as routed only when the way it
-  found holds the rule against every other wire ([#117])
-  ([**@FeldmeierMichael**])
-- 🐛 Let go of the wires behind a wire as well as the wires ahead of it. The
-  prototype only ever relaxes along the sweep, so a wire blocked by the wire
-  behind it has no move at all ([#117]) ([**@FeldmeierMichael**])
+- ✨ Count the wire spacing between **every** pair of wires the Final stage
+  draws. A search is fenced in as the prototype's is — by the two ring
+  neighbours inflated by the clearance, and by nothing else — while the fails
+  of a pass are counted on a field that carries how many wires guard each
+  cell, so the count against two hundred wires costs what the count against
+  two cost ([#117]) ([**@FeldmeierMichael**])
 - ✨ Block everything between the chip outline and the rectangle the launcher
   slots stand on. A wire that enters that strip comes back in somewhere else
   and has gone around the sources of the wires beside it, which is a crossing
@@ -44,16 +38,80 @@ releases may include breaking changes.
   distance is measured exactly, from the cell to the polygon edge in layout
   units, and the prototype's `FG_OBSTACLE_INFLATE` override is not carried
   over ([#117]) ([**@FeldmeierMichael**])
-- ✨ Add the design-rule check in the cell view: wire clearance, wire loop and
-  obstacle clearance, each written once and called by the stage's own tests, so
-  that what the stage is judged by and what the checker reports cannot drift
-  apart ([#117]) ([**@FeldmeierMichael**])
+- ✨ Add the design-rule check in the cell view: wire clearance and wire loop,
+  each written once and called by the stage's own tests, so that what the
+  stage is judged by and what the checker reports cannot drift apart ([#117])
+  ([**@FeldmeierMichael**])
 - ✨ Report what a routing stage is doing while it runs: `mqt-scpd plan -v`
   prints one line per round of the Corridor, Detail and Final stages, with how
-  many wires were tried, how many settled, how many are still open and how many
-  have no way at all. It is a callback and not a report, because on the largest
-  chip the Final stage is minutes of work and what it is doing is only useful
-  live; nothing is printed from the core ([#117]) ([**@FeldmeierMichael**])
+  many wires were tried, how many settled, how many are unrouted and how many
+  open. It is a callback and not a report, because on the largest chip the
+  Final stage is minutes of work and what it is doing is only useful live;
+  nothing is printed from the core ([#117]) ([**@FeldmeierMichael**])
+- ✨ End every routing stage on a `Fails:` line. A fail is a wire without a
+  way of its own or a wire whose way comes within the rule of another, counted
+  with every wire down and by the design-rule check's own test, so the last
+  line of a stage says what `mqt-scpd drc` will find ([#117])
+  ([**@FeldmeierMichael**])
+- ♻️ Fence a search of the Final stage as the prototype's `run_final_routing`
+  does, and by nothing else: the band around the way the wire has, less the
+  two ring neighbours inflated by the clearance; then the relaxation along
+  the sweep, which lets go of one more wire ahead per level — a wire let go
+  of is no obstacle, because it is drawn again afterwards — fences with the
+  last wire let go of and the neighbour on the other side, prices everything
+  outside the lane between the two ring neighbours and the wires let go of at
+  growing distances, and takes the way it finds. The verdict against the
+  field, the relaxation against the sweep, the targeted rip and the rescue
+  are gone ([#117]) ([**@FeldmeierMichael**])
+- 🐛 Forgive a clearance encounter only where two wires actually meet. Two
+  wires that end on one component were forgiven near their ports by the
+  check, the count and the router's fence alike, on the assumption that a
+  component's ports sit closer together than the wire spacing; the two ports
+  of a qubit can sit nine hundred units apart, and a wire passed the other's
+  approach at 140 units unreported. A junction is now geometry alone, two
+  terminals within the clearance of each other ([#117])
+  ([**@FeldmeierMichael**])
+- 🐛 Route a wire to the first cell the straight-length rule allows. The
+  target of a port sat two cells beyond the port's band, and the band ran to
+  the rule's length, so the straight run into a port exceeded
+  `min_straight_length` by twenty units along an axis and thirty along a
+  diagonal. The band now ends on the cell before the first cell whose centre
+  lies the rule's length from the port's own position, and the dig takes
+  that cell rather than the one after it, so the excess is less than one
+  step. With it the 17- and 21-qubit chips route with no fail ([#117])
+  ([**@FeldmeierMichael**])
+- ✨ Price the approaches of the wires around a relaxed search ten times over.
+  A wire let go of is crossable, but the straight run out of its source and
+  the run into its target are the two places it cannot be drawn anywhere
+  else; a way through either took them for good. Each is priced as a port
+  band is shaped, the straight length long and two wire clearances wide
+  ([#117]) ([**@FeldmeierMichael**])
+- ✨ Start every pass of the Final stage from the ways the Detail stage drew.
+  The sweep is a rip-up and re-route, and a rip-up needs something to rip:
+  every wire is put down on its Detail way, joined on the router grid with its
+  straight stub in front, before the first search, and a wire that finds no
+  way of its own keeps that seed. No wire is ever without a way; a wire still
+  on its seed when the rounds end is unrouted, and the artifact carries no
+  cells for it, as the prototype drops the path of a wire it could not route
+  ([#117]) ([**@FeldmeierMichael**])
+- 🐛 Count a committed way of the Final stage by the rule in layout units.
+  The figure was declared and never set, so the stage never counted a wire
+  too close to another and its "too close" count could not agree with
+  `mqt-scpd drc` ([#117]) ([**@FeldmeierMichael**])
+- ✨ Say what every search of the Final stage came to: `mqt-scpd plan -v 1`
+  adds one line per wire and search — found in phase 1, or which neighbour
+  each relaxation level let go of and whether it helped — names the picture
+  of the search when `-d` is on, and ends every pass on which wires are
+  unrouted, which open, and what each round came to wire by wire ([#117])
+  ([**@FeldmeierMichael**])
+- ✨ Draw what the Final stage looks at: `mqt-scpd plan -d` writes the router
+  grid — artwork and keepout, the obstacle halo, every port as the chip
+  carries it, every seed, every source and target with its heading — and
+  then one picture per search into
+  `<run>/debug/`, named after the pass, the round, the wire and the kind of
+  search, showing the band, the fence, the prices, the neighbours, the wires
+  let go of and the way found. Like the progress it is a callback, so the
+  core writes no file ([#117]) ([**@FeldmeierMichael**])
 - ✨ Render the Final stage: `plot --stage final --phase <name>` draws one
   phase, and `render --stage final` writes all five on layers of their own, so
   one GDS shows every phase ([#117]) ([**@FeldmeierMichael**])

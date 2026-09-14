@@ -9,6 +9,7 @@ left of the stage is [handover-final-couplers.md](handover-final-couplers.md).
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
 - Branch: `phase-4-routing-stages`. **Nothing is committed.**
 - Prototype: `/Users/michaelfeldmeier/Documents/GitHub/FridgeCAD` (`0c5d6d9`)
+- Newest first: [the seeded sweep, and what a fail is](#the-seeded-sweep-and-what-a-fail-is)
 
 ## What this step delivers
 
@@ -59,9 +60,95 @@ priced, nothing is forbidden. On top of it the wires further along the sweep
 are priced at growing distances, so a wire that was let go of is pushed away
 rather than walked over.
 
+## The search fenced as the prototype's
+
+The user's last instruction of this step: build `attempt()` exactly as the
+prototype's `run_final_routing` has it — phase 1 with both ring neighbours as
+obstacles inflated by the wire clearance, phase 2 the relaxation with the
+proximity penalty on the wires ripped up and the corridor polygon, and
+nothing else. So the three corrections below that changed the *search* are
+gone again, and what a search sees is now:
+
+- **Phase 1.** The band around the way the wire has (`buildCorridor`, the
+  prototype's `expand_path`: a walk over the cells that are not artwork, which
+  knows nothing of other wires), less the ways of the two ring neighbours
+  inflated by the clearance (`fence`, the prototype's `mark_obstacles` with
+  `min_dist_wires`). Nothing priced.
+- **Phase 2.** For each level up to `max_relaxation`, along the sweep only:
+  the wire one further ahead is let go of — its way is no obstacle at all,
+  because it is drawn again afterwards — and the search is fenced by the last
+  wire let go of and the neighbour on the other side. Everything outside the
+  lane between the two ring neighbours is priced (`priceLane`, the
+  prototype's `compute_corridor_polygon_proximity`), and the wires let go of
+  are priced at growing distances (`compute_proximity_grid`), so the way is
+  pushed away from where they run rather than drawn over it.
+- **A way found is taken.** When none is, the wires let go of go back to
+  what they were. No verdict against the field, no relaxation against the
+  sweep, no targeted rip, no rescue.
+
+**One price on top of the prototype's**, asked for after the crossings above
+were understood: in the relaxation, the approaches of the wires around the
+search — the straight run out of each source and the run into each target,
+shaped as the port band is, `min_straight_length` long and two wire
+clearances wide — cost ten times the wire price (`priceApproaches`). A wire let go of is
+crossable, but those two runs are the places it cannot be drawn anywhere else,
+and a relaxed way through one of them took it for good.
+
+**The target sat two cells too far out.** `digTargetBeyondBand` stepped once
+before its first test, so the cell it returned lay two cells beyond the last
+strip of the port's band, and the band itself ran to `floor(L / cell)`
+strips, the rule's whole length. The straight run into a port was therefore
+120 layout units along an axis and 127 along a diagonal against a rule of
+100, every one of the 58 ring wires of 17q alike (16 axial at 12 cells, 28
+diagonal at 9 steps, 14 bridging at 22). The prototype has the same walk, one
+strip shorter, so its targets sit at 110 and 113. Now the band ends on the
+cell before the first cell whose centre lies the rule's length from the
+port's own position, and the target is that cell: 100 to 110 units along an
+axis, 100 to 114 along a diagonal. It is what took the 17- and 21-qubit chips
+to no fail at all; 33q did not move.
+
+What stays from the corrections is the **count**: the field carries how many
+wires guard each cell, and the fails of a pass are counted on it against
+every other wire, by the check's own test. The field no longer fences any
+search. The junction exemption stays in its narrow form — a fence wire that
+shares a junction with this one leaves the meeting open, its copper closed —
+because without it two wires whose ports sit closer than the rule cannot both
+reach them.
+
+### Measured at six rounds, five relaxations, no refinement
+
+| chip | wires | drawn | unrouted | open | **Fails** | pairs | of them crossings | final stage |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4q  |  12 |  12 | 0 |  0 |  **0** |  0 | 0 | 0.04 s |
+| 9q  |  36 |  36 | 0 |  0 |  **0** |  0 | 0 |  0.4 s |
+| 17q |  72 |  72 | 0 |  3 |  **3** |  2 | 0 |  1.8 s |
+| 21q |  78 |  78 | 0 |  7 |  **7** |  5 | 2 |  6.3 s |
+| 33q | 118 | 117 | 1 | 16 | **17** | 12 | 9 |  8.6 s |
+
+Against the field-fenced search at the same setting (3 / 9 / 16 fails, with
+42 of 17q and 69 of 21q unrouted): both of those wires are drawn now, 21q has
+fewer fails, 33q one more, and every pass runs in half the time because nearly
+everything settles in round 0 — 33q ends round 0 with 6 fails where the
+field-fenced search ended it with 53.
+
+**What the fence of two cannot see.** Eleven of the twenty pairs are at zero
+distance: two wires holding the same cells. On 33q wire 47 runs over 43, 44
+and 45, and 74 and 75 over 71, 72 and 73 — wires two to four places away in
+the ring, which no fence of this wire ever names, and which the relaxation
+lets it cross on purpose. The prototype's rerouting of the wires it crossed
+is fenced by *their* neighbours, and where that leaves them no way they keep
+the way they had, crossing and all. This is the defect the field-fenced
+search was built against, and it is the price of the prototype's model. What
+the two searches share is that neither holds the rule everywhere at this
+setting; where they differ is in kind — near misses and shorts on one side,
+crossings on the other.
+
 ## The four corrections
 
-Each is the answer to a defect the prototype's own pictures show.
+Each is the answer to a defect the prototype's own pictures show. **The first
+three no longer describe the search** — see the section above — and stay here
+as the record of what was built and measured; the count they left behind is
+what the `Fails:` lines report.
 
 **1. The clearance holds against every wire.** The prototype keeps a wire clear
 of the two beside it in the ring, per search, and knows nothing of the other two
@@ -116,9 +203,111 @@ wire that still has no way at all takes the one it finds without the rule
 rather than none. A connection that is not drawn cannot be repaired later; a
 connection drawn too close to another is a finding the check reports.
 
+## The seeded sweep, and what a fail is
+
+Two changes the user asked for after the first write-up, and one bug they
+uncovered.
+
+**The sweep starts from the Detail stage's ways.** The sweep is a rip-up and
+re-route, and a rip-up needs something to rip. Before, every wire began with
+nothing — the Detail way was only the band a search was allowed in — so a
+round saw empty space where the wires it had not reached yet would run, and a
+wire whose search failed had no way at all. Now every pass begins by putting
+each of its wires down on the Detail way, joined on the router grid by
+eight-connected steps with the straight stub out of the source spliced in
+front (`Driver::seed`, `seededWay`), copper and clearance charged like any
+other way. A wire is lifted, offered a way of its own, and put back on the
+way it had when it finds none; the baseline of the verdict is that way, seed
+or its own. This is the prototype's start: its `global_paths` begin as the
+detailed routing's paths, and a wire that fails keeps its entry.
+
+A seed is not a way this stage drew — it is not curvature-constrained and it
+knows nothing of this grid's keepout — so a wire still on its seed when the
+rounds end is **unrouted**, and the artifact carries no cells for it, as the
+prototype clears the path of every wire it could not route.
+
+**Every stage ends on a `Fails:` line.** A fail is a wire without a way of its
+own (*unrouted*) or a wire whose way comes within the rule of another
+(*open*), counted with every wire down and by the design-rule check's own
+test. The Corridor and Detail stages end on the same line; the Final stage
+prints it per pass and once more over every wire:
+
+```text
+[corridor]     0.03s  58 of 58 connections have a way through the partitions, 0 unrouted | Fails: 0
+[detail]       0.29s  72 of 72 wires drawn, 0 unrouted, 0 within the rule of another | Fails: 0
+[final]        0.09s  outer routing: 58 of 58 wires start on the way the Detail stage drew
+[final]        0.81s  outer routing round 0 forward : tried 58, routed 48, unrouted 2, open 14 | Fails: 16
+[final]        3.52s  outer routing: 57 of 58 drawn, 1 unrouted, 2 open | Fails: 3
+[final]        3.52s  final routing: 71 of 72 drawn, 1 unrouted, 2 open | Fails: 3
+```
+
+**The verdict never fired.** `Tuning::spacing` — the rule in cells, unrounded,
+that `conflictsIn` judges a committed way by — was declared and never set. At
+zero, a way conflicted only where another wire owned the very same cell,
+which never happens, so every way found was taken, every drawn wire counted
+as settled the moment it was drawn, and the "0 too close" the stage reported
+against the checker's two findings was this. It is set now, as
+`min_wire_spacing` over the smaller cell side, which is the unit
+`checkClearance` measures in. Everything below is measured with it live.
+
+### Measured at six rounds, five relaxations, no refinement — with the search still fenced by the field
+
+These figures are of the seeded sweep with the search as the corrections
+below had it, fenced by every wire's room; the prototype-shaped search that
+replaced it is measured in the next section. The user's setting for this
+measurement, carried by every benchmark's
+`[stages.final]`: `rounds = 6`, `max_relaxation = 5`,
+`refinement_rounds = 0`. Fails are wires; pairs are what `mqt-scpd drc`
+reports for rule 1, and a short is a pair one cell apart.
+
+| chip | wires | drawn | unrouted | open | **Fails** | pairs | of them shorts | final stage |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4q  |  12 |  12 | 0 |  0 |  **0** |  0 | 0 |  0.04 s |
+| 9q  |  36 |  36 | 0 |  0 |  **0** |  0 | 0 |  0.3 s |
+| 17q |  72 |  71 | 1 |  2 |  **3** |  1 | 0 |  3.5 s |
+| 21q |  78 |  77 | 1 |  8 |  **9** |  4 | 3 | 12.8 s |
+| 33q | 118 | 118 | 0 | 16 | **16** | 10 | 5 | 15.9 s |
+
+The same three chips with the sweep as it was before — no seeds, the verdict
+dead — at the same setting: 17q 1 unrouted and no pair, 21q 1 unrouted and
+one pair (a short), 33q none unrouted and six pairs (four shorts). So at
+this setting the seeded sweep leaves *more* open wires than the unseeded one,
+and the same two wires unrouted: connection 42 of 17q and 69 of 21q are left
+by both, and were drawn only at thirty rounds and ten relaxations.
+
+Where the difference comes from, read off the rounds: the canvas is full
+from the first search on, so a wire in a bundle at the Detail stage's pitch
+(153–182 layout units against 185) finds no free channel and relaxes; the
+search then runs a cell from the copper of the neighbour it was let past,
+because a bend costs 71 to 150 cells of length and a hug saves two. Taken,
+the hug displaces the neighbour, which is the negotiation that resolves most
+of the bundle by the last round — and leaves a short wherever it does not.
+
+**Measured and not kept**, so nobody builds them twice:
+
+| mechanism | 17q / 21q / 33q fails | shorts |
+| --- | --- | --- |
+| the verdict as shipped: a new way is taken when it conflicts in no more cells than the way it had | **3 / 9 / 16** | 0 / 3 / 5 |
+| judged by depth instead — the sum over conflicting cells of how far inside the rule the nearest copper lies, so a hug is never taken over a near miss | 5 / 7 / 25 | 0 / 1 / 4 |
+| depth, and the top price of 127 on the room of every wire let go of, so the search leaves it whenever it can | 5 / 8 / 29 | 0 / 2 / 7 |
+
+Depth keeps the hugs out of the rounds, but the wire then stays on its seed
+until the rescue, which takes any way it finds — the shorts move from the
+rounds to the rescue and fewer bundles get negotiated. The uniform price does
+not tell a hug from a graze, because `stampDisc` writes one value over the
+whole disc, exactly as the prototype's `compute_proximity_grid` does.
+
+**What it costs.** The seeded sweep makes far more searches per round than
+the unseeded one, because far more wires stay unsettled: at the schema's
+defaults of thirty rounds and ten relaxations, the 45-qubit test case took
+109 minutes where the stage took 296 s before. The tests therefore read
+`rounds`, `max_relaxation` and `refinement_rounds` from each benchmark's
+`config.toml` (`test/pipeline/Benchmarks.hpp`), as they read every other
+per-chip figure, and run at the setting above.
+
 ## What the figures say
 
-At the shipped defaults, all eight chips:
+**Before the seeded sweep**, at the schema's defaults, all eight chips:
 
 Measured over the eight benchmarks. The first six columns come from one run of
 the whole set; the two chips marked ● were measured again after the last three
@@ -160,11 +349,10 @@ Two shapes, and they want different answers.
   to compare against; refusing that took the 21-qubit chip's three-wire bundle
   out. What is left of them is on the chips that were not measured again.
 
-**The stage's own counter and the checker disagree**, and the checker is right.
-`mqt-scpd plan -v` ends the 17-qubit run with "0 too close" while
-`mqt-scpd drc` reports two pairs at 176 and 178 layout units. Both make the same
-two exemptions and both measure in layout units, so one of the two reads
-something the other does not; it is the first thing to find out.
+**The stage's own counter and the checker disagreed**, and the checker was
+right: the counter's rule was never set (see *The verdict never fired* above).
+With it set, the `Fails:` line and `mqt-scpd drc` count the same encounters —
+17q ends on 2 open wires and the check reports the one pair they make.
 
 
 ## The rule, and the two encounters it forgives
@@ -175,21 +363,33 @@ is 19 whole cells — about 189.5 units, a little more than the rule asks for. T
 **check** asks for the rule itself, in layout units, because that is the
 physical contract.
 
-Two encounters are not violations, and each is one a working design makes on
-purpose. Both are the prototype's own, from `verify_min_clearance`:
+One encounter is not a violation, and it is one a working design makes on
+purpose, the prototype's own geometric test from `verify_min_clearance`:
 
 - **A junction.** Two terminals within one wire spacing of each other are one
   meeting, and everything within one and a half spacings of it belongs to that
   meeting.
-- **Two wires that end on one component.** The ports of a component sit closer
-  together than the wire spacing and each of the two has to be reached, so the
-  approaches converge and no arrangement holds them apart.
 
-The router makes the same two exemptions, in their narrow form: a wire may
-enter a cell another wire only guards when the cell belongs to a junction of
-its own **and** every wire guarding it ends on a component this wire also ends
-on. The exemption is of the clearance, never of the copper — two wires never
-share a cell.
+**A second exemption was taken out on the user's instruction.** Two wires
+that end on one component used to be forgiven near their ports as well, on
+the assumption that a component's ports sit closer together than the wire
+spacing. The two ports of a qubit do not: on 17q, Qb2.port0 and Qb2.port1
+lie 909 layout units apart, and wire 44, bound for port0, ran 140 units
+from wire 43's approach to port1 over thirty cells — forgiven by the check,
+by the count and by the fence alike, because all three keyed the exemption on
+the component. The prototype forgives such a pair outright, over its whole
+length (`wires_connected`). Now a junction is geometry alone, in all four
+places (`junctionsOf`, `meetAt`, `couldMeet`, and the count), and the
+component bookkeeping that served the shortcut — `Field::guardedOnlyBy`,
+`Wire::components`, `markJunctions` — is gone with it. The exemption is of the
+clearance, never of the copper — two wires never share a cell.
+
+**With it, every chip routes clean.** At six rounds, five relaxations and no
+refinement, all eight benchmarks end on `Fails: 0` — every connection drawn
+and `mqt-scpd drc` without a pair — where the same setting left 33q at 18
+fails an hour earlier: the forgiven pass-bys were what the relaxation cascades
+grew from. The final stage takes 0.04 s on 4q, 1.9 s on 17q, 9.6 s on 45q,
+30 s on 57q and 41 s on 69q.
 
 ## Every figure is normalised to the grid
 
@@ -208,7 +408,7 @@ Nothing here is a cell count standing for a distance.
 ## The design-rule check
 
 `MQT::ScpdDrc` gains the rules that read a view in router cells — wire
-clearance, wire loop and obstacle clearance — each written once. The stage's own
+clearance and wire loop — each written once. The stage's own
 tests call them, so what the stage is judged by and what `mqt-scpd drc` reports
 cannot drift apart, and `drc.json` says where every finding is and how far the
 two wires are.
@@ -218,9 +418,13 @@ revisit within four steps is the micro backtrack the router emits at every
 heading change — hundreds per layout, none of them a loop, because the bend
 radius is five cells.
 
-The obstacle rule is checked and not searched: the keepout is baked into the
-mask before any search runs, as an exact distance in layout units from the cell
-to the polygon edge rather than a dilation of the finished raster.
+The keepout is searched and, for now, not checked: it is baked into the
+router's mask before any search runs, as an exact distance in layout units
+from the cell to the polygon edge, with the approach of every port exempted so
+that a wire can leave its port at all. The check's rule 4 rasterized the same
+keepout *without* the exemptions and therefore reported every stub out of a
+port (8 on 4q, 21 on 9q, 40 on 17q, all at zero distance); the user took it
+out until the check's raster makes the same exemptions.
 
 ## The pictures
 
@@ -245,7 +449,8 @@ boolean finds an overlap exactly.
 | `schemas/artifacts.fbs` | `FinalWire`, `FinalPhase`, and `FinalRouting` with `grid`, `wires`, `inner`, `feedlines`, `phases` |
 | `schemas/config.fbs` | `FinalParams`, `GridParams.router_cell_size` |
 | `include/mqt-scpd/pipeline/Stages.hpp` | `IFinalRouter` |
-| `include/mqt-scpd/pipeline/FinalRouter.hpp`, `src/pipeline/FinalRouter.cpp` | the stage, the scene, the field, the driver |
+| `include/mqt-scpd/pipeline/FinalRouter.hpp`, `src/pipeline/FinalRouter.cpp` | the stage, the scene, the field, the driver, and the debug pictures of the grid and of every search (`plan -d`) |
+| `src/pipeline/DebugSvg.hpp` | the painter of those pictures: fields as merged runs of rectangles, ways as polylines, one CSS class per layer |
 | `include/mqt-scpd/drc/Rules.hpp`, `src/drc/Rules.cpp` | the rules in the cell view, and `drc.json` |
 | `src/pipeline/Registry.cpp`, `src/io/Artifacts.cpp`, `bindings/bindings.cpp` | wiring |
 | `python/mqt/scpd/{run,planning,plot,cli,drc}.py`, `export/klayout.py` | the stage, the phases, the layers, the report |
@@ -257,7 +462,16 @@ boolean finds an overlap exactly.
    says what each has to do and what the first two learned.
 2. **The meander is not built.** `meander_length` is read and converted and
    nothing uses it, so a resonator's way is as long as its route makes it.
-3. **Two chips do not hold the rule everywhere.** Every wire is drawn on all
-   eight; what is left is in `drc.json` of each run.
-4. **Nothing is compared against the prototype's own output**, only against its
+3. **Three of the five measured chips do not hold the rule everywhere, and two
+   leave a wire unrouted** at six rounds and five relaxations; what is left
+   is in `drc.json` of each run and in the `Fails:` lines. Connections 42 of
+   17q and 69 of 21q find no way at this setting with or without seeds.
+4. **The shorts come from the relaxation.** A search let past a neighbour
+   runs a cell from its copper to save two bends. A price that tells a hug
+   from a graze — decaying from the copper to the rim of the room, unlike the
+   uniform disc — has not been measured.
+5. **Rule 4, obstacle clearance, is out of the check** until its raster
+   exempts the port approaches as the router's mask does (`sceneOf`,
+   `keepoutExemptions`). The keepout itself is still searched.
+6. **Nothing is compared against the prototype's own output**, only against its
    formulation as read and the counts in its checked-in run logs.

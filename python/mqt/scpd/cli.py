@@ -144,15 +144,38 @@ def command_plan(args: argparse.Namespace) -> int:
     config = (
         directory.load() if args.stage is not None and directory.config.is_file() else directory.prepare(args.config)
     )
+
     # With --verbose a stage that reports its progress prints one line at a time while it runs.
     # The Final stage is minutes of work on the largest chip, and what it is doing in that time is
     # only useful live.
     def say(line: str) -> None:
         print(line, flush=True)
 
+    # With --debug a stage that draws pictures of what it is doing writes them into <run>/debug:
+    # the Final stage draws its grid once and then every search it makes, labelled by pass, round,
+    # wire and kind of search. It is a callback like the progress, so the core writes no file.
+    drawn = 0
+
+    def draw(name: str, content: str) -> str:
+        nonlocal drawn
+        directory.debug.mkdir(parents=True, exist_ok=True)
+        target = directory.debug / name
+        target.write_text(content, encoding="utf-8")
+        drawn += 1
+        return str(target)
+
     for stage in list(IMPLEMENTED) if args.stage is None else [args.stage]:
-        result = directory.run_stage(stage, config, say if args.verbose else None)
+        drawn = 0
+        result = directory.run_stage(
+            stage,
+            config,
+            say if args.verbose is not None else None,
+            draw if args.debug else None,
+            args.verbose or 0,
+        )
         print(f"{result.stage:9s} -> {result.path.name} ({result.size} bytes)")
+        if drawn:
+            print(f"{'':9s}    {drawn} debug pictures in {directory.debug}")
     return 0
 
 
@@ -262,8 +285,19 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument(
         "-v",
         "--verbose",
+        nargs="?",
+        const=0,
+        default=None,
+        type=int,
+        metavar="LEVEL",
+        help="print what a stage is doing while it runs, one line per round; "
+        "with LEVEL 1 also one line per wire and search, with the picture's path when -d is on",
+    )
+    plan.add_argument(
+        "-d",
+        "--debug",
         action="store_true",
-        help="print what a stage is doing while it runs, one line per round",
+        help="draw the Final stage's grid and every search it makes as SVG pictures into <run>/debug",
     )
     plan.set_defaults(run=command_plan)
 

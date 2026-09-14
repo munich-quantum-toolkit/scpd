@@ -41,7 +41,8 @@ inline const std::string BENCHMARKS = MQT_SCPD_BENCHMARK_DIR;
 inline std::string readFile(const std::string& path) {
   std::ifstream file(path);
   EXPECT_TRUE(file.is_open()) << path;
-  return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+  return {std::istreambuf_iterator<char>(file),
+          std::istreambuf_iterator<char>()};
 }
 
 /// A chip and its configuration, as the shipped files describe them.
@@ -58,14 +59,16 @@ struct Benchmark {
 /// The file is TOML and this is C++, so the two arrays are read by hand.
 /// That is deliberate: a test that built its own ring would not be testing
 /// the ring the chip actually ships with.
-inline std::vector<std::string> readArray(const std::string& text, const std::string& key) {
+inline std::vector<std::string> readArray(const std::string& text,
+                                          const std::string& key) {
   std::vector<std::string> values;
   const auto start = text.find(key + " = [");
   if (start == std::string::npos) {
     return values;
   }
   const auto end = text.find(']', start);
-  for (auto quote = text.find('"', start); quote < end && quote != std::string::npos;) {
+  for (auto quote = text.find('"', start);
+       quote < end && quote != std::string::npos;) {
     const auto close = text.find('"', quote + 1);
     values.push_back(text.substr(quote + 1, close - quote - 1));
     quote = text.find('"', close + 1);
@@ -79,21 +82,42 @@ inline std::vector<std::string> readArray(const std::string& text, const std::st
 /// default is what the fixture uses. Reading the scalars rather than copying
 /// them keeps the fixture on the figures the chip ships with, which is the
 /// reason the port sequences are read as well.
+/// The value of `key = <number>` on a line of its own, or the fallback.
+///
+/// The key has to start its line, so that `rounds` does not read
+/// `refinement_rounds`, and the spaces a shipped file aligns its `=` with are
+/// stepped over.
 inline std::uint32_t readScalar(const std::string& text, const std::string& key,
-                         const std::uint32_t fallback) {
-  const auto start = text.find(key + " = ");
-  if (start == std::string::npos) {
-    return fallback;
+                                const std::uint32_t fallback) {
+  for (auto at = text.find(key); at != std::string::npos;
+       at = text.find(key, at + 1)) {
+    if (at != 0 && text[at - 1] != '\n') {
+      continue;
+    }
+    auto cursor = at + key.size();
+    while (cursor < text.size() && text[cursor] == ' ') {
+      ++cursor;
+    }
+    if (cursor >= text.size() || text[cursor] != '=') {
+      continue;
+    }
+    ++cursor;
+    while (cursor < text.size() && text[cursor] == ' ') {
+      ++cursor;
+    }
+    return static_cast<std::uint32_t>(std::stoul(text.substr(cursor)));
   }
-  return static_cast<std::uint32_t>(std::stoul(text.substr(start + key.size() + 3)));
+  return fallback;
 }
 
 /// One declared bridge rule, as the two expressions the configuration pairs on.
 using RulePair = std::pair<std::string, std::string>;
 
 inline Benchmark load(const std::string& chip, const std::string& resonator,
-               const std::string& conventional, const std::string& bridgePair,
-               const std::vector<RulePair>& bridgeRules, const bool internalBridges = false) {
+                      const std::string& conventional,
+                      const std::string& bridgePair,
+                      const std::vector<RulePair>& bridgeRules,
+                      const bool internalBridges = false) {
   namespace fbc = flatbuffers::config;
   Benchmark benchmark;
   const auto configText = readFile(BENCHMARKS + "/" + chip + "/config.toml");
@@ -124,36 +148,54 @@ inline Benchmark load(const std::string& chip, const std::string& resonator,
   config.rules->min_straight_length = 100.0;
   config.rules->target_resonator_length = 2500.0;
   config.rules->resonator_length_tolerance = 100.0;
-  config.rules->max_feedline_utilization = readScalar(configText, "max_feedline_utilization", 0);
-  config.rules->feedline_terminations = readScalar(configText, "feedline_terminations", 0);
+  config.rules->max_feedline_utilization =
+      readScalar(configText, "max_feedline_utilization", 0);
+  config.rules->feedline_terminations =
+      readScalar(configText, "feedline_terminations", 0);
 
   config.grid = std::make_unique<fbc::GridParamsT>();
-  config.grid->capacity_cells_x = readScalar(configText, "capacity_cells_x", 50);
+  config.grid->capacity_cells_x =
+      readScalar(configText, "capacity_cells_x", 50);
   config.grid->capacity_cells_y = readScalar(configText, "capacity_cells_y", 0);
-  config.grid->launcher_offset_x = readScalar(configText, "launcher_offset_x", 15);
-  config.grid->launcher_offset_y = readScalar(configText, "launcher_offset_y", 15);
+  config.grid->launcher_offset_x =
+      readScalar(configText, "launcher_offset_x", 15);
+  config.grid->launcher_offset_y =
+      readScalar(configText, "launcher_offset_y", 15);
   config.grid->detail_factor = 30;
 
   config.stages = std::make_unique<fbc::StageParamsT>();
   config.stages->capacity = std::make_unique<fbc::CapacityParamsT>();
   config.stages->assignment = std::make_unique<fbc::AssignmentParamsT>();
-  config.stages->assignment->launcher_target = readScalar(configText, "launcher_target", 0);
+  config.stages->assignment->launcher_target =
+      readScalar(configText, "launcher_target", 0);
   config.stages->global = std::make_unique<fbc::GlobalParamsT>();
   config.stages->global->internal_bridges = internalBridges;
+  // The Final stage's sweep at the setting the benchmark ships, so that the
+  // tests run what `mqt-scpd plan` runs; the schema's defaults where a
+  // benchmark says nothing.
+  config.stages->final = std::make_unique<fbc::FinalParamsT>();
+  config.stages->final->rounds =
+      readScalar(configText, "rounds", config.stages->final->rounds);
+  config.stages->final->max_relaxation = readScalar(
+      configText, "max_relaxation", config.stages->final->max_relaxation);
+  config.stages->final->refinement_rounds = readScalar(
+      configText, "refinement_rounds", config.stages->final->refinement_rounds);
 
-  benchmark.chip =
-      io::loadChip(readFile(BENCHMARKS + "/" + chip + "/routing_config.json"), config);
+  benchmark.chip = io::loadChip(
+      readFile(BENCHMARKS + "/" + chip + "/routing_config.json"), config);
   return benchmark;
 }
 
 /// The seven chips whose qubits are `Qb<n>` and whose couplers are
 /// `Coupler<a>_<b>` with five ports each.
-inline Benchmark qubitAndCouplerChip(const std::string& chip, const bool internalBridges = false) {
-  return load(chip, R"(^Qb\d+\.port0$)", R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$)",
-              R"(^Coupler\d+_\d+\.port[1-4]$)",
-              {{R"(^(Coupler\d+_\d+)\.port1$)", R"(^(Coupler\d+_\d+)\.port2$)"},
-               {R"(^(Coupler\d+_\d+)\.port3$)", R"(^(Coupler\d+_\d+)\.port4$)"}},
-              internalBridges);
+inline Benchmark qubitAndCouplerChip(const std::string& chip,
+                                     const bool internalBridges = false) {
+  return load(
+      chip, R"(^Qb\d+\.port0$)", R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$)",
+      R"(^Coupler\d+_\d+\.port[1-4]$)",
+      {{R"(^(Coupler\d+_\d+)\.port1$)", R"(^(Coupler\d+_\d+)\.port2$)"},
+       {R"(^(Coupler\d+_\d+)\.port3$)", R"(^(Coupler\d+_\d+)\.port4$)"}},
+      internalBridges);
 }
 
 /// The 4-qubit chip, whose qubits are `Q<n>` and whose couplers are `C<a><b>`
@@ -161,7 +203,8 @@ inline Benchmark qubitAndCouplerChip(const std::string& chip, const bool interna
 /// configuration for, so it stays in the fixture.
 inline Benchmark fourQubit() {
   return load("4q", R"(^Q\d+\.port0$)", R"(^(Q\d+\.port1|C\d+\.port0)$)",
-              R"(^C\d+\.port[12]$)", {{R"(^(C\d+)\.port1$)", R"(^(C\d+)\.port2$)"}});
+              R"(^C\d+\.port[12]$)",
+              {{R"(^(C\d+)\.port1$)", R"(^(C\d+)\.port2$)"}});
 }
 
 inline Benchmark seventeenQubit() { return qubitAndCouplerChip("17q"); }

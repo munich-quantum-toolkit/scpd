@@ -23,7 +23,8 @@ namespace {
 using namespace mqt::scpd::grid;
 
 const GridMetrics TEN_UNITS = GridMetrics::fit(
-    BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 1000.0, .maxY = 1000.0}, 101, 101);
+    BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 1000.0, .maxY = 1000.0}, 101,
+    101);
 
 TEST(PortBands, OrientationsStepAlongTheAxesAndDiagonals) {
   EXPECT_EQ(orientationStep(0.0), (Step{.x = 1, .y = 0}));
@@ -94,11 +95,14 @@ TEST(PortBands, DiggingFreesTheExitBeyondTheBand) {
   const StampedBand stamped = stampBand(mask, band);
   const auto target = digTargetBeyondBand(mask, stamped, band.step);
   ASSERT_TRUE(target.has_value());
-  // The walk starts one beyond the band and steps once more.
-  EXPECT_EQ(*target, static_cast<std::size_t>(32) * 50 + 25);
-  EXPECT_FALSE(mask.testCell(25, 32));
-  EXPECT_FALSE(mask.testCell(24, 33));
+  // The target is the first cell beyond the last strip, which lies at 30.
+  EXPECT_EQ(*target, static_cast<std::size_t>(31) * 50 + 25);
+  EXPECT_FALSE(mask.testCell(25, 31));
+  EXPECT_FALSE(mask.testCell(24, 32));
+  // The band stays whole: its last strip is a neighbor of the target and is
+  // not freed with it.
   EXPECT_TRUE(mask.testCell(25, 30));
+  EXPECT_TRUE(mask.testCell(24, 30));
 }
 
 TEST(PortBands, PlacingKeepsObstaclesThatWereThereBefore) {

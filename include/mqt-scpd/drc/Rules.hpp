@@ -37,12 +37,12 @@ struct CheckedWire {
   std::span<const flatbuffers::geometry::RCoord> cells;
   /// The components its two ends sit on, empty where an end is not a port.
   ///
-  /// Two wires that end on one component converge there by construction: the
-  /// ports of a component sit closer together than the wire spacing, and each
-  /// of the two has to be reached. The clearance rule exempts such a pair
-  /// near the two ports. The prototype decides the same question by parsing a
-  /// component name out of a port label and needs a documented special case
-  /// for its synthetic labels; here a component is declared.
+  /// No rule reads them any more. The clearance rule used to exempt two wires
+  /// that end on one component near their ports, on the assumption that a
+  /// component's ports sit closer together than the wire spacing; the two
+  /// ports of a qubit can sit nine hundred units apart, and the exemption let
+  /// a wire pass the other's approach. A junction is now geometry alone:
+  /// two terminals within the clearance of each other.
   std::array<std::string_view, 2> components;
   /// Whether it is a feedline that runs from one coupler to another.
   ///
@@ -58,7 +58,9 @@ struct CellView {
   /// The grid the cells are counted on.
   grid::GridMetrics grid;
   std::vector<CheckedWire> wires;
-  /// The chip, for the obstacle rule. Nothing skips that rule.
+  /// The chip. No rule reads it for now: the obstacle rule is out until its
+  /// raster exempts the port approaches the router's mask exempts, because
+  /// until then it reports every stub out of a port.
   const flatbuffers::design::ChipT* chip = nullptr;
 };
 
@@ -71,11 +73,14 @@ struct Settings {
   double junctionRadiusNorm = 1.5;
 };
 
-/// Run the rules that read a view in router cells: wire clearance, wire loop
-/// and obstacle clearance.
+/// Run the rules that read a view in router cells: wire clearance and wire
+/// loop.
 ///
 /// Feedline orthogonality is not here. It needs feedlines, which the stage
-/// does not produce yet.
+/// does not produce yet. Obstacle clearance is out for now: the keepout is
+/// baked into the router's mask with the port approaches exempted, and a
+/// check that rasterizes the keepout without those exemptions reports every
+/// stub out of a port.
 [[nodiscard]] MQT_SCPD_DRC_EXPORT flatbuffers::drc::DrcReportT
 checkCells(const CellView& view, const flatbuffers::design::DesignRulesT& rules,
            const Settings& settings = {});

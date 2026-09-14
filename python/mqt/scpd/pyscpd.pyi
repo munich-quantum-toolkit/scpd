@@ -53,8 +53,10 @@ def route_final(
     config: bytes,
     producer: str,
     progress: Callable[[str], None] | None = None,
+    debug: Callable[[str, str], str | None] | None = None,
+    verbosity: int = 0,
 ) -> bytes:
-    """Run the Final stage. Returns 06-final.fb as bytes. progress, when given, is called with one line per round while the stage runs."""
+    """Run the Final stage. Returns 06-final.fb as bytes. progress, when given, is called with one line per round while the stage runs, and with verbosity 1 with one line per wire and search as well; debug, when given, is called with the name and the text of one SVG picture of the grid and then of every search, and returns where it put the picture so the lines can name it."""
 
 def check_final(chip: bytes, global_: bytes, assignment: bytes, final: bytes, config: bytes) -> str:
     """Check a final routing against the design rules. Returns the text of drc.json."""

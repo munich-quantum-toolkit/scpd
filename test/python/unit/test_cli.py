@@ -152,6 +152,37 @@ def test_plan_says_what_a_stage_is_doing_with_verbose(
     assert "drawn" in captured
 
 
+def test_plan_draws_debug_pictures_with_debug(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`-d` writes the Final stage's grid and one picture per search into <run>/debug."""
+    run = tmp_path / "run"
+    config = str(BENCHMARKS / "4q" / "config.toml")
+    assert main(["plan", "-c", config, "-o", str(run), "-d"]) == 0
+
+    grid = run / "debug" / "final-grid.svg"
+    assert grid.is_file()
+    assert grid.read_text(encoding="utf-8").startswith("<svg")
+    # Every wire of the 4-qubit chip finds its way in phase 1 of round 0, so there is one
+    # picture per wire, each named after the pass, the round, the wire and the kind of search.
+    searches = sorted((run / "debug").glob("final-*-outer-r0f-w*-normal.svg"))
+    assert len(searches) == 12
+    assert "debug pictures in" in capsys.readouterr().out
+
+
+def test_plan_tells_every_search_at_verbosity_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`-v 1` says what every search came to, and names its picture when `-d` is on.
+
+    Every pass ends on what each round came to, wire by wire.
+    """
+    run = tmp_path / "run"
+    config = str(BENCHMARKS / "4q" / "config.toml")
+    assert main(["plan", "-c", config, "-o", str(run), "-v", "1", "-d"]) == 0
+
+    captured = capsys.readouterr().out
+    assert "wire 0 · round 0 forward · normal: found" in captured
+    assert "final-00001-outer-r0f-w0-normal.svg" in captured
+    assert "outer routing round 0 forward : 12 found a way in phase 1, 0 after relaxation, 0 failed" in captured
+
+
 def test_plan_is_quiet_without_verbose(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Without it a run says only which artifact each stage wrote."""
     run = tmp_path / "run"

@@ -112,6 +112,19 @@ mqt::scpd::pipeline::Progress sayTo(const nb::object& progress) {
   };
 }
 
+/// The Python callable a stage hands its debug pictures to, or nothing.
+mqt::scpd::pipeline::Debug drawTo(const nb::object& debug) {
+  if (debug.is_none()) {
+    return {};
+  }
+  return [&debug](const std::string_view name,
+                  const std::string_view content) -> std::string {
+    const nb::object where = debug(nb::str(name.data(), name.size()),
+                                   nb::str(content.data(), content.size()));
+    return where.is_none() ? std::string{} : nb::cast<std::string>(where);
+  };
+}
+
 /// The detail routing an artifact carries.
 const mqt::scpd::flatbuffers::artifacts::DetailRoutingT&
 detailOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
@@ -308,7 +321,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       [](const nb::bytes& chip, const nb::bytes& capacity,
          const nb::bytes& global, const nb::bytes& assignment,
          const nb::bytes& detail, const nb::bytes& config,
-         const std::string_view producer, const nb::object& progress) {
+         const std::string_view producer, const nb::object& progress,
+         const nb::object& debug, const std::uint32_t verbosity) {
         const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
         const auto design = mqt::scpd::io::readChip(asSpan(chip));
         const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
@@ -320,13 +334,19 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
         return asArtifact(mqt::scpd::pipeline::finalRouters().make(name)->run(
                               design, capacityOf(plan), globalOf(circuit),
                               assignmentOf(assigned), detailOf(drawn),
-                              configuration, sayTo(progress)),
+                              configuration, sayTo(progress), drawTo(debug),
+                              verbosity),
                           producer);
       },
       "chip"_a, "capacity"_a, "global"_a, "assignment"_a, "detail"_a,
       "config"_a, "producer"_a, "progress"_a = nb::none(),
+      "debug"_a = nb::none(), "verbosity"_a = 0,
       "Run the Final stage. Returns 06-final.fb as bytes. progress, when "
-      "given, is called with one line per round while the stage runs.");
+      "given, is called with one line per round while the stage runs, and "
+      "with verbosity 1 with one line per wire and search as well; debug, "
+      "when given, is called with the name and the text of one SVG picture "
+      "of the grid and then of every search, and returns where it put the "
+      "picture so the lines can name it.");
 
   m.def(
       "check_final",

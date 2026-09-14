@@ -246,32 +246,32 @@ Inside `FinalRouter.cpp`, in the order it reads:
 
 | Symbol | Line | What it is for |
 | --- | ---: | --- |
-| `Tuning` | 79 | every knob, already converted onto the grid. Nothing here is a cell count standing for a distance |
-| `tuningOf` | 114 | the one place a design rule or a configured length becomes cells |
-| `Scene` | 165 | the router grid, the mask it searches on, the target cell and arrival heading of every port |
-| `blockOutsideTheSources` | 188 | blocks everything between the chip outline and the rectangle the launcher slots stand on, so no wire slips **around** the sources |
-| `sceneOf` | 218 | builds that scene: obstacle raster with the keepout baked in, one band per port, one target dug beyond each band |
-| `Stencil`, `stencilOf` | 318 | the offsets of one clearance disc, and what enters it on each step. Charging a disc per wire cell costs thirty times as much |
-| `Field` | 373 | **the heart of the correction.** Two fields per cell: which wire holds the copper, and how many wires keep their clearance over it. A wire charges its room when it is put down and gives it up when it is taken off |
-| `Field::guardedOnlyBy` | 398 | whether every wire guarding a cell ends on one of two components — what makes the junction exemption narrow |
-| `Wire` | 541 | one connection: its two ends, the way it has, whether it is drawn, placed, routed |
-| `Pass` | 589 | what one run of the driver does: rounds, relaxation, band, stub |
-| `Driver` | 608 | the one rip-up-and-reroute loop. The prototype writes it out four times |
-| `Driver::sweep` | 697 | the rounds. Ends when every wire is routed, or after four rounds without progress, then a rescue pass |
-| `Driver::refine` | 766 | routes every wire again against a centring price, to widen the room around it |
-| `Driver::fixPlaces` | 802 | charges the places no wire may be moved off — its target **and the straight run out of its source**, which no search ever sees |
-| `Driver::markJunctions` | 827 | where two wires meet and the rule therefore does not bind |
-| `Driver::attempt` | 901 | one wire's turn: band, relaxation both ways, targeted rip, verdict |
-| `Driver::conflictsOf` | 1029 | the verdict: how many cells of a way lie in another wire's room, counted with the wire off the canvas |
-| `Driver::blockersOf` | 1056 | the wires actually in the way of a way |
-| `Driver::search` | 1082 | the call into the shared `DubinsRouter` |
-| `Driver::buildCorridor` | 1099 | the cells a search may enter: free space within the band, less every cell another wire holds or guards |
-| `Driver::priceLane` / `fillLane` | 1196 | the prototype's corridor polygon: everything outside the lane between the two ring neighbours is priced, nothing is forbidden |
-| `Driver::priceGuarded` | 1342 | a price on every guarded cell, for the search that has to ignore the rule |
-| `Driver::priceRoom` | 1369 | the centring price of the refinement: free in the middle of a channel, full price at its wall |
-| `wiresOf` | 1591 | reads the plan into wires: feed point, target cell, headings, components, the Detail stage's way as a seed |
-| `snapshotOf` | 1697 | what one phase drew |
-| `DubinsFinalRouter::run` | 1722 | the five phases and the artifact |
+| `Tuning` | 82 | every knob, already converted onto the grid. Nothing here is a cell count standing for a distance |
+| `tuningOf` | 122 | the one place a design rule or a configured length becomes cells |
+| `Scene` | 179 | the router grid, the mask it searches on, the target cell and arrival heading of every port |
+| `blockOutsideTheSources` | 202 | blocks everything between the chip outline and the rectangle the launcher slots stand on, so no wire slips **around** the sources |
+| `sceneOf` | 232 | builds that scene: obstacle raster with the keepout baked in, one band per port, one target dug beyond each band |
+| `Stencil`, `stencilOf` | 332 | the offsets of one clearance disc, and what enters it on each step. Charging a disc per wire cell costs thirty times as much |
+| `Field` | 385 | **the heart of the correction.** Two fields per cell: which wire holds the copper, and how many wires keep their clearance over it. A wire charges its room when it is put down and gives it up when it is taken off |
+| `Wire` | 553 | one connection: its two ends, the way it has, whether it is drawn, placed, routed |
+| `Pass` | 607 | what one run of the driver does: rounds, relaxation, band, stub |
+| `Driver` | 675 | the one rip-up-and-reroute loop. The prototype writes it out four times |
+| `Driver::sweep` | 785 | the rounds, over wires that start on the Detail stage's ways. Ends when no wire fails, or after four rounds without progress, on the pass's `Fails:` line |
+| `Driver::failsOf` | 877 | the fails of a set of wires, counted with every wire down: unrouted plus open |
+| `Driver::refine` | 905 | routes every wire again against a centring price, to widen the room around it |
+| `Driver::fixPlaces` | 964 | charges the places no wire may be moved off — its target **and the straight run out of its source**, which no search ever sees |
+| `Driver::seed` | 992 | puts every wire of a pass down on the way the Detail stage drew, joined on this grid with the straight stub in front |
+| `Driver::attempt` | 1139 | one wire's turn, the prototype's two phases: the band fenced by both ring neighbours inflated by the clearance, then the relaxation along the sweep with the lane price and the discs around the wires let go of. A way found is taken; nothing else |
+| `Driver::conflictsOf` | 1198 | how many cells of a way lie within the rule of another wire, counted with the wire off the canvas — what the fails are counted by, not what the search keeps |
+| `Driver::search` | 1296 | the call into the shared `DubinsRouter` |
+| `Driver::buildCorridor` | 1314 | the cells a search may enter: the free space within the band around the way the wire has — the prototype's `expand_path`, which knows nothing of other wires |
+| `Driver::fence` | 1382 | closes the ways of the fence wires, inflated by the clearance — the prototype's `mark_obstacles` with `min_dist_wires`; the meeting of two wires that share a junction stays open |
+| `Driver::priceLane` / `fillLane` | 1494 | the prototype's corridor polygon: everything outside the lane between the two ring neighbours is priced, nothing is forbidden; the wires let go of are priced at growing distances |
+| `Driver::priceApproaches` | 1494 | not in the prototype: the straight run out of the source and the run into the target of every wire around the search, in the port band's geometry but two clearances wide, at ten times the wire price, so that a relaxed search does not take a place a wire let go of has to come back to |
+| `Driver::priceRoom` | 1610 | the centring price of the refinement: free in the middle of a channel, full price at its wall |
+| `wiresOf` | 1835 | reads the plan into wires: feed point, target cell, headings, the Detail stage's way as a seed |
+| `snapshotOf` | 1941 | what one phase drew |
+| `DubinsFinalRouter::run` | 1966 | the five phases and the artifact |
 
 #### What the stage reuses
 
@@ -291,7 +291,7 @@ Written in phase 2 of the project; **no new search was written**.
 | Where | What |
 | --- | --- |
 | [include/mqt-scpd/drc/Rules.hpp](include/mqt-scpd/drc/Rules.hpp) | `CellView` — what a rule sees — and `checkCells` |
-| [src/drc/Rules.cpp](src/drc/Rules.cpp) | rule 1 wire clearance, rule 3 wire loop, rule 4 obstacle clearance, and the writer of `drc.json` |
+| [src/drc/Rules.cpp](src/drc/Rules.cpp) | rule 1 wire clearance, rule 3 wire loop, and the writer of `drc.json`. Rule 4, obstacle clearance, is out for now: its raster does not exempt the port approaches the router's mask exempts, so it reported every stub out of a port |
 | [python/mqt/scpd/drc.py](python/mqt/scpd/drc.py) | reads `drc.json` back and counts it; only the active findings decide the exit code |
 
 #### Schema, wiring and rendering
@@ -337,47 +337,103 @@ c=17q
 ```
 
 ```text
-[final]     0.01s  grid 1425x1425 cells of 9.97 layout units | clearance 19 cells | stub 11 cells | band 209 cells | bend 7125 | wire price 4 | obstacle price 1 over 11 cells
-[final]     0.02s  inner routing: 14 wires, up to 4 rounds, 10 relaxations each way
-[final]     0.06s  inner routing round 0 forward : tried 14, routed 14, still open 0, undrawn 0
-[final]     0.06s  inner routing: 14 of 14 drawn, 0 of them too close to another wire
-[final]     0.09s  outer routing: 58 wires, up to 30 rounds, 10 relaxations each way
-[final]     2.02s  outer routing round 0 forward : tried 58, routed 57, still open 14, undrawn 1
-[final]     3.06s  outer routing round 1 backward: tried 24, routed 23, still open 12, undrawn 1
+[final]     0.01s  grid 1425x1425 cells of 9.97 layout units | clearance 19 cells for a rule of 18.55 | stub 11 cells | band 209 cells | bend 7125 | wire price 4 | obstacle price 1 over 11 cells
+[final]     0.02s  inner routing: 14 of 14 wires start on the way the Detail stage drew
+[final]     0.02s  inner routing: 14 wires, up to 4 rounds, 5 relaxations each way
+[final]     0.05s  inner routing: 14 of 14 drawn, 0 unrouted, 0 open | Fails: 0
+[final]     0.09s  outer routing: 58 of 58 wires start on the way the Detail stage drew
+[final]     0.09s  outer routing: 58 wires, up to 6 rounds, 5 relaxations each way
+[final]     0.81s  outer routing round 0 forward : tried 58, routed 48, unrouted 2, open 14 | Fails: 16
+[final]     1.42s  outer routing round 1 backward: tried 19, routed 17, unrouted 2, open 6 | Fails: 8
 ...
-[final]     6.72s  outer routing: 4 rounds without progress, stopping
-[final]     6.72s  outer routing: wire 42 has no way; taking one without the rule
-[final]     7.40s  outer routing: 58 of 58 drawn, 0 of them too close to another wire
-[final]     7.40s  refinement: 58 wires, 2 rounds
-[final]     8.44s  refinement round 0 forward : moved 54 of 58
+[final]     3.21s  outer routing: wire 42 is still on its seed; taking any way it finds
+[final]     3.52s  outer routing: 57 of 58 drawn, 1 unrouted, 2 open | Fails: 3
+[final]     3.52s  final routing: 71 of 72 drawn, 1 unrouted, 2 open | Fails: 3
 ```
 
-What each line says:
+Every pass starts with every wire on the way the Detail stage drew, put down
+with its copper and its clearance, so that the sweep is a rip-up and
+re-route over a complete routing and no wire is ever without a way. What
+each line says:
 
 | Word | What it counts |
 | --- | --- |
 | `tried` | wires this round offered a way |
-| `routed` | of those, the ones that came out settled — a way that holds the rule against **every** other wire |
-| `still open` | wires not settled at the end of the round, so the next round looks at them again. A wire that another wire had to let go of is open too, because the way it has was drawn when that other one was not there |
-| `undrawn` | wires with no way at all. These are the ones the rescue takes without the rule |
-| `too close` | wires whose committed way comes within `min_wire_spacing` of another, counted with every wire down and by the same test `mqt-scpd drc` uses |
+| `routed` | of those, the ones that found a way |
+| `unrouted` | wires with no way of their own: the stage has found none, and the wire still stands on the Detail stage's way. A seed is not curvature-constrained and knows nothing of this grid's keepout, so the artifact carries no cells for a wire left on it |
+| `open` | wires with a way of their own that is not settled: in a round, let go of by a wire that relaxed past it and not drawn again yet, so the next round looks at them again; at the end of a pass, too close to another wire |
+| `Fails:` | `unrouted` plus `open`. A round with none ends the pass. The pass's own last line and the stage's `final routing:` line count the same two things with every wire down, by the test `mqt-scpd drc` makes, so what they say is what the check will find |
 | `moved` | wires the refinement found a wider way for |
 
-`-v` works on the Corridor and the Detail stage too:
+`-v 1` says one line more per search, indented, and with `-d` it names the
+picture of that search:
+
+```text
+[final]     0.81s    wire 1 · round 0 forward · normal: no way, relaxing · artifacts/17q/debug/final-00016-outer-r0f-w1-normal.svg
+[final]     0.83s    wire 1 · relax 1: let go of 2, fence 2 and 0 · no way · artifacts/17q/debug/final-00017-outer-r0f-w1-relax1.svg
+[final]     0.86s    wire 1 · relax 2: let go of 3, fence 3 and 0 · found 249 cells · artifacts/17q/debug/final-00018-outer-r0f-w1-relax2.svg
+[final]     0.90s    wire 2 · round 0 forward · normal: found 301 cells · artifacts/17q/debug/final-00019-outer-r0f-w2-normal.svg
+...
+[final]     3.99s    wire 42 · round 5 backward: no way after 5 relaxations; 41, 40, 39, 38, 37 back as they were
+[final]     4.34s  outer routing: 57 of 58 drawn, 1 unrouted, 4 open | Fails: 5
+[final]     4.34s  outer routing: unrouted: 42 · open: 30, 31, 36, 37
+[final]     4.34s  outer routing round 0 forward : 48 found a way in phase 1, 5 after relaxation, 5 failed: 30, 36, 42, 45, 46
+[final]     4.34s  outer routing round 1 backward: 17 found a way in phase 1, 3 after relaxation, 3 failed: 30, 36, 42
+```
+
+So a pass ends on which wires are unrouted and which open, and on what every
+round came to: how many wires found a way in phase 1, how many only after
+letting neighbours go, and which found none in that round.
+
+`-v` works on the Corridor and the Detail stage too, and each ends on a
+`Fails:` line of its own:
 
 ```text
 [corridor]     0.00s  30 connections over 91 partitions, up to 12 rounds, 30 relaxations
 [corridor]     0.00s  round 0 forward : routed 30 of 30
+[corridor]     0.00s  30 of 30 connections have a way through the partitions, 0 unrouted | Fails: 0
 [detail]     0.00s  grid 360x360 cells | 30 connections of the ring | 6 of the inner circuit
 [detail]     0.00s  pass 1, inside the partitions: 0 pieces left undrawn
 [detail]     0.00s  the rule is 4 cells of this grid, which is 158 layout units against a rule of 185
 [detail]     0.02s  round 0 forward : 1 of 36 wires still to settle
-[detail]     0.02s  36 of 36 wires drawn, 0 of them within the rule of another
+[detail]     0.02s  36 of 36 wires drawn, 0 unrouted, 0 within the rule of another | Fails: 0
 ```
 
 > **Trap.** `--stage` reads the configuration **from the run directory**, not
 > from the file named on the command line. After editing `benchmarks/$c/config.toml`,
 > copy it over first: `cp benchmarks/$c/config.toml artifacts/$c/config.toml`.
+
+#### Debug pictures of the Final stage
+
+```bash
+.venv/bin/mqt-scpd plan -c benchmarks/$c/config.toml -o artifacts/$c -d
+```
+
+`-d` makes the Final stage hand out one SVG per thing it looks at, written
+into `artifacts/$c/debug/`:
+
+| File | What it shows |
+| --- | --- |
+| `final-grid.svg` | the whole router grid before anything is drawn: the artwork with its keepout (dark), the obstacle halo the search pays for (yellow, darker is dearer), every port as the chip carries it (teal square on the port's own cell, line = orientation, `p<n>` = its index, the label on hover), every wire's seed from the Detail stage (thin grey), and every source (blue) and target (red, the cell beyond the port's band) with the heading it leaves or arrives on as a line and the wire's number beside it |
+| `final-00017-outer-r0f-w1-relax1.svg` | one search, taken from inside `search()` so it shows exactly what the router was given: picture 17 of the run, the `outer` pass, round 0 `f`orward (`b` backward), wire 1, phase 2 at relaxation level 1 (`normal` is phase 1, `refine` the refinement). Cropped to the band's box |
+
+In a search picture: every port in the crop as the chip carries it (teal
+square on its cell, dot at its exact position, index beside it, label on
+hover) and, dashed, the distance from that exact position to the cell the
+wire is routed to beyond the port's band, in layout units and cells; the band
+the search may enter (green), the wire price
+outside the lane and around the wires let go of (red, darker is dearer), the
+fence — the clearance around the fence wires, closed — as an orange band
+around their copper, the ring neighbours (blue), the wires let go of (purple,
+dashed), the way the wire had (grey, dashed), the way it found (green, bold)
+or `no way` in the title, and its two ends. The title line names the fence,
+the wires let go of, the lane's two neighbours and the box; the second one
+the setting. Every fill is translucent, so what lies under it stays visible,
+and every layer is one CSS class, so one can be switched off in the file.
+
+The wire is the ring index, `i3` the third wire of the inner circuit. Count on
+one picture per search: 13 on the 4-qubit chip, 37 on the 9-qubit, 166 on
+the 17-qubit (19 MB); a chip that relaxes a lot makes many hundred.
 
 #### The five pictures and the GDS
 
@@ -458,8 +514,9 @@ uv run --no-sync pytest test/python/unit
 ### 3.4 Its knobs
 
 Everything is a length in layout units or a price. A shipped configuration
-carries only what differs from the defaults, so none of the benchmarks has a
-`[stages.final]` section at all.
+carries only what differs from the defaults; every benchmark carries a
+`[stages.final]` section with `rounds = 6`, `max_relaxation = 5` and
+`refinement_rounds = 0`, the setting the seeded sweep was measured at.
 
 ```toml
 [grid]
@@ -470,7 +527,7 @@ corridor_spacings       = 11   # the band around a wire's own way, in wire spaci
 inner_corridor_spacings = 11   # the same, for the inner circuit
 rounds                  = 30   # sweeps over the wire list
 inner_rounds            = 4
-max_relaxation          = 10   # neighbours a failed wire may let go of, each way
+max_relaxation          = 10   # neighbours a failed wire may let go of, along the sweep
 refinement_rounds       = 2
 meander_length          = 3000.0   # layout units; not built yet
 bend_penalty_norm       = 2.5      # × the sum of the grid's two extents
@@ -493,8 +550,11 @@ and none of them can be set.
 
 ## 4. When something is wrong
 
-0. **Run it again with `-v`.** Every round says how many wires it tried, how
-   many settled, how many are still open and how many have no way at all.
+0. **Run it again with `-v`, or `-v 1 -d`.** Every round says how many wires
+   it tried, how many settled, how many are unrouted and how many open, and
+   every stage ends on a `Fails:` line that counts both. At level 1 every
+   search says what it came to, which wires it let go of, and where its
+   picture is.
 1. **`mqt-scpd drc <run>`** then. It says which two wires, where, and by how
    much.
 2. **The picture of the phase.** `plot --stage final --phase outer` draws every

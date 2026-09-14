@@ -1608,12 +1608,18 @@ private:
         break;
       }
     }
-    const auto left = recount(canvas, wires);
-    say(std::format("{} of {} wires drawn, {} of them within the rule of "
-                    "another",
+    // The stage's summary: a fail is a wire without a way, or a wire whose
+    // way comes within the rule of another, counted with every wire down.
+    const auto fails = recount(canvas, wires);
+    const auto unrouted = static_cast<std::size_t>(
+        std::ranges::count_if(wires, [](const Wire& wire) {
+          return wire.planned && (!wire.drawn || wire.path.empty());
+        }));
+    say(std::format("{} of {} wires drawn, {} unrouted, {} within the rule of "
+                    "another | Fails: {}",
                     std::ranges::count_if(
                         wires, [](const Wire& wire) { return wire.drawn; }),
-                    wires.size(), left));
+                    wires.size(), unrouted, fails - unrouted, fails));
   }
 
   /// Draw one wire again: the prototype's two phases.

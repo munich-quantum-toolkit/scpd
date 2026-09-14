@@ -861,8 +861,12 @@ public:
     exchange(corridors, requests, routes, sweeps);
     const auto placed = std::ranges::count_if(
         routes, [](const auto& route) { return route.has_value(); });
-    say(std::format("{} of {} connections have a way through the partitions",
-                    placed, requests.size()));
+    // The stage's summary. A corridor has no clearance to break, so its fails
+    // are the connections without a way.
+    const auto unrouted = requests.size() - static_cast<std::size_t>(placed);
+    say(std::format("{} of {} connections have a way through the partitions, "
+                    "{} unrouted | Fails: {}",
+                    placed, requests.size(), unrouted, unrouted));
     return artifactOf(corridors, capacity, requests, routes, scene.detail);
   }
 

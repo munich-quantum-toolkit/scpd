@@ -140,3 +140,11 @@ capacity_cells_x = 32
 # How many launchers this chip's assignment activates. A per-chip figure with no
 # default, taken from the driver of the same benchmark.
 launcher_target = 15
+
+[stages.final]
+# The sweep of the Final stage, for the measurement of the seeded sweep: six
+# rounds, five relaxations each way and no refinement. The defaults are 30, 10
+# and 2.
+rounds            = 6
+max_relaxation    = 5
+refinement_rounds = 0

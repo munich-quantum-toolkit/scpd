@@ -36,11 +36,13 @@ namespace mqt::scpd::pipeline {
 /// prototype writes that loop out four times, once per phase, with the phases
 /// differing only in their parameters.
 ///
-/// The clearance holds against **every** wire. The prototype keeps a wire
-/// clear of the two beside it in the ring and of nothing else, which is what
-/// its own pictures show; here the grid carries how many wires guard each
-/// cell, a wire charges its own when it is put down and gives it up when it
-/// is taken off, and a search refuses a guarded cell outright.
+/// A search is fenced in as the prototype's is: by the two wires beside this
+/// one in the ring, inflated by the clearance, and by nothing else — the wires
+/// it lets go of in the relaxation are no obstacle at all, because they are
+/// drawn again afterwards. The rule against **every** wire is what a wire is
+/// judged by, not what its search keeps: the grid carries how many wires guard
+/// each cell, a wire charges its own when it is put down and gives it up when
+/// it is taken off, and the fails of a pass are counted on that field.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::unique_ptr<IFinalRouter>
 makeDubinsFinalRouter();
 

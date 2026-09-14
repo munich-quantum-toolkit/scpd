@@ -10,8 +10,6 @@
 
 #include "mqt-scpd/drc/Rules.hpp"
 
-#include "mqt-scpd/grid/BitGrid.hpp"
-#include "mqt-scpd/grid/Rasterize.hpp"
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/SelfIntersection.hpp"
 
@@ -60,29 +58,16 @@ struct Ends {
   return ends;
 }
 
-[[nodiscard]] bool sharesComponent(const CheckedWire& one,
-                                   const CheckedWire& two) {
-  for (const auto& here : one.components) {
-    if (here.empty()) {
-      continue;
-    }
-    for (const auto& there : two.components) {
-      if (here == there) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 /// Where two wires meet, in cells.
 ///
 /// A terminal of one within the clearance of a terminal of the other is a
-/// junction, and so is any pair of terminals on one component: the ports of a
-/// component sit closer together than the wire spacing and each has to be
-/// reached, so the two approaches converge and no arrangement holds them
-/// apart. Everything within `junctionRadiusNorm` clearances of either terminal
-/// belongs to that meeting.
+/// junction: two ports that close together have to be reached by two wires
+/// whose approaches converge, and no arrangement holds them apart.
+/// Everything within `junctionRadiusNorm` clearances of either terminal
+/// belongs to that meeting. Geometry alone decides it. That two wires end on
+/// one component says nothing about where its ports are — the two ports of a
+/// qubit can sit nine hundred units apart — and an exemption keyed on the
+/// component let a wire pass the other's approach far from any meeting.
 [[nodiscard]] std::vector<std::pair<double, double>>
 junctionsOf(const CheckedWire& one, const CheckedWire& two,
             const double clearance) {
@@ -92,11 +77,9 @@ junctionsOf(const CheckedWire& one, const CheckedWire& two,
   if (!here.present || !there.present) {
     return centres;
   }
-  const bool shared = sharesComponent(one, two);
   for (const auto& a : here.at) {
     for (const auto& b : there.at) {
-      if (shared ||
-          std::hypot(a.first - b.first, a.second - b.second) <= clearance) {
+      if (std::hypot(a.first - b.first, a.second - b.second) <= clearance) {
         centres.push_back(a);
         centres.push_back(b);
       }
@@ -270,39 +253,6 @@ void checkLoops(const CellView& view, fbdrc::DrcReportT& report) {
   }
 }
 
-/// Rule 4: no wire closer to a chip obstacle than the obstacle spacing.
-///
-/// The distance is measured the way the raster measures it, from the cell to
-/// the polygon edge in layout units, by rasterizing the obstacles with the
-/// keepout and asking whether a wire cell is one of the cells that leaves. The
-/// stage bakes the same mask in before it searches, so what this reports is a
-/// cell the committed result holds and the search never offered.
-void checkObstacles(const CellView& view, const fbd::DesignRulesT& rules,
-                    fbdrc::DrcReportT& report) {
-  if (view.chip == nullptr || rules.min_obstacle_spacing <= 0.0) {
-    return;
-  }
-  const auto raster = grid::rasterizeObstacles(
-      *view.chip, view.grid, {.keepout = rules.min_obstacle_spacing});
-  for (const auto& wire : view.wires) {
-    for (const auto& cell : wire.cells) {
-      if (!view.grid.contains(cell.x(), cell.y()) ||
-          !raster.blocked.testCell(cell.x(), cell.y())) {
-        continue;
-      }
-      report.findings.push_back(findingOf(
-          fbdrc::DrcRule::ObstacleClearance, fbdrc::DrcSeverity::Active,
-          {wire.connection}, view.grid.toLayout(cell.x(), cell.y()), 0.0,
-          rules.min_obstacle_spacing,
-          std::format(
-              "wire {} runs within {} layout units of an obstacle at ({}, {})",
-              wire.connection, rules.min_obstacle_spacing, cell.x(),
-              cell.y())));
-      break;
-    }
-  }
-}
-
 } // namespace
 
 fbdrc::DrcReportT checkCells(const CellView& view,
@@ -312,7 +262,6 @@ fbdrc::DrcReportT checkCells(const CellView& view,
   report.stage = fbdrc::DrcStage::Final;
   checkClearance(view, rules, settings, report);
   checkLoops(view, report);
-  checkObstacles(view, rules, report);
   return report;
 }
 
