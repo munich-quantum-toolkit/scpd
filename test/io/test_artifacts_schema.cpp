@@ -246,6 +246,13 @@ TEST(ArtifactSchema, FinalRoutingKeepsTheCreatedPortsAndTheFailures) {
   // The coupler carries the port it creates and the connection it completes,
   // so a reloaded run can rebuild the grown port list without the stage.
   FinalRoutingT final;
+  // The grid is required: a reader places the cells without rebuilding the
+  // run.
+  final.grid = std::make_unique<GridExtentT>();
+  final.grid->width = 4;
+  final.grid->height = 4;
+  final.grid->cell_width = 10.0;
+  final.grid->cell_height = 10.0;
   final.couplers.push_back(makeCoupler(3));
   final.bridges.push_back(makeBridge());
   final.unresolved = {ConnectionRef(7)};

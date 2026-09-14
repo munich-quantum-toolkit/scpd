@@ -1,330 +1,285 @@
-# Phase 4, step 3 → the Final stage — handover
+# Phase 4, step 3 → the Final stage: outer routing complete — handover
 
-Written for whoever implements the **Final** stage. The Detail stage is done,
-verified and drawn, and it holds the design rule everywhere. This file says what
-is finished, what the ground truth is, and — most of all — **what cost time and
-should not cost it twice.**
+Written for whoever builds the **meander insertion**, the next piece of the
+Final stage. The inner and the outer routing are done: every wire of every
+benchmark is drawn and the design rule holds everywhere. This file says what
+the stage is now, what changed to get there and why, what cost time, and
+where the meander goes.
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch: `phase-4-routing-stages`, based on `8ef300a`. **Nothing is committed —
-  the user commits per phase.** Leave your work in the tree.
+- Branch: `phase-4-routing-stages`. The outer routing is committed as
+  `1957fe1` ("0 fails on final routing on all benchmarks"). Not committed:
+  this file and two test repairs named under *Verification*. **The user
+  commits per phase**; leave your work in the tree. `artifacts/*/drc.json`
+  are tracked and show as modified after a run that changes a report.
 - Prototype: `/Users/michaelfeldmeier/Documents/GitHub/FridgeCAD` (`0c5d6d9`),
-  read only. The Final stage is `include/fiction/layout/FinalGrid.cpp`, and it
-  is **23 413 lines** — an order of magnitude more than `DetailedGrid.cpp`.
-- What is finished: [summary-stage-4.md](summary-stage-4.md) (Corridor),
-  [summary-detail-routing.md](summary-detail-routing.md) (Detail). The two
-  earlier briefings, [handover-detail-routing.md](handover-detail-routing.md)
-  and [handover-detail-clearance.md](handover-detail-clearance.md), are history
-  now: **both of their requirements are met.**
+  read only. `include/fiction/layout/FinalGrid.cpp` (23 413 lines) and
+  `include/fiction/algorithms/routing/dubin_router_opt.hpp`.
+- Write-ups: [summary-final-routing.md](summary-final-routing.md) is the
+  record of every measurement; [user_final.md](user_final.md) is the guide
+  to the code and every command; [handover-final-couplers.md](handover-final-couplers.md)
+  briefs the coupler and feedline phases that come after the meander.
 
 ## Where the pipeline stands
 
-Five of seven artifacts are written, and the sixth is yours:
-
 ```text
-01-capacity.fb  02-global.fb  03-assign.fb  04-corridor.fb  05-detail.fb  →  06-final.fb
+01-capacity.fb  02-global.fb  03-assign.fb  04-corridor.fb  05-detail.fb  06-final.fb
 ```
 
-| chip | connections | drawn | inner | cells | bends | longest | detail | clearance |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 4q  |  12 |  12 |   0/0 |    550 |   41 |  64 |  0.38 s | held |
-| 9q  |  30 |  30 |   6/6 |   2644 |  116 |  98 |  0.09 s | held |
-| 17q |  58 |  58 | 14/14 |   7891 |  553 | 202 |  0.33 s | held |
-| 21q |  70 |  70 |   8/8 |  12454 |  717 | 221 |  0.60 s | held |
-| 33q | 110 | 110 |   8/8 |  25916 | 1346 | 308 |  1.63 s | held |
-| 45q | 150 | 150 |   7/7 |  42869 | 2744 | 396 |  4.58 s | held |
-| 57q | 190 | 190 | 11/11 |  71230 | 4555 | 575 |  9.66 s | held |
-| 69q | 230 | 230 | 11/11 | 111345 | 5478 | 700 | 15.50 s | held |
+Six of seven artifacts are written. In `06-final.fb` the phases `inner` and
+`outer` carry wires; `couplers`, `feedlines`, `refined` are written empty.
+At the setting every benchmark ships (`rounds = 6`, `max_relaxation = 5`,
+`refinement_rounds = 0`):
 
-**968 of 968 connections and 65 of 65 inner connections, and no two wires
-anywhere within the design rule.** 314 of 314 ctest cases, 129 Python tests.
+| chip | wires | drawn | open | **Fails** | `drc` pairs | final stage |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4q  |  12 |  12 | 0 | **0** | 0 |  0.04 s |
+| 9q  |  36 |  36 | 0 | **0** | 0 |   0.4 s |
+| 17q |  72 |  72 | 0 | **0** | 0 |   1.9 s |
+| 21q |  78 |  78 | 0 | **0** | 0 |   6 s |
+| 33q | 118 | 118 | 0 | **0** | 0 |   9 s |
+| 45q | 157 | 157 | 0 | **0** | 0 |  10 s |
+| 57q | 201 | 201 | 0 | **0** | 0 |  30 s |
+| 69q | 241 | 241 | 0 | **0** | 0 |  41 s |
 
-## What the Final stage has to do
+`artifacts/` was cleared and regenerated in full on 2026-09-14: every stage,
+SVG and GDS of `layout`, `capacity`, `global`, `assign`, `corridor`,
+`detail`, `final`, the five final phases as SVG, and `drc.json`.
+`--stage aligned` cannot be drawn yet ("arrives with phase 4").
 
-`docs/design/pipeline.md` § Final. The prototype's live sequence:
+## The stage as it is now
 
-```text
-inner routing        stubs inside each unit cell
-outer routing        the resonator and conventional wires
-coupler insertion    CPW couplers instantiated; ResonatorSource ports created
-feedline routing     the launcher-to-launcher chains, with rip-up repair
-feedline refinement
-```
+One driver, `Driver` in `src/pipeline/FinalRouter.cpp`, runs the inner pass
+and the outer pass with the same loop. Read it in this order:
 
-with a clearance check and a wire-loop check after every routing pass. Two
-things the design document already fixes and you should not re-litigate:
+| Piece | Where | What it is |
+| --- | --- | --- |
+| `Tuning`, `tuningOf` | `:83`, `:131` | every knob converted onto the grid once. `spacing` is the rule in cells, unrounded; `approach*` the port band's geometry |
+| `Scene`, `sceneOf` | `:196`, `:249` | the mask with the keepout, the port bands, the target of every port |
+| `Field` | `:430` | copper and clearance per cell. **Only the count reads it**; no search is fenced by it |
+| `Wire`, `Pass` | `:559`, `:599` | one connection; one pass's parameters |
+| `Driver::sweep` | `:914` | the rounds; every pass starts with every wire on its Detail way (`seed`, `:1177`) |
+| `Driver::attempt` | `:1252` | **the prototype's two phases and nothing else**: phase 1 fenced by the two ring neighbours; phase 2 the relaxation along the sweep, the wire let go of is crossable, the fence is the last one let go of plus the opposite neighbour, the lane is free and everything outside it priced, the wires let go of are priced at growing distances (`priceLane`, `:1653`), their approaches ten times over (`priceApproaches`, `:1696`). A way found is taken; on failure the wires let go of go back |
+| `Driver::fence`, `buildCorridor` | `:1537`, `:1469` | `mark_obstacles` and `expand_path` of the prototype |
+| `Driver::meetAt`, `couldMeet` | `:1368`, `:1572` | the junction: two terminals within one clearance, everything within 1.5 of either exempt. **Geometry alone** |
+| `Driver::conflictsOf`, `failsOf` | `:1352`, `:1032` | the count: `Fails = unrouted + open`, by the check's own test |
+| `Driver::drawSearch`, `drawGrid` | `:2149`, `:2284` | the debug pictures |
+| `src/pipeline/DebugSvg.hpp` | | the SVG painter |
+| `src/grid/PortBands.cpp` | | `bandLength`, `bandHalfWidth`, `stampBand`, `digTargetBeyondBand` |
+| `src/drc/Rules.cpp` | | rule 1 wire clearance, rule 3 wire loop. Rule 4 obstacle clearance is out |
 
-- **Coupler placement and feedline routing are one fixpoint, not two steps.**
-  The repair loop re-orients an already-placed coupler when that is what lets a
-  chain route. `IFinalRouter` has to be shaped around that.
-- **The obstacle keepout is baked into the raster mask**, not checked
-  afterwards. Every cell a search may enter already satisfies it.
-
-Your input is the Detail stage's cell paths. They are a **centre line on a
-grid**, not geometry: your job is to turn them into curvature-constrained
-copper with real widths, and the clearance question comes back in a form the
-cell grid could not express.
-
----
-
-# Lessons learned — read this part twice
-
-These are the things that cost a day each. Every one of them is measured, not
-believed.
-
-## 1. A rule in layout units is not a rule in cells, and the check must use the same one
-
-`min_wire_spacing` is 185 layout units. The detail cell is 19 units on the
-17-qubit chip and 40 on the 9-qubit one. A router that works in cells **cannot**
-keep 185: what it keeps is `ceil(185 / cell) - 1` cells, which is 4 to 9 cells
-and 153 to 182 layout units.
-
-| chip | 4q | 9q | 17q | 21q | 33q | 45q | 57q | 69q |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| cell (layout units) | 19.2 | 39.6 | 19.0 | 39.9 | 38.4 | 36.4 | 31.7 | 36.0 |
-| rule in cells | 9 | 4 | 9 | 4 | 4 | 5 | 5 | 5 |
-| what that is | 173 | 158 | 171 | 160 | 154 | 182 | 158 | 180 |
-
-I first wrote the check in exact layout units — forbid a cell when
-`(dx·cellW)² + (dy·cellH)² < 185²`. It is arithmetically right and it is the
-wrong check: it asks the grid to tell apart two answers that are the same
-drawing, and it reported three failures on the 57-qubit chip that were pairs of
-wires 5.66 cells apart against a rule of 5. **Convert the rule once, enforce the
-converted figure, and check the converted figure.**
-
-For your stage the conversion is different — the final grid is finer, and
-`cells_for(min_wire_spacing, final)` **is** 19 there — but the discipline is the
-same: one conversion, used by the router, the test and the picture alike.
-`docs/design/data-model.md` § clearance has the table of every place a clearance
-value comes from.
-
-## 2. Never quote a distance as a cell count
-
-Every knob of this stage used to be a cell count, and a cell count is not a
-distance. `corridor_half_width = 40` cells is 760 layout units on one grid and
-1600 on another — four wire spacings there and eight here, from the same
-literal. `obstacle_penalty_radius = 6` cells is 114 units and 240 units.
-
-They are now `corridor_spacings` (4 wire spacings) and `obstacle_penalty_reach`
-(185 layout units), converted through the grid at the point of use. **Prices** —
-what a step costs, what a penalty costs — are quoted per *step*, against the ten
-a step along an axis costs, and that is already grid-independent: a way of a
-given length is twice as many steps on the fine grid as on the coarse one, so a
-price per step is the same fraction of it either way. A price per *cell of a
-clearance disc* is not: the disc of one wire spacing holds 298 cells on the
-finest grid and 83 on the coarsest.
-
-Do the same. `FinalGridParams` in the prototype is full of cell counts.
-
-## 3. A plan's crossings are a coarse route, not a constraint
-
-The Corridor stage writes, for each wire, the partitions it passes through and a
-crossing point on each border between them. The previous version of the Detail
-stage treated those crossings as **hard**: it claimed the cells, cut the wire
-into pieces, and made each piece begin and end exactly there.
-
-Measured: the crossings a plan names sit **13 to 28 layout units apart** on the
-benchmark chips, against a rule of 185. No arrangement that runs through them
-can hold the rule. That single decision accounted for most of the 457 failures I
-started from.
-
-The corridor is a guide. Seed with it, then draw the wire again from end to end
-and let it cross where it can. The same will be true of the Detail stage's cell
-paths for you: they are where a wire roughly goes, not where its centre line has
-to be to the nanometre.
-
-## 4. The fixed places are the ones that must never lose their clearance
-
-A wire has two places it cannot be moved off: the point the assignment feeds it
-at, and the cell of its target port. Everything between them is negotiable.
-
-The bug that cost the most: while a wire is lifted off the canvas to be
-re-routed, its **two fixed places must keep their clearance charged**. Only the
-wire currently being drawn is let out of its own two places, and only for the
-length of its own search. Otherwise a wire drawn while another one is lifted
-settles within a wire spacing of where that other one has to return to — and
-that is a violation no later round can undo, because neither wire can move the
-place. Fixing this alone took the 17-qubit chip from 4 failures to 0 and the
-whole set from 457 to 175.
-
-Measured beforehand, and worth knowing: **the fixed places themselves are far
-enough apart.** The minimum distance between any two endpoints is 192.8 to 543.8
-layout units across the eight chips, all ≥ 185. The plan is feasible; only the
-router was in the way.
-
-## 5. Count a wire's violations with the wire off the field
-
-The mirror image of lesson 4. After re-routing a wire I re-charged its two ends
-and *then* counted how many of its cells lay within the rule of another wire.
-Its own two ends are within the rule of the cells beside them, so every wire was
-too close to itself, no wire was ever marked finished, and every sweep re-routed
-every wire. It still converged — which is why it was easy to miss — but it
-wasted most of the runtime and it hid how many sweeps were really needed.
-
-**Lift the wire, count, then put it down.** `recount()` in
-`src/pipeline/DetailRouter.cpp` is the pattern.
-
-## 6. Follow the prototype, and read its call graph rather than its functions
-
-This is the biggest one, and it is the user's own correction to me.
-
-I spent hours on mechanisms of my own — a sequential "spread" pass that lays
-every wire down in turn, a PathFinder-style congestion history, an
-accept-only-if-better test on every swap. They took the failures from 457 to
-175. Then I threw all of it away, implemented `detailed_cross_boundary_routing`
-as the prototype actually writes it, and the same measurement gave **46** — and
-it ran three times faster. The remaining 46 came down with the prototype's own
-parameters turned up, and the last 3 with a mechanism the prototype describes in
-a comment.
-
-But **read what runs, not what is written**. The prototype's defects that matter:
-
-- `astar_in_corridor` has **no occupancy test at all**. Two wires are kept apart
-  only by the disc `build_corridor` cuts around the *two* neighbours in the
-  ring. That is why the prototype's own pictures show wires touching.
-- `for (back_count = 0; back_count <= 0 && !success; ++back_count)`
-  (`DetailedGrid.cpp:1587`) runs its body **exactly once**. The comment above it
-  describes an escalation into the opposite sweep direction that never happens.
-  Implementing what the comment says took the last three failures on the
-  57-qubit chip to zero. **Look for more of these in `FinalGrid.cpp`.**
-- `DetailedGridParams::I` and `neighbor_path_proximity_penalty` are read in two
-  passes and used in neither: both calls that look as though they use them pass
-  `corridor_polygon_penalty`.
-- `run_inner_routing_requests` wraps its search in a relaxation that cannot do
-  anything — what it rips changes neither the mask nor the costs.
-- Its `DetailFail 0` is scraped from the **last round** of the cross-boundary
-  pass, and a wire with no path is skipped before it can be counted. Its own
-  logs start that pass at 37 failures on the 69-qubit chip. **Do not treat its
-  published zero as the bar.**
-
-## 7. Its parameters were tuned for a weaker rule
-
-`rounds = 8` and `max_relaxation = 10` are the prototype's, and they are enough
-for the clearance it holds — to two wires, which settles in a couple of sweeps.
-Holding the rule against every wire is a harder question:
-
-| | fails over the eight chips |
-| --- | ---: |
-| rounds 30, relaxation 30, with back-rip | **0** |
-| rounds 30, relaxation 30, no back-rip | 3 |
-| rounds 8, relaxation 10 | 46 |
-| rounds 60 or 100 | 11 → no further gain without back-rip |
-
-More sweeps stop helping at 30. When a number stops paying, stop turning it and
-find the missing mechanism instead — that is how the back-rip was found.
-
-## 8. Make the global constraint a field on the canvas, not a mask per search
-
-The prototype rebuilds an `allowed` mask per search: the box around the wire's
-own way, minus a disc around two neighbours. Cutting a disc for **every** wire
-that way costs the whole chip's copper per attempt — on the 69-qubit chip,
-111 345 cells × 83 disc cells, per search, per wire, per round.
-
-Instead the canvas carries `guard_[cell]`: how many wire cells lie within the
-rule of that cell. A wire charges the disc around each of its cells when it is
-put down and discharges it when taken off; a search that must hold the rule
-refuses any cell with `guard_ > 0`. **The rule against 240 wires then costs what
-the rule against two cost**, the test is one comparison, and "ripping" a wire is
-exactly "discharge its clearance, leave its copper". You will want the same
-structure for whatever the Final stage's global constraint turns out to be.
-
-## 9. Measure before you build, and keep the measurement runnable
-
-The single most useful thing I made was a 90-line script that reads
-`05-detail.fb` back and counts violations. It gave a number after every change,
-in two seconds, without running the test suite. Build yours first.
+Everything the search decides by is in the picture `-d` draws of it, and
+`-v 1` says one line per search. Use both before reasoning about a wire.
 
 ```bash
-# artifacts, then the number
-for c in 4q 9q 17q 21q 33q 45q 57q 69q; do
-  rm -f artifacts/$c/05-detail.fb
-  .venv/bin/mqt-scpd plan -c benchmarks/$c/config.toml -o artifacts/$c --stage detail
-done
+.venv/bin/mqt-scpd plan -c benchmarks/17q/config.toml -o artifacts/17q -v 1 -d
 ```
 
-A second thing worth the ten minutes: a debug switch on the stage that prints an
-**ASCII map** of the neighbourhood of a violation — obstacles, each wire by a
-letter, the charged clearance, free space. Two of the three real bugs above were
-found by looking at one. It is temporary code; take it out again.
+## What changed on 2026-09-13 and 14, most valuable first
 
-## 10. The traps that are still traps
+Every item was measured over 4q–33q at six rounds and five relaxations, and
+the 69q run confirms the end state.
 
-1. **The corridor stage writes a cell as the layout point of its corner-frame
-   centre.** Reading one back is `floor(onGrid(toCell(p)))`, never
-   `roundToCell`. Rounding moves the whole feed-point rectangle one cell, and
-   111 of the 230 wires of the 69-qubit chip then cannot take their first step.
-   `cellAt` in `DetailRouter.cpp` is the one conversion; use it.
-2. **The diagonal-crossing rule must ask whether *one* wire holds both cells
-   beside the step.** Refusing whenever either corner is taken also refuses the
-   harmless squeeze between two different wires, and that costs connections.
-3. **`uv sync` does not rebuild the extension when only C++ changed.** Use
-   `uv pip install --python .venv/bin/python --no-build-isolation --no-deps
-   --reinstall-package mqt-scpd -e .` and check behaviour, not the `.so`
-   timestamp. `cmake --build --preset release` alone updates ctest but **not**
-   the Python module.
-4. **`uvx ruff check` rewrites every `# noqa: <code>` into
-   `# ruff: ignore[<name>]` across the whole repository.** Revert every file you
-   do not own. `uvx nox -s stubs` still emits invalid Python for the `global`
-   stage, so `python/mqt/scpd/pyscpd.pyi` is maintained by hand.
-5. **Long runs belong in the background.** The whole ctest suite is 14 minutes;
-   the 69-qubit detail cases alone are 87 seconds each.
-6. **After any `.fbs` change, run `uvx nox -s schemas`** and update
-   `python/mqt/scpd/config.py` (`STAGE_DEFAULTS` **and** `_read_stages`) in the
-   same commit — the Python side does not follow the schema by itself.
+1. **The exemption for two wires ending on one component is gone** — from the
+   check (`junctionsOf`), the fence (`couldMeet`, `meetAt`) and the count.
+   It assumed a component's ports sit closer than the wire spacing; the two
+   ports of a qubit sit 909 units apart on 17q, and wire 44 ran 140 units
+   from wire 43's approach unreported and unfenced. Taking it out took 33q
+   from 18 fails with 10 crossings to **0**, and every other chip to 0 as
+   well. The forgiven pass-bys were what the relaxation cascades grew from.
+   The prototype forgives such a pair outright (`wires_connected` in
+   `verify_min_clearance`); do not bring that back.
+2. **The target sits on the first cell the straight-length rule allows.**
+   `digTargetBeyondBand` stepped once before its first test, so every target
+   lay two cells beyond the band: 120 units along an axis and 127 along a
+   diagonal against a rule of 100. Now the band ends before the first cell
+   whose centre lies `min_straight_length` from the port's *own* position
+   and the target is that cell: 100–110 axial, 100–114 diagonal. Alone it
+   took 17q and 21q to 0.
+3. **`Tuning::spacing` was never assigned**, so the stage counted no wire as
+   too close and its "0 too close" could not agree with `drc`. Set now; the
+   `Fails:` line and the check count the same encounters.
+4. **Every pass starts on the Detail stage's ways.** The sweep is a rip-up
+   and re-route, and a rip-up needs something to rip: seeds are joined on
+   the router grid with the straight stub in front and put down with copper
+   and clearance. A wire still on its seed at the end is *unrouted* and gets
+   no cells in the artifact, as the prototype drops it.
+5. **`attempt` is the prototype's `run_final_routing`, verbatim in shape.**
+   The field-fenced search, the verdict against the field, the relaxation
+   against the sweep, the targeted rip and the rescue are all gone. What the
+   summary calls "the four corrections" no longer describes the search.
+6. **Rule 4 (obstacle clearance) is out of the check** because its raster
+   did not exempt the port approaches the router's mask exempts, so it
+   reported every stub out of a port. The keepout is still searched.
+7. **`Fails:` after every stage**, `-v 1`, `-d`, and the tests read
+   `rounds`, `max_relaxation`, `refinement_rounds` from each benchmark's
+   `config.toml` (`test/pipeline/Benchmarks.hpp`), so the suite runs what
+   `plan` runs.
 
-## 11. What was built, measured and thrown away
+**Measured and not kept** — see the summary for the figures: a verdict by
+penetration depth (more fails), a uniform top price on released rooms (more
+fails), the approaches of the wires around priced ten times over (kept, but
+it changed nothing: the crossings lay 26–510 cells from any terminal),
+doubling that zone's width (one fail more on 33q). The approach price is
+still in; it is harmless and the user asked for it, but nothing measured
+earns it.
 
-Do not rebuild these without a new measurement.
+## Lessons that cost time
 
-| mechanism | verdict |
-| --- | --- |
-| A sequential pass laying every wire down in turn from a clean canvas | Better on two chips, worse on two others, and it loses wires; the prototype's sweep beats it |
-| A PathFinder congestion history over the rounds | Made it worse (4 → 5 unresolved on 17q); the rip-up already does what it is for |
-| Accepting a swap only when it strictly lowers the conflict count | Blocks the lateral moves the next round needs; `<=` beat `<`, and the prototype's "no test at all" beat both |
-| Naming the wires in the way by a priced search instead of ring order | Helped a lot in my own version, and is unnecessary once the sweep is the prototype's |
-| A price for coming within the rule, as a last resort so a wire is drawn anyway | Not needed: a wire that finds nothing keeps the way it had, which is the prototype's answer and is always legal |
-| The obstacle proximity penalty | Neither better nor worse on any chip with the clearance in force. Kept, because it keeps copper off the artwork where there is room |
-| The seed's rescue passes (`placeWhatIsLeft`, `drawWhatIsLeftWhole`) | **Kept — still earn their place.** Without them 45q loses 5 connections and 69q 1 |
+1. **A signed step times an unsigned count wraps.** `step.x * k` with
+   `int8_t step.x = -1` and `uint32_t k` walked off the grid on its first
+   step, and the fallback hid it for every port facing 180°, 270°, 135° or
+   315°. Keep every such loop in `std::int64_t`. Measure the result of a
+   geometric change from the artifact, per wire, before believing it.
+2. **Read the log before the theory.** `-v 1` showed within a minute that
+   the 33q crossings arose in *phase 1* of wire 47 — fenced only by 46 and
+   48 — after 43, 44 and 45 had relaxed into 47's room. No price on the
+   relaxation could reach that. The approach price was built on a plausible
+   reading of the pictures and measured neutral.
+3. **A shortcut in an exemption is a hole in the rule.** The component
+   shortcut was in three places that all agreed with each other, so no test
+   and no count could see it. Only the plot, which draws the clearance
+   bands without exemptions, showed the overlap. When the check, the count
+   and the search share a rule, a single wrong assumption is invisible.
+4. **The prototype's parallel routing is not its sequential routing.**
+   `run_final_routing_parralel` relaxes *both* ways and repeats each round
+   up to four times within itself; `run_final_routing` does neither. When
+   the user says "exactly the prototype", ask which one. Neither was needed
+   in the end.
+5. **The price model is the prototype's to the digit**: `100·Σ static +
+   100·wire[end]·(1 + swept)` per primitive, bends in hundredths of a cell,
+   norms resolved with `llround` and a floor of 1. If a price seems not to
+   bite, it is not the scale — compare bend 7125 against a per-step price
+   of 400.
+6. **Diagonal bands are narrower than the rule.** `bandHalfWidth` truncates
+   `19/√2/2` to 6, so a diagonal band is 13 cells = 183 units wide against
+   185, and asymmetric by a cell on the joining strips. Inherited from the
+   prototype; untouched; worth a look if a diagonal port ever fails the
+   check.
+7. **Tooling.** `clang-format` on this machine is 21.1.7, the hook pins
+   23.1.0; the diff was nil so far. `uv sync` does not rebuild the
+   extension — use `uv pip install --python .venv/bin/python
+   --no-build-isolation --no-deps --reinstall-package mqt-scpd -e .` after
+   every C++ change, and check behaviour. `plan --stage X` reads the
+   configuration from the run directory, not from `-c`. The pinned ruff
+   reports four `noqa` comments in `cli.py`, an import blank line and a
+   missing `__init__` docstring in `run.py`, and one old test signature; all
+   predate this work.
+8. **`-d` is heavy on a chip that relaxes a lot** (one picture per search,
+   17q: 166 pictures, 19 MB), and at the schema's defaults of thirty rounds
+   the seeded sweep on 45q once took 109 minutes. Never run the Final tests
+   at 30/10 on 45q and up; the tests read the shipped 6/5/0 now.
+
+## What is open
+
+1. **The meander** — below.
+2. **Couplers, feedlines, refinement**: [handover-final-couplers.md](handover-final-couplers.md).
+3. **Rule 4** needs the port approaches exempted in its raster before it can
+   come back (`sceneOf`, `keepoutExemptions` is the model).
+4. **The refinement** (`Driver::refine`) is ported but runs zero rounds
+   everywhere and is unmeasured; the prototype runs 3 to 15 rounds with the
+   two neighbours hard at the clearance and a centring price of 6.
+5. **The diagonal band width** (lesson 6).
+6. `CheckedWire::components` in the DRC view is filled and read by nothing.
+7. The summary's "four corrections" and "measured" sections are a history
+   now; the sections "The seeded sweep", "The search fenced as the
+   prototype's" and the two bug findings are current. Keep it that way.
+
+## Next: the meander
+
+A resonator's wire has to be `meander_length` long before the coupler is
+spliced into it — longer than `target_resonator_length` (2500), because the
+coupler is spliced where the way left to the qubit reaches the target and the
+wire is fed on the ring, not at a port. The router draws it as short as it
+can, so a serpentine is inserted into a straight run of it.
+
+**What the repo has.** `Wire::resonator` (`FinalRouter.cpp:582`, set from
+`AssignedRole::ResonatorTarget`); `FinalParams.meander_length` in layout
+units (`schemas/config.fbs:245`, default 3000, read into `Tuning::meanderLength`
+as cells at `:161` and used by nothing); `DubinsRouter::freeStripAlong`
+(`include/mqt-scpd/routing/DubinsRouter.hpp:212`), the widest obstacle-free
+strip along a segment, which is what a serpentine is fitted into;
+`routing::samplePath` in `PathGeometry.hpp`, which renders a path's length
+the way the prototype's `sample_path` does; `CouplerInsertion.hpp` for the
+phase after. Decision 0019: the router's `meander_insertion_params::
+min_straight_length` is **not** the design rule of the same name — it is the
+straight a meander needs to fit, and keeps its own name.
+
+**What the prototype does** (`dubin_router_opt.hpp:2010` params, `:2182`
+`meander_insertion`, `:2325` `meander_insertion_proximity`;
+`FinalGrid.cpp:7017` and `:7201` in `process_wire` of `run_final_routing_parralel`):
+
+- After a resonator's search succeeds, in phase 1 and in every relaxation
+  level alike, it calls the insertion with
+  `meander_length - target_anchor_offset(path)`, where the offset is the gap
+  between the sampled path's last point and the port's true position. **A
+  resonator whose meander cannot be placed counts as not routed**, and the
+  relaxation goes on; the plain way is kept only as the neighbour obstacle.
+- `meander_insertion`: sample the path; if it is already long enough, done.
+  Otherwise walk the points of its straight segments in steps
+  (`distance_from_s_t` from either end), and for each pair of points try
+  `compute_meander_between_points` with the extra length needed, inside the
+  box `LowerX..UpperX × LowerY..UpperY` — the grid inset by
+  `outer_meander_insertion_boundary = 0.07` on each side — with
+  `min_clearence`, `min_straight_length = 25` and `min_radius = 5`. The first
+  fit is spliced in, the path re-sampled, and the real length printed. The
+  `_proximity` variant scores candidate placements by bends and the wire
+  price instead of taking the first.
+- Lengths are in final-grid cells per layout: 4q 250, 9q the default 300,
+  17q 300, 21q 400, 33q to 69q 600. In our layout units that is about 2500,
+  3000, 3000, 4000 and 6000. **Our benchmarks carry no `meander_length`, so
+  every chip runs at 3000 today** — set it per chip as the prototype does
+  before measuring anything.
+- The meander lives inside the corridor and the fence of the search that
+  produced the way, so it cannot cross a neighbour the way itself could not.
+  In the relaxation the `_proximity` variant reads the same price field.
+
+**Where it goes here.** In `Driver::attempt`, once `found` is non-empty and
+`wire.resonator` holds, before the way is taken and placed: extend `found`
+to the required length or treat the attempt as failed and let the relaxation
+continue, exactly as the prototype. The count, the fence and the pictures
+need nothing new — a meander is cells of the way like any other — but
+`drawSearch` should say the length reached, and the `-v 1` line should say
+"meander: N cells, L units" or "no room for the meander". Check the result
+with `samplePath` against `meander_length`, with `resonator_length_tolerance`
+(100) as the margin, and put that check into `test_final_router.cpp` over
+every chip: every resonator's way at least `meander_length` long and every
+wire still within the rule. The `Fails:` line should count a resonator that
+is short as unrouted.
 
 ## Verification
 
 ```bash
-cmake --build --preset release && ctest --preset release   # 314 tests
-uv run --no-sync pytest test/python/unit                   # 129 tests
-uvx nox -s schemas                                         # after any .fbs change
-```
-
-The eight benchmarks and the pictures:
-
-```bash
+cmake --build --preset release
+uv pip install --python .venv/bin/python --no-build-isolation --no-deps --reinstall-package mqt-scpd -e .
+ctest --preset release                                     # see the figure below
+uv run --no-sync pytest test/python/unit                   # 141 tests
 for c in 4q 9q 17q 21q 33q 45q 57q 69q; do
-  mqt-scpd plan   -c benchmarks/$c/config.toml -o artifacts/$c --stage detail
-  mqt-scpd plot   -c benchmarks/$c/config.toml --stage detail --run-dir artifacts/$c \
-                  -o artifacts/$c/$c-detail.svg
-  mqt-scpd render -c benchmarks/$c/config.toml --stage detail --run-dir artifacts/$c \
-                  -o artifacts/$c/$c-detail.gds
+  .venv/bin/mqt-scpd plan -c benchmarks/$c/config.toml -o artifacts/$c -v
+  .venv/bin/mqt-scpd drc artifacts/$c
 done
 ```
 
-`plot --stage detail` draws every wire with a band of the clearance the router
-keeps, so two wires closer than that are two bands whose overlap is darker;
-`render --stage detail` writes the same band on GDS layer 23 `plan.clearance`,
-where a boolean finds the overlaps exactly.
+Last full run on 2026-09-14, after everything above: Python 141 of 141;
+`ctest --preset release` 350 tests in 29 minutes, 347 passed. Of the three
+that failed, none is of this step, and two are repaired in the tree:
 
-## What is open for you
-
-1. **There is no design-rule stage.** The clearance is checked in the Detail
-   stage's own tests and drawn in its pictures. Phase 5's DRC has to make the
-   same check on finished geometry, where a wire is a polygon with a width and
-   not a run of cells — and `docs/design/pipeline.md` § Design-rule checking
-   already writes down the rule set it must implement.
-2. **The corridor is a guide and no longer a constraint.** A wire may use a
-   partition its corridor did not name, so the capacity stage's wire budgets are
-   a plan rather than a bound.
-3. **`[stages.capacity] crossing_pitch` is 165 against a wire spacing of 185.**
-   It no longer blocks anything, because the crossings are a seed — but it is
-   still a number saying a border carries more wires than the rule allows, and
-   the budgets follow from it.
-4. **Nothing has been compared against the prototype's own output**, only
-   against its formulation as read and its published counts. A run of FridgeCAD
-   on 9Q side by side would still be worth more than another test.
+- `ArtifactSchema.FinalRoutingKeepsTheCreatedPortsAndTheFailures` built a
+  `FinalRoutingT` without the `grid` the schema has required since the Final
+  stage was added, so the reader refused its own bytes. The test now sets
+  one. Repaired.
+- `BenchmarkStages.ReportsWhatThePortsOwnApproachesKeepClear` expected the
+  capacity keepout to be strictly larger than the reserved cells, which held
+  while a launcher swept squares in front of its port; the slot is the
+  launcher now and nothing is swept, so on 9q the two sets are equal (740 and
+  740). The test says `>=` now, with the reason. Repaired.
+- `BenchmarkDetail.DrawsCopperTheRulesAllow/57q` — **open, not of this
+  step.** On 57q the Detail stage's wires start one cell away from the point
+  the corridor feeds them at: "wire 0 starts at (92, 1244) and is fed at
+  (1713.19, 38222.16)", and the same for 11, 100, 102, 107, 112, 118, 121
+  and more, all on the top and bottom rows of the ring. Nothing in
+  `Scene.cpp`, `CapacityPlanner.cpp`, `CorridorRouter.cpp` or
+  `DetailRouter.cpp` changed functionally since `fc7e846`, so it was red
+  before this step. The other seven chips pass it. It smells like the feed
+  point of a launcher on 57q not falling on a detail cell centre; start at
+  `cellAt` in `DetailRouter.cpp` and the launcher slot in `Scene.cpp`.

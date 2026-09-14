@@ -390,9 +390,12 @@ TEST(BenchmarkStages, ReportsWhatThePortsOwnApproachesKeepClear) {
   const auto benchmark = nineQubit();
   const auto scene = buildScene(benchmark.chip, benchmark.config);
 
-  // Every cell a band reserved is part of the keepout. The reverse does not
-  // hold: a launcher sweep is keepout and was never reserved, and a target
-  // dug back out of a band left the reserved set and not the keepout.
+  // Every cell a band reserved is part of the keepout. The reverse need not
+  // hold: a target dug back out of a band leaves the reserved set and not
+  // the keepout. It used to be strictly larger, when a launcher swept squares
+  // that were keepout and never reserved; a launcher's slot is the launcher
+  // now and nothing is blocked around it, so on a chip whose targets all land
+  // beyond their bands the two sets are the same.
   std::size_t reserved = 0;
   std::size_t keepout = 0;
   for (std::size_t cell = 0; cell < scene.reserved.size(); ++cell) {
@@ -403,7 +406,7 @@ TEST(BenchmarkStages, ReportsWhatThePortsOwnApproachesKeepClear) {
     keepout += scene.keepout.test(cell) ? 1 : 0;
   }
   EXPECT_GT(reserved, 0U);
-  EXPECT_GT(keepout, reserved);
+  EXPECT_GE(keepout, reserved);
 
   const auto plan = capacityPlanners()
                         .make("watershed")
