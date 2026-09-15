@@ -12,6 +12,36 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Lengthen every resonator of the Final stage to `meander_length`. After
+  a resonator's search has found a way, one meander is spliced into a
+  straight run of it: the two ends of the run are turned across it by one
+  or two moves of the primitives, and one rectangular loop is built between
+  them, as deep as the missing length makes it. The loop may enter what the
+  search could enter and nothing else, so it cannot cross a neighbour the
+  way itself could not. Phase 1 takes the first placement that fits; the
+  relaxation and the refinement take the cheapest by the search's own price
+  field, as the prototype's `meander_insertion` and
+  `meander_insertion_proximity` do. The smallest loop goes as near the qubit
+  as it fits, because the source end is where the coupler is spliced in and
+  the feedline runs. A way without room for its meander is no way, so the
+  relaxation goes on, and a resonator left short keeps the way it found and
+  is tried again in the next round ([#117]) ([**@FeldmeierMichael**])
+- ✨ Count a resonator too short as a fail. The `Fails:` line of every pass
+  and of the stage says `short` beside `unrouted` and `open`, `-v 1` names
+  the wires, and every search of a resonator says what its lengthening came
+  to: the length before and after, or that there was no room and how many
+  placements were tried. `-v` ends the stage on the length of every
+  resonator — the way, the run to the port, and the two together against
+  `meander_length` ([#117]) ([**@FeldmeierMichael**])
+- ✨ Carry the length of every wire in the Final stage's artifact.
+  `FinalWire.length` is the rendered length of the way in layout units, the
+  exact curves of its bends and not the cells they sweep, so that a reader
+  can check a resonator against `meander_length` without the primitives
+  ([#117]) ([**@FeldmeierMichael**])
+- ✨ Set `meander_length` per benchmark to the prototype's own figure: 2500
+  layout units on the 4-qubit chip, 4000 on the 21-qubit chip, 6000 from
+  the 33-qubit chip up, and the default of 3000 on the 9- and 17-qubit
+  chips ([#117]) ([**@FeldmeierMichael**])
 - ✨ Add the Final stage: every wire of the plan drawn again as
   curvature-constrained copper over the Dubins primitives of one bend radius,
   on a grid whose cell is about ten layout units. The stage runs five phases —

@@ -219,7 +219,7 @@ It runs five phases and leaves a snapshot after each:
 | # | Phase | State |
 | --- | --- | --- |
 | 1 | `inner` — the inner circuit, inside its unit cells | built |
-| 2 | `outer` — the ring, against the inner circuit and itself | built |
+| 2 | `outer` — the ring, against the inner circuit and itself, every resonator lengthened to `meander_length` | built |
 | 3 | `couplers` — the CPW couplers and the ports they create | open |
 | 4 | `feedlines` — the launcher-to-launcher chains | open |
 | 5 | `refined` — the refinement of those chains | open |
@@ -240,38 +240,43 @@ Output: `06-final.fb`, and `drc.json` when the check is run.
 | --- | --- |
 | [include/mqt-scpd/pipeline/Stages.hpp](include/mqt-scpd/pipeline/Stages.hpp) | `IFinalRouter`, the stage interface. One call does coupler placement **and** feedline routing, because the two are one fixpoint |
 | [include/mqt-scpd/pipeline/FinalRouter.hpp](include/mqt-scpd/pipeline/FinalRouter.hpp) | `makeDubinsFinalRouter()`, the one implementation this build ships |
-| [src/pipeline/FinalRouter.cpp](src/pipeline/FinalRouter.cpp) | the whole stage, about 1800 lines |
+| [src/pipeline/FinalRouter.cpp](src/pipeline/FinalRouter.cpp) | the whole stage, about 2900 lines |
+| [include/mqt-scpd/routing/MeanderInsertion.hpp](include/mqt-scpd/routing/MeanderInsertion.hpp), [src/routing/MeanderInsertion.cpp](src/routing/MeanderInsertion.cpp) | `insertMeander`, the prototype's meander insertion: one loop spliced into a straight run of a path, first fit or cheapest by a price |
 
 Inside `FinalRouter.cpp`, in the order it reads:
 
 | Symbol | Line | What it is for |
 | --- | ---: | --- |
-| `Tuning` | 82 | every knob, already converted onto the grid. Nothing here is a cell count standing for a distance |
-| `tuningOf` | 122 | the one place a design rule or a configured length becomes cells |
-| `Scene` | 179 | the router grid, the mask it searches on, the target cell and arrival heading of every port |
-| `blockOutsideTheSources` | 202 | blocks everything between the chip outline and the rectangle the launcher slots stand on, so no wire slips **around** the sources |
-| `sceneOf` | 232 | builds that scene: obstacle raster with the keepout baked in, one band per port, one target dug beyond each band |
-| `Stencil`, `stencilOf` | 332 | the offsets of one clearance disc, and what enters it on each step. Charging a disc per wire cell costs thirty times as much |
-| `Field` | 385 | **the heart of the correction.** Two fields per cell: which wire holds the copper, and how many wires keep their clearance over it. A wire charges its room when it is put down and gives it up when it is taken off |
-| `Wire` | 553 | one connection: its two ends, the way it has, whether it is drawn, placed, routed |
-| `Pass` | 607 | what one run of the driver does: rounds, relaxation, band, stub |
-| `Driver` | 675 | the one rip-up-and-reroute loop. The prototype writes it out four times |
-| `Driver::sweep` | 785 | the rounds, over wires that start on the Detail stage's ways. Ends when no wire fails, or after four rounds without progress, on the pass's `Fails:` line |
-| `Driver::failsOf` | 877 | the fails of a set of wires, counted with every wire down: unrouted plus open |
-| `Driver::refine` | 905 | routes every wire again against a centring price, to widen the room around it |
-| `Driver::fixPlaces` | 964 | charges the places no wire may be moved off — its target **and the straight run out of its source**, which no search ever sees |
-| `Driver::seed` | 992 | puts every wire of a pass down on the way the Detail stage drew, joined on this grid with the straight stub in front |
-| `Driver::attempt` | 1139 | one wire's turn, the prototype's two phases: the band fenced by both ring neighbours inflated by the clearance, then the relaxation along the sweep with the lane price and the discs around the wires let go of. A way found is taken; nothing else |
-| `Driver::conflictsOf` | 1198 | how many cells of a way lie within the rule of another wire, counted with the wire off the canvas — what the fails are counted by, not what the search keeps |
-| `Driver::search` | 1296 | the call into the shared `DubinsRouter` |
-| `Driver::buildCorridor` | 1314 | the cells a search may enter: the free space within the band around the way the wire has — the prototype's `expand_path`, which knows nothing of other wires |
-| `Driver::fence` | 1382 | closes the ways of the fence wires, inflated by the clearance — the prototype's `mark_obstacles` with `min_dist_wires`; the meeting of two wires that share a junction stays open |
-| `Driver::priceLane` / `fillLane` | 1494 | the prototype's corridor polygon: everything outside the lane between the two ring neighbours is priced, nothing is forbidden; the wires let go of are priced at growing distances |
-| `Driver::priceApproaches` | 1494 | not in the prototype: the straight run out of the source and the run into the target of every wire around the search, in the port band's geometry but two clearances wide, at ten times the wire price, so that a relaxed search does not take a place a wire let go of has to come back to |
-| `Driver::priceRoom` | 1610 | the centring price of the refinement: free in the middle of a channel, full price at its wall |
-| `wiresOf` | 1835 | reads the plan into wires: feed point, target cell, headings, the Detail stage's way as a seed |
-| `snapshotOf` | 1941 | what one phase drew |
-| `DubinsFinalRouter::run` | 1966 | the five phases and the artifact |
+| `Tuning` | 85 | every knob, already converted onto the grid. Nothing here is a cell count standing for a distance |
+| `tuningOf` | 135 | the one place a design rule or a configured length becomes cells |
+| `Scene` | 201 | the router grid, the mask it searches on, the target cell and arrival heading of every port |
+| `blockOutsideTheSources` | 224 | blocks everything between the chip outline and the rectangle the launcher slots stand on, so no wire slips **around** the sources |
+| `sceneOf` | 254 | builds that scene: obstacle raster with the keepout baked in, one band per port, one target dug beyond each band |
+| `Stencil`, `stencilOf` | 382 | the offsets of one clearance disc, and what enters it on each step. Charging a disc per wire cell costs thirty times as much |
+| `Field` | 435 | **the heart of the correction.** Two fields per cell: which wire holds the copper, and how many wires keep their clearance over it. A wire charges its room when it is put down and gives it up when it is taken off |
+| `Wire` | 564 | one connection: its two ends, the way it has, whether it is drawn, placed, routed, too short; for a resonator the run from its last cell to the port, `anchorGap` |
+| `Pass` | 613 | what one run of the driver does: rounds, relaxation, band, stub |
+| `Driver` | 803 | the one rip-up-and-reroute loop. The prototype writes it out four times |
+| `Driver::needsLength`, `requiredLength`, `lengthOf`, `lengthInUnits` | 874 | whether a wire has to reach a length, how long a resonator's way has to be in cells (`meander_length` less `anchorGap`), and the rendered length of a way in cells and in layout units |
+| `Driver::lengthen` | 920 | lengthens a resonator's way with `insertMeander`: the meander may enter what the search could enter — the band less the fence — first fit in phase 1, cheapest by the search's price field in the relaxation and the refinement. Returns whether the length was reached and the words for the line about it |
+| `Driver::sweep` | 1022 | the rounds, over wires that start on the Detail stage's ways. Ends when no wire fails, or after four rounds without progress, on the pass's `Fails:` line |
+| `Driver::failsOf` | 1154 | the fails of a set of wires, counted with every wire down: unrouted, open and short, each wire once |
+| `Driver::sayResonatorLengths` | 1190 | one `-v` line per resonator at the end of the stage: the way, the run to the port, the two together against `meander_length`, and one line over all of them |
+| `Driver::refine` | 1258 | routes every wire again against a centring price, to widen the room around it; a resonator is lengthened again and keeps its way when the wider one has no room |
+| `Driver::fixPlaces` | 1350 | charges the places no wire may be moved off — its target **and the straight run out of its source**, which no search ever sees |
+| `Driver::seed` | 1377 | puts every wire of a pass down on the way the Detail stage drew, joined on this grid with the straight stub in front |
+| `Driver::attempt` | 1458 | one wire's turn, the prototype's two phases: the band fenced by both ring neighbours inflated by the clearance, then the relaxation along the sweep with the lane price and the discs around the wires let go of. A way found is taken; a resonator's way found is lengthened first, and one without room for its meander is no way. Nothing else |
+| `Driver::conflictsOf` | 1606 | how many cells of a way lie within the rule of another wire, counted with the wire off the canvas — what the fails are counted by, not what the search keeps |
+| `Driver::search` | 1701 | the call into the shared `DubinsRouter` |
+| `Driver::buildCorridor` | 1724 | the cells a search may enter: the free space within the band around the way the wire has — the prototype's `expand_path`, which knows nothing of other wires |
+| `Driver::fence` | 1792 | closes the ways of the fence wires, inflated by the clearance — the prototype's `mark_obstacles` with `min_dist_wires`; the meeting of two wires that share a junction stays open |
+| `Driver::priceLane` / `fillLane` | 1908 | the prototype's corridor polygon: everything outside the lane between the two ring neighbours is priced, nothing is forbidden; the wires let go of are priced at growing distances |
+| `Driver::priceApproaches` | 1951 | not in the prototype: the straight run out of the source and the run into the target of every wire around the search, in the port band's geometry but two clearances wide, at ten times the wire price, so that a relaxed search does not take a place a wire let go of has to come back to |
+| `Driver::priceRoom` | 2101 | the centring price of the refinement: free in the middle of a channel, full price at its wall |
+| `Driver::drawSearch` | 2406 | the picture of one search, with the meander and what the lengthening said for a resonator |
+| `wiresOf` | 2680 | reads the plan into wires: feed point, target cell, headings, the Detail stage's way as a seed, the gap to the port for a resonator |
+| `snapshotOf` | 2798 | what one phase drew, each wire with its length |
+| `DubinsFinalRouter::run` | 2824 | the five phases and the artifact |
 
 #### What the stage reuses
 
@@ -281,6 +286,7 @@ Written in phase 2 of the project; **no new search was written**.
 | --- | --- |
 | [include/mqt-scpd/routing/DubinsRouter.hpp](include/mqt-scpd/routing/DubinsRouter.hpp) | the curvature-constrained A\*, its corridor mask and its two proximity prices |
 | [include/mqt-scpd/routing/CouplerInsertion.hpp](include/mqt-scpd/routing/CouplerInsertion.hpp) | `spliceCouplerDogleg` — phase 3 will need it |
+| [include/mqt-scpd/routing/PathGeometry.hpp](include/mqt-scpd/routing/PathGeometry.hpp) | `samplePath` and `renderedLength` — how long a way is, as the prototype's `sample_path` measures it |
 | [include/mqt-scpd/routing/SelfIntersection.hpp](include/mqt-scpd/routing/SelfIntersection.hpp) | whether a path meets itself; the design-rule check calls the same function |
 | [include/mqt-scpd/grid/GridMetrics.hpp](include/mqt-scpd/grid/GridMetrics.hpp) | `routerGrid`, and `cellsFor` — the one conversion from a rule to cells |
 | [include/mqt-scpd/grid/Rasterize.hpp](include/mqt-scpd/grid/Rasterize.hpp) | the obstacle raster with the keepout baked in |
@@ -312,7 +318,8 @@ Written in phase 2 of the project; **no new search was written**.
 
 | Where | What |
 | --- | --- |
-| [test/pipeline/test_final_router.cpp](test/pipeline/test_final_router.cpp) | over all eight chips: every connection drawn, no wire meets itself or the artwork, every wire starts at its feed, **no two wires within the design rule**, two runs give the same answer |
+| [test/pipeline/test_final_router.cpp](test/pipeline/test_final_router.cpp) | over all eight chips: every connection drawn, no wire meets itself or the artwork, every wire starts at its feed, **no two wires within the design rule**, **every resonator at least `meander_length` long**, two runs give the same answer |
+| [test/routing/test_meander_insertion.cpp](test/routing/test_meander_insertion.cpp) | the meander on a straight run: the length is reached, the path stays well formed, the loop stays where it may and in its box, the priced insertion takes the cheaper side |
 | [test/drc/test_rules.cpp](test/drc/test_rules.cpp) | what each rule finds and what it forgives, on wires built by hand |
 | [test/python/unit/test_planning.py](test/python/unit/test_planning.py) | the five phases and the picture of one of them |
 | [test/python/unit/test_drc.py](test/python/unit/test_drc.py) | reading a report back |
@@ -337,18 +344,22 @@ c=17q
 ```
 
 ```text
-[final]     0.01s  grid 1425x1425 cells of 9.97 layout units | clearance 19 cells for a rule of 18.55 | stub 11 cells | band 209 cells | bend 7125 | wire price 4 | obstacle price 1 over 11 cells
+[final]     0.01s  grid 1425x1425 cells of 9.97 layout units | clearance 19 cells for a rule of 18.55 | stub 11 cells | band 209 cells | bend 7125 | wire price 4 | obstacle price 1 over 11 cells | resonators 301 cells long
 [final]     0.02s  inner routing: 14 of 14 wires start on the way the Detail stage drew
 [final]     0.02s  inner routing: 14 wires, up to 4 rounds, 5 relaxations each way
-[final]     0.05s  inner routing: 14 of 14 drawn, 0 unrouted, 0 open | Fails: 0
-[final]     0.09s  outer routing: 58 of 58 wires start on the way the Detail stage drew
-[final]     0.09s  outer routing: 58 wires, up to 6 rounds, 5 relaxations each way
-[final]     0.81s  outer routing round 0 forward : tried 58, routed 48, unrouted 2, open 14 | Fails: 16
-[final]     1.42s  outer routing round 1 backward: tried 19, routed 17, unrouted 2, open 6 | Fails: 8
+[final]     0.05s  inner routing: 14 of 14 drawn, 0 unrouted, 0 open, 0 short | Fails: 0
+[final]     0.06s  outer routing: 58 of 58 wires start on the way the Detail stage drew
+[final]     0.06s  outer routing: 58 wires, up to 6 rounds, 5 relaxations each way
+[final]     0.92s  outer routing round 0 forward : tried 58, routed 56, unrouted 2, open 0, short 0 | Fails: 2
+[final]     0.98s  outer routing round 1 backward: tried 6, routed 5, unrouted 0, open 1, short 0 | Fails: 1
 ...
-[final]     3.21s  outer routing: wire 42 is still on its seed; taking any way it finds
-[final]     3.52s  outer routing: 57 of 58 drawn, 1 unrouted, 2 open | Fails: 3
-[final]     3.52s  final routing: 71 of 72 drawn, 1 unrouted, 2 open | Fails: 3
+[final]     0.90s  outer routing round 4 forward : tried 1, routed 1, unrouted 0, open 0, short 0 | Fails: 0
+[final]     0.90s  outer routing: 58 of 58 drawn, 0 unrouted, 0 open, 0 short | Fails: 0
+[final]     0.94s  resonator 1 to Qb15.port0: 3395 units of way + 113 to the port = 3508 units, meets 3000
+[final]     0.94s  resonator 5 to Qb14.port0: 5106 units of way + 113 to the port = 5219 units, meets 3000
+...
+[final]     0.94s  resonators: 17 in all, 3007 to 5640 units, 0 short of 3000
+[final]     0.90s  final routing: 72 of 72 drawn, 0 unrouted, 0 open, 0 short | Fails: 0
 ```
 
 Every pass starts with every wire on the way the Detail stage drew, put down
@@ -362,28 +373,34 @@ each line says:
 | `routed` | of those, the ones that found a way |
 | `unrouted` | wires with no way of their own: the stage has found none, and the wire still stands on the Detail stage's way. A seed is not curvature-constrained and knows nothing of this grid's keepout, so the artifact carries no cells for a wire left on it |
 | `open` | wires with a way of their own that is not settled: in a round, let go of by a wire that relaxed past it and not drawn again yet, so the next round looks at them again; at the end of a pass, too close to another wire |
-| `Fails:` | `unrouted` plus `open`. A round with none ends the pass. The pass's own last line and the stage's `final routing:` line count the same two things with every wire down, by the test `mqt-scpd drc` makes, so what they say is what the check will find |
+| `short` | resonators whose way is shorter than `meander_length` asks: drawn, but without room for the meander that would make them long enough. In a round, the ones that kept such a way in this round; at the end of a pass, measured by the sampler on every resonator |
+| `resonator N to <port>` | one line per resonator at the end of the stage: the rendered length of its way, the run from the way's last cell to the port itself, the two together, and whether that meets `meander_length` or falls short of it. `resonators:` sums them up |
+| `Fails:` | `unrouted` plus `open` plus `short`, each wire counted once. A round with none ends the pass. The pass's own last line and the stage's `final routing:` line count the same things with every wire down, by the test `mqt-scpd drc` makes and by the length the artifact carries, so what they say is what the check will find |
 | `moved` | wires the refinement found a wider way for |
 
 `-v 1` says one line more per search, indented, and with `-d` it names the
 picture of that search:
 
 ```text
-[final]     0.81s    wire 1 · round 0 forward · normal: no way, relaxing · artifacts/17q/debug/final-00016-outer-r0f-w1-normal.svg
-[final]     0.83s    wire 1 · relax 1: let go of 2, fence 2 and 0 · no way · artifacts/17q/debug/final-00017-outer-r0f-w1-relax1.svg
-[final]     0.86s    wire 1 · relax 2: let go of 3, fence 3 and 0 · found 249 cells · artifacts/17q/debug/final-00018-outer-r0f-w1-relax2.svg
-[final]     0.90s    wire 2 · round 0 forward · normal: found 301 cells · artifacts/17q/debug/final-00019-outer-r0f-w2-normal.svg
+[final]     0.11s    wire 1 · relax 2: let go of 3, fence 3 and 0 · found 348 cells · meander: 267 → 340 cells for 289 · artifacts/17q/debug/final-00018-outer-r0f-w1-relax2.svg
+[final]     0.27s    wire 10 · round 0 forward · normal: found 288 cells · long enough: 338 of 281 cells
+[final]     0.33s    wire 15 · round 0 forward · normal: found 167 cells · no room for a meander: 182 of 290 cells, 191508 placements tried, relaxing
+[final]     0.36s    wire 15 · relax 1: let go of 16, fence 16 and 14 · found 167 cells · no room for a meander: 182 of 290 cells, 191508 placements tried
+[final]     0.42s    wire 15 · relax 2: let go of 17, fence 17 and 14 · found 305 cells · meander: 182 → 292 cells for 290
 ...
-[final]     3.99s    wire 42 · round 5 backward: no way after 5 relaxations; 41, 40, 39, 38, 37 back as they were
-[final]     4.34s  outer routing: 57 of 58 drawn, 1 unrouted, 4 open | Fails: 5
-[final]     4.34s  outer routing: unrouted: 42 · open: 30, 31, 36, 37
-[final]     4.34s  outer routing round 0 forward : 48 found a way in phase 1, 5 after relaxation, 5 failed: 30, 36, 42, 45, 46
+[final]     3.99s    wire 42 · round 5 backward: no way after 5 relaxations; 41, 40, 39, 38, 37 back as they were; keeps a way too short for its meander
+[final]     4.34s  outer routing: 57 of 58 drawn, 1 unrouted, 4 open, 1 short | Fails: 6
+[final]     4.34s  outer routing: unrouted: 42 · open: 30, 31, 36, 37 · short: 45
+[final]     4.34s  outer routing round 0 forward : 48 found a way in phase 1, 5 after relaxation, 5 failed: 30, 36, 42, 45, 46, 1 kept a way too short for its meander
 [final]     4.34s  outer routing round 1 backward: 17 found a way in phase 1, 3 after relaxation, 3 failed: 30, 36, 42
 ```
 
-So a pass ends on which wires are unrouted and which open, and on what every
-round came to: how many wires found a way in phase 1, how many only after
-letting neighbours go, and which found none in that round.
+So a pass ends on which wires are unrouted, which open and which short, and
+on what every round came to: how many wires found a way in phase 1, how many
+only after letting neighbours go, and which found none in that round. A
+resonator's search says what its lengthening came to: `meander: before →
+after cells for required`, `long enough`, or `no room for a meander` with how
+many placements were tried.
 
 `-v` works on the Corridor and the Detail stage too, and each ends on a
 `Fails:` line of its own:
@@ -415,7 +432,7 @@ into `artifacts/$c/debug/`:
 | File | What it shows |
 | --- | --- |
 | `final-grid.svg` | the whole router grid before anything is drawn: the artwork with its keepout (dark), the obstacle halo the search pays for (yellow, darker is dearer), every port as the chip carries it (teal square on the port's own cell, line = orientation, `p<n>` = its index, the label on hover), every wire's seed from the Detail stage (thin grey), and every source (blue) and target (red, the cell beyond the port's band) with the heading it leaves or arrives on as a line and the wire's number beside it |
-| `final-00017-outer-r0f-w1-relax1.svg` | one search, taken from inside `search()` so it shows exactly what the router was given: picture 17 of the run, the `outer` pass, round 0 `f`orward (`b` backward), wire 1, phase 2 at relaxation level 1 (`normal` is phase 1, `refine` the refinement). Cropped to the band's box |
+| `final-00017-outer-r0f-w1-relax1.svg` | one search, taken right after it so it shows exactly what the router was given: picture 17 of the run, the `outer` pass, round 0 `f`orward (`b` backward), wire 1, phase 2 at relaxation level 1 (`normal` is phase 1, `refine` the refinement). Cropped to the band's box. For a resonator the way found carries its meander, and the title says what the lengthening came to |
 
 In a search picture: every port in the crop as the chip carries it (teal
 square on its cell, dot at its exact position, index beside it, label on
@@ -529,7 +546,7 @@ rounds                  = 30   # sweeps over the wire list
 inner_rounds            = 4
 max_relaxation          = 10   # neighbours a failed wire may let go of, along the sweep
 refinement_rounds       = 2
-meander_length          = 3000.0   # layout units; not built yet
+meander_length          = 3000.0   # layout units; every resonator's way is made this long. The benchmarks carry the prototype's figure per chip: 2500 on 4q, 4000 on 21q, 6000 from 33q up
 bend_penalty_norm       = 2.5      # × the sum of the grid's two extents
 wire_proximity_penalty_norm   = 0.00125
 static_proximity_penalty_norm = 0.00033
@@ -551,10 +568,10 @@ and none of them can be set.
 ## 4. When something is wrong
 
 0. **Run it again with `-v`, or `-v 1 -d`.** Every round says how many wires
-   it tried, how many settled, how many are unrouted and how many open, and
-   every stage ends on a `Fails:` line that counts both. At level 1 every
-   search says what it came to, which wires it let go of, and where its
-   picture is.
+   it tried, how many settled, how many are unrouted, open and short, and
+   every stage ends on a `Fails:` line that counts all three. At level 1
+   every search says what it came to, which wires it let go of, what a
+   resonator's lengthening came to, and where its picture is.
 1. **`mqt-scpd drc <run>`** then. It says which two wires, where, and by how
    much.
 2. **The picture of the phase.** `plot --stage final --phase outer` draws every

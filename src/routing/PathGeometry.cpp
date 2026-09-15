@@ -182,6 +182,15 @@ double polylineLength(const std::span<const Point> points) {
   return total;
 }
 
+double renderedLength(const MovePrimitives& primitives, const Path& path) {
+  if (path.empty()) {
+    return 0.0;
+  }
+  Path copy = path;
+  std::vector<PathSegment> segments;
+  return polylineLength(samplePath(primitives, copy, copy.front(), segments));
+}
+
 uint32_t countBends(const Path& path) {
   if (path.size() < 3) {
     return 0;

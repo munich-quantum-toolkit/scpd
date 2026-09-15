@@ -2193,6 +2193,7 @@ inline ::flatbuffers::Offset<DetailRouting> CreateDetailRoutingDirect(
 struct FinalWireT : public ::flatbuffers::NativeTable {
   typedef FinalWire TableType;
   std::vector<mqt::scpd::flatbuffers::geometry::RCoord> path{};
+  double length = 0.0;
 };
 
 /// One wire's path on the router grid, cell by cell.
@@ -2207,16 +2208,25 @@ struct FinalWire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FinalWireBuilder Builder;
   struct Traits;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_PATH = 4
+    VT_PATH = 4,
+    VT_LENGTH = 6
   };
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *> *path() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *> *>(VT_PATH);
+  }
+  /// How long the path is, in layout units, as the stage renders it: the
+  /// exact curves of its bends and not the cells they sweep. Zero for a wire
+  /// that carries no cells. The Final stage lengthens a resonator's way to
+  /// `meander_length` with a meander, and this is the figure it measured.
+  double length() const {
+    return GetField<double>(VT_LENGTH, 0.0);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffsetRequired(verifier, VT_PATH) &&
            verifier.VerifyVector(path()) &&
+           VerifyField<double>(verifier, VT_LENGTH, 8) &&
            verifier.EndTable();
   }
   FinalWireT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -2230,6 +2240,9 @@ struct FinalWireBuilder {
   ::flatbuffers::uoffset_t start_;
   void add_path(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *>> path) {
     fbb_.AddOffset(FinalWire::VT_PATH, path);
+  }
+  void add_length(double length) {
+    fbb_.AddElement<double>(FinalWire::VT_LENGTH, length, 0.0);
   }
   explicit FinalWireBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -2245,8 +2258,10 @@ struct FinalWireBuilder {
 
 inline ::flatbuffers::Offset<FinalWire> CreateFinalWire(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *>> path = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *>> path = 0,
+    double length = 0.0) {
   FinalWireBuilder builder_(_fbb);
+  builder_.add_length(length);
   builder_.add_path(path);
   return builder_.Finish();
 }
@@ -2258,11 +2273,13 @@ struct FinalWire::Traits {
 
 inline ::flatbuffers::Offset<FinalWire> CreateFinalWireDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    const std::vector<mqt::scpd::flatbuffers::geometry::RCoord> *path = nullptr) {
+    const std::vector<mqt::scpd::flatbuffers::geometry::RCoord> *path = nullptr,
+    double length = 0.0) {
   auto path__ = path ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::RCoord>(*path) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateFinalWire(
       _fbb,
-      path__);
+      path__,
+      length);
 }
 
 ::flatbuffers::Offset<FinalWire> CreateFinalWire(::flatbuffers::FlatBufferBuilder &_fbb, const FinalWireT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -3802,7 +3819,8 @@ inline ::flatbuffers::Offset<DetailRouting> DetailRouting::Pack(::flatbuffers::F
 
 inline bool operator==(const FinalWireT &lhs, const FinalWireT &rhs) {
   return
-      (lhs.path == rhs.path);
+      (lhs.path == rhs.path) &&
+      (lhs.length == rhs.length);
 }
 
 inline bool operator!=(const FinalWireT &lhs, const FinalWireT &rhs) {
@@ -3820,6 +3838,7 @@ inline void FinalWire::UnPackTo(FinalWireT *_o, const ::flatbuffers::resolver_fu
   (void)_o;
   (void)_resolver;
   { auto _e = path(); if (_e) { _o->path.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->path[_i] = *_e->Get(_i); } } else { _o->path.resize(0); } }
+  { auto _e = length(); _o->length = _e; }
 }
 
 inline ::flatbuffers::Offset<FinalWire> CreateFinalWire(::flatbuffers::FlatBufferBuilder &_fbb, const FinalWireT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -3831,9 +3850,11 @@ inline ::flatbuffers::Offset<FinalWire> FinalWire::Pack(::flatbuffers::FlatBuffe
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const FinalWireT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _path = _fbb.CreateVectorOfStructs(_o->path);
+  auto _length = _o->length;
   return mqt::scpd::flatbuffers::artifacts::CreateFinalWire(
       _fbb,
-      _path);
+      _path,
+      _length);
 }
 
 

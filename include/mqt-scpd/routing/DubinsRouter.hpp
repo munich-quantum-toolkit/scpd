@@ -40,14 +40,6 @@ enum class Heuristic : uint8_t {
   Octile,
 };
 
-/// A box of cells, both bounds included.
-struct CellBox {
-  uint32_t minX = 0;
-  uint32_t maxX = 0;
-  uint32_t minY = 0;
-  uint32_t maxY = 0;
-};
-
 /// The curvature-constrained A* of the final routing: a search over cells
 /// and eight-way headings whose moves are the primitives of one bend radius.
 ///

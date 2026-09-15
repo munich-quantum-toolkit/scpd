@@ -24,6 +24,7 @@
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
+#include "mqt-scpd/routing/MeanderInsertion.hpp"
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/PathGeometry.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
@@ -35,6 +36,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <limits>
 #include <memory>
@@ -100,6 +102,8 @@ struct Tuning {
   /// How long a resonator's way is made before the coupler is spliced in, in
   /// cells. Zero switches the meander off.
   double meanderLength = 0.0;
+  /// The same in layout units, for the lines that report it.
+  double meanderLengthUnits = 0.0;
   /// The price of one eighth turn, in hundredths of a cell.
   std::uint16_t bendPenalty = 0;
   std::uint8_t wireProximityPenalty = 0;
@@ -163,6 +167,7 @@ struct Tuning {
           ? 0.0
           : params.meander_length /
                 std::min(router.cellWidth, router.cellHeight);
+  tuning.meanderLengthUnits = std::max(0.0, params.meander_length);
   tuning.bendPenalty = static_cast<std::uint16_t>(
       std::min<std::uint32_t>(std::numeric_limits<std::uint16_t>::max(),
                               resolved(params.bend_penalty_norm, router)));
@@ -580,6 +585,15 @@ struct Wire {
   /// on, which its port's orientation fixes, and the cell of its target port.
   Path fixed;
   bool resonator = false;
+  /// The run from the cell its way ends on to the port itself, in cells. The
+  /// sampler measures a way to its last cell, and the wire runs on to the
+  /// port from there; a resonator's length counts both.
+  double anchorGap = 0.0;
+  /// The same run in layout units, for the lines that report it.
+  double anchorGapUnits = 0.0;
+  /// Whether its way is shorter than a resonator's has to be: drawn, but
+  /// without room for the meander that would make it long enough.
+  bool tooShort = false;
   bool inner = false;
   /// Its place in the artifact: the connection of the assignment, or of the
   /// global stage for an inner wire.
@@ -844,12 +858,104 @@ public:
     say(std::format(
         "grid {}x{} cells of {:.2f} layout units | clearance {} cells for a "
         "rule of {:.2f} | stub {} cells | band {} cells | bend {} | wire "
-        "price {} | obstacle price {} over {} cells",
+        "price {} | obstacle price {} over {} cells | {}",
         scene_.router.width, scene_.router.height,
         std::min(scene_.router.cellWidth, scene_.router.cellHeight),
         tuning_.clearance, tuning_.spacing, tuning_.straightStart,
         tuning_.reach, tuning_.bendPenalty, tuning_.wireProximityPenalty,
-        tuning_.staticProximityPenalty, tuning_.obstacleReach));
+        tuning_.staticProximityPenalty, tuning_.obstacleReach,
+        tuning_.meanderLength > 0.0
+            ? std::format("resonators {:.0f} cells long", tuning_.meanderLength)
+            : std::string("no meander")));
+  }
+
+  /// Whether a wire has to reach a length: a resonator, while the meander is
+  /// switched on.
+  [[nodiscard]] bool needsLength(const Wire& wire) const {
+    return wire.resonator && tuning_.meanderLength > 0.0;
+  }
+
+  /// How long a resonator's way has to be, in cells: `meander_length` less
+  /// the run from the cell the way ends on to the port itself, which the
+  /// wire covers without cells of its own.
+  [[nodiscard]] double requiredLength(const Wire& wire) const {
+    return std::max(0.0, tuning_.meanderLength - wire.anchorGap);
+  }
+
+  /// The length of a way as the sampler renders it, in cells.
+  [[nodiscard]] double lengthOf(const Path& way) const {
+    return routing::renderedLength(*primitives_, way);
+  }
+
+  /// The same in layout units, with the two sides of a cell told apart.
+  [[nodiscard]] double lengthInUnits(const Path& way) const {
+    if (way.empty()) {
+      return 0.0;
+    }
+    Path copy = way;
+    std::vector<routing::PathSegment> segments;
+    const auto points =
+        routing::samplePath(*primitives_, copy, copy.front(), segments);
+    double total = 0.0;
+    for (std::size_t at = 1; at < points.size(); ++at) {
+      total += std::hypot(
+          (points[at].x() - points[at - 1].x()) * scene_.router.cellWidth,
+          (points[at].y() - points[at - 1].y()) * scene_.router.cellHeight);
+    }
+    return total;
+  }
+
+  /// What lengthening a way came to, and the words for it.
+  struct Lengthened {
+    bool reached = false;
+    std::string note;
+  };
+
+  /// Lengthen a resonator's way to what it needs: the prototype's meander
+  /// insertion, the first placement that fits in phase 1 and the cheapest by
+  /// the search's own price field in the relaxation and the refinement. The
+  /// meander may enter what the search could enter — the band less the
+  /// fence — and nothing else, so it cannot cross a neighbour the way itself
+  /// could not.
+  [[nodiscard]] Lengthened lengthen(const Wire& wire, Path& way,
+                                    const bool priced) {
+    const auto required = requiredLength(wire);
+    const routing::MeanderOptions options{
+        .width = scene_.router.width,
+        .height = scene_.router.height,
+        .box = {.minX = 0,
+                .maxX = scene_.router.width - 1,
+                .minY = 0,
+                .maxY = scene_.router.height - 1}};
+    const auto enterable = [this](const std::uint32_t x,
+                                  const std::uint32_t y) {
+      return x < scene_.router.width && y < scene_.router.height &&
+             !corridor_.testCell(x, y);
+    };
+    routing::CellPrice price;
+    if (priced) {
+      price = [this](const std::uint32_t x, const std::uint32_t y) {
+        const auto cell =
+            (static_cast<std::size_t>(y) * scene_.router.width) + x;
+        return static_cast<std::uint32_t>(router_.staticPenalty(cell)) +
+               proximity_[cell];
+      };
+    }
+    const auto made = routing::insertMeander(*primitives_, way, required,
+                                             enterable, options, price);
+    Lengthened result{.reached = made.reached};
+    if (!made.reached) {
+      result.note = std::format(
+          "no room for a meander: {:.0f} of {:.0f} cells, {} placements tried",
+          made.lengthBefore, required, made.candidates);
+    } else if (made.inserted) {
+      result.note = std::format("meander: {:.0f} → {:.0f} cells for {:.0f}",
+                                made.lengthBefore, made.lengthAfter, required);
+    } else {
+      result.note = std::format("long enough: {:.0f} of {:.0f} cells",
+                                made.lengthBefore, required);
+    }
+    return result;
   }
 
   /// Put a wire's way down: its copper, and the room it keeps around it. The
@@ -906,11 +1012,13 @@ public:
   /// inside it.
   ///
   /// What a round reports, and what the pass ends on, is its fails: the
-  /// wires still on their seed, for which this stage has found no way, and
-  /// the wires with a way of their own that is not settled against every
-  /// other wire. The first are unrouted, the second open, and both count.
+  /// wires still on their seed, for which this stage has found no way; the
+  /// wires with a way of their own that is not settled against every other
+  /// wire; and the resonators whose way is too short for want of room for
+  /// their meander. The first are unrouted, the second open, the third
+  /// short, and all three count.
   ///
-  /// @returns How many wires are unrouted or open when the pass ends.
+  /// @returns How many wires are unrouted, open or short when the pass ends.
   std::uint32_t sweep(std::vector<Wire>& wires,
                       const std::vector<std::uint32_t>& members,
                       const Pass& pass) {
@@ -947,23 +1055,26 @@ public:
       }
       // Unrouted is a wire with no way of its own yet; open is a wire whose
       // own way is not settled — let go of by a wire that relaxed past it and
-      // not drawn again yet. Both are fails, and a round with none ends the
-      // pass.
+      // not drawn again yet; short is a resonator that kept a way without
+      // room for its meander. All three are fails, and a round with none
+      // ends the pass.
       std::uint32_t unrouted = 0;
       std::uint32_t open = 0;
+      std::uint32_t tooShort = 0;
       for (const auto member : members) {
         const auto& wire = wires[member];
         if (!wire.feasible) {
           continue;
         }
         unrouted += wire.drawn ? 0 : 1;
-        open += (wire.drawn && !wire.routed) ? 1 : 0;
+        tooShort += (wire.drawn && wire.tooShort) ? 1 : 0;
+        open += (wire.drawn && !wire.tooShort && !wire.routed) ? 1 : 0;
       }
-      const auto fails = unrouted + open;
+      const auto fails = unrouted + open + tooShort;
       say(std::format("{} round {} {}: tried {}, routed {}, unrouted {}, "
-                      "open {} | Fails: {}",
+                      "open {}, short {} | Fails: {}",
                       pass.name, round, forward ? "forward " : "backward",
-                      tried, won, unrouted, open, fails));
+                      tried, won, unrouted, open, tooShort, fails));
       if (fails == 0) {
         break;
       }
@@ -999,12 +1110,16 @@ public:
         for (const auto& id : record.failed) {
           failed += (failed.empty() ? " " : ", ") + id;
         }
-        say(std::format("{} round {} {}: {} found a way in phase 1, {} after "
-                        "relaxation, {} failed{}",
-                        pass.name, round,
-                        record.forward ? "forward " : "backward", record.normal,
-                        record.relaxed, record.failed.size(),
-                        record.failed.empty() ? "" : ":" + failed));
+        say(std::format(
+            "{} round {} {}: {} found a way in phase 1, {} after "
+            "relaxation, {} failed{}{}",
+            pass.name, round, record.forward ? "forward " : "backward",
+            record.normal, record.relaxed, record.failed.size(),
+            record.failed.empty() ? "" : ":" + failed,
+            record.tooShort == 0 ? ""
+                                 : std::format(", {} kept a way too short for "
+                                               "its meander",
+                                               record.tooShort)));
       }
     }
     return fails.total();
@@ -1018,17 +1133,24 @@ public:
     std::uint32_t unrouted = 0;
     /// Wires whose own way comes within the rule of another wire.
     std::uint32_t open = 0;
+    /// Resonators whose way is shorter than `meander_length` asks.
+    std::uint32_t tooShort = 0;
+    /// Wires with any of the three, each counted once.
+    std::uint32_t failing = 0;
     /// Which ones, for the second level of verbosity.
     std::vector<std::string> unroutedIds;
     std::vector<std::string> openIds;
-    [[nodiscard]] std::uint32_t total() const { return unrouted + open; }
+    std::vector<std::string> shortIds;
+    [[nodiscard]] std::uint32_t total() const { return failing; }
   };
 
   /// Count the fails of a set of wires, by the same test the design-rule
   /// check makes and with every wire down — so what it says is what the
   /// check will find, not what the sweep happened to leave open. Each wire
   /// is counted with itself lifted off the canvas, because a wire is always
-  /// within the rule of itself.
+  /// within the rule of itself. A resonator's length is measured here as
+  /// well, by the sampler that measures it for the artifact, so that a way
+  /// too short is a fail whatever the sweep believed about it.
   [[nodiscard]] Fails failsOf(std::vector<Wire>& wires,
                               const std::vector<std::uint32_t>& members) {
     Fails fails;
@@ -1036,26 +1158,86 @@ public:
       auto& wire = wires[member];
       if (!wire.drawn) {
         ++fails.unrouted;
+        ++fails.failing;
         fails.unroutedIds.push_back(wireId(wire));
         continue;
       }
       ++fails.drawn;
       lift(wire);
-      if (conflictsOf(wire, wires) != 0) {
+      const bool open = conflictsOf(wire, wires) != 0;
+      place(wire);
+      wire.tooShort =
+          needsLength(wire) && lengthOf(wire.way) < requiredLength(wire);
+      if (open) {
         ++fails.open;
         fails.openIds.push_back(wireId(wire));
       }
-      place(wire);
+      if (wire.tooShort) {
+        ++fails.tooShort;
+        fails.shortIds.push_back(wireId(wire));
+      }
+      if (open || wire.tooShort) {
+        ++fails.failing;
+      }
     }
     return fails;
+  }
+
+  /// Say how long every resonator is, in layout units: its way as the
+  /// sampler renders it, the run from the way's last cell to the port, and
+  /// the two together against `meander_length`. One line per resonator, in
+  /// the order of the ring.
+  void sayResonatorLengths(const std::vector<Wire>& wires,
+                           const std::vector<std::uint32_t>& members) const {
+    if (tuning_.meanderLength <= 0.0) {
+      return;
+    }
+    std::uint32_t resonators = 0;
+    std::uint32_t short_ = 0;
+    double shortest = std::numeric_limits<double>::max();
+    double longest = 0.0;
+    for (const auto member : members) {
+      const auto& wire = wires[member];
+      if (!wire.resonator || !wire.feasible) {
+        continue;
+      }
+      ++resonators;
+      const auto label = wire.targetPort < ports_.size()
+                             ? ports_[wire.targetPort].label
+                             : std::string("?");
+      if (!wire.drawn) {
+        ++short_;
+        say(std::format("resonator {} to {}: not drawn", wireId(wire), label));
+        continue;
+      }
+      const auto way = lengthInUnits(wire.way);
+      const auto total = way + wire.anchorGapUnits;
+      const bool enough = total >= tuning_.meanderLengthUnits;
+      short_ += enough ? 0 : 1;
+      shortest = std::min(shortest, total);
+      longest = std::max(longest, total);
+      say(std::format("resonator {} to {}: {:.0f} units of way + {:.0f} to "
+                      "the port = {:.0f} units, {} {:.0f}",
+                      wireId(wire), label, way, wire.anchorGapUnits, total,
+                      enough ? "meets" : "short of",
+                      tuning_.meanderLengthUnits));
+    }
+    if (resonators == 0) {
+      return;
+    }
+    say(std::format("resonators: {} in all, {:.0f} to {:.0f} units, {} short "
+                    "of {:.0f}",
+                    resonators, shortest, longest, short_,
+                    tuning_.meanderLengthUnits));
   }
 
   /// The summary line of a pass, or of the stage.
   void sayFails(const std::string& name, const Fails& fails,
                 const std::uint32_t total) const {
-    say(std::format("{}: {} of {} drawn, {} unrouted, {} open | Fails: {}",
-                    name, fails.drawn, total, fails.unrouted, fails.open,
-                    fails.total()));
+    say(std::format(
+        "{}: {} of {} drawn, {} unrouted, {} open, {} short | Fails: {}", name,
+        fails.drawn, total, fails.unrouted, fails.open, fails.tooShort,
+        fails.total()));
     if (verbosity_ >= 1 && fails.total() != 0) {
       const auto join = [](const std::vector<std::string>& ids) {
         std::string joined;
@@ -1064,8 +1246,9 @@ public:
         }
         return joined.empty() ? std::string("-") : joined;
       };
-      say(std::format("{}: unrouted: {} · open: {}", name,
-                      join(fails.unroutedIds), join(fails.openIds)));
+      say(std::format("{}: unrouted: {} · open: {} · short: {}", name,
+                      join(fails.unroutedIds), join(fails.openIds),
+                      join(fails.shortIds)));
     }
   }
 
@@ -1104,13 +1287,30 @@ public:
         frame_.kind = "refine";
         frame_.fence = {before.key, after.key};
         frame_.ripped.clear();
-        const auto found = search(wire, pass.straightStart, true);
-        tell(std::format("wire {} · round {} {} · refine: {}{}", wireId(wire),
+        auto found = search(wire, pass.straightStart, true, !needsLength(wire));
+        std::string note;
+        if (needsLength(wire)) {
+          // A resonator is lengthened here as it is in the relaxation, and
+          // keeps the way it had when the wider way has no room for it.
+          std::string said;
+          bool reached = true;
+          if (!found.empty()) {
+            const auto made = lengthen(wire, found, true);
+            said = made.note;
+            note = " · " + said;
+            reached = made.reached;
+          }
+          drawSearch(wire, found, said);
+          if (!reached) {
+            found.clear();
+          }
+        }
+        tell(std::format("wire {} · round {} {} · refine: {}{}{}", wireId(wire),
                          round, forward ? "forward" : "backward",
                          found.empty()
                              ? std::string("kept its way")
                              : std::format("found {} cells", found.size()),
-                         picture()));
+                         note, picture()));
         // The prototype's refinement takes what it finds, and falls back to
         // the way it had when the wider constraint does not route.
         wire.way = found.empty() ? had : found;
@@ -1247,6 +1447,12 @@ private:
   /// than drawn over it. A way found is taken as it is; when none is found,
   /// the wires let go of go back to what they were.
   ///
+  /// A resonator's way found is not a way taken until it is long enough.
+  /// The meander goes in after each search, the first placement that fits in
+  /// phase 1 and the cheapest in the relaxation, and a way without room for
+  /// it counts as no way, so the relaxation goes on; when nothing comes of
+  /// it the wire keeps that way, short as it is, as the prototype keeps it.
+  ///
   /// The rule against every other wire is not what the search keeps. It is
   /// what the fails are counted by when the round is over.
   bool attempt(std::vector<Wire>& wires,
@@ -1272,20 +1478,57 @@ private:
     frame_.kind = "normal";
     frame_.fence = {before.key, after.key};
     frame_.ripped.clear();
-    auto found = search(wire, pass.straightStart, true);
+    const bool lengthened = needsLength(wire);
+    auto found = search(wire, pass.straightStart, true, !lengthened);
     const auto id = wireId(wire);
     const auto where = std::format("round {} {}", frame_.round,
                                    forward ? "forward" : "backward");
     RoundRecord* record = rounds_.empty() ? nullptr : &rounds_.back();
+    // The last way found that could not be made long enough, and what the
+    // lengthening said. A way found is kept only when it is long enough.
+    Path plain;
+    std::string note;
+    const auto lengthenFound = [&](const bool priced) {
+      note.clear();
+      if (!lengthened) {
+        return;
+      }
+      std::string said;
+      if (!found.empty()) {
+        const auto made = lengthen(wire, found, priced);
+        said = made.note;
+        note = " · " + said;
+        if (!made.reached) {
+          plain = std::move(found);
+          found.clear();
+        }
+      }
+      // The picture of the search, taken here rather than in `search` so
+      // that it shows the way with its meander, or the way that had no room
+      // for one.
+      drawSearch(wire, found.empty() && !said.empty() ? plain : found, said);
+    };
+    // What a search came to, in words: the way found and what the
+    // lengthening made of it, or a way found and left short, or nothing.
+    const auto outcome = [&]() {
+      if (!found.empty()) {
+        return std::format("found {} cells{}", found.size(), note);
+      }
+      if (!note.empty()) {
+        return std::format("found {} cells{}", plain.size(), note);
+      }
+      return std::string("no way");
+    };
+    lengthenFound(false);
     if (!found.empty()) {
-      tell(std::format("wire {} · {} · normal: found {} cells{}", id, where,
-                       found.size(), picture()));
+      tell(std::format("wire {} · {} · normal: {}{}", id, where, outcome(),
+                       picture()));
       if (record != nullptr) {
         ++record->normal;
       }
     } else {
-      tell(std::format("wire {} · {} · normal: no way, relaxing{}", id, where,
-                       picture()));
+      tell(std::format("wire {} · {} · normal: {}, relaxing{}", id, where,
+                       outcome(), picture()));
     }
 
     // Phase 2: the relaxation.
@@ -1307,13 +1550,12 @@ private:
       frame_.kind = std::format("relax {}", level);
       frame_.fence = {ripped.key, (forward ? before : after).key};
       frame_.ripped.push_back(ripped.key);
-      found = search(wire, pass.straightStart, true);
+      found = search(wire, pass.straightStart, true, !lengthened);
+      lengthenFound(true);
       tell(std::format(
           "wire {} · relax {}: let go of {}, fence {} and {} · {}{}", id, level,
           wireId(ripped), wireId(ripped), wireId(forward ? before : after),
-          found.empty() ? std::string("no way")
-                        : std::format("found {} cells", found.size()),
-          picture()));
+          outcome(), picture()));
     }
 
     if (found.empty()) {
@@ -1323,14 +1565,25 @@ private:
         wires[key].routed = routed;
         names += (names.empty() ? "" : ", ") + wireId(wires[key]);
       }
+      // A resonator whose way was found but could not be made long enough
+      // keeps that way: it is what the wires around it see, and the wire is
+      // tried again in the next round.
+      if (!plain.empty()) {
+        wire.way = std::move(plain);
+        wire.drawn = true;
+        wire.tooShort = true;
+      }
       place(wire);
       wire.routed = false;
       tell(std::format("wire {} · {}: no way after {} relaxations; {} back as "
-                       "they were",
+                       "they were{}",
                        id, where, released.size(),
-                       names.empty() ? std::string("nothing") : names));
+                       names.empty() ? std::string("nothing") : names,
+                       wire.tooShort ? "; keeps a way too short for its meander"
+                                     : ""));
       if (record != nullptr) {
         record->failed.push_back(id);
+        record->tooShort += wire.tooShort ? 1 : 0;
       }
       return false;
     }
@@ -1340,6 +1593,7 @@ private:
     wire.way = found;
     wire.drawn = true;
     wire.routed = true;
+    wire.tooShort = false;
     place(wire);
     return true;
   }
@@ -1442,9 +1696,10 @@ private:
     return found;
   }
 
-  /// The search itself, with the stubs of this pass.
+  /// The search itself, with the stubs of this pass. Its picture is taken
+  /// here unless the caller has more to put into it.
   [[nodiscard]] Path search(const Wire& wire, const std::uint32_t straightStart,
-                            const bool usePenalty) {
+                            const bool usePenalty, const bool draw = true) {
     router_.setParams(
         {.startStraightLength = wire.resonator ? 0U : straightStart,
          .endStraightLength = 0,
@@ -1453,8 +1708,8 @@ private:
     router_.attachCorridor(&corridor_);
     lastPicture_.clear();
     auto found = router_.route(wire.objective, usePenalty);
-    if (debug_) {
-      drawSearch(wire, found);
+    if (draw) {
+      drawSearch(wire, found, {});
     }
     return found;
   }
@@ -2144,10 +2399,13 @@ private:
   }
 
   /// A picture of one search: what it may enter, what fences it, what it
-  /// pays, the wires around it, and what it found. Taken from inside
-  /// `search`, so it shows exactly what the router was given.
-  void drawSearch(const Wire& wire, const Path& found) {
-    if (box_.empty() || frame_.wires == nullptr) {
+  /// pays, the wires around it, and what it found. Taken right after the
+  /// search, so it shows exactly what the router was given; for a resonator
+  /// the way carries its meander and the note says what the lengthening
+  /// came to.
+  void drawSearch(const Wire& wire, const Path& found,
+                  const std::string& note) {
+    if (!debug_ || box_.empty() || frame_.wires == nullptr) {
       return;
     }
     const auto& wires = *frame_.wires;
@@ -2234,9 +2492,10 @@ private:
                             : std::format("found {} cells", found.size());
     drawLegend(
         svg, scale,
-        {std::format("{} · round {} {} · wire {} · {} · {}", frame_.pass,
+        {std::format("{} · round {} {} · wire {} · {} · {}{}", frame_.pass,
                      frame_.round, frame_.forward ? "forward" : "backward",
-                     wireId(wire), frame_.kind, result),
+                     wireId(wire), frame_.kind, result,
+                     note.empty() ? "" : " · " + note),
          std::format("fence {} · ripped {} · lane between {} and {} · box x "
                      "{}..{} y {}..{}",
                      fenced.empty() ? "-" : fenced,
@@ -2354,6 +2613,8 @@ private:
     bool forward = true;
     std::uint32_t normal = 0;
     std::uint32_t relaxed = 0;
+    /// Of the failed, the resonators that kept a way too short.
+    std::uint32_t tooShort = 0;
     std::vector<std::string> failed;
   };
   std::vector<RoundRecord> rounds_;
@@ -2477,6 +2738,20 @@ private:
     if (!place(connection.target.index(), false, wire.objective.target)) {
       wire.feasible = false;
     }
+    // A resonator's length runs to the port itself, and the way ends on the
+    // cell beyond the port's band, so the gap between the two is part of
+    // the length. The port's exact position is in fractional cells, as the
+    // sampler measures.
+    if (wire.resonator && wire.feasible &&
+        connection.target.index() < chip.ports.size()) {
+      const auto exact =
+          scene.router.toCell(chip.ports[connection.target.index()]->center);
+      const auto dx = static_cast<double>(wire.objective.target.x) - exact.x();
+      const auto dy = static_cast<double>(wire.objective.target.y) - exact.y();
+      wire.anchorGap = std::hypot(dx, dy);
+      wire.anchorGapUnits =
+          std::hypot(dx * scene.router.cellWidth, dy * scene.router.cellHeight);
+    }
     wires.push_back(std::move(wire));
   }
 
@@ -2504,28 +2779,34 @@ private:
 
 // ------------------------------------------------------------- The artifact
 
-[[nodiscard]] std::unique_ptr<fba::FinalWireT> wireOf(const Path& way) {
+/// How long a way is, in layout units.
+using Measure = std::function<double(const Path&)>;
+
+[[nodiscard]] std::unique_ptr<fba::FinalWireT> wireOf(const Path& way,
+                                                      const double length) {
   auto drawn = std::make_unique<fba::FinalWireT>();
   drawn->path.reserve(way.size());
   for (const auto& point : way) {
     drawn->path.emplace_back(point.x, point.y, point.heading);
   }
+  drawn->length = length;
   return drawn;
 }
 
 /// The state of every wire, as one phase left it.
 [[nodiscard]] std::unique_ptr<fba::FinalPhaseT>
 snapshotOf(std::string name, const std::vector<Wire>& wires,
-           const std::uint32_t ring, const std::size_t inner) {
+           const std::uint32_t ring, const std::size_t inner,
+           const Measure& measure) {
   auto phase = std::make_unique<fba::FinalPhaseT>();
   phase->name = std::move(name);
   phase->wires.reserve(ring);
   for (std::uint32_t at = 0; at < ring; ++at) {
-    phase->wires.push_back(wireOf({}));
+    phase->wires.push_back(wireOf({}, 0.0));
   }
   phase->inner.reserve(inner);
   for (std::size_t at = 0; at < inner; ++at) {
-    phase->inner.push_back(wireOf({}));
+    phase->inner.push_back(wireOf({}, 0.0));
   }
   for (const auto& wire : wires) {
     if (!wire.drawn) {
@@ -2533,7 +2814,7 @@ snapshotOf(std::string name, const std::vector<Wire>& wires,
     }
     auto& into = wire.inner ? phase->inner : phase->wires;
     if (wire.slot < into.size()) {
-      into[wire.slot] = wireOf(wire.way);
+      into[wire.slot] = wireOf(wire.way, measure(wire.way));
     }
   }
   return phase;
@@ -2572,6 +2853,9 @@ public:
     Driver driver(field, tuning, progress, debug, verbosity);
     driver.attachPorts(portMarksOf(chip, field));
     driver.drawGrid(wires);
+    const Measure measure = [&driver](const Path& way) {
+      return driver.lengthInUnits(way);
+    };
 
     FinalRoutingT routing;
     auto extent = std::make_unique<fba::GridExtentT>();
@@ -2594,7 +2878,7 @@ public:
                   .straightStart = 0,
                   .keepDrawn = true});
     routing.phases.push_back(
-        snapshotOf("inner", wires, ring, global.connections.size()));
+        snapshotOf("inner", wires, ring, global.connections.size(), measure));
 
     // Phase 2. The ring, against the inner circuit and against itself.
     driver.sweep(wires, outer,
@@ -2612,14 +2896,14 @@ public:
                    .straightStart = tuning.straightStart,
                    .keepDrawn = false});
     routing.phases.push_back(
-        snapshotOf("outer", wires, ring, global.connections.size()));
+        snapshotOf("outer", wires, ring, global.connections.size(), measure));
 
     // The three phases that follow are not implemented yet. Their snapshots
     // are written empty rather than left out, so that a reader and a renderer
     // see the same five phases whatever a build carries.
     for (const auto* const name : {"couplers", "feedlines", "refined"}) {
       routing.phases.push_back(
-          snapshotOf(name, wires, ring, global.connections.size()));
+          snapshotOf(name, wires, ring, global.connections.size(), measure));
     }
 
     // What the stage came to, over every wire of the plan and counted with
@@ -2627,10 +2911,11 @@ public:
     // design-rule check will find.
     std::vector<std::uint32_t> every(wires.size());
     std::iota(every.begin(), every.end(), 0U);
+    driver.sayResonatorLengths(wires, outer);
     driver.sayFails("final routing", driver.failsOf(wires, every),
                     static_cast<std::uint32_t>(wires.size()));
 
-    auto last = snapshotOf("", wires, ring, global.connections.size());
+    auto last = snapshotOf("", wires, ring, global.connections.size(), measure);
     routing.wires = std::move(last->wires);
     routing.inner = std::move(last->inner);
     // A `ConnectionRef` indexes the connections of the assignment, so only a

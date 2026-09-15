@@ -39,6 +39,14 @@ struct PathPoint {
 /// A routed path, from its source to its target.
 using Path = std::vector<PathPoint>;
 
+/// A box of cells, both bounds included.
+struct CellBox {
+  uint32_t minX = 0;
+  uint32_t maxX = 0;
+  uint32_t minY = 0;
+  uint32_t maxY = 0;
+};
+
 /// The two ends of one routing request. The heading of the source is the
 /// heading the wire leaves with; the heading of the target is the heading it
 /// arrives with. The primitive fields are ignored.

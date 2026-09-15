@@ -250,6 +250,11 @@ table DetailRouting {
 /// handed a separate list that can disagree with the paths beside it.
 table FinalWire {
   path: [geometry.RCoord] (required);
+  /// How long the path is, in layout units, as the stage renders it: the
+  /// exact curves of its bends and not the cells they sweep. Zero for a wire
+  /// that carries no cells. The Final stage lengthens a resonator's way to
+  /// `meander_length` with a meander, and this is the figure it measured.
+  length: double;
 }
 
 /// What the Final stage had drawn at the end of one of its phases.

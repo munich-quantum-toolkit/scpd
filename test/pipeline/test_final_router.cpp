@@ -28,6 +28,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -44,6 +45,7 @@ using flatbuffers::artifacts::CorridorRoutingT;
 using flatbuffers::artifacts::DetailRoutingT;
 using flatbuffers::artifacts::FinalRoutingT;
 using flatbuffers::artifacts::GlobalRoutingT;
+using flatbuffers::design::AssignedRole;
 using flatbuffers::drc::DrcRule;
 
 /// What the five stages before the final router produce.
@@ -160,6 +162,33 @@ void reportFirst(const flatbuffers::drc::DrcReportT& report,
   }
 }
 
+/// How far a resonator's way falls short of `meander_length`, at worst, in
+/// layout units: the length the artifact carries plus the run from the last
+/// cell of the way to the port itself, which the wire covers without cells of
+/// its own. Zero when every resonator is long enough.
+double worstResonatorShortfall(const Benchmark& benchmark,
+                               const Planned& planned,
+                               const FinalRoutingT& routing) {
+  const auto grid = gridOf(routing);
+  const double required = benchmark.config.stages->final->meander_length;
+  double worst = 0.0;
+  for (std::size_t index = 0; index < routing.wires.size(); ++index) {
+    const auto& wire = *routing.wires[index];
+    const auto& connection = *planned.assignment.connections[index];
+    if (wire.path.empty() ||
+        connection.target_role != AssignedRole::ResonatorTarget) {
+      continue;
+    }
+    const auto& port = *benchmark.chip.ports[connection.target.index()];
+    const auto& last = wire.path.back();
+    const auto end = grid.toLayout(last.x(), last.y());
+    const double gap =
+        std::hypot(end.x() - port.center.x(), end.y() - port.center.y());
+    worst = std::max(worst, required - (wire.length + gap));
+  }
+  return worst;
+}
+
 class Final : public testing::TestWithParam<std::string> {};
 class SpacedFinal : public testing::TestWithParam<std::string> {};
 
@@ -208,6 +237,32 @@ TEST_P(Final, WiresRunFromFeedToTargetWithoutMeetingThemselves) {
     EXPECT_EQ(path.front().x(), feed.x()) << "wire " << index;
     EXPECT_EQ(path.front().y(), feed.y()) << "wire " << index;
   }
+}
+
+/// Every resonator's way is at least `meander_length` long, the run to the
+/// port counted, and every drawn wire carries its length. The length is the
+/// sampled curve of the way and not the cells it sweeps, which is what the
+/// stage measured when it lengthened the way.
+TEST_P(Final, ResonatorsReachTheMeanderLength) {
+  const auto benchmark = benchmarkOf(GetParam());
+  const auto planned = plan(benchmark);
+  const auto routing = routeFinal(benchmark, planned);
+  ASSERT_GT(benchmark.config.stages->final->meander_length, 0.0);
+
+  std::size_t resonators = 0;
+  for (std::size_t index = 0; index < routing.wires.size(); ++index) {
+    const auto& wire = *routing.wires[index];
+    if (wire.path.empty()) {
+      continue;
+    }
+    EXPECT_GT(wire.length, 0.0) << "wire " << index << " carries no length";
+    resonators += planned.assignment.connections[index]->target_role ==
+                          AssignedRole::ResonatorTarget
+                      ? 1
+                      : 0;
+  }
+  EXPECT_GT(resonators, 0U);
+  EXPECT_LE(worstResonatorShortfall(benchmark, planned, routing), 0.0);
 }
 
 INSTANTIATE_TEST_SUITE_P(EveryChip, Final,
@@ -287,10 +342,10 @@ TEST(FinalRouter, EveryPhaseLeavesASnapshot) {
 }
 
 /// Every pass starts every wire on the way the Detail stage drew and ends on
-/// a line that says how many wires are unrouted or open, and the stage ends
-/// on one over every wire. "Fails: 0" there promises what the artifact and
-/// the design-rule check find: every connection drawn and no two wires within
-/// the rule.
+/// a line that says how many wires are unrouted, open or short, and the stage
+/// ends on one over every wire. "Fails: 0" there promises what the artifact
+/// and the design-rule check find: every connection drawn, no two wires
+/// within the rule, and every resonator as long as `meander_length` asks.
 TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
@@ -318,6 +373,26 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   ASSERT_FALSE(total.empty());
   const auto fails = std::stoul(total.substr(total.find("Fails:") + 6));
 
+  // Every resonator's length is said, way plus the run to the port against
+  // `meander_length`, and a line sums them up.
+  std::size_t resonators = 0;
+  std::size_t said = 0;
+  for (std::size_t index = 0; index < planned.assignment.connections.size();
+       ++index) {
+    resonators += planned.assignment.connections[index]->target_role ==
+                          AssignedRole::ResonatorTarget
+                      ? 1
+                      : 0;
+  }
+  for (const auto& line : lines) {
+    said += line.find("resonator ") != std::string::npos &&
+                    line.find("to the port") != std::string::npos
+                ? 1
+                : 0;
+  }
+  EXPECT_EQ(said, resonators);
+  EXPECT_FALSE(lineWith("resonators:", "in all").empty());
+
   const auto view = viewOf(benchmark, planned, routing);
   const auto report = drc::checkCells(view, *benchmark.config.rules);
   const bool everyWireDrawn =
@@ -325,7 +400,8 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
       std::ranges::none_of(routing.inner,
                            [](const auto& wire) { return wire->path.empty(); });
   const bool holds =
-      everyWireDrawn && countOf(report, DrcRule::WireClearance) == 0;
+      everyWireDrawn && countOf(report, DrcRule::WireClearance) == 0 &&
+      worstResonatorShortfall(benchmark, planned, routing) <= 0.0;
   EXPECT_EQ(fails == 0, holds) << total;
 }
 

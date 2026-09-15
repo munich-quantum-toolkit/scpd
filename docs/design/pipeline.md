@@ -617,6 +617,21 @@ outside it is priced and nothing is forbidden, so a wire that has to leave its
 lane may and a wire that need not, does not. On top of it the wires further
 along the sweep are priced at growing distances.
 
+**A resonator's way is lengthened to `meander_length` before the coupler is
+spliced into it.** After a search of a resonator has found a way, one meander
+goes into a straight run of it: the two ends of the run are turned across it by
+one or two moves of the primitives, and one rectangular loop is built between
+them, as deep as the missing length makes it and as wide as the run is long.
+The loop may enter what the search could enter — the band less the fence — and
+nothing else, so it cannot cross a neighbour the way itself could not. Phase 1
+takes the first placement that fits; the relaxation takes the cheapest by the
+price field the search was steered by. A way without room for its meander is no
+way, so the relaxation goes on, and a resonator left short keeps the way it
+found and counts as a fail. This is the prototype's `meander_insertion` and
+`meander_insertion_proximity`, whose one accepted shape is that single loop.
+The artifact carries the rendered length of every wire, so that a reader can
+check a resonator without the primitives.
+
 Four things the port does that the prototype does not, and each is the answer
 to a defect its own pictures show:
 

@@ -61,8 +61,19 @@ class FinalWire(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         return o == 0
 
+    # How long the path is, in layout units, as the stage renders it: the
+    # exact curves of its bends and not the cells they sweep. Zero for a wire
+    # that carries no cells. The Final stage lengthens a resonator's way to
+    # `meander_length` with a meander, and this is the figure it measured.
+    # FinalWire
+    def Length(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
 def FinalWireStart(builder: flatbuffers.Builder):
-    builder.StartObject(1)
+    builder.StartObject(2)
 
 def Start(builder: flatbuffers.Builder):
     FinalWireStart(builder)
@@ -78,6 +89,12 @@ def FinalWireStartPathVector(builder, numElems: int) -> int:
 
 def StartPathVector(builder, numElems: int) -> int:
     return FinalWireStartPathVector(builder, numElems)
+
+def FinalWireAddLength(builder: flatbuffers.Builder, length: float):
+    builder.PrependFloat64Slot(1, length, 0.0)
+
+def AddLength(builder: flatbuffers.Builder, length: float):
+    FinalWireAddLength(builder, length)
 
 def FinalWireEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -97,8 +114,10 @@ class FinalWireT(object):
     def __init__(
         self,
         path = None,
+        length = 0.0,
     ):
         self.path = path  # type: Optional[List[mqt.scpd.flatbuffers.geometry.RCoord.RCoordT]]
+        self.length = length  # type: float
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -129,6 +148,7 @@ class FinalWireT(object):
                 else:
                     rCoord_ = mqt.scpd.flatbuffers.geometry.RCoord.RCoordT.InitFromObj(finalWire.Path(i))
                     self.path.append(rCoord_)
+        self.length = finalWire.Length()
 
     # FinalWireT
     def Pack(self, builder):
@@ -140,5 +160,6 @@ class FinalWireT(object):
         FinalWireStart(builder)
         if self.path is not None:
             FinalWireAddPath(builder, path)
+        FinalWireAddLength(builder, self.length)
         finalWire = FinalWireEnd(builder)
         return finalWire

@@ -1,12 +1,18 @@
 # Phase 4, step 3 → the couplers, the feedlines and their refinement
 
 Written for whoever finishes the Final stage. Its first two phases are built,
-verified and drawn; the three that follow are specified here, with what the
-first two learned and what cost time.
+verified and drawn, and every resonator is lengthened to `meander_length`;
+the three phases that follow are specified here, with what the first two
+learned and what cost time. Read
+[handover-final-routing.md](handover-final-routing.md) first: it is the
+current state of the stage, and its *Next* section says what the meander
+changed for the coupler insertion and which length question to settle
+before splicing anything.
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch: `phase-4-routing-stages`. **Nothing is committed — the user commits
-  per phase.** Leave your work in the tree.
+- Branch: `phase-4-routing-stages`. The outer routing is committed
+  (`1957fe1`, `6faeaae`); the meander is not. **The user commits per
+  phase** — leave your work in the tree.
 - Prototype: `/Users/michaelfeldmeier/Documents/GitHub/FridgeCAD` (`0c5d6d9`),
   read only. The Final stage is `include/fiction/layout/FinalGrid.cpp`, 23 413
   lines.
@@ -25,7 +31,9 @@ inner  outer  couplers  feedlines  refined
 The three empty ones are yours. They are written out empty rather than left
 out, so a reader and a renderer see the same five phases whatever a build
 carries — `plot --stage final --phase couplers` already works and draws
-nothing.
+nothing. Every wire of the two built phases carries its rendered length
+(`FinalWire.length`), and every resonator is at least `meander_length` long
+with its loop as near the qubit as it fits.
 
 ## What you inherit
 
@@ -47,6 +55,15 @@ more calls to `sweep` and `refine`, over a different wire list.
 
 `run_optimized_cpw_coupler_insertion` (`FinalGrid.cpp:16940`). The roadmap says
 to port the optimizer as it stands: it is genuine algorithm, not duplication.
+
+What you start from: every resonator's way is at least `meander_length` long
+when the outer routing ends — the meander insertion is built, in
+`include/mqt-scpd/routing/MeanderInsertion.hpp` and `Driver::lengthen` — so the
+point where the way left to the qubit port reaches `target_resonator_length`
+exists on every resonator. `FinalWire.length` in the artifact is the rendered
+length of every way in layout units, measured by `samplePath`; the length to
+the port itself is that figure plus the run from the last cell to the port,
+which `Wire::anchorGap` holds in cells.
 
 - Per resonator, an option set: eight orientation offsets × mirrored × dogleg
   variants, each spliced with `routing::spliceCouplerDogleg` at the point where

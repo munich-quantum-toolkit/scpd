@@ -67,6 +67,12 @@ samplePath(const MovePrimitives& primitives, Path& path, PathPoint start,
 [[nodiscard]] MQT_SCPD_ROUTING_EXPORT double
 polylineLength(std::span<const Point> points);
 
+/// The length of a path as samplePath renders it, in cells: the exact curves
+/// of its bends and not the cells they sweep. The path itself is left as it
+/// is.
+[[nodiscard]] MQT_SCPD_ROUTING_EXPORT double
+renderedLength(const MovePrimitives& primitives, const Path& path);
+
 /// The number of direction changes between consecutive steps of a path.
 [[nodiscard]] MQT_SCPD_ROUTING_EXPORT uint32_t countBends(const Path& path);
 

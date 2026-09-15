@@ -166,3 +166,6 @@ launcher_target = 18
 rounds            = 6
 max_relaxation    = 5
 refinement_rounds = 0
+# How long a resonator's way is made before the coupler is spliced into it,
+# in layout units: the prototype's figure for this chip. The default is 3000.
+meander_length    = 6000.0
