@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/munich-quantum-toolkit/scpd/ci.yml?branch=main&style=flat-square&logo=github&label=ci)](https://github.com/munich-quantum-toolkit/scpd/actions/workflows/ci.yml)
 [![CD](https://img.shields.io/github/actions/workflow/status/munich-quantum-toolkit/scpd/cd.yml?style=flat-square&logo=github&label=cd)](https://github.com/munich-quantum-toolkit/scpd/actions/workflows/cd.yml)
-[![Documentation](https://img.shields.io/readthedocs/mqtscpd?logo=readthedocs&style=flat-square)](https://mqt.readthedocs.io/projects/scpd)
+[![Documentation](https://img.shields.io/readthedocs/mqt-scpd?logo=readthedocs&style=flat-square)](https://mqt.readthedocs.io/projects/scpd)
 [![codecov](https://img.shields.io/codecov/c/github/munich-quantum-toolkit/scpd?style=flat-square&logo=codecov)](https://codecov.io/gh/munich-quantum-toolkit/scpd)
 
 <p align="center">
