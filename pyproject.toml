@@ -59,16 +59,16 @@ email = "michael.feldmeier@tum.de"
 # KLayout writes GDSII and OASIS. It is an extra because it ships no wheels for Windows on ARM.
 # 0.30.6 is the first release with wheels for CPython 3.14 on every platform the CI covers; the
 # upper bound keeps a new minor release of KLayout from breaking the adapter unnoticed.
-klayout = ["klayout~=0.30.6"]
-
-[project.scripts]
-mqt-scpd = "mqt.scpd.cli:main"
+klayout = [ "klayout~=0.30.6" ]
 
 [project.urls]
 Homepage = "https://github.com/munich-quantum-toolkit/scpd"
 Documentation = "https://mqt.readthedocs.io/projects/scpd"
 Issues = "https://github.com/munich-quantum-toolkit/scpd/issues"
 Discussions = "https://github.com/munich-quantum-toolkit/scpd/discussions"
+
+[project.scripts]
+mqt-scpd = "mqt.scpd.cli:main"
 
 
 [dependency-groups]
@@ -79,6 +79,8 @@ dev = [
 ]
 test = [
   "flatbuffers~=25.12.19",
+  # KLayout ships no wheels for Windows on ARM or for CPython 3.15; the export tests skip without it.
+  "klayout~=0.30.6; python_version<'3.15' and (sys_platform!='win32' or platform_machine!='ARM64')",
   "pytest>=9.0.1",
   "pytest-cov>=7.1",
   "pytest-sugar>=1.1.1",
@@ -220,6 +222,7 @@ docstring-code-format = true
 
 [tool.ruff.lint.per-file-ignores]
 "test/python/**" = [ "INP001", "T20" ]
+"python/mqt/scpd/cli.py" = [ "T20" ]  # the command line prints its output
 "docs/**" = [ "INP001", "T20" ]
 "noxfile.py" = [ "T20", "TID251" ]
 "*.pyi" = [ "D301", "D418", "E501", "PYI021" ]
@@ -249,16 +252,6 @@ ignore = [
 future-annotations = true
 
 
-[tool.ruff.lint.per-file-ignores]
-"test/python/**" = ["T20", "INP001"]
-"python/mqt/scpd/cli.py" = ["T20"]  # the command line prints its output
-"docs/**" = ["T20", "INP001"]
-"noxfile.py" = ["T20", "TID251"]
-"*.pyi" = ["D301", "D418", "E501", "PYI021"]
-"*.ipynb" = [
-    "D",    # pydocstyle
-    "E402", # Allow imports to appear anywhere in Jupyter notebooks
-    "I002", # Allow missing `from __future__ import annotations` import
 [tool.repo-review.ignore]
 GH200 = "We use Renovate instead of Dependabot"
 PC160 = "We use a mirror of crate-ci/typos"
@@ -344,14 +337,6 @@ omit = [
   "*/flatbuffers/*",
   "*/visualization/*",
 ]
-test = [
-  "flatbuffers~=25.12.19",
-  # KLayout ships no wheels for Windows on ARM or for CPython 3.15; the export tests skip without it.
-  "klayout~=0.30.6; python_version < '3.15' and (sys_platform != 'win32' or platform_machine != 'ARM64')",
-  "pytest>=9.0.1",
-  "pytest-cov>=7.1.0",
-  "pytest-sugar>=1.1.1",
-  "pytest-xdist>=3.8.0",
 parallel = true
 disable_warnings = [
   "no-sysmon",
