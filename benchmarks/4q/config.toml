@@ -1,0 +1,45 @@
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
+# The 4-qubit benchmark chip. The chip input is the prototype's own
+# routing_config.json, unchanged; README.md in this directory names its
+# source. Every design rule is written out; every other key is present only
+# when it differs from the default.
+
+[chip]
+input = "routing_config.json"
+
+[ports.patterns]
+launcher = '^Chip\.port\d+$'
+resonator = '^Q\d+\.port0$'
+conventional = '^(Q\d+\.port1|C\d+\.port[0-2])$'
+
+[ports.sequences]
+all_outer = [
+  "Q1.port0", "Q1.port1", "C12.port0", "Q2.port1", "Q2.port0", "C23.port0", "Q3.port0", "Q3.port1",
+  "C34.port0", "Q4.port0", "Q4.port1", "C14.port0",
+]
+fixed_outer = [
+  "Q1.port0", "Q1.port1", "C12.port0", "Q2.port1", "Q2.port0", "C23.port0", "Q3.port0", "Q3.port1",
+  "C34.port0", "Q4.port0", "Q4.port1", "C14.port0",
+]
+
+[design_rules]
+min_wire_spacing = 185.0
+min_obstacle_spacing = 25.0
+min_bend_radius = 50.0
+min_straight_length = 100.0
+target_resonator_length = 2500.0
+resonator_length_tolerance = 100.0
+max_feedline_utilization = 4
+feedline_terminations = 0
+
+[grid]
+capacity_cells_x = 12
+launcher_offset_x = 5
+launcher_offset_y = 5

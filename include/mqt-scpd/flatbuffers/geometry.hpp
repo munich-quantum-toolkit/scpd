@@ -53,6 +53,18 @@ bool operator!=(const SegmentT &lhs, const SegmentT &rhs);
 bool operator==(const PathT &lhs, const PathT &rhs);
 bool operator!=(const PathT &lhs, const PathT &rhs);
 
+inline const ::flatbuffers::TypeTable *PointTypeTable();
+
+inline const ::flatbuffers::TypeTable *PolygonTypeTable();
+
+inline const ::flatbuffers::TypeTable *LineTypeTable();
+
+inline const ::flatbuffers::TypeTable *ArcTypeTable();
+
+inline const ::flatbuffers::TypeTable *SegmentTypeTable();
+
+inline const ::flatbuffers::TypeTable *PathTypeTable();
+
 /// The two analytic shapes a routed wire consists of.
 enum class SegmentShape : uint8_t {
   NONE = 0,
@@ -197,6 +209,9 @@ FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(8) Point FLATBUFFERS_FINAL_CLASS {
 
  public:
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PointTypeTable();
+  }
   Point()
       : x_(0),
         y_(0) {
@@ -239,6 +254,9 @@ struct Polygon FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PolygonT NativeTableType;
   typedef PolygonBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PolygonTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_VERTICES = 4
   };
@@ -311,6 +329,9 @@ struct Line FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef LineT NativeTableType;
   typedef LineBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return LineTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_START = 4,
     VT_END = 6
@@ -387,6 +408,9 @@ struct Arc FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ArcT NativeTableType;
   typedef ArcBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ArcTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CENTER = 4,
     VT_RADIUS = 6,
@@ -478,6 +502,9 @@ struct Segment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef SegmentT NativeTableType;
   typedef SegmentBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return SegmentTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SHAPE_TYPE = 4,
     VT_SHAPE = 6
@@ -569,6 +596,9 @@ struct Path FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PathT NativeTableType;
   typedef PathBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PathTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SEGMENTS = 4
   };
@@ -937,6 +967,133 @@ inline void SegmentShapeUnion::Reset() {
   }
   value = nullptr;
   type = SegmentShape::NONE;
+}
+
+inline const ::flatbuffers::TypeTable *SegmentShapeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::LineTypeTable,
+    mqt::scpd::flatbuffers::geometry::ArcTypeTable
+  };
+  static const char * const names[] = {
+    "NONE",
+    "Line",
+    "Arc"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_UNION, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PointTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const int64_t values[] = { 0, 8, 16 };
+  static const char * const names[] = {
+    "x",
+    "y"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_STRUCT, 2, type_codes, nullptr, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PolygonTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "vertices"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 1, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *LineTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "start",
+    "end"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ArcTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "center",
+    "radius",
+    "start_angle",
+    "sweep"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *SegmentTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UTYPE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::SegmentShapeTypeTable
+  };
+  static const char * const names[] = {
+    "shape_type",
+    "shape"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PathTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::SegmentTypeTable
+  };
+  static const char * const names[] = {
+    "segments"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 1, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
 }
 
 }  // namespace geometry

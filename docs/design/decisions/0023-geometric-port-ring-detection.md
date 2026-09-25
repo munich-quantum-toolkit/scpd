@@ -1,6 +1,6 @@
 # 0023 — Port ring detection is geometric, and opt-in
 
-- **Status:** Accepted
+- **Status:** Superseded by [0025](0025-port-ring-is-manual-input.md)
 - **Date:** 2026-09-02
 - **Amends:** [0020](0020-legacy-routing-config-as-input.md)
 
@@ -81,3 +81,8 @@ retires risk 1, and a mechanism nobody can select does not retire anything.
   rotation there means nothing. The validation treats the two differently.
 - Decision 0018 is unaffected. The walk parses no component names, so nothing in
   the port needs to know which qubits a coupler joins.
+
+> **Superseded 2026-09-06.** Phase 1 ported the walk, measured both modes on all
+> eight benchmarks and found the walk wrong on the two inputs whose qubits carry
+> two ports. [Decision 0025](0025-port-ring-is-manual-input.md) removes
+> automatic detection; the ring is configuration only.

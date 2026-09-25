@@ -14,7 +14,6 @@ import flatbuffers
 
 from mqt.scpd.flatbuffers.config.GridParams import GridParamsT
 from mqt.scpd.flatbuffers.config.PortConfig import PortConfigT
-from mqt.scpd.flatbuffers.config.PortDetection import PortDetection
 from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
 from mqt.scpd.flatbuffers.design.Chip import ChipT
 from mqt.scpd.flatbuffers.design.Connection import ConnectionT
@@ -39,8 +38,6 @@ def test_role_enums_match_the_wire_format() -> None:
     assert AssignedRole.ConventionalTarget == 6
     assert Rotation.Unset == 0
     assert Rotation.R315 == 8
-    assert PortDetection.Manual == 0
-    assert PortDetection.Auto == 1
 
 
 def test_chip_round_trips_through_object_api() -> None:
@@ -105,7 +102,6 @@ def test_connection_source_may_be_absent() -> None:
 def test_config_defaults_are_the_documented_defaults() -> None:
     """Absent keys take the defaults that the configuration section documents."""
     ports = PortConfigT()
-    assert ports.detection == PortDetection.Manual
     assert ports.sequences is None
 
     grid = GridParamsT()

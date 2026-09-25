@@ -26,11 +26,9 @@ Two decisions remove all of it. Roles are **declared, not inferred** — see
 [decision 0018](decisions/0018-port-roles-unassigned-and-assigned.md) — and the
 one relationship those string parsers existed to recover, a coupler's qubit
 pair, is needed by nothing that survives. The port ring is the only thing that
-ever wanted it, and neither way of obtaining a ring asks for it now: under
-`port_detection = "manual"` the ring is configuration
-([decision 0020](decisions/0020-legacy-routing-config-as-input.md)), and under
-`"auto"` it comes from a geometric traversal that parses no names
-([decision 0023](decisions/0023-geometric-port-ring-detection.md)).
+ever wanted it, and the ring is configuration
+([decision 0020](decisions/0020-legacy-routing-config-as-input.md) and
+[decision 0025](decisions/0025-port-ring-is-manual-input.md)).
 
 ## Entities
 
@@ -52,6 +50,7 @@ classDiagram
     Launcher
     Resonator
     Conventional
+    Coupler
   }
   class AssignedRole {
     <<enum>>
@@ -135,6 +134,9 @@ expressions in `config.toml`. `AssignedRole` is a property of a
 **connection endpoint** and cannot exist before the assignment is solved,
 because until then no port is anyone's source or target.
 
+One member of `UnassignedRole` never comes from a pattern: `Coupler` is the role
+of the port that coupler insertion creates in the Final stage.
+
 The prototype conflated the two, which is why `is_resonator` was a `bool` on a
 routing request in one place and a `NodeKind` on a graph node in another.
 
@@ -166,8 +168,8 @@ expression per role, given per chip in `config.toml`:
 ```toml
 [ports.patterns]
 launcher     = '^Chip\.port\d+$'
-resonator    = '^Qb?\d+\.port0$'
-conventional = '^(Qb?\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
+resonator    = '^Qb\d+\.port0$'
+conventional = '^(Qb\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
 ```
 
 Every port must match **exactly one** pattern. A port matching none, or more
@@ -392,13 +394,8 @@ trust boundary. Both are validated on load, and both report actionable errors
 that name the offending field:
 
 - Every port matches exactly one role pattern.
-- `port_detection` is `"manual"` or `"auto"`. Under `"manual"` both `all_outer`
-  and `fixed_outer` are present; under `"auto"` neither is, and supplying one is
-  an error rather than a value that is quietly ignored.
-- Every label in `all_outer` and `fixed_outer` exists on the chip, and
-  `fixed_outer ⊆ all_outer`.
-- `start_component`, when set, names a component the chip actually carries. It
-  is accepted only under `"auto"`.
+- Both `all_outer` and `fixed_outer` are present. Every label in them is a
+  routable port of the chip and appears once, and `fixed_outer ⊆ all_outer`.
 - Every regular expression compiles.
 - Unknown configuration keys are an error, not a warning.
 - A chip file carrying a non-empty `nets` is rejected rather than silently

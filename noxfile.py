@@ -264,6 +264,10 @@ def schemas(session: nox.Session) -> None:
             "--gen-object-api",
             "--gen-compare",
             "--scoped-enums",
+            # The type tables these emit let the core render an artifact as JSON from the schema
+            # itself, so that no second field list has to be kept in step with it.
+            "--reflect-types",
+            "--reflect-names",
             "--cpp-std",
             "c++17",
             "--filename-suffix",

@@ -9,7 +9,7 @@
 # Declare one MQT SCPD module library. Adapted from MQT Core's AddMQTCoreLibrary.cmake.
 #
 # add_mqt_scpd_library(<module> [ALIAS_NAME <name>] [GENERATED_HEADERS <file>...] [LINK_LIBRARIES
-# <target>...])
+# <target>...] [PRIVATE_LINK_LIBRARIES <target>...])
 #
 # The function creates the target `mqt-scpd-<module>` with the alias `MQT::Scpd<Module>`. It
 # collects the public headers from `include/mqt-scpd/<module>/` and the sources from
@@ -19,7 +19,9 @@
 # GENERATED_HEADERS names schema-generated headers under `include/mqt-scpd/flatbuffers/` that the
 # module owns. They join the header set, and the module links the FlatBuffers runtime.
 #
-# LINK_LIBRARIES names the modules this module depends on.
+# LINK_LIBRARIES names the modules this module depends on. PRIVATE_LINK_LIBRARIES names the
+# dependencies only the module's sources use, such as a parser library; a module without sources
+# cannot have any.
 #
 # A module without sources becomes an INTERFACE library. The first source file in `src/<module>/`
 # turns it into a regular library with an export header; nothing else changes for its users. Both
@@ -40,7 +42,8 @@ function(kebab_to_camel output input)
 endfunction()
 
 function(add_mqt_scpd_library module)
-  cmake_parse_arguments(ARG "" "ALIAS_NAME" "GENERATED_HEADERS;LINK_LIBRARIES" ${ARGN})
+  cmake_parse_arguments(ARG "" "ALIAS_NAME"
+                        "GENERATED_HEADERS;LINK_LIBRARIES;PRIVATE_LINK_LIBRARIES" ${ARGN})
 
   set(name ${MQT_SCPD_TARGET_NAME}-${module})
   if(TARGET ${name})
@@ -105,7 +108,15 @@ function(add_mqt_scpd_library module)
   set_target_properties(${name} PROPERTIES EXPORT_NAME Scpd${ARG_ALIAS_NAME})
 
   if(scope STREQUAL "INTERFACE")
+    if(ARG_PRIVATE_LINK_LIBRARIES)
+      message(
+        FATAL_ERROR "${name}: PRIVATE_LINK_LIBRARIES needs a source file under src/${module}/")
+    endif()
     return()
+  endif()
+
+  if(ARG_PRIVATE_LINK_LIBRARIES)
+    target_link_libraries(${name} PRIVATE ${ARG_PRIVATE_LINK_LIBRARIES})
   endif()
 
   # Add link libraries for warnings and options

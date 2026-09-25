@@ -46,6 +46,22 @@ set(FLATBUFFERS_INSTALL
 FetchContent_Declare(flatbuffers URL ${FLATBUFFERS_URL})
 list(APPEND FETCH_PACKAGES flatbuffers)
 
+# nlohmann/json reads the chip input and, later, writes the metrics and the log. Only the
+# header-only library is used.
+set(NLOHMANN_JSON_VERSION
+    3.12.0
+    CACHE STRING "nlohmann/json version")
+set(NLOHMANN_JSON_URL
+    https://github.com/nlohmann/json/releases/download/v${NLOHMANN_JSON_VERSION}/json.tar.xz)
+set(JSON_BuildTests
+    OFF
+    CACHE INTERNAL "")
+set(JSON_Install
+    OFF
+    CACHE INTERNAL "")
+FetchContent_Declare(nlohmann_json URL ${NLOHMANN_JSON_URL})
+list(APPEND FETCH_PACKAGES nlohmann_json)
+
 if(BUILD_MQT_SCPD_TESTS)
   set(gtest_force_shared_crt
       ON
@@ -67,4 +83,11 @@ if(NOT TARGET mqt-scpd-flatbuffers)
   add_library(mqt-scpd-flatbuffers INTERFACE)
   target_include_directories(mqt-scpd-flatbuffers SYSTEM
                              INTERFACE $<BUILD_INTERFACE:${flatbuffers_SOURCE_DIR}/include>)
+endif()
+
+# The header-only nlohmann/json library, likewise as a system include.
+if(NOT TARGET mqt-scpd-json)
+  add_library(mqt-scpd-json INTERFACE)
+  target_include_directories(mqt-scpd-json SYSTEM
+                             INTERFACE $<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/include>)
 endif()
