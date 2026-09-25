@@ -249,6 +249,9 @@ def _planning_layers(
     if planning.inner_wires:
         data = "".join(polyline(wire) for wire in planning.inner_wires)
         parts.append(f'<g class="l-innerwire"><path d="{data}"/></g>')
+    if planning.couplers:
+        data = "".join(polyline(ring, close=True) for ring in planning.couplers)
+        parts.append(f'<g class="l-coupler"><path d="{data}"/></g>')
     if planning.launchers:
         circles = "".join(
             f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 1.4)}"/>'
@@ -302,6 +305,10 @@ def _planning_style(font: float, clearance: float = 0.0) -> str:
         "vector-effect:non-scaling-stroke}"
     )
     style += f"g.l-slot>circle{{fill:{PLANNING_COLORS['slot']};fill-opacity:0.55;stroke:none}}"
+    style += (
+        f"g.l-coupler>path{{fill:{ROLE_COLORS['coupler']};fill-opacity:0.45;"
+        f"stroke:{ROLE_COLORS['coupler']};stroke-width:1.2;vector-effect:non-scaling-stroke}}"
+    )
     if clearance > 0:
         style += (
             f"g.l-clearance>path{{fill:none;stroke:{PLANNING_COLORS['clearance']};"

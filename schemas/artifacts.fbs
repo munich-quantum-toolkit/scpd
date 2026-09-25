@@ -159,6 +159,31 @@ table Assignment {
   /// launcher was given n resonators they divide that segment evenly, in
   /// ring order.
   feeds: [geometry.Point] (required);
+  /// The feedline chains the model chose: which resonators one feedline
+  /// drives, from one launcher to the next. The Final stage routes each of
+  /// them from its first launcher through the couplers of its resonators to
+  /// its last.
+  chains: [FeedlineChain] (required);
+}
+
+/// One feedline chain of the assignment.
+///
+/// The model gives every resonator degree two on the ring: a chord to the
+/// resonator before it, a chord to the one after it, or an end. An end is a
+/// launcher, or one of the permitted terminations where the feedline simply
+/// stops. A chain is a run of resonators joined by chords, and it is what the
+/// Final stage drives with one feedline: launcher, coupler, coupler, …,
+/// launcher.
+table FeedlineChain {
+  /// The ring nodes the chain runs through, as indices into `ring` and
+  /// `connections`, in ring order. Every one of them is a resonator.
+  nodes: [uint32] (required);
+  /// The launcher the chain starts at: the launcher slot its first resonator
+  /// was given. Absent where the chain starts at a termination.
+  start: design.PortRef;
+  /// The launcher the chain ends at: the launcher slot its last resonator
+  /// was given. Absent where the chain ends at a termination.
+  end: design.PortRef;
 }
 
 /// The crossing slots of one partition border.
@@ -286,14 +311,32 @@ table FinalRouting {
   wires: [FinalWire] (required);
   /// One entry per connection of the Global stage, in its order.
   inner: [FinalWire] (required);
-  /// The edges of the feedline chains, in chain order.
+  /// The edges of the feedline chains, in chain order. An edge that was not
+  /// drawn carries no cells.
   feedlines: [FinalWire] (required);
+  /// What each entry of `feedlines` runs between, parallel to it.
+  feedline_edges: [FeedlineEdge] (required);
   /// What the stage had drawn at the end of each of its phases.
   phases: [FinalPhase] (required);
   couplers: [design.CpwCoupler] (required);
   bridges: [design.Bridge] (required);
   /// The connections that did not route.
   unresolved: [design.ConnectionRef] (required);
+}
+
+/// One edge of a feedline chain: what it runs between and how it is treated.
+table FeedlineEdge {
+  /// The chain of the Assignment it belongs to.
+  chain: uint32;
+  /// The ports the edge runs between: a launcher of the chip, or the port a
+  /// coupler created, which is the coupler's own `ResonatorSource` port.
+  from: design.PortRef (required, native_inline);
+  to: design.PortRef (required, native_inline);
+  /// Whether the edge starts or ends at a launcher. Such an edge is a hard
+  /// obstacle for every wire and the clearance rule checks it; an edge from
+  /// one coupler to the next is crossed by the wires between them, at a
+  /// right angle, and the clearance rule leaves it out.
+  terminal: bool;
 }
 
 /// One connection's wire in its exact analytic form.

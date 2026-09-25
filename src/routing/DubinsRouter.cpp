@@ -12,6 +12,7 @@
 
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/BucketQueue.hpp"
+#include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/PathGeometry.hpp"
@@ -47,8 +48,8 @@ inline void prefetchForWrite([[maybe_unused]] const void* address) {
 #endif
 }
 
-constexpr uint32_t octile(const uint32_t x0, const uint32_t y0, const uint32_t x1,
-                          const uint32_t y1) {
+constexpr uint32_t octile(const uint32_t x0, const uint32_t y0,
+                          const uint32_t x1, const uint32_t y1) {
   const uint32_t dx = x0 > x1 ? x0 - x1 : x1 - x0;
   const uint32_t dy = y0 > y1 ? y0 - y1 : y1 - y0;
   const uint32_t minD = std::min(dx, dy);
@@ -59,8 +60,8 @@ constexpr uint32_t octile(const uint32_t x0, const uint32_t y0, const uint32_t x
 /// The sign of the cross product of a direction with the vector from a
 /// center to a point: 1 when the point is left of the direction, -1 right, 0
 /// on the line.
-int sideSign(const int64_t dx, const int64_t dy, const int64_t px, const int64_t py,
-             const int64_t cx, const int64_t cy) {
+int sideSign(const int64_t dx, const int64_t dy, const int64_t px,
+             const int64_t py, const int64_t cx, const int64_t cy) {
   const int64_t cross = (dx * (py - cy)) - (dy * (px - cx));
   return (cross > 0) - (cross < 0);
 }
@@ -75,7 +76,8 @@ DubinsRouter::DubinsRouter(std::shared_ptr<const MovePrimitives> primitives,
     throw std::invalid_argument("a router needs primitives");
   }
   if (width_ == 0 || height_ == 0 || width_ >= 65536U || height_ >= 65536U) {
-    throw std::invalid_argument("a router grid needs 1 to 65535 cells per axis");
+    throw std::invalid_argument(
+        "a router grid needs 1 to 65535 cells per axis");
   }
   if (params_.minRadius != primitives_->minRadius()) {
     throw std::invalid_argument(
@@ -102,7 +104,8 @@ void DubinsRouter::setParams(const SearchParams& params) {
 
 void DubinsRouter::attachObstacles(const grid::BitGrid* obstacles) {
   if (obstacles != nullptr && obstacles->size() != cells()) {
-    throw std::invalid_argument("the obstacle grid does not match the router grid");
+    throw std::invalid_argument(
+        "the obstacle grid does not match the router grid");
   }
   obstacles_ = obstacles;
 }
@@ -133,14 +136,16 @@ void DubinsRouter::rebuildPacked() {
   packed_.resize(cells());
   const std::size_t n = cells();
   for (std::size_t i = 0; i < n; ++i) {
-    packed_[i] = static_cast<uint8_t>((corridor_->test(i) ? 0x80U : 0x00U) | static_[i]);
+    packed_[i] =
+        static_cast<uint8_t>((corridor_->test(i) ? 0x80U : 0x00U) | static_[i]);
   }
   packedValid_ = true;
 }
 
 void DubinsRouter::setStaticProximity(std::vector<uint8_t> penalty) {
   if (penalty.size() != cells()) {
-    throw std::invalid_argument("the proximity grid does not match the router grid");
+    throw std::invalid_argument(
+        "the proximity grid does not match the router grid");
   }
   for (const uint8_t value : penalty) {
     if (value > 127U) {
@@ -159,8 +164,9 @@ void DubinsRouter::computeStaticProximity(const uint32_t distance,
     rebuildPacked();
     return;
   }
-  computeStaticProximityWindow(distance, penalty,
-                               {.minX = 0, .maxX = width_ - 1, .minY = 0, .maxY = height_ - 1});
+  computeStaticProximityWindow(
+      distance, penalty,
+      {.minX = 0, .maxX = width_ - 1, .minY = 0, .maxY = height_ - 1});
   rebuildPacked();
 }
 
@@ -168,7 +174,8 @@ void DubinsRouter::computeStaticProximityWindow(const uint32_t distance,
                                                 const uint8_t penalty,
                                                 CellBox window) {
   packedValid_ = false;
-  if (obstacles_ == nullptr || window.minX > window.maxX || window.minY > window.maxY) {
+  if (obstacles_ == nullptr || window.minX > window.maxX ||
+      window.minY > window.maxY) {
     return;
   }
   window.maxX = std::min(window.maxX, width_ - 1);
@@ -176,8 +183,12 @@ void DubinsRouter::computeStaticProximityWindow(const uint32_t distance,
   window.minX = std::min(window.minX, window.maxX);
   window.minY = std::min(window.minY, window.maxY);
   for (uint32_t y = window.minY; y <= window.maxY; ++y) {
-    std::fill(static_.begin() + static_cast<std::ptrdiff_t>((static_cast<std::size_t>(y) * width_) + window.minX),
-              static_.begin() + static_cast<std::ptrdiff_t>((static_cast<std::size_t>(y) * width_) + window.maxX + 1),
+    std::fill(static_.begin() +
+                  static_cast<std::ptrdiff_t>(
+                      (static_cast<std::size_t>(y) * width_) + window.minX),
+              static_.begin() +
+                  static_cast<std::ptrdiff_t>(
+                      (static_cast<std::size_t>(y) * width_) + window.maxX + 1),
               0);
   }
   if (distance == 0 || penalty == 0) {
@@ -201,10 +212,13 @@ void DubinsRouter::computeStaticProximityWindow(const uint32_t distance,
   proximityFrontB_.clear();
 
   const auto local = [&](const uint32_t x, const uint32_t y) {
-    return (static_cast<std::size_t>(y - haloMinY) * haloWidth) + (x - haloMinX);
+    return (static_cast<std::size_t>(y - haloMinY) * haloWidth) +
+           (x - haloMinX);
   };
-  const auto mark = [&](const uint32_t x, const uint32_t y, const uint8_t value) {
-    if (x >= window.minX && x <= window.maxX && y >= window.minY && y <= window.maxY) {
+  const auto mark = [&](const uint32_t x, const uint32_t y,
+                        const uint8_t value) {
+    if (x >= window.minX && x <= window.maxX && y >= window.minY &&
+        y <= window.maxY) {
       static_[(static_cast<std::size_t>(y) * width_) + x] = value;
     }
   };
@@ -221,8 +235,11 @@ void DubinsRouter::computeStaticProximityWindow(const uint32_t distance,
   static constexpr int8_t DYS[4] = {0, 0, 1, -1};
   for (uint32_t d = 1; d <= distance && !proximityFrontA_.empty(); ++d) {
     proximityFrontB_.clear();
-    const uint32_t decayed = (static_cast<uint32_t>(penalty) * (distance - d + 1U)) / (distance + 1U);
-    const auto layerPenalty = static_cast<uint8_t>(std::max<uint32_t>(1U, decayed));
+    const uint32_t decayed =
+        (static_cast<uint32_t>(penalty) * (distance - d + 1U)) /
+        (distance + 1U);
+    const auto layerPenalty =
+        static_cast<uint8_t>(std::max<uint32_t>(1U, decayed));
     for (const uint32_t current : proximityFrontA_) {
       const uint32_t cx = current % width_;
       const uint32_t cy = current / width_;
@@ -248,7 +265,8 @@ void DubinsRouter::computeStaticProximityWindow(const uint32_t distance,
 
 void DubinsRouter::attachWireProximity(const std::vector<uint8_t>* penalty) {
   if (penalty != nullptr && penalty->size() != cells()) {
-    throw std::invalid_argument("the wire proximity grid does not match the router grid");
+    throw std::invalid_argument(
+        "the wire proximity grid does not match the router grid");
   }
   wire_ = penalty;
 }
@@ -259,73 +277,12 @@ uint8_t DubinsRouter::wirePenalty(const std::size_t index) const {
 
 // --- Crossing constraints ----------------------------------------------------
 
-void DubinsRouter::clearOrthogonalConstraints() {
-  std::fill(constraints_.begin(), constraints_.end(), 0);
-}
+void DubinsRouter::clearOrthogonalConstraints() { constraints_.clear(); }
 
 void DubinsRouter::buildOrthogonalConstraints(const std::vector<Path>& wires,
                                               const std::vector<bool>& skip,
                                               const int expandRadius) {
-  constraints_.assign(cells(), 0);
-  const auto w = static_cast<int64_t>(width_);
-  const auto h = static_cast<int64_t>(height_);
-  const auto blockAround = [&](const int64_t cx, const int64_t cy, const int radius) {
-    for (int64_t dy = -radius; dy <= radius; ++dy) {
-      for (int64_t dx = -radius; dx <= radius; ++dx) {
-        const int64_t nx = cx + dx;
-        const int64_t ny = cy + dy;
-        if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
-          continue;
-        }
-        constraints_[(static_cast<std::size_t>(ny) * width_) + static_cast<std::size_t>(nx)] = CURVE_ZONE;
-      }
-    }
-  };
-  for (std::size_t k = 0; k < wires.size(); ++k) {
-    if (k < skip.size() && skip[k]) {
-      continue;
-    }
-    const Path& wire = wires[k];
-    const SegmentedPath segmented = reconstructSegments(*primitives_, wire);
-    for (const PathSegment& segment : segmented.segments) {
-      if (!segment.straight) {
-        continue;
-      }
-      const auto bit = static_cast<uint8_t>(1U << (segment.heading & 7U));
-      for (const PathPoint& cell : segment.cells) {
-        for (int64_t dy = -expandRadius; dy <= expandRadius; ++dy) {
-          for (int64_t dx = -expandRadius; dx <= expandRadius; ++dx) {
-            const int64_t nx = static_cast<int64_t>(cell.x) + dx;
-            const int64_t ny = static_cast<int64_t>(cell.y) + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
-              continue;
-            }
-            uint8_t& mask = constraints_[(static_cast<std::size_t>(ny) * width_) + static_cast<std::size_t>(nx)];
-            if (mask != CURVE_ZONE) {
-              mask |= bit;
-            }
-          }
-        }
-      }
-    }
-    for (const PathSegment& segment : segmented.segments) {
-      if (segment.straight) {
-        continue;
-      }
-      for (const PathPoint& cell : segment.cells) {
-        blockAround(cell.x, cell.y, 1);
-      }
-    }
-    // The pin zones at both ends may not be crossed.
-    for (std::size_t i = 0; i < 10 && i < wire.size(); ++i) {
-      blockAround(wire[i].x, wire[i].y, 1);
-    }
-    if (wire.size() > 10) {
-      for (std::size_t i = wire.size() - 10; i < wire.size(); ++i) {
-        blockAround(wire[i].x, wire[i].y, 1);
-      }
-    }
-  }
+  constraints_.build(width_, height_, wires, skip, expandRadius);
 }
 
 void DubinsRouter::setSingleCrossingFeedline(const Path* feedline,
@@ -349,7 +306,8 @@ bool DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
 
   const int64_t straightRadius = singleCrossingStraightRadius_;
   const int64_t curveRadius = singleCrossingCurveRadius_;
-  const SegmentedPath segmented = reconstructSegments(*primitives_, *singleCrossing_);
+  const SegmentedPath segmented =
+      reconstructSegments(*primitives_, *singleCrossing_);
   const int64_t sx = source.x;
   const int64_t sy = source.y;
   const int64_t tx = target.x;
@@ -360,7 +318,8 @@ bool DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
   // The far side of a segment is the side its line puts the target on,
   // provided the source lies on the other side. A segment with both ends
   // on one side is one the wire has no business crossing; it gets no rule.
-  const auto farSideOf = [&](const int64_t cx, const int64_t cy, const int64_t dx, const int64_t dy) {
+  const auto farSideOf = [&](const int64_t cx, const int64_t cy,
+                             const int64_t dx, const int64_t dy) {
     const int ss = sideSign(dx, dy, sx, sy, cx, cy);
     const int st = sideSign(dx, dy, tx, ty, cx, cy);
     if (st == 0 || ss == st) {
@@ -368,15 +327,19 @@ bool DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
     }
     return st;
   };
-  const auto mark = [&](const int64_t cx, const int64_t cy, const int64_t dx, const int64_t dy,
-                        const int farSign, const uint8_t value, const int64_t radius) {
+  const auto mark = [&](const int64_t cx, const int64_t cy, const int64_t dx,
+                        const int64_t dy, const int farSign,
+                        const uint8_t value, const int64_t radius) {
     const bool isCurve = (value & SIDE_STRAIGHT) == 0U;
-    for (int64_t y = std::max<int64_t>(0, cy - radius); y <= std::min<int64_t>(h - 1, cy + radius); ++y) {
-      for (int64_t x = std::max<int64_t>(0, cx - radius); x <= std::min<int64_t>(w - 1, cx + radius); ++x) {
+    for (int64_t y = std::max<int64_t>(0, cy - radius);
+         y <= std::min<int64_t>(h - 1, cy + radius); ++y) {
+      for (int64_t x = std::max<int64_t>(0, cx - radius);
+           x <= std::min<int64_t>(w - 1, cx + radius); ++x) {
         if (sideSign(dx, dy, x, y, cx, cy) != farSign) {
           continue;
         }
-        uint8_t& m = crossingSide_[(static_cast<std::size_t>(y) * width_) + static_cast<std::size_t>(x)];
+        uint8_t& m = crossingSide_[(static_cast<std::size_t>(y) * width_) +
+                                   static_cast<std::size_t>(x)];
         if (m == 0U) {
           m = value;
           crossingSideCells_.push_back(static_cast<uint32_t>((y * w) + x));
@@ -406,7 +369,8 @@ bool DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
     // The exit run of a crossing leaves the feedline at a right angle,
     // toward the far side. Of the two perpendiculars of the segment, the
     // one two eighths back points to the positive side.
-    const Heading away = (farSign > 0) ? turned(segment.heading, -2) : turned(segment.heading, 2);
+    const Heading away = (farSign > 0) ? turned(segment.heading, -2)
+                                       : turned(segment.heading, 2);
     const auto value = static_cast<uint8_t>(SIDE_FAR | SIDE_STRAIGHT | away);
     for (const PathPoint& c : segment.cells) {
       mark(c.x, c.y, d.dx, d.dy, farSign, value, straightRadius);
@@ -445,7 +409,9 @@ bool DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
   }
   const std::vector<PathPoint> head(
       singleCrossing_->begin(),
-      singleCrossing_->begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(10, singleCrossing_->size())));
+      singleCrossing_->begin() +
+          static_cast<std::ptrdiff_t>(
+              std::min<std::size_t>(10, singleCrossing_->size())));
   blockRun(head);
   crossingSideActive_ = !crossingSideCells_.empty();
   return crossingSideActive_;
@@ -459,12 +425,34 @@ void DubinsRouter::endSingleCrossingOverlay() {
   crossingSideActive_ = false;
 }
 
+void DubinsRouter::setCrossingExemption(const std::vector<uint32_t>& cells) {
+  for (const uint32_t index : exemptCells_) {
+    exempt_[index] = 0;
+  }
+  exemptCells_.clear();
+  if (cells.empty()) {
+    return;
+  }
+  if (exempt_.size() != this->cells()) {
+    exempt_.assign(this->cells(), 0);
+  }
+  for (const uint32_t index : cells) {
+    if (index < exempt_.size() && exempt_[index] == 0U) {
+      exempt_[index] = 1;
+      exemptCells_.push_back(index);
+    }
+  }
+}
+
 bool DubinsRouter::canCrossOrthogonal(const uint32_t x, const uint32_t y,
                                       const Heading heading) const {
   if (x >= width_ || y >= height_) {
     return false;
   }
   const std::size_t index = (static_cast<std::size_t>(y) * width_) + x;
+  if (!exemptCells_.empty() && exempt_[index] != 0U) {
+    return true;
+  }
   if (crossingSideActive_) {
     const uint8_t side = crossingSide_[index];
     if (side != 0U) {
@@ -476,22 +464,7 @@ bool DubinsRouter::canCrossOrthogonal(const uint32_t x, const uint32_t y,
       }
     }
   }
-  if (constraints_.empty()) {
-    return true;
-  }
-  const uint8_t mask = constraints_[index];
-  if (mask == 0U) {
-    return true;
-  }
-  for (Heading wireHeading = 0; wireHeading < NUM_HEADINGS; ++wireHeading) {
-    if ((mask & static_cast<uint8_t>(1U << wireHeading)) == 0U) {
-      continue;
-    }
-    if (!isOrthogonal(wireHeading, heading)) {
-      return false;
-    }
-  }
-  return true;
+  return constraints_.allowed(x, y, heading);
 }
 
 bool DubinsRouter::crossingAllowedOrthogonal(const uint32_t x, const uint32_t y,
@@ -499,14 +472,13 @@ bool DubinsRouter::crossingAllowedOrthogonal(const uint32_t x, const uint32_t y,
   return canCrossOrthogonal(x, y, heading);
 }
 
-uint8_t DubinsRouter::constraintMaskAt(const uint32_t x, const uint32_t y) const {
-  if (x >= width_ || y >= height_ || constraints_.empty()) {
-    return 0;
-  }
-  return constraints_[(static_cast<std::size_t>(y) * width_) + x];
+uint8_t DubinsRouter::constraintMaskAt(const uint32_t x,
+                                       const uint32_t y) const {
+  return constraints_.maskAt(x, y);
 }
 
-// --- Search tables -------------------------------------------------------------
+// --- Search tables
+// -------------------------------------------------------------
 
 void DubinsRouter::buildTables() {
   if (tablesValid_) {
@@ -537,7 +509,8 @@ void DubinsRouter::buildTables() {
 
     const auto prims = primitives_->of(static_cast<Heading>(heading));
     if (prims.size() > MAX_PRIMITIVES_PER_HEADING) {
-      throw std::invalid_argument("a heading has more primitives than the search tables hold");
+      throw std::invalid_argument(
+          "a heading has more primitives than the search tables hold");
     }
     for (std::size_t li = 0; li < prims.size(); ++li) {
       const Primitive& p = prims[li];
@@ -548,8 +521,11 @@ void DubinsRouter::buildTables() {
       tp.id = p.id;
       tp.sweptCount = static_cast<uint16_t>(p.swept.size());
       // The move cost as the prototype tabulated it: rounded to float first.
-      const auto moveCost = static_cast<uint32_t>(static_cast<double>(static_cast<float>(p.cost)) * 100.0);
-      tp.costBend = moveCost + (headingDistance(static_cast<Heading>(heading), tp.exit) * bend);
+      const auto moveCost = static_cast<uint32_t>(
+          static_cast<double>(static_cast<float>(p.cost)) * 100.0);
+      tp.costBend =
+          moveCost +
+          (headingDistance(static_cast<Heading>(heading), tp.exit) * bend);
 
       left = std::max<int32_t>(left, -p.dx);
       right = std::max<int32_t>(right, p.dx);
@@ -564,7 +540,8 @@ void DubinsRouter::buildTables() {
 
       // The normalized cell sequence: the origin first, the end last.
       std::vector<CellOffset> cellsOfMove;
-      const bool sweepsOrigin = !p.swept.empty() && p.swept.front().dx == 0 && p.swept.front().dy == 0;
+      const bool sweepsOrigin = !p.swept.empty() && p.swept.front().dx == 0 &&
+                                p.swept.front().dy == 0;
       if (!sweepsOrigin) {
         cellsOfMove.push_back({0, 0});
       }
@@ -579,19 +556,22 @@ void DubinsRouter::buildTables() {
       tp.sweepsOrigin = sweepsOrigin ? 1 : 0;
       tp.endExtra = appended ? 0 : 1;
       if (cellsOfMove.size() > MAX_TRIE_DEPTH) {
-        throw std::invalid_argument("a primitive sweeps more cells than the search tables hold");
+        throw std::invalid_argument(
+            "a primitive sweeps more cells than the search tables hold");
       }
 
       uint32_t parent = 0xFFFFFFFFU;
       for (std::size_t k = 1; k < cellsOfMove.size(); ++k) {
         const CellOffset& c = cellsOfMove[k];
         if (c.dx < -127 || c.dx > 127 || c.dy < -127 || c.dy > 127) {
-          throw std::invalid_argument("a primitive reaches further than the search tables hold");
+          throw std::invalid_argument(
+              "a primitive reaches further than the search tables hold");
         }
         const auto dx = static_cast<int8_t>(c.dx);
         const auto dy = static_cast<int8_t>(c.dy);
         uint32_t child = 0xFFFFFFFFU;
-        const auto& siblings = (parent == 0xFFFFFFFFU) ? roots : nodes[parent].children;
+        const auto& siblings =
+            (parent == 0xFFFFFFFFU) ? roots : nodes[parent].children;
         for (const uint32_t candidate : siblings) {
           if (nodes[candidate].dx == dx && nodes[candidate].dy == dy) {
             child = candidate;
@@ -604,12 +584,14 @@ void DubinsRouter::buildTables() {
           node.dx = dx;
           node.dy = dy;
           nodes.push_back(node);
-          ((parent == 0xFFFFFFFFU) ? roots : nodes[parent].children).push_back(child);
+          ((parent == 0xFFFFFFFFU) ? roots : nodes[parent].children)
+              .push_back(child);
         }
         nodes[child].primitives |= static_cast<uint16_t>(1U << li);
         if (k + 1 == cellsOfMove.size()) {
           if (nodes[child].completes != NO_PRIMITIVE) {
-            throw std::invalid_argument("two primitives of a heading end on the same cell");
+            throw std::invalid_argument(
+                "two primitives of a heading end on the same cell");
           }
           nodes[child].completes = static_cast<uint8_t>(li);
         }
@@ -624,7 +606,8 @@ void DubinsRouter::buildTables() {
     marginDown_[heading] = static_cast<uint32_t>(down);
 
     // Emit the trie in preorder with the subtree size as skip.
-    const auto emit = [&](const auto& self, const uint32_t n, const uint32_t depth) -> uint32_t {
+    const auto emit = [&](const auto& self, const uint32_t n,
+                          const uint32_t depth) -> uint32_t {
       const auto mine = static_cast<uint32_t>(tflat.size());
       TrieNode node;
       node.dx = nodes[n].dx;
@@ -649,7 +632,8 @@ void DubinsRouter::buildTables() {
   tablesValid_ = true;
 }
 
-// --- Distance field --------------------------------------------------------------
+// --- Distance field
+// --------------------------------------------------------------
 
 void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
   fieldValid_ = false;
@@ -704,13 +688,15 @@ void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
           if (corridor.test(nIndex)) {
             continue;
           }
-          const uint32_t weight = (nx != x && ny != y) ? DIAGONAL_COST : STRAIGHT_COST;
+          const uint32_t weight =
+              (nx != x && ny != y) ? DIAGONAL_COST : STRAIGHT_COST;
           uint32_t nd = d + weight;
           if (nd > FIELD_DISTANCE_MASK) {
             nd = FIELD_DISTANCE_MASK;
           }
           const uint32_t nv = field[nIndex];
-          if ((nv >> FIELD_DISTANCE_BITS) == fieldStamp_ && (nv & FIELD_DISTANCE_MASK) <= nd) {
+          if ((nv >> FIELD_DISTANCE_BITS) == fieldStamp_ &&
+              (nv & FIELD_DISTANCE_MASK) <= nd) {
             continue;
           }
           field[nIndex] = stampHigh | nd;
@@ -724,12 +710,16 @@ void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
   fieldValid_ = true;
 }
 
-// --- States and paths ----------------------------------------------------------
+// --- States and paths
+// ----------------------------------------------------------
 
 PathPoint DubinsRouter::unpackState(const uint32_t index) const {
   const auto heading = static_cast<Heading>(index & 7U);
   const uint32_t cell = index >> 3U;
-  return {.x = cell % width_, .y = cell / width_, .heading = heading, .primitive = 0};
+  return {.x = cell % width_,
+          .y = cell / width_,
+          .heading = heading,
+          .primitive = 0};
 }
 
 uint32_t DubinsRouter::parentState(const uint32_t index) const {
@@ -744,7 +734,8 @@ uint32_t DubinsRouter::parentState(const uint32_t index) const {
   return stateIndex(px, py, parentHeading);
 }
 
-Path DubinsRouter::reconstruct(const uint32_t goalIndex, const uint32_t startIndex) const {
+Path DubinsRouter::reconstruct(const uint32_t goalIndex,
+                               const uint32_t startIndex) const {
   Path path;
   uint32_t current = goalIndex;
   path.push_back(unpackState(current));
@@ -757,8 +748,10 @@ Path DubinsRouter::reconstruct(const uint32_t goalIndex, const uint32_t startInd
       std::vector<PathPoint> segment;
       segment.reserve(primitive->swept.size());
       for (const CellOffset& off : primitive->swept) {
-        segment.push_back({.x = static_cast<uint32_t>(static_cast<int64_t>(parent.x) + off.dx),
-                           .y = static_cast<uint32_t>(static_cast<int64_t>(parent.y) + off.dy),
+        segment.push_back({.x = static_cast<uint32_t>(
+                               static_cast<int64_t>(parent.x) + off.dx),
+                           .y = static_cast<uint32_t>(
+                               static_cast<int64_t>(parent.y) + off.dy),
                            .heading = parent.heading,
                            .primitive = edge});
       }
@@ -783,27 +776,34 @@ Path DubinsRouter::reconstruct(const uint32_t goalIndex, const uint32_t startInd
   return path;
 }
 
-PathPoint DubinsRouter::sanitize(const PathPoint point, const bool isTarget) const {
-  const int64_t length = isTarget ? static_cast<int64_t>(params_.endStraightLength)
-                                  : -static_cast<int64_t>(params_.startStraightLength);
+PathPoint DubinsRouter::sanitize(const PathPoint point,
+                                 const bool isTarget) const {
+  const int64_t length =
+      isTarget ? static_cast<int64_t>(params_.endStraightLength)
+               : -static_cast<int64_t>(params_.startStraightLength);
   const HeadingVector v = headingVector(point.heading);
   // The source moves along its heading, the target back along its heading.
-  return {.x = static_cast<uint32_t>(static_cast<int64_t>(point.x) - (v.dx * length)),
-          .y = static_cast<uint32_t>(static_cast<int64_t>(point.y) - (v.dy * length)),
+  return {.x = static_cast<uint32_t>(static_cast<int64_t>(point.x) -
+                                     (v.dx * length)),
+          .y = static_cast<uint32_t>(static_cast<int64_t>(point.y) -
+                                     (v.dy * length)),
           .heading = static_cast<Heading>(point.heading & 7U),
           .primitive = 0};
 }
 
 Path DubinsRouter::straightStub(const PathPoint point, const bool isTarget,
                                 const uint32_t length) const {
-  const int64_t signedLength = isTarget ? static_cast<int64_t>(length) : -static_cast<int64_t>(length);
+  const int64_t signedLength =
+      isTarget ? static_cast<int64_t>(length) : -static_cast<int64_t>(length);
   const HeadingVector v = headingVector(point.heading);
   const uint16_t straight = primitives_->straight(point.heading);
   Path stub;
   for (int64_t i = 0; i <= std::abs(signedLength); ++i) {
     const int64_t step = (signedLength < 0) ? i : -i;
-    stub.push_back({.x = static_cast<uint32_t>(static_cast<int64_t>(point.x) + (v.dx * step)),
-                    .y = static_cast<uint32_t>(static_cast<int64_t>(point.y) + (v.dy * step)),
+    stub.push_back({.x = static_cast<uint32_t>(static_cast<int64_t>(point.x) +
+                                               (v.dx * step)),
+                    .y = static_cast<uint32_t>(static_cast<int64_t>(point.y) +
+                                               (v.dy * step)),
                     .heading = static_cast<Heading>(point.heading & 7U),
                     .primitive = straight});
   }
@@ -825,7 +825,8 @@ Path DubinsRouter::assemble(Path searched, const PathPoint& source,
   // otherwise appear twice and every consumer would have to step over a
   // move of no length.
   auto first = searched.begin();
-  if (!path.empty() && first != searched.end() && first->samePlace(path.back())) {
+  if (!path.empty() && first != searched.end() &&
+      first->samePlace(path.back())) {
     ++first;
   }
   path.insert(path.end(), first, searched.end());
@@ -847,15 +848,17 @@ template <typename Search> Path DubinsRouter::guarded(Search&& search) {
   return {};
 }
 
-// --- The free search -------------------------------------------------------------
+// --- The free search
+// -------------------------------------------------------------
 
-Path DubinsRouter::route(const RoutingObjective& objective, const bool usePenalty,
-                         const bool onlyStraight) {
+Path DubinsRouter::route(const RoutingObjective& objective,
+                         const bool usePenalty, const bool onlyStraight) {
   if (corridor_ == nullptr) {
     throw std::logic_error("route needs an attached corridor");
   }
   if (usePenalty && wire_ == nullptr) {
-    throw std::logic_error("routing with penalties needs an attached wire proximity");
+    throw std::logic_error(
+        "routing with penalties needs an attached wire proximity");
   }
   RoutingObjective moved;
   moved.source = sanitize(objective.source, false);
@@ -866,17 +869,24 @@ Path DubinsRouter::route(const RoutingObjective& objective, const bool usePenalt
   scratch_.beginSearch();
   return guarded([&] {
     if (packedValid_) {
-      return usePenalty ? searchFree<true, true>(moved, objective.source, objective.target, onlyStraight)
-                        : searchFree<true, false>(moved, objective.source, objective.target, onlyStraight);
+      return usePenalty
+                 ? searchFree<true, true>(moved, objective.source,
+                                          objective.target, onlyStraight)
+                 : searchFree<true, false>(moved, objective.source,
+                                           objective.target, onlyStraight);
     }
-    return usePenalty ? searchFree<false, true>(moved, objective.source, objective.target, onlyStraight)
-                      : searchFree<false, false>(moved, objective.source, objective.target, onlyStraight);
+    return usePenalty
+               ? searchFree<false, true>(moved, objective.source,
+                                         objective.target, onlyStraight)
+               : searchFree<false, false>(moved, objective.source,
+                                          objective.target, onlyStraight);
   });
 }
 
 template <bool PACKED, bool USE_PENALTY>
-Path DubinsRouter::searchFree(const RoutingObjective& objective, const PathPoint& source,
-                              const PathPoint& target, const bool onlyStraight) {
+Path DubinsRouter::searchFree(const RoutingObjective& objective,
+                              const PathPoint& source, const PathPoint& target,
+                              const bool onlyStraight) {
   buildTables();
   open_.clear();
   const uint8_t* blockMap = PACKED ? packed_.data() : nullptr;
@@ -893,7 +903,8 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective, const PathPoint
   }
   const bool fieldReady = useField && fieldValid_;
 
-  const uint32_t startIndex = stateIndex(objective.source.x, objective.source.y, objective.source.heading);
+  const uint32_t startIndex = stateIndex(objective.source.x, objective.source.y,
+                                         objective.source.heading);
   scratch_.setStart(startIndex);
   open_.push({.x = static_cast<uint16_t>(objective.source.x),
               .y = static_cast<uint16_t>(objective.source.y),
@@ -911,7 +922,8 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective, const PathPoint
         prefetchForWrite(scratch_.data() + nextIndex);
       }
     }
-    const uint32_t currentIndex = stateIndex(current.x, current.y, current.heading);
+    const uint32_t currentIndex =
+        stateIndex(current.x, current.y, current.heading);
     SearchNode& node = scratch_.at(currentIndex);
     if (node.iteration == scratch_.iteration() && node.closed != 0U) {
       continue;
@@ -925,16 +937,19 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective, const PathPoint
         current.heading == objective.target.heading) {
       return assemble(reconstruct(currentIndex, startIndex), source, target);
     }
-    expandFree<PACKED, USE_PENALTY>(current, objective, onlyStraight, blockMap, penaltyMap,
-                                    blockMask, penaltyMask, wireMap, fieldReady);
+    expandFree<PACKED, USE_PENALTY>(current, objective, onlyStraight, blockMap,
+                                    penaltyMap, blockMask, penaltyMask, wireMap,
+                                    fieldReady);
   }
   return {};
 }
 
 template <bool PACKED, bool USE_PENALTY>
-void DubinsRouter::expandFree(const QueueEntry& current, const RoutingObjective& objective,
+void DubinsRouter::expandFree(const QueueEntry& current,
+                              const RoutingObjective& objective,
                               const bool onlyStraight, const uint8_t* blockMap,
-                              const uint8_t* penaltyMap, const uint8_t blockMask,
+                              const uint8_t* penaltyMap,
+                              const uint8_t blockMask,
                               const uint8_t penaltyMask, const uint8_t* wireMap,
                               const bool useField) {
   const uint32_t heading = current.heading & 7U;
@@ -942,7 +957,8 @@ void DubinsRouter::expandFree(const QueueEntry& current, const RoutingObjective&
   const auto& tflat = trie_[heading];
   const uint32_t cx = current.x;
   const uint32_t cy = current.y;
-  const std::size_t currentLinear = (static_cast<std::size_t>(cy) * width_) + cx;
+  const std::size_t currentLinear =
+      (static_cast<std::size_t>(cy) * width_) + cx;
   const uint32_t* field = field_.data();
   const grid::BitGrid* corridor = corridor_;
 
@@ -954,8 +970,9 @@ void DubinsRouter::expandFree(const QueueEntry& current, const RoutingObjective&
     }
   };
 
-  const bool fastBounds = (cx >= marginLeft_[heading]) && (cx + marginRight_[heading] < width_) &&
-                          (cy >= marginUp_[heading]) && (cy + marginDown_[heading] < height_);
+  const bool fastBounds =
+      (cx >= marginLeft_[heading]) && (cx + marginRight_[heading] < width_) &&
+      (cy >= marginUp_[heading]) && (cy + marginDown_[heading] < height_);
 
   // The candidates: every primitive whose end is in the grid, allowed, not
   // blocked, not dominated and, with a field, able to reach the target.
@@ -1020,7 +1037,8 @@ void DubinsRouter::expandFree(const QueueEntry& current, const RoutingObjective&
     }
     std::size_t cell = 0;
     if (fastBounds) {
-      cell = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(currentLinear) + tn.linear);
+      cell = static_cast<std::size_t>(
+          static_cast<std::ptrdiff_t>(currentLinear) + tn.linear);
     } else {
       const auto nx = static_cast<uint32_t>(static_cast<int32_t>(cx) + tn.dx);
       const auto ny = static_cast<uint32_t>(static_cast<int32_t>(cy) + tn.dy);
@@ -1035,7 +1053,8 @@ void DubinsRouter::expandFree(const QueueEntry& current, const RoutingObjective&
       continue;
     }
     if constexpr (USE_PENALTY) {
-      penaltyAcc[tn.depth + 1U] = penaltyAcc[tn.depth] + (penaltyMap[cell] & penaltyMask);
+      penaltyAcc[tn.depth + 1U] =
+          penaltyAcc[tn.depth] + (penaltyMap[cell] & penaltyMask);
     }
     if (tn.completes != NO_PRIMITIVE && (alive & (1U << tn.completes)) != 0) {
       const TriePrimitive& p = tprims[tn.completes];
@@ -1046,11 +1065,15 @@ void DubinsRouter::expandFree(const QueueEntry& current, const RoutingObjective&
         if (p.sweepsOrigin != 0U) {
           sum += penaltyCurrent;
         }
-        const std::size_t linear = (static_cast<std::size_t>(endY[tn.completes]) * width_) + endX[tn.completes];
+        const std::size_t linear =
+            (static_cast<std::size_t>(endY[tn.completes]) * width_) +
+            endX[tn.completes];
         if (p.endExtra != 0U) {
           sum += penaltyMap[linear] & penaltyMask;
         }
-        penaltyTerm = PENALTY_SCALE * (sum + (static_cast<uint32_t>(wireMap[linear]) * (1U + p.sweptCount)));
+        penaltyTerm =
+            PENALTY_SCALE * (sum + (static_cast<uint32_t>(wireMap[linear]) *
+                                    (1U + p.sweptCount)));
       }
       const uint32_t tentative = current.g + p.costBend + penaltyTerm;
       SearchNode& n = scratch_.at(index);
@@ -1067,7 +1090,8 @@ void DubinsRouter::expandFree(const QueueEntry& current, const RoutingObjective&
         if (useField) {
           h = endField[tn.completes];
         } else {
-          h = octile(endX[tn.completes], endY[tn.completes], objective.target.x, objective.target.y);
+          h = octile(endX[tn.completes], endY[tn.completes], objective.target.x,
+                     objective.target.y);
         }
         const uint32_t f = tentative + h;
         open_.push({.x = endX[tn.completes],
@@ -1083,15 +1107,18 @@ void DubinsRouter::expandFree(const QueueEntry& current, const RoutingObjective&
   }
 }
 
-// --- The orthogonal search ------------------------------------------------------
+// --- The orthogonal search
+// ------------------------------------------------------
 
-Path DubinsRouter::routeOrthogonal(const RoutingObjective& objective, const bool usePenalty,
+Path DubinsRouter::routeOrthogonal(const RoutingObjective& objective,
+                                   const bool usePenalty,
                                    const bool onlyStraight) {
   if (corridor_ == nullptr) {
     throw std::logic_error("routeOrthogonal needs an attached corridor");
   }
   if (usePenalty && wire_ == nullptr) {
-    throw std::logic_error("routing with penalties needs an attached wire proximity");
+    throw std::logic_error(
+        "routing with penalties needs an attached wire proximity");
   }
   RoutingObjective moved;
   moved.source = sanitize(objective.source, false);
@@ -1100,10 +1127,13 @@ Path DubinsRouter::routeOrthogonal(const RoutingObjective& objective, const bool
     return {};
   }
   scratch_.beginSearch();
-  const bool overlay = beginSingleCrossingOverlay(objective.source, objective.target);
+  const bool overlay =
+      beginSingleCrossingOverlay(objective.source, objective.target);
   Path path = guarded([&] {
-    return usePenalty ? searchOrthogonal<true>(moved, objective.source, objective.target, onlyStraight)
-                      : searchOrthogonal<false>(moved, objective.source, objective.target, onlyStraight);
+    return usePenalty ? searchOrthogonal<true>(moved, objective.source,
+                                               objective.target, onlyStraight)
+                      : searchOrthogonal<false>(moved, objective.source,
+                                                objective.target, onlyStraight);
   });
   if (overlay) {
     endSingleCrossingOverlay();
@@ -1112,11 +1142,14 @@ Path DubinsRouter::routeOrthogonal(const RoutingObjective& objective, const bool
 }
 
 template <bool USE_PENALTY>
-Path DubinsRouter::searchOrthogonal(const RoutingObjective& objective, const PathPoint& source,
-                                    const PathPoint& target, const bool onlyStraight) {
+Path DubinsRouter::searchOrthogonal(const RoutingObjective& objective,
+                                    const PathPoint& source,
+                                    const PathPoint& target,
+                                    const bool onlyStraight) {
   buildTables();
   open_.clear();
-  const uint32_t startIndex = stateIndex(objective.source.x, objective.source.y, objective.source.heading);
+  const uint32_t startIndex = stateIndex(objective.source.x, objective.source.y,
+                                         objective.source.heading);
   scratch_.setStart(startIndex);
   open_.push({.x = static_cast<uint16_t>(objective.source.x),
               .y = static_cast<uint16_t>(objective.source.y),
@@ -1127,7 +1160,8 @@ Path DubinsRouter::searchOrthogonal(const RoutingObjective& objective, const Pat
              0);
   while (!open_.empty()) {
     const QueueEntry current = open_.pop();
-    const uint32_t currentIndex = stateIndex(current.x, current.y, current.heading);
+    const uint32_t currentIndex =
+        stateIndex(current.x, current.y, current.heading);
     SearchNode& node = scratch_.at(currentIndex);
     if (node.iteration == scratch_.iteration() && node.closed != 0U) {
       continue;
@@ -1146,14 +1180,16 @@ Path DubinsRouter::searchOrthogonal(const RoutingObjective& objective, const Pat
 }
 
 template <bool USE_PENALTY>
-void DubinsRouter::expandOrthogonal(const QueueEntry& current, const RoutingObjective& objective,
+void DubinsRouter::expandOrthogonal(const QueueEntry& current,
+                                    const RoutingObjective& objective,
                                     const bool onlyStraight) {
   const uint32_t heading = current.heading & 7U;
   const auto& tprims = triePrimitives_[heading];
   const auto& tflat = trie_[heading];
   const uint32_t cx = current.x;
   const uint32_t cy = current.y;
-  const std::size_t currentLinear = (static_cast<std::size_t>(cy) * width_) + cx;
+  const std::size_t currentLinear =
+      (static_cast<std::size_t>(cy) * width_) + cx;
   const grid::BitGrid& corridor = *corridor_;
 
   const auto cellOk = [&](const uint32_t x, const uint32_t y) {
@@ -1162,8 +1198,9 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current, const RoutingObje
     }
     return canCrossOrthogonal(x, y, static_cast<Heading>(heading));
   };
-  const bool fastBounds = (cx >= marginLeft_[heading]) && (cx + marginRight_[heading] < width_) &&
-                          (cy >= marginUp_[heading]) && (cy + marginDown_[heading] < height_);
+  const bool fastBounds =
+      (cx >= marginLeft_[heading]) && (cx + marginRight_[heading] < width_) &&
+      (cy >= marginUp_[heading]) && (cy + marginDown_[heading] < height_);
 
   uint16_t alive = 0;
   std::array<uint32_t, MAX_PRIMITIVES_PER_HEADING> endIndex{};
@@ -1228,7 +1265,9 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current, const RoutingObje
     }
     if (tn.completes != NO_PRIMITIVE && (alive & (1U << tn.completes)) != 0) {
       const TriePrimitive& p = tprims[tn.completes];
-      const std::size_t linear = (static_cast<std::size_t>(endY[tn.completes]) * width_) + endX[tn.completes];
+      const std::size_t linear =
+          (static_cast<std::size_t>(endY[tn.completes]) * width_) +
+          endX[tn.completes];
       uint32_t penaltyTerm = 0;
       if constexpr (USE_PENALTY) {
         uint32_t sum = penaltyAcc[tn.depth + 1U];
@@ -1238,8 +1277,10 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current, const RoutingObje
         if (p.endExtra != 0U) {
           sum += static_[linear];
         }
-        penaltyTerm = (PENALTY_SCALE * sum) +
-                      (PENALTY_SCALE * static_cast<uint32_t>(wirePenalty(linear)) * (1U + p.sweptCount));
+        penaltyTerm =
+            (PENALTY_SCALE * sum) +
+            (PENALTY_SCALE * static_cast<uint32_t>(wirePenalty(linear)) *
+             (1U + p.sweptCount));
       }
       const uint32_t tentative = current.g + p.costBend + penaltyTerm;
       SearchNode& n = scratch_.at(endIndex[tn.completes]);
@@ -1252,10 +1293,13 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current, const RoutingObje
         n.g = tentative;
         n.parentHeading = heading & 7U;
         n.primitive = p.id & 0x3FFU;
-        uint32_t h = octile(endX[tn.completes], endY[tn.completes], objective.target.x, objective.target.y);
+        uint32_t h = octile(endX[tn.completes], endY[tn.completes],
+                            objective.target.x, objective.target.y);
         // The unavoidable turning toward the target heading is a lower bound
         // on the bend penalties still to pay.
-        h += headingDistance(static_cast<Heading>(p.exit), objective.target.heading) * params_.bendPenalty;
+        h += headingDistance(static_cast<Heading>(p.exit),
+                             objective.target.heading) *
+             params_.bendPenalty;
         const uint32_t f = tentative + h;
         open_.push({.x = endX[tn.completes],
                     .y = endY[tn.completes],
@@ -1270,17 +1314,21 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current, const RoutingObje
   }
 }
 
-// --- Free strip -----------------------------------------------------------------
+// --- Free strip
+// -----------------------------------------------------------------
 
-CellBox DubinsRouter::freeStripAlong(const PathPoint from, const PathPoint to) const {
+CellBox DubinsRouter::freeStripAlong(const PathPoint from,
+                                     const PathPoint to) const {
   if (obstacles_ == nullptr) {
     return {.minX = 0, .maxX = width_ - 1, .minY = 0, .maxY = height_ - 1};
   }
   const grid::BitGrid& obstacles = *obstacles_;
   const auto w = static_cast<int64_t>(width_);
   const auto h = static_cast<int64_t>(height_);
-  const auto edgeFree = [&](const int64_t x0, const int64_t y0, const int64_t x1, const int64_t y1) {
-    if (std::min(x0, x1) < 0 || std::max(x0, x1) >= w || std::min(y0, y1) < 0 || std::max(y0, y1) >= h) {
+  const auto edgeFree = [&](const int64_t x0, const int64_t y0,
+                            const int64_t x1, const int64_t y1) {
+    if (std::min(x0, x1) < 0 || std::max(x0, x1) >= w || std::min(y0, y1) < 0 ||
+        std::max(y0, y1) >= h) {
       return false;
     }
     int64_t dx = std::abs(x1 - x0);
@@ -1291,7 +1339,8 @@ CellBox DubinsRouter::freeStripAlong(const PathPoint from, const PathPoint to) c
     int64_t x = x0;
     int64_t y = y0;
     while (true) {
-      if (obstacles.testCell(static_cast<uint32_t>(x), static_cast<uint32_t>(y))) {
+      if (obstacles.testCell(static_cast<uint32_t>(x),
+                             static_cast<uint32_t>(y))) {
         return false;
       }
       if (x == x1 && y == y1) {
@@ -1327,8 +1376,11 @@ CellBox DubinsRouter::freeStripAlong(const PathPoint from, const PathPoint to) c
   const int64_t fromY = static_cast<int64_t>(from.y) << shift;
   const int64_t toX = static_cast<int64_t>(to.x) << shift;
   const int64_t toY = static_cast<int64_t>(to.y) << shift;
-  const auto roundFixed = [](const int64_t v) { return (v + (one >> 1)) >> shift; };
-  const auto edgeAt = [&](const int64_t offset, int64_t& x0, int64_t& y0, int64_t& x1, int64_t& y1) {
+  const auto roundFixed = [](const int64_t v) {
+    return (v + (one >> 1)) >> shift;
+  };
+  const auto edgeAt = [&](const int64_t offset, int64_t& x0, int64_t& y0,
+                          int64_t& x1, int64_t& y1) {
     x0 = roundFixed(fromX + (nx * offset));
     y0 = roundFixed(fromY + (ny * offset));
     x1 = roundFixed(toX + (nx * offset));
@@ -1370,8 +1422,12 @@ CellBox DubinsRouter::freeStripAlong(const PathPoint from, const PathPoint to) c
   int64_t c4y = 0;
   edgeAt(positive, c1x, c1y, c2x, c2y);
   edgeAt(-negative, c4x, c4y, c3x, c3y);
-  const auto clampX = [&](const int64_t v) { return static_cast<uint32_t>(std::clamp<int64_t>(v, 0, w - 1)); };
-  const auto clampY = [&](const int64_t v) { return static_cast<uint32_t>(std::clamp<int64_t>(v, 0, h - 1)); };
+  const auto clampX = [&](const int64_t v) {
+    return static_cast<uint32_t>(std::clamp<int64_t>(v, 0, w - 1));
+  };
+  const auto clampY = [&](const int64_t v) {
+    return static_cast<uint32_t>(std::clamp<int64_t>(v, 0, h - 1));
+  };
   return {.minX = clampX(std::min({c1x, c2x, c3x, c4x})),
           .maxX = clampX(std::max({c1x, c2x, c3x, c4x})),
           .minY = clampY(std::min({c1y, c2y, c3y, c4y})),

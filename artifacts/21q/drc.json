@@ -2,8 +2,25 @@
   "reports": [
     {
       "stage": "final",
-      "feedlines_skipped": 0,
+      "feedlines_skipped": 26,
       "findings": [
+        {"rule": "wire-clearance", "severity": "active", "wires": [5, 7], "location": {"x": 9888.05752396832, "y": 16034.910379324718}, "measured": 134.0315192684709, "limit": 185, "clearance_kind": "near-miss", "message": "wires 5 and 7 come within 134.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [6, 8], "location": {"x": 10017.569820758648, "y": 15447.123801583994}, "measured": 179.32471863276365, "limit": 185, "clearance_kind": "near-miss", "message": "wires 6 and 8 come within 179.3 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [7, 8], "location": {"x": 10196.894539391413, "y": 15148.249270529386}, "measured": 0, "limit": 185, "clearance_kind": "short", "message": "wires 7 and 8 come within 0.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [7, 9], "location": {"x": 10426.031679866612, "y": 15536.786160900376}, "measured": 29.887453105460608, "limit": 185, "clearance_kind": "near-miss", "message": "wires 7 and 9 come within 29.9 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [12, 13], "location": {"x": 12737.328053355564, "y": 14968.924551896624}, "measured": 59.774906210921216, "limit": 185, "clearance_kind": "near-miss", "message": "wires 12 and 13 come within 59.8 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [21, 22], "location": {"x": 17658.79533138808, "y": 14092.225927469779}, "measured": 9.96248436848687, "limit": 185, "clearance_kind": "short", "message": "wires 21 and 22 come within 10.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [26, 27], "location": {"x": 14699.937473947477, "y": 10695.018757815757}, "measured": 0, "limit": 185, "clearance_kind": "short", "message": "wires 26 and 27 come within 0.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [26, 28], "location": {"x": 15018.736973739058, "y": 10695.018757815757}, "measured": 109.58732805335556, "limit": 185, "clearance_kind": "near-miss", "message": "wires 26 and 28 come within 109.6 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [27, 30], "location": {"x": 16214.235097957482, "y": 10196.894539391413}, "measured": 111.38396136357852, "limit": 185, "clearance_kind": "near-miss", "message": "wires 27 and 30 come within 111.4 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [28, 30], "location": {"x": 16034.910379324718, "y": 10107.23218007503}, "measured": 0, "limit": 185, "clearance_kind": "short", "message": "wires 28 and 30 come within 0.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [60, 61], "location": {"x": 6411.150479366403, "y": 10555.54397665694}, "measured": 19.92496873697374, "limit": 185, "clearance_kind": "near-miss", "message": "wires 60 and 61 come within 19.9 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [63, 65], "location": {"x": 5355.1271363067945, "y": 12199.353897457273}, "measured": 0, "limit": 185, "clearance_kind": "short", "message": "wires 63 and 65 come within 0.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [63, 66], "location": {"x": 5693.851604835348, "y": 12199.353897457273}, "measured": 0, "limit": 185, "clearance_kind": "short", "message": "wires 63 and 66 come within 0.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [65, 66], "location": {"x": 5803.438932888704, "y": 12139.578991246352}, "measured": 0, "limit": 185, "clearance_kind": "short", "message": "wires 65 and 66 come within 0.0 layout units of each other"},
+        {"rule": "feedline-orthogonality", "severity": "active", "wires": [5], "location": {"x": 9648.957899124634, "y": 15636.411004585243}, "measured": 0, "limit": 0, "clearance_kind": "unset", "message": "wire 5 crosses a feedline other than at a right angle at (1094, 1695), step 693"},
+        {"rule": "feedline-orthogonality", "severity": "active", "wires": [8], "location": {"x": 10196.894539391413, "y": 15646.37348895373}, "measured": 0, "limit": 0, "clearance_kind": "unset", "message": "wire 8 crosses a feedline other than at a right angle at (1149, 1696), step 659"},
+        {"rule": "feedline-orthogonality", "severity": "active", "wires": [63], "location": {"x": 6600.437682367653, "y": 11492.017507294706}, "measured": 0, "limit": 0, "clearance_kind": "unset", "message": "wire 63 crosses a feedline other than at a right angle at (788, 1279), step 752"}
       ]
     }
   ]

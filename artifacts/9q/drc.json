@@ -2,7 +2,7 @@
   "reports": [
     {
       "stage": "final",
-      "feedlines_skipped": 0,
+      "feedlines_skipped": 10,
       "findings": [
       ]
     }

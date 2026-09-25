@@ -231,9 +231,19 @@ table FinalParams {
   /// How many neighbouring wires a failed route may let go of, counted along
   /// the sweep direction.
   max_relaxation: uint32 = 10;
-  /// Rounds that route every wire again against a proximity price, to widen
-  /// the room around it. A wire that does not route keeps the way it had.
+  /// Rounds that route every wire of the ring again against a proximity
+  /// price after the outer routing, to widen the room around it. A wire that
+  /// does not route keeps the way it had.
   refinement_rounds: uint32 = 2;
+  /// The same after the feedline routing, over the ring with the edges of
+  /// the chains, under the feedline constraints: the fifth phase of the
+  /// stage, the prototype's feedline refinement.
+  ///
+  /// Off by default for now, by the user's decision: the phase is built and
+  /// keeps its verdict, but while the coupler rules are being worked out the
+  /// measurements are to show what the sweep and the repair leave, not what
+  /// a later pass moved. Set it to five to run it again.
+  feedline_refinement_rounds: uint32 = 0;
   /// How long a resonator's way is made before the coupler is spliced into
   /// it, in layout units. Zero switches the meander off.
   ///
@@ -262,6 +272,20 @@ table FinalParams {
   /// units. The prototype carries it as 20 by 3 cells.
   coupler_length: double = 200.0;
   coupler_height: double = 26.0;
+  /// How many times the feedline repair may turn a placed coupler to another
+  /// of its options while the feedlines leave fails. The prototype's
+  /// `max_repair_rounds`. Zero switches the repair off.
+  repair_trials: uint32 = 100;
+  /// The last phase of the stage to run: "inner", "outer", "couplers",
+  /// "feedlines" or "refined". Empty runs the whole stage.
+  ///
+  /// The five phases are the five snapshots the artifact carries and the
+  /// five values `plot --phase` and `render --phase` take, so a run stopped
+  /// after a phase is drawn by the name it was stopped at. The stage still
+  /// says what it came to and still writes its artifact; the phases after
+  /// the one named are simply not run, which is what makes a stop worth
+  /// more than a picture of a finished run.
+  stop_after: string;
 }
 
 /// How the mixed-integer programs of the planning stages are solved.

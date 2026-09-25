@@ -94,6 +94,8 @@ class PlanningGeometry:
     wires: list[list[Point]] = field(default_factory=list)
     #: Each wire of the inner circuit, likewise.
     inner_wires: list[list[Point]] = field(default_factory=list)
+    #: The body of every coupler the Final stage placed, as a closed ring of four corners.
+    couplers: list[list[Point]] = field(default_factory=list)
     #: What the Final stage had drawn at the end of each of its five phases, by phase name.
     #:
     #: A phase changes what the phase before it produced, so a picture of one cannot be derived
@@ -348,9 +350,7 @@ def spacing_cells(wire_spacing: float, cell: float) -> float:
     return math.ceil(wire_spacing / cell) * cell
 
 
-def _final(
-    routing: FinalRoutingT, geometry: PlanningGeometry, wire_spacing: float, phase: str | None
-) -> None:
+def _final(routing: FinalRoutingT, geometry: PlanningGeometry, wire_spacing: float, phase: str | None) -> None:
     """Fill the layers a final routing carries, for one phase or for the end state."""
     grid = routing.grid
     if grid is None or grid.origin is None:
@@ -373,6 +373,29 @@ def _final(
                 found.append(points)
         return found
 
+    def bodies(couplers: list[Any] | None) -> list[list[Point]]:
+        # A coupler is a rectangle of its length along its rotation and its height across it,
+        # around its centre.
+        rings = []
+        for coupler in _entries(couplers):
+            if coupler.center is None:
+                continue
+            rotation = int(coupler.rotation or 0)
+            angle = math.radians(45.0 * (rotation - 1)) if rotation > 0 else 0.0
+            along = (math.cos(angle), math.sin(angle))
+            across = (-math.sin(angle), math.cos(angle))
+            half_length = 0.5 * float(coupler.length)
+            half_height = 0.5 * float(coupler.height)
+            cx, cy = float(coupler.center.x), float(coupler.center.y)
+            rings.append([
+                (
+                    cx + sl * half_length * along[0] + sh * half_height * across[0],
+                    cy + sl * half_length * along[1] + sh * half_height * across[1],
+                )
+                for sl, sh in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+            ])
+        return rings
+
     for snapshot in _entries(routing.phases):
         name = snapshot.name or ""
         geometry.phases[name] = drawn(snapshot.wires) + drawn(snapshot.inner) + drawn(snapshot.feedlines)
@@ -381,12 +404,20 @@ def _final(
     for snapshot in _entries(routing.phases):
         if (snapshot.name or "") == phase:
             chosen = snapshot
+    if chosen is None and phase:
+        # A run stopped early carries only the phases it ran, and drawing the end state
+        # under another phase's name would show the wrong thing without saying so.
+        held = ", ".join(f"'{name}'" for name in geometry.phases if name) or "none"
+        msg = f"the run holds no phase '{phase}' of the final stage; it holds {held}"
+        raise PlanningError(msg)
     if chosen is not None:
         geometry.wires = drawn(chosen.wires)
         geometry.inner_wires = drawn(chosen.inner) + drawn(chosen.feedlines)
+        geometry.couplers = bodies(chosen.couplers)
     else:
         geometry.wires = drawn(routing.wires)
         geometry.inner_wires = drawn(routing.inner) + drawn(routing.feedlines)
+        geometry.couplers = bodies(routing.couplers)
 
 
 def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: float) -> None:

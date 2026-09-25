@@ -33,8 +33,8 @@ namespace {
 
 /// The primitive of a heading with a given exit heading, the one of lowest
 /// identifier when several exist.
-const Primitive* primitiveTo(const MovePrimitives& primitives, const Heading from,
-                             const Heading exit) {
+const Primitive* primitiveTo(const MovePrimitives& primitives,
+                             const Heading from, const Heading exit) {
   for (const Primitive& p : primitives.of(from)) {
     if (p.exitHeading == exit) {
       return &p;
@@ -49,8 +49,9 @@ uint64_t cellKey(const uint32_t x, const uint32_t y) {
 
 } // namespace
 
-DoglegGeometry buildDogleg(const MovePrimitives& primitives, const Heading entry,
-                           const int turnSign, const uint32_t straightLength) {
+DoglegGeometry buildDogleg(const MovePrimitives& primitives,
+                           const Heading entry, const int turnSign,
+                           const uint32_t straightLength) {
   if (turnSign != 1 && turnSign != -1) {
     throw std::invalid_argument("a dogleg turns one way or the other");
   }
@@ -60,7 +61,8 @@ DoglegGeometry buildDogleg(const MovePrimitives& primitives, const Heading entry
 
   const Primitive* turn = primitiveTo(primitives, entry, exit);
   if (turn == nullptr) {
-    throw std::logic_error("the primitives hold no quarter turn for this heading");
+    throw std::logic_error(
+        "the primitives hold no quarter turn for this heading");
   }
   result.cost = turn->cost;
   result.tip.primitive = turn->id;
@@ -76,8 +78,10 @@ DoglegGeometry buildDogleg(const MovePrimitives& primitives, const Heading entry
   const uint16_t straight = primitives.straight(exit);
   const HeadingVector v = headingVector(exit);
   for (uint32_t s = 0; s < straightLength; ++s) {
-    result.tip.x = static_cast<uint32_t>(static_cast<int32_t>(result.tip.x) + v.dx);
-    result.tip.y = static_cast<uint32_t>(static_cast<int32_t>(result.tip.y) + v.dy);
+    result.tip.x =
+        static_cast<uint32_t>(static_cast<int32_t>(result.tip.x) + v.dx);
+    result.tip.y =
+        static_cast<uint32_t>(static_cast<int32_t>(result.tip.y) + v.dy);
     result.tip.primitive = straight;
     result.path.push_back(result.tip);
   }
@@ -109,14 +113,33 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     orientation = reverse(orientation);
   }
   const int firstTurn = options.mirrored ? 1 : -1;
-  DoglegGeometry dogleg = buildDogleg(primitives, orientationStart, firstTurn, options.straightLength);
+  DoglegGeometry dogleg = buildDogleg(primitives, orientationStart, firstTurn,
+                                      options.straightLength);
   PathPoint tip = dogleg.tip;
   double initialCost = dogleg.cost;
-  std::vector<Path> prefix = {dogleg.path};
+  std::vector<Path> prefix;
+  if (options.leadStraight > 0) {
+    // The straight run before the turn: one cell per step from the origin,
+    // on the heading the turn starts on, tagged with the straight move.
+    Path lead;
+    const HeadingVector v = headingVector(orientationStart);
+    const uint16_t straight = primitives.straight(orientationStart);
+    for (uint32_t s = 1; s <= options.leadStraight; ++s) {
+      lead.push_back(
+          {.x = static_cast<uint32_t>(static_cast<int32_t>(s) * v.dx),
+           .y = static_cast<uint32_t>(static_cast<int32_t>(s) * v.dy),
+           .heading = orientationStart,
+           .primitive = straight});
+    }
+    prefix.push_back(std::move(lead));
+    initialCost += static_cast<double>(options.leadStraight);
+  }
+  prefix.push_back(dogleg.path);
   Heading searchHeading = orientation;
   if (options.secondStraightLength > 0) {
     const int secondTurn = options.secondTurnReverse ? -firstTurn : firstTurn;
-    DoglegGeometry second = buildDogleg(primitives, orientation, secondTurn, options.secondStraightLength);
+    DoglegGeometry second = buildDogleg(primitives, orientation, secondTurn,
+                                        options.secondStraightLength);
     prefix.push_back(second.path);
     initialCost += second.cost;
     tip = second.tip;
@@ -124,7 +147,8 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   }
   optionsByHeading[searchHeading].push_back({tip, initialCost, prefix});
 
-  const auto addOption = [&](const Heading target, const PathPoint& end, const double cost,
+  const auto addOption = [&](const Heading target, const PathPoint& end,
+                             const double cost,
                              const std::vector<Path>& pieces) {
     auto it = optionsByHeading.find(target);
     if (it == optionsByHeading.end() || cost < it->second.front().length) {
@@ -143,28 +167,35 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   for (const Primitive& first : primitives.of(searchHeading)) {
     const Heading intermediate = first.exitHeading;
     Path pathOne;
-    PathPoint current{.x = 0, .y = 0, .heading = searchHeading, .primitive = first.id};
+    PathPoint current{
+        .x = 0, .y = 0, .heading = searchHeading, .primitive = first.id};
     for (const CellOffset& move : first.swept) {
       current.x = static_cast<uint32_t>(static_cast<int32_t>(move.dx));
       current.y = static_cast<uint32_t>(static_cast<int32_t>(move.dy));
       pathOne.push_back(current);
     }
     const double costOne = initialCost + first.cost;
-    const PathPoint tipOne{.x = tip.x + current.x, .y = tip.y + current.y,
-                           .heading = intermediate, .primitive = first.id};
+    const PathPoint tipOne{.x = tip.x + current.x,
+                           .y = tip.y + current.y,
+                           .heading = intermediate,
+                           .primitive = first.id};
     addOption(intermediate, tipOne, costOne, with({pathOne}));
 
     for (const Primitive& second : primitives.of(intermediate)) {
       Path combined;
-      PathPoint c2{.x = 0, .y = 0, .heading = intermediate, .primitive = second.id};
+      PathPoint c2{
+          .x = 0, .y = 0, .heading = intermediate, .primitive = second.id};
       for (const CellOffset& move : second.swept) {
         c2.x = static_cast<uint32_t>(static_cast<int32_t>(move.dx));
         c2.y = static_cast<uint32_t>(static_cast<int32_t>(move.dy));
         combined.push_back(c2);
       }
-      const PathPoint tipTwo{.x = tipOne.x + c2.x, .y = tipOne.y + c2.y,
-                             .heading = second.exitHeading, .primitive = second.id};
-      addOption(second.exitHeading, tipTwo, costOne + second.cost, with({pathOne, combined}));
+      const PathPoint tipTwo{.x = tipOne.x + c2.x,
+                             .y = tipOne.y + c2.y,
+                             .heading = second.exitHeading,
+                             .primitive = second.id};
+      addOption(second.exitHeading, tipTwo, costOne + second.cost,
+                with({pathOne, combined}));
     }
   }
 
@@ -199,10 +230,14 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     for (std::size_t i = 0; i < segment.cells.size(); ++i) {
       const PathPoint& cell = segment.cells[i];
       const auto it = firstIndexOf.find(cellKey(cell.x, cell.y));
-      const std::size_t routingIndex = (it != firstIndexOf.end()) ? it->second : path.size();
+      const std::size_t routingIndex =
+          (it != firstIndexOf.end()) ? it->second : path.size();
       for (const PathOption& option : found->second) {
-        const double diff = (overallLength - segment.lengthAt[i] + option.length) - targetLength;
-        candidates.push_back({cell, std::abs(diff), diff, &option, routingIndex});
+        const double diff =
+            (overallLength - segment.lengthAt[i] + option.length) -
+            targetLength;
+        candidates.push_back(
+            {cell, std::abs(diff), diff, &option, routingIndex});
       }
     }
   }
@@ -214,7 +249,10 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     uint32_t y0 = cand.cell.y;
     for (const Path& piece : cand.option->pieces) {
       for (const PathPoint& move : piece) {
-        simulated.push_back({.x = x0 + move.x, .y = y0 + move.y, .heading = move.heading, .primitive = move.primitive});
+        simulated.push_back({.x = x0 + move.x,
+                             .y = y0 + move.y,
+                             .heading = move.heading,
+                             .primitive = move.primitive});
       }
       if (!simulated.empty()) {
         x0 = simulated.back().x;
@@ -241,12 +279,15 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     return true;
   };
   const auto allowed = [&](const Path& simulated) {
-    return !anchorAllowed || simulated.empty() || anchorAllowed(simulated.front().x, simulated.front().y);
+    return !anchorAllowed || simulated.empty() ||
+           anchorAllowed(simulated.front().x, simulated.front().y);
   };
 
   // The best achievable mismatch, which scales the undershoot preference.
   std::sort(candidates.begin(), candidates.end(),
-            [](const Candidate& a, const Candidate& b) { return a.mismatch < b.mismatch; });
+            [](const Candidate& a, const Candidate& b) {
+              return a.mismatch < b.mismatch;
+            });
   double best = 0.0;
   {
     Path discard;
@@ -271,10 +312,13 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   // loses to an undershoot within about twice the best mismatch of the
   // target, so a hard, blocked-in resonator is not dragged far away.
   for (Candidate& cand : candidates) {
-    cand.mismatch = cand.signedDiff <= 0.0 ? -cand.signedDiff : cand.signedDiff + best;
+    cand.mismatch =
+        cand.signedDiff <= 0.0 ? -cand.signedDiff : cand.signedDiff + best;
   }
   std::sort(candidates.begin(), candidates.end(),
-            [](const Candidate& a, const Candidate& b) { return a.mismatch < b.mismatch; });
+            [](const Candidate& a, const Candidate& b) {
+              return a.mismatch < b.mismatch;
+            });
 
   bool found = false;
   bool foundFallback = false;
@@ -316,12 +360,13 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     return std::nullopt;
   }
 
-  path.erase(path.begin(), path.begin() + static_cast<std::ptrdiff_t>(chosenSplit));
+  path.erase(path.begin(),
+             path.begin() + static_cast<std::ptrdiff_t>(chosenSplit));
   path.insert(path.begin(), chosen.begin(), chosen.end());
   return CouplerSplice{.anchor = {.x = path.front().x,
-                                 .y = path.front().y,
-                                 .heading = chosenCell.heading,
-                                 .primitive = chosenCell.primitive},
+                                  .y = path.front().y,
+                                  .heading = chosenCell.heading,
+                                  .primitive = chosenCell.primitive},
                        .inAllowedArea = inAllowedArea};
 }
 

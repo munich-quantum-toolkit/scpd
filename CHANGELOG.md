@@ -12,6 +12,73 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Insert a CPW coupler on every resonator of the Final stage and route
+  the feedline chains through them, the prototype's
+  `run_optimized_cpw_coupler_insertion`. A resonator's way is cut where the
+  way left to the qubit port is `target_resonator_length`, and the coupler
+  sits there: the way runs the coupling length straight from the anchor,
+  turns a quarter and joins what is left; the body spans that run and the
+  feedline runs along its far edge, along the ring. Every orientation,
+  mirrored or not, with the feedline either way along the body and with
+  or without a second dogleg is an option, and a greedy local search per
+  chain takes for each coupler the option whose two feedline edges to its
+  chain neighbours turn least; an edge already chosen or drawn stands in
+  the way of every edge routed after it, the edge into a coupler and
+  the edge out of it never cross, and every edge keeps the wire clearance
+  from every resonator but its own coupler's. The chains come from the assignment, which
+  now carries them (`Assignment.chains`); the coupler carries the
+  `ResonatorSource` port the assignment left absent, and the artifact
+  carries the edges (`FinalRouting.feedlines`, `feedline_edges`) and the
+  couplers, from the `couplers` phase on ([#118]) ([**@FeldmeierMichael**])
+- ✨ Route every wire again under the feedline constraints, the prototype's
+  feedline routing: the edges of the chains are fenced, a wire crosses an
+  edge between two couplers at a right angle only and a conventional wire
+  crosses the one edge that spans its launcher, once; the edges at the
+  launchers are hard for every wire. A resonator is drawn again from its
+  coupler and made `target_resonator_length` exactly, within
+  `resonator_length_tolerance`, by the strict meander insertion
+  (`MeanderOptions.exact`). A wire whose way already holds every rule is
+  settled without a search ([#118]) ([**@FeldmeierMichael**])
+- ✨ Repair the feedline routing by turning couplers, the prototype's
+  `run_final_routing_feedline_choices`: while fails are left, a coupler near
+  them is turned to another of its options, what that unsettles is drawn
+  again, and the turn is kept when it leaves strictly fewer fails, up to
+  `repair_trials` times ([#118]) ([**@FeldmeierMichael**])
+- ✨ Refine the feedline routing, the fifth phase of the Final stage: every
+  wire of the ring and every edge at a launcher is drawn again against the
+  centring price under the feedline constraints, for
+  `feedline_refinement_rounds` rounds, zero by default for now, the prototype's
+  `run_final_routing_feedline_refinement_parallel` ([#118])
+  ([**@FeldmeierMichael**])
+- ✨ Count a resonator too long, a wire crossing a feedline other than at a
+  right angle, a wire that meets itself and an edge of a chain without a
+  way as fails; every `Fails:`
+  line says so, `-v 1` names them, and `-v` says where every coupler sits
+  and how long every resonator is against the target ([#118])
+  ([**@FeldmeierMichael**])
+- ✨ Treat every edge of a feedline chain alike in the design-rule check: the
+  conventional and inner wires cross any of them, at a launcher or between two
+  couplers, and rule 1 binds instead between an edge and a resonator and
+  between two edges, outside the reach of a coupler the two share. The edges
+  at the launchers used to be checked against every wire, which walled off the
+  plane from the chip edge to the first coupler; the prototype excludes them
+  everywhere (`is_first_last_feedline`) ([#118]) ([**@FeldmeierMichael**])
+- ✨ Check feedline orthogonality, rule 2 of the design-rule check, by the
+  router's own crossing test (`routing::CrossingConstraints`, shared by the
+  search and the check, reading a straight run off the cells rather than
+  the moves, so that the straight lead of a move that bends counts as the
+  straight run it is), and leave a resonator and the edges of its own
+  chain alone near the coupler in rules 1 and 2, where they run beside each
+  other on purpose. `mqt-scpd drc` and the tests read one view of a final
+  routing (`drc::viewOfFinal`), the feedline edges and couplers included
+  ([#118]) ([**@FeldmeierMichael**])
+- ✨ Stop the Final stage after one of its five phases with
+  `[stages.final] stop_after`, which takes the same five names `--phase`
+  takes; the phases after it are not run, and asking a stopped run for a
+  phase it does not hold is an error rather than a picture of the end state
+  ([#118]) ([**@FeldmeierMichael**])
+- ✨ Draw the coupler bodies in the pictures of the Final stage ([#118])
+  ([**@FeldmeierMichael**])
 - ✨ Lengthen every resonator of the Final stage to `meander_length`. After
   a resonator's search has found a way, one meander is spliced into a
   straight run of it: the two ends of the run are turned across it by one
@@ -383,6 +450,7 @@ releases may include breaking changes.
 <!-- PR links -->
 
 [#116]: https://github.com/munich-quantum-toolkit/scpd/pull/116
+[#118]: https://github.com/munich-quantum-toolkit/scpd/pull/118
 [#117]: https://github.com/munich-quantum-toolkit/scpd/pull/117
 [#115]: https://github.com/munich-quantum-toolkit/scpd/pull/115
 [#114]: https://github.com/munich-quantum-toolkit/scpd/pull/114

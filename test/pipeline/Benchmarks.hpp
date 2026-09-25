@@ -202,6 +202,9 @@ inline Benchmark load(const std::string& chip, const std::string& resonator,
       configText, "max_relaxation", config.stages->final->max_relaxation);
   config.stages->final->refinement_rounds = readScalar(
       configText, "refinement_rounds", config.stages->final->refinement_rounds);
+  config.stages->final->feedline_refinement_rounds =
+      readScalar(configText, "feedline_refinement_rounds",
+                 config.stages->final->feedline_refinement_rounds);
   config.stages->final->meander_length = readLength(
       configText, "meander_length", config.stages->final->meander_length);
 

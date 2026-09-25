@@ -10,6 +10,8 @@
 
 #include "mqt-scpd/drc/Rules.hpp"
 
+#include "mqt-scpd/routing/CrossingConstraints.hpp"
+#include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/SelfIntersection.hpp"
 
@@ -28,9 +30,34 @@
 namespace mqt::scpd::drc {
 namespace {
 
+namespace fba = flatbuffers::artifacts;
 namespace fbd = flatbuffers::design;
 namespace fbdrc = flatbuffers::drc;
 namespace fbg = flatbuffers::geometry;
+
+/// The bend radius of the router's primitives, in cells. A property of the
+/// move set the Final stage draws with, not a knob.
+constexpr std::uint32_t BEND_RADIUS = 5;
+
+/// The coupler two wires share, or nothing.
+[[nodiscard]] const CheckedCoupler* sharedCoupler(const CellView& view,
+                                                  const CheckedWire& one,
+                                                  const CheckedWire& two) {
+  for (const auto port : one.ports) {
+    if (port == CheckedWire::NO_PORT) {
+      continue;
+    }
+    if (port != two.ports[0] && port != two.ports[1]) {
+      continue;
+    }
+    for (const auto& coupler : view.couplers) {
+      if (coupler.port == port) {
+        return &coupler;
+      }
+    }
+  }
+  return nullptr;
+}
 
 /// A cell of a wire, and which wire it belongs to.
 struct Occupant {
@@ -135,8 +162,9 @@ void checkClearance(const CellView& view, const fbd::DesignRulesT& rules,
   for (std::uint32_t index = 0; index < view.wires.size(); ++index) {
     const auto& wire = view.wires[index];
     if (wire.feedline) {
+      // Counted, not left out: an edge is compared with the resonators and
+      // with the other edges, and left out against the wires that cross it.
       ++report.feedlines_skipped;
-      continue;
     }
     for (const auto& cell : wire.cells) {
       const auto x = static_cast<std::int32_t>(cell.x());
@@ -171,6 +199,16 @@ void checkClearance(const CellView& view, const fbd::DesignRulesT& rules,
         if (one.wire >= two.wire) {
           continue;
         }
+        // An edge of a chain is crossed by the conventional and inner wires
+        // on purpose, at a right angle, which is rule 2's business and not
+        // this one's. The rule binds between an edge and a resonator, and
+        // between two edges, which may never cross at all.
+        const auto& first = view.wires[one.wire];
+        const auto& second = view.wires[two.wire];
+        if ((first.feedline && !second.resonator && !second.edge) ||
+            (second.feedline && !first.resonator && !first.edge)) {
+          continue;
+        }
         const auto distance = std::hypot(static_cast<double>(one.x - two.x),
                                          static_cast<double>(one.y - two.y));
         if (distance * unit > limit) {
@@ -185,11 +223,20 @@ void checkClearance(const CellView& view, const fbd::DesignRulesT& rules,
         const auto& centres = meetings.at(pair);
         const auto mx = 0.5 * (one.x + two.x);
         const auto my = 0.5 * (one.y + two.y);
-        const bool exempt =
-            std::ranges::any_of(centres, [&](const auto& centre) {
-              return std::hypot(mx - centre.first, my - centre.second) <=
-                     settings.junctionRadiusNorm * clearance;
-            });
+        bool exempt = std::ranges::any_of(centres, [&](const auto& centre) {
+          return std::hypot(mx - centre.first, my - centre.second) <=
+                 settings.junctionRadiusNorm * clearance;
+        });
+        // A resonator and the edges of its own chain run beside each other
+        // along the coupler on purpose: that is the coupling.
+        if (!exempt) {
+          if (const auto* const coupler = sharedCoupler(
+                  view, view.wires[one.wire], view.wires[two.wire]);
+              coupler != nullptr) {
+            exempt =
+                std::hypot(mx - coupler->x, my - coupler->y) <= coupler->reach;
+          }
+        }
         if (exempt) {
           continue;
         }
@@ -218,6 +265,70 @@ void checkClearance(const CellView& view, const fbd::DesignRulesT& rules,
             view.wires[pair.second].connection, record.distance * unit));
     finding->clearance_kind = kind;
     report.findings.push_back(std::move(finding));
+  }
+}
+
+/// Rule 2: a wire crosses a feedline between two couplers at a right angle
+/// only, and never at its bends or its ends.
+///
+/// The test is the router's own, over the constraints the search ran
+/// under, so what is reported is exactly what the search refused. The cells
+/// around a wire's own coupler are left out, where the edges of its chain
+/// pin and run beside it on purpose.
+void checkOrthogonality(const CellView& view, fbdrc::DrcReportT& report) {
+  // The constraints read a straight run off the cells, as the router's own
+  // do, so the artifact's cells and headings are all they need.
+  std::vector<routing::Path> feedlines;
+  for (const auto& wire : view.wires) {
+    if (!wire.feedline) {
+      continue;
+    }
+    routing::Path path;
+    path.reserve(wire.cells.size());
+    for (const auto& cell : wire.cells) {
+      path.push_back({.x = cell.x(),
+                      .y = cell.y(),
+                      .heading = static_cast<routing::Heading>(cell.heading() & 7U),
+                      .primitive = 0});
+    }
+    feedlines.push_back(std::move(path));
+  }
+  if (feedlines.empty()) {
+    return;
+  }
+  routing::CrossingConstraints constraints;
+  constraints.build(view.grid.width, view.grid.height, feedlines, {});
+  for (const auto& wire : view.wires) {
+    if (wire.feedline || wire.edge) {
+      continue;
+    }
+    const CheckedCoupler* own = nullptr;
+    for (const auto port : wire.ports) {
+      for (const auto& coupler : view.couplers) {
+        if (port != CheckedWire::NO_PORT && coupler.port == port) {
+          own = &coupler;
+        }
+      }
+    }
+    for (std::size_t step = 0; step < wire.cells.size(); ++step) {
+      const auto& cell = wire.cells[step];
+      if (own != nullptr &&
+          std::hypot(static_cast<double>(cell.x()) - own->x,
+                     static_cast<double>(cell.y()) - own->y) <= own->reach) {
+        continue;
+      }
+      if (constraints.allowed(cell.x(), cell.y(), cell.heading())) {
+        continue;
+      }
+      report.findings.push_back(findingOf(
+          fbdrc::DrcRule::FeedlineOrthogonality, fbdrc::DrcSeverity::Active,
+          {wire.connection}, view.grid.toLayout(cell.x(), cell.y()), 0.0, 0.0,
+          std::format(
+              "wire {} crosses a feedline other than at a right angle at "
+              "({}, {}), step {}",
+              wire.connection, cell.x(), cell.y(), step)));
+      break;
+    }
   }
 }
 
@@ -261,8 +372,109 @@ fbdrc::DrcReportT checkCells(const CellView& view,
   fbdrc::DrcReportT report;
   report.stage = fbdrc::DrcStage::Final;
   checkClearance(view, rules, settings, report);
+  checkOrthogonality(view, report);
   checkLoops(view, report);
   return report;
+}
+
+CellView viewOfFinal(const fbd::ChipT& chip, const fba::GlobalRoutingT& global,
+                     const fba::AssignmentT& assignment,
+                     const fba::FinalRoutingT& routing,
+                     const fbd::DesignRulesT& rules) {
+  const auto componentOf =
+      [&chip](const std::uint32_t port) -> std::string_view {
+    return port < chip.ports.size() ? chip.ports[port]->component
+                                    : std::string_view{};
+  };
+  CellView view;
+  if (routing.grid != nullptr) {
+    view.grid = {.width = routing.grid->width,
+                 .height = routing.grid->height,
+                 .origin = routing.grid->origin,
+                 .cellWidth = routing.grid->cell_width,
+                 .cellHeight = routing.grid->cell_height};
+  }
+  view.chip = &chip;
+  // The couplers: the port each created follows the chip's own ports in
+  // coupler order, and the meeting at it reaches over the body and the
+  // clearance around it.
+  const auto inputs = static_cast<std::uint32_t>(chip.ports.size());
+  std::vector<std::uint32_t> couplerOfConnection(routing.wires.size(),
+                                                 CheckedWire::NO_PORT);
+  for (std::size_t index = 0; index < routing.couplers.size(); ++index) {
+    const auto& coupler = *routing.couplers[index];
+    const auto port = inputs + static_cast<std::uint32_t>(index);
+    CheckedCoupler checked{.port = port, .x = 0.0, .y = 0.0, .reach = 0.0};
+    if (coupler.port != nullptr && routing.grid != nullptr) {
+      const auto at = view.grid.toCell(coupler.port->center);
+      checked.x = at.x();
+      checked.y = at.y();
+    }
+    checked.reach = grid::cellsFor(coupler.length, view.grid) +
+                    grid::cellsFor(coupler.height, view.grid) +
+                    (2.0 * BEND_RADIUS) +
+                    (1.5 * grid::cellsFor(rules.min_wire_spacing, view.grid));
+    view.couplers.push_back(checked);
+    if (coupler.connection.index() < couplerOfConnection.size()) {
+      couplerOfConnection[coupler.connection.index()] = port;
+    }
+  }
+  for (std::size_t index = 0; index < routing.wires.size(); ++index) {
+    if (routing.wires[index]->path.empty() ||
+        index >= assignment.connections.size()) {
+      continue;
+    }
+    const auto& connection = *assignment.connections[index];
+    view.wires.push_back(
+        {.connection = static_cast<std::uint32_t>(index),
+         .cells = routing.wires[index]->path,
+         .components = {std::string_view{},
+                        componentOf(connection.target.index())},
+         .feedline = false,
+         .resonator = connection.target_role == fbd::AssignedRole::ResonatorTarget,
+         .ports = {couplerOfConnection[index], connection.target.index()}});
+  }
+  for (std::size_t index = 0; index < routing.inner.size(); ++index) {
+    if (routing.inner[index]->path.empty() ||
+        index >= global.connections.size()) {
+      continue;
+    }
+    const auto& connection = *global.connections[index];
+    view.wires.push_back(
+        {.connection = static_cast<std::uint32_t>(routing.wires.size() + index),
+         .cells = routing.inner[index]->path,
+         .components = {connection.source == nullptr
+                            ? std::string_view{}
+                            : componentOf(connection.source->index()),
+                        componentOf(connection.target.index())},
+         .feedline = false,
+         .ports = {connection.source == nullptr ? CheckedWire::NO_PORT
+                                                : connection.source->index(),
+                   connection.target.index()}});
+  }
+  // The edges of the feedline chains: one between two couplers is crossed
+  // by design and left out of the clearance rule; one at a launcher is a
+  // hard obstacle and checked like any wire.
+  for (std::size_t index = 0; index < routing.feedlines.size(); ++index) {
+    if (routing.feedlines[index]->path.empty()) {
+      continue;
+    }
+    const bool described = index < routing.feedline_edges.size();
+    const auto& edge =
+        described ? *routing.feedline_edges[index] : fba::FeedlineEdgeT{};
+    view.wires.push_back(
+        {.connection = static_cast<std::uint32_t>(routing.wires.size() +
+                                                  routing.inner.size() + index),
+         .cells = routing.feedlines[index]->path,
+         .components = {},
+         // Every edge, at a launcher or between two couplers, is crossable
+         // by the wires that pass it; the two ends are what `edge` says.
+         .feedline = true,
+         .edge = true,
+         .ports = {described ? edge.from.index() : CheckedWire::NO_PORT,
+                   described ? edge.to.index() : CheckedWire::NO_PORT}});
+  }
+  return view;
 }
 
 namespace {

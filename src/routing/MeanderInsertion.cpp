@@ -349,12 +349,20 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
   const auto samples = samplePath(primitives, path, path.front(), segments);
   result.lengthBefore = polylineLength(samples);
   result.lengthAfter = result.lengthBefore;
-  if (result.lengthBefore >= required) {
+  const double tolerance =
+      options.exact ? std::max(0.0, options.tolerance) : 0.0;
+  if (options.exact && result.lengthBefore > required + tolerance) {
+    // Longer than it may be: nothing spliced in makes a path shorter.
+    result.tooLong = true;
+    return result;
+  }
+  if (result.lengthBefore >= required - tolerance) {
     result.reached = true;
     return result;
   }
   double wanted = required;
-  if (wanted - result.lengthBefore < options.smallDeficitMargin) {
+  if (!options.exact &&
+      wanted - result.lengthBefore < options.smallDeficitMargin) {
     wanted += options.smallDeficitMargin;
   }
   const double deficit = wanted - result.lengthBefore;
@@ -401,8 +409,36 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
   using Chains = std::vector<Chain>;
   std::vector<std::array<std::optional<Chains>, 4>> heads(count);
   std::vector<std::array<std::optional<Chains>, 4>> tails(count);
+  // The box of a pair: the box of the options, cut down to what the caller
+  // allows between the two cells of the pair. With a box per pair the
+  // chains of a cell differ per pair too, so they are not cached then.
+  Box pairBox = box;
+  const auto boxOfPair = [&](const Straight& g0, const Straight& g1) {
+    if (!options.boxFor) {
+      return box;
+    }
+    const auto strip = options.boxFor({.x = static_cast<uint32_t>(g0.spot.x),
+                                       .y = static_cast<uint32_t>(g0.spot.y),
+                                       .heading = g0.spot.heading,
+                                       .primitive = g0.spot.primitive},
+                                      {.x = static_cast<uint32_t>(g1.spot.x),
+                                       .y = static_cast<uint32_t>(g1.spot.y),
+                                       .heading = g1.spot.heading,
+                                       .primitive = g1.spot.primitive});
+    return Box{.minX = std::max<int64_t>(box.minX, strip.minX),
+               .maxX = std::min<int64_t>(box.maxX, strip.maxX),
+               .minY = std::max<int64_t>(box.minY, strip.minY),
+               .maxY = std::min<int64_t>(box.maxY, strip.maxY)};
+  };
+  Chains uncachedHeads;
+  Chains uncachedTails;
   const auto headsOf = [&](const std::size_t at, const std::size_t key,
                            const Targets& target) -> const Chains& {
+    if (options.boxFor) {
+      uncachedHeads =
+          chainsFrom(primitives, straights[at].spot, target, pairBox);
+      return uncachedHeads;
+    }
     auto& slot = heads[at][key];
     if (!slot.has_value()) {
       slot = chainsFrom(primitives, straights[at].spot, target, box);
@@ -411,6 +447,11 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
   };
   const auto tailsOf = [&](const std::size_t at, const std::size_t key,
                            const Targets& target) -> const Chains& {
+    if (options.boxFor) {
+      uncachedTails =
+          chainsInto(primitives, straights[at].spot, target, pairBox);
+      return uncachedTails;
+    }
     auto& slot = tails[at][key];
     if (!slot.has_value()) {
       slot = chainsInto(primitives, straights[at].spot, target, box);
@@ -422,8 +463,9 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
   // loop does not fit or a cell of it may not be entered.
   const auto assemble = [&](const Chain& head, const Chain& tail,
                             const double loopLength) -> std::optional<Piece> {
-    const auto loop = buildLoop(primitives, head.to, tail.from, loopLength, box,
-                                options.safety, options.minStraightLength);
+    const auto loop =
+        buildLoop(primitives, head.to, tail.from, loopLength, pairBox,
+                  options.safety, options.minStraightLength);
     if (!loop.has_value()) {
       return std::nullopt;
     }
@@ -475,19 +517,31 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
                         double loopLength) {
     Path candidate;
     double after = 0.0;
-    for (int attempt = 0; attempt < 4; ++attempt) {
+    // Where the rendering lands within a cell of the requirement the loop
+    // is right; in the exact mode it is built again shallower as well as
+    // deeper, so that it lands within the tolerance and not merely above.
+    const int attempts = options.exact ? 6 : 4;
+    for (int attempt = 0; attempt < attempts; ++attempt) {
       const auto piece = assemble(head, tail, loopLength);
       candidate = piece.has_value() ? splice(g0, g1, *piece) : Path{};
       if (candidate.empty()) {
         return false;
       }
       after = renderedLength(primitives, candidate);
+      if (options.exact) {
+        if (std::abs(after - required) <= 1.0) {
+          break;
+        }
+        loopLength += required - after;
+        continue;
+      }
       if (after >= required) {
         break;
       }
       loopLength += (required - after) + 1.0;
     }
-    if (after < required) {
+    if (options.exact ? std::abs(after - required) > tolerance
+                      : after < required) {
       return false;
     }
     path = std::move(candidate);
@@ -552,8 +606,8 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
   struct Fit {
     std::size_t from = 0;
     std::size_t to = 0;
-    const Chain* head = nullptr;
-    const Chain* tail = nullptr;
+    Chain head;
+    Chain tail;
     double loopLength = 0.0;
     double score = 0.0;
   };
@@ -593,6 +647,10 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
       // What replaces the cells between the pair has to be as long as they
       // were, plus the deficit.
       const double lengthToAdd = (g1.lengthAt - g0.lengthAt) + deficit;
+      pairBox = boxOfPair(g0, g1);
+      if (pairBox.maxX < pairBox.minX || pairBox.maxY < pairBox.minY) {
+        continue;
+      }
       for (const Chain& head :
            headsOf(static_cast<std::size_t>(j), key, target)) {
         for (const Chain& tail :
@@ -615,8 +673,8 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
           }
           fits.push_back({.from = static_cast<std::size_t>(j),
                           .to = static_cast<std::size_t>(i),
-                          .head = &head,
-                          .tail = &tail,
+                          .head = head,
+                          .tail = tail,
                           .loopLength = loopLength,
                           .score = scoreOf(g0, g1, *piece)});
         }
@@ -627,7 +685,8 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
   result.fits = static_cast<uint32_t>(fits.size());
   std::ranges::stable_sort(fits, {}, &Fit::score);
   for (const Fit& fit : fits) {
-    if (take(straights[fit.from], straights[fit.to], *fit.head, *fit.tail,
+    pairBox = boxOfPair(straights[fit.from], straights[fit.to]);
+    if (take(straights[fit.from], straights[fit.to], fit.head, fit.tail,
              fit.loopLength)) {
       return result;
     }

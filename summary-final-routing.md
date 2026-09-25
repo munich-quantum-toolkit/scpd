@@ -1,4 +1,4 @@
-# Phase 4, step 3 — the Final stage, phases 1 and 2
+# Phase 4, steps 3 and 4 — the Final stage
 
 What was built, what was measured, what is deliberately different from the
 prototype, and what is still open. Step 2 is
@@ -9,8 +9,230 @@ left of the stage is [handover-final-couplers.md](handover-final-couplers.md).
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
 - Branch: `phase-4-routing-stages`. **Nothing is committed.**
 - Prototype: `/Users/michaelfeldmeier/Documents/GitHub/FridgeCAD` (`0c5d6d9`)
-- Newest first: [the meander](#the-meander), then
+- Newest first: [the couplers, the feedlines and the repair](#the-couplers-the-feedlines-and-the-repair),
+  then [the meander](#the-meander), then
   [the seeded sweep, and what a fail is](#the-seeded-sweep-and-what-a-fail-is)
+
+## The couplers, the feedlines and the repair
+
+Phases 3 to 5 of the Final stage, built on top of the meander (`cd8e597`):
+the prototype's `run_optimized_cpw_coupler_insertion` (`FinalGrid.cpp:16940`),
+its feedline routing in the form its pipeline runs
+(`run_final_routing_feedline_parallel`, `:10566`), its strict meander
+(`meander_insertion_proximity_strict`, `dubin_router_opt.hpp:2500`) and its
+repair loop (`run_final_routing_feedline_choices_parallel`, `:13863`), as
+`Driver::insertCouplers`, the feedline pass of `Driver::sweep`,
+`MeanderOptions.exact` and `Driver::repair`. The decisions that shaped it are
+[decision 0032](docs/design/decisions/0032-the-coupler-couples-along-the-ring.md).
+
+**What the prototype does, read from its code.** For every resonator it
+cuts the way where the way left to the qubit is `meander_length`, less the
+run to the port and a margin of three cells, and splices a dogleg in front:
+a quarter turn at the anchor, a straight of 14, one or two more moves onto
+the way. Its coupler is an anchor with a 20 by 3 body along the heading the
+way leaves the anchor on, the feedline ports three cells across; every
+orientation offset but the one facing back, mirrored or not, with or
+without a second dogleg is an option, and an option whose spliced path meets
+itself is dropped. The chains come from its assignment as lists of port
+labels. Per chain, up to five greedy passes: every coupler takes the option
+whose two edges to its chain neighbours cost least, an edge routed free in a
+band of 150 cells around the chord with the coupler bodies as obstacles and
+priced by how much it turns, times ten thousand, plus the lengths, their
+difference and twenty thousand for a second dogleg; an edge that overlaps
+its own coupler's path costs everything. The committed couplers become
+obstacles and the edges are drawn. Then every wire of the ring is drawn
+again, the edges at the launchers among them: the edges between couplers
+are hard obstacles inflated by the clearance except the one edge a
+conventional wire bridges, which is crossable at a right angle only within
+ten cells of its straight runs and never at its bends; a resonator starts on
+a fixed quarter turn from its anchor with 14 straight cells after it and is
+made `meander_length` again by the strict insertion, which aims at the
+length exactly, refines the loop's depth both ways, and tries the widest
+free strip along every pair. A resonator that comes out longer fails. While
+fails are left, the repair turns a coupler near them to another of its
+stored options, routes what that unsettles again, and keeps the turn that
+leaves strictly fewer fails, up to a hundred times.
+
+**What was built the same, and where it differs.**
+
+- **The cut is at `target_resonator_length`**, the design rule, and the
+  resonator drawn from its coupler is made that length exactly within
+  `resonator_length_tolerance`. The prototype's figure is `meander_length`,
+  which it never compares with the rule; `meander_length` stays what the
+  outer routing makes the way, so that the cut point exists.
+- **The coupling run comes before the turn, along the ring.** The prototype's
+  body lies along the heading the way leaves the anchor on and its turn
+  curves toward its own feedline ports, crossing them in the cell picture;
+  a first port here laid the body along the run after the turn, which
+  points inward, so that every chain edge had to turn back around the
+  coupler and a third of the 17-qubit chip's edges found no way. Now the way
+  runs `coupler_length` straight from the anchor, turns, runs the straight
+  start and joins what is left; the body spans the coupling run, the
+  feedline runs along its far edge either way, and the edges follow the
+  ring. `CouplerDoglegOptions.leadStraight` is the straight before the turn.
+- **The chains are in the assignment** (`Assignment.chains`), read off the
+  model's chord, launcher and termination variables, in ring order, with the
+  launcher slot of the first and the last anchor. The artifact carries the
+  edges (`FinalRouting.feedlines`, `feedline_edges`) and the couplers with
+  the port each creates, from the `couplers` phase on.
+- **Options:** all eight orientations, mirrored or not, the feedline along
+  the run or against it, with or without one second dogleg (20 cells,
+  reversed) — 64 per resonator, pre-screened to the 24 that turn least by
+  the prototype's beeline estimate. An option is refused only when its body,
+  its head or the stub the feedline leaves it on lies off the grid, on
+  artwork, on a body already placed or in the approach of a port; another
+  wire's room under it is priced, and its copper priced far above that,
+  because every wire is drawn again afterwards. What is left of the way has
+  to be within the tolerance of the target: longer is refused, shorter
+  priced by what the meander has to make up.
+- **Edges** are routed as the prototype routes them, free of any crossing
+  rule, in a band of 200 cells around the chord, with the coupler bodies,
+  the two endpoint resonators' cut ways and the approaches of every port as
+  obstacles and the room of every wire priced; an edge ends at the coupler's
+  *out* port through the body row, so that consecutive edges meet there and
+  the check sees a junction. The stubs are closed to the search but their far
+  cells, or the way would meet itself.
+- **What is committed stands in the way of every edge routed after it**
+  (asked for by the user): while the options are weighed, the edges the
+  greedy has chosen for the other couplers are hard obstacles inflated by
+  the clearance; at the commit and in the repair the edges already drawn
+  are. The edge into a coupler and the edge out of it meet at the coupler's
+  port and keep no clearance from each other, but neither may run over the
+  other's copper, two cells wide, so the two never cross
+  (`Driver::fenceCommittedEdges`). The greedy's chosen edges are taken as
+  they are at the commit where they still run between the ports the
+  couplers ended on, and only the rest are routed again.
+- **A feedline keeps the clearance from every resonator** (asked for by the
+  user): in the edge routing every resonator's way — cut back to its
+  coupler, or its coupler's chosen option while the options are weighed —
+  is fenced by the clearance, except the resonators of the two couplers the
+  edge runs between within the couplers' reach, where the coupling itself
+  is the closeness (`Driver::fenceResonators`); under the feedline
+  constraints an edge drawn again is fenced by every resonator, the meeting
+  at its own coupler open; and the count and the design-rule check compare
+  an edge between two couplers with the resonators, where before they left
+  such an edge out altogether (`CheckedWire.resonator`).
+- **Under the feedline constraints** every edge is fenced but the bridged
+  one; the crossing rule is the router's `CrossingConstraints`, split out of
+  the router so the design-rule check runs the same test, and it does not
+  bind within the coupler's reach of a resonator's own anchor, where the
+  edges of its chain pin and run beside it on purpose
+  (`DubinsRouter::setCrossingExemption`); the clearance rule leaves the same
+  room open between a resonator and the edges of its own coupler, in the
+  fence, the count and the check alike. The one-crossing overlay the router
+  offered is not used: it asks for a straight run on the far side that a
+  port beside a feedline cannot give, and the prototype has none.
+- **A wire whose way holds every rule is settled without a search**; a wire
+  a neighbour let go of is searched again even so, because letting it go
+  was a promise that it moves.
+- **Fails** now count a resonator too long, a wire crossing a feedline other
+  than at a right angle, a wire that meets itself and an edge without a
+  way; `-v 1` names them and
+  says, for a wire that found nothing, what stands in its way — the
+  neighbours, the feedlines, the crossing rule, the bodies, or the band
+  itself — by searching again with each left out.
+- **The repair** is serial: a wave of two untried options per candidate
+  coupler, each a snapshot, a turn, a one-round sweep over what it
+  unsettles and a count; the best turn that leaves strictly fewer fails is
+  kept. The prototype evaluates a wave in parallel on cloned grids.
+
+**The refinement of phase 5** is `Driver::refine` over the ring with the
+edges at the launchers, under the feedline constraints, for
+`feedline_refinement_rounds` rounds — a knob of its own, zero by default
+now (the phase is built, and switched off while the coupler rules are
+worked out),
+because the benchmarks keep the outer routing's `refinement_rounds` at
+zero. Every wire is drawn again against the centring price; a resonator is
+lengthened again to the target; a wire that finds no way keeps the one it
+had, as the prototype's refinement does. Unlike the prototype's, a way
+found is taken only when it is not worse than the way the wire had —
+counted against every other wire with the wire lifted, by `conflictsIn` —
+and crosses no feedline other than at a right angle: measured first
+without that verdict, five rounds took 17q from 8 fails to 23 and 21q from
+13 to 38, because a wider way fenced by the two neighbours and the edges
+alone walks into the room of wires further along. With the verdict the
+five rounds leave 17q at the 7 the repair left and take 21q from 12 to 11.
+
+### Measured at six rounds, five relaxations, a hundred repair trials
+
+Every benchmark at its shipped setting (`rounds = 6`, `max_relaxation = 5`,
+`refinement_rounds = 0`, `repair_trials = 100`), `target_resonator_length`
+2500 within 100 on every chip. *Insertion* is the coupler insertion with the
+edges routed; *feedline pass* is what the sweep under the feedline
+constraints ends on; *repair* is what the hundred trials leave; `drc` counts
+the active findings, pairs and crossings. On 45q the repair lowered the
+count by one in 23 minutes, on 57q by three in 28; 69q was still running
+when this was written.
+
+| chip | couplers | chains | edges | angle cost | insertion | feedline pass | repair | **Fails** | `drc` | final stage |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4q  |  4 | 1 |  5 |  28 |   5 s |  0 |  — | **0** |  0 |    5 s |
+| 9q  |  9 | 2 | 10 |  36 |  31 s |  0 |  — | **0** |  0 |   40 s |
+| 17q | 17 | 4 | 20 | 112 |  26 s | 10 |  7 |  **7** |  5 |   99 s |
+| 21q | 21 | 5 | 26 | 110 |  77 s | 14 | 14 | **13** | 12 |  420 s |
+| 33q | 33 | 7 | 40 | 190 | 159 s | 54 | 49 | **49** | 55 | 1299 s |
+| 45q | 45 | 8 | 52 | 242 | 226 s | 67 | 66 | **66** | 83 | 1870 s |
+| 57q | 57 | 9 | 66 | 324 | 354 s | 78 | 75 | **75** | 133 | 2423 s |
+
+The 4q, 9q, 17q and 21q rows are with the two rules the user asked for last
+— the committed edges as obstacles for the edges routed after them, and the
+clearance between every feedline and every resonator — and with the five
+rounds of refinement after the repair; the 33q, 45q and 57q rows are with
+the first rule only and no refinement. The 33q row is a run before the
+option that meets itself was dropped, which is what the row's one wire-loop
+finding was; 45q, 57q and 69q have not been measured with these rules at
+all. `Fails` counts wires and `drc` findings, so a pair of open wires is two
+fails and one finding: on 17q the seven fails are three pairs and two
+crossings, the five findings the same. Dropping a spliced way that meets
+itself costs the greedy options: on 21q it took the count from 11 to 13,
+because the coupler the repair used to turn to is no longer offered.
+The two agree since the crossing rule reads a feedline's straight runs off
+its cells on both sides; before, the router read the moves, and the straight
+lead of a move that bends counted as a bend, so the stage said `Fails: 0` on
+4q and 9q where the check found a wire at 45 degrees beside such a lead. On 17q the resonator clearance took
+the count from 11 to 8 and every edge is drawn again: an edge that no
+longer fits when a coupler's last greedy evaluation had no feasible option
+is routed again against everything committed, and the fence of the
+resonators steers it clear of where the other edges had to go.
+
+Every chain edge is drawn on every chip, every coupler is placed, and on 4q
+and 9q every resonator is the target length within the tolerance with no
+finding. From 17q up the fails are the wires in the fan-in around the
+couplers: open against a neighbour, a few crossing a feedline other than
+at a right angle, one or two resonators off their length. The repair takes
+most of the time on the larger chips — 24 of the 29 minutes on 33q — and
+was still lowering the count when its hundred trials were spent.
+
+What the resonators come to, in layout units, way plus the run to the port:
+
+| chip | shortest | longest | off the target by more than the tolerance |
+| --- | ---: | ---: | ---: |
+| 4q  | 2501 | 2510 | 0 |
+| 9q  | 2494 | 2508 | 0 |
+| 17q | 2449 | 2584 | 0 |
+| 21q | 2406 | 2526 | 0 |
+| 33q | 1985 | 2642 | 3 |
+
+### What is open
+
+1. **The dense fan-in.** With the cut at the target length the couplers sit
+   2 500 units from the qubits, which on the 21-qubit chip and up is deep
+   among the qubit ports, and the edges between couplers run through the
+   fan-in of the wires into those ports. What stands in the way of the
+   wires that fail there is their two ring neighbours, both at once — a
+   pocket the relaxation, which fences the other side while it lets one go,
+   never opens. The prototype's model has the same limit; its figure keeps
+   the couplers nearer the ring and its resonators longer than the rule.
+   **Measured and not kept:** one relaxation level beyond the prototype's
+   that lets go of both ring neighbours at once and fences nothing of the
+   ring. On 21q it found a way for 34 searches that had none, and the chip
+   ended on 16 fails instead of 14: the neighbours let go of found no room
+   in turn, and the crossings stayed.
+2. **The repair is slow.** A trial costs a sweep over the unsettled wires,
+   a second to seven seconds on the chips measured, and the 17-qubit chip
+   was still improving when the hundred trials were spent.
+3. **The coupler insertion takes long on the larger chips**, because every
+   option costs two routed edges per pass: 74 s on 21q.
 
 ## What this step delivers
 
@@ -211,9 +433,9 @@ The prototype's five phases, in its order:
 ```text
 1 inner routing      the inner circuit, inside its unit cells        built
 2 outer routing      the ring, against the inner circuit and itself  built
-3 coupler insertion  the CPW couplers and their ports                open
-4 feedline routing   the launcher-to-launcher chains                 open
-5 feedline refinement                                                open
+3 coupler insertion  the CPW couplers and their ports                built
+4 feedline routing   the launcher-to-launcher chains, with repair    built
+5 feedline refinement                                                built (Driver::refine)
 ```
 
 **One driver runs every routing phase.** The prototype writes the loop out four
@@ -637,8 +859,9 @@ boolean finds an overlap exactly.
 
 ## What is still open
 
-1. **Three of the five phases.** [handover-final-couplers.md](handover-final-couplers.md)
-   says what each has to do and what the first two learned.
+1. **The routing quality of the last three phases from 17 qubits up.** All
+   five are built; [handover-final-couplers.md](handover-final-couplers.md)
+   says where they stand and what to try next.
 2. **The meander is one loop, and it is not checked against the wire it is
    part of.** One rectangular detour is the prototype's one shape; a loop
    whose legs come within the rule of the wire's own other runs breaks no

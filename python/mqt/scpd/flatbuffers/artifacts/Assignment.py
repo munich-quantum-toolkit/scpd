@@ -5,6 +5,7 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
+from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChain
 from mqt.scpd.flatbuffers.design.Connection import Connection
 from mqt.scpd.flatbuffers.design.PortRef import PortRef
 from mqt.scpd.flatbuffers.geometry.Point import Point
@@ -149,8 +150,36 @@ class Assignment(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
         return o == 0
 
+    # The feedline chains the model chose: which resonators one feedline
+    # drives, from one launcher to the next. The Final stage routes each of
+    # them from its first launcher through the couplers of its resonators to
+    # its last.
+    # Assignment
+    def Chains(self, j: int) -> Optional[FeedlineChain]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = FeedlineChain()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # Assignment
+    def ChainsLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # Assignment
+    def ChainsIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        return o == 0
+
 def AssignmentStart(builder: flatbuffers.Builder):
-    builder.StartObject(5)
+    builder.StartObject(6)
 
 def Start(builder: flatbuffers.Builder):
     AssignmentStart(builder)
@@ -209,12 +238,25 @@ def AssignmentStartFeedsVector(builder, numElems: int) -> int:
 def StartFeedsVector(builder, numElems: int) -> int:
     return AssignmentStartFeedsVector(builder, numElems)
 
+def AssignmentAddChains(builder: flatbuffers.Builder, chains: int):
+    builder.PrependUOffsetTRelativeSlot(5, flatbuffers.number_types.UOffsetTFlags.py_type(chains), 0)
+
+def AddChains(builder: flatbuffers.Builder, chains: int):
+    AssignmentAddChains(builder, chains)
+
+def AssignmentStartChainsVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartChainsVector(builder, numElems: int) -> int:
+    return AssignmentStartChainsVector(builder, numElems)
+
 def AssignmentEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
 def End(builder: flatbuffers.Builder) -> int:
     return AssignmentEnd(builder)
 
+import mqt.scpd.flatbuffers.artifacts.FeedlineChain
 import mqt.scpd.flatbuffers.design.Connection
 import mqt.scpd.flatbuffers.design.PortRef
 import mqt.scpd.flatbuffers.geometry.Point
@@ -233,12 +275,14 @@ class AssignmentT(object):
         ring = None,
         launchers = None,
         feeds = None,
+        chains = None,
     ):
         self.connections = connections  # type: Optional[List[mqt.scpd.flatbuffers.design.Connection.ConnectionT]]
         self.objective = objective  # type: float
         self.ring = ring  # type: Optional[List[mqt.scpd.flatbuffers.design.PortRef.PortRefT]]
         self.launchers = launchers  # type: Optional[List[mqt.scpd.flatbuffers.design.PortRef.PortRefT]]
         self.feeds = feeds  # type: Optional[List[mqt.scpd.flatbuffers.geometry.Point.PointT]]
+        self.chains = chains  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.FeedlineChain.FeedlineChainT]]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -294,6 +338,14 @@ class AssignmentT(object):
                 else:
                     point_ = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(assignment.Feeds(i))
                     self.feeds.append(point_)
+        if not assignment.ChainsIsNone():
+            self.chains = []
+            for i in range(assignment.ChainsLength()):
+                if assignment.Chains(i) is None:
+                    self.chains.append(None)
+                else:
+                    feedlineChain_ = mqt.scpd.flatbuffers.artifacts.FeedlineChain.FeedlineChainT.InitFromObj(assignment.Chains(i))
+                    self.chains.append(feedlineChain_)
 
     # AssignmentT
     def Pack(self, builder):
@@ -320,6 +372,14 @@ class AssignmentT(object):
             for i in reversed(range(len(self.feeds))):
                 self.feeds[i].Pack(builder)
             feeds = builder.EndVector()
+        if self.chains is not None:
+            chainslist = []
+            for i in range(len(self.chains)):
+                chainslist.append(self.chains[i].Pack(builder))
+            AssignmentStartChainsVector(builder, len(self.chains))
+            for i in reversed(range(len(self.chains))):
+                builder.PrependUOffsetTRelative(chainslist[i])
+            chains = builder.EndVector()
         AssignmentStart(builder)
         if self.connections is not None:
             AssignmentAddConnections(builder, connections)
@@ -330,5 +390,7 @@ class AssignmentT(object):
             AssignmentAddLaunchers(builder, launchers)
         if self.feeds is not None:
             AssignmentAddFeeds(builder, feeds)
+        if self.chains is not None:
+            AssignmentAddChains(builder, chains)
         assignment = AssignmentEnd(builder)
         return assignment

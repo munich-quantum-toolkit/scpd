@@ -12,6 +12,7 @@
 
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/BucketQueue.hpp"
+#include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
@@ -70,7 +71,9 @@ public:
   [[nodiscard]] std::size_t cells() const {
     return static_cast<std::size_t>(width_) * height_;
   }
-  [[nodiscard]] const MovePrimitives& primitives() const { return *primitives_; }
+  [[nodiscard]] const MovePrimitives& primitives() const {
+    return *primitives_;
+  }
   [[nodiscard]] const SearchParams& params() const { return params_; }
 
   /// Change the search parameters. Only a changed bend penalty rebuilds the
@@ -154,6 +157,12 @@ public:
   void setSingleCrossingFeedline(const Path* feedline, int straightRadius,
                                  int curveRadius);
 
+  /// Cells the crossing constraints do not bind in the next orthogonal
+  /// routes: the room around a resonator's own coupler, where the edges of
+  /// its chain pin and run beside it on purpose. Replaces the exemption set
+  /// before; empty for none.
+  void setCrossingExemption(const std::vector<uint32_t>& cells);
+
   /// Whether a route may enter a cell under a heading, by the test the
   /// orthogonal search runs on every move, so that a check of a committed
   /// path asks exactly what the search asked.
@@ -163,6 +172,12 @@ public:
   /// The constraint mask of a cell: 0 free, 0xFF a curve or pin zone, else
   /// the bits of the headings of the straight runs present there.
   [[nodiscard]] uint8_t constraintMaskAt(uint32_t x, uint32_t y) const;
+
+  /// The constraints themselves, which the design-rule check reads so that
+  /// what it reports is what the search refused.
+  [[nodiscard]] const CrossingConstraints& crossingConstraints() const {
+    return constraints_;
+  }
 
   // --- Searches -----------------------------------------------------------
 
@@ -241,16 +256,18 @@ private:
   static constexpr uint32_t MAX_TRIE_DEPTH = 60;
 
   static constexpr uint32_t FIELD_DISTANCE_BITS = 22;
-  static constexpr uint32_t FIELD_DISTANCE_MASK = (1U << FIELD_DISTANCE_BITS) - 1U;
+  static constexpr uint32_t FIELD_DISTANCE_MASK =
+      (1U << FIELD_DISTANCE_BITS) - 1U;
   static constexpr uint32_t FIELD_BUCKETS = 1024;
   static constexpr uint8_t SIDE_FAR = 0x80;
   static constexpr uint8_t SIDE_STRAIGHT = 0x40;
-  static constexpr uint8_t CURVE_ZONE = 0xFF;
+  static constexpr uint8_t CURVE_ZONE = CrossingConstraints::CURVE_ZONE;
 
   void buildTables();
   void rebuildPacked();
   void buildDistanceField(uint32_t tx, uint32_t ty);
-  bool beginSingleCrossingOverlay(const PathPoint& source, const PathPoint& target);
+  bool beginSingleCrossingOverlay(const PathPoint& source,
+                                  const PathPoint& target);
   void endSingleCrossingOverlay();
 
   [[nodiscard]] uint32_t stateIndex(const uint32_t x, const uint32_t y,
@@ -299,7 +316,9 @@ private:
   std::vector<uint8_t> packed_;
   bool packedValid_ = false;
 
-  std::vector<uint8_t> constraints_;
+  CrossingConstraints constraints_;
+  std::vector<uint8_t> exempt_;
+  std::vector<uint32_t> exemptCells_;
   std::vector<uint8_t> crossingSide_;
   std::vector<uint32_t> crossingSideCells_;
   bool crossingSideActive_ = false;

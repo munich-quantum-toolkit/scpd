@@ -167,10 +167,25 @@ Problems validate(const ArtifactT& artifact) {
   case StageOutput::NONE:
     problems.emplace_back("output is missing");
     break;
-  case StageOutput::Assignment:
-    validateEach(artifact.output.AsAssignment()->connections, "connection",
-                 problems);
+  case StageOutput::Assignment: {
+    const auto& assignment = *artifact.output.AsAssignment();
+    validateEach(assignment.connections, "connection", problems);
+    // A chain names ring nodes, and every one of them has to be a node of
+    // the ring it belongs to.
+    for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
+      if (assignment.chains[index] == nullptr) {
+        problems.push_back(std::format("chain {}: missing", index));
+        continue;
+      }
+      for (const auto node : assignment.chains[index]->nodes) {
+        if (node >= assignment.ring.size()) {
+          problems.push_back(std::format("chain {} names ring node {} of {}",
+                                         index, node, assignment.ring.size()));
+        }
+      }
+    }
     break;
+  }
   case StageOutput::FinalRouting: {
     // A wire of the router grid is the cells it runs over with the heading it
     // held in each, so two consecutive cells differ by at most one along each
@@ -181,6 +196,11 @@ Problems validate(const ArtifactT& artifact) {
     validateFinalWires(routing.wires, "wire", problems);
     validateFinalWires(routing.inner, "inner wire", problems);
     validateFinalWires(routing.feedlines, "feedline", problems);
+    if (routing.feedline_edges.size() != routing.feedlines.size()) {
+      problems.push_back(std::format("{} feedline edges describe {} feedlines",
+                                     routing.feedline_edges.size(),
+                                     routing.feedlines.size()));
+    }
     for (std::size_t index = 0; index < routing.phases.size(); ++index) {
       if (routing.phases[index] == nullptr) {
         problems.push_back(std::format("phase {}: missing", index));

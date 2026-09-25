@@ -31,6 +31,7 @@
 namespace mqt::scpd::pipeline {
 namespace {
 
+namespace fba = flatbuffers::artifacts;
 namespace fbd = flatbuffers::design;
 
 /// How much a ring node's distance from its own nearest launcher counts
@@ -77,7 +78,8 @@ RingEdges ringEdgesOf(const AssignmentInputs& inputs) {
     const auto from = ring.anchors[position];
     const auto to = ring.anchors[(position + 1) % ring.anchors.size()];
     // The ports between the two, walking forward around the cycle.
-    auto between = to > from ? to - from - 1 : inputs.ring.size() - from + to - 1;
+    auto between =
+        to > from ? to - from - 1 : inputs.ring.size() - from + to - 1;
     ring.leaving[position] = ring.edges.size();
     ring.edges.emplace_back(position, (position + 1) % ring.anchors.size());
     ring.weights.push_back(static_cast<double>(between));
@@ -88,7 +90,8 @@ RingEdges ringEdgesOf(const AssignmentInputs& inputs) {
 /// The assigner of the first release.
 class OrderedMilpAssigner final : public IAssigner {
 public:
-  [[nodiscard]] AssignmentT run(const ChipT& chip, const CapacityPlanT& capacity,
+  [[nodiscard]] AssignmentT run(const ChipT& chip,
+                                const CapacityPlanT& capacity,
                                 const GlobalRoutingT& global,
                                 const ConfigT& config) const override {
     const auto inputs = assignmentInputs(chip, capacity, global);
@@ -109,12 +112,13 @@ public:
     const auto variables = build(model, inputs, ring, config);
     const auto solution = solveWith(model, config);
     if (!solution.hasValues()) {
-      throw std::runtime_error(std::format("the assignment did not solve: {}{}",
-                                           milp::statusName(solution.status),
-                                           solution.message.empty() ? "" : ", " + solution.message));
+      throw std::runtime_error(
+          std::format("the assignment did not solve: {}{}",
+                      milp::statusName(solution.status),
+                      solution.message.empty() ? "" : ", " + solution.message));
     }
     assignment.objective = solution.objective;
-    readBack(assignment, inputs, variables, solution);
+    readBack(assignment, inputs, ring, variables, solution);
     return assignment;
   }
 
@@ -134,11 +138,14 @@ private:
     milp::Var offset;
   };
 
-  [[nodiscard]] static Variables build(milp::Model& model, const AssignmentInputs& inputs,
-                                       const RingEdges& ring, const ConfigT& config) {
+  [[nodiscard]] static Variables build(milp::Model& model,
+                                       const AssignmentInputs& inputs,
+                                       const RingEdges& ring,
+                                       const ConfigT& config) {
     const auto launchers = static_cast<double>(inputs.launchers.size());
     const auto& rules = *config.rules;
-    const auto utilizationCap = static_cast<double>(rules.max_feedline_utilization);
+    const auto utilizationCap =
+        static_cast<double>(rules.max_feedline_utilization);
     const auto terminations = static_cast<double>(rules.feedline_terminations);
     const auto target = launcherTarget(config);
 
@@ -168,13 +175,16 @@ private:
     const auto span = launchers - 1.0;
     variables.flow.reserve(inputs.ring.size());
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
-      variables.flow.push_back(model.addInteger(std::format("flow_{}", index), 0.0, span));
+      variables.flow.push_back(
+          model.addInteger(std::format("flow_{}", index), 0.0, span));
     }
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
-      variables.launcher.push_back(model.addBinary(std::format("launcher_{}", index)));
-      variables.termination.push_back(model.addBinary(std::format("termination_{}", index)));
-      variables.utilization.push_back(
-          model.addInteger(std::format("utilization_{}", index), 0.0, utilizationCap));
+      variables.launcher.push_back(
+          model.addBinary(std::format("launcher_{}", index)));
+      variables.termination.push_back(
+          model.addBinary(std::format("termination_{}", index)));
+      variables.utilization.push_back(model.addInteger(
+          std::format("utilization_{}", index), 0.0, utilizationCap));
     }
     for (std::size_t index = 0; index < ring.edges.size(); ++index) {
       variables.edge.push_back(
@@ -187,7 +197,8 @@ private:
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
       milp::LinearExpr degree;
       for (std::size_t edge = 0; edge < ring.edges.size(); ++edge) {
-        if (ring.edges[edge].first == index || ring.edges[edge].second == index) {
+        if (ring.edges[edge].first == index ||
+            ring.edges[edge].second == index) {
           degree.add(variables.edge[edge], 1.0);
         }
       }
@@ -205,15 +216,18 @@ private:
     // the second anchor whenever the ring opens on a conventional port; the
     // constraint then held the wrong resonator's launcher on four of the eight
     // benchmark chips.
-    model.addEqual("flow_start", milp::LinearExpr(variables.flow.front()), span);
+    model.addEqual("flow_start", milp::LinearExpr(variables.flow.front()),
+                   span);
     for (std::size_t index = 1; index < inputs.ring.size(); ++index) {
-      const auto step = milp::LinearExpr(variables.flow[index]) - variables.flow[index - 1];
+      const auto step =
+          milp::LinearExpr(variables.flow[index]) - variables.flow[index - 1];
       if (!inputs.isResonator[index]) {
         model.addLessOrEqual(std::format("flow_step_{}", index), step, -1.0);
         continue;
       }
       model.addLessOrEqual(std::format("flow_step_{}", index),
-                           step + variables.launcher[ring.positionOf[index]], 0.0);
+                           step + variables.launcher[ring.positionOf[index]],
+                           0.0);
     }
 
     // The utilization of a corridor counts up from every launcher and resets
@@ -221,32 +235,39 @@ private:
     // carries. A big-M pair per anchor switches between the two.
     const auto bigM = static_cast<double>(ring.anchors.size()) + 2.0;
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
-      const auto previous = variables.utilization[(index + 1) % ring.anchors.size()];
+      const auto previous =
+          variables.utilization[(index + 1) % ring.anchors.size()];
       const auto leaving = variables.edge[ring.leaving[index]];
       const auto starts = model.addBinary(std::format("starts_{}", index));
 
       // `starts` is one exactly where the anchor ends a chain and the chord
       // leaving it is unused, which is where a new corridor begins.
       model.addLessOrEqual(std::format("starts_a_{}", index),
-                           milp::LinearExpr(starts) - variables.launcher[index] -
+                           milp::LinearExpr(starts) -
+                               variables.launcher[index] -
                                variables.termination[index],
                            0.0);
       model.addLessOrEqual(std::format("starts_b_{}", index),
                            milp::LinearExpr(starts) + leaving, 1.0);
       model.addGreaterOrEqual(std::format("starts_c_{}", index),
-                              milp::LinearExpr(starts) - variables.launcher[index] -
+                              milp::LinearExpr(starts) -
+                                  variables.launcher[index] -
                                   variables.termination[index] + leaving,
                               0.0);
 
       const auto here = milp::LinearExpr(variables.utilization[index]);
       model.addLessOrEqual(std::format("util_reset_up_{}", index),
-                           here + (bigM * milp::LinearExpr(starts)), 1.0 + bigM);
+                           here + (bigM * milp::LinearExpr(starts)),
+                           1.0 + bigM);
       model.addGreaterOrEqual(std::format("util_reset_low_{}", index),
-                              here - (bigM * milp::LinearExpr(starts)), 1.0 - bigM);
+                              here - (bigM * milp::LinearExpr(starts)),
+                              1.0 - bigM);
       model.addLessOrEqual(std::format("util_step_up_{}", index),
-                           here - previous - (bigM * milp::LinearExpr(starts)), 1.0);
-      model.addGreaterOrEqual(std::format("util_step_low_{}", index),
-                              here - previous + (bigM * milp::LinearExpr(starts)), 1.0);
+                           here - previous - (bigM * milp::LinearExpr(starts)),
+                           1.0);
+      model.addGreaterOrEqual(
+          std::format("util_step_low_{}", index),
+          here - previous + (bigM * milp::LinearExpr(starts)), 1.0);
     }
 
     milp::LinearExpr activeLaunchers;
@@ -255,7 +276,8 @@ private:
       activeLaunchers.add(variables.launcher[index], 1.0);
       activeTerminations.add(variables.termination[index], 1.0);
     }
-    model.addEqual("launcher_target", activeLaunchers, static_cast<double>(target));
+    model.addEqual("launcher_target", activeLaunchers,
+                   static_cast<double>(target));
     model.addEqual("termination_target", activeTerminations, terminations);
 
     // Between two assignments that cross equally often, the one that sends
@@ -267,15 +289,19 @@ private:
       // launcher it is nearest to. The potential spans the whole ring, so this
       // reaches as far as the ring is long.
       const auto turns = std::ceil((span + launchers) / launchers);
-      const auto wrap = model.addInteger(std::format("wrap_{}", index), -turns, 1.0);
-      const auto gap = model.addContinuous(std::format("gap_{}", index), 0.0, launchers / 2.0,
-                                           PROXIMITY_WEIGHT);
-      const auto placed = milp::LinearExpr(variables.flow[index]) + variables.offset;
+      const auto wrap =
+          model.addInteger(std::format("wrap_{}", index), -turns, 1.0);
+      const auto gap = model.addContinuous(std::format("gap_{}", index), 0.0,
+                                           launchers / 2.0, PROXIMITY_WEIGHT);
+      const auto placed =
+          milp::LinearExpr(variables.flow[index]) + variables.offset;
       model.addGreaterOrEqual(std::format("gap_up_{}", index),
-                              milp::LinearExpr(gap) - placed - (launchers * milp::LinearExpr(wrap)),
+                              milp::LinearExpr(gap) - placed -
+                                  (launchers * milp::LinearExpr(wrap)),
                               -wanted);
       model.addGreaterOrEqual(std::format("gap_low_{}", index),
-                              milp::LinearExpr(gap) + placed + (launchers * milp::LinearExpr(wrap)),
+                              milp::LinearExpr(gap) + placed +
+                                  (launchers * milp::LinearExpr(wrap)),
                               wanted);
     }
 
@@ -289,11 +315,65 @@ private:
       return config.stages->assignment->launcher_target;
     }
     throw std::invalid_argument(
-        "[stages.assignment] launcher_target is missing; it is a per-chip figure with no default");
+        "[stages.assignment] launcher_target is missing; it is a per-chip "
+        "figure with no default");
+  }
+
+  /// Which ring node is the last anchor of a chain that ends at a launcher.
+  ///
+  /// The walk of `readBackChains`, run before the feeds are placed, because
+  /// where a resonator is fed depends on whether its chain ends on it: the
+  /// feed of such a node has to lie *before* its launcher along the walk,
+  /// or the chain runs past the launcher and has to come back to it.
+  [[nodiscard]] static std::vector<bool>
+  endsAChain(const AssignmentInputs& inputs, const RingEdges& ring,
+             const Variables& variables, const milp::Solution& solution) {
+    std::vector<bool> ends(inputs.ring.size(), false);
+    const auto anchors = ring.anchors.size();
+    if (anchors == 0) {
+      return ends;
+    }
+    const auto used = [&](const std::size_t edge) {
+      return std::llround(solution.valueOf(variables.edge[edge])) == 1;
+    };
+    const auto launcherAt = [&](const std::size_t position) {
+      return std::llround(solution.valueOf(variables.launcher[position])) == 1;
+    };
+    const auto entering = [&](const std::size_t position) {
+      return ring.leaving[(position + anchors - 1) % anchors];
+    };
+    std::vector<bool> taken(anchors, false);
+    for (std::size_t first = 0; first < anchors; ++first) {
+      if (taken[first] || used(entering(first))) {
+        continue;
+      }
+      auto position = first;
+      std::size_t count = 0;
+      while (true) {
+        taken[position] = true;
+        ++count;
+        if (!used(ring.leaving[position])) {
+          break;
+        }
+        const auto next = (position + 1) % anchors;
+        if (taken[next]) {
+          break;
+        }
+        position = next;
+      }
+      // A chain of one anchor both starts and ends on it. The start wins:
+      // its feed has to leave the launcher the chain starts at, and there
+      // is no second launcher to arrive at.
+      if (count > 1 && launcherAt(position)) {
+        ends[ring.anchors[position]] = true;
+      }
+    }
+    return ends;
   }
 
   static void readBack(AssignmentT& assignment, const AssignmentInputs& inputs,
-                       const Variables& variables, const milp::Solution& solution) {
+                       const RingEdges& ring, const Variables& variables,
+                       const milp::Solution& solution) {
     const auto launchers = inputs.launchers.size();
     const auto offset = std::llround(solution.valueOf(variables.offset));
 
@@ -305,20 +385,37 @@ private:
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
       const auto placed = std::llround(solution.valueOf(variables.flow[index]));
       const auto count = static_cast<long long>(launchers);
-      slotOf[index] = static_cast<std::size_t>((((placed + offset) % count) + count) % count);
+      slotOf[index] = static_cast<std::size_t>(
+          (((placed + offset) % count) + count) % count);
       assignment.launchers.emplace_back(inputs.launchers[slotOf[index]]);
     }
 
     // Where each node is fed from. A conventional port is fed at its launcher
     // slot, and no two of them share one. A resonator is fed at no launcher at
-    // all: the wire that reaches it comes past the slot, so it moves onto the
-    // segment that runs from its own launcher to the next launcher along.
+    // all: the wire that reaches it comes past the slot, so it moves onto one
+    // of the two segments its launcher lies between.
     //
-    // The next launcher along is the slot *below* by index, because the
-    // potential falls as the ring is walked. Where a launcher was given n
-    // resonators they land at 1/(n+1) ... n/(n+1) of that segment, in ring
-    // order, so the one the walk reaches first is the one nearest its own
-    // launcher and the wires of the group do not cross each other.
+    // **Which segment depends on where its chain goes.** The ring is walked
+    // one way, and the launcher after a slot along that walk is the slot
+    // *below* by index, because the potential falls as the ring is walked.
+    //
+    // - A resonator the chain runs *on past* is fed on the segment that
+    //   leaves its launcher, so the chain reaches its launcher first and its
+    //   feed after: the walk stays in one direction.
+    // - A resonator its chain **ends on** is fed on the segment that arrives
+    //   at its launcher, so the chain reaches its feed first and the launcher
+    //   after. Fed on the leaving segment instead, the chain would run past
+    //   its own launcher and have to turn back to it — on 4q that put the
+    //   coupler of the top-left qubit a whole launcher segment beyond
+    //   `Chip.port0`, and the feedline out of it had to hook back around the
+    //   coupler to reach the launcher it had already passed. The prototype
+    //   feeds an ending resonator before the last launcher for this reason.
+    //
+    // Where a launcher was given n resonators on one segment they land at
+    // 1/(n+1) ... n/(n+1) of it, ordered so that the one the walk reaches
+    // first is the one it reaches first on that segment too, and the wires of
+    // the group do not cross each other.
+    const auto ends = endsAChain(inputs, ring, variables, solution);
     assignment.feeds.reserve(inputs.ring.size());
     std::vector<std::vector<std::size_t>> given(launchers);
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
@@ -326,25 +423,40 @@ private:
       given[slotOf[index]].push_back(index);
     }
     for (std::size_t slot = 0; slot < launchers; ++slot) {
-      const auto resonators = static_cast<std::size_t>(std::ranges::count_if(
-          given[slot], [&](const std::size_t index) { return inputs.isResonator[index]; }));
-      if (resonators == 0) {
-        continue;
-      }
       const auto& here = inputs.launcherPosition[slot];
-      const auto& there = inputs.launcherPosition[(slot + launchers - 1) % launchers];
-      if (geometry::distance(here, there) == 0.0) {
-        // The two slots are one point and there is nothing to interpolate.
-        continue;
-      }
-      std::size_t taken = 0;
-      for (const auto index : given[slot]) {
-        if (!inputs.isResonator[index]) {
+      // The segment that leaves the slot along the walk, and the one that
+      // arrives at it.
+      const auto& after =
+          inputs.launcherPosition[(slot + launchers - 1) % launchers];
+      const auto& before = inputs.launcherPosition[(slot + 1) % launchers];
+      for (const bool ending : {false, true}) {
+        std::vector<std::size_t> group;
+        for (const auto index : given[slot]) {
+          if (inputs.isResonator[index] && ends[index] == ending) {
+            group.push_back(index);
+          }
+        }
+        if (group.empty()) {
           continue;
         }
-        const auto ratio = static_cast<double>(++taken) / static_cast<double>(resonators + 1);
-        assignment.feeds[index] = geometry::Point(here.x() + (ratio * (there.x() - here.x())),
-                                                  here.y() + (ratio * (there.y() - here.y())));
+        const auto& there = ending ? before : after;
+        if (geometry::distance(here, there) == 0.0) {
+          // The two slots are one point and there is nothing to interpolate.
+          continue;
+        }
+        // On the leaving segment the walk runs from the launcher outward, so
+        // the first of the group in ring order sits nearest it. On the
+        // arriving segment the walk runs toward the launcher, so the first in
+        // ring order sits farthest from it.
+        const auto count = group.size();
+        for (std::size_t taken = 0; taken < count; ++taken) {
+          const auto step = ending ? (count - taken) : (taken + 1);
+          const auto ratio =
+              static_cast<double>(step) / static_cast<double>(count + 1);
+          assignment.feeds[group[taken]] =
+              geometry::Point(here.x() + (ratio * (there.x() - here.x())),
+                              here.y() + (ratio * (there.y() - here.y())));
+        }
       }
     }
 
@@ -361,18 +473,93 @@ private:
         connection->source_role = fbd::AssignedRole::ResonatorSource;
         connection->target_role = fbd::AssignedRole::ResonatorTarget;
       } else {
-        connection->source = std::make_unique<fbd::PortRef>(inputs.launchers[slotOf[index]]);
+        connection->source =
+            std::make_unique<fbd::PortRef>(inputs.launchers[slotOf[index]]);
         connection->source_role = fbd::AssignedRole::FeedlineSource;
         connection->target_role = fbd::AssignedRole::FeedlineTarget;
       }
       assignment.connections.push_back(std::move(connection));
+    }
+
+    readBackChains(assignment, inputs, ring, variables, solution, slotOf);
+  }
+
+  /// The feedline chains the model chose, read off the chord, launcher and
+  /// termination variables.
+  ///
+  /// Every anchor has degree two: a chord on either side, or a chord and an
+  /// end. A chain is walked from an anchor whose entering chord is unused,
+  /// along the used chords, to the anchor whose leaving chord is unused, so
+  /// it runs in ring order. Its launchers are the slots its two end anchors
+  /// were given: the first anchor's feed lies on the segment that leaves its
+  /// slot, so the chain starts there, and the last anchor's feed lies on the
+  /// segment that arrives at its slot, so the chain ends there without
+  /// turning back. `endsAChain` is what puts that last feed on the arriving
+  /// segment, and it runs this same walk. An end that is a termination has
+  /// no launcher.
+  static void readBackChains(AssignmentT& assignment,
+                             const AssignmentInputs& inputs,
+                             const RingEdges& ring, const Variables& variables,
+                             const milp::Solution& solution,
+                             const std::vector<std::size_t>& slotOf) {
+    const auto anchors = ring.anchors.size();
+    const auto used = [&](const std::size_t edge) {
+      return std::llround(solution.valueOf(variables.edge[edge])) == 1;
+    };
+    const auto launcherAt = [&](const std::size_t position) {
+      return std::llround(solution.valueOf(variables.launcher[position])) == 1;
+    };
+    // The chord entering an anchor is the one leaving the anchor before it.
+    const auto entering = [&](const std::size_t position) {
+      return ring.leaving[(position + anchors - 1) % anchors];
+    };
+    std::vector<bool> taken(anchors, false);
+    for (std::size_t first = 0; first < anchors; ++first) {
+      if (taken[first] || used(entering(first))) {
+        continue;
+      }
+      auto chain = std::make_unique<fba::FeedlineChainT>();
+      auto position = first;
+      while (true) {
+        taken[position] = true;
+        chain->nodes.push_back(
+            static_cast<std::uint32_t>(ring.anchors[position]));
+        if (!used(ring.leaving[position])) {
+          break;
+        }
+        position = (position + 1) % anchors;
+        if (taken[position]) {
+          break;
+        }
+      }
+      const auto last = position;
+      if (launcherAt(first)) {
+        chain->start = std::make_unique<fbd::PortRef>(
+            inputs.launchers[slotOf[ring.anchors[first]]]);
+      }
+      if (launcherAt(last)) {
+        chain->end = std::make_unique<fbd::PortRef>(
+            inputs.launchers[slotOf[ring.anchors[last]]]);
+      }
+      assignment.chains.push_back(std::move(chain));
+    }
+    // A ring where every chord is used has no end at all, which the degree
+    // constraints forbid; it is written as one chain from the first anchor
+    // rather than dropped, so that nothing downstream is left without it.
+    if (assignment.chains.empty() && anchors > 0) {
+      auto chain = std::make_unique<fba::FeedlineChainT>();
+      for (const auto anchor : ring.anchors) {
+        chain->nodes.push_back(static_cast<std::uint32_t>(anchor));
+      }
+      assignment.chains.push_back(std::move(chain));
     }
   }
 };
 
 } // namespace
 
-AssignmentInputs assignmentInputs(const ChipT& chip, const CapacityPlanT& capacity,
+AssignmentInputs assignmentInputs(const ChipT& chip,
+                                  const CapacityPlanT& capacity,
                                   const GlobalRoutingT& global) {
   if (capacity.launchers.empty()) {
     throw std::invalid_argument("the capacity plan carries no launcher");
@@ -417,7 +604,8 @@ AssignmentInputs assignmentInputs(const ChipT& chip, const CapacityPlanT& capaci
     std::size_t best = 0;
     auto shortest = geometry::distance(center, positions.front());
     for (std::size_t index = 1; index < positions.size(); ++index) {
-      if (const auto gap = geometry::distance(center, positions[index]); gap < shortest) {
+      if (const auto gap = geometry::distance(center, positions[index]);
+          gap < shortest) {
         shortest = gap;
         best = index;
       }

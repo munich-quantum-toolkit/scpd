@@ -190,6 +190,14 @@ to `FeedlineTarget`. A resonator carries `ResonatorSource` to `ResonatorTarget`
 with no source port: the port that feeds it is the coupler the Final stage
 inserts.
 
+**The chains are in the artifact.** The model gives every resonator degree
+two on the ring — a chord on either side, or a chord and an end, an end being
+a launcher or a permitted termination — and a run of resonators joined by
+chords is what one feedline drives. `Assignment.chains` carries each of them
+in ring order with the launcher slot of its first and its last resonator,
+which is what the Final stage routes launcher to coupler to launcher. See
+[decision 0032](decisions/0032-the-coupler-couples-along-the-ring.md).
+
 **This is where `AssignedRole` is set.** Every connection the assignment
 produces carries a source and target role. The one role it cannot place yet is
 `ResonatorSource`, whose port does not exist until the Final stage inserts the
@@ -722,7 +730,7 @@ other stage is read from a run directory, which `--run-dir` names.
 | `assign`   | `03-assign.fb`   | + the ring, and each node's chord to the launcher it got |
 | `corridor` | `04-corridor.fb` | + the partitions each wire uses, and every crossing slot |
 | `detail`   | `05-detail.fb`   | + every wire as its bends, and the clearance around it   |
-| `final`    | `06-final.fb`    | + Dubins paths, couplers, bridges                        |
+| `final`    | `06-final.fb`    | + Dubins paths, coupler bodies, feedline chains          |
 | `aligned`  | `07-geometry.fb` | fitted analytic wires, real coupler/bridge footprints    |
 
 `mqt-scpd render --stage <name>` takes the same names and writes the same
@@ -814,7 +822,16 @@ An **advisory** rule is compiled and unit-tested but skipped on a normal run.
 
 Rule 2 runs the router's own `crossing_allowed_orthogonal` test in cell space,
 so what it reports is exactly what the router would have refused to produce; the
-layout-space form is geometric. Rule 3 works the same way, and for the same
+layout-space form is geometric. The test reads a feedline's straight runs off
+its cells — a cell that steps to the next along its own heading is on a
+straight run — because the artifact carries cells and headings and no moves,
+and the router builds its own constraints the same way, so that the straight
+lead of a move that bends is the straight run it is in copper on both sides.
+The rule binds on no edge of a chain, at a launcher or between two couplers:
+the search draws every edge free of it and fences it by every other edge
+instead, so two edges beside each other are rule 1's business. Every edge is
+in the constraint the rule tests against, the ones at the launchers included,
+so a wire that passes one crosses it at a right angle. Rule 3 works the same way, and for the same
 reason: the prototype's router and its end-of-stage check call one
 implementation, so the two cannot drift apart. See
 [decision 0024](decisions/0024-wire-loop-is-active.md). Rules 7 and 8 are

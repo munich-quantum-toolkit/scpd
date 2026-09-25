@@ -92,14 +92,30 @@ class FinalParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 10
 
-    # Rounds that route every wire again against a proximity price, to widen
-    # the room around it. A wire that does not route keeps the way it had.
+    # Rounds that route every wire of the ring again against a proximity
+    # price after the outer routing, to widen the room around it. A wire that
+    # does not route keeps the way it had.
     # FinalParams
     def RefinementRounds(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 2
+
+    # The same after the feedline routing, over the ring with the edges of
+    # the chains, under the feedline constraints: the fifth phase of the
+    # stage, the prototype's feedline refinement.
+    #
+    # Off by default for now, by the user's decision: the phase is built and
+    # keeps its verdict, but while the coupler rules are being worked out the
+    # measurements are to show what the sweep and the repair leave, not what
+    # a later pass moved. Set it to five to run it again.
+    # FinalParams
+    def FeedlineRefinementRounds(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
 
     # How long a resonator's way is made before the coupler is spliced into
     # it, in layout units. Zero switches the meander off.
@@ -111,7 +127,7 @@ class FinalParams(object):
     # on the 17-qubit chip and 6000 on the 69-qubit one.
     # FinalParams
     def MeanderLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 3000.0
@@ -125,7 +141,7 @@ class FinalParams(object):
     # and multiplied by that sum at the point of use.
     # FinalParams
     def BendPenaltyNorm(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 2.5
@@ -133,7 +149,7 @@ class FinalParams(object):
     # What running beside another wire costs, on the same scale.
     # FinalParams
     def WireProximityPenaltyNorm(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.00125
@@ -141,7 +157,7 @@ class FinalParams(object):
     # What running beside an obstacle costs, on the same scale.
     # FinalParams
     def StaticProximityPenaltyNorm(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.00033
@@ -150,7 +166,7 @@ class FinalParams(object):
     # units. Zero switches the penalty off.
     # FinalParams
     def ObstaclePenaltyReach(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 100.0
@@ -159,20 +175,46 @@ class FinalParams(object):
     # units. The prototype carries it as 20 by 3 cells.
     # FinalParams
     def CouplerLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 200.0
 
     # FinalParams
     def CouplerHeight(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(32))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 26.0
 
+    # How many times the feedline repair may turn a placed coupler to another
+    # of its options while the feedlines leave fails. The prototype's
+    # `max_repair_rounds`. Zero switches the repair off.
+    # FinalParams
+    def RepairTrials(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 100
+
+    # The last phase of the stage to run: "inner", "outer", "couplers",
+    # "feedlines" or "refined". Empty runs the whole stage.
+    #
+    # The five phases are the five snapshots the artifact carries and the
+    # five values `plot --phase` and `render --phase` take, so a run stopped
+    # after a phase is drawn by the name it was stopped at. The stage still
+    # says what it came to and still writes its artifact; the phases after
+    # the one named are simply not run, which is what makes a stop worth
+    # more than a picture of a finished run.
+    # FinalParams
+    def StopAfter(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(36))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
 def FinalParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(14)
+    builder.StartObject(17)
 
 def Start(builder: flatbuffers.Builder):
     FinalParamsStart(builder)
@@ -219,47 +261,65 @@ def FinalParamsAddRefinementRounds(builder: flatbuffers.Builder, refinementRound
 def AddRefinementRounds(builder: flatbuffers.Builder, refinementRounds: int):
     FinalParamsAddRefinementRounds(builder, refinementRounds)
 
+def FinalParamsAddFeedlineRefinementRounds(builder: flatbuffers.Builder, feedlineRefinementRounds: int):
+    builder.PrependUint32Slot(7, feedlineRefinementRounds, 0)
+
+def AddFeedlineRefinementRounds(builder: flatbuffers.Builder, feedlineRefinementRounds: int):
+    FinalParamsAddFeedlineRefinementRounds(builder, feedlineRefinementRounds)
+
 def FinalParamsAddMeanderLength(builder: flatbuffers.Builder, meanderLength: float):
-    builder.PrependFloat64Slot(7, meanderLength, 3000.0)
+    builder.PrependFloat64Slot(8, meanderLength, 3000.0)
 
 def AddMeanderLength(builder: flatbuffers.Builder, meanderLength: float):
     FinalParamsAddMeanderLength(builder, meanderLength)
 
 def FinalParamsAddBendPenaltyNorm(builder: flatbuffers.Builder, bendPenaltyNorm: float):
-    builder.PrependFloat64Slot(8, bendPenaltyNorm, 2.5)
+    builder.PrependFloat64Slot(9, bendPenaltyNorm, 2.5)
 
 def AddBendPenaltyNorm(builder: flatbuffers.Builder, bendPenaltyNorm: float):
     FinalParamsAddBendPenaltyNorm(builder, bendPenaltyNorm)
 
 def FinalParamsAddWireProximityPenaltyNorm(builder: flatbuffers.Builder, wireProximityPenaltyNorm: float):
-    builder.PrependFloat64Slot(9, wireProximityPenaltyNorm, 0.00125)
+    builder.PrependFloat64Slot(10, wireProximityPenaltyNorm, 0.00125)
 
 def AddWireProximityPenaltyNorm(builder: flatbuffers.Builder, wireProximityPenaltyNorm: float):
     FinalParamsAddWireProximityPenaltyNorm(builder, wireProximityPenaltyNorm)
 
 def FinalParamsAddStaticProximityPenaltyNorm(builder: flatbuffers.Builder, staticProximityPenaltyNorm: float):
-    builder.PrependFloat64Slot(10, staticProximityPenaltyNorm, 0.00033)
+    builder.PrependFloat64Slot(11, staticProximityPenaltyNorm, 0.00033)
 
 def AddStaticProximityPenaltyNorm(builder: flatbuffers.Builder, staticProximityPenaltyNorm: float):
     FinalParamsAddStaticProximityPenaltyNorm(builder, staticProximityPenaltyNorm)
 
 def FinalParamsAddObstaclePenaltyReach(builder: flatbuffers.Builder, obstaclePenaltyReach: float):
-    builder.PrependFloat64Slot(11, obstaclePenaltyReach, 100.0)
+    builder.PrependFloat64Slot(12, obstaclePenaltyReach, 100.0)
 
 def AddObstaclePenaltyReach(builder: flatbuffers.Builder, obstaclePenaltyReach: float):
     FinalParamsAddObstaclePenaltyReach(builder, obstaclePenaltyReach)
 
 def FinalParamsAddCouplerLength(builder: flatbuffers.Builder, couplerLength: float):
-    builder.PrependFloat64Slot(12, couplerLength, 200.0)
+    builder.PrependFloat64Slot(13, couplerLength, 200.0)
 
 def AddCouplerLength(builder: flatbuffers.Builder, couplerLength: float):
     FinalParamsAddCouplerLength(builder, couplerLength)
 
 def FinalParamsAddCouplerHeight(builder: flatbuffers.Builder, couplerHeight: float):
-    builder.PrependFloat64Slot(13, couplerHeight, 26.0)
+    builder.PrependFloat64Slot(14, couplerHeight, 26.0)
 
 def AddCouplerHeight(builder: flatbuffers.Builder, couplerHeight: float):
     FinalParamsAddCouplerHeight(builder, couplerHeight)
+
+def FinalParamsAddRepairTrials(builder: flatbuffers.Builder, repairTrials: int):
+    builder.PrependUint32Slot(15, repairTrials, 100)
+
+def AddRepairTrials(builder: flatbuffers.Builder, repairTrials: int):
+    FinalParamsAddRepairTrials(builder, repairTrials)
+
+def FinalParamsAddStopAfter(builder: flatbuffers.Builder, stopAfter: int):
+    builder.PrependUOffsetTRelativeSlot(16, flatbuffers.number_types.UOffsetTFlags.py_type(stopAfter), 0)
+
+def AddStopAfter(builder: flatbuffers.Builder, stopAfter: int):
+    FinalParamsAddStopAfter(builder, stopAfter)
 
 def FinalParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -280,6 +340,7 @@ class FinalParamsT(object):
         innerRounds = 4,
         maxRelaxation = 10,
         refinementRounds = 2,
+        feedlineRefinementRounds = 0,
         meanderLength = 3000.0,
         bendPenaltyNorm = 2.5,
         wireProximityPenaltyNorm = 0.00125,
@@ -287,6 +348,8 @@ class FinalParamsT(object):
         obstaclePenaltyReach = 100.0,
         couplerLength = 200.0,
         couplerHeight = 26.0,
+        repairTrials = 100,
+        stopAfter = None,
     ):
         self.router = router  # type: Optional[str]
         self.corridorSpacings = corridorSpacings  # type: int
@@ -295,6 +358,7 @@ class FinalParamsT(object):
         self.innerRounds = innerRounds  # type: int
         self.maxRelaxation = maxRelaxation  # type: int
         self.refinementRounds = refinementRounds  # type: int
+        self.feedlineRefinementRounds = feedlineRefinementRounds  # type: int
         self.meanderLength = meanderLength  # type: float
         self.bendPenaltyNorm = bendPenaltyNorm  # type: float
         self.wireProximityPenaltyNorm = wireProximityPenaltyNorm  # type: float
@@ -302,6 +366,8 @@ class FinalParamsT(object):
         self.obstaclePenaltyReach = obstaclePenaltyReach  # type: float
         self.couplerLength = couplerLength  # type: float
         self.couplerHeight = couplerHeight  # type: float
+        self.repairTrials = repairTrials  # type: int
+        self.stopAfter = stopAfter  # type: Optional[str]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -333,6 +399,7 @@ class FinalParamsT(object):
         self.innerRounds = finalParams.InnerRounds()
         self.maxRelaxation = finalParams.MaxRelaxation()
         self.refinementRounds = finalParams.RefinementRounds()
+        self.feedlineRefinementRounds = finalParams.FeedlineRefinementRounds()
         self.meanderLength = finalParams.MeanderLength()
         self.bendPenaltyNorm = finalParams.BendPenaltyNorm()
         self.wireProximityPenaltyNorm = finalParams.WireProximityPenaltyNorm()
@@ -340,11 +407,17 @@ class FinalParamsT(object):
         self.obstaclePenaltyReach = finalParams.ObstaclePenaltyReach()
         self.couplerLength = finalParams.CouplerLength()
         self.couplerHeight = finalParams.CouplerHeight()
+        self.repairTrials = finalParams.RepairTrials()
+        self.stopAfter = finalParams.StopAfter()
+        if self.stopAfter is not None:
+            self.stopAfter = self.stopAfter.decode('utf-8')
 
     # FinalParamsT
     def Pack(self, builder):
         if self.router is not None:
             router = builder.CreateString(self.router)
+        if self.stopAfter is not None:
+            stopAfter = builder.CreateString(self.stopAfter)
         FinalParamsStart(builder)
         if self.router is not None:
             FinalParamsAddRouter(builder, router)
@@ -354,6 +427,7 @@ class FinalParamsT(object):
         FinalParamsAddInnerRounds(builder, self.innerRounds)
         FinalParamsAddMaxRelaxation(builder, self.maxRelaxation)
         FinalParamsAddRefinementRounds(builder, self.refinementRounds)
+        FinalParamsAddFeedlineRefinementRounds(builder, self.feedlineRefinementRounds)
         FinalParamsAddMeanderLength(builder, self.meanderLength)
         FinalParamsAddBendPenaltyNorm(builder, self.bendPenaltyNorm)
         FinalParamsAddWireProximityPenaltyNorm(builder, self.wireProximityPenaltyNorm)
@@ -361,5 +435,8 @@ class FinalParamsT(object):
         FinalParamsAddObstaclePenaltyReach(builder, self.obstaclePenaltyReach)
         FinalParamsAddCouplerLength(builder, self.couplerLength)
         FinalParamsAddCouplerHeight(builder, self.couplerHeight)
+        FinalParamsAddRepairTrials(builder, self.repairTrials)
+        if self.stopAfter is not None:
+            FinalParamsAddStopAfter(builder, stopAfter)
         finalParams = FinalParamsEnd(builder)
         return finalParams

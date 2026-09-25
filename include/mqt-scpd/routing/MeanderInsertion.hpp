@@ -51,6 +51,20 @@ struct MeanderOptions {
   /// What one direction change costs against the cell price, for the priced
   /// insertion.
   double bendPrice = 10.0;
+  /// Aim for the required length exactly rather than at least: the loop is
+  /// deepened or flattened until the rendered length lies within
+  /// `tolerance` of it, a path already within the tolerance is left alone,
+  /// and a path longer than the required length and the tolerance cannot
+  /// be helped, which the result says. The prototype's strict insertion,
+  /// which the feedline phase uses to make a resonator its target length.
+  bool exact = false;
+  /// How far the rendered length may lie from the required one, in cells,
+  /// in the exact mode.
+  double tolerance = 0.0;
+  /// The box a meander between two cells of the path may use, when given:
+  /// the widest free strip along the line between the two, in the
+  /// prototype's strict insertion. It is cut down to `box`.
+  std::function<CellBox(const PathPoint&, const PathPoint&)> boxFor;
 };
 
 /// What an insertion came to.
@@ -60,6 +74,9 @@ struct MeanderResult {
   bool reached = false;
   /// Whether a meander was spliced in.
   bool inserted = false;
+  /// Whether the path was already longer than the required length allows,
+  /// in the exact mode, so that no meander could make it right.
+  bool tooLong = false;
   /// The length the path had to reach, in cells.
   double required = 0.0;
   /// The rendered length of the path before and after, in cells.

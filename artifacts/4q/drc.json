@@ -2,8 +2,9 @@
   "reports": [
     {
       "stage": "final",
-      "feedlines_skipped": 0,
+      "feedlines_skipped": 5,
       "findings": [
+        {"rule": "wire-clearance", "severity": "active", "wires": [8, 9], "location": {"x": 3211.1802877697833, "y": -522.6887556904412}, "measured": 0, "limit": 185, "clearance_kind": "short", "message": "wires 8 and 9 come within 0.0 layout units of each other"}
       ]
     }
   ]

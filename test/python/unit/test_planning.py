@@ -255,10 +255,15 @@ def test_one_phase_of_the_final_routing_is_drawn_on_its_own(run: RunDirectory, c
     assert inner.inner_wires
     assert outer.wires
 
-    # A phase that changes nothing leaves the state of the phase before it, which is what a
-    # snapshot is. The three that are not built yet are therefore the outer routing again.
+    # The coupler insertion cuts every resonator back to its coupler, so the third phase draws
+    # the ring differently from the second, and it is the first to draw the couplers and the
+    # edges of the feedline chains.
     couplers = planning_geometry(data, chip, "final", phase="couplers")
-    assert couplers.wires == outer.wires
+    assert couplers.wires != outer.wires
+    assert len(couplers.wires) == len(outer.wires)
+    assert not outer.couplers
+    assert couplers.couplers
+    assert len(couplers.inner_wires) > len(outer.inner_wires)
 
 
 def test_a_stage_that_is_not_a_planning_stage_is_refused(chip) -> None:  # noqa: ANN001

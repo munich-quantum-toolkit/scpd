@@ -29,3 +29,4 @@ record and mark the old one `Superseded by NNNN` rather than editing history.
 | [0029](0029-a-feedline-end-is-fed-between-launchers.md) | A feedline end is fed between two launchers                          |
 | [0030](0030-bridge-pairs-are-declared.md)               | A bridge pair is declared, and an internal one is shut               |
 | [0031](0031-coarse-routing-is-its-own-stage.md)         | Coarse routing is a stage of its own                                 |
+| [0032](0032-the-coupler-couples-along-the-ring.md)      | The coupler couples along the ring, at the target length             |

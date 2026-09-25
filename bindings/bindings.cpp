@@ -135,58 +135,6 @@ detailOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
   return *output;
 }
 
-/// What the design-rule check sees of a final routing: every wire as the cells
-/// it runs over, with the components its two ends sit on.
-mqt::scpd::drc::CellView
-viewOf(const mqt::scpd::flatbuffers::design::ChipT& chip,
-       const mqt::scpd::flatbuffers::artifacts::GlobalRoutingT& global,
-       const mqt::scpd::flatbuffers::artifacts::AssignmentT& assignment,
-       const mqt::scpd::flatbuffers::artifacts::FinalRoutingT& routing) {
-  const auto componentOf =
-      [&chip](const std::uint32_t port) -> std::string_view {
-    return port < chip.ports.size() ? chip.ports[port]->component
-                                    : std::string_view{};
-  };
-  mqt::scpd::drc::CellView view;
-  if (routing.grid != nullptr) {
-    view.grid = {.width = routing.grid->width,
-                 .height = routing.grid->height,
-                 .origin = routing.grid->origin,
-                 .cellWidth = routing.grid->cell_width,
-                 .cellHeight = routing.grid->cell_height};
-  }
-  view.chip = &chip;
-  for (std::size_t index = 0; index < routing.wires.size(); ++index) {
-    if (routing.wires[index]->path.empty() ||
-        index >= assignment.connections.size()) {
-      continue;
-    }
-    const auto& connection = *assignment.connections[index];
-    view.wires.push_back(
-        {.connection = static_cast<std::uint32_t>(index),
-         .cells = routing.wires[index]->path,
-         .components = {std::string_view{},
-                        componentOf(connection.target.index())},
-         .feedline = false});
-  }
-  for (std::size_t index = 0; index < routing.inner.size(); ++index) {
-    if (routing.inner[index]->path.empty() ||
-        index >= global.connections.size()) {
-      continue;
-    }
-    const auto& connection = *global.connections[index];
-    view.wires.push_back(
-        {.connection = static_cast<std::uint32_t>(routing.wires.size() + index),
-         .cells = routing.inner[index]->path,
-         .components = {connection.source == nullptr
-                            ? std::string_view{}
-                            : componentOf(connection.source->index()),
-                        componentOf(connection.target.index())},
-         .feedline = false});
-  }
-  return view;
-}
-
 /// One report as the text of drc.json.
 std::string asReports(mqt::scpd::flatbuffers::drc::DrcReportT report) {
   mqt::scpd::flatbuffers::drc::DrcReportsT reports;
@@ -363,7 +311,9 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
           throw std::invalid_argument("the artifact is not a final routing");
         }
         return asReports(mqt::scpd::drc::checkCells(
-            viewOf(design, globalOf(circuit), assignmentOf(assigned), *routing),
+            mqt::scpd::drc::viewOfFinal(design, globalOf(circuit),
+                                        assignmentOf(assigned), *routing,
+                                        *configuration.rules),
             *configuration.rules));
       },
       "chip"_a, "global"_a, "assignment"_a, "final"_a, "config"_a,

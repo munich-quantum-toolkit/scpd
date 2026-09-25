@@ -5,6 +5,7 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
+from mqt.scpd.flatbuffers.artifacts.FeedlineEdge import FeedlineEdge
 from mqt.scpd.flatbuffers.artifacts.FinalPhase import FinalPhase
 from mqt.scpd.flatbuffers.artifacts.FinalWire import FinalWire
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtent
@@ -102,7 +103,8 @@ class FinalRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         return o == 0
 
-    # The edges of the feedline chains, in chain order.
+    # The edges of the feedline chains, in chain order. An edge that was not
+    # drawn carries no cells.
     # FinalRouting
     def Feedlines(self, j: int) -> Optional[FinalWire]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
@@ -127,10 +129,35 @@ class FinalRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
         return o == 0
 
+    # What each entry of `feedlines` runs between, parallel to it.
+    # FinalRouting
+    def FeedlineEdges(self, j: int) -> Optional[FeedlineEdge]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = FeedlineEdge()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # FinalRouting
+    def FeedlineEdgesLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # FinalRouting
+    def FeedlineEdgesIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        return o == 0
+
     # What the stage had drawn at the end of each of its phases.
     # FinalRouting
     def Phases(self, j: int) -> Optional[FinalPhase]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
         if o != 0:
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
@@ -142,19 +169,19 @@ class FinalRouting(object):
 
     # FinalRouting
     def PhasesLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # FinalRouting
     def PhasesIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
         return o == 0
 
     # FinalRouting
     def Couplers(self, j: int) -> Optional[CpwCoupler]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
         if o != 0:
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
@@ -166,19 +193,19 @@ class FinalRouting(object):
 
     # FinalRouting
     def CouplersLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # FinalRouting
     def CouplersIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
         return o == 0
 
     # FinalRouting
     def Bridges(self, j: int) -> Optional[Bridge]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
         if o != 0:
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
@@ -190,20 +217,20 @@ class FinalRouting(object):
 
     # FinalRouting
     def BridgesLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # FinalRouting
     def BridgesIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
         return o == 0
 
     # The connections that did not route.
     # FinalRouting
     def Unresolved(self, j: int) -> Optional[ConnectionRef]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
         if o != 0:
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
@@ -214,18 +241,18 @@ class FinalRouting(object):
 
     # FinalRouting
     def UnresolvedLength(self) -> int:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # FinalRouting
     def UnresolvedIsNone(self) -> bool:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
         return o == 0
 
 def FinalRoutingStart(builder: flatbuffers.Builder):
-    builder.StartObject(8)
+    builder.StartObject(9)
 
 def Start(builder: flatbuffers.Builder):
     FinalRoutingStart(builder)
@@ -272,8 +299,20 @@ def FinalRoutingStartFeedlinesVector(builder, numElems: int) -> int:
 def StartFeedlinesVector(builder, numElems: int) -> int:
     return FinalRoutingStartFeedlinesVector(builder, numElems)
 
+def FinalRoutingAddFeedlineEdges(builder: flatbuffers.Builder, feedlineEdges: int):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(feedlineEdges), 0)
+
+def AddFeedlineEdges(builder: flatbuffers.Builder, feedlineEdges: int):
+    FinalRoutingAddFeedlineEdges(builder, feedlineEdges)
+
+def FinalRoutingStartFeedlineEdgesVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartFeedlineEdgesVector(builder, numElems: int) -> int:
+    return FinalRoutingStartFeedlineEdgesVector(builder, numElems)
+
 def FinalRoutingAddPhases(builder: flatbuffers.Builder, phases: int):
-    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(phases), 0)
+    builder.PrependUOffsetTRelativeSlot(5, flatbuffers.number_types.UOffsetTFlags.py_type(phases), 0)
 
 def AddPhases(builder: flatbuffers.Builder, phases: int):
     FinalRoutingAddPhases(builder, phases)
@@ -285,7 +324,7 @@ def StartPhasesVector(builder, numElems: int) -> int:
     return FinalRoutingStartPhasesVector(builder, numElems)
 
 def FinalRoutingAddCouplers(builder: flatbuffers.Builder, couplers: int):
-    builder.PrependUOffsetTRelativeSlot(5, flatbuffers.number_types.UOffsetTFlags.py_type(couplers), 0)
+    builder.PrependUOffsetTRelativeSlot(6, flatbuffers.number_types.UOffsetTFlags.py_type(couplers), 0)
 
 def AddCouplers(builder: flatbuffers.Builder, couplers: int):
     FinalRoutingAddCouplers(builder, couplers)
@@ -297,7 +336,7 @@ def StartCouplersVector(builder, numElems: int) -> int:
     return FinalRoutingStartCouplersVector(builder, numElems)
 
 def FinalRoutingAddBridges(builder: flatbuffers.Builder, bridges: int):
-    builder.PrependUOffsetTRelativeSlot(6, flatbuffers.number_types.UOffsetTFlags.py_type(bridges), 0)
+    builder.PrependUOffsetTRelativeSlot(7, flatbuffers.number_types.UOffsetTFlags.py_type(bridges), 0)
 
 def AddBridges(builder: flatbuffers.Builder, bridges: int):
     FinalRoutingAddBridges(builder, bridges)
@@ -309,7 +348,7 @@ def StartBridgesVector(builder, numElems: int) -> int:
     return FinalRoutingStartBridgesVector(builder, numElems)
 
 def FinalRoutingAddUnresolved(builder: flatbuffers.Builder, unresolved: int):
-    builder.PrependUOffsetTRelativeSlot(7, flatbuffers.number_types.UOffsetTFlags.py_type(unresolved), 0)
+    builder.PrependUOffsetTRelativeSlot(8, flatbuffers.number_types.UOffsetTFlags.py_type(unresolved), 0)
 
 def AddUnresolved(builder: flatbuffers.Builder, unresolved: int):
     FinalRoutingAddUnresolved(builder, unresolved)
@@ -326,6 +365,7 @@ def FinalRoutingEnd(builder: flatbuffers.Builder) -> int:
 def End(builder: flatbuffers.Builder) -> int:
     return FinalRoutingEnd(builder)
 
+import mqt.scpd.flatbuffers.artifacts.FeedlineEdge
 import mqt.scpd.flatbuffers.artifacts.FinalPhase
 import mqt.scpd.flatbuffers.artifacts.FinalWire
 import mqt.scpd.flatbuffers.artifacts.GridExtent
@@ -346,6 +386,7 @@ class FinalRoutingT(object):
         wires = None,
         inner = None,
         feedlines = None,
+        feedlineEdges = None,
         phases = None,
         couplers = None,
         bridges = None,
@@ -355,6 +396,7 @@ class FinalRoutingT(object):
         self.wires = wires  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.FinalWire.FinalWireT]]
         self.inner = inner  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.FinalWire.FinalWireT]]
         self.feedlines = feedlines  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.FinalWire.FinalWireT]]
+        self.feedlineEdges = feedlineEdges  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.FeedlineEdge.FeedlineEdgeT]]
         self.phases = phases  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.FinalPhase.FinalPhaseT]]
         self.couplers = couplers  # type: Optional[List[mqt.scpd.flatbuffers.design.CpwCoupler.CpwCouplerT]]
         self.bridges = bridges  # type: Optional[List[mqt.scpd.flatbuffers.design.Bridge.BridgeT]]
@@ -407,6 +449,14 @@ class FinalRoutingT(object):
                 else:
                     finalWire_ = mqt.scpd.flatbuffers.artifacts.FinalWire.FinalWireT.InitFromObj(finalRouting.Feedlines(i))
                     self.feedlines.append(finalWire_)
+        if not finalRouting.FeedlineEdgesIsNone():
+            self.feedlineEdges = []
+            for i in range(finalRouting.FeedlineEdgesLength()):
+                if finalRouting.FeedlineEdges(i) is None:
+                    self.feedlineEdges.append(None)
+                else:
+                    feedlineEdge_ = mqt.scpd.flatbuffers.artifacts.FeedlineEdge.FeedlineEdgeT.InitFromObj(finalRouting.FeedlineEdges(i))
+                    self.feedlineEdges.append(feedlineEdge_)
         if not finalRouting.PhasesIsNone():
             self.phases = []
             for i in range(finalRouting.PhasesLength()):
@@ -468,6 +518,14 @@ class FinalRoutingT(object):
             for i in reversed(range(len(self.feedlines))):
                 builder.PrependUOffsetTRelative(feedlineslist[i])
             feedlines = builder.EndVector()
+        if self.feedlineEdges is not None:
+            feedlineEdgeslist = []
+            for i in range(len(self.feedlineEdges)):
+                feedlineEdgeslist.append(self.feedlineEdges[i].Pack(builder))
+            FinalRoutingStartFeedlineEdgesVector(builder, len(self.feedlineEdges))
+            for i in reversed(range(len(self.feedlineEdges))):
+                builder.PrependUOffsetTRelative(feedlineEdgeslist[i])
+            feedlineEdges = builder.EndVector()
         if self.phases is not None:
             phaseslist = []
             for i in range(len(self.phases)):
@@ -506,6 +564,8 @@ class FinalRoutingT(object):
             FinalRoutingAddInner(builder, inner)
         if self.feedlines is not None:
             FinalRoutingAddFeedlines(builder, feedlines)
+        if self.feedlineEdges is not None:
+            FinalRoutingAddFeedlineEdges(builder, feedlineEdges)
         if self.phases is not None:
             FinalRoutingAddPhases(builder, phases)
         if self.couplers is not None:

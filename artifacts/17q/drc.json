@@ -2,8 +2,16 @@
   "reports": [
     {
       "stage": "final",
-      "feedlines_skipped": 0,
+      "feedlines_skipped": 20,
       "findings": [
+        {"rule": "wire-clearance", "severity": "active", "wires": [20, 21], "location": {"x": 8502.52808988764, "y": 1641.8539325842696}, "measured": 14.102410523664291, "limit": 185, "clearance_kind": "short", "message": "wires 20 and 21 come within 14.1 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [22, 23], "location": {"x": 7375.702247191011, "y": 2030.758426966292}, "measured": 84.61446314198574, "limit": 185, "clearance_kind": "near-miss", "message": "wires 22 and 23 come within 84.6 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [30, 31], "location": {"x": 2519.38202247191, "y": 1332.7247191011236}, "measured": 0, "limit": 185, "clearance_kind": "short", "message": "wires 30 and 31 come within 0.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [34, 35], "location": {"x": 1990.870786516854, "y": 2958.14606741573}, "measured": 0, "limit": 185, "clearance_kind": "short", "message": "wires 34 and 35 come within 0.0 layout units of each other"},
+        {"rule": "wire-clearance", "severity": "active", "wires": [44, 45], "location": {"x": -422.3314606741573, "y": 9589.466292134832}, "measured": 49.859550561797754, "limit": 185, "clearance_kind": "near-miss", "message": "wires 44 and 45 come within 49.9 layout units of each other"},
+        {"rule": "feedline-orthogonality", "severity": "active", "wires": [21], "location": {"x": 10357.303370786516, "y": -571.9101123595506}, "measured": 0, "limit": 0, "clearance_kind": "unset", "message": "wire 21 crosses a feedline other than at a right angle at (1164, 68), step 22"},
+        {"rule": "feedline-orthogonality", "severity": "active", "wires": [31], "location": {"x": 2260.112359550562, "y": -621.7696629213483}, "measured": 0, "limit": 0, "clearance_kind": "unset", "message": "wire 31 crosses a feedline other than at a right angle at (352, 63), step 29"},
+        {"rule": "feedline-orthogonality", "severity": "active", "wires": [45], "location": {"x": -561.938202247191, "y": 9519.662921348314}, "measured": 0, "limit": 0, "clearance_kind": "unset", "message": "wire 45 crosses a feedline other than at a right angle at (69, 1080), step 39"}
       ]
     }
   ]

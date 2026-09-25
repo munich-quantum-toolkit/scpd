@@ -99,7 +99,7 @@ min_wire_spacing = 185.0
 min_obstacle_spacing = 25.0
 min_bend_radius = 50.0
 min_straight_length = 100.0
-target_resonator_length = 2500.0
+target_resonator_length = 6000.0
 resonator_length_tolerance = 100.0
 max_feedline_utilization = 5
 feedline_terminations = 0
@@ -123,7 +123,10 @@ launcher_target = 14
 # and 2.
 rounds            = 6
 max_relaxation    = 5
-refinement_rounds = 0
-# How long a resonator's way is made before the coupler is spliced into it,
-# in layout units: the prototype's figure for this chip. The default is 3000.
-meander_length    = 6000.0
+refinement_rounds = 5
+
+# The measurement of the feedline routing on its own: the repair is off, so
+# that what the sweep leaves is what is counted, and the run stops after the
+# feedlines.
+repair_trials = 0
+stop_after    = "couplers"

@@ -15,7 +15,7 @@ Three documents go with this one:
 | --- | --- |
 | [user_final.md](user_final.md) | how to run the Corridor, Detail and Final stages: every command, every knob, and where each piece of the code is |
 | [summary-final-routing.md](summary-final-routing.md) | what the Final stage does, what was measured, and what is deliberately different from the prototype |
-| [handover-final-couplers.md](handover-final-couplers.md) | the three phases that are still open, with what the first two learned |
+| [handover-final-couplers.md](handover-final-couplers.md) | the coupler insertion, the feedlines and the repair: where they stand, where the pieces are, and the traps |
 
 ## The pipeline now
 
@@ -89,41 +89,27 @@ chip, and its `FG_OBSTACLE_INFLATE` environment override is not carried over.
 
 ## What is open
 
-1. **Phases 3 to 5.** [handover-final-couplers.md](handover-final-couplers.md)
-   says what each has to do, which prototype function to read, and what the
-   first two phases learned the hard way.
-2. **The meander is not built.** `FinalParams.meander_length` is read and
-   converted and nothing uses it, so a resonator's way is as long as its route
-   makes it. It was in the plan for this step and is deliberately not in the
-   tree: its only consumer is the coupler splice of phase 3, and building it
-   before that consumer would lengthen every resonator, tighten the clearance
-   and be measurable against nothing. The port is
-   `dubin_router_opt.hpp:2182 meander_insertion` and `:8723
-   compute_meander_between_points`.
-3. **The lenpoint constraint is not ported.** It keeps a disc clear around the
-   point where a resonator reaches its target length, which is where phase 3
-   splices the coupler. Read `outer_res_lenpoint_clearance` in `FinalGrid.hpp`
-   before phase 3.
-4. **The stage's own counter and the checker disagree, and the checker is
-   right.** `mqt-scpd plan -v` ends the 17-qubit run with "0 too close" while
-   `mqt-scpd drc` reports two pairs, at 176.4 and 178.4 layout units against a
-   rule of 185. Both are supposed to ask the same question — the same rule in
-   layout units, the same junction and component exemptions — so one of the two
-   reads something the other does not. `Driver::conflictsIn` in
-   `src/pipeline/FinalRouter.cpp` and `checkClearance` in `src/drc/Rules.cpp`
-   are the two, and the pairs to reproduce it on are 17q's (29, 30) and
-   (41, 42). **This is the first thing to find out**: until it is settled, the
-   driver cannot be trusted to repair what it cannot see.
-5. **The wires that still come too close.** Every one of them is in `drc.json`
+1. **The routing quality of phases 3 to 5 from 17 qubits up.** All five
+   phases are built and the 4- and 9-qubit chips end on no fail and no
+   finding; the larger chips do not.
+   [handover-final-couplers.md](handover-final-couplers.md) says where it
+   stands, what was measured and rejected, and what to try next.
+2. **The lenpoint constraint is not ported.** It keeps a disc clear around
+   the point where a resonator reaches its target length, which is where
+   phase 3 splices the coupler. Read `outer_res_lenpoint_clearance` in
+   `FinalGrid.hpp`. Nothing has needed it so far — every coupler is placed on
+   every chip — so it is a hardening, not a gap.
+3. **The wires that still come too close.** Every one of them is in `drc.json`
    of its run, with the two wires, the place and the distance. Two shapes: a
    near miss at 176 to 184 layout units, which comes from the straight runs the
    router adds to a way after it has searched; and a short at one cell, which
    comes from a wire taking a way through a neighbour's room.
-6. **The last full measurement of all eight chips is one build old.** The
-   figures in [summary-final-routing.md](summary-final-routing.md) mark which
-   two chips were measured again; re-run the loop at the end of
-   [user_final.md](user_final.md) to replace the rest.
-7. **Nothing is compared against the prototype's own output**, only against its
+4. **The last full measurement of all eight chips is several builds old.**
+   The figures in [summary-final-routing.md](summary-final-routing.md) say
+   which chips were measured with which rules; 45q, 57q and 69q have not been
+   measured to the end with the current ones. Re-run the loop at the end of
+   [user_final.md](user_final.md) to replace them.
+5. **Nothing is compared against the prototype's own output**, only against its
    formulation as read and the counts in its checked-in run logs.
 
 ## Verification
@@ -132,8 +118,11 @@ chip, and its `FG_OBSTACLE_INFLATE` environment override is not carried over.
 cmake --build --preset release && ctest --preset release
 uv run --no-sync pytest test/python/unit
 uvx nox -s schemas          # after any .fbs change
-uvx nox -s lint
 ```
+
+`uvx nox -s lint` reformats every committed file to 80 columns and its `typos`
+hook renames identifiers in the code it touches, so run it only when you mean
+to reformat the repository, and read its diff.
 
 All eight chips, with the pictures and the check, is the loop at the end of
 [user_final.md](user_final.md).

@@ -98,6 +98,170 @@ TEST(WireClearance, TwoRunsInsideTheRuleAreOneFinding) {
             flatbuffers::drc::ClearanceKind::NearMiss);
 }
 
+/// A straight run of cells along y at a fixed x, heading up the grid.
+std::vector<RCoord> upward(const std::uint32_t x, const std::uint32_t from,
+                           const std::uint32_t to) {
+  std::vector<RCoord> cells;
+  for (std::uint32_t y = from; y <= to; ++y) {
+    cells.emplace_back(x, y, 0);
+  }
+  return cells;
+}
+
+TEST(FeedlineOrthogonality, ARightAngleCrossingOfAFeedlineIsAllowed) {
+  // A feedline between two couplers along x, and a wire straight across it
+  // along y: the crossing is at a right angle and the rule is content.
+  const auto feedline = along(200, 10, 390);
+  const auto wire = upward(200, 100, 300);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.wires = {
+      {.connection = 0, .cells = wire, .components = {}, .feedline = false},
+      {.connection = 1, .cells = feedline, .components = {}, .feedline = true}};
+
+  const auto report = checkCells(view, rules());
+  EXPECT_EQ(countOf(report, DrcRule::FeedlineOrthogonality), 0U);
+  // The feedline is left out of the clearance rule altogether.
+  EXPECT_EQ(countOf(report, DrcRule::WireClearance), 0U);
+  EXPECT_EQ(report.feedlines_skipped, 1U);
+}
+
+TEST(FeedlineOrthogonality, ARunBesideAFeedlineIsAFinding) {
+  // The same feedline, and a wire that runs along it five cells away:
+  // inside the band the crossing rule keeps around a straight run, on a
+  // heading that is not across it.
+  const auto feedline = along(200, 10, 390);
+  const auto wire = along(205, 100, 300);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.wires = {
+      {.connection = 0, .cells = wire, .components = {}, .feedline = false},
+      {.connection = 1, .cells = feedline, .components = {}, .feedline = true}};
+
+  const auto report = checkCells(view, rules());
+  EXPECT_EQ(countOf(report, DrcRule::FeedlineOrthogonality), 1U);
+}
+
+TEST(WireClearance, AFeedlineKeepsTheRuleFromAResonatorButNotFromOtherWires) {
+  // An edge between two couplers ten cells from a conventional wire is
+  // nothing — the wire crosses such edges on purpose — but ten cells from a
+  // resonator it is a finding: a feedline keeps the clearance from every
+  // resonator but its own coupler's.
+  const auto feedline = along(200, 10, 200);
+  const auto conventional = along(210, 10, 200);
+  const auto resonator = along(190, 10, 200);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.wires = {
+      {.connection = 0, .cells = feedline, .components = {}, .feedline = true},
+      {.connection = 1, .cells = conventional, .components = {}, .feedline = false},
+      {.connection = 2, .cells = resonator, .components = {}, .feedline = false, .resonator = true}};
+
+  const auto report = checkCells(view, rules());
+  ASSERT_EQ(countOf(report, DrcRule::WireClearance), 1U);
+  EXPECT_EQ(report.findings.front()->wires[0].index(), 0U);
+  EXPECT_EQ(report.findings.front()->wires[1].index(), 2U);
+}
+
+TEST(WireClearance, TwoEdgesOfTheChainsKeepTheRuleFromEachOther) {
+  // Two edges ten cells apart that meet at no coupler is a finding: a
+  // feedline may be crossed by the wires that pass it, never by another
+  // feedline, so the two keep the clearance like any other pair.
+  const auto first = along(200, 10, 200);
+  const auto second = along(210, 10, 200);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.wires = {{.connection = 0,
+                 .cells = first,
+                 .components = {},
+                 .feedline = true,
+                 .edge = true,
+                 .ports = {1, 2}},
+                {.connection = 1,
+                 .cells = second,
+                 .components = {},
+                 .feedline = true,
+                 .edge = true,
+                 .ports = {3, 4}}};
+
+  const auto report = checkCells(view, rules());
+  ASSERT_EQ(countOf(report, DrcRule::WireClearance), 1U);
+  EXPECT_EQ(report.findings.front()->wires[0].index(), 0U);
+  EXPECT_EQ(report.findings.front()->wires[1].index(), 1U);
+}
+
+TEST(WireClearance, TwoEdgesThatMeetAtACouplerAreFreeWithinItsReach) {
+  // The two edges of one coupler run into it from either side and lie
+  // beside each other there on purpose; within the coupler's reach the rule
+  // does not bind between them.
+  const auto first = along(200, 150, 250);
+  const auto second = along(203, 150, 250);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.couplers = {{.port = 7, .x = 200.0, .y = 200.0, .reach = 60.0}};
+  view.wires = {{.connection = 0,
+                 .cells = first,
+                 .components = {},
+                 .feedline = true,
+                 .edge = true,
+                 .ports = {1, 7}},
+                {.connection = 1,
+                 .cells = second,
+                 .components = {},
+                 .feedline = true,
+                 .edge = true,
+                 .ports = {7, 4}}};
+
+  const auto report = checkCells(view, rules());
+  EXPECT_EQ(countOf(report, DrcRule::WireClearance), 0U);
+}
+
+TEST(WireClearance, AnEdgeAtALauncherDoesNotWallOffAConventionalWire) {
+  // A terminal edge used to be checked against every wire, which made the
+  // run from the chip edge to the first coupler a wall. It is an edge like
+  // any other now: a conventional wire beside it is nothing.
+  const auto terminal = along(200, 10, 200);
+  const auto conventional = along(210, 10, 200);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.wires = {{.connection = 0,
+                 .cells = terminal,
+                 .components = {},
+                 .feedline = true,
+                 .edge = true,
+                 .ports = {1, 2}},
+                {.connection = 1, .cells = conventional, .components = {}, .feedline = false}};
+
+  const auto report = checkCells(view, rules());
+  EXPECT_EQ(countOf(report, DrcRule::WireClearance), 0U);
+}
+
+TEST(FeedlineOrthogonality, AResonatorIsFreeAroundItsOwnCoupler) {
+  // The wire runs beside the feedline, but both share the coupler's port
+  // and the run lies within the coupler's reach: that is the coupling, and
+  // neither the crossing rule nor the clearance rule binds there.
+  const auto feedline = along(200, 150, 250);
+  const auto wire = along(203, 160, 240);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.couplers = {{.port = 7, .x = 200.0, .y = 200.0, .reach = 60.0}};
+  view.wires = {{.connection = 0,
+                 .cells = wire,
+                 .components = {},
+                 .feedline = false,
+                 .resonator = true,
+                 .ports = {7, CheckedWire::NO_PORT}},
+                {.connection = 1,
+                 .cells = feedline,
+                 .components = {},
+                 .feedline = true,
+                 .ports = {3, 7}}};
+
+  const auto report = checkCells(view, rules());
+  EXPECT_EQ(countOf(report, DrcRule::FeedlineOrthogonality), 0U);
+  EXPECT_EQ(countOf(report, DrcRule::WireClearance), 0U);
+}
+
 TEST(WireClearance, APairInsideTheShortThresholdIsAShort) {
   const auto first = along(100, 10, 200);
   const auto second = along(101, 10, 200);

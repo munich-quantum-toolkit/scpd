@@ -43,6 +43,10 @@ buildDogleg(const MovePrimitives& primitives, Heading entry, int turnSign,
 
 /// How the coupler's dogleg is built onto a resonator.
 struct CouplerDoglegOptions {
+  /// Straight cells before the first quarter turn: the run the resonator
+  /// couples along, from the anchor, on the heading across the coupler's
+  /// orientation. Zero for a turn right at the anchor.
+  uint32_t leadStraight = 0;
   /// Straight cells after the first quarter turn.
   uint32_t straightLength = 14;
   /// Straight cells after a second quarter turn; zero for a single dogleg.
@@ -81,9 +85,9 @@ struct CouplerSplice {
 /// @returns The splice, or nothing when no candidate is collision-free; then
 /// the path is unchanged.
 [[nodiscard]] MQT_SCPD_ROUTING_EXPORT std::optional<CouplerSplice>
-spliceCouplerDogleg(const MovePrimitives& primitives, double targetLength,
-                    Path& path, Heading orientation,
-                    const CouplerDoglegOptions& options = {},
-                    const std::function<bool(uint32_t, uint32_t)>& anchorAllowed = {});
+spliceCouplerDogleg(
+    const MovePrimitives& primitives, double targetLength, Path& path,
+    Heading orientation, const CouplerDoglegOptions& options = {},
+    const std::function<bool(uint32_t, uint32_t)>& anchorAllowed = {});
 
 } // namespace mqt::scpd::routing

@@ -1256,6 +1256,7 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   uint32_t inner_rounds = 4;
   uint32_t max_relaxation = 10;
   uint32_t refinement_rounds = 2;
+  uint32_t feedline_refinement_rounds = 0;
   double meander_length = 3000.0;
   double bend_penalty_norm = 2.5;
   double wire_proximity_penalty_norm = 0.00125;
@@ -1263,6 +1264,8 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   double obstacle_penalty_reach = 100.0;
   double coupler_length = 200.0;
   double coupler_height = 26.0;
+  uint32_t repair_trials = 100;
+  std::string stop_after{};
 };
 
 /// What the Final stage is allowed to do.
@@ -1285,13 +1288,16 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_INNER_ROUNDS = 12,
     VT_MAX_RELAXATION = 14,
     VT_REFINEMENT_ROUNDS = 16,
-    VT_MEANDER_LENGTH = 18,
-    VT_BEND_PENALTY_NORM = 20,
-    VT_WIRE_PROXIMITY_PENALTY_NORM = 22,
-    VT_STATIC_PROXIMITY_PENALTY_NORM = 24,
-    VT_OBSTACLE_PENALTY_REACH = 26,
-    VT_COUPLER_LENGTH = 28,
-    VT_COUPLER_HEIGHT = 30
+    VT_FEEDLINE_REFINEMENT_ROUNDS = 18,
+    VT_MEANDER_LENGTH = 20,
+    VT_BEND_PENALTY_NORM = 22,
+    VT_WIRE_PROXIMITY_PENALTY_NORM = 24,
+    VT_STATIC_PROXIMITY_PENALTY_NORM = 26,
+    VT_OBSTACLE_PENALTY_REACH = 28,
+    VT_COUPLER_LENGTH = 30,
+    VT_COUPLER_HEIGHT = 32,
+    VT_REPAIR_TRIALS = 34,
+    VT_STOP_AFTER = 36
   };
   /// The implementation, by the name it is registered under.
   const ::flatbuffers::String *router() const {
@@ -1327,10 +1333,22 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t max_relaxation() const {
     return GetField<uint32_t>(VT_MAX_RELAXATION, 10);
   }
-  /// Rounds that route every wire again against a proximity price, to widen
-  /// the room around it. A wire that does not route keeps the way it had.
+  /// Rounds that route every wire of the ring again against a proximity
+  /// price after the outer routing, to widen the room around it. A wire that
+  /// does not route keeps the way it had.
   uint32_t refinement_rounds() const {
     return GetField<uint32_t>(VT_REFINEMENT_ROUNDS, 2);
+  }
+  /// The same after the feedline routing, over the ring with the edges of
+  /// the chains, under the feedline constraints: the fifth phase of the
+  /// stage, the prototype's feedline refinement.
+  ///
+  /// Off by default for now, by the user's decision: the phase is built and
+  /// keeps its verdict, but while the coupler rules are being worked out the
+  /// measurements are to show what the sweep and the repair leave, not what
+  /// a later pass moved. Set it to five to run it again.
+  uint32_t feedline_refinement_rounds() const {
+    return GetField<uint32_t>(VT_FEEDLINE_REFINEMENT_ROUNDS, 0);
   }
   /// How long a resonator's way is made before the coupler is spliced into
   /// it, in layout units. Zero switches the meander off.
@@ -1374,6 +1392,24 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   double coupler_height() const {
     return GetField<double>(VT_COUPLER_HEIGHT, 26.0);
   }
+  /// How many times the feedline repair may turn a placed coupler to another
+  /// of its options while the feedlines leave fails. The prototype's
+  /// `max_repair_rounds`. Zero switches the repair off.
+  uint32_t repair_trials() const {
+    return GetField<uint32_t>(VT_REPAIR_TRIALS, 100);
+  }
+  /// The last phase of the stage to run: "inner", "outer", "couplers",
+  /// "feedlines" or "refined". Empty runs the whole stage.
+  ///
+  /// The five phases are the five snapshots the artifact carries and the
+  /// five values `plot --phase` and `render --phase` take, so a run stopped
+  /// after a phase is drawn by the name it was stopped at. The stage still
+  /// says what it came to and still writes its artifact; the phases after
+  /// the one named are simply not run, which is what makes a stop worth
+  /// more than a picture of a finished run.
+  const ::flatbuffers::String *stop_after() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_STOP_AFTER);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1385,6 +1421,7 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_INNER_ROUNDS, 4) &&
            VerifyField<uint32_t>(verifier, VT_MAX_RELAXATION, 4) &&
            VerifyField<uint32_t>(verifier, VT_REFINEMENT_ROUNDS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_FEEDLINE_REFINEMENT_ROUNDS, 4) &&
            VerifyField<double>(verifier, VT_MEANDER_LENGTH, 8) &&
            VerifyField<double>(verifier, VT_BEND_PENALTY_NORM, 8) &&
            VerifyField<double>(verifier, VT_WIRE_PROXIMITY_PENALTY_NORM, 8) &&
@@ -1392,6 +1429,9 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<double>(verifier, VT_OBSTACLE_PENALTY_REACH, 8) &&
            VerifyField<double>(verifier, VT_COUPLER_LENGTH, 8) &&
            VerifyField<double>(verifier, VT_COUPLER_HEIGHT, 8) &&
+           VerifyField<uint32_t>(verifier, VT_REPAIR_TRIALS, 4) &&
+           VerifyOffset(verifier, VT_STOP_AFTER) &&
+           verifier.VerifyString(stop_after()) &&
            verifier.EndTable();
   }
   FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1424,6 +1464,9 @@ struct FinalParamsBuilder {
   void add_refinement_rounds(uint32_t refinement_rounds) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_REFINEMENT_ROUNDS, refinement_rounds, 2);
   }
+  void add_feedline_refinement_rounds(uint32_t feedline_refinement_rounds) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_FEEDLINE_REFINEMENT_ROUNDS, feedline_refinement_rounds, 0);
+  }
   void add_meander_length(double meander_length) {
     fbb_.AddElement<double>(FinalParams::VT_MEANDER_LENGTH, meander_length, 3000.0);
   }
@@ -1445,6 +1488,12 @@ struct FinalParamsBuilder {
   void add_coupler_height(double coupler_height) {
     fbb_.AddElement<double>(FinalParams::VT_COUPLER_HEIGHT, coupler_height, 26.0);
   }
+  void add_repair_trials(uint32_t repair_trials) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_REPAIR_TRIALS, repair_trials, 100);
+  }
+  void add_stop_after(::flatbuffers::Offset<::flatbuffers::String> stop_after) {
+    fbb_.AddOffset(FinalParams::VT_STOP_AFTER, stop_after);
+  }
   explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1465,13 +1514,16 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     uint32_t inner_rounds = 4,
     uint32_t max_relaxation = 10,
     uint32_t refinement_rounds = 2,
+    uint32_t feedline_refinement_rounds = 0,
     double meander_length = 3000.0,
     double bend_penalty_norm = 2.5,
     double wire_proximity_penalty_norm = 0.00125,
     double static_proximity_penalty_norm = 0.00033,
     double obstacle_penalty_reach = 100.0,
     double coupler_length = 200.0,
-    double coupler_height = 26.0) {
+    double coupler_height = 26.0,
+    uint32_t repair_trials = 100,
+    ::flatbuffers::Offset<::flatbuffers::String> stop_after = 0) {
   FinalParamsBuilder builder_(_fbb);
   builder_.add_coupler_height(coupler_height);
   builder_.add_coupler_length(coupler_length);
@@ -1480,6 +1532,9 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
   builder_.add_bend_penalty_norm(bend_penalty_norm);
   builder_.add_meander_length(meander_length);
+  builder_.add_stop_after(stop_after);
+  builder_.add_repair_trials(repair_trials);
+  builder_.add_feedline_refinement_rounds(feedline_refinement_rounds);
   builder_.add_refinement_rounds(refinement_rounds);
   builder_.add_max_relaxation(max_relaxation);
   builder_.add_inner_rounds(inner_rounds);
@@ -1504,14 +1559,18 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     uint32_t inner_rounds = 4,
     uint32_t max_relaxation = 10,
     uint32_t refinement_rounds = 2,
+    uint32_t feedline_refinement_rounds = 0,
     double meander_length = 3000.0,
     double bend_penalty_norm = 2.5,
     double wire_proximity_penalty_norm = 0.00125,
     double static_proximity_penalty_norm = 0.00033,
     double obstacle_penalty_reach = 100.0,
     double coupler_length = 200.0,
-    double coupler_height = 26.0) {
+    double coupler_height = 26.0,
+    uint32_t repair_trials = 100,
+    const char *stop_after = nullptr) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
+  auto stop_after__ = stop_after ? _fbb.CreateString(stop_after) : 0;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       router__,
@@ -1521,13 +1580,16 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       inner_rounds,
       max_relaxation,
       refinement_rounds,
+      feedline_refinement_rounds,
       meander_length,
       bend_penalty_norm,
       wire_proximity_penalty_norm,
       static_proximity_penalty_norm,
       obstacle_penalty_reach,
       coupler_length,
-      coupler_height);
+      coupler_height,
+      repair_trials,
+      stop_after__);
 }
 
 ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -2397,13 +2459,16 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.inner_rounds == rhs.inner_rounds) &&
       (lhs.max_relaxation == rhs.max_relaxation) &&
       (lhs.refinement_rounds == rhs.refinement_rounds) &&
+      (lhs.feedline_refinement_rounds == rhs.feedline_refinement_rounds) &&
       (lhs.meander_length == rhs.meander_length) &&
       (lhs.bend_penalty_norm == rhs.bend_penalty_norm) &&
       (lhs.wire_proximity_penalty_norm == rhs.wire_proximity_penalty_norm) &&
       (lhs.static_proximity_penalty_norm == rhs.static_proximity_penalty_norm) &&
       (lhs.obstacle_penalty_reach == rhs.obstacle_penalty_reach) &&
       (lhs.coupler_length == rhs.coupler_length) &&
-      (lhs.coupler_height == rhs.coupler_height);
+      (lhs.coupler_height == rhs.coupler_height) &&
+      (lhs.repair_trials == rhs.repair_trials) &&
+      (lhs.stop_after == rhs.stop_after);
 }
 
 inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
@@ -2427,6 +2492,7 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = inner_rounds(); _o->inner_rounds = _e; }
   { auto _e = max_relaxation(); _o->max_relaxation = _e; }
   { auto _e = refinement_rounds(); _o->refinement_rounds = _e; }
+  { auto _e = feedline_refinement_rounds(); _o->feedline_refinement_rounds = _e; }
   { auto _e = meander_length(); _o->meander_length = _e; }
   { auto _e = bend_penalty_norm(); _o->bend_penalty_norm = _e; }
   { auto _e = wire_proximity_penalty_norm(); _o->wire_proximity_penalty_norm = _e; }
@@ -2434,6 +2500,8 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = obstacle_penalty_reach(); _o->obstacle_penalty_reach = _e; }
   { auto _e = coupler_length(); _o->coupler_length = _e; }
   { auto _e = coupler_height(); _o->coupler_height = _e; }
+  { auto _e = repair_trials(); _o->repair_trials = _e; }
+  { auto _e = stop_after(); if (_e) _o->stop_after = _e->str(); }
 }
 
 inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -2451,6 +2519,7 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _inner_rounds = _o->inner_rounds;
   auto _max_relaxation = _o->max_relaxation;
   auto _refinement_rounds = _o->refinement_rounds;
+  auto _feedline_refinement_rounds = _o->feedline_refinement_rounds;
   auto _meander_length = _o->meander_length;
   auto _bend_penalty_norm = _o->bend_penalty_norm;
   auto _wire_proximity_penalty_norm = _o->wire_proximity_penalty_norm;
@@ -2458,6 +2527,8 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _obstacle_penalty_reach = _o->obstacle_penalty_reach;
   auto _coupler_length = _o->coupler_length;
   auto _coupler_height = _o->coupler_height;
+  auto _repair_trials = _o->repair_trials;
+  auto _stop_after = _o->stop_after.empty() ? 0 : _fbb.CreateString(_o->stop_after);
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       _router,
@@ -2467,13 +2538,16 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _inner_rounds,
       _max_relaxation,
       _refinement_rounds,
+      _feedline_refinement_rounds,
       _meander_length,
       _bend_penalty_norm,
       _wire_proximity_penalty_norm,
       _static_proximity_penalty_norm,
       _obstacle_penalty_reach,
       _coupler_length,
-      _coupler_height);
+      _coupler_height,
+      _repair_trials,
+      _stop_after);
 }
 
 

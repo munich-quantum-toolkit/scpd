@@ -36,6 +36,7 @@ from .flatbuffers.config.PortSequences import PortSequencesT
 from .flatbuffers.config.SolverParams import SolverParamsT
 from .flatbuffers.config.StageParams import StageParamsT
 from .flatbuffers.design.DesignRules import DesignRulesT
+from .planning import FINAL_PHASES
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -95,6 +96,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "inner_rounds": 4,
         "max_relaxation": 10,
         "refinement_rounds": 2,
+        "feedline_refinement_rounds": 0,
         "meander_length": 3000.0,
         "bend_penalty_norm": 2.5,
         "wire_proximity_penalty_norm": 0.00125,
@@ -102,6 +104,8 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "obstacle_penalty_reach": 100.0,
         "coupler_length": 200.0,
         "coupler_height": 26.0,
+        "repair_trials": 100,
+        "stop_after": "",
     },
     "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0},
 }
@@ -340,6 +344,8 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("inner_rounds", "innerRounds"),
         ("max_relaxation", "maxRelaxation"),
         ("refinement_rounds", "refinementRounds"),
+        ("feedline_refinement_rounds", "feedlineRefinementRounds"),
+        ("repair_trials", "repairTrials"),
     ):
         setattr(stages.final, field, final.take(key, int, default=defaults["final"][key]))
     # Lengths in layout units and prices against the grid extent. None of them is a cell
@@ -354,6 +360,11 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("coupler_height", "couplerHeight"),
     ):
         setattr(stages.final, field, final.take(key, float, default=defaults["final"][key]))
+    stages.final.stopAfter = final.take("stop_after", str, default="")
+    if stages.final.stopAfter and stages.final.stopAfter not in FINAL_PHASES:
+        named = ", ".join(f"'{phase}'" for phase in FINAL_PHASES)
+        problems.append(f"[stages.final] stop_after must be empty or one of {named}")
+        stages.final.stopAfter = ""
     final.finish()
 
     solver = _Section("stages.solver", section.subtable("solver") or {}, problems)
