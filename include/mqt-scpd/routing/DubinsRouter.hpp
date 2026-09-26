@@ -83,6 +83,26 @@ public:
   /// primitives were built with.
   void setParams(const SearchParams& params);
   void setHeuristic(const Heuristic heuristic) { heuristic_ = heuristic; }
+
+  /// Add the unavoidable turning toward the target heading to the heuristic.
+  ///
+  /// A way has to arrive on the target heading, and every eighth turn it
+  /// still owes costs one bend penalty, so `bendPenalty` times the cyclic
+  /// distance from a state's heading to the target's is a lower bound on
+  /// what that state has left to pay. It is what the orthogonal search has
+  /// always added; the free search did not.
+  ///
+  /// **On by default.** It is admissible on its own, but the sum of it and
+  /// the distance term is not guaranteed to be consistent, and this search
+  /// never reopens a closed state — so in principle it can return a way that
+  /// turns more than the cheapest one. Measured on 4q, 9q, 17q and 21q it
+  /// does not: the feedline angle cost, the edges drawn and the whole fail
+  /// list come out byte for byte the same, and the Final stage runs 1.2 to
+  /// 1.4 times faster. The prototype leaves the same term off by default
+  /// (`DUBIN_TDH=2`) and records the trade at
+  /// `dubin_router_opt.hpp:263-286`; measure the angle cost, not only the
+  /// clock, before trusting it on a chip that is not in that list.
+  void setBendLowerBound(const bool on) { bendLowerBound_ = on; }
   [[nodiscard]] Heuristic heuristic() const { return heuristic_; }
 
   // --- Grids -------------------------------------------------------------
@@ -308,6 +328,11 @@ private:
   uint32_t width_;
   uint32_t height_;
   Heuristic heuristic_ = Heuristic::DistanceField;
+  bool bendLowerBound_ = true;
+  /// Per heading, what a state facing it still owes in turning, in the cost
+  /// units of the search. Filled once per search; all zeroes when the bend
+  /// lower bound is off, so the expansion adds it unconditionally.
+  std::array<uint32_t, 8> bendLb_{};
 
   const grid::BitGrid* obstacles_ = nullptr;
   const grid::BitGrid* corridor_ = nullptr;

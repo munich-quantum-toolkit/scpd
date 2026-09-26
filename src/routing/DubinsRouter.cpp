@@ -895,6 +895,14 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective,
   constexpr uint8_t penaltyMask = PACKED ? uint8_t{0x7F} : uint8_t{0xFF};
   const uint8_t* wireMap = wire_ != nullptr ? wire_->data() : nullptr;
 
+  for (uint32_t a = 0; a < NUM_HEADINGS; ++a) {
+    bendLb_[a] = bendLowerBound_
+                     ? headingDistance(static_cast<Heading>(a),
+                                       objective.target.heading) *
+                           params_.bendPenalty
+                     : 0U;
+  }
+
   const bool useField = heuristic_ == Heuristic::DistanceField;
   if (useField) {
     buildDistanceField(objective.target.x, objective.target.y);
@@ -1093,6 +1101,7 @@ void DubinsRouter::expandFree(const QueueEntry& current,
           h = octile(endX[tn.completes], endY[tn.completes], objective.target.x,
                      objective.target.y);
         }
+        h += bendLb_[p.exit & 7U];
         const uint32_t f = tentative + h;
         open_.push({.x = endX[tn.completes],
                     .y = endY[tn.completes],

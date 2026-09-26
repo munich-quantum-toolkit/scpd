@@ -23,6 +23,7 @@
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/routing/CouplerInsertion.hpp"
+#include "mqt-scpd/routing/ChainTrellis.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/MeanderInsertion.hpp"
@@ -985,6 +986,14 @@ public:
     router_.computeStaticProximity(tuning_.obstacleReach,
                                    tuning_.staticProximityPenalty);
     router_.attachWireProximity(&proximity_);
+    // The distance field, not the octile distance. It costs a backward
+    // Dijkstra over the corridor per search — 15 to 23 % of the time a
+    // search takes — and it earns it back on a fenced corridor, where it
+    // stops the search flooding and proves unreachable cells before they are
+    // expanded. Measured both ways on the real chips: 17q 23.4 s with the
+    // field against 41.3 s with octile, 9q 13.0 against 14.9, same angle
+    // cost. On an *empty* grid the ranking reverses and the field is pure
+    // overhead — which is why a synthetic benchmark says the opposite.
     router_.setHeuristic(routing::Heuristic::DistanceField);
   }
 
@@ -1687,6 +1696,13 @@ public:
     PathPoint centre;
     /// Which of the two resonator ports the resonator leaves from.
     bool secondPort = false;
+    /// The second dogleg, the prototype's `second_straight` /
+    /// `second_reverse`: after the arc and its straight, one more quarter
+    /// turn and one more straight before the lead meets the path. Zero for
+    /// none. It is what lets a coupler slide sideways off the way it sits
+    /// on — the same pad, reached from one side or the other.
+    std::uint32_t secondStraight = 0;
+    bool secondReverse = false;
     /// **The coupler's orientation**: the direction the straight run takes
     /// after the arc off the resonator port. Not the pad's long axis, which
     /// is `orientation` and is the axis the feedline runs along — this is
@@ -1726,6 +1742,16 @@ public:
     PathPoint anchor;
     /// The resonator's way before the cut, which every option is cut from.
     Path outerWay;
+    /// Whether the options with a second dogleg are open to this coupler.
+    ///
+    /// They are not, to begin with. A jog slides the pad sideways and there
+    /// are two of them per offset and port, so opening them everywhere
+    /// trebles what the greedy has to route and hands it choices it cannot
+    /// judge — its cost measures the feedline's turning and knows nothing of
+    /// the resonator. So a coupler gets them only once it has shown it needs
+    /// them: a pass in which not one of its plain options brought both of
+    /// its feedline edges home unlocks them for the passes after.
+    bool jogsUnlocked = false;
     /// The feedline edges into and out of it, by wire key.
     std::uint32_t edgeIn = NO_OWNER;
     std::uint32_t edgeOut = NO_OWNER;
@@ -1807,7 +1833,6 @@ public:
     couplers_.clear();
     chains_.clear();
     edges_.clear();
-    looseEdges_ = 0;
     bodies_ = grid::BitGrid(scene_.router.width, scene_.router.height);
     aimAtTarget(true);
     couplerBox_ = couplerBoxOf();
@@ -2006,10 +2031,14 @@ public:
 
     drawCouplerOptions(wires);
 
-    // The greedy local search over every chain.
+    // The search for the options.
     std::uint32_t passes = 0;
-    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
-      passes = std::max(passes, optimizeChain(wires, chain));
+    if (exactChainSearch()) {
+      passes = optimizeChainsExact(wires);
+    } else {
+      for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+        passes = std::max(passes, optimizeChain(wires, chain));
+      }
     }
 
     // The commit: the chosen options, then the edges.
@@ -2075,19 +2104,14 @@ public:
           chosen.front().samePlace(wire.objective.source) &&
           chosen.back().samePlace(wire.objective.target) &&
           edgeWayStillOpen(wires, wire.objective, edge, chosen);
-      wire.way = fits ? chosen : routeEdge(wires, wire.objective, edge, {}, false);
-      if (wire.way.empty()) {
-        // The edges beside it may hold what the greedy chose for another
-        // option of the coupler between them; once more without them.
-        wire.way = routeEdge(wires, wire.objective, edge, {}, true);
-      }
+      wire.way = fits ? chosen : routeEdge(wires, wire.objective, edge);
       wire.drawn = !wire.way.empty();
       // A way the greedy chose and the commit kept was drawn by no search of
       // this loop, so it has no picture of its own. Draw it against the
       // ground it stands on, or every line of the log would link the last
       // search the greedy happened to make.
       if (debug_ && fits) {
-        corridorOfEdge(wires, wire.objective, edge, {}, false);
+        corridorOfEdge(wires, wire.objective, edge);
         Wire pretend;
         pretend.objective = wire.objective;
         pretend.feedline = true;
@@ -2135,10 +2159,9 @@ public:
     say(std::format(
         "coupler insertion: {} couplers on {} resonators ({} on a diagonal), "
         "{} chains, {} of {} edges drawn, feedline angle cost {}, {} greedy "
-        "passes, {} weighed without the clearance to their neighbour, "
-        "{} of {} option costs from the memo, {:.1f}s",
+        "passes, {} of {} option costs from the memo, {:.1f}s",
         couplers_.size(), couplers_.size() + withoutOptions, diagonal,
-        chains_.size(), drawn, edges_.size(), angle, passes, looseEdges_,
+        chains_.size(), drawn, edges_.size(), angle, passes,
         memoHits_, memoHits_ + memoMisses_, seconds));
     // The two figures the insertion is judged by, on a line of their own so
     // that a sweep over settings can be read off the log without counting.
@@ -2170,6 +2193,13 @@ public:
     const auto places = couplerPlace(resonator);
     for (Heading offset = 0; offset < routing::NUM_HEADINGS; ++offset) {
       for (const bool secondPort : {false, true}) {
+       // The second dogleg, as the prototype sweeps it: none, or one of
+       // twenty turned each way. It slides the pad sideways off the way it
+       // sits on without changing which way the coupler points, which is
+       // the one freedom the offsets and the two ports do not give.
+       for (const auto& [secondStraight, secondReverse] :
+            {std::pair{0U, false}, std::pair{COUPLER_SECOND_STRAIGHT, true},
+             std::pair{COUPLER_SECOND_STRAIGHT, false}}) {
         std::string why;
         std::size_t tried = 0;
         bool got = false;
@@ -2180,32 +2210,40 @@ public:
         // along the way.
         for (const auto& spot : places) {
           ++tried;
-          auto option = makeOption(resonator, spot, secondPort, offset,
-                                   explaining() ? &why : nullptr);
+          auto option =
+              makeOption(resonator, spot, secondPort, secondStraight,
+                         secondReverse, offset, explaining() ? &why : nullptr);
           if (!option.has_value()) {
             continue;
           }
           explain(std::format(
-              "resonator {} · offset {} · resonator port {}: option {} at "
+              "[Coupler Insertion]   '{}' offset {} port {}{}: option {} at "
               "place {} of {} ({:.0f} of {:.0f} cells to the port), "
-              "orientation {}, centre ({},{}), feedline at ({},{}) on "
-              "heading {}, {} priced cells",
-              wireId(resonator), offset, secondPort ? 2 : 1, options.size(),
-              tried - 1, places.size(), spot.centreLength, spot.wanted,
-              option->orientation, option->centre.x, option->centre.y,
-              option->out.x, option->out.y, option->out.heading,
-              option->guarded));
+              "angle {}°, centre ({},{}), {} priced cells",
+              wireId(resonator), offset, secondPort ? 2 : 1,
+              secondStraight == 0
+                  ? std::string{}
+                  : std::format(" jog {}{}", secondStraight,
+                                secondReverse ? " reversed" : ""),
+              options.size(), tried - 1, places.size(), spot.centreLength,
+              spot.wanted, degreesOfHeading(option->couplerOrientation),
+              option->centre.x, option->centre.y, option->guarded));
           options.push_back(std::move(*option));
           got = true;
           break;
         }
         if (!got && explaining()) {
           explain(std::format(
-              "resonator {} · offset {} · resonator port {}: no place of {} "
-              "tried fits — last refusal: {}",
-              wireId(resonator), offset, secondPort ? 2 : 1, tried,
-              why.empty() ? std::string("none offered") : why));
+              "[Coupler Insertion]   '{}' offset {} port {}{}: no place of "
+              "{} tried fits — last refusal: {}",
+              wireId(resonator), offset, secondPort ? 2 : 1,
+              secondStraight == 0
+                  ? std::string{}
+                  : std::format(" jog {}{}", secondStraight,
+                                secondReverse ? " reversed" : ""),
+              tried, why.empty() ? std::string("none offered") : why));
         }
+       }
       }
     }
     if (places.empty() && explaining()) {
@@ -2467,12 +2505,16 @@ public:
   }
   static constexpr std::uint32_t COUPLER_LEAD_STRAIGHT = 14;
 
+  /// The straight of the second dogleg, in cells. The prototype's twenty.
+  static constexpr std::uint32_t COUPLER_SECOND_STRAIGHT = 20;
+
   /// One option at the place the coupler takes: the body as a pad centred on
   /// that cell, turned by one of the eight offsets from the heading the way
   /// holds there. Nothing, where it does not fit.
   [[nodiscard]] std::optional<CouplerOption>
   makeOption(const Wire& resonator, const CouplerPlace& place,
-             const bool secondPort,
+             const bool secondPort, const std::uint32_t secondStraight,
+             const bool secondReverse,
              const Heading offset, std::string* why = nullptr) const {
     const auto refuse = [&why](std::string reason)
         -> std::optional<CouplerOption> {
@@ -2591,21 +2633,47 @@ public:
     const auto portHeading = secondPort
                                  ? routing::reverse(option.orientation)
                                  : option.orientation;
+    option.secondStraight = secondStraight;
+    option.secondReverse = secondReverse;
     routing::DoglegGeometry lead;
+    routing::DoglegGeometry jog;
+    Heading afterFirst = 0;
     try {
       const auto turnSign =
           routing::turned(portHeading, 2) == option.couplerOrientation ? 1 : -1;
       lead = routing::buildDogleg(*primitives_, portHeading, turnSign,
                                   leadStraight());
+      afterFirst = lead.tip.heading;
+      // The second dogleg, when the option asks for one: another quarter
+      // turn off the orientation and another straight. It turns the lead a
+      // second time, so the heading it finally meets the path on is **not**
+      // the coupler's orientation any more — the orientation is what the
+      // component points the resonator in, which is settled by the first
+      // arc, and the second is a jog in front of it that moves where the
+      // pad has to sit for that lead to land on the way. Reversed it jogs
+      // one way, with the first turn the other.
+      if (secondStraight > 0) {
+        jog = routing::buildDogleg(*primitives_, afterFirst,
+                                   secondReverse ? -turnSign : turnSign,
+                                   secondStraight);
+      }
     } catch (const std::logic_error&) {
       return refuse("the primitives hold no quarter turn for the lead");
     }
-    const auto portX =
-        place.x -
-        static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.x));
-    const auto portY =
-        place.y -
-        static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.y));
+    // Where the whole lead ends, as an offset from the port: the first
+    // dogleg, and the second laid on its tip.
+    const auto tipX =
+        static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.x)) +
+        (secondStraight > 0
+             ? static_cast<std::int64_t>(static_cast<std::int32_t>(jog.tip.x))
+             : 0);
+    const auto tipY =
+        static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.y)) +
+        (secondStraight > 0
+             ? static_cast<std::int64_t>(static_cast<std::int32_t>(jog.tip.y))
+             : 0);
+    const auto portX = place.x - tipX;
+    const auto portY = place.y - tipY;
     // The port is one end of the near edge; the centre lies half a depth
     // across from it and half a run back along the pad, on the side the
     // other port is.
@@ -2765,20 +2833,41 @@ public:
     // not, the turn and the orientation disagree and the option is not the
     // component.
     if (lead.tip.heading != option.couplerOrientation) {
-      return refuse("the arc does not reach the coupler's orientation");
+      return refuse("the first arc does not reach the coupler's "
+                    "orientation");
     }
     // The tip is not part of the arc: the search begins on it and puts the
     // arc in front of what it finds, so a tip in both would put one cell in
     // the way twice and the self-intersection test would throw it away.
+    //
+    // Both pieces of the lead, walked as one: the first dogleg from the
+    // port, and the second laid on its tip. The second's cells are offset
+    // by the first's tip, which is how `buildDogleg` hands them back — in a
+    // frame whose origin is the turn it starts on.
+    std::vector<std::pair<PathPoint, bool>> leadCells;
+    leadCells.reserve(lead.path.size() + jog.path.size());
+    for (const auto& move : lead.path) {
+      leadCells.emplace_back(move, false);
+    }
+    for (const auto& move : jog.path) {
+      leadCells.emplace_back(move, true);
+    }
+    const auto jogX =
+        static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.x));
+    const auto jogY =
+        static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.y));
+
     option.arc.clear();
-    option.arc.reserve(lead.path.size());
+    option.arc.reserve(leadCells.size());
     PathPoint tip{};
-    for (std::size_t step = 0; step < lead.path.size(); ++step) {
-      const auto& move = lead.path[step];
+    for (std::size_t step = 0; step < leadCells.size(); ++step) {
+      const auto& [move, onJog] = leadCells[step];
       const auto x =
-          portX + static_cast<std::int64_t>(static_cast<std::int32_t>(move.x));
+          portX + (onJog ? jogX : 0) +
+          static_cast<std::int64_t>(static_cast<std::int32_t>(move.x));
       const auto y =
-          portY + static_cast<std::int64_t>(static_cast<std::int32_t>(move.y));
+          portY + (onJog ? jogY : 0) +
+          static_cast<std::int64_t>(static_cast<std::int32_t>(move.y));
       if (x < 0 || y < 0 || x >= width || y >= height) {
         return refuse("the resonator's lead leaves the grid");
       }
@@ -2796,7 +2885,7 @@ public:
                            .y = static_cast<std::uint32_t>(y),
                            .heading = move.heading,
                            .primitive = move.primitive};
-      if (step + 1 < lead.path.size()) {
+      if (step + 1 < leadCells.size()) {
         option.arc.push_back(here);
       } else {
         tip = here;
@@ -2845,24 +2934,29 @@ public:
     return chainEdgePaths_[chain][at];
   }
 
-  /// Every edge already committed stands in the way of the edge about to be
-  /// routed, inflated by the clearance; the edges that share a coupler with
-  /// it meet it at the coupler's port and keep no clearance from it, but
-  /// their copper, two cells wide, is closed to it all the same, so that
-  /// the edge into a coupler and the edge out of it never cross.
-  ///
-  /// @param ignoreAdjacent Leave out the edges that share a coupler with
-  /// this one: while the options are weighed, what they hold is stale and
-  /// the caller passes the fresh one.
   /// How far past the two ends of an edge its search may roam, in cells.
   static constexpr std::uint32_t EDGE_BOX_MARGIN = 250;
 
-  static constexpr std::size_t NO_PIVOT =
-      std::numeric_limits<std::size_t>::max();
-
-  void fenceCommittedEdges(const std::vector<Wire>& wires, const Edge& edge,
-                           const bool ignoreAdjacent,
-                           const std::size_t pivot = NO_PIVOT) {
+  /// Every edge of every chain but the one being routed stands in its way,
+  /// inflated by the clearance — the edges that share a coupler with it
+  /// included, right up to the port they share.
+  ///
+  /// Nothing is exempt. The direct neighbours of a path were once the one
+  /// pair of feedlines nothing closed, and an edge weighed against them ran
+  /// through them.
+  ///
+  /// What it fences is `edgeWayOf`: the edge's wire once it has one, else
+  /// what the greedy last chose for it. So this is the one thing in
+  /// `corridorOfEdge` that is **not** a function of the two endpoint options
+  /// alone — it is what ties an edge's price to every other edge on the chip.
+  void fenceCommittedEdges(const std::vector<Wire>& wires, const Edge& edge) {
+    // While a chain is searching itself, its own edges may be asked to stand
+    // out of the way. What they hold is the answer of the round before, and
+    // fencing an edge with the last round's idea of its own neighbours is
+    // what makes the rounds a walk that can circle rather than a descent.
+    // The commit fences the chain fully and re-routes what no longer fits,
+    // so nothing ships through a way this leaves open.
+    const bool skipOwn = looseChain_ == edge.chain;
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     const auto& stencil = stencilFor(tuning_.clearance);
     std::size_t fenced = 0;
@@ -2870,30 +2964,16 @@ public:
     std::size_t neighbours = 0;
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
       for (std::size_t at = 0; at < chainEdgePaths_[chain].size(); ++at) {
-        if (chain == edge.chain && at == edge.from) {
+        if (chain == edge.chain && (at == edge.from || skipOwn)) {
           continue;
         }
-        // No exemption of any kind. An edge that meets this one at a
-        // coupler is fenced by the full clearance like every other feedline,
-        // right up to the port they share. The disc that used to be left
-        // open there was the one place two feedlines could come closer than
-        // the rule allows.
+        // Counted only for the diagnostic: an edge that meets this one at a
+        // coupler is fenced by the full clearance like every other feedline.
+        // The disc that used to be left open there was the one place two
+        // feedlines could come closer than the rule allows.
         const bool adjacent = chain == edge.chain &&
                               (at + 1 == edge.from || at == edge.from + 1);
         neighbours += adjacent ? 1 : 0;
-        // Nothing is left out any more. An edge that meets this one at a
-        // coupler is still an active feedline, and it is fenced like every
-        // other — at the clearance away from the coupler, open only within
-        // the reach where the two pin on the same cell on purpose. The
-        // caller that replaces one of them hands the fresh path in as
-        // `more`, which is fenced the same way, so the stale copy costs the
-        // search only the ground it actually holds.
-        //
-        // What used to happen instead: the direct neighbours of a path were
-        // the one pair of feedlines nothing closed, and an edge weighed
-        // against them ran through them.
-        (void)ignoreAdjacent;
-        (void)pivot;
         const auto& way = edgeWayOf(wires, chain, at);
         if (way.empty()) {
           continue;
@@ -2959,10 +3039,7 @@ public:
   }
 
   void corridorOfEdge(const std::vector<Wire>& wires,
-                      const RoutingObjective& objective, const Edge& edge,
-                      const std::vector<std::size_t>& more,
-                      const bool ignoreAdjacent,
-                      const std::size_t pivot = NO_PIVOT) {
+                      const RoutingObjective& objective, const Edge& edge) {
     // The corridor of an edge holds nothing back but the artwork. A band
     // around the beeline, the bodies, the resonators, the committed edges and
     // every port's approach used to be closed here, and it was the band and
@@ -3032,7 +3109,52 @@ public:
     // there is not a way the stage can keep. The edges that meet this one at
     // a coupler are the exception, and only within that coupler's reach,
     // where they pin on the same cell on purpose.
-    fenceCommittedEdges(wires, edge, ignoreAdjacent, pivot);
+    fenceCommittedEdges(wires, edge);
+
+    // A coupler's own resonator, for the two edges that run to it.
+    //
+    // An edge may lie beside the resonator of the coupler it serves — that
+    // is the coupling, and decision 0032 says so — but it may not run
+    // *across* it. Nothing said so until now: the resonator was fenced
+    // against every feedline except the two that matter most, its own.
+    //
+    // Copper only, two cells wide, and not the clearance. The pad is three
+    // cells deep, so the feedline port and the resonator's lead sit four
+    // cells apart at the coupler; a clearance disc there would bury the port
+    // the edge has to reach. And the pad's own cells are left open, because
+    // inside it the two belong side by side.
+    for (const auto at : {edge.from, edge.to}) {
+      const auto& point = chains_[edge.chain][at];
+      if (point.fixed) {
+        continue;
+      }
+      const auto& coupler = couplers_[point.coupler];
+      const auto& option = coupler.options[coupler.chosen];
+      const auto& resonator = wires[coupler.wire];
+      // The way it has now: its own once it has been drawn from the coupler,
+      // and what the option carries before that.
+      const Path& way =
+          (resonator.couplerAtSource == point.coupler && resonator.drawn)
+              ? resonator.way
+              : option.way;
+      const std::unordered_set<std::size_t> pad(option.body.begin(),
+                                                option.body.end());
+      for (const auto& cell : way) {
+        for (std::int64_t dy = -2; dy <= 2; ++dy) {
+          for (std::int64_t dx = -2; dx <= 2; ++dx) {
+            const auto x = static_cast<std::int64_t>(cell.x) + dx;
+            const auto y = static_cast<std::int64_t>(cell.y) + dy;
+            if (x < 0 || y < 0 || x >= width || y >= height) {
+              continue;
+            }
+            const auto at2 = static_cast<std::size_t>((y * width) + x);
+            if (!pad.contains(at2)) {
+              corridor_.set(at2, true);
+            }
+          }
+        }
+      }
+    }
 
     // The box is **off**. It was a hard bound on where an edge may run — no
     // cell outside the rectangle the launcher stubs leave open — with the
@@ -3100,8 +3222,6 @@ public:
              .primitive = 0});
     }
 
-    (void)more;
-    (void)objective;
   }
 
   /// What a bend costs an edge of a chain. A feedline is judged by how much
@@ -3117,6 +3237,26 @@ public:
                      static_cast<std::uint16_t>(factor * tuning_.bendPenalty));
   }
 
+  /// Whether the chain's options are settled by the exact layered search
+  /// rather than by the greedy. Read once, like the bend factor beside it,
+  /// so a run costs a rebuild of nothing.
+  ///
+  /// An environment switch and not a config key on purpose: `plan --stage
+  /// final` reads its config out of the run directory, so an A/B on a key
+  /// turns on remembering to copy the file over and is confounded the moment
+  /// it is forgotten. Promote it once the numbers are in.
+  [[nodiscard]] static int exactChainSearch() {
+    static const int mode = [] {
+      const char* set = std::getenv("SCPD_CHAIN_DP");
+      return set != nullptr ? std::atoi(set) : 0;
+    }();
+    return mode;
+  }
+
+  /// The chain that is being searched and is therefore not fenced by its own
+  /// edges, or NO_OWNER. Only `SCPD_CHAIN_DP=2` ever sets it.
+  std::uint32_t looseChain_ = NO_OWNER;
+
   /// Whether every cell of a way the greedy chose is still open in the
   /// corridor this edge would be searched in now.
   ///
@@ -3128,7 +3268,7 @@ public:
   [[nodiscard]] bool edgeWayStillOpen(const std::vector<Wire>& wires,
                                       const RoutingObjective& objective,
                                       const Edge& edge, const Path& way) {
-    corridorOfEdge(wires, objective, edge, {}, false);
+    corridorOfEdge(wires, objective, edge);
     return std::ranges::none_of(way, [this](const PathPoint& point) {
       return point.x >= scene_.router.width || point.y >= scene_.router.height ||
              corridor_.test(scene_.router.index(point.x, point.y));
@@ -3140,12 +3280,9 @@ public:
   /// the artwork and the couplers is in the way.
   [[nodiscard]] Path routeEdge(const std::vector<Wire>& wires,
                                const RoutingObjective& objective,
-                               const Edge& edge,
-                               const std::vector<std::size_t>& more,
-                               const bool ignoreAdjacent,
-                               const std::size_t pivot = NO_PIVOT) {
+                               const Edge& edge) {
     lastPicture_.clear();
-    corridorOfEdge(wires, objective, edge, more, ignoreAdjacent, pivot);
+    corridorOfEdge(wires, objective, edge);
     // Nothing another wire holds is priced here. An edge is drawn against
     // the artwork and the couplers alone; every wire it passes is drawn
     // again under the feedline constraints afterwards, and the price on its
@@ -3263,6 +3400,61 @@ public:
     return cost;
   }
 
+  /// The fewest eighth turns any way from one pose to another can make —
+  /// a lower bound on `angleCostOf`, answered without routing anything.
+  ///
+  /// `angleCostOf` is the length of a walk on the ring of eight headings:
+  /// it starts at the heading the way leaves the source on, steps once per
+  /// straight run, and ends by paying the difference to the target heading.
+  /// The stubs the router is given pin both ends of that walk, so it runs
+  /// from the source heading to the target heading whatever the way does in
+  /// between.
+  ///
+  /// A way's straight runs add up to the displacement between the two poses.
+  /// Dotted against the beeline — the heading whose step points most nearly
+  /// along that displacement — the sum is positive, so at least one run must
+  /// point within an eighth of the beeline. The walk therefore passes
+  /// through one of the beeline's three nearest headings, and it can be no
+  /// shorter than the best of those three detours. Obstacles only lengthen
+  /// it, so this holds for whatever way the search comes back with — even
+  /// though the search minimises length and bends together rather than
+  /// bends alone.
+  ///
+  /// It is **not** the prototype's `estimate_edge_angle_cost_heuristic`,
+  /// which pins the walk to the beeline itself and adds two where the poses
+  /// are close. That is the tighter figure and it is used there to throw
+  /// candidates away before routing them, where guessing high costs nothing.
+  /// Here a figure that is too high would lose the answer.
+  [[nodiscard]] static std::uint32_t turnBound(const PathPoint& from,
+                                               const PathPoint& to) {
+    const auto dx = static_cast<std::int64_t>(to.x) -
+                    static_cast<std::int64_t>(from.x);
+    const auto dy = static_cast<std::int64_t>(to.y) -
+                    static_cast<std::int64_t>(from.y);
+    if (dx == 0 && dy == 0) {
+      return routing::headingDistance(from.heading, to.heading);
+    }
+    routing::Heading beeline = 0;
+    std::int64_t most = std::numeric_limits<std::int64_t>::min();
+    for (routing::Heading h = 0; h < routing::NUM_HEADINGS; ++h) {
+      const auto v = routing::headingVector(h);
+      const auto dot = (static_cast<std::int64_t>(v.dx) * dx) +
+                       (static_cast<std::int64_t>(v.dy) * dy);
+      if (dot > most) {
+        most = dot;
+        beeline = h;
+      }
+    }
+    auto best = routing::NUM_HEADINGS;
+    for (int eighth = -1; eighth <= 1; ++eighth) {
+      const auto through = routing::turned(beeline, eighth);
+      const auto detour = routing::headingDistance(from.heading, through) +
+                          routing::headingDistance(through, to.heading);
+      best = detour < best ? detour : best;
+    }
+    return best;
+  }
+
   /// What one option of a coupler costs: its two edges routed, each priced
   /// by how much it turns, plus their lengths and the difference between
   /// them, plus a penalty for a second dogleg. An option whose edge finds
@@ -3331,73 +3523,38 @@ public:
                               .target = targetOf(points[to])};
     };
 
-    // One edge, routed against a way already found — its copper two cells
-    // wide so the two never cross, and its clearance on top of that. The
-    // clearance goes before the copper but never instead of an edge: a chain
-    // with an edge missing is worse than two edges that run close. On 69q
-    // the clearance alone left two of eighty-one edges undrawn.
-    const auto routeAgainst = [&](const std::size_t from, const std::size_t to,
-                                  const Path& against) {
-      const auto edge = edgeOf(from, to);
-      const auto objective = objectiveOf(from, to);
-      if (against.empty()) {
-        return routeEdge(wires, objective, edge, {}, true, at);
-      }
-      const auto width = static_cast<std::int64_t>(scene_.router.width);
-      std::vector<std::size_t> copper;
-      for (const auto& cell : against) {
-        for (std::int64_t dy = -2; dy <= 2; ++dy) {
-          for (std::int64_t dx = -2; dx <= 2; ++dx) {
-            const auto x = static_cast<std::int64_t>(cell.x) + dx;
-            const auto y = static_cast<std::int64_t>(cell.y) + dy;
-            if (x >= 0 && y >= 0 && x < width && y < scene_.router.height) {
-              copper.push_back(static_cast<std::size_t>((y * width) + x));
-            }
-          }
-        }
-      }
-      auto taken = copper;
-      const auto& stencil = stencilFor(tuning_.clearance);
-      alongDisc(against, stencil,
-                [&](const std::int64_t x, const std::int64_t y) {
-                  taken.push_back(static_cast<std::size_t>((y * width) + x));
-                });
-      auto found = routeEdge(wires, objective, edge, taken, true, at);
-      if (found.empty()) {
-        found = routeEdge(wires, objective, edge, copper, true, at);
-        looseEdges_ += found.empty() ? 0 : 1;
-      }
-      return found;
+    // One edge of this coupler, routed on its own.
+    //
+    // It used to take the sibling edge's freshly found way and fence it —
+    // copper two cells wide, the clearance on top, the clearance dropped
+    // again when that left no way. None of it ever reached the search:
+    // `corridorOfEdge` discarded the cells it was handed. What actually
+    // keeps the two edges of one coupler apart is `fenceCommittedEdges`,
+    // which closes the sibling's last chosen way like every other edge on
+    // the chip. So the price of an edge is a function of the two options at
+    // its ends and the frozen state of every other edge — never of the
+    // order the two edges of one coupler are routed in.
+    const auto routeOne = [&](const std::size_t from, const std::size_t to) {
+      return routeEdge(wires, objectiveOf(from, to), edgeOf(from, to));
     };
 
-    // Both edges, in one order. The one routed first is free of the other
-    // and the second has to get past it, so which goes first decides what
-    // is left for the other: a way that takes the only gap blocks its
-    // neighbour, where the reverse order fits both. The second order is
-    // tried only when the first loses an edge, which is what makes it
-    // cheap — on a chain that routes, it never runs at all.
+    // Both edges of this coupler. Neither sees the other, so there is no
+    // order to choose: the two searches were tried both ways round for a
+    // long time and returned the same two paths every time, because the
+    // corridor each is built in does not depend on the other.
     struct Attempt {
       Path first;
       Path second;
       std::uint32_t lost = 0;
       std::uint32_t cost = 0;
     };
-    const auto tryOrder = [&](const bool afterFirst) {
+    const auto routeBoth = [&]() {
       Attempt out;
-      if (afterFirst) {
-        if (hasAfter) {
-          out.second = routeAgainst(at, at + 1, {});
-        }
-        if (hasBefore) {
-          out.first = routeAgainst(at - 1, at, out.second);
-        }
-      } else {
-        if (hasBefore) {
-          out.first = routeAgainst(at - 1, at, {});
-        }
-        if (hasAfter) {
-          out.second = routeAgainst(at, at + 1, out.first);
-        }
+      if (hasBefore) {
+        out.first = routeOne(at - 1, at);
+      }
+      if (hasAfter) {
+        out.second = routeOne(at, at + 1);
       }
       if (hasBefore) {
         out.lost += out.first.empty() ? 1 : 0;
@@ -3462,15 +3619,7 @@ public:
     }
     ++memoMisses_;
 
-    auto taken = tryOrder(false);
-    if (taken.lost > 0 && hasBefore && hasAfter) {
-      const auto other = tryOrder(true);
-      if (other.lost < taken.lost ||
-          (other.lost == taken.lost && other.cost < taken.cost)) {
-        taken = other;
-      }
-    }
-    // The better of the two orders is what the pair is remembered by.
+    auto taken = routeBoth();
     if (hasBefore) {
       edgeMemo_[edgeMemoKey(chain, at - 1)] = taken.first;
     }
@@ -3578,9 +3727,15 @@ public:
             coupler.options.size(),
             leastLost > 0 ? std::format("{} edge(s) unroutable", leastLost)
                           : std::format("cost {}", least)));
+        bool plainFits = leastLost == 0 &&
+                         coupler.options[current].secondStraight == 0;
         for (std::size_t option = 0; option < coupler.options.size();
              ++option) {
           if (option == current) {
+            continue;
+          }
+          if (coupler.options[option].secondStraight > 0 &&
+              !coupler.jogsUnlocked) {
             continue;
           }
           Path first;
@@ -3603,6 +3758,8 @@ public:
                          : std::format("cost {}", cost),
                 picture()));
           }
+          plainFits = plainFits ||
+                      (lost == 0 && coupler.options[option].secondStraight == 0);
           const bool better =
               lost == 0 &&
               (leastLost > 0 || (cost != INFINITE && cost <= least));
@@ -3624,6 +3781,17 @@ public:
             chainEdgePaths_[chain][at] = bestSecond;
           }
         }
+        // Not one plain option brought both edges home: open the jogs, and
+        // let the next pass use them. Opening them in this pass would mean
+        // routing them against a chain that is still moving under them.
+        if (!plainFits && !coupler.jogsUnlocked) {
+          coupler.jogsUnlocked = true;
+          moved = true;
+          tell(std::format(
+              "[Coupler Insertion]   '{}' chain {} pass {}: no plain option "
+              "keeps both edges — opening the second-dogleg options",
+              wireId(wires[coupler.wire]), chain, pass));
+        }
         if (best != current) {
           coupler.chosen = best;
           moved = true;
@@ -3642,6 +3810,566 @@ public:
       ++improved;
     }
     return improved;
+  }
+
+  /// What one edge of a chain costs with a named option at each of its ends,
+  /// routed if it has to be. The price the greedy puts on it, for the one
+  /// edge: ten thousand an eighth turn, and everything if there is no way.
+  ///
+  /// It stands the two couplers on the options asked about for as long as it
+  /// takes to answer, because everything the question needs — the two ports,
+  /// the end stub, the two resonators the corridor closes — is read off
+  /// `chosen`. Both are put back before it returns.
+  [[nodiscard]] std::uint64_t edgeCost(const std::vector<Wire>& wires,
+                                       const std::uint32_t chain,
+                                       const std::size_t from,
+                                       const std::size_t optionFrom,
+                                       const std::size_t optionTo) {
+    auto& points = chains_[chain];
+    const auto stand = [&](const std::size_t at, const std::size_t option) {
+      if (points[at].fixed) {
+        return std::size_t{0};
+      }
+      auto& coupler = couplers_[points[at].coupler];
+      const auto kept = coupler.chosen;
+      coupler.chosen = option;
+      return kept;
+    };
+    const auto keptFrom = stand(from, optionFrom);
+    const auto keptTo = stand(from + 1, optionTo);
+
+    const RoutingObjective objective{.source = sourceOf(points[from]),
+                                     .target = targetOf(points[from + 1])};
+    const Edge edge{.chain = chain,
+                    .from = from,
+                    .to = from + 1,
+                    .terminal =
+                        points[from].fixed || points[from + 1].fixed};
+
+    const auto key = edgeMemoKey(chain, from);
+    const auto found = edgeMemo_.find(key);
+    Path way;
+    if (found != edgeMemo_.end()) {
+      ++memoHits_;
+      way = found->second;
+    } else {
+      ++memoMisses_;
+      way = routeEdge(wires, objective, edge);
+      edgeMemo_[key] = way;
+    }
+
+    stand(from, keptFrom);
+    stand(from + 1, keptTo);
+    if (way.empty()) {
+      return routing::TRELLIS_UNREACHABLE;
+    }
+    return 10000ULL * angleCostOf(way, objective.target.heading);
+  }
+
+  /// What one round of the exact search made of one chain: the options it
+  /// would have it stand on, and the way it found for each of its edges.
+  /// Nothing is written while a round runs — see `optimizeChainsExact`.
+  struct ChainAnswer {
+    bool solved = false;
+    std::uint64_t cost = routing::TRELLIS_UNREACHABLE;
+    std::uint32_t evaluations = 0;
+    /// Of those, the ones that were not already remembered — the searches.
+    std::uint32_t routed = 0;
+    std::uint64_t pairs = 0;
+    std::vector<std::size_t> chosen;
+    std::vector<Path> ways;
+  };
+
+  /// The cheapest run of coupler options along one chain, exactly, against
+  /// the chip as it stands — one round of the layered search that replaces
+  /// the greedy's coordinate descent.
+  ///
+  /// A chain is a trellis: a layer per waypoint, a node per option of the
+  /// coupler standing there, and the step between two of them one routed
+  /// feedline edge. The price of a step is what its two options make of it
+  /// and nothing else — every other thing `corridorOfEdge` closes is either
+  /// the same for the whole chip or read off those two options — with one
+  /// exception, `fenceCommittedEdges`, which closes every other edge on the
+  /// chip as it currently stands. Freeze that and the trellis is exact.
+  ///
+  /// `routing::solveTrellis` prices a step only when the answer turns on it;
+  /// `turnBound` is what lets it leave the rest alone.
+  [[nodiscard]] ChainAnswer solveChain(const std::vector<Wire>& wires,
+                                       const std::uint32_t chain) {
+    ChainAnswer out;
+    const auto routedBefore = memoMisses_;
+    auto& points = chains_[chain];
+    const auto layers = points.size();
+    if (layers < 2) {
+      return out;
+    }
+
+    // Which options each layer offers. A launcher offers the one it is; a
+    // coupler offers its plain options, and its jogs only once it has shown
+    // it needs them.
+    const auto openOptions = [&](const std::size_t at) {
+      std::vector<std::uint32_t> open;
+      if (points[at].fixed) {
+        open.push_back(0);
+        return open;
+      }
+      const auto& coupler = couplers_[points[at].coupler];
+      for (std::size_t option = 0; option < coupler.options.size(); ++option) {
+        if (coupler.options[option].secondStraight > 0 &&
+            !coupler.jogsUnlocked) {
+          continue;
+        }
+        open.push_back(static_cast<std::uint32_t>(option));
+      }
+      return open;
+    };
+
+    std::vector<std::vector<std::uint32_t>> open;
+    routing::TrellisResult answer;
+    {
+      // Two goes at most: the plain options, then the jogs opened at the
+      // wall if the plain ones did not reach.
+      for (int go = 0; go < 2; ++go) {
+        open.clear();
+        for (std::size_t at = 0; at < layers; ++at) {
+          open.push_back(openOptions(at));
+        }
+        const auto portOf = [&](const std::size_t at, const std::uint32_t node,
+                                const bool leaving) -> PathPoint {
+          const auto& point = points[at];
+          if (point.fixed) {
+            return leaving ? point.asSource : point.asTarget;
+          }
+          const auto& option = couplers_[point.coupler].options[open[at][node]];
+          return leaving ? option.out : option.in;
+        };
+
+        routing::TrellisProblem problem;
+        for (const auto& layer : open) {
+          problem.width.push_back(static_cast<std::uint32_t>(layer.size()));
+        }
+        problem.bound = [&](const std::size_t layer, const std::uint32_t i,
+                            const std::uint32_t j) {
+          return 10000ULL * turnBound(portOf(layer, i, true),
+                                      portOf(layer + 1, j, false));
+        };
+        problem.evaluate = [&](const std::size_t layer, const std::uint32_t i,
+                               const std::uint32_t j) {
+          return edgeCost(wires, chain, layer, open[layer][i],
+                          open[layer + 1][j]);
+        };
+        answer = routing::solveTrellis(problem);
+        if (answer.solved) {
+          break;
+        }
+        // The wall: the first layer nothing reaches going forward, and the
+        // last nothing reaches coming back. The step that shut the chain
+        // runs between the two couplers there, so those are the ones whose
+        // choice is widened — never the whole chain, which trebles what
+        // every round has to route and was measured worse.
+        bool widened = false;
+        const auto unlock = [&](const std::size_t at) {
+          if (points[at].fixed) {
+            return;
+          }
+          auto& coupler = couplers_[points[at].coupler];
+          if (coupler.jogsUnlocked) {
+            return;
+          }
+          coupler.jogsUnlocked = true;
+          widened = true;
+          tell(std::format(
+              "[Coupler Insertion]   '{}' chain {}: the chain does not reach "
+              "past it on plain options — opening the second-dogleg options",
+              wireId(wires[coupler.wire]), chain));
+        };
+        for (std::size_t at = 0; at < layers; ++at) {
+          if (!answer.reachedFromStart[at]) {
+            unlock(at);
+            if (at > 0) {
+              unlock(at - 1);
+            }
+            break;
+          }
+        }
+        for (std::size_t at = layers; at > 0; --at) {
+          if (!answer.reachedFromEnd[at - 1]) {
+            unlock(at - 1);
+            if (at < layers) {
+              unlock(at);
+            }
+            break;
+          }
+        }
+        if (!widened) {
+          break;
+        }
+      }
+    }
+
+    out.evaluations = answer.evaluations;
+    out.routed = static_cast<std::uint32_t>(memoMisses_ - routedBefore);
+    for (std::size_t at = 0; at + 1 < layers; ++at) {
+      out.pairs +=
+          static_cast<std::uint64_t>(open[at].size()) * open[at + 1].size();
+    }
+    if (!answer.solved) {
+      return out;
+    }
+    out.solved = true;
+    out.cost = answer.cost;
+    out.chosen.assign(layers, 0);
+    for (std::size_t at = 0; at < layers; ++at) {
+      out.chosen[at] = points[at].fixed ? 0 : open[at][answer.chosen[at]];
+    }
+    // Every step of the winner was priced, so every one of its ways is in
+    // the memo of this round. Read them out rather than route them again.
+    out.ways.assign(layers - 1, Path{});
+    const auto kept = standOn(chain, out.chosen);
+    for (std::size_t at = 0; at + 1 < layers; ++at) {
+      const auto found = edgeMemo_.find(edgeMemoKey(chain, at));
+      if (found != edgeMemo_.end()) {
+        out.ways[at] = found->second;
+      }
+    }
+    static_cast<void>(standOn(chain, kept));
+    return out;
+  }
+
+  /// Stand a whole chain on a run of options and hand back the run it was
+  /// standing on. Used to read a chain's ways out of the memo without
+  /// leaving anything moved.
+  [[nodiscard]] std::vector<std::size_t>
+  standOn(const std::uint32_t chain, const std::vector<std::size_t>& options) {
+    auto& points = chains_[chain];
+    std::vector<std::size_t> kept(points.size(), 0);
+    for (std::size_t at = 0; at < points.size(); ++at) {
+      if (points[at].fixed) {
+        continue;
+      }
+      auto& coupler = couplers_[points[at].coupler];
+      kept[at] = coupler.chosen;
+      coupler.chosen = options[at];
+    }
+    return kept;
+  }
+
+  /// A rectangle that may hang off the grid on either side, which
+  /// `routing::CellBox` cannot: both of the things compared below are the
+  /// grown span of something near an edge of the chip.
+  struct Span {
+    std::int64_t minX = 0;
+    std::int64_t minY = 0;
+    std::int64_t maxX = 0;
+    std::int64_t maxY = 0;
+
+    [[nodiscard]] bool meets(const Span& other) const {
+      return other.minX <= maxX && other.maxX >= minX && other.minY <= maxY &&
+             other.maxY >= minY;
+    }
+  };
+
+  /// The box an edge is searched in, for a named option at each of its ends
+  /// — the same rectangle `corridorOfEdge` closes everything outside of.
+  [[nodiscard]] Span edgeBox(const std::uint32_t chain,
+                                         const std::size_t from,
+                                         const std::size_t optionFrom,
+                                         const std::size_t optionTo) const {
+    const auto& points = chains_[chain];
+    const auto port = [&](const std::size_t at, const std::size_t option,
+                          const bool leaving) -> PathPoint {
+      const auto& point = points[at];
+      if (point.fixed) {
+        return leaving ? point.asSource : point.asTarget;
+      }
+      const auto& chosen = couplers_[point.coupler].options[option];
+      return leaving ? chosen.out : chosen.in;
+    };
+    const auto source = port(from, optionFrom, true);
+    const auto target = port(from + 1, optionTo, false);
+    const std::int64_t margin = EDGE_BOX_MARGIN;
+    return {.minX = std::min<std::int64_t>(source.x, target.x) - margin,
+            .minY = std::min<std::int64_t>(source.y, target.y) - margin,
+            .maxX = std::max<std::int64_t>(source.x, target.x) + margin,
+            .maxY = std::max<std::int64_t>(source.y, target.y) + margin};
+  }
+
+  /// Forget every remembered edge whose corridor one of these ways can have
+  /// changed, and keep the rest.
+  ///
+  /// A round's answer only moves an edge's price where it moves a way that
+  /// edge could see. Everything outside an edge's box is closed to it
+  /// whatever happens, so a way that changed matters to it only if what the
+  /// way closes — itself, spread by the clearance — reaches into that box.
+  /// The test is on bounding boxes, so it forgets more than it has to and
+  /// never less.
+  ///
+  /// Throwing the whole memo away at the head of every round is the safe
+  /// thing and it is what the rounds cost: on 17q three of four rounds
+  /// re-priced chains that had not moved and could not move.
+  void forgetEdgesNear(const std::vector<Span>& moved) {
+    if (moved.empty()) {
+      return;
+    }
+    std::erase_if(edgeMemo_, [&](const auto& entry) {
+      const auto key = entry.first;
+      const auto chain = static_cast<std::uint32_t>(key >> 48U);
+      const auto from = static_cast<std::size_t>((key >> 32U) & 0xFFFFU);
+      const auto encodedFrom = static_cast<std::size_t>((key >> 16U) & 0xFFFFU);
+      const auto encodedTo = static_cast<std::size_t>(key & 0xFFFFU);
+      if (chain >= chains_.size() || from + 1 >= chains_[chain].size()) {
+        return true;
+      }
+      const auto box = edgeBox(chain, from,
+                               encodedFrom == 0 ? 0 : encodedFrom - 1,
+                               encodedTo == 0 ? 0 : encodedTo - 1);
+      return std::ranges::any_of(
+          moved, [&](const Span& what) { return what.meets(box); });
+    });
+  }
+
+  /// Where a way that changed reaches, the clearance it keeps included.
+  [[nodiscard]] Span reachOf(const Path& way) const {
+    const std::int64_t spread = tuning_.clearance;
+    Span box{.minX = std::numeric_limits<std::int64_t>::max(),
+             .minY = std::numeric_limits<std::int64_t>::max(),
+             .maxX = std::numeric_limits<std::int64_t>::min(),
+             .maxY = std::numeric_limits<std::int64_t>::min()};
+    for (const auto& point : way) {
+      box.minX = std::min<std::int64_t>(box.minX, point.x);
+      box.minY = std::min<std::int64_t>(box.minY, point.y);
+      box.maxX = std::max<std::int64_t>(box.maxX, point.x);
+      box.maxY = std::max<std::int64_t>(box.maxY, point.y);
+    }
+    box.minX -= spread;
+    box.minY -= spread;
+    box.maxX += spread;
+    box.maxY += spread;
+    return box;
+  }
+
+  /// How many edges of the chip would not survive the state it is standing
+  /// on: their way is empty, or it no longer lies in the corridor that holds
+  /// once every other edge of that same state is fenced.
+  ///
+  /// This is the commit's own test — `edgeWayStillOpen` — asked of a whole
+  /// state at once, and it is what a round has to be judged by. A round
+  /// whose answer scores zero here is one the commit will keep entire; a
+  /// round that scores above zero will have edges routed again from
+  /// scratch, and those are the ones that come back with no way at all.
+  ///
+  /// It builds a corridor per edge and searches for nothing, so it costs a
+  /// few dozen corridor builds and not one A*.
+  [[nodiscard]] std::uint32_t stateFaults(const std::vector<Wire>& wires) {
+    std::uint32_t faults = 0;
+    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      const auto& points = chains_[chain];
+      for (std::size_t at = 0; at + 1 < points.size(); ++at) {
+        const auto& way = chainEdgePaths_[chain][at];
+        if (way.empty()) {
+          ++faults;
+          continue;
+        }
+        const RoutingObjective objective{.source = sourceOf(points[at]),
+                                         .target = targetOf(points[at + 1])};
+        const Edge edge{.chain = chain,
+                        .from = at,
+                        .to = at + 1,
+                        .terminal = points[at].fixed || points[at + 1].fixed};
+        if (!way.front().samePlace(objective.source) ||
+            !way.back().samePlace(objective.target) ||
+            !edgeWayStillOpen(wires, objective, edge, way)) {
+          ++faults;
+        }
+      }
+    }
+    return faults;
+  }
+
+  /// The exact search over every chain, in rounds.
+  ///
+  /// The one thing that stops a chain's price being a function of its own
+  /// two options is the fence of every other edge on the chip. A round
+  /// freezes that fence, solves each chain against it exactly, and takes
+  /// the answer into the fence before the next chain is solved; the rounds
+  /// repeat until no chain moves.
+  ///
+  /// Freezing the fence for a whole round instead — every chain solved
+  /// against the ways as they stood when the round began, none written back
+  /// until all are done — makes the chains of a round independent of each
+  /// other, which is what would make them parallel. It was measured and it
+  /// oscillates: on 17q chain 0 flipped between two optima round after
+  /// round, and the walk ended on whichever half the last round left.
+  ///
+  /// **Optimal against a frozen fence**, not optimal outright — the fence is
+  /// the part no decomposition reaches.
+  ///
+  /// @returns How many rounds changed something.
+  [[nodiscard]] std::uint32_t optimizeChainsExact(std::vector<Wire>& wires) {
+    constexpr std::uint32_t ROUNDS = 4;
+    std::uint32_t changed = 0;
+
+    // A round is solved against the round before it, so the rounds are a
+    // walk and not a descent: a chain can be driven off its own optimum by a
+    // neighbour and back onto it, round after round, and stop on whichever
+    // half of the flip the last round happened to be. Two things follow.
+    //
+    // Every whole-chip state the walk has stood on is kept, and the walk
+    // stops the moment it stands on one twice — from there it only repeats
+    // itself, and on 17q that is the difference between stopping at round 2
+    // and paying out all four.
+    //
+    // And the state the search leaves behind is the best round it stood on,
+    // judged **first** by how many of its edges survive its own fence and
+    // only then by what it costs.
+    //
+    // Judging by cost alone does not work and was measured: round 0 is
+    // solved against a fence with nothing in it, so it is always the
+    // cheapest and always the least real, and keeping it cost 9q a feedline
+    // edge and 17q two. Whether a state survives itself is the thing that
+    // is comparable between rounds, because it is the test the commit
+    // actually applies.
+    const auto stateNow = [&]() {
+      std::vector<std::size_t> state;
+      state.reserve(couplers_.size());
+      for (const auto& coupler : couplers_) {
+        state.push_back(coupler.chosen);
+      }
+      return state;
+    };
+    std::vector<std::vector<std::size_t>> seen;
+    std::vector<std::size_t> bestState;
+    std::vector<std::vector<Path>> bestWays;
+    auto bestFaults = std::numeric_limits<std::uint32_t>::max();
+    auto bestTotal = routing::TRELLIS_UNREACHABLE;
+    std::uint32_t bestRound = 0;
+
+    // The ways as the round before left them, so the round can say which of
+    // them moved and forget only what those reach.
+    auto wasBefore = chainEdgePaths_;
+    for (std::uint32_t round = 0; round < ROUNDS; ++round) {
+      if (round > 0) {
+        std::vector<Span> moved;
+        for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+          for (std::size_t at = 0; at < chainEdgePaths_[chain].size(); ++at) {
+            const auto& now = chainEdgePaths_[chain][at];
+            const auto& then = wasBefore[chain][at];
+            if (now.size() == then.size() &&
+                std::ranges::equal(now, then, [](const PathPoint& a,
+                                                 const PathPoint& b) {
+                  return a.samePlace(b);
+                })) {
+              continue;
+            }
+            if (!then.empty()) {
+              moved.push_back(reachOf(then));
+            }
+            if (!now.empty()) {
+              moved.push_back(reachOf(now));
+            }
+          }
+        }
+        forgetEdgesNear(moved);
+        wasBefore = chainEdgePaths_;
+      }
+
+      bool moved = false;
+      std::uint64_t total = 0;
+      for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+        // Solved against the ways as they stand **now**, the chains already
+        // seen in this round included. Solving every chain of a round
+        // against one frozen fence and writing them all at the end is the
+        // other way round, and it makes the chains of a round independent —
+        // which is what would make them parallel. It also oscillates: on
+        // 17q chain 0 flipped between two optima round after round and the
+        // search stopped on whichever half the last round left. Taking each
+        // chain's answer into the fence at once settles it.
+        looseChain_ = exactChainSearch() >= 2 ? chain : NO_OWNER;
+        const auto answer = solveChain(wires, chain);
+        looseChain_ = NO_OWNER;
+        total = answer.solved ? total + answer.cost
+                              : routing::TRELLIS_UNREACHABLE;
+        if (!answer.solved) {
+          // Nothing the trellis can offer joins this chain up. The greedy
+          // keeps whatever it can and reports the rest, which is what the
+          // commit expects to find.
+          say(std::format(
+              "[Coupler Insertion] chain {} round {}: no run of options "
+              "joins the chain — falling back to the greedy",
+              chain, round));
+          if (optimizeChain(wires, chain) > 0) {
+            moved = true;
+          }
+          continue;
+        }
+        auto& points = chains_[chain];
+        for (std::size_t at = 0; at < points.size(); ++at) {
+          if (points[at].fixed) {
+            continue;
+          }
+          auto& coupler = couplers_[points[at].coupler];
+          moved = moved || answer.chosen[at] != coupler.chosen;
+          coupler.chosen = answer.chosen[at];
+        }
+        for (std::size_t at = 0; at + 1 < points.size(); ++at) {
+          if (!answer.ways[at].empty()) {
+            chainEdgePaths_[chain][at] = answer.ways[at];
+          }
+        }
+        say(std::format(
+            "[Coupler Insertion] chain {} round {}: optimum {} over {} "
+            "layers, {} of {} pairs priced, {} of them searched",
+            chain, round, answer.cost, points.size(), answer.evaluations,
+            answer.pairs, answer.routed));
+      }
+      const auto faults = stateFaults(wires);
+      if (faults < bestFaults ||
+          (faults == bestFaults && total < bestTotal)) {
+        bestFaults = faults;
+        bestTotal = total;
+        bestState = stateNow();
+        bestWays = chainEdgePaths_;
+        bestRound = round;
+      }
+      say(std::format("[Coupler Insertion] round {}: total {}, {} edge{} "
+                      "would not survive this state",
+                      round, total, faults, faults == 1 ? "" : "s"));
+      if (faults == 0) {
+        // A state the commit keeps entire. No later round can better it on
+        // the thing that is judged first, so there is nothing to pay for.
+        say(std::format("[Coupler Insertion] round {}: every edge survives "
+                        "this state — stopping",
+                        round));
+        break;
+      }
+      if (!moved) {
+        say(std::format("[Coupler Insertion] round {}: nothing moved — the "
+                        "chains stand on their own fence",
+                        round));
+        break;
+      }
+      ++changed;
+      const auto state = stateNow();
+      if (std::ranges::find(seen, state) != seen.end()) {
+        say(std::format("[Coupler Insertion] round {}: back on a state it has "
+                        "already stood on — stopping",
+                        round));
+        break;
+      }
+      seen.push_back(state);
+    }
+
+    if (!bestState.empty()) {
+      for (std::size_t index = 0; index < couplers_.size(); ++index) {
+        couplers_[index].chosen = bestState[index];
+      }
+      chainEdgePaths_ = bestWays;
+      say(std::format("[Coupler Insertion] the chains stand on round {}: "
+                      "total {}, {} edge{} it would not keep",
+                      bestRound, bestTotal, bestFaults,
+                      bestFaults == 1 ? "" : "s"));
+    }
+    return changed;
   }
 
   /// Put a coupler's option in place: the resonator's way is cut back to
@@ -3924,7 +4652,7 @@ public:
       wire.objective.source = sourceOf(points[edge.from]);
       wire.objective.target = targetOf(points[edge.to]);
       wire.fixed.clear();
-      wire.way = routeEdge(wires, wire.objective, edge, {}, false);
+      wire.way = routeEdge(wires, wire.objective, edge);
       if (wire.way.empty()) {
         restore(wires, taken);
         return false;
@@ -5931,12 +6659,6 @@ private:
   /// One entry per cell: the resonator whose surviving way holds it, or
   /// nobody. No coupler may be built over one.
   std::vector<std::uint32_t> tailOwner_;
-  /// How often an edge of the greedy had to be weighed against its chain
-  /// neighbour's copper alone, because it found no way that kept the
-  /// clearance from it. The fallback is what keeps a chain whole; the count
-  /// is what makes two runs comparable when it fires in one and not the
-  /// other.
-  std::uint32_t looseEdges_ = 0;
   /// A price field of nothing, for the searches that price nothing. Filled
   /// once and never written again.
   std::vector<std::uint8_t> zeroProximity_;
@@ -5955,6 +6677,10 @@ private:
   /// in would make every entry stale on every move and there would be
   /// nothing left to keep. The price is that an entry can outlive the
   /// ground it was found on; the fails say what that costs.
+  /// The greedy leaves the staleness above standing. The exact search does
+  /// not: at the head of every round it forgets the entries whose corridor
+  /// a way that moved could have changed, and keeps the rest — see
+  /// `forgetEdgesNear`.
   std::unordered_map<std::uint64_t, Path> edgeMemo_;
   std::uint64_t memoHits_ = 0;
   std::uint64_t memoMisses_ = 0;

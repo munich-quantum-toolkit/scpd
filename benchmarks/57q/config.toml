@@ -165,7 +165,7 @@ launcher_target = 18
 # and 2.
 rounds            = 6
 max_relaxation    = 5
-refinement_rounds = 0
+refinement_rounds = 5
 
 # The measurement of the feedline routing on its own: the repair is off, so
 # that what the sweep leaves is what is counted, and the run stops after the
