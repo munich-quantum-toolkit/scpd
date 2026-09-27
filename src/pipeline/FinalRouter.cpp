@@ -22,8 +22,9 @@
 #include "mqt-scpd/grid/Rasterize.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
-#include "mqt-scpd/routing/CouplerInsertion.hpp"
+#include "mqt-scpd/routing/AnalyticDubins.hpp"
 #include "mqt-scpd/routing/ChainTrellis.hpp"
+#include "mqt-scpd/routing/CouplerInsertion.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/MeanderInsertion.hpp"
@@ -968,6 +969,7 @@ public:
       : scene_(scene), tuning_(tuning), progress_(std::move(progress)),
         debug_(std::move(debug)), verbosity_(verbosity),
         primitives_(std::make_shared<const MovePrimitives>(BEND_RADIUS)),
+        analytic_(*primitives_),
         scratch_(scene.router.width, scene.router.height),
         router_(primitives_, scratch_,
                 {.startStraightLength = 0,
@@ -2158,14 +2160,39 @@ public:
         });
     say(std::format(
         "coupler insertion: {} couplers on {} resonators ({} on a diagonal), "
-        "{} chains, {} of {} edges drawn, feedline angle cost {}, {} greedy "
-        "passes, {} of {} option costs from the memo, {:.1f}s",
+        "{} chains, {} of {} edges drawn, feedline angle cost {}, {} {}, "
+        "{} of {} option costs from the memo, {:.1f}s",
         couplers_.size(), couplers_.size() + withoutOptions, diagonal,
         chains_.size(), drawn, edges_.size(), angle, passes,
+        // Both searches fill `passes`, so the word has to say which one ran:
+        // a log that calls an exact round a greedy pass is a log that answers
+        // the wrong question when somebody asks which search they got.
+        exactChainSearch() ? "exact rounds" : "greedy passes",
         memoHits_, memoHits_ + memoMisses_, seconds));
     // The two figures the insertion is judged by, on a line of their own so
     // that a sweep over settings can be read off the log without counting.
     const auto missing = static_cast<std::uint32_t>(edges_.size()) - drawn;
+    if (boundPairs_ > 0) {
+      say(std::format(
+          "coupler insertion: the layer graph took {} bound{} in {:.1f} ms "
+          "({:.3f} us each), bound {}",
+          boundPairs_, boundPairs_ == 1 ? "" : "s",
+          static_cast<double>(boundNanos_) / 1e6,
+          static_cast<double>(boundNanos_) / 1000.0 /
+              static_cast<double>(boundPairs_),
+          chainBound() == 0 ? "turnBound" : "analytic"));
+    }
+    if (auditSteps_ > 0) {
+      say(std::format(
+          "coupler insertion: audit over {} priced steps — mean turnBound "
+          "{:.2f}, "
+          "analytic {:.2f}, real {:.2f}; sharper on {}, exact on {}, above the "
+          "real on {}",
+          auditSteps_, static_cast<double>(auditTurnBound_) / auditSteps_,
+          static_cast<double>(auditAnalytic_) / auditSteps_,
+          static_cast<double>(auditReal_) / auditSteps_, auditSharper_,
+          auditExact_, auditViolations_));
+    }
     say(std::format("==> coupler insertion: {} feedline edge{} NOT drawn, "
                     "feedline angle cost {}, {:.1f}s",
                     missing, missing == 1 ? "" : "s", angle, seconds));
@@ -3190,7 +3217,7 @@ public:
       // on, and the clearance around it.
       const auto v = routing::headingVector(at.heading);
       Path places;
-      for (std::int64_t k = 0; k <= tuning_.straightStart*2.0; ++k) {
+      for (std::int64_t k = 0; k <= tuning_.straightStart; ++k) {
         const auto x = static_cast<std::int64_t>(at.x) + (k * v.dx);
         const auto y = static_cast<std::int64_t>(at.y) + (k * v.dy);
         if (x < 0 || y < 0 || x >= width || y >= height) {
@@ -3244,14 +3271,105 @@ public:
   /// An environment switch and not a config key on purpose: `plan --stage
   /// final` reads its config out of the run directory, so an A/B on a key
   /// turns on remembering to copy the file over and is confounded the moment
-  /// it is forgotten. Promote it once the numbers are in.
+  /// it is forgotten.
+  ///
+  /// **On by default**, and `SCPD_CHAIN_DP=0` is the way back to the greedy.
+  /// It was off while it cost more than it bought; the analytic bound
+  /// (`chainBound` below) turned that around. One sweep of both searches over
+  /// all eight chips, a run at a time: the exact search is **faster on seven
+  /// of them** — 9q 1.0 s against 9.5, 21q 2.5 against 38.8, 33q 6.4 against
+  /// 90.0 — and where both draw the same edges its angle cost is better on
+  /// three and level on two, never worse.
+  ///
+  /// **What it costs, said plainly.** 69q is still slower than the greedy,
+  /// 949 s against 509. And 57q and 69q each draw one feedline edge fewer
+  /// than the greedy does, 7 undrawn against 6, because neither converges and
+  /// the round each keeps still carries faults. 33q is the other way round —
+  /// all 40 edges where the greedy loses 2. See *Where it stands* and *What
+  /// is open* in `handover-cpw-coupler-insertion.md`.
   [[nodiscard]] static int exactChainSearch() {
     static const int mode = [] {
       const char* set = std::getenv("SCPD_CHAIN_DP");
-      return set != nullptr ? std::atoi(set) : 0;
+      return set != nullptr ? std::atoi(set) : 1;
     }();
     return mode;
   }
+
+  /// Which bound the layered search leans on, on the same reasoning as
+  /// `exactChainSearch` above: 0 is `turnBound`, 1 the analytic answer, and
+  /// 2 the analytic answer with every step it priced reported beside both.
+  [[nodiscard]] static int chainBound() {
+    static const int mode = [] {
+      const char* set = std::getenv("SCPD_CHAIN_BOUND");
+      return set != nullptr ? std::atoi(set) : 1;
+    }();
+    return mode;
+  }
+
+  /// The fewest eighth turns an edge between two poses can make, by whichever
+  /// bound is switched on. Both are lower bounds on `angleCostOf`, so the
+  /// layered search is exact either way; the analytic one is simply sharper,
+  /// and a sharper bound is fewer steps priced.
+  [[nodiscard]] std::uint32_t boundTurns(const PathPoint& from,
+                                         const PathPoint& to) const {
+    return chainBound() == 0 ? turnBound(from, to)
+                             : analytic_.minTurns(from, to);
+  }
+
+  /// A round's total, or the word for a round holding a chain that nothing
+  /// joins — which is not a number and must not print as one.
+  [[nodiscard]] static std::string spell(const std::uint64_t total) {
+    return total == routing::TRELLIS_UNREACHABLE ? std::string("unreachable")
+                                                 : std::to_string(total);
+  }
+
+  /// Report one priced step against both bounds. `SCPD_CHAIN_BOUND=2` only.
+  ///
+  /// How sharp the bound is decides how much of the trellis has to be
+  /// searched at all, so it is the figure to look at before any clock. Here
+  /// it is measured against the truth — the real price of a step the search
+  /// did go on to pay for — rather than guessed at from the runtime.
+  void audit(const std::uint32_t chain, const std::size_t layer,
+             const PathPoint& from, const PathPoint& to,
+             const std::uint64_t real) {
+    if (real == routing::TRELLIS_UNREACHABLE) {
+      ++auditUnreachable_;
+      return;
+    }
+    const auto truth = static_cast<std::uint32_t>(real / 10000ULL);
+    const auto loose = turnBound(from, to);
+    const auto sharp = analytic_.minTurns(from, to);
+    ++auditSteps_;
+    auditTurnBound_ += loose;
+    auditAnalytic_ += sharp;
+    auditReal_ += truth;
+    auditSharper_ += (sharp > loose) ? 1U : 0U;
+    auditExact_ += (sharp == truth) ? 1U : 0U;
+    if (sharp > truth) {
+      // The one thing that would break the exactness of the layered search.
+      ++auditViolations_;
+      say(std::format(
+          "[Coupler Insertion]   AUDIT chain {} step {}: analytic {} is ABOVE "
+          "the real {} — the bound is not admissible",
+          chain, layer, sharp, truth));
+    }
+    tell(std::format(
+        "[Coupler Insertion]   audit chain {} step {}: turnBound {}, "
+        "analytic {}, real {}",
+        chain, layer, loose, sharp, truth));
+  }
+
+  /// What the bound cost and how sharp it was, over the whole insertion.
+  std::uint64_t boundPairs_ = 0;
+  std::uint64_t boundNanos_ = 0;
+  std::uint32_t auditSteps_ = 0;
+  std::uint32_t auditUnreachable_ = 0;
+  std::uint32_t auditSharper_ = 0;
+  std::uint32_t auditExact_ = 0;
+  std::uint32_t auditViolations_ = 0;
+  std::uint64_t auditTurnBound_ = 0;
+  std::uint64_t auditAnalytic_ = 0;
+  std::uint64_t auditReal_ = 0;
 
   /// The chain that is being searched and is therefore not fenced by its own
   /// edges, or NO_OWNER. Only `SCPD_CHAIN_DP=2` ever sets it.
@@ -3892,8 +4010,10 @@ public:
   /// exception, `fenceCommittedEdges`, which closes every other edge on the
   /// chip as it currently stands. Freeze that and the trellis is exact.
   ///
-  /// `routing::solveTrellis` prices a step only when the answer turns on it;
-  /// `turnBound` is what lets it leave the rest alone.
+  /// `routing::solveTrellis` prices a step only when the answer turns on it,
+  /// and the bound is what lets it leave the rest alone — so how sharp the
+  /// bound is *is* the runtime. `boundTurns` picks it; the analytic answer is
+  /// the default and prices a fraction of the pairs `turnBound` does.
   [[nodiscard]] ChainAnswer solveChain(const std::vector<Wire>& wires,
                                        const std::uint32_t chain) {
     ChainAnswer out;
@@ -3948,15 +4068,52 @@ public:
         for (const auto& layer : open) {
           problem.width.push_back(static_cast<std::uint32_t>(layer.size()));
         }
+
+        // The layer graph, built before the search rather than during it.
+        // Every step of it is priced by the bound, which answers in a
+        // fraction of a microsecond against the tens of milliseconds a real
+        // edge search costs, so the whole graph is affordable where even one
+        // extra search is not. This is the only place the bound is asked —
+        // `solveTrellis` fills its prices from it once — so the time spent
+        // here is the whole of what the bound costs.
+        const auto beganBound = std::chrono::steady_clock::now();
+        std::vector<std::vector<std::uint64_t>> bounds(layers - 1);
+        for (std::size_t layer = 0; layer + 1 < layers; ++layer) {
+          const auto from = open[layer].size();
+          const auto to = open[layer + 1].size();
+          bounds[layer].resize(from * to);
+          for (std::size_t i = 0; i < from; ++i) {
+            const auto leaving =
+                portOf(layer, static_cast<std::uint32_t>(i), true);
+            for (std::size_t j = 0; j < to; ++j) {
+              const auto arriving =
+                  portOf(layer + 1, static_cast<std::uint32_t>(j), false);
+              bounds[layer][(i * to) + j] =
+                  10000ULL * boundTurns(leaving, arriving);
+            }
+          }
+          boundPairs_ += from * to;
+        }
+        boundNanos_ += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - beganBound)
+                .count());
+
         problem.bound = [&](const std::size_t layer, const std::uint32_t i,
                             const std::uint32_t j) {
-          return 10000ULL * turnBound(portOf(layer, i, true),
-                                      portOf(layer + 1, j, false));
+          return bounds[layer]
+                       [(static_cast<std::size_t>(i) * open[layer + 1].size()) +
+                        j];
         };
         problem.evaluate = [&](const std::size_t layer, const std::uint32_t i,
                                const std::uint32_t j) {
-          return edgeCost(wires, chain, layer, open[layer][i],
-                          open[layer + 1][j]);
+          const auto real =
+              edgeCost(wires, chain, layer, open[layer][i], open[layer + 1][j]);
+          if (chainBound() == 2) {
+            audit(chain, layer, portOf(layer, i, true),
+                  portOf(layer + 1, j, false), real);
+          }
+          return real;
         };
         answer = routing::solveTrellis(problem);
         if (answer.solved) {
@@ -4287,19 +4444,31 @@ public:
         looseChain_ = exactChainSearch() >= 2 ? chain : NO_OWNER;
         const auto answer = solveChain(wires, chain);
         looseChain_ = NO_OWNER;
-        total = answer.solved ? total + answer.cost
-                              : routing::TRELLIS_UNREACHABLE;
+        // Once a chain of the round cannot be joined at all, the round's
+        // total is unreachable and must *stay* unreachable. Adding the next
+        // chain's cost onto TRELLIS_UNREACHABLE wraps it — on 69q an
+        // unsolved chain plus 400000 printed as `total 399999`, which then
+        // undercuts every honest round in the `total < bestTotal` tiebreak
+        // below and makes the least real round look the cheapest.
+        total = (!answer.solved || total == routing::TRELLIS_UNREACHABLE)
+                    ? routing::TRELLIS_UNREACHABLE
+                    : total + answer.cost;
         if (!answer.solved) {
-          // Nothing the trellis can offer joins this chain up. The greedy
-          // keeps whatever it can and reports the rest, which is what the
-          // commit expects to find.
+          // Nothing the trellis can offer joins this chain up.
+          //
+          // **The chain is left as it stands.** It used to fall back to the
+          // greedy here, which is not wanted (user, 2026-09-27): a round is
+          // then part exact and part coordinate descent, the greedy's choice
+          // is fenced into every chain solved after it, and the round total
+          // no longer prices what the search actually chose. Leaving the
+          // chain alone keeps the round one method's answer, and the edges
+          // that cannot be drawn are counted by `stateFaults` and reported
+          // by the commit — which is the honest outcome rather than a
+          // quietly patched one.
           say(std::format(
               "[Coupler Insertion] chain {} round {}: no run of options "
-              "joins the chain — falling back to the greedy",
+              "joins the chain — leaving it as it stands",
               chain, round));
-          if (optimizeChain(wires, chain) > 0) {
-            moved = true;
-          }
           continue;
         }
         auto& points = chains_[chain];
@@ -4333,7 +4502,7 @@ public:
       }
       say(std::format("[Coupler Insertion] round {}: total {}, {} edge{} "
                       "would not survive this state",
-                      round, total, faults, faults == 1 ? "" : "s"));
+                      round, spell(total), faults, faults == 1 ? "" : "s"));
       if (faults == 0) {
         // A state the commit keeps entire. No later round can better it on
         // the thing that is judged first, so there is nothing to pay for.
@@ -4366,7 +4535,7 @@ public:
       chainEdgePaths_ = bestWays;
       say(std::format("[Coupler Insertion] the chains stand on round {}: "
                       "total {}, {} edge{} it would not keep",
-                      bestRound, bestTotal, bestFaults,
+                      bestRound, spell(bestTotal), bestFaults,
                       bestFaults == 1 ? "" : "s"));
     }
     return changed;
@@ -6629,6 +6798,7 @@ private:
   std::chrono::steady_clock::time_point began_ =
       std::chrono::steady_clock::now();
   std::shared_ptr<const MovePrimitives> primitives_;
+  routing::AnalyticDubins analytic_;
   routing::SearchScratch scratch_;
   routing::DubinsRouter router_;
   Field field_;

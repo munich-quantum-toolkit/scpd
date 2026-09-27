@@ -1,20 +1,24 @@
 # The CPW coupler insertion
 
-Written for whoever takes the coupler insertion further. Two things changed in
-this session and both are in *How the option is chosen* below: the option is
-now settled either by the greedy as before **or exactly**, by a layered search
-over the whole chain, and the router's heuristic gained the bend term it was
-missing. Before this, read
+Written for whoever takes the coupler insertion further. **The option is now
+settled exactly by default**, by a layered search over the whole chain
+(*How the option is chosen*) — the greedy is still there behind
+`SCPD_CHAIN_DP=0`. What made that affordable is the bound: it is now the
+*exact* least turning of a way with nothing in its path (*The analytic
+bound*), which prices a fraction of the pairs the old one did and made the
+layered search **faster than the greedy on seven of the eight chips**, 69q
+excepted. The router's heuristic also gained the bend term it was missing.
+Before this, read
 [handover-final-couplers.md](handover-final-couplers.md) for the feedline
 chains, the repair and the refinement, which this session did not touch, and
 know that the geometry described here differs from
 [0032](docs/design/decisions/0032-the-coupler-couples-along-the-ring.md).
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch: `phase-4-routing-stages`. HEAD is **`cf17fb3` ⚡️ Coupler insertion
-  basic functionality**. Everything below is **uncommitted** on top of it. The
-  user commits per phase — leave the work in the tree and say what you
-  verified.
+- Branch: `phase-4-routing-stages`. HEAD is **`6226b15` ⚡️ progress coupler
+  insertion some fails remain at 45-69Q**. The analytic bound is
+  **uncommitted** on top of it; everything else is in. The user commits per
+  phase — leave the work in the tree and say what you verified.
 
 ## Where it stands
 
@@ -27,16 +31,41 @@ The two figures the insertion is judged by are **the feedline edges it fails
 to draw** and **the feedline angle cost**. Fails of the whole stage are not a
 criterion for this phase (user, 2026-09-26).
 
-| chip | chains | edges | **not drawn** | angle | insertion | couplers (diagonal) | option costs (from the memo) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 4q | 1 | 5 | 0 | 16 | 1.6 s | 4 (2) | 320 (198) |
-| 9q | 2 | 10 | 0 | 22 | 9.6 s | 9 (5) | 700 (339) |
-| 17q | 4 | 20 | 0 | 72 | 19.8 s | 17 (8) | 2111 (1070) |
-| 21q | 5 | 26 | 0 | 48 | 39.5 s | 21 (16) | 1660 (800) |
-| 33q | 7 | 40 | **2** | 72 | 91.9 s | 33 (21) | 2869 (1302) |
-| 45q | 8 | 52 | 0 | 123 | 146.4 s | 45 (33) | 3795 (1888) |
-| 57q | 9 | 66 | **6** | 128 | 262.5 s | 57 (38) | 5278 (2435) |
-| 69q | 12 | 81 | **6** | 176 | 509.0 s | 69 (38) | 6315 (3064) |
+**The exact layered search is the default** since the analytic bound made it
+cheaper than the greedy; the greedy is `SCPD_CHAIN_DP=0`. **Both halves of
+this table come from one sweep**, every chip run on its own, so the columns
+are comparable to each other and not only to history.
+
+| chip | chains | edges | not drawn | angle | insertion | | greedy: not drawn | angle | insertion |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |
+| 4q | 1 | 5 | 0 | 16 | **0.8 s** | | 0 | 16 | 1.6 s |
+| 9q | 2 | 10 | 0 | **20** | **1.0 s** | | 0 | 22 | 9.5 s |
+| 17q | 4 | 20 | 0 | **70** | **15.8 s** | | 0 | 72 | 19.5 s |
+| 21q | 5 | 26 | 0 | 48 | **2.5 s** | | 0 | 48 | 38.8 s |
+| 33q | 7 | 40 | **0** | 76 | **6.4 s** | | **2** | 72 | 90.0 s |
+| 45q | 8 | 52 | 0 | **107** | **21.4 s** | | 0 | 123 | 144.4 s |
+| 57q | 9 | 66 | **7** | **114** | **257.0 s** | | **6** | 128 | 261.5 s |
+| 69q | 12 | 81 | **7** | **160** | 948.9 s | | **6** | 176 | 508.9 s |
+
+The couplers are unchanged by the search: 4/9/17/21/33/45/57/69 of them, with
+2/5/8/16/21/33/38/38 on a diagonal.
+
+**Compare the angle cost only where the same number of edges was drawn.** An
+edge that was not drawn turns nowhere and `angleCostOf` scores it **zero**
+(*Traps*, 1), so a search that draws fewer edges is flattered by this column.
+On the five chips where both draw the same edges — 4q, 9q, 17q, 21q, 45q —
+the exact search is **better on three and level on two, and never worse**:
+9q by 2, 17q by 2, 45q by 16.
+
+On the three where the counts differ, per drawn edge: 33q 76/40 = 1.90
+against the greedy's 72/38 = 1.89 — level, for **two more edges drawn**; 57q
+1.93 against 2.13; 69q 2.16 against 2.35. So the greedy's lower raw angle on
+33q is bought by leaving two edges out, and its lower edge count on 57q and
+69q costs it more turning per edge that it does draw.
+
+**Runtime: the exact search wins seven of eight**, 69q excepted (949 s against
+509). And it is the more pessimistic half of this sweep — the exact runs were
+measured at 122–158 % background indexing load, the greedy runs at 0–99 %.
 
 **`refinement_rounds` belongs to this measurement.** It drives the outer
 routing's refinement, which settles what way a resonator has *before* the
@@ -87,7 +116,7 @@ edge of *every* chain as it currently stands. That is the one thing that ties
 an edge's price to the rest of the chip, and it is what both searches have to
 work around.
 
-### The greedy — the default
+### The greedy — `SCPD_CHAIN_DP=0`
 
 `optimizeChain` (`:3682`), the prototype's `optimize_chain`. Five passes
 (`PASSES = 5`); each pass walks the chain front to back and gives every
@@ -110,9 +139,11 @@ coupler the cheapest of its options.
 It is a coordinate descent: a worsening at coupler *i* that would unlock a
 larger gain at *i+1* is never taken, and the loop order decides every tie.
 
-### The exact search — `SCPD_CHAIN_DP=1`
+### The exact search — **the default**
 
-`optimizeChainsExact` (`:4208`). **A chain is a trellis**: one layer per
+`optimizeChainsExact` (`:4208`), **on by default since the analytic bound
+made it cheaper than the greedy on seven of the eight chips**;
+`SCPD_CHAIN_DP=0` is the way back. **A chain is a trellis**: one layer per
 waypoint, one node per option of the coupler standing there, and the step
 between two of them is one routed feedline edge. A launcher is a layer of one
 node. The cheapest run of options along the chain is then a shortest path, and
@@ -141,8 +172,11 @@ whose own steps are all real. A weak bound costs evaluations, never
 correctness. On the chips it priced between **7 % and 52 %** of the pairs of a
 chain — 72 of 1008 on one 9q chain, 410 of 784 on one 17q chain.
 
-**The bound is `turnBound` (`:3428`)**: the fewest eighth turns any way from
-one pose to the other can make, answered without routing anything. The walk of
+**The bound is chosen by `SCPD_CHAIN_BOUND` (`:3261`)**, and how sharp it is
+*is* the runtime — it decides how much of the trellis has to be searched at
+all.
+
+`turnBound` (`:3428`), **`SCPD_CHAIN_BOUND=0`**, is the original: the walk of
 headings runs from the source heading to the target heading; the way's
 straight runs add up to the displacement between the poses, so at least one of
 them must point within an eighth of the beeline, and the walk therefore passes
@@ -151,6 +185,18 @@ detours is the bound. It is **not** the prototype's
 `estimate_edge_angle_cost_heuristic`, which pins the walk to the beeline
 itself and can read up to two eighths high — harmless where it only throws
 candidates away before routing them, fatal here.
+
+**`AnalyticDubins::minTurns` (`src/routing/AnalyticDubins.cpp`) is the
+default**, `SCPD_CHAIN_BOUND=1`, and it is the *exact* least turning of a way
+with nothing in its path — see *The analytic bound* below. It prices a
+fraction of the pairs `turnBound` does and is 2.5 to 7.6 times faster over the
+chips, at **identical optima**.
+
+**`turnBound` is essentially distance-blind.** It looks at the displacement
+only to pick the beeline heading and never asks whether a way that turns that
+little can actually cover it. Measured over random pose pairs its mean is
+~3.0 eighths at every separation from 5 to 400 cells; the analytic answer runs
+4.5 to 6.2 and rises as the poses close up.
 
 **The rounds.** A round freezes `fenceCommittedEdges` and solves each chain
 against it exactly, taking each chain's answer into the fence before the next
@@ -177,24 +223,34 @@ outright** — the fence is the part no decomposition reaches. Say it that way.
   them everywhere makes an inner edge 48 × 48 = 2304 pairs.
 - A chain the trellis cannot join at all falls back to the greedy, and says so.
 
-**What it buys, measured** (`SCPD_CHAIN_DP=1`, against the greedy on the same
-build; 21q and up are unmeasured with it):
+**What it buys, measured** (against the greedy on the same
+build), **all eight chips, one run at a time**. The exact column is the
+analytic bound, which is the default; the bound changes the clock and nothing
+else, so the angle cost and the edges drawn are the same under either.
 
-| | 4q | 9q | 17q |
-| --- | ---: | ---: | ---: |
-| greedy, angle | 16 | 22 | 72 |
-| exact, angle | 16 | **20** | **70** |
-| greedy, insertion | 1.6 s | 9.6 s | 19.8 s |
-| exact, insertion | 2.5 s | **5.9 s** | 37.9 s |
+The figures are in *Where it stands*, which is one sweep of both searches over
+all eight chips.
 
-Every edge is drawn either way. The angle cost is never worse and twice
-better; the clock goes both ways, because 9q settles in two rounds while 17q
-never settles and pays all four. **The prototype measured the same trade and
-dropped it** — its own full Viterbi cost 244 s against 14 s for its greedy at
-100 bends against 99 (`FinalGrid.cpp:18459`). What makes it worth having here
-is not the 1–3 % on the angle cost: it is that a price per *option* is a node
-weight the trellis takes for free, and that is the term the greedy cannot have
-at all. See *What is open*.
+**With the analytic bound the exact search is faster than the greedy on seven
+of the eight chips**, and by an order of magnitude on 9q, 21q and 33q — which
+reverses the trade the prototype measured and dropped (its own full Viterbi
+cost 244 s against 14 s for its greedy at 100 bends against 99,
+`FinalGrid.cpp:18459`). **69q is the exception**: 949 s against the greedy's
+509, because it pays all four rounds and never settles.
+
+**It is not uniformly better on quality either.** 33q is the clear win — all
+40 edges where the greedy loses 2, at angle 76 against 72 (which is level per
+drawn edge; see *Where it stands*). **57q and 69q are the losses**: 7 edges
+undrawn against the greedy's 6 on both, though at angle 114 against 128 and
+160 against 176, which is less turning per edge either way. In each case the exact search does not
+converge and the round it keeps still carries faults. That is a property of
+the rounds, not of the bound — both bounds produce the identical
+1280000/1920000/1280000/1900000 cycle on 57q with identical faults 9/11/10/11,
+and the identical 18/12/10/12 on 69q.
+
+What is worth having beyond the clock is still that a price per *option* is a
+node weight the trellis takes for free, and that is the term the greedy cannot
+have at all. See *What is open*.
 
 ### The router's heuristic
 
@@ -203,6 +259,98 @@ at all. See *What is open*.
 heuristic — a way has to arrive on the target heading and every eighth turn it
 still owes costs one bend penalty. The orthogonal search always had this; the
 free one did not. It **halves the states the search expands**. See *Runtime*.
+
+## The analytic bound
+
+`AnalyticDubins` (`include/mqt-scpd/routing/AnalyticDubins.hpp`,
+`src/routing/AnalyticDubins.cpp`) answers **the fewest eighth turns a way of
+this bend radius can make from one pose to another when nothing is in its
+way** — no obstacles, no corridor, no edge of the chip. Every real way is also
+an obstacle-free way, so it can never exceed what the search produces: it is
+admissible, **the trellis stays exact**, and it is simply far sharper.
+
+**The problem is small because the move set is.** There are exactly five
+primitives per heading — the straight step, the eighth turns to either side
+and the quarter turns to either side (`test/routing/test_primitives.cpp:40`
+asserts the turn set is `{-2,-1,0,1,2}`). A straight does not turn, so in this
+metric it is free and may be repeated at will. What is left is
+
+> minimise the turning of an arc sequence walking the headings from the
+> source's to the target's, subject to the displacement the arcs leave over
+> lying in the **cone of the headings the way runs straight on**.
+
+Iterative deepening from `headingDistance(source, target)` up to a cap;
+`cap + 1` when nothing fits, which is still a lower bound. The constructor
+reads the arcs off `MovePrimitives::of`, so the model cannot drift from the
+move set the router actually expands if the radius ever changes.
+
+**The cone test is a 256-entry table, exact and O(1).** Every generator is a
+multiple of 45°, so a cone's edges lie on headings and membership turns only
+on which of **sixteen direction classes** the residual falls in — eight rays
+and the eight open sectors between them. The table is built once by
+Carathéodory in two dimensions: a member of a cone is already a non-negative
+combination of *two* of its generators, so trying every pair and every single
+generator settles it exactly. Do not replace this with an angular-hull
+shortcut on "spans more than 180°": the cone of two opposite headings is the
+line through them, not the half-plane, and that is exactly where such a
+shortcut over-accepts.
+
+**Two things that would have broken it silently:**
+
+1. `reconstructSegments` (`src/routing/PathGeometry.cpp:27`) tags an arc with
+   its **entry** heading and opens one segment per primitive change, so
+   `angleCostOf` sums exactly `headingDistance(entry, exit)` per arc — a
+   quarter turn counts two and nothing counts twice. The model has to match
+   that, and it does.
+2. The straight runs must be relaxed to **real** rather than whole cells, and
+   the minimum separation the router keeps between two arcs dropped. Both only
+   widen the feasible set, which is what keeps the answer a lower bound.
+
+**Admissibility is measured, not argued, in three places** — the 100
+stress-harness requests on an empty grid and through pillars
+(`test/routing/test_analytic_dubins.cpp`), some 1500 random pose pairs routed
+for real at separations from 15 to 300 cells, and the live audit below. **Not
+one violation anywhere.** On random pairs it is *exact* on 81–95 % of them,
+not merely below.
+
+**It costs nothing.** 0.038 µs per answer against 11 231 µs per route in the
+microbenchmark; 0.5–0.6 µs on real chip poses. The whole layer graph is built
+up front and the line says what it cost — 13 632 bounds in 7.3 ms on 17q,
+62 264 in 33.6 ms on 57q. The bound's own time is never the question.
+
+**`SCPD_CHAIN_BOUND=2` is the audit.** It prints `turnBound / analytic / real`
+for every step the search actually priced and a summary line, and counts any
+step where the analytic answer sits above the real one. **Run it before
+believing any clock** — it is the only thing that tests admissibility on the
+real workload. On 9q: 32 priced steps, mean turnBound 1.75, analytic 2.44,
+real 2.94; exact on 27, above the real on 0.
+
+**The trap this set.** On the `test_route_stress` requests the analytic answer
+is sharper than `turnBound` on **0 of 100** — those are wide open lattice
+cells with opposite headings, where the beeline detour is always realisable.
+That fixture says the change is worthless and it is wrong. Judge a bound on
+the workload the pipeline gives it, or do not judge it.
+
+**What it bought**, `SCPD_CHAIN_DP=1` with `SCPD_CHAIN_BOUND=0` against `1`,
+one run at a time (pairs the search had to price / insertion):
+
+| chip | turnBound | analytic | |
+| --- | ---: | ---: | ---: |
+| 4q | 264 / 2.5 s | 85 / 0.8 s | 3.1x |
+| 9q | 421 / 6.0 s | 50 / 0.9 s | 6.7x |
+| 17q | 3212 / 37.9 s | 1322 / 15.0 s | 2.5x |
+| 21q | 479 / 13.2 s | 29 / 2.3 s | 5.7x |
+| 33q | 854 / 33.8 s | 67 / 5.9 s | 5.7x |
+| 45q | — / 149.7 s | — / 19.8 s | 7.6x |
+| 57q | — / 530.7 s | — / 235.6 s | 2.3x |
+| 69q | — / 1620.3 s | — / 922.4 s | 1.8x |
+
+**Every chain optimum, every round total, every fault count and the round that
+is kept are identical under both bounds** — 17q reproduces its whole
+660000/700000/660000/700000 cycle, 57q its 1280000/1920000/1280000/1900000,
+69q its faults 18/12/10/12 and the round it stands on.
+That identity is the gate. A difference would mean the bound is not
+admissible, and the exactness of the layered search would be gone with it.
 
 ## What a coupler is
 
@@ -409,8 +557,13 @@ uv pip install --python .venv/bin/python --no-build-isolation --no-deps \
     --reinstall-package mqt-scpd -e .
 cp benchmarks/17q/config.toml artifacts/17q/config.toml     # ← not optional
 .venv/bin/mqt-scpd plan -c benchmarks/17q/config.toml -o artifacts/17q --stage final -v 1
-SCPD_CHAIN_DP=1 .venv/bin/mqt-scpd plan -c benchmarks/17q/config.toml \
-    -o artifacts/17q-dp --stage final -v 1
+# the exact layered search is the default; this is the way back to the greedy
+SCPD_CHAIN_DP=0 .venv/bin/mqt-scpd plan -c benchmarks/17q/config.toml \
+    -o artifacts/17q --stage final -v 1
+# the bound the layered search leans on: 0 turnBound, 1 analytic (default),
+# 2 the audit. Run the audit before believing any clock.
+SCPD_CHAIN_BOUND=2 .venv/bin/mqt-scpd plan \
+    -c benchmarks/9q/config.toml -o artifacts/9q-dp --stage final -v 1
 ```
 
 **`plan --stage final` reads the config *and the earlier stages' artifacts*
@@ -422,6 +575,21 @@ config over, every time; and a fresh run directory needs `00-chip.json` and
 
 **Measure sequentially.** Running the chips in parallel contends for CPU and
 the runtimes in the `==>` line become meaningless.
+
+**And watch what else the machine is doing.** `artifacts/` grows to **15 GB**,
+and every run rewrites the GDS and SVG in it, which sets Spotlight indexing it
+again — a loop that does not settle while you are measuring. One 69q run came
+back at **5553 s against 922 s** for the identical result (angle 160, 7 edges
+undrawn) with `mds_stores` and `mediaanalysisd` taking about one and a half
+cores between them. Check it before believing a clock:
+
+```bash
+ps -A -o %cpu,comm -r | awk 'NR>1 && ($2 ~ /mds_stores|mediaanalysisd/) {s+=$1} END {print s"%"}'
+```
+
+Measuring **CPU time** as well as wall time is the cheap insurance — the
+process spends the same cycles whatever else is running, so the two agreeing
+is what says a row is clean.
 
 `uvx nox -s lint` reformats every committed file — do not run it blindly.
 
@@ -440,7 +608,10 @@ the runtimes in the `==>` line become meaningless.
 | `Driver::optimizeChainsExact` | **the exact search**: the rounds, the frozen fence, the round it keeps |
 | `Driver::solveChain` | one chain, one round: the trellis built and solved |
 | `Driver::edgeCost` | one edge priced for a named pair of options, through the memo |
-| `Driver::turnBound` | the admissible bound the trellis leans on |
+| `Driver::turnBound` | the original admissible bound, `SCPD_CHAIN_BOUND=0` |
+| `Driver::boundTurns` | which bound the trellis leans on |
+| `routing::AnalyticDubins` | **the analytic bound**: the least turning with nothing in the way, the default |
+| `Driver::audit` | `SCPD_CHAIN_BOUND=2`: both bounds against the real price of a step |
 | `Driver::stateFaults` | how many edges of a state would not survive its own fence |
 | `Driver::forgetEdgesNear`, `Driver::edgeBox` | what a round has to forget, and what it may keep |
 | `routing::solveTrellis` | the search itself, router-free and unit-tested |
@@ -458,36 +629,45 @@ the runtimes in the `==>` line become meaningless.
    yet closes that gap; the cycle is inside chain 0, its own six edges fencing
    each other from round to round, and Gauss-Seidel against Jacobi makes no
    difference to it at all.
-2. **The chains of a round are independent and are not run in parallel.**
+2. **The exact search loses 57q and 69q a feedline edge against the greedy**
+   — 7 undrawn against 6 on both, though at angle 114 against 128 and 160
+   against 176. Same shape as 17q and worse: neither converges, and the round
+   each keeps still carries faults (57q round 0 with nine, 69q round 2 with
+   ten). **69q is also the one chip where the exact search is still slower
+   than the greedy**, 922 s against 509. The analytic bound made both 1.8 to
+   2.3 times faster to find out and changed nothing else about them; the fix,
+   if there is one, is in how a round is chosen or in `nodeCost`, not in the
+   bound.
+3. **The chains of a round are independent and are not run in parallel.**
    Freezing the fence is what made them independent — this is the largest
    runtime lever left, 4× on 17q and 12× on 69q. It needs one router context
    per thread: `router_`, `corridor_`, `box_`, `proximity_`, `stencils_` and
    `frame_` are all shared `Driver` state. The prototype has exactly this as
    `CouplerRouterCtx`.
-3. **The bend term is verified identical only to 21q.** 33q and up were run
+4. **The bend term is verified identical only to 21q.** 33q and up were run
    with it on and never against it off. Before trusting it there, run one chip
    both ways and compare the angle cost, not only the clock — the prototype
    leaves the same term off by default and says why
    (`dubin_router_opt.hpp:263-286`).
-4. **The cost still sees only the feedline.** Length, length difference and
+5. **The cost still sees only the feedline.** Length, length difference and
    `100 × guarded` are commented out at `:3640`, so the two resonator ports of
    one coupler are an exact tie. The trellis makes the fix cheap in a way the
    greedy never could: a price per *option* is a node weight, and a node weight
    costs no routing at all — `TrellisProblem::nodeCost` is already there and
    unused. This is the obvious next experiment.
-5. **The commit order decides who gets the room.** Edges are committed by
+6. **The commit order decides who gets the room.** Edges are committed by
    chain index and the first one there takes the space. Committing by how
    little room an edge has left is the natural fix.
-6. **Two fences are dead code.** `fenceResonators` has **no caller** — the
+7. **Two fences are dead code.** `fenceResonators` has **no caller** — the
    own-resonator rule was written inline instead, and the two should be
    reconciled. `closeOutsideBox` has none either, switched off on request; the
    comment at its call site says how to switch it on.
-7. **The edge picture draws stale prices.** Edge searches attach
+8. **The edge picture draws stale prices.** Edge searches attach
    `zeroProximity_`, but `drawSearch` still renders `proximity_`, which holds
    whatever the last sweep search left.
-8. **Diagnostics are still in the tree** — the `fence for edge …` and
+9. **Diagnostics are still in the tree** — the `fence for edge …` and
    `picture …` lines and their counters.
-9. **The configs are in a measuring state** and must go back before a commit:
+10. **The configs are in a measuring state** and must go back before a commit:
    `repair_trials = 0` and `stop_after = "couplers"` in all eight.
    `test_the_final_routing_carries_a_snapshot_of_every_phase` fails while they
    are in.
@@ -536,7 +716,17 @@ always the least real; keeping it cost 9q a feedline edge and 17q two. Compare
 them by whether a state survives its own fence, which is the test the commit
 applies.
 
-**9. A parameter that is silently ignored is worse than no parameter.**
+**9. A saturating value must saturate, or it wraps and wins.** A round whose
+chain the trellis could not join set the round total to
+`TRELLIS_UNREACHABLE`, and the loop then went on adding the next chains' costs
+onto it. On 69q that printed `total 399999` — `UINT64_MAX + 400000` — which
+is *below* every honest round and would have taken the `total < bestTotal`
+tiebreak. Fixed at `:4421`: once unreachable, stay unreachable. It changed no
+chip's outcome, because 69q's faults 18/12/10/12 pick round 2 on the first
+criterion and the total never got a say — but it was one tie away from
+choosing the least real round on every run.
+
+**10. A parameter that is silently ignored is worse than no parameter.**
 `corridorOfEdge` took `more`, `ignoreAdjacent` and `pivot` and `(void)`-cast
 all three. Three call sites were built on the belief that they did something;
 all three were identical re-searches, and one of them made a counter that could
