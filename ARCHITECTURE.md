@@ -286,7 +286,7 @@ mqt-scpd/
     config.py                            config.toml into the configuration schema
     chip.py                              the chip input, loaded and classified by the core
     doctor.py                            classification table, port ring, sequence diff
-    inspection.py                        artifacts as schema-driven JSON, and back
+    inspection.py                        artifacts as JSON, rendered by the core
     cli.py                               argparse subcommands
     solvers/gurobipy_backend.py          BYOK Gurobi via MPS
     export/klayout.py                    GDS and OASIS
@@ -302,20 +302,20 @@ mqt-scpd/
 
 ## Dependencies
 
-| Layer         | Dependency    | Acquisition                             | Why                                                                                      |
-| ------------- | ------------- | --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| C++           | FlatBuffers   | FetchContent                            | Schema-generated data model and stage artifacts. Runtime only, no parser library         |
-| C++           | nlohmann/json | FetchContent                            | The chip input, metrics and logs                                                         |
-| C++           | spdlog        | FetchContent                            | Structured logging; replaces scattered `std::cout`                                       |
-| C++           | HiGHS         | FetchContent                            | Default solver; makes an unlicensed install fully functional                             |
-| C++           | Boost.Polygon | FetchContent, `BOOST_INCLUDE_LIBRARIES` | One Voronoi construction. Never a user-installed Boost                                   |
-| C++           | GoogleTest    | FetchContent                            | Existing repository convention                                                           |
-| Python        | flatbuffers   | PyPI                                    | Runtime for the generated artifact readers behind `plot`, `inspect` and `report`         |
-| Python        | klayout       | PyPI, extra `mqt-scpd[klayout]`         | GDS and OASIS writing and rendering. It provides no DRC, and no wheel for Windows on ARM |
-| Python        | rich          | PyPI                                    | Progress over long runs, and result tables                                               |
-| Python (test) | hypothesis    | PyPI                                    | Property-based tests                                                                     |
-| Optional      | gurobipy      | user-installed                          | Bring-your-own-license solver path                                                       |
-| Optional      | gdsfactory    | `mqt-scpd[gdsfactory]`                  | Adapter over the same geometry IR                                                        |
+| Layer         | Dependency    | Acquisition                             | Why                                                                                                                                                    |
+| ------------- | ------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| C++           | FlatBuffers   | FetchContent                            | Schema-generated data model and stage artifacts. Runtime only, no parser library                                                                       |
+| C++           | nlohmann/json | FetchContent                            | The chip input, metrics and logs                                                                                                                       |
+| C++           | spdlog        | FetchContent                            | Structured logging; replaces scattered `std::cout`                                                                                                     |
+| C++           | HiGHS         | FetchContent                            | Default solver; makes an unlicensed install fully functional                                                                                           |
+| C++           | Boost.Polygon | FetchContent, `BOOST_INCLUDE_LIBRARIES` | One Voronoi construction. Never a user-installed Boost                                                                                                 |
+| C++           | GoogleTest    | FetchContent                            | Existing repository convention                                                                                                                         |
+| Python        | flatbuffers   | PyPI                                    | Runtime for the generated artifact readers behind `plot`, `inspect` and `report`                                                                       |
+| Python        | klayout       | PyPI, extra `mqt-scpd[klayout]`         | GDS and OASIS writing and rendering. It provides no DRC, and no wheel for Windows on ARM; `mqt.scpd.export` imports without it and reports its absence |
+| Python        | rich          | PyPI                                    | Progress over long runs, and result tables                                                                                                             |
+| Python (test) | hypothesis    | PyPI                                    | Property-based tests                                                                                                                                   |
+| Optional      | gurobipy      | user-installed                          | Bring-your-own-license solver path                                                                                                                     |
+| Optional      | gdsfactory    | `mqt-scpd[gdsfactory]`                  | Adapter over the same geometry IR                                                                                                                      |
 
 The CLI uses the standard library's `argparse`. Dependencies are declared in
 `cmake/ExternalDependencies.cmake`, never inline in a target.
