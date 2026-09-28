@@ -96,6 +96,9 @@ def test_the_grid_section_is_optional_and_partial() -> None:
         (MANUAL.replace('[chip]\ninput = "routing_config.json"\n', ""), "[chip] is missing"),
         (MANUAL.replace('fixed_outer = ["Qb1.port0"]', "fixed_outer = [1]"), "must be an array of strings"),
         ("not = [toml", "is not TOML"),
+        (MANUAL.replace("max_feedline_utilization = 5", "max_feedline_utilization = -5"), "between 0 and 4294967295"),
+        (WITH_GRID.replace("capacity_cells_x = 25", "capacity_cells_x = 4294967296"), "between 0 and 4294967295"),
+        (MANUAL.replace("min_bend_radius = 50.0", "min_bend_radius = 1" + "0" * 400), "too large for a number"),
     ],
 )
 def test_problems_are_named(text: str, message: str) -> None:

@@ -36,6 +36,10 @@ class ConfigError(ValueError):
     """A configuration that cannot be loaded. The message names every problem."""
 
 
+#: Every integer of the schema is a ``uint32``.
+UINT32_MAX = 2**32 - 1
+
+
 T = TypeVar("T")
 
 
@@ -84,7 +88,16 @@ class _Section:
         if not _is_kind(value, kind):
             self.problems.append(f"[{self.name}] {key} must be {_kind_name(kind)}")
             return default
-        return cast("T", float(value) if kind is float else value)
+        if kind is int and not 0 <= value <= UINT32_MAX:
+            self.problems.append(f"[{self.name}] {key} must be between 0 and {UINT32_MAX}")
+            return default
+        if kind is float:
+            try:
+                return cast("T", float(value))
+            except OverflowError:
+                self.problems.append(f"[{self.name}] {key} is too large for a number")
+                return default
+        return cast("T", value)
 
     def subtable(self, key: str) -> dict[str, Any] | None:
         """Read a nested table.
