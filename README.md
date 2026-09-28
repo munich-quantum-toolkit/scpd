@@ -111,6 +111,10 @@ mqt-scpd plot -c planar-superconducting-pd/inputs/9q/config.toml -o 9q.svg
 mqt-scpd render -c planar-superconducting-pd/inputs/9q/config.toml -o 9q.gds
 ```
 
+The
+[benchmark guide](https://mqt.readthedocs.io/projects/scpd/en/latest/benchmarks.html)
+describes the chips and what the current release does with them.
+
 **Detailed documentation and examples are available at
 [ReadTheDocs](https://mqt.readthedocs.io/projects/scpd).**
 

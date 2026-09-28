@@ -12,6 +12,9 @@ releases may include breaking changes.
 
 ### Added
 
+- 📝 Document how to run MQT SCPD on the benchmark chips of
+  [planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd),
+  and check every chip against it in CI ([#111]) ([**@marcelwa**])
 - ✨ Add the `mqt-scpd` command line with `doctor`, `plot`, `render` and
   `inspect`: the `config.toml` and chip loaders, the port-role classification,
   the layout SVG, the KLayout adapter and the JSON view of the artifacts, which
@@ -59,6 +62,7 @@ releases may include breaking changes.
 
 [**@denialhaag**]: https://github.com/denialhaag
 [**@FeldmeierMichael**]: https://github.com/FeldmeierMichael
+[**@marcelwa**]: https://github.com/marcelwa
 
 <!-- General links -->
 
