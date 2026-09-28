@@ -1,0 +1,51 @@
+name: Benchmarks
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - ".github/workflows/benchmarks.yml"
+      - "bindings/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "include/**"
+      - "noxfile.py"
+      - "pyproject.toml"
+      - "python/**"
+      - "schemas/**"
+      - "src/**"
+      - "test/python/benchmarks/**"
+  schedule:
+    - cron: "0 4 * * 1" # Mondays, so that a change of the data shows up within a week
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  benchmarks:
+    name: 📊 Benchmark chips
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out the benchmark chips
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: cda-tum/planar-superconducting-pd
+          # renovate: datasource=git-refs depName=https://github.com/cda-tum/planar-superconducting-pd branch=main
+          ref: 32be57f6e4e2ea30108b2cf666b78b2f36f1b8b2
+          path: planar-superconducting-pd
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - name: Check every chip
+        run: uvx nox -s benchmarks
+        env:
+          MQT_SCPD_BENCHMARKS: ${{ github.workspace }}/planar-superconducting-pd
