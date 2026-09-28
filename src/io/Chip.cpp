@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 #include <nlohmann/json_fwd.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -185,12 +186,37 @@ void readPorts(const json& document, ChipT& chip, Problems& problems) {
 } // namespace
 
 ChipT readChipJson(const std::string_view text) {
+  // The parser keeps the last of two equal keys. The callback reports them
+  // instead, since a repeated port label would otherwise vanish silently.
+  std::vector<std::vector<std::string>> keysOfOpenObjects;
+  std::string duplicate{};
+  const json::parser_callback_t findDuplicates =
+      [&](const int /*depth*/, const json::parse_event_t event, json& parsed) {
+        if (event == json::parse_event_t::object_start) {
+          keysOfOpenObjects.emplace_back();
+        } else if (event == json::parse_event_t::object_end) {
+          keysOfOpenObjects.pop_back();
+        } else if (event == json::parse_event_t::key && duplicate.empty()) {
+          auto& keys = keysOfOpenObjects.back();
+          auto key = parsed.get<std::string>();
+          if (std::ranges::find(keys, key) != keys.end()) {
+            duplicate = std::move(key);
+          } else {
+            keys.push_back(std::move(key));
+          }
+        }
+        return true;
+      };
   json document;
   try {
-    document = json::parse(text);
+    document = json::parse(text, findDuplicates);
   } catch (const json::exception& error) {
     throw std::invalid_argument(std::string("chip input is not JSON: ") +
                                 error.what());
+  }
+  if (!duplicate.empty()) {
+    throw std::invalid_argument("chip input has the key '" + duplicate +
+                                "' twice in one object");
   }
   if (!document.is_object()) {
     throw std::invalid_argument("chip input is not a JSON object");

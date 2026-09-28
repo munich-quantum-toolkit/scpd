@@ -28,8 +28,10 @@ namespace mqt::scpd::io {
  * @c obstacles and @c ports. It accepts and ignores @c sampleSpacing, and it
  * requires @c nets to be empty. Every other key, a polygon with fewer than
  * three vertices, a vertex that is not a pair of numbers, and a port without a
- * center are problems. The ports keep the order of the file, which fixes the
- * index each of them is referred to by.
+ * center are problems. A key that appears twice in one object is an error,
+ * because the JSON parser would otherwise keep only the last of them. The ports
+ * keep the order of the file, which fixes the index each of them is referred to
+ * by.
  *
  * @param text The JSON text of the chip input.
  * @return The chip, with every port left at the role @c Unset. Classifying the
