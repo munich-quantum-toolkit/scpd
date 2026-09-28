@@ -188,7 +188,7 @@ ChipT readChipJson(const std::string_view text) {
   json document;
   try {
     document = json::parse(text);
-  } catch (const json::parse_error& error) {
+  } catch (const json::exception& error) {
     throw std::invalid_argument(std::string("chip input is not JSON: ") +
                                 error.what());
   }
