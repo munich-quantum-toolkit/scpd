@@ -15,9 +15,9 @@ releases may include breaking changes.
 - ✨ Add the `mqt-scpd` command line with `doctor`, `plot`, `render` and
   `inspect`: the `config.toml` and chip loaders, the port-role classification,
   the layout SVG, the KLayout adapter and the JSON view of the artifacts, which
-  the core renders from the schema's own type tables ([#105])
+  the core renders from the schema's own type tables ([#111])
   ([**@FeldmeierMichael**])
-- ✨ Add the eight benchmark configurations and their chip inputs ([#105])
+- ✨ Add the eight benchmark configurations and their chip inputs ([#111])
   ([**@FeldmeierMichael**])
 - 👷 Fail CI when the committed schema-generated code is stale ([#98])
   ([**@FeldmeierMichael**])
@@ -36,7 +36,7 @@ releases may include breaking changes.
 
 - ♻️ Make `[ports.sequences]` required and drop the `detection` and
   `start_component` keys of the configuration schema; the outer port ring is
-  configuration only ([#105]) ([**@FeldmeierMichael**])
+  configuration only ([#111]) ([**@FeldmeierMichael**])
 - 💥 Drop support for x86 macOS and stop publishing the respective wheels
   ([#89]) ([**@denialhaag**])
 - ⬆️ Raise the macOS deployment target to 13.3 to enable `std::format` in libc++
@@ -50,7 +50,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
-[#105]: https://github.com/munich-quantum-toolkit/scpd/pull/105
+[#111]: https://github.com/munich-quantum-toolkit/scpd/pull/111
 [#98]: https://github.com/munich-quantum-toolkit/scpd/pull/98
 [#89]: https://github.com/munich-quantum-toolkit/scpd/pull/89
 [#83]: https://github.com/munich-quantum-toolkit/scpd/pull/83
