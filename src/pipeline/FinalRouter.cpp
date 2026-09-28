@@ -23,6 +23,7 @@
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/routing/AnalyticDubins.hpp"
+#include "mqt-scpd/routing/ChainSearch.hpp"
 #include "mqt-scpd/routing/ChainTrellis.hpp"
 #include "mqt-scpd/routing/CouplerInsertion.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
@@ -44,12 +45,14 @@
 #include <functional>
 #include <initializer_list>
 #include <limits>
+#include <map>
 #include <memory>
 #include <numbers>
 #include <numeric>
 #include <optional>
 #include <ranges>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -2035,7 +2038,9 @@ public:
 
     // The search for the options.
     std::uint32_t passes = 0;
-    if (exactChainSearch()) {
+    if (chainAStar()) {
+      passes = optimizeChainsPrefix(wires);
+    } else if (exactChainSearch()) {
       passes = optimizeChainsExact(wires);
     } else {
       for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
@@ -2167,7 +2172,9 @@ public:
         // Both searches fill `passes`, so the word has to say which one ran:
         // a log that calls an exact round a greedy pass is a log that answers
         // the wrong question when somebody asks which search they got.
-        exactChainSearch() ? "exact rounds" : "greedy passes",
+        chainAStar()         ? "chains settled"
+        : exactChainSearch() ? "exact rounds"
+                             : "greedy passes",
         memoHits_, memoHits_ + memoMisses_, seconds));
     // The two figures the insertion is judged by, on a line of their own so
     // that a sweep over settings can be read off the log without counting.
@@ -2768,6 +2775,25 @@ public:
     const std::unordered_set<std::size_t> pad(option.body.begin(),
                                               option.body.end());
 
+    // **What is left of the resonator may not run back through the pad.**
+    //
+    // The way left runs from the insertion point to the qubit, and the pad
+    // hangs off the far end of the component's lead, so a way that re-enters
+    // it has folded back over the coupler it is being given. Nothing refused
+    // that until now: `free` above prices another wire's copper but exempts
+    // the resonator's own (`owner != resonator.key`), and the
+    // self-intersection test below asks whether the path meets *itself*, not
+    // whether it meets the body. The option is not buildable, and it is the
+    // two feedline edges that have to reach the pad which pay for it — the
+    // pad they must arrive at has the resonator lying across it.
+    if (std::ranges::any_of(option.way, [&](const PathPoint& cell) {
+          return pad.contains(static_cast<std::size_t>(
+              (static_cast<std::int64_t>(cell.y) * width) +
+              static_cast<std::int64_t>(cell.x)));
+        })) {
+      return refuse("what is left of the resonator runs through the pad");
+    }
+
     // Where the feedline meets it: the two ends of the far edge, a port pair
     // whose line is parallel to the pad. The chain arrives at one end, runs
     // the length of the pad — which is the coupling — and leaves at the
@@ -2964,6 +2990,11 @@ public:
   /// How far past the two ends of an edge its search may roam, in cells.
   static constexpr std::uint32_t EDGE_BOX_MARGIN = 250;
 
+  /// How many edges at each end of a chain the prefix search routes again for
+  /// every prefix rather than remembering by the pair of options at their two
+  /// ends. The edges in between are remembered — see `Driver::solveChainAStar`.
+  static constexpr std::size_t CHAIN_FRESH_EDGES = 2;
+
   /// Every edge of every chain but the one being routed stands in its way,
   /// inflated by the clearance — the edges that share a coupler with it
   /// included, right up to the port they share.
@@ -3138,21 +3169,27 @@ public:
     // where they pin on the same cell on purpose.
     fenceCommittedEdges(wires, edge);
 
-    // The edge before this one, as the second-order search has it standing.
+    // The edges the caller is standing on, which nothing above can close.
     //
-    // `fenceCommittedEdges` can only close what an earlier round committed,
-    // and inside one solve that is the *other* assignment's way — so without
-    // this the two edges that meet at a coupler never see each other, the
-    // trellis prices a pair that cannot both be built as if it could, and
-    // the commit is where one of them is lost. This is that hole closed:
-    // the way the candidate predecessor actually takes, fenced at the full
-    // clearance like every other feedline.
-    if (aheadFence_ != nullptr && !aheadFence_->empty()) {
-      alongDisc(*aheadFence_, stencilFor(tuning_.clearance),
-                [&](const std::int64_t x, const std::int64_t y) {
-                  corridor_.set(static_cast<std::size_t>((y * width) + x),
-                                true);
-                });
+    // `fenceCommittedEdges` reaches only what an earlier round committed,
+    // and inside one solve that is the *other* assignment's ways — so
+    // without this two edges of the chain being searched never see each
+    // other, the search prices a pair that cannot both be built as if it
+    // could, and the commit is where one of them is lost. This is that hole
+    // closed: the ways the caller has already laid, fenced at the full
+    // clearance like every other feedline. `prefixFence_` says which they
+    // are.
+    if (prefixFence_ != nullptr) {
+      for (const Path* laid : *prefixFence_) {
+        if (laid == nullptr || laid->empty()) {
+          continue;
+        }
+        alongDisc(*laid, stencilFor(tuning_.clearance),
+                  [&](const std::int64_t x, const std::int64_t y) {
+                    corridor_.set(static_cast<std::size_t>((y * width) + x),
+                                  true);
+                  });
+      }
     }
 
     // A coupler's own resonator, for the two edges that run to it.
@@ -3388,10 +3425,17 @@ public:
   std::uint64_t auditAnalytic_ = 0;
   std::uint64_t auditReal_ = 0;
 
-  /// The way of the edge before the one being routed, for the corridor to
-  /// close along with everything committed, or null. Set around a single
-  /// `routeEdge` call by the second-order search and cleared again.
-  const Path* aheadFence_ = nullptr;
+  /// The ways the caller has already laid, for the corridor to close along
+  /// with everything committed, or null. Set around a single `routeEdge`
+  /// call and cleared again.
+  ///
+  /// `fenceCommittedEdges` can only close what an earlier round committed,
+  /// so inside one solve it holds the *other* assignment's ways. This is
+  /// the hole that leaves: the ways of the edges the caller is standing on
+  /// right now. The second-order trellis puts one way in it — its
+  /// predecessor's — and `solveChainAStar` puts every edge of the prefix it
+  /// is extending.
+  const std::vector<const Path*>* prefixFence_ = nullptr;
 
   /// How much of the chain a node of the layered search carries: 1 is the
   /// option at its own waypoint, 2 that option **and** the one before it.
@@ -3413,6 +3457,53 @@ public:
       return set != nullptr ? std::atoi(set) : 2;
     }();
     return order;
+  }
+
+  /// Whether a chain is settled by the prefix search rather than by the
+  /// trellis, on the same reasoning as `exactChainSearch` above: an
+  /// environment switch and not a config key, because `plan --stage final`
+  /// reads its config out of the run directory.
+  ///
+  /// **On by default**, and `SCPD_CHAIN_ASTAR=0` is the way back to the
+  /// trellis. What it changes is the one assumption the trellis rests on —
+  /// see `solveChainAStar` — and what that buys is the edges: 57q draws
+  /// every one of its 66 where the trellis lost two and the greedy six, and
+  /// it does so in a quarter of the time. It also needs no rounds; see
+  /// `optimizeChainsPrefix`.
+  [[nodiscard]] static bool chainAStar() {
+    static const bool on = [] {
+      const char* set = std::getenv("SCPD_CHAIN_ASTAR");
+      return set == nullptr || std::atoi(set) != 0;
+    }();
+    return on;
+  }
+
+  /// How long the prefix search may spend on one chain before it settles for
+  /// the cheapest complete run of options it has reached — every edge of that
+  /// run drawn, and drawn against the run itself. `SCPD_CHAIN_ASTAR_SECONDS`
+  /// sets it; zero is no limit and then the answer is always the optimum.
+  ///
+  /// Without one the search is exponential in the worst case, and it is not
+  /// a theoretical worst case: on 57q one chain of nine waypoints had routed
+  /// 24 897 edges in 1 400 s and was not done. Six of the eight chips never
+  /// reach this limit — their whole insertion is under 70 s.
+  ///
+  /// **It is spent per attempt, not per chain.** A chain whose plain options
+  /// do not reach opens its jogs and searches again, and the second attempt
+  /// starts the clock over, so such a chain can spend twice this.
+  ///
+  /// **180 s and not 60 s, because 60 s cost 69q three edges.** At 60 s its
+  /// chains 2 and 5 both ran over, and with the rounds gone there is no
+  /// second attempt to recover them: 5 edges undrawn against 2, for 5 s
+  /// saved. Chain 5 settles in 79 s.
+  [[nodiscard]] static std::chrono::nanoseconds chainAStarBudget() {
+    static const auto budget = [] {
+      const char* set = std::getenv("SCPD_CHAIN_ASTAR_SECONDS");
+      const double seconds = set != nullptr ? std::atof(set) : 180.0;
+      return std::chrono::nanoseconds(
+          static_cast<std::int64_t>(std::max(0.0, seconds) * 1e9));
+    }();
+    return budget;
   }
 
   /// The chain that is being searched and is therefore not fenced by its own
@@ -3982,14 +4073,17 @@ public:
   /// takes to answer, because everything the question needs — the two ports,
   /// the end stub, the two resonators the corridor closes — is read off
   /// `chosen`. Both are put back before it returns.
-  [[nodiscard]] std::uint64_t edgeCost(const std::vector<Wire>& wires,
-                                       const std::uint32_t chain,
-                                       const std::size_t from,
-                                       const std::size_t optionFrom,
-                                       const std::size_t optionTo,
-                                       const std::size_t aheadOption = 0,
-                                       const Path* ahead = nullptr,
-                                       Path* wayOut = nullptr) {
+  ///
+  /// `fence` holds the ways the caller has already laid, which the corridor
+  /// closes on top of everything committed. `remember` is false for a caller
+  /// whose fence is a whole prefix: a way found against one prefix is worth
+  /// nothing under another, and the memo key cannot tell them apart.
+  [[nodiscard]] std::uint64_t
+  edgeCost(const std::vector<Wire>& wires, const std::uint32_t chain,
+           const std::size_t from, const std::size_t optionFrom,
+           const std::size_t optionTo, const std::size_t aheadOption = 0,
+           const std::vector<const Path*>* fence = nullptr,
+           Path* wayOut = nullptr, const bool remember = true) {
     auto& points = chains_[chain];
     const auto stand = [&](const std::size_t at, const std::size_t option) {
       if (points[at].fixed) {
@@ -4012,17 +4106,19 @@ public:
                         points[from].fixed || points[from + 1].fixed};
 
     const auto key = edgeMemoKey(chain, from, aheadOption);
-    const auto found = edgeMemo_.find(key);
+    const auto found = remember ? edgeMemo_.find(key) : edgeMemo_.end();
     Path way;
     if (found != edgeMemo_.end()) {
       ++memoHits_;
       way = found->second;
     } else {
       ++memoMisses_;
-      aheadFence_ = ahead;
+      prefixFence_ = fence;
       way = routeEdge(wires, objective, edge);
-      aheadFence_ = nullptr;
-      edgeMemo_[key] = way;
+      prefixFence_ = nullptr;
+      if (remember) {
+        edgeMemo_[key] = way;
+      }
     }
 
     stand(from, keptFrom);
@@ -4045,10 +4141,63 @@ public:
     std::uint32_t evaluations = 0;
     /// Of those, the ones that were not already remembered — the searches.
     std::uint32_t routed = 0;
+    /// How many prefixes the prefix search grew children from. Zero on the
+    /// trellis, which has no prefixes.
+    std::uint32_t expansions = 0;
+    /// Whether the budget stopped the search rather than the search settling
+    /// the chain — the one thing that separates a chain with no answer from
+    /// one there was no time to answer.
+    bool outOfTime = false;
+    /// Whether the search proved this the cheapest run of options there is.
+    /// False when the prefix search ran out of time, or when it reordered a
+    /// pair of edges at an end of the chain; either way this is then only
+    /// the cheapest run it reached.
+    bool optimal = false;
+    /// Whether a pair of edges at an end of the chain had to be laid the
+    /// other way round. That is the reason `optimal` is false when the
+    /// search did not run out of time.
+    bool relaid = false;
     std::uint64_t pairs = 0;
     std::vector<std::size_t> chosen;
     std::vector<Path> ways;
   };
+
+  /// Which options a waypoint offers a search: a launcher offers the one it
+  /// is, a coupler its plain options, and its jogs only once it has shown it
+  /// needs them.
+  [[nodiscard]] std::vector<std::uint32_t>
+  openOptionsOf(const std::uint32_t chain, const std::size_t at) const {
+    std::vector<std::uint32_t> open;
+    const auto& point = chains_[chain][at];
+    if (point.fixed) {
+      open.push_back(0);
+      return open;
+    }
+    const auto& coupler = couplers_[point.coupler];
+    for (std::size_t option = 0; option < coupler.options.size(); ++option) {
+      if (coupler.options[option].secondStraight > 0 &&
+          !coupler.jogsUnlocked) {
+        continue;
+      }
+      open.push_back(static_cast<std::uint32_t>(option));
+    }
+    return open;
+  }
+
+  /// The port an edge leaves a waypoint by, or arrives at it by, with the
+  /// coupler standing there on a named option. A launcher has one port each
+  /// way whatever is asked.
+  [[nodiscard]] PathPoint portOfOption(const std::uint32_t chain,
+                                       const std::size_t at,
+                                       const std::size_t option,
+                                       const bool leaving) const {
+    const auto& point = chains_[chain][at];
+    if (point.fixed) {
+      return leaving ? point.asSource : point.asTarget;
+    }
+    const auto& chosen = couplers_[point.coupler].options[option];
+    return leaving ? chosen.out : chosen.in;
+  }
 
   /// The cheapest run of coupler options along one chain, exactly, against
   /// the chip as it stands — one round of the layered search that replaces
@@ -4076,26 +4225,6 @@ public:
       return out;
     }
 
-    // Which options each layer offers. A launcher offers the one it is; a
-    // coupler offers its plain options, and its jogs only once it has shown
-    // it needs them.
-    const auto openOptions = [&](const std::size_t at) {
-      std::vector<std::uint32_t> open;
-      if (points[at].fixed) {
-        open.push_back(0);
-        return open;
-      }
-      const auto& coupler = couplers_[points[at].coupler];
-      for (std::size_t option = 0; option < coupler.options.size(); ++option) {
-        if (coupler.options[option].secondStraight > 0 &&
-            !coupler.jogsUnlocked) {
-          continue;
-        }
-        open.push_back(static_cast<std::uint32_t>(option));
-      }
-      return open;
-    };
-
     std::vector<std::vector<std::uint32_t>> open;
     routing::TrellisResult answer;
     // Whether a node of the search carries the option of the waypoint before
@@ -4108,16 +4237,11 @@ public:
       for (int go = 0; go < 2; ++go) {
         open.clear();
         for (std::size_t at = 0; at < layers; ++at) {
-          open.push_back(openOptions(at));
+          open.push_back(openOptionsOf(chain, at));
         }
         const auto portOf = [&](const std::size_t at, const std::uint32_t node,
-                                const bool leaving) -> PathPoint {
-          const auto& point = points[at];
-          if (point.fixed) {
-            return leaving ? point.asSource : point.asTarget;
-          }
-          const auto& option = couplers_[point.coupler].options[open[at][node]];
-          return leaving ? option.out : option.in;
+                                const bool leaving) {
+          return portOfOption(chain, at, open[at][node], leaving);
         };
 
         // **Second order**: a node is the option at its own waypoint *and*
@@ -4230,9 +4354,10 @@ public:
                                        open[at][c], 0, nullptr, &ahead));
             aheadCode = points[at - 1].fixed ? 0 : open[at - 1][p] + 1;
           }
+          const std::vector<const Path*> laid{&ahead};
           const auto real =
               edgeCost(wires, chain, at, open[at][c], open[at + 1][d],
-                       aheadCode, ahead.empty() ? nullptr : &ahead);
+                       aheadCode, ahead.empty() ? nullptr : &laid);
           if (chainBound() == 2) {
             audit(chain, at, portOf(at, static_cast<std::uint32_t>(c), true),
                   portOf(at + 1, static_cast<std::uint32_t>(d), false), real);
@@ -4298,6 +4423,7 @@ public:
       return out;
     }
     out.solved = true;
+    out.optimal = true;
     out.cost = answer.cost;
     out.chosen.assign(layers, 0);
     for (std::size_t at = 0; at < layers; ++at) {
@@ -4322,6 +4448,323 @@ public:
       }
     }
     static_cast<void>(standOn(chain, kept));
+    return out;
+  }
+
+  /// The cheapest run of coupler options along one chain, exactly, with
+  /// every edge routed against the ways the options before it have laid.
+  ///
+  /// `solveChain` above is far cheaper and rests on an assumption that is
+  /// false here: that the price of a step turns on the option at each of its
+  /// two ends and on nothing else. Two feedline edges that meet at a coupler
+  /// block each other, so the trellis prices a pair that cannot both be
+  /// built as though it could, `stateFaults` counts the difference, and the
+  /// commit is where an edge is lost. Carrying the predecessor in the node
+  /// closes that for the two edges that **share** a coupler — on 17q six
+  /// undrawn edges to none — and it does not reach 57q and 69q, where what
+  /// is lost is blocked by edges that are not neighbours. No width of node
+  /// reaches those; only pricing a step against the whole prefix does.
+  ///
+  /// So a node here is a **prefix**, and `routing::solveChainAStar` walks
+  /// the prefixes best-first. Its heuristic is the cheapest run of analytic
+  /// bounds from a layer to the end of the chain — the same relaxation the
+  /// trellis fills its price array from, run backwards. It never exceeds
+  /// what a real edge costs under any prefix, so the answer is the true
+  /// optimum against a fence that is real.
+  ///
+  /// **Nothing is remembered.** A way is worth only what the prefix it was
+  /// routed against makes it worth, and with no merging no prefix comes
+  /// round twice. `edgeMemo_` stays for the trellis.
+  [[nodiscard]] ChainAnswer solveChainAStar(const std::vector<Wire>& wires,
+                                            const std::uint32_t chain) {
+    ChainAnswer out;
+    const auto routedBefore = memoMisses_;
+    auto& points = chains_[chain];
+    const auto layers = points.size();
+    if (layers < 2) {
+      return out;
+    }
+
+    std::vector<std::vector<std::uint32_t>> open;
+    routing::ChainSolution answer;
+    // What one step of one prefix laid.
+    struct Laid {
+      /// The way of the edge into the prefix's last layer.
+      Path way;
+      /// A way for the edge **before** it, when the two would only both fit
+      /// with this one laid first — see the reorder in `step`. Empty
+      /// otherwise. It hangs off this key and not the shorter one because
+      /// the shorter prefix is shared by every choice that extends it, and
+      /// only this choice needed its predecessor moved.
+      Path before;
+    };
+    // What every step the search has priced laid, by the prefix it was
+    // priced under: the key is the run of node indices from layer 0. This is
+    // what `step` reads a prefix's fence out of, and it is the one thing a
+    // node of the search needs that the search itself knows nothing about.
+    //
+    // `std::map` for two reasons: the key is a vector, and its values never
+    // move, so the fence may hold pointers into it.
+    std::map<std::vector<std::uint32_t>, Laid> laid;
+
+    // Two goes at most: the plain options, then the jogs opened at the wall
+    // if the plain ones did not reach.
+    for (int go = 0; go < 2; ++go) {
+      open.clear();
+      for (std::size_t at = 0; at < layers; ++at) {
+        open.push_back(openOptionsOf(chain, at));
+      }
+      laid.clear();
+
+      // The bounds, built before the search as the trellis builds its price
+      // array. The analytic answer depends on the pair of options and
+      // nothing else, so the whole graph costs microseconds against the tens
+      // of milliseconds one real edge search costs.
+      const auto beganBound = std::chrono::steady_clock::now();
+      std::vector<std::vector<std::uint64_t>> turns(layers - 1);
+      for (std::size_t at = 0; at + 1 < layers; ++at) {
+        const auto n = open[at].size();
+        const auto m = open[at + 1].size();
+        turns[at].resize(n * m);
+        for (std::size_t c = 0; c < n; ++c) {
+          const auto leaving = portOfOption(chain, at, open[at][c], true);
+          for (std::size_t d = 0; d < m; ++d) {
+            const auto arriving =
+                portOfOption(chain, at + 1, open[at + 1][d], false);
+            turns[at][(c * m) + d] = 10000ULL * boundTurns(leaving, arriving);
+          }
+        }
+        boundPairs_ += n * m;
+      }
+      boundNanos_ += static_cast<std::uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - beganBound)
+              .count());
+
+      routing::ChainProblem problem;
+      for (const auto& choices : open) {
+        problem.width.push_back(static_cast<std::uint32_t>(choices.size()));
+      }
+      problem.bound = [&](const std::size_t at, const std::uint32_t i,
+                          const std::uint32_t j) {
+        return turns[at][(static_cast<std::size_t>(i) * open[at + 1].size()) +
+                         j];
+      };
+      problem.budget = chainAStarBudget();
+      // Every time a run of options comes back with all of its feedline
+      // edges drawn. This is what the budget falls back on, so say when one
+      // arrives and what it costs: a chain that never prints this line is
+      // one the search never joined.
+      problem.found = [&](const std::span<const std::uint32_t> run,
+                          const std::uint64_t cost) {
+        std::string options;
+        for (std::size_t at = 0; at < run.size(); ++at) {
+          options += std::format("{}{}", at == 0 ? "" : " ",
+                                 points[at].fixed
+                                     ? std::string("launcher")
+                                     : std::to_string(open[at][run[at]]));
+        }
+        tell(std::format("[Coupler Insertion]   chain {}: every feedline edge "
+                         "drawn on options {} -> cost {}",
+                         chain, options, cost));
+      };
+      problem.step = [&](const std::span<const std::uint32_t> prefix,
+                         const std::uint32_t j, std::int64_t& redone) {
+        redone = 0;
+        const auto at = prefix.size() - 1;
+        const auto edges = layers - 1;
+        std::vector<std::uint32_t> key(prefix.begin(), prefix.end());
+        const auto upto = [&](const std::size_t take) {
+          return std::vector<std::uint32_t>(
+              key.begin(), key.begin() + static_cast<std::ptrdiff_t>(take));
+        };
+        // The way edge `e` of this prefix stands on. Every edge of a prefix
+        // has one: the search prices a prefix's own step before it ever
+        // grows a child from it. A pair that was reordered left the
+        // replacement for its earlier edge on the later one's key, so that
+        // is what counts where it exists.
+        const auto wayOfEdge = [&](const std::size_t e) -> const Path* {
+          if (e + 3 <= key.size()) {
+            const auto moved = laid.find(upto(e + 3));
+            if (moved != laid.end() && !moved->second.before.empty()) {
+              return &moved->second.before;
+            }
+          }
+          const auto found = laid.find(upto(e + 2));
+          return (found != laid.end() && !found->second.way.empty())
+                     ? &found->second.way
+                     : nullptr;
+        };
+        std::vector<const Path*> fence;
+        fence.reserve(at);
+        for (std::size_t e = 0; e < at; ++e) {
+          if (const Path* laidWay = wayOfEdge(e); laidWay != nullptr) {
+            fence.push_back(laidWay);
+          }
+        }
+
+        // Whether this edge is routed again for every prefix, or remembered
+        // by the pair of options at its two ends.
+        //
+        // The pair is not the whole truth on this path — the prefix fence is
+        // part of the question — so an entry outlives the ground it was
+        // found on, exactly as `edgeMemo_` says of the greedy's entries. The
+        // ends of a chain are where that costs too much to accept: an edge
+        // at a launcher has one way off the terminal and the edges beside it
+        // crowd the same room, so the two edges at each end are always
+        // routed against the prefix that is actually standing
+        // (`CHAIN_FRESH_EDGES`, user 2026-09-28). Everything in between is
+        // remembered, and the search stops paying for the same pair of
+        // options once per prefix that reaches it.
+        const bool fresh =
+            at < CHAIN_FRESH_EDGES || at + CHAIN_FRESH_EDGES >= edges;
+        Path way;
+        auto real =
+            edgeCost(wires, chain, at, open[at][prefix[at]], open[at + 1][j],
+                     0, fence.empty() ? nullptr : &fence, &way, !fresh);
+        if (chainBound() == 2) {
+          audit(chain, at, portOfOption(chain, at, open[at][prefix[at]], true),
+                portOfOption(chain, at + 1, open[at + 1][j], false), real);
+        }
+
+        // **The other order, for the pair at either end of the chain.**
+        //
+        // The prefix lays its edges front to back, so the edge before this
+        // one took the room first and this one has to work around it. At the
+        // ends of a chain that order decides whether both fit at all: an
+        // edge at a launcher leaves the terminal on one heading and cannot
+        // yield, and the edge beside it wants the same ground. Laid the
+        // other way round — this one first, then its predecessor again
+        // against it — the pair can come home where it could not (user,
+        // 2026-09-28).
+        //
+        // The predecessor's new way hangs off *this* key, because the prefix
+        // it belongs to is shared by every choice that extends it and only
+        // this choice needed it moved. And the price of the prefix changes
+        // with it, which is what `redone` carries back.
+        Path before;
+        const bool pairAtAnEnd = at == 1 || (at + 1 == edges && at >= 1);
+        if (real == routing::TRELLIS_UNREACHABLE && pairAtAnEnd &&
+            !fence.empty()) {
+          const Path* stood = fence.back();
+          const auto wasTurning = 10000ULL * angleCostOf(
+              *stood,
+              portOfOption(chain, at, open[at][prefix[at]], false).heading);
+          std::vector<const Path*> without(fence.begin(), fence.end() - 1);
+          Path mine;
+          const auto first = edgeCost(
+              wires, chain, at, open[at][prefix[at]], open[at + 1][j], 0,
+              without.empty() ? nullptr : &without, &mine, false);
+          if (first != routing::TRELLIS_UNREACHABLE) {
+            auto against = without;
+            against.push_back(&mine);
+            Path again;
+            const auto nowTurning =
+                edgeCost(wires, chain, at - 1, open[at - 1][prefix[at - 1]],
+                         open[at][prefix[at]], 0, &against, &again, false);
+            if (nowTurning != routing::TRELLIS_UNREACHABLE) {
+              real = first;
+              way = std::move(mine);
+              before = std::move(again);
+              redone = static_cast<std::int64_t>(nowTurning) -
+                       static_cast<std::int64_t>(wasTurning);
+              tell(std::format(
+                  "[Coupler Insertion]   chain {} edge {}: no way after edge "
+                  "{}, but both fit with edge {} laid first — edge {} redone "
+                  "at {} instead of {}",
+                  chain, at, at - 1, at, at - 1, nowTurning, wasTurning));
+            }
+          }
+        }
+
+        if (real == routing::TRELLIS_UNREACHABLE) {
+          // The prefix blocks itself here, in either order. Nothing that
+          // extends it is a chain, and the search takes another combination
+          // — which is the whole of what the trellis cannot do.
+          return real;
+        }
+        key.push_back(j);
+        laid[std::move(key)] = Laid{.way = std::move(way),
+                                    .before = std::move(before)};
+        return real;
+      };
+
+      answer = routing::solveChainAStar(problem);
+      if (answer.solved) {
+        break;
+      }
+      // The wall: the deepest layer a prefix whose every step is real ever
+      // got to. The step out of it is what shut the chain, so those are the
+      // two couplers whose choice is widened — never the whole chain, which
+      // trebles what every round has to route and was measured worse.
+      bool widened = false;
+      const auto unlock = [&](const std::size_t at) {
+        if (at >= layers || points[at].fixed) {
+          return;
+        }
+        auto& coupler = couplers_[points[at].coupler];
+        if (coupler.jogsUnlocked) {
+          return;
+        }
+        coupler.jogsUnlocked = true;
+        widened = true;
+        tell(std::format(
+            "[Coupler Insertion]   '{}' chain {}: no prefix reaches past it "
+            "on plain options — opening the second-dogleg options",
+            wireId(wires[coupler.wire]), chain));
+      };
+      unlock(answer.reached);
+      unlock(answer.reached + 1);
+      if (!widened) {
+        break;
+      }
+    }
+
+    // On this path a step is priced exactly when it is routed, so the two
+    // figures the trellis keeps apart are one and the same.
+    out.evaluations = answer.routed;
+    out.routed = static_cast<std::uint32_t>(memoMisses_ - routedBefore);
+    out.expansions = answer.expansions;
+    out.outOfTime = answer.outOfTime;
+    for (std::size_t at = 0; at + 1 < layers; ++at) {
+      out.pairs +=
+          static_cast<std::uint64_t>(open[at].size()) * open[at + 1].size();
+    }
+    if (!answer.solved) {
+      return out;
+    }
+    out.solved = true;
+    out.optimal = answer.optimal;
+    out.relaid = answer.relaid;
+    out.cost = answer.cost;
+    out.chosen.assign(layers, 0);
+    for (std::size_t at = 0; at < layers; ++at) {
+      out.chosen[at] = points[at].fixed ? 0 : open[at][answer.chosen[at]];
+    }
+    // The winner's ways, read out of `laid` under the prefix each was routed
+    // against — which is the run of choices the winner itself is. Where a
+    // pair at an end of the chain was reordered, the earlier edge's way is
+    // the replacement the later one left behind.
+    out.ways.assign(layers - 1, Path{});
+    const std::vector<std::uint32_t> run(answer.chosen.begin(),
+                                         answer.chosen.end());
+    const auto upto = [&](const std::size_t take) {
+      return std::vector<std::uint32_t>(
+          run.begin(), run.begin() + static_cast<std::ptrdiff_t>(take));
+    };
+    for (std::size_t at = 0; at + 1 < layers; ++at) {
+      if (at + 3 <= run.size()) {
+        const auto moved = laid.find(upto(at + 3));
+        if (moved != laid.end() && !moved->second.before.empty()) {
+          out.ways[at] = moved->second.before;
+          continue;
+        }
+      }
+      const auto found = laid.find(upto(at + 2));
+      if (found != laid.end()) {
+        out.ways[at] = found->second.way;
+      }
+    }
     return out;
   }
 
@@ -4364,18 +4807,8 @@ public:
                                          const std::size_t from,
                                          const std::size_t optionFrom,
                                          const std::size_t optionTo) const {
-    const auto& points = chains_[chain];
-    const auto port = [&](const std::size_t at, const std::size_t option,
-                          const bool leaving) -> PathPoint {
-      const auto& point = points[at];
-      if (point.fixed) {
-        return leaving ? point.asSource : point.asTarget;
-      }
-      const auto& chosen = couplers_[point.coupler].options[option];
-      return leaving ? chosen.out : chosen.in;
-    };
-    const auto source = port(from, optionFrom, true);
-    const auto target = port(from + 1, optionTo, false);
+    const auto source = portOfOption(chain, from, optionFrom, true);
+    const auto target = portOfOption(chain, from + 1, optionTo, false);
     const std::int64_t margin = EDGE_BOX_MARGIN;
     return {.minX = std::min<std::int64_t>(source.x, target.x) - margin,
             .minY = std::min<std::int64_t>(source.y, target.y) - margin,
@@ -4574,7 +5007,8 @@ public:
         // search stopped on whichever half the last round left. Taking each
         // chain's answer into the fence at once settles it.
         looseChain_ = exactChainSearch() >= 2 ? chain : NO_OWNER;
-        const auto answer = solveChain(wires, chain);
+        const auto answer = chainAStar() ? solveChainAStar(wires, chain)
+                                         : solveChain(wires, chain);
         looseChain_ = NO_OWNER;
         // Once a chain of the round cannot be joined at all, the round's
         // total is unreachable and must *stay* unreachable. Adding the next
@@ -4597,10 +5031,18 @@ public:
           // that cannot be drawn are counted by `stateFaults` and reported
           // by the commit — which is the honest outcome rather than a
           // quietly patched one.
+          // Two different things, and calling them by one name reads as a
+          // geometric verdict where it is only a clock. `optimal` on an
+          // unsolved answer says the search saw every run of options there
+          // is; without it, the search simply ran out of time.
           say(std::format(
-              "[Coupler Insertion] chain {} round {}: no run of options "
-              "joins the chain — leaving it as it stands",
-              chain, round));
+              "[Coupler Insertion] chain {} round {}: {} — leaving it as it "
+              "stands ({} steps routed)",
+              chain, round,
+              answer.optimal
+                  ? "no run of options joins the chain"
+                  : "out of time before any run of options joined the chain",
+              answer.routed));
           continue;
         }
         auto& points = chains_[chain];
@@ -4617,11 +5059,23 @@ public:
             chainEdgePaths_[chain][at] = answer.ways[at];
           }
         }
-        say(std::format(
-            "[Coupler Insertion] chain {} round {}: optimum {} over {} "
-            "layers, {} of {} pairs priced, {} of them searched",
-            chain, round, answer.cost, points.size(), answer.evaluations,
-            answer.pairs, answer.routed));
+        say(chainAStar()
+                ? std::format("[Coupler Insertion] chain {} round {}: {} {} "
+                              "over {} layers, {} prefixes expanded, {} "
+                              "steps routed",
+                              chain, round,
+                              answer.optimal   ? "optimum"
+                              : answer.relaid  ? "best found, an end pair "
+                                                 "laid the other way round"
+                                               : "best in the time given",
+                              answer.cost, points.size(), answer.expansions,
+                              answer.routed)
+                : std::format("[Coupler Insertion] chain {} round {}: optimum "
+                              "{} over {} layers, {} of {} pairs priced, {} "
+                              "of them searched",
+                              chain, round, answer.cost, points.size(),
+                              answer.evaluations, answer.pairs,
+                              answer.routed));
       }
       const auto faults = stateFaults(wires);
       if (faults < bestFaults ||
@@ -4671,6 +5125,78 @@ public:
                       bestFaults == 1 ? "" : "s"));
     }
     return changed;
+  }
+
+  /// The prefix search over every chain, once. **There are no rounds.**
+  ///
+  /// The rounds of `optimizeChainsExact` exist because the trellis prices a
+  /// chain against a fence it cannot see all of: its answer may not survive
+  /// its own fence, so a later round has something to correct, and the round
+  /// that is kept has to be chosen by `stateFaults`. None of that applies
+  /// here. The prefix search routes every edge against the ways the options
+  /// before it laid, so the state it hands over survives itself.
+  ///
+  /// That is measured and not argued. Under the rounds, **seven of the eight
+  /// chips reported zero faults after round 0** and the loop stopped there of
+  /// its own accord; only 69q ever paid for a second round, where it changed
+  /// nothing and cost 200 s. The rounds are gone from this path (user,
+  /// 2026-09-28).
+  ///
+  /// What is left is one pass over the chains, each solved against the ways
+  /// the chains before it settled on — the same Gauss-Seidel order the
+  /// commit lays them in.
+  ///
+  /// @returns How many chains it settled.
+  [[nodiscard]] std::uint32_t optimizeChainsPrefix(std::vector<Wire>& wires) {
+    std::uint32_t settled = 0;
+    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      const auto answer = solveChainAStar(wires, chain);
+      auto& points = chains_[chain];
+      if (!answer.solved) {
+        // **The chain is left as it stands**, and the edges it cannot draw
+        // are reported by the commit. Two different reasons, and calling
+        // them by one name reads as a verdict about the geometry where it is
+        // only a clock.
+        say(std::format(
+            "[Coupler Insertion] chain {}: {} — leaving it as it stands "
+            "({} steps routed)",
+            chain,
+            answer.outOfTime
+                ? "out of time before any run of options joined the chain"
+                : "no run of options joins the chain",
+            answer.routed));
+        continue;
+      }
+      ++settled;
+      for (std::size_t at = 0; at < points.size(); ++at) {
+        if (!points[at].fixed) {
+          couplers_[points[at].coupler].chosen = answer.chosen[at];
+        }
+      }
+      for (std::size_t at = 0; at + 1 < points.size(); ++at) {
+        if (!answer.ways[at].empty()) {
+          chainEdgePaths_[chain][at] = answer.ways[at];
+        }
+      }
+      say(std::format("[Coupler Insertion] chain {}: {} {} over {} layers, "
+                      "{} prefixes expanded, {} steps routed",
+                      chain,
+                      answer.optimal  ? "optimum"
+                      : answer.relaid ? "best found, an end pair laid the "
+                                        "other way round"
+                                      : "best in the time given",
+                      answer.cost, points.size(), answer.expansions,
+                      answer.routed));
+    }
+    // What the commit is about to find, said once. It decides nothing — with
+    // one pass there is no second state to prefer — but it is the number
+    // this whole approach is judged by, so it belongs in the log: an edge
+    // counted here is an edge the commit will route again from scratch.
+    const auto faults = stateFaults(wires);
+    say(std::format("[Coupler Insertion] {} of {} chains settled, {} edge{} "
+                    "would not survive this state",
+                    settled, chains_.size(), faults, faults == 1 ? "" : "s"));
+    return settled;
   }
 
   /// Put a coupler's option in place: the resonator's way is cut back to
