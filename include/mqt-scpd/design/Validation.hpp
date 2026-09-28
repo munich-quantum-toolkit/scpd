@@ -62,8 +62,8 @@ validate(const flatbuffers::design::ConnectionT& connection);
 /**
  * @brief Validates the design rules.
  * @param rules The rules to check.
- * @return A problem for every length that is not positive and one for a
- * feedline utilization of zero, empty when the rules are valid.
+ * @return A problem for every length that is not positive and finite and one
+ * for a feedline utilization of zero, empty when the rules are valid.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::DesignRulesT& rules);
@@ -72,8 +72,8 @@ validate(const flatbuffers::design::DesignRulesT& rules);
  * @brief Validates a coplanar-waveguide coupler.
  * @param coupler The coupler to check.
  * @return A problem for an unset rotation, for every dimension that is not
- * positive, for a missing port, for a port whose role is not @c Coupler, and
- * for every problem of that port, empty when the coupler is valid.
+ * positive and finite, for a missing port, for a port whose role is not @c
+ * Coupler, and for every problem of that port, empty when the coupler is valid.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::CpwCouplerT& coupler);
@@ -82,7 +82,7 @@ validate(const flatbuffers::design::CpwCouplerT& coupler);
  * @brief Validates an air bridge.
  * @param bridge The bridge to check.
  * @return A problem for an unset rotation and for every dimension that is not
- * positive, empty when the bridge is valid.
+ * positive and finite, empty when the bridge is valid.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::BridgeT& bridge);

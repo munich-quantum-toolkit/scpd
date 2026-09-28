@@ -14,6 +14,7 @@
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <regex>
 #include <string>
@@ -36,7 +37,9 @@ using flatbuffers::design::UnassignedRole;
 
 void requirePositive(const double value, const std::string& what,
                      Problems& problems) {
-  if (!(value > 0.0)) {
+  if (!std::isfinite(value)) {
+    problems.push_back(what + " must be finite");
+  } else if (!(value > 0.0)) {
     problems.push_back(what + " must be positive");
   }
 }
