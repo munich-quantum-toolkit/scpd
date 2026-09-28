@@ -130,11 +130,13 @@ TEST(DesignValidation, ChipProblemsNameTheOffendingPortAndObstacle) {
   chip.ports.push_back(makePort("Chip.port0", UnassignedRole::Launcher));
   chip.ports.push_back(makePort("", UnassignedRole::Unset));
   chip.ports.emplace_back(nullptr);
+  chip.ports.push_back(makePort("Chip.port0", UnassignedRole::Launcher));
 
   EXPECT_EQ(validate(chip),
             (Problems{"obstacle 0 has fewer than three vertices",
                       "port 1: label is empty", "port 1: role is unset",
-                      "port 2: missing"}));
+                      "port 2: missing",
+                      "port 3: label 'Chip.port0' is not unique"}));
 }
 
 } // namespace

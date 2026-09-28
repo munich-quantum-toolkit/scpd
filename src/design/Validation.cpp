@@ -117,6 +117,8 @@ Problems validate(const flatbuffers::design::ChipT& chip) {
                          " has fewer than three vertices");
     }
   }
+  // Configuration sequences name ports by label, so a label must be unique.
+  std::unordered_set<std::string_view> labels;
   for (std::size_t i = 0; i < chip.ports.size(); ++i) {
     const std::string prefix = "port " + std::to_string(i) + ": ";
     const auto* const port = chip.ports[i].get();
@@ -125,6 +127,9 @@ Problems validate(const flatbuffers::design::ChipT& chip) {
       continue;
     }
     append(problems, validate(*port), prefix);
+    if (!port->label.empty() && !labels.insert(port->label).second) {
+      problems.push_back(prefix + "label '" + port->label + "' is not unique");
+    }
   }
   return problems;
 }

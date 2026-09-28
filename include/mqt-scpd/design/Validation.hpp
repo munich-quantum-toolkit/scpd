@@ -43,9 +43,9 @@ validate(const flatbuffers::design::PortT& port);
 /**
  * @brief Validates a chip and the ports it carries.
  * @param chip The chip to check.
- * @return A problem for every obstacle with fewer than three vertices and for
- * every problem of every port, each prefixed by the port's index, empty when
- * the chip is valid.
+ * @return A problem for every obstacle with fewer than three vertices, for
+ * every problem of every port and for every label that is not unique, each
+ * port problem prefixed by the port's index, empty when the chip is valid.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::ChipT& chip);
