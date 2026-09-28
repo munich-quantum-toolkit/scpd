@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
+- **Amended by:** [0024](0024-wire-loop-is-active.md)
 
 ## Context
 
@@ -12,9 +13,9 @@ each other's homework."
 **There is no KLayout design-rule checking to agree with.** The prototype's
 `klayout/` package is a GDS/OASIS exporter plus a viewer panel; not one file in
 it mentions DRC. The criterion described a cross-check that had never existed,
-and the package's own README asks for the opposite arrangement — *"Sobald ein
-`MinClearanceReport` als JSON vorliegt, gehören dessen Verletzungen…"* — the
-viewer wants the core to hand it a structured report it can highlight.
+and the package's own README asks for the opposite arrangement: once a
+`MinClearanceReport` exists as JSON, its violations belong in the viewer, which
+wants the core to hand it a structured report it can highlight.
 
 What the prototype does have is two of the eight rules that matter, implemented
 twice over: `FinalGrid::verify_min_clearance` (483 lines, router cells) and
@@ -37,6 +38,10 @@ obstacle clearance, and resonator length within `resonator_length_tolerance`.
 Four are **advisory** — wire loops, component overlap, minimum straight length,
 minimum bend radius: compiled, unit-tested, and skipped unless `--drc-all` or
 `[drc] all = true` runs them.
+
+[Decision 0024](0024-wire-loop-is-active.md) moves wire loops to the active set,
+making the split five and three. The prototype gained a working implementation
+after this record was written.
 
 Each rule is written **once**, against a `DrcView` that the calling stage
 supplies in its own units — router cells for Final, layout units for Finalize. A
@@ -69,7 +74,7 @@ with them. Rejected: nothing outside the pipeline could then run a check, and
 algorithms live.
 
 **Ship all eight rules active.** Rejected as dishonest about their maturity. Six
-rules are new code with no measured behaviour on any benchmark; declaring them
+rules are new code with no measured behavior on any benchmark; declaring them
 enforced before anyone has seen what they report on a working chip would either
 block the port on false positives or, worse, get switched off wholesale the
 first time one fired.

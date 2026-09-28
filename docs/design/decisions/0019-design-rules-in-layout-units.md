@@ -51,7 +51,7 @@ name so the coincidence of wording does not become a coincidence of value.
 
 ## Alternatives considered
 
-**Keep the literals and document them.** Zero behavioural risk. Rejected: it
+**Keep the literals and document them.** Zero behavioral risk. Rejected: it
 preserves exactly the situation where `19` is right for reasons no one can
 check, and leaves the one genuinely inconsistent site inconsistent.
 
@@ -69,7 +69,7 @@ Rejected on the argument this decision exists to make.
   eight benchmarks, 20 × 3 cells for the coupler footprint (which is the
   physical 200 × 26 at the final cell size), 6 × 6 for the bridge. That
   agreement is the evidence the derivation is right rather than plausible.
-- **Two values become chip-dependent and therefore change behaviour.** The
+- **Two values become chip-dependent and therefore change behavior.** The
   detail-grid blockade goes from a fixed 6 to 4–9, and the straight-start stub
   from a fixed 9 to 10–11. This is the point: one literal cannot be correct on
   eight differently-scaled grids. Both are validated against the zero-fail

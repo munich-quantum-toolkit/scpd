@@ -2,8 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
-- **Supersedes:** [0008](0008-split-chip-and-config.md),
-  [0010](0010-generated-benchmark-chips.md)
+- **Amended by:** [0023](0023-geometric-port-ring-detection.md)
 
 ## Context
 
@@ -72,6 +71,10 @@ two smallest are enough for continuous integration.
   only consumer of a coupler's parsed qubit pair, which is what makes dropping
   the entity model safe
   ([decision 0018](0018-port-roles-unassigned-and-assigned.md)).
+  [Decision 0023](0023-geometric-port-ring-detection.md) softens this to
+  *may be* input: a different, purely geometric traversal can derive the ring
+  instead, and it recovers no qubit pair either, so the gain above survives
+  under both modes.
 - The risk changes shape rather than disappearing: `all_outer` is about 330
   hand-maintained entries on the 69-qubit chip. It is a smaller risk than the
   generator, because the sequences are copied verbatim from the prototype's own

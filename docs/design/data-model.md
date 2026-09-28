@@ -25,9 +25,10 @@ did not agree with each other:
 Two decisions remove all of it. Roles are **declared, not inferred** — see
 [decision 0018](decisions/0018-port-roles-unassigned-and-assigned.md) — and the
 one relationship those string parsers existed to recover, a coupler's qubit
-pair, is no longer needed by anything once the outer port ring is input rather
-than derived
-([decision 0020](decisions/0020-legacy-routing-config-as-input.md)).
+pair, is needed by nothing that survives. The port ring is the only thing that
+ever wanted it, and the ring is configuration
+([decision 0020](decisions/0020-legacy-routing-config-as-input.md) and
+[decision 0025](decisions/0025-port-ring-is-manual-input.md)).
 
 ## Entities
 
@@ -40,7 +41,7 @@ classDiagram
   }
   class Port {
     string label
-    Point centre
+    Point center
     double orientation
     UnassignedRole role
   }
@@ -49,6 +50,7 @@ classDiagram
     Launcher
     Resonator
     Conventional
+    Coupler
   }
   class AssignedRole {
     <<enum>>
@@ -100,33 +102,53 @@ stage works in indices.
 The rule that matters: *a label is looked up, never parsed*. There is no code
 that reads digits out of `Coupler13_14`, and no code that tests a prefix.
 
+A connection is identified the same way: a `ConnectionRef` is a dense index into
+the connection list of the Assignment stage's output. Wires, couplers, failures
+and design-rule findings name their connection through it.
+
 ### Roles: unassigned in, assigned out
 
 Roles come in two enums, with a defined transition between them.
 
 ```fbs
-/// What a port is, before anything is decided. Set at load, from patterns.
-enum UnassignedRole : ubyte { Launcher, Resonator, Conventional }
+/// What a port is, before anything is decided. Set at load, from patterns,
+/// or by coupler insertion for a Coupler port.
+enum UnassignedRole : ubyte {
+  Unset, Launcher, Resonator, Conventional, Coupler, BridgePair
+}
 
 /// What a port does in the solved design. Set by the Assignment stage.
 enum AssignedRole : ubyte {
+  Unset,
   FeedlineSource,     FeedlineTarget,
   ResonatorSource,    ResonatorTarget,
   ConventionalSource, ConventionalTarget,
 }
 ```
 
+Every enum starts with `Unset` at zero. A scalar field that is absent from a
+buffer reads as zero, so without the sentinel an incomplete connection would
+decode as a feedline. `Unset` is never valid after validation; it exists so that
+absence is visible.
+
 `UnassignedRole` is a property of a **port** and comes from the regular
 expressions in `config.toml`. `AssignedRole` is a property of a
 **connection endpoint** and cannot exist before the assignment is solved,
 because until then no port is anyone's source or target.
+
+One member of `UnassignedRole` never comes from a pattern: `Coupler` is the role
+of the port that coupler insertion creates in the Final stage.
+
+`Launcher` and `Coupler` are the two roles a wire never runs to. The other three
+are **routable**: `Resonator` and `Conventional` end a wire, and `BridgePair`
+carries it on across the component and out of the port paired with it.
 
 The prototype conflated the two, which is why `is_resonator` was a `bool` on a
 routing request in one place and a `NodeKind` on a graph node in another.
 
 | `AssignedRole`                              | Where it comes from                                                                       |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `FeedlineSource` / `FeedlineTarget`         | The two launcher-terminated ends of a feedline chain                                      |
+| `FeedlineSource` / `FeedlineTarget`         | A launcher and the conventional port it feeds                                             |
 | `ResonatorTarget`                           | A `Resonator` port that the assignment gave a launcher                                    |
 | `ResonatorSource`                           | **Only ever a CPW coupler port** — see below                                              |
 | `ConventionalSource` / `ConventionalTarget` | The endpoints of a non-resonator connection                                               |
@@ -134,9 +156,15 @@ routing request in one place and a `NodeKind` on a graph node in another.
 `ResonatorSource` is the case that shapes the schema. A resonator runs from the
 CPW coupler that taps the feedline to the qubit's readout port — so its source
 port **does not exist in the chip input**. The Assignment stage decides that a
-resonator is fed; the Final stage's coupler insertion materializes the port that
-carries the role. `Chip::ports` therefore grows during a run, and `PortRef` must
-stay valid across that growth: ports are appended, never reordered or removed.
+resonator is fed and records the connection without a source; the Final stage's
+coupler insertion creates the port that carries the role. The stage receives an
+immutable chip, so the created port lives in its output: each `CpwCoupler`
+carries the `Port` it creates, with the role `Coupler`, and a `ConnectionRef` to
+the connection it completes. After the Final stage, the port list is the input
+ports followed by the couplers' ports in coupler order, so the `PortRef` of a
+coupler's port is the number of input ports plus the coupler's index. That rule
+is what a reloaded run, a plot and a design-rule check use to rebuild the grown
+port list; ports are appended, never reordered or removed.
 
 ### Patterns, not prefixes
 
@@ -146,8 +174,9 @@ expression per role, given per chip in `config.toml`:
 ```toml
 [ports.patterns]
 launcher     = '^Chip\.port\d+$'
-resonator    = '^Qb?\d+\.port0$'
-conventional = '^(Qb?\d+\.port1|Coupler\d+_\d+\.port[0-4])$'
+resonator    = '^Qb\d+\.port0$'
+conventional = '^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$'
+bridge_pair  = '^Coupler\d+_\d+\.port[1-4]$'
 ```
 
 Every port must match **exactly one** pattern. A port matching none, or more
@@ -156,8 +185,56 @@ what turns the prototype's silent misclassification into a message.
 `mqt-scpd doctor` prints the resulting classification table, so a wrong regex is
 visible in a second rather than after a 456-second run.
 
+`bridge_pair` is optional, because a chip whose components carry no crossing
+declares none. Where it is given, **which two of those ports pair** is one rule
+per crossing, each side capturing the component the two must share:
+
+```toml
+[[ports.bridge_pairs]]
+first  = '^(Coupler\d+_\d+)\.port1$'
+second = '^(Coupler\d+_\d+)\.port2$'
+
+[[ports.bridge_pairs]]
+first  = '^(Coupler\d+_\d+)\.port3$'
+second = '^(Coupler\d+_\d+)\.port4$'
+```
+
+The two declarations have to agree: a port the pattern names and no rule pairs
+is a load problem, and so is a port a rule pairs whose role is something else.
+The pairing is declared rather than measured from the artwork — the two ends of
+a crossing do face opposite ways a coupler's width apart, but that says what the
+artwork happens to be, not what the crossing is meant to be. See
+[decision 0030](decisions/0030-bridge-pairs-are-declared.md).
+
 The 4-qubit chip's `Q1.port0` and the 69-qubit chip's `Qb1.port0` are handled by
 two different config files, not by a prefix test that has to satisfy both.
+
+### The component a port belongs to
+
+A port also carries the **component** it belongs to, filled at load from one
+more configured pattern, whose single capture group is the name:
+
+```toml
+[ports.patterns]
+component = '^([^.]+)\.port\d+$'
+```
+
+This is declared in exactly the sense the roles are: the pattern says which part
+of a label names the component, and no algorithm reads a label itself. It exists
+because the planning stages need the grouping and cannot get it any other way. A
+coupler's artwork carries routable ports on opposite sides and an inner wire
+crosses between them, so which two ports those are is a property of the
+component; and what the inner circuit has to reach is a qubit's own routing
+ports, which the role does not separate from a coupler's because both classify
+as `Conventional`.
+
+Everything past the grouping is geometry rather than another name test. A
+component that carries a `Resonator` port is a qubit; every other component with
+routable ports is a coupler, and a coupler's ports bridge in pairs whose
+orientations are opposite. `mqt-scpd doctor` prints the grouping, so a pattern
+that captures nothing is visible at once rather than as a Global stage with no
+bridges. See
+[decision 0027](decisions/0027-components-are-declared.md).
 
 ### Geometry
 
@@ -249,18 +326,46 @@ That single rule replaces every clearance literal in the prototype:
 | Final: straight-start stubs                       | literal `9`      | `cells_for(min_straight_length, final)`               |
 | Final: coupler footprint                          | `20 × 3` cells   | `cells_for` of 200.0 × 26.0                           |
 | Final: bridge footprint                           | `6 × 6` cells    | `cells_for` of 60.0 × 60.0                            |
+| Final: obstacle keepout                           | 25.0, plus an env override | `min_obstacle_spacing` through `RasterOptions.keepout` |
+| Final: corridor band                              | `200`/`800` cells | `corridor_spacings` × the wire clearance             |
+| Final: grid border                                | `40` cells       | the rectangle the launcher slots stand on             |
 
 The final grid's cell size is 9.91–10.00 layout units on every benchmark, so
 `ceil(185 / cell)` is 18.5–18.7 → **19** on all eight. The prototype's literal
 was right; nothing in the prototype recorded *why*, so nothing could have caught
 it drifting.
 
+The grid border is the row that stops being a distance at all. What it is for
+is to keep a wire off the edge of the chip, and where the edge of the routable
+space is, is not a length: it is the ring of launcher slots the wires are fed
+from. Everything between that rectangle and the chip outline is free space no
+wire has any business in — a wire that enters it comes back in somewhere else
+and has gone *around* the sources of the wires beside it. So the strip is
+derived from where the launchers are, and on the 17-qubit chip that comes to 45
+cells against the prototype's literal 40.
+
+The obstacle keepout is the row that decides the most, because it is baked into
+the mask rather than checked: the prototype measures it in layout units already
+and then lets `FG_OBSTACLE_INFLATE` override it, which is a calibration knob for
+one experiment and not a setting. It comes from `min_obstacle_spacing`, and it
+is measured exactly — the distance from the cell to the polygon edge in layout
+units, not a dilation of the finished raster. A dilation would carry the half
+cell the fill convention differs by and would widen the edge seam a second
+time.
+
 Two of these are not constant across chips, and making them derived therefore
-changes behaviour: the detail-grid blockade becomes 4–9 rather than a fixed 6,
+changes behavior: the detail-grid blockade becomes 4–9 rather than a fixed 6,
 and the straight-start stub becomes 10–11 rather than a fixed 9. That is the
-point — one literal cannot be correct on eight differently-scaled grids. Both
-are validated by benchmark result in phase 4, and a chip that genuinely needs a
-different value gets a documented override rather than a reverted rule.
+point — one literal cannot be correct on eight differently-scaled grids. A chip
+that genuinely needs a different value gets a documented override rather than a
+reverted rule.
+
+The detail-grid blockade is now measured on the eight benchmarks: the detail
+cell is 18.96 to 39.90 layout units, so `ceil(185 / cell) - 1` is **9** on the
+4- and 17-qubit chips, **4** on the 9-, 21- and 33-qubit ones and **5** on the
+45-, 57- and 69-qubit ones. The prototype's literal 6 is right on none of them,
+and its own cross-boundary pass computes the same expression a few lines above
+the place where it reads the literal.
 
 ## Coordinate systems
 
@@ -269,20 +374,50 @@ so each has a distinct type and conversions are explicit.
 
 | Space       | Type     | Unit                    | Where it is valid                                                   |
 | ----------- | -------- | ----------------------- | ------------------------------------------------------------------- |
-| Layout      | `Point`  | micrometres as `double` | The chip description, the geometry IR, all design rules, GDS export |
+| Layout      | `Point`  | micrometers as `double` | The chip description, the geometry IR, all design rules, GDS export |
 | Coarse grid | `GCoord` | cell index              | Capacity planning: partitions, budgets, chains                      |
 | Detail grid | `DCoord` | pixel index             | Detail routing: the A* over partitions                              |
 | Router grid | `RCoord` | node index plus heading | Final routing: the Dubins A* state, heading `0..7`                  |
 
-Conversions live in `MQT::ScpdGrid` as named functions, never as inline
-arithmetic at the call site. The prototype re-derived `pad + x * px_w` in six
-separate renderers, each with its own y-flip convention.
+All four types live in `geometry.fbs`. Conversions live in `MQT::ScpdGrid` as
+named functions, never as inline arithmetic at the call site: one `GridMetrics`
+value describes a grid — its cell counts, the layout point of cell `(0, 0)` and
+its cell step along each axis — and every conversion between layout units and
+cells goes through it. The prototype re-derived `pad + x * px_w` in six separate
+renderers, each with its own y-flip convention.
+
+A `GridMetrics` puts cell `(0, 0)` on the minimum corner of the chip's box and
+the last cell on the maximum corner, so one cell step is the extent of the box
+divided by the number of steps and every point of the box rounds onto a cell.
+
+That is a **node** convention: a cell is a point. A raster convention would make
+a cell an area covering `[k, k + 1)` and test it at its center, and the two
+frames differ by half a cell. The prototype uses the raster one, so its grids
+and ours do not agree cell for cell: on the 9-qubit chip the difference moves 28
+of 102 port cells by one cell and, through the port bands, 43 of 78 routing
+targets by three cells along their own direction, which changes which
+bottlenecks the capacity stage's target filter rejects. The node convention is
+kept because the whole grid module is built on it and because a cell of the
+router grid is a search state rather than an area; the cost is that the capacity
+chains are not the prototype's, and it is recorded here rather than worked
+around. The same type describes all three grids; the coordinate structs say
+which grid a cell belongs to. The detail grid of a capacity grid is that grid
+refined by a whole factor, and the router grid divides every capacity cell into
+as many cells as it holds steps of the configured cell size, rounded up, so a
+router cell is never wider than that size.
 
 `Rotation` and the router heading are both eight-way. That assumption is baked
-into the A* state index and the flat primitive tables, where a heading is packed
-as `(ang << 10) | path_id`. It is named as `kNumAngles` rather than spelled `8`
-throughout, so it is greppable — but changing it is out of scope for the first
-release. See [decision 0015](decisions/0015-grid-and-memory-model.md).
+into the search state index and the primitive tables, where a move identifier
+occupies ten bits beside the heading. It is named as `NUM_HEADINGS` rather than
+spelled `8` throughout, so it is greppable — but changing it is out of scope for
+the first release. See
+[decision 0015](decisions/0015-grid-and-memory-model.md).
+
+A heading is a direction of travel: heading `0` travels toward negative `y`, and
+the headings continue clockwise in eighth turns when `y` points up, so heading
+`2` travels toward negative `x` and heading `6` toward positive `x`. A port's
+heading is the one a wire has when it arrives there, so a wire leaving that port
+carries the reverse.
 
 ## Paths
 
@@ -290,7 +425,7 @@ A routed wire is a sequence of **analytic segments**, not sampled points:
 
 ```text
 Segment := Line{ start, end }
-         | Arc { centre, radius, startAngle, sweep }
+         | Arc { center, radius, startAngle, sweep }
 ```
 
 The router produces Dubins paths, which are exactly lines and circular arcs.
@@ -306,27 +441,61 @@ could no longer be trusted to show where a bend was.
 Sampling happens exactly once, in the KLayout adapter, at a tolerance taken from
 the configuration.
 
+## The schema files
+
+| File            | Holds                                                                                                          | Owner               |
+| --------------- | -------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `geometry.fbs`  | `Point`, `GCoord`, `DCoord`, `RCoord`, `Polygon`, `Line`, `Arc`, `Segment`, `Path`                             | `MQT::ScpdGeometry` |
+| `design.fbs`    | The two role enums, `Rotation`, `PortRef`, `Port`, `Chip`, `Connection`, `DesignRules`, `CpwCoupler`, `Bridge` | `MQT::ScpdDesign`   |
+| `config.fbs`    | `Config` with the port and grid sections, with the defaults the loader applies to absent keys                  | `MQT::ScpdDesign`   |
+| `artifacts.fbs` | The seven stage outputs, each behind the one `Artifact` root                                                   | `MQT::ScpdIO`       |
+| `drc.fbs`       | `DrcReport` and its findings                                                                                   | `MQT::ScpdDrc`      |
+
+A schema holds what the implemented phases read. Each later stage appends its
+own tables and fields when it arrives: the contents of the capacity, global and
+detail outputs with their stages, and the stage, component and DRC parameters of
+`Config` with the code that consumes them. FlatBuffers permits that growth
+without touching what exists.
+
+Each schema declares its own namespace, `mqt.scpd.flatbuffers.<schema>`, so the
+generated code is grouped by the schema that owns it. In C++ that is one header
+and one namespace per schema, `mqt::scpd::flatbuffers::design` for `design.fbs`.
+For a table `Chip` the header holds the read-only accessor `Chip` over a buffer
+and the native object `ChipT`; the object types are the in-memory model. In
+Python each schema is a subpackage with one module per type, so `Chip` and
+`ChipT` live in `mqt.scpd.flatbuffers.design.Chip`. Python code is generated
+only for the schemas Python reads or writes itself: the chip, the configuration
+it hands to the core, and the artifacts that `plot` and `inspect` open. The DRC
+report is written as JSON and read with the `json` module, so `drc.fbs` has no
+Python module.
+
 ## Schema evolution
 
 - Schemas live in `schemas/*.fbs` and are the single source of truth for the
   in-memory model, the `01-`…`06-` artifacts, and `DrcReport`. Generated C++
-  headers and Python modules are committed under `include/mqt-scpd/generated/`
-  and `python/mqt/scpd/generated/`, regenerated by `uvx nox -s schemas`. CI
-  fails if the committed output is stale.
+  headers and Python modules are committed under `include/mqt-scpd/flatbuffers/`
+  and `python/mqt/scpd/flatbuffers/`, regenerated by `uvx nox -s schemas`. The
+  session builds `flatc` from the FlatBuffers source that the C++ build already
+  fetches, so it needs CMake and a C++ compiler and nothing else.
+  `uvx nox -s schemas -- --check` regenerates and fails if the committed output
+  differs; CI runs it on every change.
 - **`DrcReport` is schema-defined even though it is written as JSON.** It is the
   one JSON output that is not loose: metrics may gain a field mid-experiment,
   but a violation has to be machine-readable to be overlaid on a plot, diffed
   between runs and gated on in continuous integration. The prototype's clearance
   findings existed only as printed text, and its own viewer records that it
-  cannot use them for exactly that reason.
+  cannot use them for exactly that reason. The root of `drc.json` is
+  `DrcReports`, one report per checked stage, so the whole file conforms to the
+  schema.
 - The chip input is **not** parsed by FlatBuffers; it is the prototype's JSON,
   read through nlohmann into the schema-defined model. Only the header-only
   FlatBuffers runtime is linked, not the parser library.
 - FlatBuffers' own rules apply: add fields at the end of a table, never
   renumber, never change a field's type, and mark removed fields `deprecated`.
-- Every run directory records the schema version it was written with. Loading a
-  run written by an incompatible version fails with a clear message rather than
-  misreading it.
+- Every artifact records the schema version it was written with, as the
+  FlatBuffers file identifier `SCP1` in `artifacts.fbs`. An incompatible change
+  bumps the digit, so loading an artifact written by an incompatible version
+  fails the verifier with a clear message rather than misreading it.
 
 ## Validation
 
@@ -335,8 +504,11 @@ trust boundary. Both are validated on load, and both report actionable errors
 that name the offending field:
 
 - Every port matches exactly one role pattern.
-- Every label in `all_outer` and `fixed_outer` exists on the chip, and
-  `fixed_outer ⊆ all_outer`.
+- The `component` pattern, where it is given, compiles and has exactly one
+  capture group. A pattern that says which labels have a component without
+  saying what it is called is a mistake rather than a choice.
+- Both `all_outer` and `fixed_outer` are present. Every label in them is a
+  routable port of the chip and appears once, and `fixed_outer ⊆ all_outer`.
 - Every regular expression compiles.
 - Unknown configuration keys are an error, not a warning.
 - A chip file carrying a non-empty `nets` is rejected rather than silently
@@ -344,3 +516,23 @@ that name the offending field:
 
 Per the project's minimalism rules, trust-boundary validation is one of the
 things that is never trimmed for brevity.
+
+Validation of the binary artifacts has two layers, because the FlatBuffers
+verifier answers only half of the question:
+
+- **Structural.** The verifier checks that a buffer is well formed and that
+  every field marked `required` is present. Every field the in-memory model
+  holds by value is marked `required`, so a buffer that omits a point, a
+  reference or the producer fails here rather than unpacking to a default.
+- **Semantic.** A scalar field is never required; an absent role reads as
+  `Unset` and an absent dimension as zero. The `validate` functions in
+  `MQT::ScpdDesign`, `MQT::ScpdIO` and `MQT::ScpdDrc` check what the verifier
+  cannot: no enum at `Unset`, every length positive, every coupler carrying a
+  port of role `Coupler`. `readArtifact` and `writeArtifact` in `MQT::ScpdIO`
+  run both layers, so an artifact never crosses the core's boundary unchecked.
+
+The generated Python code has neither layer: the builders do not enforce
+required fields, and the runtime has no verifier. `mqt.scpd.artifacts` is the
+checked path for Python: `write_artifact` and `read_artifact` reject a missing
+identifier and every missing required field, so an artifact that Python writes
+is one the core accepts. Checking the values is the core's job.
