@@ -98,14 +98,17 @@ uv pip install mqt.scpd
 > MQT SCPD is still under development. This section will be expanded in the
 > future.
 
-The command line is the product. Each benchmark chip under `benchmarks/` has a
-`config.toml`; the doctor checks it and its chip, `plot` draws the chip, and
-`render` writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that).
+The command line is the product. A chip is described by a `config.toml` and the
+chip input it names; the doctor checks both, `plot` draws the chip, and `render`
+writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that). The eight
+benchmark chips of the paper live in
+[planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd):
 
 ```bash
-mqt-scpd doctor -c benchmarks/9q/config.toml
-mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg
-mqt-scpd render -c benchmarks/9q/config.toml -o 9q.gds
+git clone --depth 1 https://github.com/cda-tum/planar-superconducting-pd.git
+mqt-scpd doctor -c planar-superconducting-pd/inputs/9q/config.toml
+mqt-scpd plot -c planar-superconducting-pd/inputs/9q/config.toml -o 9q.svg
+mqt-scpd render -c planar-superconducting-pd/inputs/9q/config.toml -o 9q.gds
 ```
 
 **Detailed documentation and examples are available at

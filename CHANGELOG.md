@@ -17,8 +17,6 @@ releases may include breaking changes.
   the layout SVG, the KLayout adapter and the JSON view of the artifacts, which
   the core renders from the schema's own type tables ([#111])
   ([**@FeldmeierMichael**])
-- ✨ Add the eight benchmark configurations and their chip inputs ([#111])
-  ([**@FeldmeierMichael**])
 - 👷 Fail CI when the committed schema-generated code is stale ([#98])
   ([**@FeldmeierMichael**])
 - ✨ Add semantic validation of the data model in the core and a checked
