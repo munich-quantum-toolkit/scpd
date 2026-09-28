@@ -27,11 +27,12 @@ if TYPE_CHECKING:
 
     from ..flatbuffers.design.Chip import ChipT
 
-#: The layer that carries the obstacle polygons.
+#: The layer that carries the obstacle polygons, as in the published layouts of planar-superconducting-pd.
 OBSTACLE_LAYER = (1, 0)
 
-#: The layer of the port labels; the datatype is the port's role value.
-PORT_LAYER = 2
+#: The layer of the port labels; the datatype is the port's role value. The published layouts use layers 1 to 5
+#: for the obstacles and the routing result, so the labels stay clear of them.
+PORT_LAYER = 10
 
 #: The file suffixes KLayout writes, with the format each selects.
 FORMATS: dict[str, str] = {".gds": "GDS2", ".gds2": "GDS2", ".oas": "OASIS"}
@@ -57,7 +58,7 @@ class ExportSummary:
 def write_layout(chip: ChipT, path: Path, *, cell: str = "chip") -> ExportSummary:
     """Write the unrouted chip as GDSII or OASIS, chosen by the file suffix.
 
-    The obstacles go to layer 1 as polygons. Every port becomes a text with its label on layer 2,
+    The obstacles go to layer 1 as polygons. Every port becomes a text with its label on layer 10,
     with the role's value as the datatype, so that the roles can be shown and hidden separately.
 
     Args:
