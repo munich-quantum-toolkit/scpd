@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import re
+from itertools import starmap
 from pathlib import Path
 
 # The parsed SVG is the output of the code under test, not foreign input.
@@ -20,6 +22,8 @@ import pytest
 from mqt.scpd.chip import decode_chip, load_chip, obstacles_of, ports_of, vertices_of
 from mqt.scpd.config import load_config
 from mqt.scpd.flatbuffers.design.Chip import ChipT
+from mqt.scpd.flatbuffers.geometry.Point import PointT
+from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
 from mqt.scpd.plot import OBSTACLE_FILL, PlotError, layout_svg, simplify
 
 BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
@@ -93,3 +97,53 @@ def test_an_empty_chip_cannot_be_drawn() -> None:
     """A chip without geometry is a PlotError, not a division by zero."""
     with pytest.raises(PlotError, match="no obstacle vertex and no port"):
         layout_svg(ChipT())
+
+
+def _chip(*polygons: list[tuple[float, float]]) -> ChipT:
+    """Build a chip that carries only obstacles.
+
+    Returns:
+        The chip.
+    """
+    return ChipT(obstacles=[PolygonT(vertices=list(starmap(PointT, polygon))) for polygon in polygons])
+
+
+def _subpaths(svg: str) -> list[list[tuple[float, float]]]:
+    """The absolute vertices of every obstacle and outline subpath of a picture.
+
+    Returns:
+        One vertex list per subpath, in path order.
+    """
+    subpaths = []
+    for data in re.findall(r'<path class="[of]" d="([^"]*)"', svg):
+        for subpath in filter(None, data.split("Z")):
+            x = y = 0.0
+            vertices = []
+            for command, dx, dy in re.findall(r"([Ml])(-?[\d.]+) (-?[\d.]+)", subpath):
+                x, y = (float(dx), float(dy)) if command == "M" else (x + float(dx), y + float(dy))
+                vertices.append((x, y))
+            subpaths.append(vertices)
+    return subpaths
+
+
+def _doubled_area(vertices: list[tuple[float, float]]) -> float:
+    return sum(ax * by - bx * ay for (ax, ay), (bx, by) in zip(vertices, vertices[1:] + vertices[:1], strict=True))
+
+
+def test_overlapping_obstacles_of_opposite_winding_leave_no_hole() -> None:
+    """Every subpath winds the same way, so the nonzero rule fills an overlap instead of cancelling it."""
+    clockwise = [(0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)]
+    counterclockwise = [(5.0, 5.0), (15.0, 5.0), (15.0, 15.0), (5.0, 15.0)]
+    assert _doubled_area(clockwise) < 0 < _doubled_area(counterclockwise)
+
+    first, second = _subpaths(layout_svg(_chip(clockwise, counterclockwise)))
+    assert (_doubled_area(first) > 0) == (_doubled_area(second) > 0)
+
+
+def test_relative_steps_do_not_accumulate_rounding() -> None:
+    """Steps run between rounded points, so the last vertex lands where the input has it."""
+    points = [(i * 1.0004, 0.0) for i in range(1000)] + [(0.0, 1.0)]
+    (rebuilt,) = _subpaths(layout_svg(_chip(points)))
+    # The first and the last input vertex share their x, so they must share it in the picture.
+    assert rebuilt[-1][0] == pytest.approx(rebuilt[0][0], abs=1e-6)
+    assert max(x for x, _ in rebuilt) - rebuilt[0][0] == pytest.approx(round(999 * 1.0004, 3), abs=1e-6)

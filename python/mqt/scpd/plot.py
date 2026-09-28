@@ -116,10 +116,20 @@ def _dedupe(points: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
 def _path_data(points: Sequence[tuple[float, float]]) -> str:
     """One closed subpath: an absolute move, then relative lines, which keeps the numbers short.
 
+    The steps run between the rounded points, so that rounding does not add up along the polygon.
+    Every subpath winds the same way: all obstacles share one path under the nonzero fill rule, and
+    two overlapping polygons of opposite winding would cancel to a hole.
+
     Returns:
         The path data.
     """
-    (x0, y0), *rest = points
+    rounded = [(round(x, 3), round(y, 3)) for x, y in points]
+    doubled_area = sum(
+        ax * by - bx * ay for (ax, ay), (bx, by) in zip(rounded, rounded[1:] + rounded[:1], strict=False)
+    )
+    if doubled_area < 0:
+        rounded.reverse()
+    (x0, y0), *rest = rounded
     parts = [f"M{_number(x0)} {_number(y0)}"]
     x, y = x0, y0
     for px, py in rest:
