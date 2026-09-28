@@ -8,9 +8,9 @@
 
 """The ``doctor`` command: check a configuration and its chip before a run.
 
-The doctor loads the configuration under the rules for a shipped file, loads and classifies the chip,
-prints the classification table so that a wrong pattern is visible in a second, and prints the outer
-port ring the run would use, checked label by label against the chip.
+The doctor loads the configuration, loads and classifies the chip, prints the classification table
+so that a wrong pattern is visible in a second, and prints the outer port ring the run would use,
+checked label by label against the chip.
 """
 
 from __future__ import annotations
@@ -125,7 +125,7 @@ def run_doctor(config_path: Path, *, list_ports: bool = False) -> DoctorReport:
     report = DoctorReport()
     report.say(f"configuration: {config_path}")
     try:
-        config = load_config(config_path, strict=True)
+        config = load_config(config_path)
     except ConfigError as error:
         report.fail(str(error))
         return report

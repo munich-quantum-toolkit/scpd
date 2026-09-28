@@ -64,3 +64,17 @@ def test_problems_end_the_report_with_a_verdict(tmp_path: Path) -> None:
     report = run_doctor(wrong_ring)
     assert not report.ok
     assert "'Q9.port0' is not a port of the chip" in report.problems[0]
+
+
+def test_a_default_written_out_is_not_a_problem(tmp_path: Path) -> None:
+    """The rules for a shipped file are for the benchmarks; a user may write a default out."""
+    config = (BENCHMARKS / "9q" / "config.toml").read_text(encoding="utf-8")
+    written_out = tmp_path / "config.toml"
+    written_out.write_text(
+        config.replace(
+            'input = "routing_config.json"', f'input = "{(BENCHMARKS / "9q" / "routing_config.json").as_posix()}"'
+        ).replace("capacity_cells_x = 12", "capacity_cells_x = 50"),
+        encoding="utf-8",
+    )
+    report = run_doctor(written_out)
+    assert report.ok, report.text()
