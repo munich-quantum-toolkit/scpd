@@ -16,11 +16,22 @@
   ],
   enabledManagers: [
     "cargo",
+    "custom.regex",
     "github-actions",
     "npm",
     "pep621",
     "pip_requirements",
     "pre-commit",
+  ],
+  customManagers: [
+    {
+      customType: "regex",
+      description: "Update the commit of the benchmark chips that the benchmark job checks",
+      managerFilePatterns: ["/^\\.github/workflows/benchmarks\\.yml$/"],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) branch=(?<currentValue>\\S+)\\s+ref: (?<currentDigest>[0-9a-f]{40})",
+      ],
+    },
   ],
   lockFileMaintenance: {
     enabled: true,
@@ -58,6 +69,14 @@
     {
       matchUpdateTypes: ["lockFileMaintenance"],
       commitMessagePrefix: "⬆\uFE0F\uD83D\uDD12\uFE0F",
+    },
+    {
+      description: "Review every new commit of the benchmark chips before the benchmark job moves to it",
+      matchManagers: ["custom.regex"],
+      matchDepNames: ["https://github.com/cda-tum/planar-superconducting-pd"],
+      addLabels: ["github-actions"],
+      commitMessagePrefix: "⬆\uFE0F\uD83D\uDCCA",
+      automerge: false,
     },
     {
       description: "Group and auto-merge all patch updates",

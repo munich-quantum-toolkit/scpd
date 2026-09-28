@@ -69,6 +69,22 @@ bool operator!=(const GeometryT &lhs, const GeometryT &rhs);
 bool operator==(const ArtifactT &lhs, const ArtifactT &rhs);
 bool operator!=(const ArtifactT &lhs, const ArtifactT &rhs);
 
+inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable();
+
+inline const ::flatbuffers::TypeTable *AssignmentTypeTable();
+
+inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable();
+
+inline const ::flatbuffers::TypeTable *DetailRoutingTypeTable();
+
+inline const ::flatbuffers::TypeTable *FinalRoutingTypeTable();
+
+inline const ::flatbuffers::TypeTable *WireTypeTable();
+
+inline const ::flatbuffers::TypeTable *GeometryTypeTable();
+
+inline const ::flatbuffers::TypeTable *ArtifactTypeTable();
+
 /// What a stage produces.
 enum class StageOutput : uint8_t {
   NONE = 0,
@@ -306,6 +322,9 @@ struct CapacityPlan FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CapacityPlanT NativeTableType;
   typedef CapacityPlanBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CapacityPlanTypeTable();
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -359,6 +378,9 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef AssignmentT NativeTableType;
   typedef AssignmentBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return AssignmentTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CONNECTIONS = 4,
     VT_OBJECTIVE = 6
@@ -442,6 +464,9 @@ struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef GlobalRoutingT NativeTableType;
   typedef GlobalRoutingBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return GlobalRoutingTypeTable();
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -489,6 +514,9 @@ struct DetailRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef DetailRoutingT NativeTableType;
   typedef DetailRoutingBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return DetailRoutingTypeTable();
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -545,6 +573,9 @@ struct FinalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FinalRoutingT NativeTableType;
   typedef FinalRoutingBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return FinalRoutingTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_COUPLERS = 4,
     VT_BRIDGES = 6,
@@ -654,6 +685,9 @@ struct Wire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef WireT NativeTableType;
   typedef WireBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return WireTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CONNECTION = 4,
     VT_PATH = 6
@@ -733,6 +767,9 @@ struct Geometry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef GeometryT NativeTableType;
   typedef GeometryBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return GeometryTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_WIRES = 4,
     VT_COUPLERS = 6,
@@ -838,6 +875,9 @@ struct Artifact FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ArtifactT NativeTableType;
   typedef ArtifactBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ArtifactTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PRODUCER = 4,
     VT_OUTPUT_TYPE = 6,
@@ -1514,6 +1554,161 @@ inline void StageOutputUnion::Reset() {
   }
   value = nullptr;
   type = StageOutput::NONE;
+}
+
+inline const ::flatbuffers::TypeTable *StageOutputTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 3 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 4 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 5 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::CapacityPlanTypeTable,
+    mqt::scpd::flatbuffers::artifacts::AssignmentTypeTable,
+    mqt::scpd::flatbuffers::artifacts::GlobalRoutingTypeTable,
+    mqt::scpd::flatbuffers::artifacts::DetailRoutingTypeTable,
+    mqt::scpd::flatbuffers::artifacts::FinalRoutingTypeTable,
+    mqt::scpd::flatbuffers::artifacts::GeometryTypeTable
+  };
+  static const char * const names[] = {
+    "NONE",
+    "CapacityPlan",
+    "Assignment",
+    "GlobalRouting",
+    "DetailRouting",
+    "FinalRouting",
+    "Geometry"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_UNION, 7, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable() {
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 0, nullptr, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *AssignmentTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::ConnectionTypeTable
+  };
+  static const char * const names[] = {
+    "connections",
+    "objective"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable() {
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 0, nullptr, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DetailRoutingTypeTable() {
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 0, nullptr, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *FinalRoutingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::CpwCouplerTypeTable,
+    mqt::scpd::flatbuffers::design::BridgeTypeTable,
+    mqt::scpd::flatbuffers::design::ConnectionRefTypeTable
+  };
+  static const char * const names[] = {
+    "couplers",
+    "bridges",
+    "unresolved"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *WireTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::ConnectionRefTypeTable,
+    mqt::scpd::flatbuffers::geometry::PathTypeTable
+  };
+  static const char * const names[] = {
+    "connection",
+    "path"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *GeometryTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::WireTypeTable,
+    mqt::scpd::flatbuffers::design::CpwCouplerTypeTable,
+    mqt::scpd::flatbuffers::design::BridgeTypeTable
+  };
+  static const char * const names[] = {
+    "wires",
+    "couplers",
+    "bridges"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ArtifactTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_UTYPE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::StageOutputTypeTable
+  };
+  static const char * const names[] = {
+    "producer",
+    "output_type",
+    "output"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
 }
 
 inline const mqt::scpd::flatbuffers::artifacts::Artifact *GetArtifact(const void *buf) {

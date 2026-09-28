@@ -121,6 +121,18 @@ def tests(session: nox.Session) -> None:
     _run_tests(session)
 
 
+@nox.session(python="3.14", reuse_venv=True)
+def benchmarks(session: nox.Session) -> None:
+    """Check the benchmark chips of planar-superconducting-pd.
+
+    Set ``MQT_SCPD_BENCHMARKS`` to a clone of https://github.com/cda-tum/planar-superconducting-pd.
+    CI checks out the commit that ``.github/workflows/benchmarks.yml`` pins.
+    """
+    if not os.environ.get("MQT_SCPD_BENCHMARKS"):
+        session.error("set MQT_SCPD_BENCHMARKS to a clone of https://github.com/cda-tum/planar-superconducting-pd")
+    _run_tests(session, pytest_run_args=["test/python/benchmarks"])
+
+
 @nox.session(python=PYTHON_ALL_VERSIONS, reuse_venv=True, venv_backend="uv", default=True)
 def minimums(session: nox.Session) -> None:
     """Test the minimum versions of dependencies."""
@@ -264,6 +276,10 @@ def schemas(session: nox.Session) -> None:
             "--gen-object-api",
             "--gen-compare",
             "--scoped-enums",
+            # The type tables these emit let the core render an artifact as JSON from the schema
+            # itself, so that no second field list has to be kept in step with it.
+            "--reflect-types",
+            "--reflect-names",
             "--cpp-std",
             "c++17",
             "--filename-suffix",

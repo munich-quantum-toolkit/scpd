@@ -12,6 +12,14 @@ releases may include breaking changes.
 
 ### Added
 
+- 📝 Document how to run MQT SCPD on the benchmark chips of
+  [planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd),
+  and check every chip against it in CI ([#111]) ([**@marcelwa**])
+- ✨ Add the `mqt-scpd` command line with `doctor`, `plot`, `render` and
+  `inspect`: the `config.toml` and chip loaders, the port-role classification,
+  the layout SVG, the KLayout adapter and the JSON view of the artifacts, which
+  the core renders from the schema's own type tables ([#111])
+  ([**@FeldmeierMichael**])
 - 👷 Fail CI when the committed schema-generated code is stale ([#98])
   ([**@FeldmeierMichael**])
 - ✨ Add semantic validation of the data model in the core and a checked
@@ -27,6 +35,9 @@ releases may include breaking changes.
 
 ### Changed
 
+- ♻️ Make `[ports.sequences]` required and drop the `detection` and
+  `start_component` keys of the configuration schema; the outer port ring is
+  configuration only ([#111]) ([**@FeldmeierMichael**])
 - 💥 Drop support for x86 macOS and stop publishing the respective wheels
   ([#89]) ([**@denialhaag**])
 - ⬆️ Raise the macOS deployment target to 13.3 to enable `std::format` in libc++
@@ -40,6 +51,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#111]: https://github.com/munich-quantum-toolkit/scpd/pull/111
 [#98]: https://github.com/munich-quantum-toolkit/scpd/pull/98
 [#89]: https://github.com/munich-quantum-toolkit/scpd/pull/89
 [#83]: https://github.com/munich-quantum-toolkit/scpd/pull/83
@@ -50,6 +62,7 @@ releases may include breaking changes.
 
 [**@denialhaag**]: https://github.com/denialhaag
 [**@FeldmeierMichael**]: https://github.com/FeldmeierMichael
+[**@marcelwa**]: https://github.com/marcelwa
 
 <!-- General links -->
 

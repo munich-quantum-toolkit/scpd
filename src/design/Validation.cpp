@@ -10,22 +10,36 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 
+#include "mqt-scpd/design/Roles.hpp"
+#include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 
+#include <cmath>
 #include <cstddef>
+#include <regex>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace mqt::scpd::design {
 
 namespace {
 
+using flatbuffers::config::ConfigT;
+using flatbuffers::config::PortConfigT;
+using flatbuffers::config::PortPatternsT;
 using flatbuffers::design::AssignedRole;
+using flatbuffers::design::ChipT;
 using flatbuffers::design::Rotation;
 using flatbuffers::design::UnassignedRole;
 
 void requirePositive(const double value, const std::string& what,
                      Problems& problems) {
-  if (!(value > 0.0)) {
+  if (!std::isfinite(value)) {
+    problems.push_back(what + " must be finite");
+  } else if (!(value > 0.0)) {
     problems.push_back(what + " must be positive");
   }
 }
@@ -39,6 +53,45 @@ void requireRotation(const Rotation rotation, Problems& problems) {
 void append(Problems& into, const Problems& from, const std::string& prefix) {
   for (const auto& problem : from) {
     into.push_back(prefix + problem);
+  }
+}
+
+void requirePattern(const std::string& expression, const std::string& key,
+                    Problems& problems) {
+  if (expression.empty()) {
+    problems.push_back(key + " pattern is empty");
+    return;
+  }
+  try {
+    static_cast<void>(std::regex(expression, std::regex::ECMAScript));
+  } catch (const std::regex_error& error) {
+    problems.push_back(key + " pattern does not compile: " + error.what());
+  }
+}
+
+/// Problems of one configured sequence against the chip: every label must
+/// be a routable port, and none may appear twice.
+void checkSequence(
+    const std::vector<std::string>& sequence, const std::string& name,
+    const std::unordered_map<std::string_view, UnassignedRole>& roleOf,
+    Problems& problems) {
+  std::unordered_map<std::string_view, std::size_t> firstAt;
+  for (std::size_t i = 0; i < sequence.size(); ++i) {
+    const std::string prefix =
+        name + "[" + std::to_string(i) + "]: '" + sequence[i] + "' ";
+    const auto role = roleOf.find(sequence[i]);
+    if (role == roleOf.end()) {
+      problems.push_back(prefix + "is not a port of the chip");
+    } else if (!isRoutable(role->second)) {
+      problems.push_back(prefix + "is a " +
+                         std::string(roleName(role->second)) +
+                         " port, not a routable one");
+    }
+    const auto [first, inserted] = firstAt.try_emplace(sequence[i], i);
+    if (!inserted) {
+      problems.push_back(prefix + "appears twice; first at " +
+                         std::to_string(first->second));
+    }
   }
 }
 
@@ -64,6 +117,8 @@ Problems validate(const flatbuffers::design::ChipT& chip) {
                          " has fewer than three vertices");
     }
   }
+  // Configuration sequences name ports by label, so a label must be unique.
+  std::unordered_set<std::string_view> labels;
   for (std::size_t i = 0; i < chip.ports.size(); ++i) {
     const std::string prefix = "port " + std::to_string(i) + ": ";
     const auto* const port = chip.ports[i].get();
@@ -72,6 +127,9 @@ Problems validate(const flatbuffers::design::ChipT& chip) {
       continue;
     }
     append(problems, validate(*port), prefix);
+    if (!port->label.empty() && !labels.insert(port->label).second) {
+      problems.push_back(prefix + "label '" + port->label + "' is not unique");
+    }
   }
   return problems;
 }
@@ -124,6 +182,78 @@ Problems validate(const flatbuffers::design::BridgeT& bridge) {
   requireRotation(bridge.rotation, problems);
   requirePositive(bridge.width, "width", problems);
   requirePositive(bridge.height, "height", problems);
+  return problems;
+}
+
+Problems validate(const PortPatternsT& patterns) {
+  Problems problems;
+  requirePattern(patterns.launcher, "launcher", problems);
+  requirePattern(patterns.resonator, "resonator", problems);
+  requirePattern(patterns.conventional, "conventional", problems);
+  return problems;
+}
+
+Problems validate(const PortConfigT& ports) {
+  Problems problems;
+  if (ports.patterns == nullptr) {
+    problems.emplace_back("patterns are missing");
+  } else {
+    append(problems, validate(*ports.patterns), "patterns: ");
+  }
+  if (ports.sequences == nullptr) {
+    problems.emplace_back("[ports.sequences] is missing");
+  }
+  return problems;
+}
+
+Problems validate(const ConfigT& config) {
+  Problems problems;
+  if (config.chip_input.empty()) {
+    problems.emplace_back("chip_input is empty");
+  }
+  if (config.ports == nullptr) {
+    problems.emplace_back("ports section is missing");
+  } else {
+    append(problems, validate(*config.ports), "ports: ");
+  }
+  if (config.rules == nullptr) {
+    problems.emplace_back("design rules are missing");
+  } else {
+    append(problems, validate(*config.rules), "rules: ");
+  }
+  if (config.grid != nullptr && config.grid->capacity_cells_x == 0) {
+    problems.emplace_back("grid: capacity_cells_x must be at least one");
+  }
+  return problems;
+}
+
+Problems validate(const ConfigT& config, const ChipT& chip) {
+  Problems problems;
+  if (config.ports == nullptr) {
+    return problems;
+  }
+  const auto& ports = *config.ports;
+
+  std::unordered_map<std::string_view, UnassignedRole> roleOf;
+  for (const auto& port : chip.ports) {
+    if (port != nullptr) {
+      roleOf.emplace(port->label, port->role);
+    }
+  }
+
+  if (ports.sequences != nullptr) {
+    const auto& sequences = *ports.sequences;
+    checkSequence(sequences.all_outer, "all_outer", roleOf, problems);
+    checkSequence(sequences.fixed_outer, "fixed_outer", roleOf, problems);
+    const std::unordered_set<std::string_view> allOuter(
+        sequences.all_outer.begin(), sequences.all_outer.end());
+    for (std::size_t i = 0; i < sequences.fixed_outer.size(); ++i) {
+      if (!allOuter.contains(sequences.fixed_outer[i])) {
+        problems.push_back("fixed_outer[" + std::to_string(i) + "]: '" +
+                           sequences.fixed_outer[i] + "' is not in all_outer");
+      }
+    }
+  }
   return problems;
 }
 
