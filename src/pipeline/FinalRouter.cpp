@@ -3138,6 +3138,23 @@ public:
     // where they pin on the same cell on purpose.
     fenceCommittedEdges(wires, edge);
 
+    // The edge before this one, as the second-order search has it standing.
+    //
+    // `fenceCommittedEdges` can only close what an earlier round committed,
+    // and inside one solve that is the *other* assignment's way — so without
+    // this the two edges that meet at a coupler never see each other, the
+    // trellis prices a pair that cannot both be built as if it could, and
+    // the commit is where one of them is lost. This is that hole closed:
+    // the way the candidate predecessor actually takes, fenced at the full
+    // clearance like every other feedline.
+    if (aheadFence_ != nullptr && !aheadFence_->empty()) {
+      alongDisc(*aheadFence_, stencilFor(tuning_.clearance),
+                [&](const std::int64_t x, const std::int64_t y) {
+                  corridor_.set(static_cast<std::size_t>((y * width) + x),
+                                true);
+                });
+    }
+
     // A coupler's own resonator, for the two edges that run to it.
     //
     // An edge may lie beside the resonator of the coupler it serves — that
@@ -3370,6 +3387,33 @@ public:
   std::uint64_t auditTurnBound_ = 0;
   std::uint64_t auditAnalytic_ = 0;
   std::uint64_t auditReal_ = 0;
+
+  /// The way of the edge before the one being routed, for the corridor to
+  /// close along with everything committed, or null. Set around a single
+  /// `routeEdge` call by the second-order search and cleared again.
+  const Path* aheadFence_ = nullptr;
+
+  /// How much of the chain a node of the layered search carries: 1 is the
+  /// option at its own waypoint, 2 that option **and** the one before it.
+  ///
+  /// At second order a step may fence the way its predecessor takes, which
+  /// is what lets the search see two edges of one chain blocking each other
+  /// instead of discovering it at the commit.
+  ///
+  /// **It applies to every chain, however wide.** It was once given up for a
+  /// layer past a width cap, and the cap was doing the damage: on 57q the
+  /// two chains whose jogs had opened — 48 options against 16 — were the
+  /// ones handed back to the first order, and they were where the edges were
+  /// lost. A layer of `n` options costs `n x n` nodes and the step matrix
+  /// between two layers `n^2 x n^2`, so the widest chains are dear; that is
+  /// the price of seeing the blockage at all.
+  [[nodiscard]] static int chainOrder() {
+    static const int order = [] {
+      const char* set = std::getenv("SCPD_CHAIN_ORDER");
+      return set != nullptr ? std::atoi(set) : 2;
+    }();
+    return order;
+  }
 
   /// The chain that is being searched and is therefore not fenced by its own
   /// edges, or NO_OWNER. Only `SCPD_CHAIN_DP=2` ever sets it.
@@ -3942,7 +3986,10 @@ public:
                                        const std::uint32_t chain,
                                        const std::size_t from,
                                        const std::size_t optionFrom,
-                                       const std::size_t optionTo) {
+                                       const std::size_t optionTo,
+                                       const std::size_t aheadOption = 0,
+                                       const Path* ahead = nullptr,
+                                       Path* wayOut = nullptr) {
     auto& points = chains_[chain];
     const auto stand = [&](const std::size_t at, const std::size_t option) {
       if (points[at].fixed) {
@@ -3964,7 +4011,7 @@ public:
                     .terminal =
                         points[from].fixed || points[from + 1].fixed};
 
-    const auto key = edgeMemoKey(chain, from);
+    const auto key = edgeMemoKey(chain, from, aheadOption);
     const auto found = edgeMemo_.find(key);
     Path way;
     if (found != edgeMemo_.end()) {
@@ -3972,12 +4019,17 @@ public:
       way = found->second;
     } else {
       ++memoMisses_;
+      aheadFence_ = ahead;
       way = routeEdge(wires, objective, edge);
+      aheadFence_ = nullptr;
       edgeMemo_[key] = way;
     }
 
     stand(from, keptFrom);
     stand(from + 1, keptTo);
+    if (wayOut != nullptr) {
+      *wayOut = way;
+    }
     if (way.empty()) {
       return routing::TRELLIS_UNREACHABLE;
     }
@@ -4046,6 +4098,10 @@ public:
 
     std::vector<std::vector<std::uint32_t>> open;
     routing::TrellisResult answer;
+    // Whether a node of the search carries the option of the waypoint before
+    // it as well as its own. Settled per go, because widening the options is
+    // what can put it out of reach.
+    bool second = false;
     {
       // Two goes at most: the plain options, then the jogs opened at the
       // wall if the plain ones did not reach.
@@ -4064,9 +4120,39 @@ public:
           return leaving ? option.out : option.in;
         };
 
+        // **Second order**: a node is the option at its own waypoint *and*
+        // the one at the waypoint before it. That is what lets a step fence
+        // the way its own predecessor takes — without it the two edges that
+        // meet at a coupler never see each other inside a solve, the trellis
+        // prices a pair that cannot both be built as though it could, and
+        // the commit is where one of them is lost.
+        //
+        // It costs width: a layer of `n` options becomes one of `n x n`, and
+        // the step matrix between two layers `n^2 x n^2`, of which only the
+        // steps whose two nodes agree about the option they share are steps
+        // at all. Every chain pays it — giving it up on the wide ones was
+        // measured giving up exactly the chains that needed it.
+        // `SCPD_CHAIN_ORDER=1` turns it off everywhere.
+        second = chainOrder() >= 2;
+
+        // How many nodes each layer holds, and how to read one back.
+        std::vector<std::size_t> wide(layers);
+        wide[0] = open[0].size();
+        for (std::size_t at = 1; at < layers; ++at) {
+          wide[at] =
+              second ? open[at - 1].size() * open[at].size() : open[at].size();
+        }
+        constexpr auto NO_AHEAD = std::numeric_limits<std::size_t>::max();
+        const auto hereOf = [&](const std::size_t at, const std::size_t node) {
+          return (second && at > 0) ? node % open[at].size() : node;
+        };
+        const auto aheadOf = [&](const std::size_t at, const std::size_t node) {
+          return (second && at > 0) ? node / open[at].size() : NO_AHEAD;
+        };
+
         routing::TrellisProblem problem;
-        for (const auto& layer : open) {
-          problem.width.push_back(static_cast<std::uint32_t>(layer.size()));
+        for (const auto nodes : wide) {
+          problem.width.push_back(static_cast<std::uint32_t>(nodes));
         }
 
         // The layer graph, built before the search rather than during it.
@@ -4077,41 +4163,79 @@ public:
         // `solveTrellis` fills its prices from it once — so the time spent
         // here is the whole of what the bound costs.
         const auto beganBound = std::chrono::steady_clock::now();
-        std::vector<std::vector<std::uint64_t>> bounds(layers - 1);
-        for (std::size_t layer = 0; layer + 1 < layers; ++layer) {
-          const auto from = open[layer].size();
-          const auto to = open[layer + 1].size();
-          bounds[layer].resize(from * to);
-          for (std::size_t i = 0; i < from; ++i) {
-            const auto leaving =
-                portOf(layer, static_cast<std::uint32_t>(i), true);
-            for (std::size_t j = 0; j < to; ++j) {
+        // The analytic answer depends on the pair of *options* and nothing
+        // else, so it is asked once per option pair and the lifted graph is
+        // filled from that: raising the order multiplies the nodes, never
+        // the geometry.
+        std::vector<std::vector<std::uint64_t>> turns(layers - 1);
+        for (std::size_t at = 0; at + 1 < layers; ++at) {
+          const auto n = open[at].size();
+          const auto m = open[at + 1].size();
+          turns[at].resize(n * m);
+          for (std::size_t c = 0; c < n; ++c) {
+            const auto leaving = portOf(at, static_cast<std::uint32_t>(c), true);
+            for (std::size_t d = 0; d < m; ++d) {
               const auto arriving =
-                  portOf(layer + 1, static_cast<std::uint32_t>(j), false);
-              bounds[layer][(i * to) + j] =
-                  10000ULL * boundTurns(leaving, arriving);
+                  portOf(at + 1, static_cast<std::uint32_t>(d), false);
+              turns[at][(c * m) + d] = 10000ULL * boundTurns(leaving, arriving);
             }
           }
-          boundPairs_ += from * to;
+          boundPairs_ += n * m;
         }
         boundNanos_ += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - beganBound)
                 .count());
 
-        problem.bound = [&](const std::size_t layer, const std::uint32_t i,
+        // A step of the lifted graph is a step only when the node it lands
+        // on agrees about where it came from; everything else is not a step
+        // at all and carries the price of one that cannot be built.
+        std::vector<std::vector<std::uint64_t>> bounds(layers - 1);
+        for (std::size_t at = 0; at + 1 < layers; ++at) {
+          bounds[at].assign(wide[at] * wide[at + 1],
+                            routing::TRELLIS_UNREACHABLE);
+          const auto m = open[at + 1].size();
+          for (std::size_t i = 0; i < wide[at]; ++i) {
+            const auto c = hereOf(at, i);
+            for (std::size_t j = 0; j < wide[at + 1]; ++j) {
+              if (second && aheadOf(at + 1, j) != c) {
+                continue;
+              }
+              bounds[at][(i * wide[at + 1]) + j] =
+                  turns[at][(c * m) + hereOf(at + 1, j)];
+            }
+          }
+        }
+
+        problem.bound = [&](const std::size_t at, const std::uint32_t i,
                             const std::uint32_t j) {
-          return bounds[layer]
-                       [(static_cast<std::size_t>(i) * open[layer + 1].size()) +
-                        j];
+          return bounds[at][(static_cast<std::size_t>(i) * wide[at + 1]) + j];
         };
-        problem.evaluate = [&](const std::size_t layer, const std::uint32_t i,
+        problem.evaluate = [&](const std::size_t at, const std::uint32_t i,
                                const std::uint32_t j) {
+          const auto c = hereOf(at, i);
+          const auto d = hereOf(at + 1, j);
+          if (second && aheadOf(at + 1, j) != c) {
+            return routing::TRELLIS_UNREACHABLE;
+          }
+          // The way the predecessor takes, priced **first order**. Carrying
+          // its own fence back as well would make a node the whole prefix of
+          // the chain, which is the exponential the trellis exists to avoid;
+          // one step back is what buys the pair that matters — the two edges
+          // that share a coupler — at a width that can still be solved.
+          Path ahead;
+          std::size_t aheadCode = 0;
+          if (const auto p = aheadOf(at, i); p != NO_AHEAD) {
+            static_cast<void>(edgeCost(wires, chain, at - 1, open[at - 1][p],
+                                       open[at][c], 0, nullptr, &ahead));
+            aheadCode = points[at - 1].fixed ? 0 : open[at - 1][p] + 1;
+          }
           const auto real =
-              edgeCost(wires, chain, layer, open[layer][i], open[layer + 1][j]);
+              edgeCost(wires, chain, at, open[at][c], open[at + 1][d],
+                       aheadCode, ahead.empty() ? nullptr : &ahead);
           if (chainBound() == 2) {
-            audit(chain, layer, portOf(layer, i, true),
-                  portOf(layer + 1, j, false), real);
+            audit(chain, at, portOf(at, static_cast<std::uint32_t>(c), true),
+                  portOf(at + 1, static_cast<std::uint32_t>(d), false), real);
           }
           return real;
         };
@@ -4177,14 +4301,22 @@ public:
     out.cost = answer.cost;
     out.chosen.assign(layers, 0);
     for (std::size_t at = 0; at < layers; ++at) {
-      out.chosen[at] = points[at].fixed ? 0 : open[at][answer.chosen[at]];
+      // A second-order node carries its predecessor as well; the option of
+      // this waypoint is the low half of it.
+      const auto node = static_cast<std::size_t>(answer.chosen[at]);
+      const auto here =
+          (second && at > 0) ? node % open[at].size() : node;
+      out.chosen[at] = points[at].fixed ? 0 : open[at][here];
     }
     // Every step of the winner was priced, so every one of its ways is in
-    // the memo of this round. Read them out rather than route them again.
+    // the memo of this round. Read them out rather than route them again —
+    // under the predecessor the winner stands on, which is the key the way
+    // was remembered under.
     out.ways.assign(layers - 1, Path{});
     const auto kept = standOn(chain, out.chosen);
     for (std::size_t at = 0; at + 1 < layers; ++at) {
-      const auto found = edgeMemo_.find(edgeMemoKey(chain, at));
+      const auto ahead = (second && at > 0) ? optionAt(chain, at - 1) : 0;
+      const auto found = edgeMemo_.find(edgeMemoKey(chain, at, ahead));
       if (found != edgeMemo_.end()) {
         out.ways[at] = found->second;
       }
@@ -4270,8 +4402,8 @@ public:
     }
     std::erase_if(edgeMemo_, [&](const auto& entry) {
       const auto key = entry.first;
-      const auto chain = static_cast<std::uint32_t>(key >> 48U);
-      const auto from = static_cast<std::size_t>((key >> 32U) & 0xFFFFU);
+      const auto chain = static_cast<std::uint32_t>((key >> 56U) & 0xFFU);
+      const auto from = static_cast<std::size_t>((key >> 48U) & 0xFFU);
       const auto encodedFrom = static_cast<std::size_t>((key >> 16U) & 0xFFFFU);
       const auto encodedTo = static_cast<std::size_t>(key & 0xFFFFU);
       if (chain >= chains_.size() || from + 1 >= chains_[chain].size()) {
@@ -6862,12 +6994,22 @@ private:
     return point.fixed ? 0 : couplers_[point.coupler].chosen + 1;
   }
 
+  /// `ahead` is the option the waypoint **before** this edge stands on, plus
+  /// one, and zero for an edge that has no predecessor or is being priced
+  /// first order. It belongs in the key because the second-order search
+  /// fences the way that predecessor takes, so one pair of endpoint options
+  /// can have two different ways under two different predecessors. Zero is
+  /// therefore the first-order slot, which is what the greedy uses and what
+  /// the second order reads its own fence out of.
   [[nodiscard]] std::uint64_t edgeMemoKey(const std::uint32_t chain,
-                                          const std::size_t from) const {
-    return (static_cast<std::uint64_t>(chain) << 48U) |
-           (static_cast<std::uint64_t>(from) << 32U) |
-           (static_cast<std::uint64_t>(optionAt(chain, from)) << 16U) |
-           static_cast<std::uint64_t>(optionAt(chain, from + 1));
+                                          const std::size_t from,
+                                          const std::size_t ahead = 0) const {
+    return (static_cast<std::uint64_t>(chain & 0xFFU) << 56U) |
+           (static_cast<std::uint64_t>(from & 0xFFU) << 48U) |
+           (static_cast<std::uint64_t>(ahead & 0xFFFFU) << 32U) |
+           (static_cast<std::uint64_t>(optionAt(chain, from) & 0xFFFFU)
+            << 16U) |
+           static_cast<std::uint64_t>(optionAt(chain, from + 1) & 0xFFFFU);
   }
 
   /// The approaches of every port, inflated by the clearance, where no

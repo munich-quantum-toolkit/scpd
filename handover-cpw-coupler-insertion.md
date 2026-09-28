@@ -38,34 +38,45 @@ are comparable to each other and not only to history.
 
 | chip | chains | edges | not drawn | angle | insertion | | greedy: not drawn | angle | insertion |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |
-| 4q | 1 | 5 | 0 | 16 | **0.8 s** | | 0 | 16 | 1.6 s |
-| 9q | 2 | 10 | 0 | **20** | **1.0 s** | | 0 | 22 | 9.5 s |
-| 17q | 4 | 20 | 0 | **70** | **15.8 s** | | 0 | 72 | 19.5 s |
-| 21q | 5 | 26 | 0 | 48 | **2.5 s** | | 0 | 48 | 38.8 s |
-| 33q | 7 | 40 | **0** | 76 | **6.4 s** | | **2** | 72 | 90.0 s |
-| 45q | 8 | 52 | 0 | **107** | **21.4 s** | | 0 | 123 | 144.4 s |
-| 57q | 9 | 66 | **7** | **114** | **257.0 s** | | **6** | 128 | 261.5 s |
-| 69q | 12 | 81 | **7** | **160** | 948.9 s | | **6** | 176 | 508.9 s |
+| 4q | 1 | 5 | **0** | **8** | **0.2 s** | | 0 | 16 | 1.6 s |
+| 9q | 2 | 10 | **0** | **20** | **0.5 s** | | 0 | 22 | 9.5 s |
+| 17q | 4 | 20 | **0** | **51** | **11.9 s** | | 0 | 72 | 19.5 s |
+| 21q | 5 | 26 | **0** | 48 | **2.4 s** | | 0 | 48 | 38.8 s |
+| 33q | 7 | 40 | **0** | 76 | **9.3 s** | | **2** | 72 | 90.0 s |
+| 45q | 8 | 52 | **0** | **105** | **32.5 s** | | 0 | 123 | 144.4 s |
+| 57q | 9 | 66 | **5** | **118** | 2641.0 s | | 6 | 128 | 261.5 s |
+| 69q | 12 | 81 | **10** | 173 | 366.0 s | | **6** | 176 | 508.9 s |
 
 The couplers are unchanged by the search: 4/9/17/21/33/45/57/69 of them, with
 2/5/8/16/21/33/38/38 on a diagonal.
 
+**Six of the eight draw every edge**, where the greedy loses two on 33q, six
+on 57q and six on 69q. And where both draw the same edges the angle cost is
+better or level everywhere: 4q **8** against 16, 9q 20 against 22, 17q **51**
+against 72, 21q level at 48, 45q **105** against 123.
+
 **Compare the angle cost only where the same number of edges was drawn.** An
 edge that was not drawn turns nowhere and `angleCostOf` scores it **zero**
-(*Traps*, 1), so a search that draws fewer edges is flattered by this column.
-On the five chips where both draw the same edges — 4q, 9q, 17q, 21q, 45q —
-the exact search is **better on three and level on two, and never worse**:
-9q by 2, 17q by 2, 45q by 16.
+(*Traps*, 1), so a search that draws fewer edges is flattered by this column —
+which is why 33q's 76 against 72 is the better result and not the worse one.
 
-On the three where the counts differ, per drawn edge: 33q 76/40 = 1.90
-against the greedy's 72/38 = 1.89 — level, for **two more edges drawn**; 57q
-1.93 against 2.13; 69q 2.16 against 2.35. So the greedy's lower raw angle on
-33q is bought by leaving two edges out, and its lower edge count on 57q and
-69q costs it more turning per edge that it does draw.
+**The two that are not there yet, said plainly:**
 
-**Runtime: the exact search wins seven of eight**, 69q excepted (949 s against
-509). And it is the more pessimistic half of this sweep — the exact runs were
-measured at 122–158 % background indexing load, the greedy runs at 0–99 %.
+- **57q draws 61 of 66** against the greedy's 60, at angle 118 against 128 —
+  but it costs **2641 s against 262 s**, ten times the greedy, and it is the
+  one chip where the second order is a bad bargain.
+- **69q is a regression.** 10 edges undrawn against the greedy's 6. It is also
+  *fast* — 366 s against the greedy's 509 — and the two go together: chains
+  the trellis cannot join are now left as they stand rather than handed to
+  the greedy, so 69q gives up quickly and loses what it gave up on.
+
+**Raising the order does not reach these two.** The second order sees exactly
+one pair of edges — the two that share a coupler. 57q was measured both with
+a width cap that handed its two widest chains back to the first order and
+without it: **5 edges undrawn either way**, 122 against 118 on the angle, 810 s
+against 2641 s. So the edges that are still lost there are blocked by edges
+that are **not** their neighbours, and no amount of predecessor in the node
+reaches them. See *What is open*.
 
 **`refinement_rounds` belongs to this measurement.** It drives the outer
 routing's refinement, which settles what way a resonator has *before* the
@@ -221,7 +232,13 @@ outright** — the fence is the part no decomposition reaches. Say it that way.
   `reachedFromStart` / `reachedFromEnd` name the first layer the chain does
   not reach, and only the two couplers at that step get their jogs. Opening
   them everywhere makes an inner edge 48 × 48 = 2304 pairs.
-- A chain the trellis cannot join at all falls back to the greedy, and says so.
+- **A chain the trellis cannot join at all is left as it stands**, and says
+  so. It used to fall back to the greedy here; that is gone (user,
+  2026-09-27). A round was then part exact and part coordinate descent, the
+  greedy's choice was fenced into every chain solved after it, and the round
+  total no longer priced what the search had chosen. Removing it is a gain on
+  its own: 4q went from angle 16 to **8**, because the fallback had been
+  dragging the state onto a greedy choice that turned twice as much.
 
 **What it buys, measured** (against the greedy on the same
 build), **all eight chips, one run at a time**. The exact column is the
@@ -251,6 +268,43 @@ and the identical 18/12/10/12 on 69q.
 What is worth having beyond the clock is still that a price per *option* is a
 node weight the trellis takes for free, and that is the term the greedy cannot
 have at all. See *What is open*.
+
+### The order of the search — `SCPD_CHAIN_ORDER`
+
+**A node carries the option at its own waypoint *and* the one at the waypoint
+before it.** That is the second order, and it is **the default**;
+`SCPD_CHAIN_ORDER=1` is the way back to a node that carries only its own.
+
+**What it fixes.** At first order a step is priced against a fence that holds
+what an *earlier round* committed — inside one solve, that is the other
+assignment's way. So the two edges that meet at a coupler never see each
+other: the trellis prices a pair that cannot both be built as though it
+could, `stateFaults` counts the difference, and the commit is where an edge
+is lost. On 17q that was six edges. Carrying the predecessor in the node lets
+the step fence the way that predecessor actually takes, and the price of a
+step is once again a function of the node at each of its two ends — which is
+the property the trellis's exactness rests on (`ChainTrellis.hpp`).
+
+**The recursion is cut after one step, on purpose.** The predecessor's own way
+depends on *its* predecessor, and following that back would make a node the
+whole prefix of the chain — the exponential the trellis exists to avoid. So
+the way fenced is the predecessor's **first-order** way, which is
+well-defined, deterministic and already in the memo. It covers the pair that
+matters, because two edges can only meet where their 250-cell boxes overlap
+and at a shared coupler they always do.
+
+**What it costs.** A layer of `n` options becomes one of `n x n` and the steps
+between two layers `n^3`. At sixteen options that is 256 nodes and 4096 real
+steps a layer, which solves; with the jogs open it is 2304 nodes, which does
+not, so a chain past `SECOND_ORDER_NODES = 600` is solved first order and
+says so in the log. The analytic bound is unaffected — it depends on the pair
+of options and nothing else, so it is still asked `n x n` times a layer and
+the lifted graph is filled from that.
+
+**`edgeMemoKey` carries the predecessor** as a third option field, because one
+pair of endpoint options now has a different way under each predecessor. Zero
+is the first-order slot — what the greedy writes, and what the second order
+reads its own fence out of.
 
 ### The router's heuristic
 
@@ -629,15 +683,18 @@ is what says a row is clean.
    yet closes that gap; the cycle is inside chain 0, its own six edges fencing
    each other from round to round, and Gauss-Seidel against Jacobi makes no
    difference to it at all.
-2. **The exact search loses 57q and 69q a feedline edge against the greedy**
-   — 7 undrawn against 6 on both, though at angle 114 against 128 and 160
-   against 176. Same shape as 17q and worse: neither converges, and the round
-   each keeps still carries faults (57q round 0 with nine, 69q round 2 with
-   ten). **69q is also the one chip where the exact search is still slower
-   than the greedy**, 922 s against 509. The analytic bound made both 1.8 to
-   2.3 times faster to find out and changed nothing else about them; the fix,
-   if there is one, is in how a round is chosen or in `nodeCost`, not in the
-   bound.
+2. **57q and 69q still lose edges, and the second order does not reach
+   them.** 57q draws 61 of 66 and 69q 71 of 81; the greedy draws 60 and 75.
+   The second order closes the conflict between the two edges that **share a
+   coupler**, and on 17q that was the whole of it (6 undrawn to 0). What is
+   left on these two is blocked by edges that are not neighbours — measured:
+   57q loses the same 5 edges whether its two widest chains are solved at
+   second order or handed back to the first, at 2641 s against 810 s. So a
+   wider node is not the answer; what is needed is either a conflict the
+   search can see between *any* two edges, or a repair at the commit — rip
+   the edge that took the room, lay the one that lost, re-route the first.
+   The commit is the one place the fence is real, and it is where the greedy's
+   old two-order idea would actually have worked.
 3. **The chains of a round are independent and are not run in parallel.**
    Freezing the fence is what made them independent — this is the largest
    runtime lever left, 4× on 17q and 12× on 69q. It needs one router context
