@@ -36,7 +36,8 @@ go.
 Several comments say what something *will* be rather than what it *is*. They
 carried the intent across phases; once nothing is outstanding they are either
 wrong or trivially true. Each one either loses its outlook or gains the sentence
-that now describes the finished behaviour.
+that now describes the finished behaviour. The line numbers of source files
+refer to `main` as of scpd#111, those of the design documents to this branch.
 
 | Where                                  | What it says now                                                                    |
 | -------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -45,11 +46,11 @@ that now describes the finished behaviour.
 | `schemas/artifacts.fbs:13`             | "Each stage appends the fields of its output when the stage is implemented"         |
 | `python/mqt/scpd/plot.py:11`           | "`plot` reads the chip and, from phase 2 on, the artifacts"                         |
 | `python/mqt/scpd/plot.py:31`           | `STAGES`, which maps a stage to the phase it arrives in                             |
-| `python/mqt/scpd/cli.py:58`            | "stage '...' arrives with phase 4"                                                  |
+| `python/mqt/scpd/cli.py:74`            | "stage '...' arrives with phase 4"                                                  |
 | `test/io/test_artifacts_schema.cpp:99` | "The outputs of the stages that are not implemented yet are empty tables"           |
-| `test/python/unit/test_cli.py:41`      | "a stage of a later phase names that phase"                                         |
-| `ARCHITECTURE.md:217`                  | "already shaped for the threading work in phase 2"                                  |
-| `docs/design/data-model.md:284,301`    | "validated by benchmark result in phase 4", "arrive with that module in phase 2"    |
+| `test/python/unit/test_cli.py:38`      | "a stage of a later phase names that phase"                                         |
+| `ARCHITECTURE.md:227`                  | "already shaped for the later threading work"                                       |
+| `docs/design/data-model.md:453`        | "Each later stage appends its own tables and fields when it arrives"                |
 
 Two of these are more than wording. `STAGES` in `plot.py` and the message in
 `cli.py` are a mechanism: a stage that does not exist yet is refused with the
