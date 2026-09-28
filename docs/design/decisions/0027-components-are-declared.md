@@ -7,12 +7,12 @@
 ## Context
 
 [Decision 0018](0018-port-roles-unassigned-and-assigned.md) removed the entity
-model that the prototype recovered from label strings, on the argument that
-"the one relationship those string parsers existed to recover, a coupler's
-qubit pair, is needed by nothing that survives".
+model that the prototype recovered from label strings, on the argument that "the
+one relationship those string parsers existed to recover, a coupler's qubit
+pair, is needed by nothing that survives".
 
-The qubit pair is indeed needed by nothing. Grouping a component's ports is
-not the same relationship, and the Global stage cannot be written without it:
+The qubit pair is indeed needed by nothing. Grouping a component's ports is not
+the same relationship, and the Global stage cannot be written without it:
 
 - An inner wire crosses a coupler's artwork and leaves through the port on the
   opposite side. Which two ports those are is a property of the component they
@@ -27,8 +27,8 @@ prefix for `Coupler`, and hard-codes that ports 1 and 2 bridge and so do 3 and
 
 ## Decision
 
-A port carries the **component** it belongs to, as a string, filled at load
-from a configured pattern with one capture group:
+A port carries the **component** it belongs to, as a string, filled at load from
+a configured pattern with one capture group:
 
 ```toml
 [ports.patterns]
@@ -47,8 +47,8 @@ name test:
 - A component that carries a `Resonator` port is a **qubit**; every other
   component with routable ports is a **coupler**.
 - A coupler's ports **bridge** in pairs whose orientations are opposite. Which
-  of a pair the outer ring carries is what makes that one the ring's side of
-  the bridge.
+  of a pair the outer ring carries is what makes that one the ring's side of the
+  bridge.
 
 ## Alternatives considered
 
@@ -56,14 +56,14 @@ name test:
 same parser in a new place, and it would carry the same special case for the
 synthetic launcher labels.
 
-**Derive the grouping from geometry alone**, by clustering ports that sit on
-one piece of artwork. Rejected: it needs a distance threshold that no rule
-supplies, and it would fail exactly where two components touch, which is
-everywhere on these chips.
+**Derive the grouping from geometry alone**, by clustering ports that sit on one
+piece of artwork. Rejected: it needs a distance threshold that no rule supplies,
+and it would fail exactly where two components touch, which is everywhere on
+these chips.
 
-**Add the full entity model back**, with a component table and typed
-references. Rejected as more than any stage asks for. The grouping is a name;
-nothing needs a component to be an object.
+**Add the full entity model back**, with a component table and typed references.
+Rejected as more than any stage asks for. The grouping is a name; nothing needs
+a component to be an object.
 
 ## Consequences
 
@@ -77,7 +77,7 @@ nothing needs a component to be an object.
   though all eight agree on that too.
 
 > **Amended 2026-09-09.** Which two ports of a component pair is declared as
-> well, by one rule per crossing, and no longer measured from their
-> orientations and the distance between them. The grouping this record adds is
-> unchanged and is what a rule pairs within. See
+> well, by one rule per crossing, and no longer measured from their orientations
+> and the distance between them. The grouping this record adds is unchanged and
+> is what a rule pairs within. See
 > [decision 0030](0030-bridge-pairs-are-declared.md).
