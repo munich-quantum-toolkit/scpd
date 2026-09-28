@@ -27,6 +27,22 @@ from .inspection import InspectionError, artifact_to_json
 from .plot import STAGES, PlotError, layout_svg
 
 
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value <= 0:
+        msg = f"must be positive, not {value}"
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
+def _non_negative_float(text: str) -> float:
+    value = float(text)
+    if not value >= 0:  # also rejects nan
+        msg = f"must not be negative, not {value}"
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
 def _load(config_path: Path) -> tuple[bytes, Path]:
     """Load the configuration and its chip, for the commands that draw the chip.
 
@@ -121,10 +137,10 @@ def build_parser() -> argparse.ArgumentParser:
     plot.add_argument("-c", "--config", type=Path, required=True, help="the config.toml of the chip")
     plot.add_argument("--stage", choices=list(STAGES), default="layout", help="the stage to render")
     plot.add_argument("-o", "--output", type=Path, required=True, help="the SVG file to write")
-    plot.add_argument("--width", type=int, default=2000, help="the display width of the picture in pixels")
+    plot.add_argument("--width", type=_positive_int, default=2000, help="the display width of the picture in pixels")
     plot.add_argument(
         "--tolerance",
-        type=float,
+        type=_non_negative_float,
         default=0.0,
         help="drop vertices within this distance (layout units) of the polygon edge; 0 keeps every vertex",
     )

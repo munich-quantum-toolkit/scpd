@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from mqt.scpd.artifacts import write_artifact
 from mqt.scpd.cli import main
@@ -20,9 +21,6 @@ from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
-
-if TYPE_CHECKING:
-    import pytest
 
 BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
 CONFIG = str(BENCHMARKS / "4q" / "config.toml")
@@ -93,3 +91,11 @@ def test_problems_exit_with_one(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
     assert main(["doctor", "-c", str(tmp_path / "absent.toml")]) == 1
     assert "doctor: 1 problem(s)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("option", [["--width", "0"], ["--width", "-5"], ["--tolerance", "-1"], ["--tolerance", "nan"]])
+def test_plot_refuses_a_picture_without_size(tmp_path: Path, option: list[str]) -> None:
+    """A width that is not positive or a negative tolerance is an argument error."""
+    with pytest.raises(SystemExit) as info:
+        main(["plot", "-c", CONFIG, "-o", str(tmp_path / "x.svg"), *option])
+    assert info.value.code == 2
