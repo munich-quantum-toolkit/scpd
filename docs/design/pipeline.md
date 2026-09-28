@@ -33,15 +33,15 @@ incidental:
 The third property is what makes resume meaningful and property tests
 reproducible. It is also what will make the phase-2 threading tractable.
 
-| Stage      | Interface          | Reads                     | Writes            |
-| ---------- | ------------------ | ------------------------- | ----------------- |
-| Capacity   | `ICapacityPlanner` | chip                      | `01-capacity.fb`  |
-| Global     | `IGlobalRouter`    | chip, capacity            | `02-global.fb`    |
-| Assignment | `IAssigner`        | chip, capacity, global    | `03-assign.fb`    |
-| Corridor   | `ICorridorRouter`  | chip, capacity, assign    | `04-corridor.fb`  |
-| Detail     | `IDetailRouter`    | chip, capacity, global, assign, corridor | `05-detail.fb` |
-| Final      | `IFinalRouter`     | chip, detail              | `06-final.fb`     |
-| Finalize   | `IFinalizer`       | chip, final               | `07-geometry.fb`  |
+| Stage      | Interface          | Reads                                    | Writes           |
+| ---------- | ------------------ | ---------------------------------------- | ---------------- |
+| Capacity   | `ICapacityPlanner` | chip                                     | `01-capacity.fb` |
+| Global     | `IGlobalRouter`    | chip, capacity                           | `02-global.fb`   |
+| Assignment | `IAssigner`        | chip, capacity, global                   | `03-assign.fb`   |
+| Corridor   | `ICorridorRouter`  | chip, capacity, assign                   | `04-corridor.fb` |
+| Detail     | `IDetailRouter`    | chip, capacity, global, assign, corridor | `05-detail.fb`   |
+| Final      | `IFinalRouter`     | chip, detail                             | `06-final.fb`    |
+| Finalize   | `IFinalizer`       | chip, final                              | `07-geometry.fb` |
 
 **Global runs before Assignment.** Which outer port an inner wire surfaces at is
 a fact about the solved inner circuit, and it decides both which outer ports
@@ -190,12 +190,12 @@ to `FeedlineTarget`. A resonator carries `ResonatorSource` to `ResonatorTarget`
 with no source port: the port that feeds it is the coupler the Final stage
 inserts.
 
-**The chains are in the artifact.** The model gives every resonator degree
-two on the ring — a chord on either side, or a chord and an end, an end being
-a launcher or a permitted termination — and a run of resonators joined by
-chords is what one feedline drives. `Assignment.chains` carries each of them
-in ring order with the launcher slot of its first and its last resonator,
-which is what the Final stage routes launcher to coupler to launcher. See
+**The chains are in the artifact.** The model gives every resonator degree two
+on the ring — a chord on either side, or a chord and an end, an end being a
+launcher or a permitted termination — and a run of resonators joined by chords
+is what one feedline drives. `Assignment.chains` carries each of them in ring
+order with the launcher slot of its first and its last resonator, which is what
+the Final stage routes launcher to coupler to launcher. See
 [decision 0032](decisions/0032-the-coupler-couples-along-the-ring.md).
 
 **This is where `AssignedRole` is set.** Every connection the assignment
@@ -251,16 +251,16 @@ it runs. See
 [decision 0031](decisions/0031-coarse-routing-is-its-own-stage.md).
 
 **This is the stage that makes a wire budget bind.** A border is crossed at one
-of a fixed set of slots, one crossing pitch apart along it, and no two wires take
-the same slot; a border therefore carries no more wires than
+of a fixed set of slots, one crossing pitch apart along it, and no two wires
+take the same slot; a border therefore carries no more wires than
 `PartitionBorder.budget` says, because the budget counts those very slots. One
 function places them and both stages call it, so what is counted and what is
 crossed cannot drift apart.
 
 The slots are placed by **walking the border**, each one a pitch past the last,
 which is what the prototype does. Spacing them against every slot already placed
-instead would lose the ones on a border that bends back towards itself, and those
-are exactly the ones a wire coming from that side needs.
+instead would lose the ones on a border that bends back towards itself, and
+those are exactly the ones a wire coming from that side needs.
 
 **The pitch is a planning figure, not a clearance rule.** It says how finely a
 border is divided; how far two wires actually keep apart is the detail router's
@@ -279,17 +279,17 @@ wire crosses there and no more.
 
 **A wire may not run over a point another wire is pinned to.** A wire is pinned
 at two places: the point the assignment feeds it at, and the cell its target
-port is reached at. Neither can be moved, so a second wire drawn over one is
-two wires on one point of the chip, whatever room the corridor around them has.
-The crossing test cannot see this case at all — a chord that stops on another
-one never gets to the far side of it, so the two never cross properly. Without
-the rule the eight chips carry eleven of these, on four of them, and on the
-69-qubit chip three wires in a row run down one line of feed points with not a
-single crossing reported. The prototype allows it: its
-`check_edge_crossing` tests proper crossings only, and the occupancy it keeps
-beside that is a set of pixels, never the lines between them. A wire's pins
-reach the plan through the chords it draws, so a wire that has no corridor
-protects nothing; on all eight chips every wire has one.
+port is reached at. Neither can be moved, so a second wire drawn over one is two
+wires on one point of the chip, whatever room the corridor around them has. The
+crossing test cannot see this case at all — a chord that stops on another one
+never gets to the far side of it, so the two never cross properly. Without the
+rule the eight chips carry eleven of these, on four of them, and on the 69-qubit
+chip three wires in a row run down one line of feed points with not a single
+crossing reported. The prototype allows it: its `check_edge_crossing` tests
+proper crossings only, and the occupancy it keeps beside that is a set of
+pixels, never the lines between them. A wire's pins reach the plan through the
+chords it draws, so a wire that has no corridor protects nothing; on all eight
+chips every wire has one.
 
 **No wire crosses out of the ring the ports feed from.** Every wire starts at a
 point on the launcher ring, so the rectangle those points span is the outside of
@@ -299,22 +299,21 @@ sits beside some port's own feed point, and a wire crossing there has slipped
 behind that port — out through the ring, along the back of it, and in again
 somewhere else. Without the rule the eight chips route twenty-seven crossings
 that way, on four of them. The prototype draws the same line, clamping every
-border pixel to the box its launcher slots span
-(`CapacityGrid.cpp:7342`).
+border pixel to the box its launcher slots span (`CapacityGrid.cpp:7342`).
 
 **A target that no border reaches leaves along its own port's approach.** The
 capacity grid places a target on the first cell beyond its port's band that was
 free before the bands were stamped; it does not open the band, because nothing
 searches on that grid. Where the band and the artwork close around a port, what
 is left is a pocket no border reaches, and a wire could never leave it. The band
-is not artwork — it is the strip that port's own wire runs along — so it is a way
-out, and it carries exactly one wire. The artifact marks those ways, because a
-step over one joins two partitions that share no border of the plan and a reader
-would otherwise take it for a mistake.
+is not artwork — it is the strip that port's own wire runs along — so it is a
+way out, and it carries exactly one wire. The artifact marks those ways, because
+a step over one joins two partitions that share no border of the plan and a
+reader would otherwise take it for a mistake.
 
-**Rip-up, and then the wires that are actually in the way.** The stage sweeps the
-connection list, alternating forward and backward, and re-routes every wire in
-each sweep. A wire that finds no way rips up its neighbours along the sweep
+**Rip-up, and then the wires that are actually in the way.** The stage sweeps
+the connection list, alternating forward and backward, and re-routes every wire
+in each sweep. A wire that finds no way rips up its neighbours along the sweep
 direction, up to `max_relaxation` of them, which is what the prototype does and
 what opens a large enough hole to matter. Only when that fails does it ask which
 wires are actually in its way — the route it would take on an empty chip names
@@ -323,11 +322,11 @@ wires in the way are almost never the ring neighbours, and neither mechanism
 replaces the other: the sweep alone leaves fifteen connections of the 968
 unrouted, the targeted rip alone thirty-two, the two together none.
 
-**A slot remembers being wanted.** Two wires that both need one slot take it from
-each other, every round undoes the last, and neither ever routes. A wire that
-finds no way charges the slots it wanted, and the charge is part of what any wire
-pays for them afterwards, so the wire standing on one eventually finds its own
-way cheaper elsewhere.
+**A slot remembers being wanted.** Two wires that both need one slot take it
+from each other, every round undoes the last, and neither ever routes. A wire
+that finds no way charges the slots it wanted, and the charge is part of what
+any wire pays for them afterwards, so the wire standing on one eventually finds
+its own way cheaper elsewhere.
 
 After the last sweep two passes finish the plan. Every wire still without a way
 is offered the room the others left, which takes nothing from anyone; then each
@@ -341,20 +340,21 @@ search away with it would leave a wire unrouted where a second-best way is there
 for the taking, so the slots of the way that failed are set aside and the search
 runs again.
 
-**A wire may not turn straight back into the partition it just left.** The detour
-is short, so it costs the search almost nothing — and it costs the chip two slots
-every time. Without the rule one 57-qubit wire crossed 368 borders where 25 is
-the most any wire needs now. The prototype refuses the same move.
+**A wire may not turn straight back into the partition it just left.** The
+detour is short, so it costs the search almost nothing — and it costs the chip
+two slots every time. Without the rule one 57-qubit wire crossed 368 borders
+where 25 is the most any wire needs now. The prototype refuses the same move.
 
-Only the connections of the assignment are routed here. The inner circuit already
-paid for the free space it crosses while it was solved
-([decision 0028](decisions/0028-the-inner-circuit-pays-for-free-space.md)), so it
-goes to the detail router directly.
+Only the connections of the assignment are routed here. The inner circuit
+already paid for the free space it crosses while it was solved
+([decision 0028](decisions/0028-the-inner-circuit-pays-for-free-space.md)), so
+it goes to the detail router directly.
 
 What the picture draws is the sequence, not the wire: a straight line from one
-crossing to the next says which partitions the wire uses and in what order. Where
-inside a partition it actually runs is the detail router's answer, and a chord
-that passes over artwork here is a chord the detail router has to route around.
+crossing to the next says which partitions the wire uses and in what order.
+Where inside a partition it actually runs is the detail router's answer, and a
+chord that passes over artwork here is a chord the detail router has to route
+around.
 
 ### Detail
 
@@ -401,10 +401,10 @@ alone, and for a wire that has not two phases:
    out of it.
 2. **The relaxation.** Where that finds nothing, the wires ahead of this one in
    the sweep are let go of one place further along each time, and then the wires
-   behind it, one at a time. Letting go of a wire is letting go of *its
-   clearance*: its copper stays where it is until it is drawn again, so nothing
-   the search finds can run over it, and it is marked as a wire still to be
-   drawn. While it relaxes, the search is steered rather than confined:
+   behind it, one at a time. Letting go of a wire is letting go of
+   *its clearance*: its copper stays where it is until it is drawn again, so
+   nothing the search finds can run over it, and it is marked as a wire still to
+   be drawn. While it relaxes, the search is steered rather than confined:
    everything outside the closed ring made of the wire's own two ends and the
    ways its two neighbours take costs, and so does coming within a wire spacing
    of either of them. Both are prices, so a wire that has to leave the corridor
@@ -458,10 +458,10 @@ reachable from both ends.
 #### The rule, on a grid
 
 `min_wire_spacing` is a length in layout units and the router works in cells, so
-the rule has to be converted, and the conversion is the prototype's own: the rule
-spans `ceil(spacing / cell)` cells and what is kept clear is one less than that.
-Two wires are far enough apart when the distance between their cells is more
-than that many cells.
+the rule has to be converted, and the conversion is the prototype's own: the
+rule spans `ceil(spacing / cell)` cells and what is kept clear is one less than
+that. Two wires are far enough apart when the distance between their cells is
+more than that many cells.
 
 The conversion is where the rule stops being 185, and it cannot be anything
 else. A cell is 19 layout units across on the 17-qubit chip and 40 on the
@@ -470,10 +470,10 @@ place; asking the grid for a distance it cannot express asks it to tell apart
 two answers that are the same drawing. What the stage keeps, and what the check
 and the picture are made against, is the converted figure:
 
-| chip | 4q | 9q | 17q | 21q | 33q | 45q | 57q | 69q |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| cells | 9 | 4 | 9 | 4 | 4 | 5 | 5 | 5 |
-| layout units | 173 | 158 | 171 | 160 | 154 | 182 | 158 | 180 |
+| chip         |   4q |   9q |  17q |  21q |  33q |  45q |  57q |  69q |
+| ------------ | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cells        |    9 |    4 |    9 |    4 |    4 |    5 |    5 |    5 |
+| layout units |  173 |  158 |  171 |  160 |  154 |  182 |  158 |  180 |
 
 The prototype carries the same quantity twice, computed in the cross-boundary
 pass and as the literal 6 a few hundred lines below in the inner one, and the
@@ -500,22 +500,22 @@ per step is the same fraction of it either way.
 
 All eight chips, at the shipped defaults:
 
-| chip | connections | drawn | inner | cells | bends | longest | detail | SVG | GDS |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 4q  |  12 |  12 |   0/0 |    550 |   41 |  64 | 0.38 s | 0.17 MB | 0.07 MB |
-| 9q  |  30 |  30 |   6/6 |   2644 |  116 |  98 | 0.09 s | 0.35 MB | 0.15 MB |
-| 17q |  58 |  58 | 14/14 |   7891 |  553 | 202 | 0.33 s | 1.06 MB | 0.43 MB |
-| 21q |  70 |  70 |   8/8 |  12454 |  717 | 221 | 0.60 s | 0.92 MB | 0.42 MB |
-| 33q | 110 | 110 |   8/8 |  25916 | 1346 | 308 | 1.63 s | 1.73 MB | 0.69 MB |
-| 45q | 150 | 150 |   7/7 |  42869 | 2744 | 396 | 4.58 s | 2.65 MB | 1.03 MB |
-| 57q | 190 | 190 | 11/11 |  71230 | 4555 | 575 | 9.66 s | 4.34 MB | 1.57 MB |
-| 69q | 230 | 230 | 11/11 | 111345 | 5478 | 700 | 15.50 s | 6.27 MB | 2.17 MB |
+| chip | connections | drawn | inner |  cells | bends | longest |  detail |     SVG |     GDS |
+| ---- | ----------: | ----: | ----: | -----: | ----: | ------: | ------: | ------: | ------: |
+| 4q   |          12 |    12 |   0/0 |    550 |    41 |      64 |  0.38 s | 0.17 MB | 0.07 MB |
+| 9q   |          30 |    30 |   6/6 |   2644 |   116 |      98 |  0.09 s | 0.35 MB | 0.15 MB |
+| 17q  |          58 |    58 | 14/14 |   7891 |   553 |     202 |  0.33 s | 1.06 MB | 0.43 MB |
+| 21q  |          70 |    70 |   8/8 |  12454 |   717 |     221 |  0.60 s | 0.92 MB | 0.42 MB |
+| 33q  |         110 |   110 |   8/8 |  25916 |  1346 |     308 |  1.63 s | 1.73 MB | 0.69 MB |
+| 45q  |         150 |   150 |   7/7 |  42869 |  2744 |     396 |  4.58 s | 2.65 MB | 1.03 MB |
+| 57q  |         190 |   190 | 11/11 |  71230 |  4555 |     575 |  9.66 s | 4.34 MB | 1.57 MB |
+| 69q  |         230 |   230 | 11/11 | 111345 |  5478 |     700 | 15.50 s | 6.27 MB | 2.17 MB |
 
 **All 968 connections are drawn**, all 65 of the inner circuit, and **no two
 wires anywhere on any of the eight chips come within the rule of each other.**
-Both are checked over every chip in `test/pipeline/test_detail_router.cpp`, and a
-wire that comes too close counts exactly as a wire that was never drawn. Two runs
-of the same input produce the same bytes.
+Both are checked over every chip in `test/pipeline/test_detail_router.cpp`, and
+a wire that comes too close counts exactly as a wire that was never drawn. Two
+runs of the same input produce the same bytes.
 
 What each mechanism is worth, measured over the eight chips as places where the
 rule does not hold — as shipped **0**; without letting go of the wires *behind*
@@ -629,40 +629,40 @@ along the sweep are priced at growing distances.
 spliced into it.** After a search of a resonator has found a way, one meander
 goes into a straight run of it: the two ends of the run are turned across it by
 one or two moves of the primitives, and one rectangular loop is built between
-them, as deep as the missing length makes it and as wide as the run is long.
-The loop may enter what the search could enter — the band less the fence — and
+them, as deep as the missing length makes it and as wide as the run is long. The
+loop may enter what the search could enter — the band less the fence — and
 nothing else, so it cannot cross a neighbour the way itself could not. Phase 1
 takes the first placement that fits; the relaxation takes the cheapest by the
 price field the search was steered by. A way without room for its meander is no
 way, so the relaxation goes on, and a resonator left short keeps the way it
 found and counts as a fail. This is the prototype's `meander_insertion` and
-`meander_insertion_proximity`, whose one accepted shape is that single loop.
-The artifact carries the rendered length of every wire, so that a reader can
-check a resonator without the primitives.
+`meander_insertion_proximity`, whose one accepted shape is that single loop. The
+artifact carries the rendered length of every wire, so that a reader can check a
+resonator without the primitives.
 
-Four things the port does that the prototype does not, and each is the answer
-to a defect its own pictures show:
+Four things the port does that the prototype does not, and each is the answer to
+a defect its own pictures show:
 
 - **The clearance holds against every wire.** The prototype keeps a wire clear
   of the two beside it in the ring, per search, and knows nothing of the other
   two hundred. Here the grid carries how many wires guard each cell; a wire
-  charges its own room when it is put down and gives it up when it is taken
-  off, so the rule against two hundred wires costs what the rule against two
-  cost, and letting a wire go is exactly "its room stops standing in the way,
-  its copper stays".
-- **A wire is judged against the full field, not against the one its search
-  was given.** Everything let go of for a search stands in the way again before
-  the wire is put down, and a wire counts as routed only when the way it found
-  holds the rule against every other wire. A way that exists only because a
-  neighbour was lifted leaves the wire open, and the next round tries it again.
-  Without that the wire keeps room it took from a neighbour, the neighbour
-  cannot get it back, and no later round undoes it.
+  charges its own room when it is put down and gives it up when it is taken off,
+  so the rule against two hundred wires costs what the rule against two cost,
+  and letting a wire go is exactly "its room stops standing in the way, its
+  copper stays".
+- **A wire is judged against the full field, not against the one its search was
+  given.** Everything let go of for a search stands in the way again before the
+  wire is put down, and a wire counts as routed only when the way it found holds
+  the rule against every other wire. A way that exists only because a neighbour
+  was lifted leaves the wire open, and the next round tries it again. Without
+  that the wire keeps room it took from a neighbour, the neighbour cannot get it
+  back, and no later round undoes it.
 - **The relaxation runs both ways along the sweep.** The prototype only ever
   goes one way, so a wire blocked by the wire behind it has no move at all.
 - **Everything outside the ring of sources is blocked.** Every wire starts on
-  the ring of launcher slots, which is a rectangle set in from the chip
-  outline; the strip beyond it is free space a wire can slip through to come
-  back in somewhere else, which is a crossing the plan never allowed.
+  the ring of launcher slots, which is a rectangle set in from the chip outline;
+  the strip beyond it is free space a wire can slip through to come back in
+  somewhere else, which is a crossing the plan never allowed.
 
 The obstacle keepout is not a check at all. It is baked into the raster mask
 before any search runs, so every cell the router may enter already satisfies the
@@ -751,7 +751,8 @@ pixel. The prototype's equivalent 4-qubit capacity view is 17.8 MB because it
 did the latter; the budget here is 10 MB per snapshot on every benchmark. The
 layout view is the exception: it keeps every vertex of the input in layout
 units, so that zooming in shows what the GDS shows, and `--tolerance` trades
-that detail for a smaller file.
+that detail for a smaller file. See
+[decision 0021](decisions/0021-debug-rendering-in-python.md).
 
 ### What is never an artifact
 
@@ -823,16 +824,16 @@ An **advisory** rule is compiled and unit-tested but skipped on a normal run.
 Rule 2 runs the router's own `crossing_allowed_orthogonal` test in cell space,
 so what it reports is exactly what the router would have refused to produce; the
 layout-space form is geometric. The test reads a feedline's straight runs off
-its cells — a cell that steps to the next along its own heading is on a
-straight run — because the artifact carries cells and headings and no moves,
-and the router builds its own constraints the same way, so that the straight
-lead of a move that bends is the straight run it is in copper on both sides.
-The rule binds on no edge of a chain, at a launcher or between two couplers:
-the search draws every edge free of it and fences it by every other edge
-instead, so two edges beside each other are rule 1's business. Every edge is
-in the constraint the rule tests against, the ones at the launchers included,
-so a wire that passes one crosses it at a right angle. Rule 3 works the same way, and for the same
-reason: the prototype's router and its end-of-stage check call one
+its cells — a cell that steps to the next along its own heading is on a straight
+run — because the artifact carries cells and headings and no moves, and the
+router builds its own constraints the same way, so that the straight lead of a
+move that bends is the straight run it is in copper on both sides. The rule
+binds on no edge of a chain, at a launcher or between two couplers: the search
+draws every edge free of it and fences it by every other edge instead, so two
+edges beside each other are rule 1's business. Every edge is in the constraint
+the rule tests against, the ones at the launchers included, so a wire that
+passes one crosses it at a right angle. Rule 3 works the same way, and for the
+same reason: the prototype's router and its end-of-stage check call one
 implementation, so the two cannot drift apart. See
 [decision 0024](decisions/0024-wire-loop-is-active.md). Rules 7 and 8 are
 Finalize-only because a resonator's true length exists only after the fit, and
@@ -941,7 +942,8 @@ flowchart LR
 
 HiGHS is vendored and always present, so an unlicensed installation is fully
 functional. Gurobi is reached at run time through `gurobipy` if the user has it
-installed and licensed.
+installed and licensed. See
+[decision 0001](decisions/0001-byok-milp-solver.md).
 
 ## Logging and metrics
 
@@ -1053,8 +1055,9 @@ the problem in a new place. `FG_OBSTACLE_INFLATE` is typical: it overrides the
 obstacle keepout distance, and setting it to `0` disables the keepout entirely
 and restores the behavior from before that rule existed. That is a calibration
 knob for one experiment, not a setting. `config.toml` is the only tuning
-surface; the sole environment variable that survives is `SCPD_SOLVER`, which
-selects the solver backend.
+surface; the sole environment variable that survives is `SCPD_SOLVER` from
+[decision 0001](decisions/0001-byok-milp-solver.md), which selects the solver
+backend.
 
 One of them earns a CLI flag rather than deletion. `FG_CLEARANCE_DEBUG` lists
 every pair the clearance check *exempted*, together with the closest non-exempt

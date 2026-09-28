@@ -8,7 +8,9 @@ Companion documents:
 
 - [Data model](docs/design/data-model.md) — entities, coordinate systems
 - [Pipeline](docs/design/pipeline.md) — stage contracts, artifacts, resume
+- [Roadmap](docs/design/roadmap.md) — phased plan with acceptance criteria
 - [Decisions](docs/design/decisions/) — one record per architectural decision
+- [Porting notes](docs/design/porting-notes.md) — map of the prototype
 
 Diagrams are Mermaid and render on GitHub. These design documents are excluded
 from the Sphinx build; they target contributors, not users.

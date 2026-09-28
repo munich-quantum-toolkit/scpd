@@ -62,7 +62,8 @@ build.
 ## Consequences
 
 - Binary state stays inspectable: `mqt-scpd inspect run/05-detail.fb` prints
-  schema-driven JSON, and `mqt-scpd plot` renders it as SVG.
+  schema-driven JSON, and `mqt-scpd plot` renders it as SVG
+  ([decision 0021](0021-debug-rendering-in-python.md)).
 - `ScpdIO` links the header-only FlatBuffers runtime only. The parser library is
   not needed, because no text input is parsed against the schema.
 - Two serialization libraries coexist, deliberately. Schema-enforced state and
