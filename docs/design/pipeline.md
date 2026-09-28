@@ -719,8 +719,8 @@ and `mqt-scpd plot run/ --stage detail` renders it as SVG.
 — which is the point, since it is the instrument for watching the port make
 progress stage by stage. The layout stage needs no run at all and is rendered
 from the configuration directly:
-`mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg`. Every
-other stage is read from a run directory, which `--run-dir` names.
+`mqt-scpd plot -c inputs/9q/config.toml --stage layout -o 9q.svg`. Every other
+stage is read from a run directory, which `--run-dir` names.
 
 | `--stage`  | Reads            | Renders                                                  |
 | ---------- | ---------------- | -------------------------------------------------------- |
@@ -887,7 +887,7 @@ field comparison. The rule ports over as strictly less code than it is today.
 ## Resume
 
 ```bash
-mqt-scpd route -c benchmarks/69q/config.toml -o run/   # all stages
+mqt-scpd route -c inputs/69q/config.toml -o run/       # all stages
 mqt-scpd detail run/ --router astar-dubins             # rewrite 04 onward
 mqt-scpd final run/                                    # resume from 04
 ```

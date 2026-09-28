@@ -251,3 +251,26 @@ Per-benchmark assignment inputs, which become `config.toml` values:
 
 Per-stage timings and the full eight-benchmark table are in the prototype's
 `README.md`.
+
+### Per-chip values the configurations do not carry yet
+
+The chip inputs and their `config.toml` live in planar-superconducting-pd
+([decision 0033](decisions/0033-benchmark-chips-live-in-the-data-repository.md)),
+and Table I of the paper (`qor/qor.csv` there) is the source of truth for the
+per-chip parameters it lists. The target resonator length *d*<sub>fix</sub> is
+2500 µm for 4Q, 3000 µm for 9Q and 17Q, 4000 µm for 21Q, and 6000 µm for 33Q to
+69Q; resonators in inner regions are routed to *d*<sub>fix</sub> + 3000 µm,
+which no `config.toml` key expresses yet.
+
+Two further per-chip numbers of the prototype have no key in `config.toml`,
+because the stage that reads them is not ported yet: the `launcher_target` of
+the table above, and the capacity grid's detail factor, which is 20 for 17Q and
+30 for every other chip.
+
+The prototype's drivers also disagree about which ports they pin. The 4-qubit
+driver pins the whole outer ring in the capacity stage and nothing later; the
+9-qubit driver pins every routable port there; the 17-qubit driver pins
+`fixed_outer` in both stages; the five largest pin nothing at all, although each
+carries a `fixed_outer` list. The configurations keep every list, so that the
+phase that ports the capacity stage can decide what to do with them. The 9-qubit
+`fixed_outer` omits `Qb4` and `Coupler1_4`, which its own `all_outer` lists.

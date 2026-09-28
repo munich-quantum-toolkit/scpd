@@ -4,7 +4,8 @@
 - **Date:** 2026-09-01
 - **Supersedes:** [0008](0008-split-chip-and-config.md),
   [0010](0010-generated-benchmark-chips.md)
-- **Amended by:** [0023](0023-geometric-port-ring-detection.md)
+- **Amended by:** [0023](0023-geometric-port-ring-detection.md),
+  [0033](0033-benchmark-chips-live-in-the-data-repository.md)
 
 ## Context
 

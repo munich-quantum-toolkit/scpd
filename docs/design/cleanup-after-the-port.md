@@ -59,5 +59,8 @@ what `plot` can draw, and the message goes.
 ## 3. The design documents themselves
 
 The design documents address contributors carrying out the port rather than
-users, and this checklist is one of them. They go together once the port is
-complete.
+users, and they live on the plan branch `review_ready`, not on `main`
+([decision 0034](decisions/0034-the-plan-lives-on-its-own-branch.md)). Once the
+port is complete, the branch has served its purpose; what of it stays true of
+the finished tool moves into the user documentation. This checklist goes with
+it.

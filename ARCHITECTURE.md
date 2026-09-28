@@ -295,9 +295,13 @@ mqt-scpd/
     plot.py                              per-stage SVG from the artifacts
   test/<module>/*.cpp                    GoogleTest, per module
   test/python/{unit,property,integration}/
-  benchmarks/<n>q/config.toml            one per benchmark chip
-  benchmarks/<n>q/routing_config.json    the chip input, one per benchmark chip
-  docs/design/                           these documents
+  test/python/benchmarks/                the benchmark chips, when MQT_SCPD_BENCHMARKS names a clone
+  test/fixtures/mini/                    the hand-written chip of the unit tests
+  docs/design/                           these documents, on the review_ready branch only
+
+The benchmark chips live in planar-superconducting-pd, as
+`inputs/<n>q/config.toml` and `inputs/<n>q/routing_config.json`
+([decision 0033](docs/design/decisions/0033-benchmark-chips-live-in-the-data-repository.md)).
 ```
 
 ## Dependencies
