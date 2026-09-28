@@ -17,6 +17,7 @@
 #include <flatbuffers/verifier.h>
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -90,6 +91,12 @@ TEST(DesignValidation, DesignRulesMustBePositiveLengths) {
                       "resonator_length_tolerance must be positive",
                       "max_feedline_utilization must be at least one"}));
 
+  DesignRulesT infinite = benchmarkRules();
+  infinite.min_wire_spacing = std::numeric_limits<double>::infinity();
+  infinite.min_bend_radius = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_EQ(validate(infinite), (Problems{"min_wire_spacing must be finite",
+                                          "min_bend_radius must be finite"}));
+
   DesignRulesT noTerminations = benchmarkRules();
   noTerminations.feedline_terminations = 0;
   EXPECT_TRUE(validate(noTerminations).empty());
@@ -122,10 +129,14 @@ TEST(DesignValidation, ChipProblemsNameTheOffendingPortAndObstacle) {
   chip.obstacles.back()->vertices = {Point(0.0, 0.0), Point(1.0, 0.0)};
   chip.ports.push_back(makePort("Chip.port0", UnassignedRole::Launcher));
   chip.ports.push_back(makePort("", UnassignedRole::Unset));
+  chip.ports.emplace_back(nullptr);
+  chip.ports.push_back(makePort("Chip.port0", UnassignedRole::Launcher));
 
   EXPECT_EQ(validate(chip),
             (Problems{"obstacle 0 has fewer than three vertices",
-                      "port 1: label is empty", "port 1: role is unset"}));
+                      "port 1: label is empty", "port 1: role is unset",
+                      "port 2: missing",
+                      "port 3: label 'Chip.port0' is not unique"}));
 }
 
 } // namespace

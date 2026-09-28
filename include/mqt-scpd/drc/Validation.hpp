@@ -18,10 +18,14 @@ namespace mqt::scpd::drc {
 
 using design::Problems;
 
-/// Problems of the reports in drc.json: a report without a stage, a finding
-/// without a rule, a severity or a wire, a limit that is not positive, and a
-/// clearance kind that is set for a rule other than wire clearance or unset
-/// for that rule.
+/**
+ * @brief Validates the design-rule reports that a run writes to drc.json.
+ * @param reports The reports to check.
+ * @return A problem for every report without a stage, for every finding
+ * without a rule, a severity or a wire, for every limit that is not positive,
+ * and for every clearance kind that is set for a rule other than wire
+ * clearance or left unset for that rule, empty when the reports are valid.
+ */
 [[nodiscard]] MQT_SCPD_DRC_EXPORT Problems
 validate(const flatbuffers::drc::DrcReportsT& reports);
 

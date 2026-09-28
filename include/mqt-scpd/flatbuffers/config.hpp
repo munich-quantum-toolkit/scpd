@@ -51,38 +51,15 @@ bool operator!=(const GridParamsT &lhs, const GridParamsT &rhs);
 bool operator==(const ConfigT &lhs, const ConfigT &rhs);
 bool operator!=(const ConfigT &lhs, const ConfigT &rhs);
 
-/// Where the outer port ring comes from.
-enum class PortDetection : uint8_t {
-  /// The configuration supplies all_outer and fixed_outer.
-  Manual = 0,
-  /// The outer-boundary walk derives both sequences from the chip geometry.
-  Auto = 1,
-  MIN = Manual,
-  MAX = Auto
-};
+inline const ::flatbuffers::TypeTable *PortPatternsTypeTable();
 
-inline const PortDetection (&EnumValuesPortDetection())[2] {
-  static const PortDetection values[] = {
-    PortDetection::Manual,
-    PortDetection::Auto
-  };
-  return values;
-}
+inline const ::flatbuffers::TypeTable *PortSequencesTypeTable();
 
-inline const char * const *EnumNamesPortDetection() {
-  static const char * const names[3] = {
-    "Manual",
-    "Auto",
-    nullptr
-  };
-  return names;
-}
+inline const ::flatbuffers::TypeTable *PortConfigTypeTable();
 
-inline const char *EnumNamePortDetection(PortDetection e) {
-  if (::flatbuffers::IsOutRange(e, PortDetection::Manual, PortDetection::Auto)) return "";
-  const size_t index = static_cast<size_t>(e);
-  return EnumNamesPortDetection()[index];
-}
+inline const ::flatbuffers::TypeTable *GridParamsTypeTable();
+
+inline const ::flatbuffers::TypeTable *ConfigTypeTable();
 
 struct PortPatternsT : public ::flatbuffers::NativeTable {
   typedef PortPatterns TableType;
@@ -96,6 +73,9 @@ struct PortPatterns FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PortPatternsT NativeTableType;
   typedef PortPatternsBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PortPatternsTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_LAUNCHER = 4,
     VT_RESONATOR = 6,
@@ -193,12 +173,16 @@ struct PortSequencesT : public ::flatbuffers::NativeTable {
   std::vector<std::string> fixed_outer{};
 };
 
-/// The two ordered outer port sequences. Required under Manual, an error
-/// under Auto.
+/// The two ordered outer port sequences of the chip. all_outer is the ring
+/// the assignment consumes in order; fixed_outer is the subset a run pins, and
+/// is only ever read as a set.
 struct PortSequences FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PortSequencesT NativeTableType;
   typedef PortSequencesBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PortSequencesTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_ALL_OUTER = 4,
     VT_FIXED_OUTER = 6
@@ -280,8 +264,6 @@ inline ::flatbuffers::Offset<PortSequences> CreatePortSequencesDirect(
 struct PortConfigT : public ::flatbuffers::NativeTable {
   typedef PortConfig TableType;
   std::unique_ptr<mqt::scpd::flatbuffers::config::PortPatternsT> patterns{};
-  mqt::scpd::flatbuffers::config::PortDetection detection = mqt::scpd::flatbuffers::config::PortDetection::Manual;
-  std::string start_component{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::PortSequencesT> sequences{};
   PortConfigT() = default;
   PortConfigT(const PortConfigT &o);
@@ -293,24 +275,16 @@ struct PortConfig FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PortConfigT NativeTableType;
   typedef PortConfigBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PortConfigTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PATTERNS = 4,
-    VT_DETECTION = 6,
-    VT_START_COMPONENT = 8,
-    VT_SEQUENCES = 10
+    VT_SEQUENCES = 6
   };
   const mqt::scpd::flatbuffers::config::PortPatterns *patterns() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::PortPatterns *>(VT_PATTERNS);
   }
-  mqt::scpd::flatbuffers::config::PortDetection detection() const {
-    return static_cast<mqt::scpd::flatbuffers::config::PortDetection>(GetField<uint8_t>(VT_DETECTION, 0));
-  }
-  /// Auto only. The component at which the closed ring is entered; empty
-  /// takes the walk's own start.
-  const ::flatbuffers::String *start_component() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_START_COMPONENT);
-  }
-  /// Manual only.
   const mqt::scpd::flatbuffers::config::PortSequences *sequences() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::PortSequences *>(VT_SEQUENCES);
   }
@@ -319,10 +293,7 @@ struct PortConfig FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return VerifyTableStart(verifier) &&
            VerifyOffsetRequired(verifier, VT_PATTERNS) &&
            verifier.VerifyTable(patterns()) &&
-           VerifyField<uint8_t>(verifier, VT_DETECTION, 1) &&
-           VerifyOffset(verifier, VT_START_COMPONENT) &&
-           verifier.VerifyString(start_component()) &&
-           VerifyOffset(verifier, VT_SEQUENCES) &&
+           VerifyOffsetRequired(verifier, VT_SEQUENCES) &&
            verifier.VerifyTable(sequences()) &&
            verifier.EndTable();
   }
@@ -338,12 +309,6 @@ struct PortConfigBuilder {
   void add_patterns(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortPatterns> patterns) {
     fbb_.AddOffset(PortConfig::VT_PATTERNS, patterns);
   }
-  void add_detection(mqt::scpd::flatbuffers::config::PortDetection detection) {
-    fbb_.AddElement<uint8_t>(PortConfig::VT_DETECTION, static_cast<uint8_t>(detection), 0);
-  }
-  void add_start_component(::flatbuffers::Offset<::flatbuffers::String> start_component) {
-    fbb_.AddOffset(PortConfig::VT_START_COMPONENT, start_component);
-  }
   void add_sequences(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortSequences> sequences) {
     fbb_.AddOffset(PortConfig::VT_SEQUENCES, sequences);
   }
@@ -355,6 +320,7 @@ struct PortConfigBuilder {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<PortConfig>(end);
     fbb_.Required(o, PortConfig::VT_PATTERNS);
+    fbb_.Required(o, PortConfig::VT_SEQUENCES);
     return o;
   }
 };
@@ -362,14 +328,10 @@ struct PortConfigBuilder {
 inline ::flatbuffers::Offset<PortConfig> CreatePortConfig(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortPatterns> patterns = 0,
-    mqt::scpd::flatbuffers::config::PortDetection detection = mqt::scpd::flatbuffers::config::PortDetection::Manual,
-    ::flatbuffers::Offset<::flatbuffers::String> start_component = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortSequences> sequences = 0) {
   PortConfigBuilder builder_(_fbb);
   builder_.add_sequences(sequences);
-  builder_.add_start_component(start_component);
   builder_.add_patterns(patterns);
-  builder_.add_detection(detection);
   return builder_.Finish();
 }
 
@@ -377,21 +339,6 @@ struct PortConfig::Traits {
   using type = PortConfig;
   static auto constexpr Create = CreatePortConfig;
 };
-
-inline ::flatbuffers::Offset<PortConfig> CreatePortConfigDirect(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortPatterns> patterns = 0,
-    mqt::scpd::flatbuffers::config::PortDetection detection = mqt::scpd::flatbuffers::config::PortDetection::Manual,
-    const char *start_component = nullptr,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortSequences> sequences = 0) {
-  auto start_component__ = start_component ? _fbb.CreateString(start_component) : 0;
-  return mqt::scpd::flatbuffers::config::CreatePortConfig(
-      _fbb,
-      patterns,
-      detection,
-      start_component__,
-      sequences);
-}
 
 ::flatbuffers::Offset<PortConfig> CreatePortConfig(::flatbuffers::FlatBufferBuilder &_fbb, const PortConfigT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
@@ -407,6 +354,9 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef GridParamsT NativeTableType;
   typedef GridParamsBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return GridParamsTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CAPACITY_CELLS_X = 4,
     VT_CAPACITY_CELLS_Y = 6,
@@ -505,6 +455,9 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ConfigT NativeTableType;
   typedef ConfigBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ConfigTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CHIP_INPUT = 4,
     VT_PORTS = 6,
@@ -698,8 +651,6 @@ inline ::flatbuffers::Offset<PortSequences> PortSequences::Pack(::flatbuffers::F
 inline bool operator==(const PortConfigT &lhs, const PortConfigT &rhs) {
   return
       ((lhs.patterns == rhs.patterns) || (lhs.patterns && rhs.patterns && *lhs.patterns == *rhs.patterns)) &&
-      (lhs.detection == rhs.detection) &&
-      (lhs.start_component == rhs.start_component) &&
       ((lhs.sequences == rhs.sequences) || (lhs.sequences && rhs.sequences && *lhs.sequences == *rhs.sequences));
 }
 
@@ -710,15 +661,11 @@ inline bool operator!=(const PortConfigT &lhs, const PortConfigT &rhs) {
 
 inline PortConfigT::PortConfigT(const PortConfigT &o)
       : patterns((o.patterns) ? new mqt::scpd::flatbuffers::config::PortPatternsT(*o.patterns) : nullptr),
-        detection(o.detection),
-        start_component(o.start_component),
         sequences((o.sequences) ? new mqt::scpd::flatbuffers::config::PortSequencesT(*o.sequences) : nullptr) {
 }
 
 inline PortConfigT &PortConfigT::operator=(PortConfigT o) FLATBUFFERS_NOEXCEPT {
   std::swap(patterns, o.patterns);
-  std::swap(detection, o.detection);
-  std::swap(start_component, o.start_component);
   std::swap(sequences, o.sequences);
   return *this;
 }
@@ -733,8 +680,6 @@ inline void PortConfig::UnPackTo(PortConfigT *_o, const ::flatbuffers::resolver_
   (void)_o;
   (void)_resolver;
   { auto _e = patterns(); if (_e) { if(_o->patterns) { _e->UnPackTo(_o->patterns.get(), _resolver); } else { _o->patterns = std::unique_ptr<mqt::scpd::flatbuffers::config::PortPatternsT>(_e->UnPack(_resolver)); } } else if (_o->patterns) { _o->patterns.reset(); } }
-  { auto _e = detection(); _o->detection = _e; }
-  { auto _e = start_component(); if (_e) _o->start_component = _e->str(); }
   { auto _e = sequences(); if (_e) { if(_o->sequences) { _e->UnPackTo(_o->sequences.get(), _resolver); } else { _o->sequences = std::unique_ptr<mqt::scpd::flatbuffers::config::PortSequencesT>(_e->UnPack(_resolver)); } } else if (_o->sequences) { _o->sequences.reset(); } }
 }
 
@@ -747,14 +692,10 @@ inline ::flatbuffers::Offset<PortConfig> PortConfig::Pack(::flatbuffers::FlatBuf
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const PortConfigT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _patterns = _o->patterns ? CreatePortPatterns(_fbb, _o->patterns.get(), _rehasher) : 0;
-  auto _detection = _o->detection;
-  auto _start_component = _o->start_component.empty() ? 0 : _fbb.CreateString(_o->start_component);
   auto _sequences = _o->sequences ? CreatePortSequences(_fbb, _o->sequences.get(), _rehasher) : 0;
   return mqt::scpd::flatbuffers::config::CreatePortConfig(
       _fbb,
       _patterns,
-      _detection,
-      _start_component,
       _sequences);
 }
 
@@ -869,6 +810,100 @@ inline ::flatbuffers::Offset<Config> Config::Pack(::flatbuffers::FlatBufferBuild
       _ports,
       _rules,
       _grid);
+}
+
+inline const ::flatbuffers::TypeTable *PortPatternsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 }
+  };
+  static const char * const names[] = {
+    "launcher",
+    "resonator",
+    "conventional"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PortSequencesTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 1, -1 },
+    { ::flatbuffers::ET_STRING, 1, -1 }
+  };
+  static const char * const names[] = {
+    "all_outer",
+    "fixed_outer"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PortConfigTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::config::PortPatternsTypeTable,
+    mqt::scpd::flatbuffers::config::PortSequencesTypeTable
+  };
+  static const char * const names[] = {
+    "patterns",
+    "sequences"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *GridParamsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const char * const names[] = {
+    "capacity_cells_x",
+    "capacity_cells_y",
+    "launcher_offset_x",
+    "launcher_offset_y"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ConfigTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 2 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::config::PortConfigTypeTable,
+    mqt::scpd::flatbuffers::design::DesignRulesTypeTable,
+    mqt::scpd::flatbuffers::config::GridParamsTypeTable
+  };
+  static const char * const names[] = {
+    "chip_input",
+    "ports",
+    "rules",
+    "grid"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
 }
 
 }  // namespace config

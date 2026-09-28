@@ -26,6 +26,7 @@ self
 :caption: User Guide
 
 installation
+benchmarks
 references
 CHANGELOG
 UPGRADING

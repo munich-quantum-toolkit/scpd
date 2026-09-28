@@ -15,6 +15,7 @@
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 
 #include <flatbuffers/flatbuffer_builder.h>
+#include <flatbuffers/minireflect.h>
 #include <flatbuffers/verifier.h>
 
 #include <cstddef>
@@ -155,6 +156,17 @@ ArtifactT readArtifact(const std::span<const std::uint8_t> bytes) {
     throw std::invalid_argument("artifact is not valid: " + join(problems));
   }
   return artifact;
+}
+
+std::string artifactToJson(const std::span<const std::uint8_t> bytes) {
+  // Reading the artifact first is what checks it; the rendering below walks
+  // the buffer through the schema's type tables and cannot report a problem.
+  static_cast<void>(readArtifact(bytes));
+  return ::flatbuffers::FlatBufferToString(
+             bytes.data(), flatbuffers::artifacts::ArtifactTypeTable(),
+             /*multi_line=*/true, /*vector_delimited=*/true, /*indent=*/"  ",
+             /*quotes=*/true) +
+         "\n";
 }
 
 } // namespace mqt::scpd::io
