@@ -1,0 +1,37 @@
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
+# A two-qubit chip for the unit tests, small enough to read. Its two qubit pads
+# wind in opposite directions and the coupler between them overlaps both; the
+# round pad has 256 vertices; fixed_outer is an open sub-chain of all_outer.
+# The benchmark chips live in https://github.com/cda-tum/planar-superconducting-pd.
+
+[chip]
+input = "routing_config.json"
+
+[ports.patterns]
+launcher = '^Chip\.port\d+$'
+resonator = '^Q\d+\.port0$'
+conventional = '^(Q\d+\.port1|C\d+\.port0)$'
+
+[ports.sequences]
+all_outer = ["Q1.port0", "Q1.port1", "C12.port0", "Q2.port1", "Q2.port0"]
+fixed_outer = ["Q1.port0", "Q1.port1", "C12.port0"]
+
+[design_rules]
+min_wire_spacing = 185.0
+min_obstacle_spacing = 25.0
+min_bend_radius = 50.0
+min_straight_length = 100.0
+target_resonator_length = 2500.0
+resonator_length_tolerance = 100.0
+max_feedline_utilization = 4
+feedline_terminations = 0
+
+[grid]
+capacity_cells_x = 12

@@ -26,7 +26,7 @@ from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
 from mqt.scpd.plot import OBSTACLE_FILL, PlotError, layout_svg, simplify
 
-BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
+FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 SVG = "{http://www.w3.org/2000/svg}"
 
 
@@ -57,13 +57,12 @@ def _distinct_vertices(model: ChipT) -> int:
     return count
 
 
-@pytest.mark.parametrize("chip", ["4q", "9q"])
-def test_the_layout_view_keeps_every_vertex(chip: str) -> None:
+def test_the_layout_view_keeps_every_vertex() -> None:
     """The picture parses as XML, carries one marker per port, and draws every vertex of the input."""
-    config_path = BENCHMARKS / chip / "config.toml"
+    config_path = FIXTURE / "config.toml"
     model = decode_chip(load_chip(load_config(config_path), config_path))
 
-    svg = layout_svg(model, title=chip)
+    svg = layout_svg(model, title="mini")
 
     root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
     paths = {path.get("class"): path.get("d") or "" for path in root.findall(f"{SVG}path")}
@@ -78,19 +77,19 @@ def test_the_layout_view_keeps_every_vertex(chip: str) -> None:
     classes = {c.get("class") for c in circles}
     assert {"launcher", "resonator", "conventional"} <= classes
     assert root.get("width") == "2000"
-    assert any(text.text == chip for text in root.iter(f"{SVG}text"))
+    assert any(text.text == "mini" for text in root.iter(f"{SVG}text"))
 
 
 def test_a_tolerance_trades_vertices_for_size() -> None:
-    """With a tolerance the picture shrinks; without one it keeps the input's coordinates."""
-    config_path = BENCHMARKS / "9q" / "config.toml"
+    """With a tolerance the round pad loses most of its vertices; without one it keeps them all."""
+    config_path = FIXTURE / "config.toml"
     model = decode_chip(load_chip(load_config(config_path), config_path))
 
-    exact = layout_svg(model)
-    coarse = layout_svg(model, tolerance=20.0)
+    exact = sum(len(subpath) for subpath in _subpaths(layout_svg(model)))
+    coarse = sum(len(subpath) for subpath in _subpaths(layout_svg(model, tolerance=20.0)))
 
-    assert len(coarse) < len(exact) / 2
-    assert len(exact.encode("utf-8")) < 2_000_000
+    assert exact == _distinct_vertices(model)
+    assert coarse < exact / 2
 
 
 def test_an_empty_chip_cannot_be_drawn() -> None:

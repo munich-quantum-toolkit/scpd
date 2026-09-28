@@ -20,39 +20,27 @@ from mqt.scpd.chip import ChipError, chip_input_path, decode_chip, load_chip, ob
 from mqt.scpd.config import load_config
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 
-BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
+FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 
 
-def test_the_four_qubit_chip_loads_and_classifies() -> None:
-    """The committed 4-qubit input loads with its shipped configuration."""
-    config_path = BENCHMARKS / "4q" / "config.toml"
+def test_the_fixture_chip_loads_and_classifies() -> None:
+    """The fixture input loads with its configuration, and its sequences fit the chip."""
+    config_path = FIXTURE / "config.toml"
     config = load_config(config_path)
-    assert chip_input_path(config, config_path) == BENCHMARKS / "4q" / "routing_config.json"
+    assert chip_input_path(config, config_path) == FIXTURE / "routing_config.json"
 
     chip = decode_chip(load_chip(config, config_path))
 
-    assert len(obstacles_of(chip)) == 28
+    assert len(obstacles_of(chip)) == 4
     ports = ports_of(chip)
-    assert Counter(role_name(port.role) for port in ports) == {"launcher": 16, "resonator": 4, "conventional": 16}
-    assert ports[0].label
+    assert Counter(role_name(port.role) for port in ports) == {"launcher": 4, "resonator": 2, "conventional": 3}
+    assert ports[0].label == "Chip.port0"
     assert ports[0].center is not None
-
-
-def test_the_nine_qubit_chip_loads_with_its_sequences() -> None:
-    """The committed 9-qubit input classifies every port and accepts its sequences."""
-    config_path = BENCHMARKS / "9q" / "config.toml"
-    chip = decode_chip(load_chip(load_config(config_path), config_path))
-
-    assert Counter(role_name(port.role) for port in ports_of(chip)) == {
-        "launcher": 24,
-        "resonator": 9,
-        "conventional": 69,
-    }
 
 
 def test_a_chip_that_does_not_fit_its_configuration_is_refused() -> None:
     """A pattern that leaves ports unmatched, and a sequence label the chip lacks, are named."""
-    config_path = BENCHMARKS / "4q" / "config.toml"
+    config_path = FIXTURE / "config.toml"
     config = load_config(config_path)
     assert config.ports is not None
     assert config.ports.patterns is not None

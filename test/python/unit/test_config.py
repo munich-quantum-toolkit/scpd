@@ -16,7 +16,7 @@ import pytest
 
 from mqt.scpd.config import ConfigError, load_config, parse_config, read_config, shipped_config_problems, write_config
 
-BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
+FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 
 MANUAL = """
 [chip]
@@ -153,7 +153,6 @@ def test_load_config_names_the_file(tmp_path: Path) -> None:
         load_config(tmp_path / "absent.toml")
 
 
-@pytest.mark.parametrize("config", sorted(BENCHMARKS.glob("*/config.toml")), ids=lambda path: path.parent.name)
-def test_the_shipped_configurations_follow_the_shipped_rules(config: Path) -> None:
-    """Every benchmark configuration loads under the rules for a shipped file."""
-    load_config(config, strict=True)
+def test_the_fixture_follows_the_shipped_rules() -> None:
+    """The fixture configuration loads under the rules for a shipped file."""
+    load_config(FIXTURE / "config.toml", strict=True)

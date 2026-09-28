@@ -22,8 +22,7 @@ from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 
-BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
-CONFIG = str(BENCHMARKS / "4q" / "config.toml")
+CONFIG = str(Path(__file__).resolve().parents[2] / "fixtures" / "mini" / "config.toml")
 
 
 def test_doctor_reports_and_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
@@ -31,8 +30,8 @@ def test_doctor_reports_and_exits_zero(capsys: pytest.CaptureFixture[str]) -> No
     assert main(["doctor", "-c", CONFIG]) == 0
     out = capsys.readouterr().out
     assert "doctor: OK" in out
-    assert "launcher         16" in out
-    assert "all_outer: 12 ports, entering at Q1.port0" in out
+    assert "launcher          4" in out
+    assert "all_outer: 5 ports, entering at Q1.port0" in out
 
 
 def test_plot_writes_the_layout_and_refuses_later_stages(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -57,7 +56,7 @@ def test_render_writes_a_layout_file(tmp_path: Path, capsys: pytest.CaptureFixtu
         return
     assert code == 0
     assert output.stat().st_size > 0
-    assert "28 polygons, 36 ports" in captured.out
+    assert "4 polygons, 9 ports" in captured.out
 
     assert main(["render", "-c", CONFIG, "-o", str(tmp_path / "chip.svg")]) == 1
     assert "the suffix must be one of" in capsys.readouterr().err

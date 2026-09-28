@@ -27,27 +27,27 @@ if HAS_KLAYOUT:
 
     from mqt.scpd.export import OBSTACLE_LAYER, PORT_LAYER, ExportError, write_layout
 
-BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
+FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 
 
 @pytest.mark.parametrize("suffix", [".gds", ".oas"])
 def test_the_unrouted_chip_is_written_and_reads_back(tmp_path: Path, suffix: str) -> None:
     """Every obstacle becomes a polygon and every port a text on the layer of its role."""
-    config_path = BENCHMARKS / "4q" / "config.toml"
+    config_path = FIXTURE / "config.toml"
     chip = decode_chip(load_chip(load_config(config_path), config_path))
 
     summary = write_layout(chip, tmp_path / f"chip{suffix}")
 
-    assert (summary.polygons, summary.ports) == (28, 36)
+    assert (summary.polygons, summary.ports) == (4, 9)
     layout = kdb.Layout()
     layout.read(str(summary.path))
     top = layout.top_cell()
     assert top.name == "chip"
     obstacles = layout.layer(*OBSTACLE_LAYER)
-    assert top.shapes(obstacles).size() == 28
+    assert top.shapes(obstacles).size() == 4
     launchers = layout.layer(PORT_LAYER, UnassignedRole.Launcher)
     labels = {shape.text_string for shape in top.shapes(launchers).each()}
-    assert len(labels) == 16
+    assert len(labels) == 4
     assert "Chip.port0" in labels
     assert layout.dbu == pytest.approx(0.001)
 
