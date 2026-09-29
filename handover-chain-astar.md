@@ -9,12 +9,16 @@ this document assumes its vocabulary (chains, options, the analytic bound, the
 rounds, `stateFaults`) and describes only what changes.
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch `phase-4-routing-stages`, HEAD **`9d20ddc` ⚡️ Until 57q all feedlines
-  drawn**. Everything below is **uncommitted** on top of it, the pad-crossing
-  filter in `Driver::makeOption` included. The user commits per phase — the
-  work is in the tree and this says what was verified.
-- **It is the default.** `SCPD_CHAIN_ASTAR=0` is the way back to the trellis,
-  and `SCPD_CHAIN_DP=0` from there to the greedy.
+- Branch `phase-4-routing-stages`, HEAD **`b002669` A\* exact coupler
+  insertion**, which carries the search itself. Four things sit
+  **uncommitted** on top of it: the pad-crossing filter in
+  `Driver::makeOption`, the shortfall rule, the solo fence and the kept ways.
+  The user commits per phase — the work is in the tree and this says what was
+  verified.
+- **Every switch below defaults to what was measured last.**
+  `SCPD_CHAIN_ASTAR=0` is the way back to the trellis and `SCPD_CHAIN_DP=0`
+  from there to the greedy; the other three are named where they are
+  described.
 
 ## Why
 
@@ -43,38 +47,32 @@ costs everything and the search takes another combination.
 ## Where it stands
 
 Defaults, one run per chip, `stop_after = "couplers"`, `repair_trials = 0`,
-`--stage final`. The pad filter is in for both halves.
+`--stage final`.
 
-| chip | not drawn | angle | insertion | | trellis: not drawn / angle / insertion |
+**Only the 69q row is current.** The seven above it were measured before the
+shortfall rule, the solo fence and the kept ways, and were deliberately not
+re-run (user, 2026-09-29). Where a later section gives a figure for one of
+them, that figure is the newer one.
+
+| chip | not drawn | angle | insertion | | measured under |
 | --- | ---: | ---: | ---: | --- | --- |
-| 4q | **0** | **8** | 0.3 s | | 0 / 8 / 0.3 s |
-| 9q | **0** | **20** | 0.6 s | | 0 / 20 / 0.6 s |
-| 17q | **0** | **47** | **2.1 s** | | 0 / 51 / 11.2 s |
-| 21q | **0** | **48** | 2.9 s | | 0 / 48 / 2.9 s |
-| 33q | **0** | **76** | **7.2 s** | | 0 / 76 / 10.6 s |
-| 45q | **0** | **105** | **28.1 s** | | 0 / 105 / 36.0 s |
-| 57q | **0** | **130** | **200.7 s** | | **2** / 133 / 356.8 s |
-| 69q | **2** | 187 | **240.5 s** | | **11** / 162 / 1023.3 s |
+| 4q | 0 | 8 | 0.3 s | | before the last three changes |
+| 9q | 0 | 20 | 0.6 s | | before the last three changes |
+| 17q | 0 | 47 | 2.1 s | | before the last three changes |
+| 21q | 0 | 48 | 2.9 s | | before the last three changes |
+| 33q | 0 | 76 | 7.2 s | | before the last three changes |
+| 45q | 0 | 105 | 28.1 s | | before the last three changes |
+| 57q | 0 | 130 | 200.7 s | | before the last three changes |
+| **69q** | **0** | **164** | **80.3 s** | | **current** |
 
-**57q draws every edge**, which nothing before it did — the trellis lost two
-and the greedy six. **69q loses two of eighty-one** where the trellis lost
-eleven and the greedy six, in a quarter of the time.
+For the trellis these chips read 0/8, 0/20, 0/51, 0/48, 0/76, 0/105,
+**2**/133 and **11**/162, the last two at 356.8 s and 1023.3 s. 57q drawing
+every edge and 69q losing two rather than eleven is what the prefix search
+bought; 69q losing none is what the kept ways bought, and *Keeping the ways*
+says what that number is worth.
 
-**Read 69q's angle column with care.** An edge that was not drawn turns
-nowhere and `angleCostOf` scores it zero, so the trellis's 162 is over 70
-drawn edges and our 187 over 79 — 2.31 an edge against 2.37. Per drawn edge
-the two are level; what changed is how many are there at all.
-
-**Every chain of six of the eight chips is a proved optimum.** 57q's chain 4
-reads `best in the time given` and 69q's chain 8 `best found, an end pair laid
-the other way round`; 69q's chain 2 has no answer at all. Everything else is
-settled exactly.
-
-**`stateFaults` is zero on seven of the eight chips.** That is the measurement
-to look at, and it is what the prefix fence buys: the state the search hands
-over survives its own fence entire, so the commit keeps every way the search
-found and there is nothing for a second pass to correct. Only 69q carries
-faults, and only because one of its chains cannot be joined.
+**Read the angle column only where the same edges were drawn.** An edge that
+was not drawn turns nowhere and `angleCostOf` scores it zero.
 
 ## The search
 
@@ -129,8 +127,14 @@ every edge against the ways the options before it laid.
 reported **zero faults after round 0** and the loop stopped there of its own
 accord; only 69q ever paid for a second round, where it changed nothing and
 cost 200 s. `stateFaults` is still reported once, at the end, because it is
-the number this whole approach is judged by — an edge counted there is an edge
-the commit routes again from scratch — but it decides nothing.
+the number this whole approach is judged by, but it decides nothing.
+
+**`stateFaults` is pessimistic, and by a factor of two.** It said 17 on 69q
+where the commit kept 72 edges, routed 6 again and lost 3 — nine touched. It
+judges every edge against every other edge's *searched* way, while the commit
+lays them in order, so an edge that is routed again changes the ground for the
+ones after it and some that would have faulted then fit. Read it as an upper
+bound on what the commit has to repair, not as the commit's own count.
 
 **What the rounds were worth on 69q, said plainly.** They gave a chain that
 ran out of time a second attempt, and at a 60 s budget that was worth three
@@ -232,6 +236,110 @@ and a chain that had merely reordered then read as one that had run out of
 time. Calling the two by one name hid a 69q chain that had spent 74 s against
 a 60 s budget for a whole sweep.
 
+## Each chain on its own chip
+
+**`fenceCommittedEdges` closes no other chain's edges while a chain is
+searched** — `SCPD_CHAIN_SOLO=0` is the way back.
+
+The chains are settled one after another, so fencing them against each other
+makes the order decide who gets the room: the first chain has the run of the
+chip and the last has to work around everything. That is what strangled the
+late chains, and the numbers are not marginal.
+
+| 69q | fenced | on its own |
+| --- | ---: | ---: |
+| chains solved | 9 of 12 | **12 of 12** |
+| chain 2 | no run joins it (52 searches) | **optimum, 15** |
+| chain 5 | no run joins it (713 searches) | **optimum, 8** |
+| chain 11 | no run joins it (974 searches) | **optimum, 11** |
+| edges drawn | 76 of 81 | **78 of 81** |
+| angle | 176 | **164** |
+| `stateFaults` | 20 | **17** |
+| the chain phase | 139 s | **26 s** |
+
+It moves the conflict to the commit, and the commit turns out to settle it
+better than the fence avoided it.
+
+**On 17q it changes nothing at all** — the two arms are identical to the
+digit, though the fence demonstrably differs (11 ways closed against 0). The
+other chains' ways lie outside the 250-cell edge box there, so closing them
+closes cells the box had closed already.
+
+**What it costs is the resonators.** Without the fence the couplers pick other
+places: 69q spans 5806 to 6130 units against 6008 to 6128, and nine rather
+than six sit more than 100 off the figure. All stay inside the shortfall rule,
+so the meander has more to add and nothing is beyond it.
+
+## Keeping the ways
+
+**The commit takes the ways the search found, as they are** —
+`SCPD_CHAIN_KEEP_WAYS=0` restores the test.
+
+It used to rebuild the corridor per edge and ask whether the way still lay in
+it (`edgeWayStillOpen`), routing again what did not. That test is now dropped.
+The endpoints are still checked, which is not a rule but an identity: a way
+that does not run between the ports the couplers ended on is a different edge,
+not a stale one.
+
+**What this is worth, and what it is not.** On 69q the commit went from
+*72 kept, 6 routed again, 3 with no way* to **81 kept, 0 routed again, 0 with
+no way**. The `==>` line therefore reads 0 undrawn.
+
+**`stateFaults` did not move: 17 either way.** The same seventeen edges lie so
+that they do not survive the chip they lie on. The three that used to be lost
+were not rescued, they stopped being counted — the difference between 78 and
+81 is the difference between *three edges missing* and *three edges lying
+across others*. **Under this switch the figure to read is `stateFaults`, not
+the undrawn count.** Two of those three had a **buried source port**: another
+chain's feedline lies across the coupler's own feedline port, which no routing
+fixes and only moving the coupler would.
+
+The reasoning for taking them anyway is that the first and last feedline wires
+are drawn again in the routing phase that follows (user, 2026-09-29), which
+`stop_after = "couplers"` never reaches, so none of these measurements sees it.
+
+**This is the rule trap 2 of the coupler handover describes, walked into on
+purpose.** Keep that paragraph in view before turning the switch back on.
+
+## The shortfall rule
+
+**An option is refused when what is left of the resonator falls more than a
+tenth below `target_resonator_length`** — `SCPD_COUPLER_MAX_SHORTFALL` sets
+the share, `couplerMaxShortfall()` holds the default of 0.10.
+
+`couplerPlace` offers every cell of the way ordered by how near it leaves the
+design figure, and each orientation walks that list until one place *fits*. A
+place that fails a legality rule is skipped and the walk carries on **away
+from the figure**. Nothing stopped it: only an overshoot was refused. On 69q
+that left a resonator of **1455 units against 6000**, which no later phase
+recovers — the meander lengthens a way, but not by four times.
+
+**The figure it holds against is the spliced length**: the lead, what is left
+to the qubit, and the run to the port. The lead is absolute, about 290 layout
+units, which is a twentieth of a 6000-unit target and an eighth of a
+2500-unit one; measured without it the same share would refuse on the small
+chips the very place `couplerPlace` aims at.
+
+**It works, and it is not free.**
+
+| 69q | without | with |
+| --- | --- | --- |
+| resonator span | **1231** – 6131 | **6008** – 6128 |
+| below 5400 | 3 | **0** |
+| more than 100 off | 14 | **6** |
+| options over all 69 couplers | 3196 | **2726** (−15 %) |
+| couplers with all 48 options | 40 | **0** |
+
+| 17q | without | with |
+| --- | ---: | ---: |
+| edges not drawn | **0** | **2** |
+| angle | **47** | 66 |
+| insertion | **2.1 s** | **26.8 s** |
+
+So it is a clear gain on 69q and a clear loss on 17q, and 4q's angle went from
+8 to 32 under it. **No coupler has yet been left with no option at all.** The
+share was not swept; 15 % and 20 % are one run each.
+
 ## Where the pieces are
 
 | Piece | What it does |
@@ -242,6 +350,10 @@ a 60 s budget for a whole sweep.
 | `Driver::optimizeChainsPrefix` | **one pass over the chains, no rounds** |
 | `Driver::solveChainAStar` | one chain: the bounds built, `step` supplied, the end-pair reorder, the winner's ways read back |
 | `Driver::chainAStar` | the `SCPD_CHAIN_ASTAR` gate, on by default |
+| `Driver::chainSolo` | `SCPD_CHAIN_SOLO`: no other chain is fenced while one is searched |
+| `Driver::chainKeepWays` | `SCPD_CHAIN_KEEP_WAYS`: the commit takes the search's ways as they are |
+| `Driver::soloChain_` | the chain being searched on its own, never set around the commit |
+| `couplerMaxShortfall` | `SCPD_COUPLER_MAX_SHORTFALL`, a tenth |
 | `Driver::chainAStarBudget` | `SCPD_CHAIN_ASTAR_SECONDS`, 180 s, per attempt |
 | `Driver::CHAIN_FRESH_EDGES` | how many edges at each end are never remembered |
 | `Driver::prefixFence_` | the ways the caller has already laid, which `corridorOfEdge` closes |
@@ -312,6 +424,10 @@ SCPD_CHAIN_ASTAR_SECONDS=60 .venv/bin/mqt-scpd plan \
 # the way back to the trellis, and from there to the greedy
 SCPD_CHAIN_ASTAR=0 .venv/bin/mqt-scpd plan -c benchmarks/17q/config.toml \
     -o artifacts/17q-dp --stage final -v 1
+# the three switches this session added, each back to what it replaced
+SCPD_CHAIN_SOLO=0 ...            # fence every other chain again
+SCPD_CHAIN_KEEP_WAYS=0 ...       # test every kept way, route again what fails
+SCPD_COUPLER_MAX_SHORTFALL=1 ... # accept any remainder, however short
 ```
 
 Report per chip: **feedline edges NOT drawn, angle cost, insertion seconds,
@@ -321,12 +437,18 @@ given`.
 
 ## What is open
 
-1. **69q loses edges, and one of its chains has no answer at all.** Chain 2
-   exhausts every run of options in 52 s: the search saw them all and none
-   joins the chain. That is not something a better search reaches — it needs
-   either more options at those couplers or a repair at the commit: rip the
-   edge that took the room, lay the one that lost, re-route the first.
-2. **Merging, measured against the unmerged answer.** The natural first rule
+1. **69q draws every edge, and seventeen of them do not survive the chip they
+   lie on.** That is the open number now, and *Keeping the ways* says why the
+   undrawn count no longer reports it. Two of the worst cases are a buried
+   feedline port, which only moving the coupler fixes.
+2. **The repair is switched off and is exactly what a buried port needs.**
+   `repair_trials = 0` in all eight configs, for measuring. The repair turns a
+   coupler near a fail to another of its options, redraws what that unsettles
+   and keeps the turn when it leaves strictly fewer fails. It has never been
+   run against the prefix search: one run, no code.
+3. **The shortfall rule costs 17q two edges and 4q three quarters of its angle
+   quality**, and nothing has been swept. See *The shortfall rule*.
+4. **Merging, measured against the unmerged answer.** The natural first rule
    is the second-order equivalence: prefixes that agree on `(layer, choice
    here, choice before)` are interchangeable for the future, because an edge
    sees only a 250-cell box (`EDGE_BOX_MARGIN`) and at a shared coupler it is
@@ -337,21 +459,21 @@ given`.
    instead of assumed. The exact rule, if the second order loses something, is
    geometric: key a node by the prefix's fenced cells that fall inside the
    union of the *remaining* edges' boxes.
-3. **`CHAIN_FRESH_EDGES = 2` was not swept.** On 57q's chain 4 the two dearest
+5. **`CHAIN_FRESH_EDGES = 2` was not swept.** On 57q's chain 4 the two dearest
    edges by far are the **last two** — 14 400 and 7 200 routes of 24 897 — and
    those are precisely the ones the rule never remembers. Raising the reuse to
    them would collapse that chain; whether it costs an edge is the measurement
    nobody has made.
-4. **A chain is still fenced by its own edges as the pass before left them.**
+6. **A chain is still fenced by its own edges as the pass before left them.**
    `looseChain_` is only set under `SCPD_CHAIN_DP=2`, so
    `fenceCommittedEdges` closes this chain's other edges on top of the prefix
    fence. With one pass those are empty for every chain, so it costs nothing
    today — but it would bite the moment a second pass came back.
-5. **The chains are independent and are not run in parallel.** With the rounds
+7. **The chains are independent and are not run in parallel.** With the rounds
    gone this is the largest runtime lever left. It needs one router context
    per thread, since `router_`, `corridor_`, `box_`, `proximity_`, `stencils_`
    and `frame_` are all shared `Driver` state.
-6. **The cost still sees only the feedline.** Length, length difference and
+8. **The cost still sees only the feedline.** Length, length difference and
    `100 × guarded` are commented out, so the two resonator ports of one
    coupler are an exact tie.
 

@@ -78,6 +78,38 @@ using routing::RoutingObjective;
 /// No wire holds this cell.
 constexpr std::uint32_t NO_OWNER = std::numeric_limits<std::uint32_t>::max();
 
+/// Whether an environment switch carries a value at all.
+///
+/// **An empty value is not a value.** `SCPD_CHAIN_SOLO=` left in a shell or a
+/// script is a leftover, not a decision, and `std::atoi("")` is zero — so
+/// read as a number it turns a default **off** and says nothing about having
+/// done so. Every switch below goes through this.
+[[nodiscard]] inline const char* envSet(const char* name) {
+  const char* value = std::getenv(name);
+  return (value != nullptr && *value != '\0') ? value : nullptr;
+}
+
+/// An on/off switch from the environment, `fallback` when it carries no
+/// value.
+[[nodiscard]] inline bool envFlag(const char* name, const bool fallback) {
+  const char* value = envSet(name);
+  return value != nullptr ? std::atoi(value) != 0 : fallback;
+}
+
+/// A whole-number switch from the environment, `fallback` when it carries no
+/// value.
+[[nodiscard]] inline int envWhole(const char* name, const int fallback) {
+  const char* value = envSet(name);
+  return value != nullptr ? std::atoi(value) : fallback;
+}
+
+/// A real-number switch from the environment, `fallback` when it carries no
+/// value.
+[[nodiscard]] inline double envReal(const char* name, const double fallback) {
+  const char* value = envSet(name);
+  return value != nullptr ? std::atof(value) : fallback;
+}
+
 /// The bend radius of the primitives, in cells.
 ///
 /// It is a property of the move set and not a knob: the primitive tables, the
@@ -91,6 +123,28 @@ constexpr std::uint8_t BEND_RADIUS = 5;
 /// meander is what makes the way exact afterwards, and it can only lengthen
 /// a way, never shorten one. The tenth held back is what it has to work in.
 constexpr double COUPLER_BIAS = 1.0;
+
+/// How far below `target_resonator_length` a coupler may leave the
+/// resonator, as a share of that figure. A tenth by default, so a chip
+/// asking for 6000 accepts 5400 and refuses 5399.
+///
+/// **Why an option needs refusing for this at all.** `couplerPlace` offers
+/// every cell of the way, ordered by how near it leaves the design figure,
+/// and each orientation walks that list until one place *fits*. A place that
+/// fails a legality rule is skipped, and the walk carries on down the
+/// list — away from the figure. Nothing stopped it: only an overshoot was
+/// refused, and any undershoot at all was accepted. On 69q that put a
+/// coupler far enough along a resonator to leave **1455 units of a 6000-unit
+/// resonator**, which no later phase recovers: the meander can lengthen a
+/// way, but not by four times.
+///
+/// `SCPD_COUPLER_MAX_SHORTFALL` sets it, as a share and not a percentage.
+[[nodiscard]] inline double couplerMaxShortfall() {
+  static const double share = [] {
+    return std::clamp(envReal("SCPD_COUPLER_MAX_SHORTFALL", 0.10), 0.0, 1.0);
+  }();
+  return share;
+}
 
 /// How many places the insertion will try before it gives a coupler up. The
 /// first is the one the bias names; the rest are what a coupler whose every
@@ -2036,6 +2090,30 @@ public:
 
     drawCouplerOptions(wires);
 
+    // **Which switches are actually in force.** Trap 5 of the handover is
+    // that a switch which does not take costs an hour before anyone reads
+    // the source; the cure is for the run to say what it is doing. Each one
+    // names its value and where the value came from, so a stale export or
+    // an empty assignment is visible in the log instead of being inferred
+    // from the results.
+    {
+      const auto from = [](const char* name) {
+        return envSet(name) != nullptr ? "environment" : "default";
+      };
+      say(std::format(
+          "[Coupler Insertion] settings: search {} ({}), each chain on its "
+          "own chip {} ({}), commit keeps the search's ways {} ({}), "
+          "{:.0f}s a chain ({}), shortfall {:.0f}% ({})",
+          chainAStar() ? "prefix A*"
+                       : (exactChainSearch() != 0 ? "trellis" : "greedy"),
+          from("SCPD_CHAIN_ASTAR"), chainSolo() ? "yes" : "no",
+          from("SCPD_CHAIN_SOLO"), chainKeepWays() ? "yes" : "no",
+          from("SCPD_CHAIN_KEEP_WAYS"),
+          static_cast<double>(chainAStarBudget().count()) / 1e9,
+          from("SCPD_CHAIN_ASTAR_SECONDS"), couplerMaxShortfall() * 100.0,
+          from("SCPD_COUPLER_MAX_SHORTFALL")));
+    }
+
     // The search for the options.
     std::uint32_t passes = 0;
     if (chainAStar()) {
@@ -2106,11 +2184,16 @@ public:
       // a launcher's stub or another chain — visible in the debug picture as
       // a way crossing closed white, which no search would ever have
       // returned.
+      // The endpoints are identity and are always asked. Whether the way
+      // still lies in the corridor that holds now is the *rule*, and
+      // `chainKeepWays` is where that rule is given up: the way the search
+      // found is taken as it is, crossings and all.
+      const bool runsRight = !chosen.empty() &&
+                             chosen.front().samePlace(wire.objective.source) &&
+                             chosen.back().samePlace(wire.objective.target);
       const bool fits =
-          !chosen.empty() &&
-          chosen.front().samePlace(wire.objective.source) &&
-          chosen.back().samePlace(wire.objective.target) &&
-          edgeWayStillOpen(wires, wire.objective, edge, chosen);
+          runsRight && (chainKeepWays() ||
+                        edgeWayStillOpen(wires, wire.objective, edge, chosen));
       wire.way = fits ? chosen : routeEdge(wires, wire.objective, edge);
       wire.drawn = !wire.way.empty();
       // A way the greedy chose and the commit kept was drawn by no search of
@@ -2598,6 +2681,25 @@ public:
     if (left > target + tuning_.lengthTolerance) {
       return refuse("what is left of the way is longer than the target");
     }
+    // **And it may not be far shorter either.**
+    //
+    // The figure to hold against is what the resonator will actually
+    // measure: the lead the component leaves the pad on, what is left to the
+    // qubit, and the run from the last cell to the port. `left` is the
+    // middle term alone — the lead is spliced on at the end of this function
+    // — so the lead has to be added back, and it matters that it is: it is
+    // an absolute length, about 290 layout units, which is a twentieth of a
+    // 6000-unit target and an eighth of a 2500-unit one. Measured without
+    // it, the same share would refuse on the small chips the very place
+    // `couplerPlace` aims at.
+    const auto whole = left + leadLength() + resonator.anchorGap;
+    const auto least = tuning_.targetLength * (1.0 - couplerMaxShortfall());
+    if (whole < least) {
+      return refuse(std::format(
+          "what is left of the resonator is {:.0f} against a target of "
+          "{:.0f}, past the {:.0f}% a coupler may take off",
+          whole, tuning_.targetLength, couplerMaxShortfall() * 100.0));
+    }
     if (left < target - tuning_.lengthTolerance) {
       option.guarded +=
           static_cast<std::uint32_t>(target - tuning_.lengthTolerance - left);
@@ -3021,6 +3123,12 @@ public:
     std::size_t ways = 0;
     std::size_t neighbours = 0;
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      // Searching one chain on its own: every other chain's edges stand
+      // open. `soloChain_` is set only around the prefix search, never
+      // around the commit.
+      if (soloChain_ != NO_OWNER && chain != edge.chain) {
+        continue;
+      }
       for (std::size_t at = 0; at < chainEdgePaths_[chain].size(); ++at) {
         if (chain == edge.chain && (at == edge.from || skipOwn)) {
           continue;
@@ -3311,8 +3419,7 @@ public:
   /// Read from the environment so a sweep over it costs a rebuild of nothing.
   [[nodiscard]] std::uint16_t edgeBendPenalty() const {
     static const double factor = [] {
-      const char* set = std::getenv("SCPD_EDGE_BEND_FACTOR");
-      return set != nullptr ? std::max(1.0, std::atof(set)) : 1.0;
+      return std::max(1.0, envReal("SCPD_EDGE_BEND_FACTOR", 1.0));
     }();
     return std::max(static_cast<std::uint16_t>(1),
                      static_cast<std::uint16_t>(factor * tuning_.bendPenalty));
@@ -3343,8 +3450,7 @@ public:
   /// is open* in `handover-cpw-coupler-insertion.md`.
   [[nodiscard]] static int exactChainSearch() {
     static const int mode = [] {
-      const char* set = std::getenv("SCPD_CHAIN_DP");
-      return set != nullptr ? std::atoi(set) : 1;
+      return envWhole("SCPD_CHAIN_DP", 1);
     }();
     return mode;
   }
@@ -3354,8 +3460,7 @@ public:
   /// 2 the analytic answer with every step it priced reported beside both.
   [[nodiscard]] static int chainBound() {
     static const int mode = [] {
-      const char* set = std::getenv("SCPD_CHAIN_BOUND");
-      return set != nullptr ? std::atoi(set) : 1;
+      return envWhole("SCPD_CHAIN_BOUND", 1);
     }();
     return mode;
   }
@@ -3453,8 +3558,7 @@ public:
   /// the price of seeing the blockage at all.
   [[nodiscard]] static int chainOrder() {
     static const int order = [] {
-      const char* set = std::getenv("SCPD_CHAIN_ORDER");
-      return set != nullptr ? std::atoi(set) : 2;
+      return envWhole("SCPD_CHAIN_ORDER", 2);
     }();
     return order;
   }
@@ -3472,8 +3576,7 @@ public:
   /// `optimizeChainsPrefix`.
   [[nodiscard]] static bool chainAStar() {
     static const bool on = [] {
-      const char* set = std::getenv("SCPD_CHAIN_ASTAR");
-      return set == nullptr || std::atoi(set) != 0;
+      return envFlag("SCPD_CHAIN_ASTAR", true);
     }();
     return on;
   }
@@ -3498,13 +3601,76 @@ public:
   /// saved. Chain 5 settles in 79 s.
   [[nodiscard]] static std::chrono::nanoseconds chainAStarBudget() {
     static const auto budget = [] {
-      const char* set = std::getenv("SCPD_CHAIN_ASTAR_SECONDS");
-      const double seconds = set != nullptr ? std::atof(set) : 180.0;
+      const double seconds = envReal("SCPD_CHAIN_ASTAR_SECONDS", 180.0);
       return std::chrono::nanoseconds(
           static_cast<std::int64_t>(std::max(0.0, seconds) * 1e9));
     }();
     return budget;
   }
+
+  /// Whether a chain is searched as though the other chains were not there:
+  /// `fenceCommittedEdges` then closes none of their edges.
+  ///
+  /// **On by default**, and `SCPD_CHAIN_SOLO=0` is the way back.
+  ///
+  /// The chains are settled one after another, so fencing them against each
+  /// other makes the order decide who gets the room: the first chain has the
+  /// run of the chip and the last has to work around everything. That is
+  /// what strangled the late chains. It moves the conflict to the commit,
+  /// where an edge that no longer fits is routed again from scratch — and
+  /// the commit turns out to repair those better than the fence avoided
+  /// them.
+  ///
+  /// **Measured on 69q, one run each.** Three chains that no run of options
+  /// joined — 2, 5 and 11 — all reach their optimum once the other chains
+  /// stand open, and chain 5 does it in **8 edge searches against 713**.
+  /// Every column improves: 78 of 81 edges drawn against 76, angle 164
+  /// against 176, `stateFaults` 17 against 20, and 83 s against 192 s. The
+  /// commit still has the cross-chain conflicts to settle; it settles them.
+  ///
+  /// What it costs is the resonators: the couplers pick other places without
+  /// the fence, so 69q spans 5806 to 6130 units against 6008 to 6128, and
+  /// nine rather than six sit more than 100 off the figure. All of them stay
+  /// inside `couplerMaxShortfall`, so the meander has more to add and
+  /// nothing is beyond it.
+  ///
+  /// It bears only on the prefix search — the commit and `stateFaults`
+  /// always fence everything, or their test would mean nothing.
+  [[nodiscard]] static bool chainSolo() {
+    static const bool on = [] {
+      return envFlag("SCPD_CHAIN_SOLO", true);
+    }();
+    return on;
+  }
+
+  /// Whether the commit takes the ways the prefix search found as they are,
+  /// rather than testing each against the chip as it then stands and routing
+  /// again what no longer fits.
+  ///
+  /// **On by default**; `SCPD_CHAIN_KEEP_WAYS=0` is the way back to the test.
+  ///
+  /// **What it gives up, said plainly.** The test it drops is the one that
+  /// stops a way drawn against one chip from shipping through another, and
+  /// with `chainSolo` the ways are drawn against a chip with nothing on it —
+  /// so they will cross each other. What the stage reports as drawn is then
+  /// no longer what it can build: `stateFaults` is the figure that says how
+  /// many of the drawn edges do not survive the chip they are drawn on, and
+  /// under this switch it is the figure to read, not the undrawn count.
+  ///
+  /// The endpoints are still checked. That is not a rule but an identity: a
+  /// way that does not run between the ports the couplers ended on is a
+  /// different edge, not a stale one.
+  [[nodiscard]] static bool chainKeepWays() {
+    static const bool on = [] {
+      return envFlag("SCPD_CHAIN_KEEP_WAYS", true);
+    }();
+    return on;
+  }
+
+  /// The chain being searched on its own, or NO_OWNER. Set around a single
+  /// `solveChainAStar` call and cleared again, so nothing the commit does
+  /// ever sees it.
+  std::uint32_t soloChain_ = NO_OWNER;
 
   /// The chain that is being searched and is therefore not fenced by its own
   /// edges, or NO_OWNER. Only `SCPD_CHAIN_DP=2` ever sets it.
@@ -5150,7 +5316,9 @@ public:
   [[nodiscard]] std::uint32_t optimizeChainsPrefix(std::vector<Wire>& wires) {
     std::uint32_t settled = 0;
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      soloChain_ = chainSolo() ? chain : NO_OWNER;
       const auto answer = solveChainAStar(wires, chain);
+      soloChain_ = NO_OWNER;
       auto& points = chains_[chain];
       if (!answer.solved) {
         // **The chain is left as it stands**, and the edges it cannot draw
@@ -5193,9 +5361,11 @@ public:
     // this whole approach is judged by, so it belongs in the log: an edge
     // counted here is an edge the commit will route again from scratch.
     const auto faults = stateFaults(wires);
-    say(std::format("[Coupler Insertion] {} of {} chains settled, {} edge{} "
+    say(std::format("[Coupler Insertion] {} of {} chains settled{}, {} edge{} "
                     "would not survive this state",
-                    settled, chains_.size(), faults, faults == 1 ? "" : "s"));
+                    settled, chains_.size(),
+                    chainSolo() ? " each on its own chip" : "", faults,
+                    faults == 1 ? "" : "s"));
     return settled;
   }
 
