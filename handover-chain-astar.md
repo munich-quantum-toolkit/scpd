@@ -46,33 +46,50 @@ costs everything and the search takes another combination.
 
 ## Where it stands
 
-Defaults, one run per chip, `stop_after = "couplers"`, `repair_trials = 0`,
-`--stage final`.
+Defaults throughout, no environment variable set, one run per chip,
+`stop_after = "couplers"`, `repair_trials = 0`, `--stage final`. One sweep,
+2026-09-30.
 
-**Only the 69q row is current.** The seven above it were measured before the
-shortfall rule, the solo fence and the kept ways, and were deliberately not
-re-run (user, 2026-09-29). Where a later section gives a figure for one of
-them, that figure is the newer one.
+| chip | not drawn | angle | insertion | `stateFaults` | | trellis: not drawn / angle / insertion |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 4q | **0** | 8 | 0.3 s | 0 | | 0 / 8 / 0.3 s |
+| 9q | **0** | 20 | 0.6 s | 0 | | 0 / 20 / 0.6 s |
+| 17q | **0** | 47 | **2.0 s** | 0 | | 0 / 51 / 11.2 s |
+| 21q | **0** | 48 | 3.1 s | 0 | | 0 / 48 / 2.9 s |
+| 33q | **0** | 76 | **7.3 s** | 0 | | 0 / 76 / 10.6 s |
+| 45q | **0** | 105 | **23.6 s** | 0 | | 0 / 105 / 36.0 s |
+| 57q | **0** | 132 | **32.1 s** | **0** | | **2** / 133 / 356.8 s |
+| 69q | **0** | 166 | **70.9 s** | **22** | | **11** / 162 / 1023.3 s |
 
-| chip | not drawn | angle | insertion | | measured under |
-| --- | ---: | ---: | ---: | --- | --- |
-| 4q | 0 | 8 | 0.3 s | | before the last three changes |
-| 9q | 0 | 20 | 0.6 s | | before the last three changes |
-| 17q | 0 | 47 | 2.1 s | | before the last three changes |
-| 21q | 0 | 48 | 2.9 s | | before the last three changes |
-| 33q | 0 | 76 | 7.2 s | | before the last three changes |
-| 45q | 0 | 105 | 28.1 s | | before the last three changes |
-| 57q | 0 | 130 | 200.7 s | | before the last three changes |
-| **69q** | **0** | **164** | **80.3 s** | | **current** |
+**No chip loses a feedline edge**, where the trellis lost two on 57q and
+eleven on 69q and spent 357 s and 1023 s doing it. Wall and CPU time agree
+throughout — 69q 380.6 s against 376.6 s user — so no row is an artefact of
+the machine being busy.
 
-For the trellis these chips read 0/8, 0/20, 0/51, 0/48, 0/76, 0/105,
-**2**/133 and **11**/162, the last two at 356.8 s and 1023.3 s. 57q drawing
-every edge and 69q losing two rather than eleven is what the prefix search
-bought; 69q losing none is what the kept ways bought, and *Keeping the ways*
-says what that number is worth.
+**69q's zero is not the other seven's zero.** Twenty-two of its eighty-one
+edges lie across others; they count as drawn only because
+`SCPD_CHAIN_KEEP_WAYS` skips the commit's test. **For 69q the figure is the
+22, not the 0.** On the other seven the zero is real: no fault means every way
+survives the chip it lies on. See *Keeping the ways*.
+
+**Three chains are not proved optimal, each for a different reason:**
+
+| chip | chain | what the log says |
+| --- | --- | --- |
+| 17q | 2 | `best found, an end pair laid the other way round` — the reorder, which costs the proof |
+| 57q | 4 | `best in the time given` — the budget; the price is 220000 either way |
+| 69q | 8 | `out of time before any run of options joined the chain` |
+
+**69q's chain 8 is what the ten-second budget costs.** In 10 s it finds no
+complete run at all (223 edge searches) and is left as it stands; at 180 s it
+came home at 240000 through the end-pair reorder. That is why 69q settles 11
+of 12 chains rather than 12, why its faults are 22 rather than 17, and why its
+angle is 166 rather than 164. `SCPD_CHAIN_ASTAR_SECONDS=30` is the obvious
+thing to try and has not been run.
 
 **Read the angle column only where the same edges were drawn.** An edge that
-was not drawn turns nowhere and `angleCostOf` scores it zero.
+was not drawn turns nowhere and `angleCostOf` scores it zero, so the trellis's
+162 on 69q is over 70 drawn edges and our 166 over 81.
 
 ## The search
 
@@ -192,19 +209,31 @@ changing no chip's outcome.
 
 ## The time limit
 
-**`SCPD_CHAIN_ASTAR_SECONDS` bounds one attempt at one chain, 180 s by
+**`SCPD_CHAIN_ASTAR_SECONDS` bounds one attempt at one chain, 10 s by
 default.** When it runs out the search hands back **the cheapest complete run
 of options it has reached** — every edge of that run drawn, and drawn against
 the run itself — and says so: `ChainSolution::outOfTime` is set and the log
 reads `best in the time given`. Zero is no limit.
 
-**180 s and not 60 s, and the two chips disagree about it.** At 60 s, 69q's
-chains 2 and 5 both ran over and, with no second pass to recover them, it lost
-**five** edges instead of two — for 5 s saved. Chain 5 settles in 79 s. 57q
-pays the other way: its chain 4 reaches the limit whatever it is, so 180 s
-costs it **115 s for nothing at all** — 200.7 s against 86.1 s, at the same 66
-edges and the same angle 130. Edges drawn is the criterion, so 180 s stands;
-`SCPD_CHAIN_ASTAR_SECONDS=60` is the setting for a quick 57q.
+**Ten seconds, because the answer arrives early and the rest is the proof.**
+57q's chain 4 is the chain that always reaches the limit, and it comes home at
+**220000 either way** — after 202 edge searches at 10 s, after 3209 at 180 s.
+The extra 170 s buy no better run of options, only the certainty that none
+exists, and 57q still draws all 66 edges at `stateFaults` 0.
+
+**A wall-clock budget makes the answer machine-dependent, and that is
+measured.** 17q run twice on pure defaults is identical chain for chain; 57q
+run twice agrees on everything reported — 0 undrawn, angle 132 — but its
+chain 4 does `56 prefixes / 209 steps` once and `55 / 204` the next time,
+landing on 220000 both times. Only a chain that **reaches** the limit can
+vary, and what varies first is the work, not the answer; but nothing
+guarantees the answer. A run that has to be reproducible to the digit needs
+`SCPD_CHAIN_ASTAR_SECONDS=0` and the time that costs.
+
+**What it costs is 69q's chain 8**, which finds no complete run in 10 s where
+180 s found one. That is the whole of the difference between the two settings
+on the eight chips, and it is the reason to keep
+`SCPD_CHAIN_ASTAR_SECONDS=30` in mind rather than treating 10 s as settled.
 
 **It is spent per attempt, not per chain.** A chain whose plain options do not
 reach opens its jogs and searches again, and the second attempt starts the
@@ -303,9 +332,16 @@ purpose.** Keep that paragraph in view before turning the switch back on.
 
 ## The shortfall rule
 
-**An option is refused when what is left of the resonator falls more than a
-tenth below `target_resonator_length`** — `SCPD_COUPLER_MAX_SHORTFALL` sets
-the share, `couplerMaxShortfall()` holds the default of 0.10.
+**An option is refused when what is left of the resonator falls more than
+three tenths below `target_resonator_length`** — `SCPD_COUPLER_MAX_SHORTFALL`
+sets the share, `couplerMaxShortfall()` holds the default of 0.30.
+
+**It was a tenth first, and a tenth was measurably too tight.** It caught what
+it was for, but it also took 15 % of every coupler's options away, left no
+coupler on 69q with all 48, cost **17q two feedline edges and 2.1 s → 26.8 s**,
+and took **4q's angle from 8 to 32**. At three tenths both are back where they
+were — 4q at 8, 17q at 0 undrawn and 2.0 s — and the case the rule exists for
+is still refused by a wide margin: 1455 units against a floor of 4200.
 
 `couplerPlace` offers every cell of the way ordered by how near it leaves the
 design figure, and each orientation walks that list until one place *fits*. A
@@ -353,8 +389,8 @@ share was not swept; 15 % and 20 % are one run each.
 | `Driver::chainSolo` | `SCPD_CHAIN_SOLO`: no other chain is fenced while one is searched |
 | `Driver::chainKeepWays` | `SCPD_CHAIN_KEEP_WAYS`: the commit takes the search's ways as they are |
 | `Driver::soloChain_` | the chain being searched on its own, never set around the commit |
-| `couplerMaxShortfall` | `SCPD_COUPLER_MAX_SHORTFALL`, a tenth |
-| `Driver::chainAStarBudget` | `SCPD_CHAIN_ASTAR_SECONDS`, 180 s, per attempt |
+| `couplerMaxShortfall` | `SCPD_COUPLER_MAX_SHORTFALL`, three tenths |
+| `Driver::chainAStarBudget` | `SCPD_CHAIN_ASTAR_SECONDS`, 10 s, per attempt |
 | `Driver::CHAIN_FRESH_EDGES` | how many edges at each end are never remembered |
 | `Driver::prefixFence_` | the ways the caller has already laid, which `corridorOfEdge` closes |
 | `Driver::openOptionsOf` | which options a waypoint offers, factored out of `solveChain` |
@@ -479,6 +515,10 @@ given`.
 
 ## Traps that cost time
 
+0. **A budget in seconds is not reproducible.** Two runs of 57q on pure
+   defaults agree on every reported figure and differ in chain 4's work —
+   56 prefixes against 55. The answer held; it need not. Any table that has
+   to be exact wants `SCPD_CHAIN_ASTAR_SECONDS=0`.
 1. **Measure sequentially, and watch what else the machine is doing.**
    `artifacts/` grows to 15 GB and every run rewrites the GDS and SVG in it,
    which sets Spotlight indexing it again. One 69q run came back at **5553 s

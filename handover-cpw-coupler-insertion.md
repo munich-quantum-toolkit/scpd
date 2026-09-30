@@ -1,9 +1,19 @@
 # The CPW coupler insertion
 
-Written for whoever takes the coupler insertion further. **The option is now
-settled exactly by default**, by a layered search over the whole chain
-(*How the option is chosen*) — the greedy is still there behind
-`SCPD_CHAIN_DP=0`. What made that affordable is the bound: it is now the
+> **This document is one step behind the code.** The option is no longer
+> settled by the layered trellis it describes: the default is now a
+> best-first search over **prefixes** of coupler options, with no rounds, and
+> the commit keeps the ways that search found. What changed and what it is
+> worth is in
+> [handover-chain-astar.md](handover-chain-astar.md); *Where it stands* and
+> *Where the pieces are* below carry the current figures, and everything else
+> here still describes the ground all of it stands on — the options, the
+> geometry, the bound, the corridor and the traps.
+
+Written for whoever takes the coupler insertion further. **The option is
+settled exactly**, by a search over the whole chain (*How the option is
+chosen*) — the trellis is behind `SCPD_CHAIN_ASTAR=0` and the greedy behind
+`SCPD_CHAIN_DP=0` from there. What made that affordable is the bound: it is now the
 *exact* least turning of a way with nothing in its path (*The analytic
 bound*), which prices a fraction of the pairs the old one did and made the
 layered search **faster than the greedy on seven of the eight chips**, 69q
@@ -31,10 +41,31 @@ The two figures the insertion is judged by are **the feedline edges it fails
 to draw** and **the feedline angle cost**. Fails of the whole stage are not a
 criterion for this phase (user, 2026-09-26).
 
-**The exact layered search is the default** since the analytic bound made it
-cheaper than the greedy; the greedy is `SCPD_CHAIN_DP=0`. **Both halves of
-this table come from one sweep**, every chip run on its own, so the columns
-are comparable to each other and not only to history.
+**The prefix search is the default.** The table below is the *trellis* sweep,
+kept because it is one sweep of two searches over all eight chips and the
+prefix search is measured against it. What the prefix search makes of the same
+chips, one sweep on pure defaults with no environment variable set,
+2026-09-30:
+
+| chip | not drawn | angle | insertion | `stateFaults` |
+| --- | ---: | ---: | ---: | ---: |
+| 4q | **0** | 8 | 0.3 s | 0 |
+| 9q | **0** | 20 | 0.6 s | 0 |
+| 17q | **0** | 47 | 2.0 s | 0 |
+| 21q | **0** | 48 | 3.1 s | 0 |
+| 33q | **0** | 76 | 7.3 s | 0 |
+| 45q | **0** | 105 | 23.6 s | 0 |
+| 57q | **0** | 132 | 32.1 s | **0** |
+| 69q | **0** | 166 | 70.9 s | **22** |
+
+**No chip loses a feedline edge.** But **69q's zero is not the other seven's
+zero**: twenty-two of its eighty-one edges lie across others and count as
+drawn only because the commit no longer tests a kept way. For 69q read the 22.
+The rest is in [handover-chain-astar.md](handover-chain-astar.md).
+
+**Both halves of the table below come from one sweep** of the trellis and the
+greedy, every chip run on its own, so its columns are comparable to each other
+and not only to history.
 
 | chip | chains | edges | not drawn | angle | insertion | | greedy: not drawn | angle | insertion |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |
@@ -96,11 +127,18 @@ edges at angle 148 instead of six at 128, 69q eight at 184 instead of six at
 2. **The chains**, from `assignment.chains`: the start launcher, the couplers
    in ring order, the end launcher. A chain of fewer than two waypoints is
    dropped.
-3. **The search** over the options — the greedy, or the exact layered search.
-   This is the whole of what follows.
+3. **The search** over the options — the prefix search by default, the
+   trellis at `SCPD_CHAIN_ASTAR=0`, the greedy at `SCPD_CHAIN_DP=0` from
+   there. The trellis and the greedy are what follows; the prefix search is
+   in [handover-chain-astar.md](handover-chain-astar.md).
 4. **The commit** (`:2044`–`:2167`). `applyOption` puts every chosen option in
    place, one wire per chain edge is appended, and each edge takes the way the
-   search found for it **only if that way still passes `edgeWayStillOpen`** —
+   search found for it. **Whether that way is tested first is now a switch**:
+   `SCPD_CHAIN_KEEP_WAYS` is on by default and takes it as it is, so the
+   paragraph below describes what `=0` restores. The endpoints are checked
+   either way. What the test is for is trap 2, and giving it up is what makes
+   the undrawn count stop reporting the truth — the way it took it
+   **only if that way still passes `edgeWayStillOpen`** —
    rebuilt against the corridor as it stands now — otherwise it is routed
    again. Each edge is `place`d as it is committed, so it fences the edges
    after it.
@@ -150,7 +188,11 @@ coupler the cheapest of its options.
 It is a coordinate descent: a worsening at coupler *i* that would unlock a
 larger gain at *i+1* is never taken, and the loop order decides every tie.
 
-### The exact search — **the default**
+### The layered trellis — `SCPD_CHAIN_ASTAR=0`
+
+**This was the default and is now the way back.** What replaced it drops the
+one assumption it rests on; see [handover-chain-astar.md](handover-chain-astar.md).
+Everything in this section still holds for the trellis path.
 
 `optimizeChainsExact` (`:4208`), **on by default since the analytic bound
 made it cheaper than the greedy on seven of the eight chips**;
@@ -466,6 +508,37 @@ that has shown it needs them, and they differ in how they decide — see *How
 the option is chosen*. Opening them everywhere was measured and is worse; the
 gate is the whole value.
 
+### Two refusals the option space did not have
+
+**What is left of the resonator may not run through the pad.** In
+`Driver::makeOption`, right after the pad cell set is built. Nothing refused
+it before: `free()` prices another wire's copper but exempts the resonator's
+own (`owner != resonator.key`), and the self-intersection test asks whether
+the path meets *itself*, not whether it meets the body. It rarely rejects an
+option outright — `couplerPlace` walks on to the next place, so the coupler
+moves rather than disappearing. Measured against the trellis: six chips
+unchanged, **57q 5 undrawn → 2 and 2641 s → 357 s**, 69q 10 → 11 undrawn and
+366 s → 1023 s.
+
+**And it may not fall more than three tenths below the target length.**
+`couplerMaxShortfall()`, `SCPD_COUPLER_MAX_SHORTFALL`. The walk through the
+places carries **away from the figure** when a place is refused, and only an
+overshoot was ever caught; on 69q that left a resonator of **1455 units
+against 6000**, which the meander cannot recover — it lengthens a way, but not
+by four times. The figure held against is the **spliced** length — lead, what
+is left, and the run to the port — because the lead is absolute (~290 layout
+units) and is a twentieth of a 6000-unit target but an eighth of a 2500-unit
+one.
+
+It works and it is not free. **At a tenth**, measured: 69q's resonators go
+from spanning 1231–6131 units to 6008–6128 and from three below 5400 to none,
+but the options over all 69 couplers fall from 3196 to **2726**, no coupler
+keeps all 48, **17q loses two edges and goes from 2.1 s to 26.8 s**, and
+**4q's angle goes from 8 to 32**. That cost is why the default is **three
+tenths** (user, 2026-09-30). At three tenths 4q is back at 8 and 17q back at
+zero undrawn and 2.0 s, and the case the rule exists for is still refused by a
+wide margin: 1455 units against a floor of 4200.
+
 **A second dogleg turns the lead a second time**, so the heading it finally
 meets the path on is not the coupler's orientation. The invariant therefore
 checks the **first** arc: the orientation is what the component points the
@@ -611,7 +684,8 @@ uv pip install --python .venv/bin/python --no-build-isolation --no-deps \
     --reinstall-package mqt-scpd -e .
 cp benchmarks/17q/config.toml artifacts/17q/config.toml     # ← not optional
 .venv/bin/mqt-scpd plan -c benchmarks/17q/config.toml -o artifacts/17q --stage final -v 1
-# the exact layered search is the default; this is the way back to the greedy
+# the prefix search is the default; this is the way back to the trellis, and
+# `SCPD_CHAIN_DP=0` from there to the greedy
 SCPD_CHAIN_DP=0 .venv/bin/mqt-scpd plan -c benchmarks/17q/config.toml \
     -o artifacts/17q --stage final -v 1
 # the bound the layered search leans on: 0 turnBound, 1 analytic (default),
@@ -619,6 +693,14 @@ SCPD_CHAIN_DP=0 .venv/bin/mqt-scpd plan -c benchmarks/17q/config.toml \
 SCPD_CHAIN_BOUND=2 .venv/bin/mqt-scpd plan \
     -c benchmarks/9q/config.toml -o artifacts/9q-dp --stage final -v 1
 ```
+
+**The run says which switches are in force.** The insertion prints one line
+before it searches — `[Coupler Insertion] settings: search prefix A* (default),
+each chain on its own chip yes (default), …` — naming each value and whether
+it came from the environment or the default. Read it before believing any
+sweep: trap 5 below is that a switch which does not take costs an hour, and an
+**empty** assignment (`SCPD_CHAIN_SOLO=`) used to count as zero and turn a
+default off in silence.
 
 **`plan --stage final` reads the config *and the earlier stages' artifacts*
 from the run directory.** This cost an hour and a wrong diagnosis said out
@@ -659,14 +741,19 @@ is what says a row is clean.
 | `Driver::nearestLauncherHeading` | what the offset counts from |
 | `Driver::optimizeChain` | **the greedy**: five passes, every open option routed |
 | `Driver::localCost` | the greedy's two edges, memoised |
-| `Driver::optimizeChainsExact` | **the exact search**: the rounds, the frozen fence, the round it keeps |
+| `Driver::optimizeChainsPrefix` | **the default**: one pass over the chains, no rounds |
+| `Driver::solveChainAStar` | one chain by the prefix search — see the other handover |
+| `Driver::optimizeChainsExact` | **the trellis**: the rounds, the frozen fence, the round it keeps |
 | `Driver::solveChain` | one chain, one round: the trellis built and solved |
 | `Driver::edgeCost` | one edge priced for a named pair of options, through the memo |
 | `Driver::turnBound` | the original admissible bound, `SCPD_CHAIN_BOUND=0` |
 | `Driver::boundTurns` | which bound the trellis leans on |
 | `routing::AnalyticDubins` | **the analytic bound**: the least turning with nothing in the way, the default |
 | `Driver::audit` | `SCPD_CHAIN_BOUND=2`: both bounds against the real price of a step |
-| `Driver::stateFaults` | how many edges of a state would not survive its own fence |
+| `Driver::stateFaults` | how many edges of a state would not survive its own fence — **the figure to read**, and about twice what the commit has to repair |
+| `Driver::chainAStar`, `chainSolo`, `chainKeepWays` | the three switches of the prefix path, all on by default |
+| `couplerMaxShortfall` | how far below the target an option may leave the resonator, three tenths |
+| `envSet`, `envFlag`, `envWhole`, `envReal` | every switch read through one reader; an **empty** value counts as unset |
 | `Driver::forgetEdgesNear`, `Driver::edgeBox` | what a round has to forget, and what it may keep |
 | `routing::solveTrellis` | the search itself, router-free and unit-tested |
 | `Driver::corridorOfEdge` | the box, the launcher stubs, the feedline fence, the own-resonator rule |
@@ -676,15 +763,25 @@ is what says a row is clean.
 
 ## What is open
 
-1. **The exact search does not converge on 17q.** It cycles between a state
+**The first two below are closed by the prefix search, and are kept because
+they say what it was for.** Items 1 and 2 describe the trellis; on the prefix
+path 17q settles in one pass with every edge drawn, and 57q draws all 66. What
+is open *now* is at the head of
+[handover-chain-astar.md](handover-chain-astar.md)'s own list: seventeen of
+69q's edges lie across others because the commit no longer tests them, two of
+them because a feedline covers a coupler's own port, and the repair that would
+move such a coupler (`repair_trials`) has never been run against this search.
+
+1. **(Closed on the prefix path.) The exact search does not converge on
+   17q.** It cycles between a state
    costing 660000 with three edges that would not survive it and one costing
    700000 with one. So on 17q the real choice is **angle 66 with two feedline
    edges lost, or angle 70 with all twenty**, and the gate picks 70. Nothing
    yet closes that gap; the cycle is inside chain 0, its own six edges fencing
    each other from round to round, and Gauss-Seidel against Jacobi makes no
    difference to it at all.
-2. **57q and 69q still lose edges, and the second order does not reach
-   them.** 57q draws 61 of 66 and 69q 71 of 81; the greedy draws 60 and 75.
+2. **(Closed on the prefix path.) 57q and 69q still lose edges, and the second
+   order does not reach them.** 57q draws 61 of 66 and 69q 71 of 81; the greedy draws 60 and 75.
    The second order closes the conflict between the two edges that **share a
    coupler**, and on 17q that was the whole of it (6 undrawn to 0). What is
    left on these two is blocked by edges that are not neighbours — measured:
@@ -695,9 +792,9 @@ is what says a row is clean.
    the edge that took the room, lay the one that lost, re-route the first.
    The commit is the one place the fence is real, and it is where the greedy's
    old two-order idea would actually have worked.
-3. **The chains of a round are independent and are not run in parallel.**
-   Freezing the fence is what made them independent — this is the largest
-   runtime lever left, 4× on 17q and 12× on 69q. It needs one router context
+3. **The chains are independent and are not run in parallel.** With the rounds
+   gone on the prefix path this is the largest runtime lever left, 4× on 17q
+   and 12× on 69q. It needs one router context
    per thread: `router_`, `corridor_`, `box_`, `proximity_`, `stencils_` and
    `frame_` are all shared `Driver` state. The prototype has exactly this as
    `CouplerRouterCtx`.
@@ -788,6 +885,25 @@ choosing the least real round on every run.
 all three. Three call sites were built on the belief that they did something;
 all three were identical re-searches, and one of them made a counter that could
 never increment print 0 into every log for weeks.
+
+**11. An empty environment value is not an unset one.** `SCPD_CHAIN_SOLO=`
+left in a shell or a script is a valid pointer to an empty string, and
+`std::atoi("")` is zero — so a switch whose default is *on* silently went off
+and nothing said so. All nine switches now read through `envSet`, which counts
+an empty value as unset, and the insertion prints a `settings:` line naming
+each value and where it came from. This is trap 10 again, one level down: the
+parameter was not ignored, it was obeyed after being misread.
+
+**12. `stateFaults` is not the commit's number.** It said 17 on 69q where the
+commit kept 72 edges, routed 6 again and lost 3 — nine touched. It judges
+every edge against every other edge's *searched* way, while the commit lays
+them in order, so an edge routed again changes the ground for the ones after
+it. Read it as an upper bound on what the commit has to repair.
+
+**13. A count of what was drawn stops being a measure the moment the drawing
+stops being tested.** With `SCPD_CHAIN_KEEP_WAYS` on, 69q draws 81 of 81 and
+seventeen of them cross other edges. The undrawn count went to zero because
+the test went away, not because the geometry improved.
 
 ## Measured and rejected
 

@@ -125,8 +125,16 @@ constexpr std::uint8_t BEND_RADIUS = 5;
 constexpr double COUPLER_BIAS = 1.0;
 
 /// How far below `target_resonator_length` a coupler may leave the
-/// resonator, as a share of that figure. A tenth by default, so a chip
-/// asking for 6000 accepts 5400 and refuses 5399.
+/// resonator, as a share of that figure. Three tenths by default, so a chip
+/// asking for 6000 accepts 4200 and refuses 4199.
+///
+/// **A tenth was measured and was too tight.** It caught what it was for —
+/// 69q's 1455-unit resonator — but it also took 15 % of every coupler's
+/// options away, left no coupler on 69q with all 48, and cost 17q two
+/// feedline edges and ten times its insertion time (2.1 s against 26.8 s).
+/// Three tenths refuses the case that matters by a wide margin, 1455 against
+/// a floor of 4200, and leaves far more of the option space standing
+/// (user, 2026-09-30).
 ///
 /// **Why an option needs refusing for this at all.** `couplerPlace` offers
 /// every cell of the way, ordered by how near it leaves the design figure,
@@ -141,7 +149,7 @@ constexpr double COUPLER_BIAS = 1.0;
 /// `SCPD_COUPLER_MAX_SHORTFALL` sets it, as a share and not a percentage.
 [[nodiscard]] inline double couplerMaxShortfall() {
   static const double share = [] {
-    return std::clamp(envReal("SCPD_COUPLER_MAX_SHORTFALL", 0.10), 0.0, 1.0);
+    return std::clamp(envReal("SCPD_COUPLER_MAX_SHORTFALL", 0.30), 0.0, 1.0);
   }();
   return share;
 }
@@ -3595,13 +3603,19 @@ public:
   /// do not reach opens its jogs and searches again, and the second attempt
   /// starts the clock over, so such a chain can spend twice this.
   ///
-  /// **180 s and not 60 s, because 60 s cost 69q three edges.** At 60 s its
-  /// chains 2 and 5 both ran over, and with the rounds gone there is no
-  /// second attempt to recover them: 5 edges undrawn against 2, for 5 s
-  /// saved. Chain 5 settles in 79 s.
+  /// **Ten seconds, because the answer arrives early and the rest is the
+  /// proof.** 57q's chain 4 is the only chain on any chip that has ever
+  /// reached the limit. It comes home at **220000 either way** — after 202
+  /// edge searches at 10 s, after 3209 at 180 s — so the extra 170 s bought
+  /// no better run of options, only the certainty that none exists. 57q
+  /// still draws all 66 edges at `stateFaults` 0 (user, 2026-09-30).
+  ///
+  /// The cost is the word in the log: a chain that reaches the limit reports
+  /// `best in the time given` and `ChainSolution::optimal` is false, so the
+  /// search no longer claims an optimum it has not proved.
   [[nodiscard]] static std::chrono::nanoseconds chainAStarBudget() {
     static const auto budget = [] {
-      const double seconds = envReal("SCPD_CHAIN_ASTAR_SECONDS", 180.0);
+      const double seconds = envReal("SCPD_CHAIN_ASTAR_SECONDS", 10.0);
       return std::chrono::nanoseconds(
           static_cast<std::int64_t>(std::max(0.0, seconds) * 1e9));
     }();
