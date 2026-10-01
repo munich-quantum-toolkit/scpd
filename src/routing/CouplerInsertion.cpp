@@ -290,9 +290,12 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   };
 
   // The best achievable mismatch, which scales the undershoot preference.
-  std::ranges::sort(candidates, [](const Candidate& a, const Candidate& b) {
-    return a.mismatch < b.mismatch;
-  });
+  // The sorts are stable, so among candidates of equal mismatch the one
+  // earliest along the path wins, whatever the standard library.
+  std::ranges::stable_sort(candidates,
+                           [](const Candidate& a, const Candidate& b) {
+                             return a.mismatch < b.mismatch;
+                           });
   double best = 0.0;
   {
     Path discard;
@@ -320,9 +323,10 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     cand.mismatch =
         cand.signedDiff <= 0.0 ? -cand.signedDiff : cand.signedDiff + best;
   }
-  std::ranges::sort(candidates, [](const Candidate& a, const Candidate& b) {
-    return a.mismatch < b.mismatch;
-  });
+  std::ranges::stable_sort(candidates,
+                           [](const Candidate& a, const Candidate& b) {
+                             return a.mismatch < b.mismatch;
+                           });
 
   bool found = false;
   bool foundFallback = false;

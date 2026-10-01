@@ -20,7 +20,6 @@
 #include <numbers>
 #include <optional>
 #include <stdexcept>
-#include <vector>
 
 namespace {
 

@@ -10,7 +10,6 @@
 
 #include "mqt-scpd/routing/PathGeometry.hpp"
 
-#include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"

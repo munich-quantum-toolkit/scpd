@@ -25,7 +25,6 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
