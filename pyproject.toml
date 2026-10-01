@@ -289,6 +289,9 @@ extend-ignore-re = [
   "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on" # ignore block
 ]
 
+[tool.typos.default.extend-identifiers]
+countr_zero = "countr_zero"
+
 [tool.typos.default.extend-words]
 wille = "wille"
 anc = "anc"

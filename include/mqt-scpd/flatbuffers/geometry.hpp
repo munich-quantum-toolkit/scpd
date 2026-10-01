@@ -20,6 +20,12 @@ namespace geometry {
 
 struct Point;
 
+struct GCoord;
+
+struct DCoord;
+
+struct RCoord;
+
 struct Polygon;
 struct PolygonBuilder;
 struct PolygonT;
@@ -42,6 +48,12 @@ struct PathT;
 
 bool operator==(const Point &lhs, const Point &rhs);
 bool operator!=(const Point &lhs, const Point &rhs);
+bool operator==(const GCoord &lhs, const GCoord &rhs);
+bool operator!=(const GCoord &lhs, const GCoord &rhs);
+bool operator==(const DCoord &lhs, const DCoord &rhs);
+bool operator!=(const DCoord &lhs, const DCoord &rhs);
+bool operator==(const RCoord &lhs, const RCoord &rhs);
+bool operator!=(const RCoord &lhs, const RCoord &rhs);
 bool operator==(const PolygonT &lhs, const PolygonT &rhs);
 bool operator!=(const PolygonT &lhs, const PolygonT &rhs);
 bool operator==(const LineT &lhs, const LineT &rhs);
@@ -54,6 +66,12 @@ bool operator==(const PathT &lhs, const PathT &rhs);
 bool operator!=(const PathT &lhs, const PathT &rhs);
 
 inline const ::flatbuffers::TypeTable *PointTypeTable();
+
+inline const ::flatbuffers::TypeTable *GCoordTypeTable();
+
+inline const ::flatbuffers::TypeTable *DCoordTypeTable();
+
+inline const ::flatbuffers::TypeTable *RCoordTypeTable();
 
 inline const ::flatbuffers::TypeTable *PolygonTypeTable();
 
@@ -242,6 +260,155 @@ inline bool operator!=(const Point &lhs, const Point &rhs) {
 
 struct Point::Traits {
   using type = Point;
+};
+
+/// A cell of the coarse capacity grid.
+FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) GCoord FLATBUFFERS_FINAL_CLASS {
+ private:
+  uint32_t x_;
+  uint32_t y_;
+
+ public:
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return GCoordTypeTable();
+  }
+  GCoord()
+      : x_(0),
+        y_(0) {
+  }
+  GCoord(uint32_t _x, uint32_t _y)
+      : x_(::flatbuffers::EndianScalar(_x)),
+        y_(::flatbuffers::EndianScalar(_y)) {
+  }
+  uint32_t x() const {
+    return ::flatbuffers::EndianScalar(x_);
+  }
+  uint32_t y() const {
+    return ::flatbuffers::EndianScalar(y_);
+  }
+};
+FLATBUFFERS_STRUCT_END(GCoord, 8);
+
+inline bool operator==(const GCoord &lhs, const GCoord &rhs) {
+  return
+      (lhs.x() == rhs.x()) &&
+      (lhs.y() == rhs.y());
+}
+
+inline bool operator!=(const GCoord &lhs, const GCoord &rhs) {
+    return !(lhs == rhs);
+}
+
+
+struct GCoord::Traits {
+  using type = GCoord;
+};
+
+/// A pixel of the detail grid.
+FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) DCoord FLATBUFFERS_FINAL_CLASS {
+ private:
+  uint32_t x_;
+  uint32_t y_;
+
+ public:
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return DCoordTypeTable();
+  }
+  DCoord()
+      : x_(0),
+        y_(0) {
+  }
+  DCoord(uint32_t _x, uint32_t _y)
+      : x_(::flatbuffers::EndianScalar(_x)),
+        y_(::flatbuffers::EndianScalar(_y)) {
+  }
+  uint32_t x() const {
+    return ::flatbuffers::EndianScalar(x_);
+  }
+  uint32_t y() const {
+    return ::flatbuffers::EndianScalar(y_);
+  }
+};
+FLATBUFFERS_STRUCT_END(DCoord, 8);
+
+inline bool operator==(const DCoord &lhs, const DCoord &rhs) {
+  return
+      (lhs.x() == rhs.x()) &&
+      (lhs.y() == rhs.y());
+}
+
+inline bool operator!=(const DCoord &lhs, const DCoord &rhs) {
+    return !(lhs == rhs);
+}
+
+
+struct DCoord::Traits {
+  using type = DCoord;
+};
+
+/// A state of the router grid: a cell of the final grid and the eight-way
+/// heading 0..7 of the wire in it. A wire leaves a heading-0 state toward
+/// negative y, and the headings continue clockwise in eighth turns when y
+/// points up: heading 2 travels toward negative x, heading 4 toward positive
+/// y, heading 6 toward positive x.
+FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) RCoord FLATBUFFERS_FINAL_CLASS {
+ private:
+  uint32_t x_;
+  uint32_t y_;
+  uint8_t heading_;
+  int8_t padding0__;  int16_t padding1__;
+
+ public:
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return RCoordTypeTable();
+  }
+  RCoord()
+      : x_(0),
+        y_(0),
+        heading_(0),
+        padding0__(0),
+        padding1__(0) {
+    (void)padding0__;
+    (void)padding1__;
+  }
+  RCoord(uint32_t _x, uint32_t _y, uint8_t _heading)
+      : x_(::flatbuffers::EndianScalar(_x)),
+        y_(::flatbuffers::EndianScalar(_y)),
+        heading_(::flatbuffers::EndianScalar(_heading)),
+        padding0__(0),
+        padding1__(0) {
+    (void)padding0__;
+    (void)padding1__;
+  }
+  uint32_t x() const {
+    return ::flatbuffers::EndianScalar(x_);
+  }
+  uint32_t y() const {
+    return ::flatbuffers::EndianScalar(y_);
+  }
+  uint8_t heading() const {
+    return ::flatbuffers::EndianScalar(heading_);
+  }
+};
+FLATBUFFERS_STRUCT_END(RCoord, 12);
+
+inline bool operator==(const RCoord &lhs, const RCoord &rhs) {
+  return
+      (lhs.x() == rhs.x()) &&
+      (lhs.y() == rhs.y()) &&
+      (lhs.heading() == rhs.heading());
+}
+
+inline bool operator!=(const RCoord &lhs, const RCoord &rhs) {
+    return !(lhs == rhs);
+}
+
+
+struct RCoord::Traits {
+  using type = RCoord;
 };
 
 struct PolygonT : public ::flatbuffers::NativeTable {
@@ -1002,6 +1169,56 @@ inline const ::flatbuffers::TypeTable *PointTypeTable() {
   };
   static const ::flatbuffers::TypeTable tt = {
     ::flatbuffers::ST_STRUCT, 2, type_codes, nullptr, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *GCoordTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const int64_t values[] = { 0, 4, 8 };
+  static const char * const names[] = {
+    "x",
+    "y"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_STRUCT, 2, type_codes, nullptr, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DCoordTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const int64_t values[] = { 0, 4, 8 };
+  static const char * const names[] = {
+    "x",
+    "y"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_STRUCT, 2, type_codes, nullptr, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *RCoordTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 }
+  };
+  static const int64_t values[] = { 0, 4, 8, 12 };
+  static const char * const names[] = {
+    "x",
+    "y",
+    "heading"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_STRUCT, 3, type_codes, nullptr, nullptr, values, names
   };
   return &tt;
 }

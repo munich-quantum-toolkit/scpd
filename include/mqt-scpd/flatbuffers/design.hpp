@@ -624,7 +624,7 @@ struct DesignRulesT : public ::flatbuffers::NativeTable {
 };
 
 /// The design rules. Every rule is a length in layout units, held once and
-/// converted to cells only through cells_for.
+/// converted to cells only through cellsFor.
 struct DesignRules FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef DesignRulesT NativeTableType;
   typedef DesignRulesBuilder Builder;
