@@ -12,6 +12,17 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins
+  move primitives, with a distance-field heuristic, a bucket queue whose memory
+  is that of its largest search, one shared read-only obstacle mask and
+  per-thread scratch, an orthogonal search for feedline crossings, the path
+  geometry, the self-intersection check and the coupler dogleg ([#134])
+  ([**@FeldmeierMichael**])
+- ✨ Add `MQT::ScpdGrid`: grid metrics and the rule-to-cell conversion
+  `cellsFor`, bit grids, obstacle rasterization with the keepout, the exact
+  distance transform and the watershed, and add the grid coordinate types
+  `GCoord`, `DCoord` and `RCoord` to the geometry schema ([#134])
+  ([**@FeldmeierMichael**])
 - 📝 Document how to run MQT SCPD on the benchmark chips of
   [planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd),
   and check every chip against it in CI ([#111]) ([**@marcelwa**])
@@ -51,6 +62,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#134]: https://github.com/munich-quantum-toolkit/scpd/pull/134
 [#111]: https://github.com/munich-quantum-toolkit/scpd/pull/111
 [#98]: https://github.com/munich-quantum-toolkit/scpd/pull/98
 [#89]: https://github.com/munich-quantum-toolkit/scpd/pull/89

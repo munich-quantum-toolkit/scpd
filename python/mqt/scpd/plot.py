@@ -8,10 +8,9 @@
 
 """Per-stage SVG rendering.
 
-``plot`` reads the chip and, from phase 2 on, the artifacts of a run directory, and nothing else;
-the core writes no SVG. The layout view draws the obstacles and the ports colored
-by role, in layout units and with every vertex of the input, so that the picture shows what the
-GDS shows. A tolerance drops vertices for a smaller file when the detail is not needed; the 2 MB
+``plot`` reads the chip and nothing else; the core writes no SVG. The layout view draws the obstacles
+and the ports colored by role, in layout units and with every vertex of the input, so that the picture
+shows what the GDS shows. A tolerance drops vertices for a smaller file when the detail is not needed; the 2 MB
 budget of a snapshot applies to the raster views of the later stages.
 """
 
