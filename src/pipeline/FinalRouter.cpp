@@ -715,6 +715,86 @@ constexpr std::uint32_t CEILING = 4000;
   return on;
 }
 
+/// Whether the feedline pass holds a resonator to a second straight run
+/// after its lead — the rule's `min_straight_length` once more — before it
+/// may turn (user, 2026-10-03).
+///
+/// The lead is a quarter turn and `max(COUPLER_LEAD_STRAIGHT, straightStart)`
+/// cells of straight, 14 on every chip here, and the search starts at its
+/// tip. The prototype starts its resonator at the end of the turn with
+/// `start_straight_length = 14` (`FinalGrid.cpp:10658`): the 14 are its stub
+/// **and** its lead, one straight run, and nothing is forced beyond them.
+/// `applyOption` used to set `startStub` to the rule's run on top of the
+/// lead, so the search began 14 + 11 = 25 cells after the turn.
+///
+/// Those eleven cells belong to no way until the resonator has been drawn
+/// once: the way the insertion splices turns off five cells after the tip,
+/// and a neighbour fenced by that way may settle inside the clearance of
+/// where the search has to begin. On 45q wire 3 did exactly that in round 0
+/// — 38.9 cells from 4's stub end before, 17.0 after, 21.2 from 4's way all
+/// the while — and wire 4 never found a way again, in any round, at any
+/// relaxation; 130 did the same to 131. See `fenceFixed`, which closes the
+/// other half of this.
+///
+/// Measured over the eight chips, one run at a time, 2026-10-03, open wires
+/// at the end of the stage (the five small chips have none under any
+/// setting):
+///
+/// | | 45q | 57q | 69q | all |
+/// |---|---|---|---|---|
+/// | the second run, ways fenced (before) | 12 | 19 | 20 | 51 |
+/// | no second run | 8 | 11 | 15 | 34 |
+/// | the second run, fixed places fenced | 8 | 3 | 19 | 30 |
+/// | **no second run, fixed places fenced** | **6** | **3** | **9** | **18** |
+///
+/// The two halves need each other: without the run the search starts where
+/// the neighbours were fenced, but a wire let go of still gives its head
+/// away; with the head fenced the run is still forced, and 4 on 45q finds a
+/// way in round 0 only to lose it to 5's relaxation. Together they close
+/// every resonator that was open at its head on 45q and 57q; what is left
+/// is pairs of plain wires trading one lane (45q 65/66, 133/136; 57q
+/// 9/10/11) and, on 69q, resonator 9, whose lead the insertion laid across
+/// wire 10 with no room left for 10 to go. Fails on the three large chips
+/// went 24/46/49 to 18/29/45; 17q gained two short resonators (7 to 9),
+/// which the meander is for.
+///
+/// Off, which is the prototype's figure. `=1` restores the second run.
+[[nodiscard]] inline bool resonatorStub() {
+  static const bool on = envFlag("SCPD_RESONATOR_STUB", false);
+  return on;
+}
+
+/// Whether a wire's fixed places — a resonator's lead, the straight run out
+/// of a source, the run into a target — keep their clearance in every
+/// fence, whether the wire is fenced or let go of (user, 2026-10-03).
+///
+/// `fence` closes the clearance around a wire's **way**. The fixed places
+/// are not always in it: a resonator the insertion has just spliced holds
+/// its lead and the old tail, and the straight run its next search must
+/// make lies in neither. A neighbour drawn against the way alone may then
+/// settle inside that run's clearance, and the resonator's next search is
+/// over before it starts — its first cell is closed (see `deadOnArrival`).
+///
+/// And a wire let go of in the relaxation is fenced by nothing at all, so a
+/// relaxed neighbour may be drawn straight through its head: 132 on 45q came
+/// within 6 cells of 131's resonator port that way, 13 cells having been the
+/// figure the insertion left. The prototype keeps exactly these cells hard
+/// for a ripped resonator — `resonator_head_cells`, the arc and twenty cells
+/// beyond it (`FinalGrid.cpp:12100`) — and this is that rule, for every wire
+/// and for the runs at the launchers too.
+///
+/// Measured over the eight chips, 2026-10-03, with and without the second
+/// run of `resonatorStub` — the table is there. Alone it takes 57q from 19
+/// open wires to 3 and 45q's 131/132 apart, and leaves 69q at 19 against
+/// 20; with the second run gone as well the three chips read 6, 3 and 9
+/// against 12, 19 and 20.
+///
+/// On. `=0` fences the ways alone, as before.
+[[nodiscard]] inline bool fenceFixed() {
+  static const bool on = envFlag("SCPD_FENCE_FIXED", true);
+  return on;
+}
+
 [[nodiscard]] inline std::uint32_t terminalSlot() {
   static const auto cells = static_cast<std::uint32_t>(
       std::clamp(envWhole("SCPD_TERMINAL_SLOT", 20), 0, 200));
@@ -6569,10 +6649,13 @@ public:
     // coupler was held to a run half again as long as the rule asks — 155
     // units against 100 on 17q. `cellsOn` is the conversion the coupler's
     // own run and body already go through.
-    wire.startStub = couplerStubs()
-                         ? cellsOn(tuning_.straightStart,
-                                   chosen.arcEnd.heading)
-                         : tuning_.straightStart;
+    //
+    // Whether there is such a run at all is `resonatorStub`: the lead is
+    // already the rule's length, and the prototype forces nothing beyond it.
+    wire.startStub = !resonatorStub() ? 0U
+                     : couplerStubs() ? cellsOn(tuning_.straightStart,
+                                                chosen.arcEnd.heading)
+                                      : tuning_.straightStart;
     wire.fixed.clear();
     wire.couplerAtSource = index;
     wire.routed = false;
@@ -6696,7 +6779,18 @@ public:
       wires[member].routed = false;
     }
     rebuildCrossingRule(wires);
-      if (feedlinePass_ && verbosity_ >= 1) {
+    {
+      const auto origin = [](const char* name) {
+        return envSet(name) != nullptr ? "env" : "default";
+      };
+      say(std::format("feedline routing settings: a resonator runs the "
+                      "rule's straight again after its lead {} ({}), fixed "
+                      "places fenced {} ({})",
+                      resonatorStub() ? "yes" : "no",
+                      origin("SCPD_RESONATOR_STUB"),
+                      fenceFixed() ? "yes" : "no", origin("SCPD_FENCE_FIXED")));
+    }
+    if (feedlinePass_ && verbosity_ >= 1) {
       std::string order;
       for (const auto member : members) {
         const auto& wire = wires[member];
@@ -7334,11 +7428,17 @@ private:
         ++record->normal;
       }
     } else {
-      tell(std::format("wire {} · {} · normal: {}, relaxing{}{}", id, where,
+      // Asked before `whatBlocks`, which puts the corridor back without the
+      // second pair of neighbours and would misreport an open start.
+      const auto arrival = verbosity_ >= 1
+                               ? deadOnArrival(wire, wires, pass.straightStart)
+                               : std::string{};
+      tell(std::format("wire {} · {} · normal: {}, relaxing{}{}{}", id, where,
                        outcome(), picture(),
                        verbosity_ >= 1 && pass.feedlines
                            ? whatBlocks(wire, wires, members, before, after, pass)
-                           : std::string{}));
+                           : std::string{},
+                       arrival));
     }
 
     // Phase 2: the relaxation.
@@ -7391,6 +7491,7 @@ private:
         fence(wire, {&ripped, forward ? &before : &after});
         closed = {ripped.key, (forward ? before : after).key};
       }
+      fenceFixedPlaces(wire, wires, released);
       priceLane(wires, members, slot, forward, level);
       constrainByFeedlines(wire, wires, pass);
       frame_.kind = std::format("relax {}", level);
@@ -7402,10 +7503,13 @@ private:
       for (const auto key : closed) {
         fenced += (fenced.empty() ? "" : ", ") + wireId(wires[key]);
       }
-      tell(std::format("wire {} · relax {}: let go of {}, fence {} · {}{}", id,
+      tell(std::format("wire {} · relax {}: let go of {}, fence {} · {}{}{}", id,
                        level, wireId(ripped),
                        fenced.empty() ? std::string("nothing") : fenced,
-                       outcome(), picture()));
+                       outcome(), picture(),
+                       found.empty() && verbosity_ >= 1
+                           ? deadOnArrival(wire, wires, pass.straightStart)
+                           : std::string{}));
     }
 
     if (found.empty()) {
@@ -7516,6 +7620,106 @@ private:
     std::ranges::fill(proximity_, 0);
     constrainByFeedlines(wire, wires, pass);
     return " · in the way: " + blocked;
+  }
+
+  /// Whether a search was over before it began, for the log of one that
+  /// found nothing: the cell it starts on — the source moved along its
+  /// heading by the straight run — and the cells a first step can reach,
+  /// which of them are closed, and what lies within the clearance of each.
+  /// Empty when the start is open.
+  ///
+  /// A search that fails this way fails whatever else is loosened, and it is
+  /// what 45q's wire 4 did in every round: its start stood 17 cells from wire
+  /// 3, inside 3's clearance, with its own seed way open end to end and a
+  /// strip twenty cells wide beside it (2026-10-03). The `in the way` line
+  /// cannot see this — it never fences the second pair of neighbours — and
+  /// the pictures draw the closed cells white and unnamed.
+  [[nodiscard]] std::string deadOnArrival(const Wire& wire,
+                                          const std::vector<Wire>& wires,
+                                          const std::uint32_t straightStart) {
+    const auto stub = static_cast<std::int64_t>(startStubOf(wire, straightStart));
+    const auto& source = wire.objective.source;
+    const auto v = routing::headingVector(source.heading);
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    const std::int64_t sx = static_cast<std::int64_t>(source.x) + (v.dx * stub);
+    const std::int64_t sy = static_cast<std::int64_t>(source.y) + (v.dy * stub);
+    // The start, the cell straight ahead and the two beside that one: the
+    // least any first move sweeps.
+    const std::int64_t px = -v.dy;
+    const std::int64_t py = v.dx;
+    const std::array<std::pair<std::int64_t, std::int64_t>, 4> first{
+        {{sx, sy},
+         {sx + v.dx, sy + v.dy},
+         {sx + v.dx + px, sy + v.dy + py},
+         {sx + v.dx - px, sy + v.dy - py}}};
+    std::string closed;
+    std::uint32_t shut = 0;
+    for (const auto& [x, y] : first) {
+      if (x < 0 || y < 0 || x >= width || y >= height) {
+        ++shut;
+        closed += std::format("{}({},{}) off the grid", closed.empty() ? "" : "; ", x, y);
+        continue;
+      }
+      if (!corridor_.test(static_cast<std::size_t>((y * width) + x))) {
+        continue;
+      }
+      ++shut;
+      closed += std::format("{}({},{}) closed, within the clearance of {}",
+                            closed.empty() ? "" : "; ", x, y,
+                            whatIsNear(wire, wires, x, y));
+    }
+    if (shut == 0) {
+      return {};
+    }
+    return std::format(" · dead on arrival: the search starts at ({},{}) "
+                       "heading ({},{}) after a stub of {}, and {} of its "
+                       "first {} cells are closed: {}",
+                       sx, sy, v.dx, v.dy, stub, shut, first.size(), closed);
+  }
+
+  /// What lies within the clearance of a cell, by name: the artwork, a
+  /// coupler body, and every wire whose way or fixed places reach it. Not
+  /// every wire named is fenced in the search at hand; the line says what
+  /// is there, the fences say what is closed.
+  [[nodiscard]] std::string whatIsNear(const Wire& wire,
+                                       const std::vector<Wire>& wires,
+                                       const std::int64_t x,
+                                       const std::int64_t y) const {
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto cell = static_cast<std::size_t>((y * width) + x);
+    std::string names;
+    if (scene_.blocked.test(cell)) {
+      names = "artwork or keepout";
+    }
+    if (bodies_.test(cell)) {
+      names += std::string(names.empty() ? "" : ", ") + "a coupler body";
+    }
+    const auto limit = static_cast<double>(tuning_.clearance);
+    for (const auto& other : wires) {
+      if (other.key == wire.key) {
+        continue;
+      }
+      auto least = std::numeric_limits<double>::max();
+      const char* what = "";
+      for (const Path* const cells : {&other.way, &other.fixed}) {
+        for (const auto& point : *cells) {
+          const auto far = std::hypot(static_cast<double>(point.x) - static_cast<double>(x),
+                                      static_cast<double>(point.y) - static_cast<double>(y));
+          if (far < least) {
+            least = far;
+            what = cells == &other.way ? "way" : "fixed places";
+          }
+        }
+      }
+      if (least <= limit) {
+        names += std::format("{}{} ({} at {:.1f} cells)",
+                             names.empty() ? "" : ", ", wireId(other), what,
+                             least);
+      }
+    }
+    return names.empty() ? std::string("nothing named: the band, a port band or a body")
+                         : names;
   }
 
   /// Whether the way a wire has holds every rule the pass judges by: the
@@ -8213,25 +8417,56 @@ private:
   /// closed. The wire's own fixed places are opened again last, because it
   /// has to be able to stand on them.
   void fence(const Wire& wire, std::initializer_list<const Wire*> others) {
-    const auto& stencil = stencilFor(tuning_.clearance);
-    const auto width = static_cast<std::int64_t>(scene_.router.width);
     for (const Wire* const other : others) {
-      if (other == &wire || other->way.empty()) {
+      if (other == &wire) {
         continue;
       }
-      const bool meeting = couldMeet(wire, *other);
-      alongDisc(other->way, stencil,
-                [&](const std::int64_t x, const std::int64_t y) {
-                  const auto cell = static_cast<std::size_t>((y * width) + x);
-                  if (meeting && field_.owner(cell) != other->key &&
-                      meetAt(wire, *other, static_cast<double>(x),
-                             static_cast<double>(y))) {
-                    return;
-                  }
-                  corridor_.set(cell, true);
-                });
+      closeRoomOf(wire, *other, other->way);
+      // The fixed places with it, where they are not in the way: the lead
+      // and the straight run of a resonator the insertion has just spliced,
+      // which its next search has to make and no neighbour may take. See
+      // `fenceFixed`.
+      if (fenceFixed()) {
+        closeRoomOf(wire, *other, other->fixed);
+      }
     }
     openFixedPlaces(wire);
+  }
+
+  /// Keep the fixed places of the wires let go of closed while everything
+  /// else of them is crossable — the prototype's `ripped_heads`, for every
+  /// wire. See `fenceFixed`. Nothing happens with the switch off.
+  void fenceFixedPlaces(const Wire& wire,
+                        const std::vector<Wire>& wires,
+                        const std::vector<std::pair<std::uint32_t, bool>>&
+                            released) {
+    if (!fenceFixed()) {
+      return;
+    }
+    for (const auto& [key, routed] : released) {
+      closeRoomOf(wire, wires[key], wires[key].fixed);
+    }
+    openFixedPlaces(wire);
+  }
+
+  /// Close the clearance around some cells of another wire — its way or its
+  /// fixed places — except where the two wires meet.
+  void closeRoomOf(const Wire& wire, const Wire& other, const Path& cells) {
+    if (cells.empty()) {
+      return;
+    }
+    const auto& stencil = stencilFor(tuning_.clearance);
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const bool meeting = couldMeet(wire, other);
+    alongDisc(cells, stencil, [&](const std::int64_t x, const std::int64_t y) {
+      const auto cell = static_cast<std::size_t>((y * width) + x);
+      if (meeting && field_.owner(cell) != other.key &&
+          meetAt(wire, other, static_cast<double>(x),
+                 static_cast<double>(y))) {
+        return;
+      }
+      corridor_.set(cell, true);
+    });
   }
 
   /// A wire's own fixed places are always enterable. They are where the wire

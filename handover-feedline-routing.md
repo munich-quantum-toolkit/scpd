@@ -14,9 +14,11 @@ that settles a chain. This document is about what happens to the wires
 afterwards, and about the obstacles the insertion builds for its own edges.
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch: `phase-2-grid-router`. HEAD is **`435ca78` Coupler insertion done
-  now feedline routing**. Everything below is **uncommitted** on top of it —
-  the user commits per phase.
+- Branch: `phase-2-grid-router`. HEAD is **`8941853` Progress fixing feedline
+  routing fails**, which carries everything up to *The resonator's exit*
+  below. That section, its two switches, the `dead on arrival` line and the
+  `feedline routing settings` line are **uncommitted** on top of it — the
+  user commits per phase.
 - Benchmarks: `repair_trials = 0` and `stop_after = "feedlines"` in all eight
   `benchmarks/*/config.toml`, so a run ends where this document ends.
 - Run one chip with
@@ -26,34 +28,70 @@ afterwards, and about the obstacles the insertion builds for its own edges.
 
 ## Where it stands
 
-Measured over the eight benchmarks, no environment variable set:
+Two figures say how the pass stands, and they are not the same figure.
 
-| Chip | edges drawn | open | short | long | fails |
-|---|---|---|---|---|---|
-| 4q | 5 / 5 | 0 | 4 | 0 | 4 |
-| 9q | 10 / 10 | 0 | 1 | 1 | 2 |
-| 17q | 20 / 20 | 0 | 7 | 0 | 7 |
-| 21q | 26 / 26 | 0 | 0 | 3 | 3 |
-| 33q | 40 / 40 | 0 | 9 | 2 | 11 |
-| 45q | 52 / 52 | 12 | 8 | 6 | 24 |
-| 57q | 66 / 66 | 19 | 18 | 13 | 46 |
-| 69q | 81 / 81 | 20 | 25 | 11 | 49 |
-| **total** | **305 / 305** | **51** | **72** | **36** | **146** |
+- **Open in the last round** is the `open N` of the pass's final round line
+  — `feedline routing round 5 backward: tried 9, routed 5, unrouted 0,
+  open 4, short 0 | Fails: 4` — and the `N failed: …` line after the pass
+  names them: the wires whose own attempt found no way in that round and
+  were put back as they were. **This is the figure the stage is judged by**
+  (user, 2026-10-03). It counts one wire per conflict, the one that lost.
+- **Open at the end of the stage** is what `failsOf` counts with every wire
+  down: a wire whose way lies within the rule of another's. A conflict
+  counts both its partners, so this figure comes in pairs and runs about
+  twice the first. The `is open in the room of` lines say who, where, and
+  how far from each end.
 
-`fails` counts **wires**, the other columns count verdicts, and thirteen
-wires are open *and* off their length — which is why the columns sum to 159
-and the total says 146.
+Measured over the eight benchmarks, no environment variable set, one run at
+a time, 2026-10-03 — `SCPD_RESONATOR_STUB` off and `SCPD_FENCE_FIXED` on,
+the defaults since *The resonator's exit*. The five small chips have no open
+wire by either figure, under any setting tried, so the tables show the three
+that do:
 
-Two things to read off it. The open wires sit **only** on 45q, 57q and 69q;
-the five smaller chips have none, so the rip-up there is clean and what is
-left is length alone. And **108 of the 146 are length fails**, which is the
-meander: `SCPD_FEEDLINE_MEANDER` is off, so the pass routes and does not try
-to make a resonator its length. Three quarters of the fails are a switched-off
-step, not a routing problem. Nobody has measured what turning it back on
-catches.
+| open | 45q | 57q | 69q | all |
+|---|---|---|---|---|
+| **in the last round** | **2** | **1** | **4** | **7** |
+| at the end of the stage | 6 | 3 | 9 | 18 |
 
-The ground this is measured against is the state of 2026-10-02 midday: 63
-open, 169 fails, one edge with no way.
+In the last round: 45q 116 and 65, 57q 10, 69q 176, 19, 9 and f0 — a
+terminal edge, whose partner 9 is what the end count sees instead. At the
+end: 45q 65/66, 116/117, 133/136; 57q 9/10/11; 69q 9/10/f1, 19/20, 176/177,
+203/206.
+
+Every verdict per chip, the lengths included for completeness. They are the
+meander's business — `SCPD_FEEDLINE_MEANDER` is off, so the pass routes and
+does not try to make a resonator its length — and **not this phase's
+figure** (user, 2026-10-03):
+
+| Chip | edges drawn | open (last round) | open (end) | short | long | fails |
+|---|---|---|---|---|---|---|
+| 4q | 5 / 5 | 0 | 0 | 4 | 0 | 4 |
+| 9q | 10 / 10 | 0 | 0 | 1 | 0 | 1 |
+| 17q | 20 / 20 | 0 | 0 | 9 | 0 | 9 |
+| 21q | 26 / 26 | 0 | 0 | 1 | 1 | 2 |
+| 33q | 40 / 40 | 0 | 0 | 9 | 0 | 9 |
+| 45q | 52 / 52 | 2 | 6 | 9 | 4 | 18 |
+| 57q | 66 / 66 | 1 | 3 | 20 | 7 | 29 |
+| 69q | 81 / 81 | 4 | 9 | 29 | 8 | 45 |
+| **total** | **305 / 305** | **7** | **18** | **82** | **20** | **117** |
+
+`fails` counts **wires** with any verdict against them; a wire can be open
+*and* off its length.
+
+What this was measured against, the same build with the two switches the
+other way round, 2026-10-03 morning: in the last round 5 / 6 / 7 = **18**,
+at the end 12 / 19 / 20 = **51**, fails 24 / 46 / 49, and on the small chips
+4 / 2 / 7 / 3 / 11 fails with no open wire. Before that, 2026-10-02 midday:
+63 open at the end, 169 fails, one edge with no way.
+
+**What is left, by cause.** 45q 65/66, 133/136, 57q 9/10/11 and 69q 19/20,
+176/177, 203/206 are pairs of plain wires trading one lane: each is drawn
+through the other's released room and the other then finds nothing, round
+after round, forward and back. 45q 116/117 is a resonator's way into its
+qubit and the wire beside it sharing a pinch at the lattice. 69q's 9, 10 and
+f1 are one case: the insertion laid 9's lead one cell from 10's way, 10 has
+no room to leave once that lead is fenced, and 9 is *dead on arrival* in
+every round — the repair's case (`repair_trials`), not the sweep's.
 
 ## The three checks
 
@@ -178,13 +216,148 @@ terminal edges for everyone (`forbidden_paths_start_end`).
 neighbour is never skipped: it shares a coupler, and skipping it let the edge
 leaving a coupler be drawn through the edge arriving at it.
 
+## The resonator's exit
+
+Written 2026-10-03. This is why 45q's wire 4 and 131, 57q's 11, 86, 91,
+133, 149 and 152 and 69q's 9, 11, 99, 101, 106, 180 and 201 — fourteen of the
+seventeen resonators that were open — found no way in any round at any
+relaxation, with their own seed way open end to end in the corridor and a
+strip twenty cells wide beside it.
+
+**A resonator's search does not start at the tip of its lead.** The router
+moves the source along its heading by the start stub before it searches
+(`DubinsRouter::sanitize`; `straightStub` runs *forward* from the source,
+`assemble` puts it in front of the way afterwards), and `applyOption` gave a
+resonator a start stub of the rule's run — 11 cells — on top of the lead's
+14. So the search began 25 cells after the turn, where the prototype's
+begins after 14: its `params_resonators.start_straight_length = 14` is the
+lead and the stub in one (`FinalGrid.cpp:10658`).
+
+**Those eleven cells belonged to no way until the resonator had been drawn
+once**, and nothing kept the neighbours out of them. The way the insertion
+splices is the lead and the old tail, and the tail turns off five cells after
+the tip; `fence` closes the clearance around a wire's **way**, and `fixPlaces`
+charges the fixed places only while a wire is not down. A neighbour drawn
+against the seed in round 0 therefore settled inside the stub's clearance:
+45q's wire 3 stood 38.9 cells from 4's stub end at the start of the pass and
+17.0 after its own round-0 search, 21.2 from 4's way all the while; 130 did
+the same to 131 (38 to 18.0). From then on the first cell the search had to
+step onto was closed, in every round, at every level, because the wire that
+closed it stood on the other side from the wires the relaxation let go of —
+or two slots away, where the second pair is fenced in every search.
+
+**And a wire let go of gave its head away.** A released wire is fenced by
+nothing, so a relaxed neighbour could be drawn through its lead: 132 on 45q
+came within 6 cells of 131's resonator port, 13 having been the insertion's
+figure. The prototype keeps exactly these cells hard for a ripped resonator
+(`resonator_head_cells`, the arc and twenty cells beyond it,
+`FinalGrid.cpp:12100`).
+
+Two switches, each measured alone and together, open wires at the end of the
+stage, the five small chips at none throughout:
+
+| | 45q | 57q | 69q | all |
+|---|---|---|---|---|
+| the second run, ways fenced (before) | 12 | 19 | 20 | 51 |
+| `SCPD_RESONATOR_STUB=0` | 8 | 11 | 15 | 34 |
+| `SCPD_FENCE_FIXED=1` | 8 | 3 | 19 | 30 |
+| **both, the defaults now** | **6** | **3** | **9** | **18** |
+
+- **`SCPD_RESONATOR_STUB`**, off: a resonator drawn from its coupler has no
+  start stub beyond its lead; the lead is already `max(14, straightStart)`
+  cells and the search starts at its tip. `=1` restores the second run.
+- **`SCPD_FENCE_FIXED`**, on: `fence` closes the clearance around a wire's
+  fixed places — its lead, the run out of its source, the run into its target
+  — as well as its way, and the relaxation keeps the fixed places of the
+  wires it let go of closed (`fenceFixedPlaces`). `=0` fences the ways alone.
+
+The same four arms counted in the last round, the figure the stage is
+judged by:
+
+| | 45q | 57q | 69q | all |
+|---|---|---|---|---|
+| before | 5 | 6 | 7 | 18 |
+| `SCPD_RESONATOR_STUB=0` | 3 | 4 | 6 | 13 |
+| `SCPD_FENCE_FIXED=1` | 3 | 1 | 8 | 12 |
+| **both, the defaults now** | **2** | **1** | **4** | **7** |
+
+The two need each other. Without the stub the search starts where the
+neighbours were fenced, but a wire let go of still gives its head away: 131
+on 45q finds a way in round 0 and loses it to 132's relaxation. With the
+head fenced the run is still forced: 4 finds a way in round 0 and loses it to
+5's. Together they close every resonator that was open at its head on 45q and
+57q. Fails on the three large chips went 24/46/49 to 18/29/45; the one cost
+is two short resonators on 17q (7 to 9), which the meander is for.
+
+**The line that would have found this in minutes is now in the log.** Every
+search that finds nothing says, at `-v 1`, whether it was over before it
+began — `dead on arrival: the search starts at (809,3048) heading (0,-1)
+after a stub of 11, and 3 of its first 4 cells are closed: (809,3047)
+closed, within the clearance of 3 (way at 17.0 cells); …` — naming the
+start cell, the cells a first move must reach, and every wire whose way or
+fixed places lie within the clearance of each (`deadOnArrival`,
+`whatIsNear`). It fires in the outer routing too, where the Detail stage's
+seed of a neighbour can stand inside a launcher stub's clearance. The `in the
+way` line cannot see any of this: it never fences the second pair of
+neighbours, and the pictures draw a closed cell that no named fence explains
+as plain white. And the feedline pass now prints a `feedline routing
+settings:` line naming both switches and whether each came from the
+environment.
+
+### How this was found, so that it can be done again
+
+Nothing of this is visible in the fail counts, and the pictures do not show
+it either. What showed it, in order:
+
+1. **The `is open in the room of` lines** at the end of the stage. Every
+   open wire on 45q was one of a pair, and twelve of the seventeen open
+   resonators over the three chips had their conflict within 24 cells of
+   their source.
+2. **The round table** (`dashboard-feedline.html`, or the same table printed
+   from the log) — which wire failed in which round at which relaxation
+   level. A wire that fails in every round at every level is not short of
+   room, something stands that no relaxation lifts: 4 and 131 on 45q, 10 and
+   133 on 57q, 9, 101, 106 and 180 on 69q.
+3. **The seed state.** `06-final.fb` carries a snapshot per phase, and the
+   `couplers` phase is the ring as the feedline pass starts on it; the
+   `feedlines` phase is how it ends. Wire `k` of the ring is `wires[k]`,
+   edge `fk` is `feedlines[k]`, a cell is `(x, y, heading)` with headings
+   clockwise from south (0 south, 2 west, 4 north, 6 east). Distances between
+   ways, and from a wire's head to its neighbours, come straight from that.
+4. **The corridor itself.** A search picture draws every open cell as a
+   `co` rectangle, cell `(x, y)` at SVG `(x, 3519 − y)` on a 3520 grid, so the
+   corridor of any search can be read back cell by cell. For 4 and 131 the
+   whole seed way was open and the strip beside it 16 to 34 cells wide — and
+   the search still found nothing. That is what pointed at the start rather
+   than the room.
+5. **The router.** `sanitize` moves the source forward by the start stub,
+   so the search begins 11 cells past the lead's tip; those cells, and the
+   ones a first move has to reach, were inside wire 3's clearance — 17.0
+   cells, where 3's seed had stood 38.9 away and 3's new way kept 21.2 from
+   4's seed. The `dead on arrival` line now prints exactly this.
+
+What was ruled out on the way, so nobody pays for it again: the `in the
+way` line said `the neighbours`, which is true only because that line
+fences neither neighbour of the second pair; the forward relaxation released
+5, 6, 7, 8, 9 with 3 fenced, the backward one 3, 2, 1, 0, f0 with 5 fenced,
+and a search with both 3 and 5 open found a way. The prototype's band (800
+cells against our 798, and the whole chip from round 1 on), its four fences
+in phase 1 and at every relaxation level, and its prices (`proxy_fact = 1`,
+weaker than our halo and toll) are what ours are; the router has no budget,
+so `no way` is `no way`. None of those was it.
+
 ## The switches
 
 Everything is read from the environment, so a sweep costs a rebuild of
-nothing. Defaults, with the ones this session changed marked:
+nothing. The feedline pass prints a `feedline routing settings:` line with
+the two newest and where each value came from; the coupler insertion prints
+its own. Defaults, with the ones the sessions of 2 and 3 October changed
+marked:
 
 | switch | default | |
 |---|---|---|
+| `SCPD_RESONATOR_STUB` | **off** | new, 2026-10-03: no second straight run after the lead |
+| `SCPD_FENCE_FIXED` | **on** | new, 2026-10-03: the fixed places keep their clearance in every fence |
 | `SCPD_EDGE_LEAD_ONLY` | on | new |
 | `SCPD_EDGE_ALL_RESONATORS` | on | new |
 | `SCPD_EDGE_RESONATOR_CLEARANCE` | on | new |
@@ -214,8 +387,9 @@ switches.
 
 ## The traps
 
-Five real defects were found this session. Each was invisible in the numbers
-until something else was loosened, which is the reason to write them down.
+Five real defects were found on 2026-10-02 and three more on 2026-10-03.
+Each was invisible in the numbers until something else was loosened, which
+is the reason to write them down.
 
 **The proximity field was detached.** `routeEdge` attaches a field of zeroes
 to the router and never attached the real one back. The coupler insertion runs
@@ -268,6 +442,34 @@ wires; on the other seven it changes nothing, and a sweep over the lead
 monotone. It moves where a coupler may sit, so it reshuffles the chain rather
 than mending a mechanism. Keep the expectations low.
 
+**A search does not start at its source.** `DubinsRouter::sanitize` moves
+the source forward along its heading by the start stub, and `straightStub`
+runs *forward* from the source too — the stub is ahead of the source, not
+behind it. A resonator's search therefore began 25 cells after its turn, 14
+of lead and 11 of stub, where the prototype's begins after 14. Whoever reads
+"the source is open" has looked at the wrong cell; the `dead on arrival`
+line looks at the right one (2026-10-03).
+
+**A fence that covers the way covers less than the wire needs.** `fence`
+closes the clearance around `other->way`, and a wire's fixed places — lead,
+start stub, end stub — are in its way only once a search has drawn it. The
+way the insertion splices turns off five cells after the lead's tip, so the
+stub's eleven cells were in no way, charged in no field (`fixPlaces` charges
+the fixed places only while a wire is not down), and open to every
+neighbour. `SCPD_FENCE_FIXED` closes them (2026-10-03).
+
+**The `in the way` line fences neither neighbour of the second pair**, in
+any of its five attempts, and puts the corridor back without them too. On
+every resonator that was dead on arrival it said `the neighbours`, and on
+131 in round 0 it said all four at once — both verdicts were the same ±2
+fence it never built. Read it as "something in the corridor the line does
+not model", and read `dead on arrival` first. The pictures are no help
+there either: only `frame_.fence` wires get the grey band, the ±2 fences,
+the feedline fences and the coupler bodies are closed but drawn as plain
+white, and a fence wire is drawn in the feedlines' orange (`fw`). And the
+`IN ITS OWN STUB` flag of the `is open in the room of` line fires at the
+target end as well, where a ring wire has no stub (2026-10-03).
+
 ## Negative results
 
 Written down so nobody pays for them twice.
@@ -287,19 +489,39 @@ Written down so nobody pays for them twice.
 - **More search time** for a chain was never measured. On 69q chain 0 runs out
   of its ten seconds without one complete run of options, so
   `SCPD_CHAIN_ASTAR_SECONDS=30` is the obvious next thing to try.
+- **The fixed places fenced, the second stub kept** does nearly nothing on
+  69q — 19 open at the end against 20, 8 in the last round against 7 — and
+  takes 57q from 19 to 3. **The stub dropped, the ways fenced alone** opens a
+  new pair on 69q (175/176) and leaves resonator 9 on its seed, which touches
+  f1. Neither half stands alone; measured 2026-10-03, table in *The
+  resonator's exit*.
+- **The band, the number of fences and the prices were compared with the
+  prototype's, not swept**, when the fourteen resonators were traced: band
+  798 against its 800, the same ±1 and ±2 at every level, its `proxy_fact`
+  of 1 weaker than our halo and toll. They were not the cause. The
+  re-measurement of the prices the first bullet asks for is still owed.
 
 ## Where the pieces are
 
 - `src/pipeline/FinalRouter.cpp` — all of it. `corridorOfEdge` is the
   obstacle construction, `ensureForeignRoom` the grid, `checkFeedlineRoom`,
   `checkCouplerCrossings` and `checkResonatorCrossings` the three checks,
-  `waysCross` the crossing test, `applyOption` the lead trim.
+  `waysCross` the crossing test, `applyOption` the lead trim and the
+  resonator's stub (`resonatorStub`), `fence` and `closeRoomOf` the fence of
+  ways and fixed places (`fenceFixed`), `fenceFixedPlaces` the heads of the
+  wires let go of, `deadOnArrival` and `whatIsNear` the line that says a
+  search was over before it began.
 - `python/mqt/scpd/debugview.py` — wraps a debug SVG in an HTML page with
-  per-class layer toggles. **Untracked.**
+  per-class layer toggles. In the tree since `8941853`.
 - `python/mqt/scpd/dashboard.py` — parses a `-v 1 -d` log into a table of
   which wire failed in which round and relaxation, with the failures linking
-  to the viewers. **Untracked.** Written with `-d`, into
-  `<run>/debug/dashboard-{feedline,outer,inner}.html`.
+  to the viewers. In the tree since `8941853`. Written with `-d`, into
+  `<run>/debug/dashboard-{feedline,outer,inner}.html`; see *The dashboards*.
+- The log lines to read first, all at `-v 1`: `the ring the feedline pass
+  sweeps` (the order, resonators marked `(r)`, terminal edges `[F]`/`[L]`),
+  `feedline routing settings`, the `wire … · round … · normal` and
+  `relax N` lines with `dead on arrival` where it applies, the round lines,
+  the `N failed:` lines after the pass, and `is open in the room of`.
 - The prototype is
   `/Users/michaelfeldmeier/Documents/GitHub/FridgeCAD/include/fiction/layout/FinalGrid.cpp`.
   `run_final_routing_feedline_parallel` is the pass this one mirrors;
@@ -308,8 +530,10 @@ Written down so nobody pays for them twice.
 
 ## What is not done
 
-- **The meander is off**, and 108 of the 146 fails are lengths. Nobody has
-  measured what `SCPD_FEEDLINE_MEANDER=1` catches.
+- **The meander is off**, and 102 of the 117 fail verdicts are lengths.
+  Nobody has measured what `SCPD_FEEDLINE_MEANDER=1` catches. It is not this
+  phase's figure (user, 2026-10-03), but it should not be allowed to grow
+  unnoticed either: the two switches cost 17q two short resonators.
 - **The orthogonal crossing rule is off** (`SCPD_ORTHO_CROSSING`), set aside
   so the rip-up could be read without it. Measured over the eight chips it
   accounted for 35 of 207 fails when it was last on, and most of those were
@@ -323,6 +547,65 @@ Written down so nobody pays for them twice.
   length counts for nothing — a detour is free. Lowering that number changes
   nothing, because it is the only term; loosening it would mean adding a
   length term.
-- **`ctest` has not run to completion** since 2026-10-02 midday. It was killed
-  mid-run to free the machine for a sweep and never restarted. Run it before
-  committing.
+- **The eighteen that are left** are in *Where it stands*: lane-trading
+  pairs of plain wires, which the one-sided relaxation never frees together
+  (it releases along the sweep only, as the prototype's does — a two-sided
+  release would be ours, and has not been measured), and 69q's resonator 9,
+  whose lead the insertion laid one cell from wire 10. That one wants the
+  repair, which has never run against the prefix search.
+- **`whatBlocks` costs five searches** per failed phase 1 at `-v 1`, and its
+  `in the way` verdict leaves the second pair of neighbours out. The
+  `dead on arrival` line is the cheaper and sharper of the two.
+- **`ctest`**: see the note at the end of this document for what ran on
+  2026-10-03 and what did not.
+
+## The dashboards
+
+Generated for all eight chips on 2026-10-03 under the defaults above, each
+with `plan … --stage final -v 1 -d`:
+
+| Chip | pictures | run | size | dashboards |
+|---|---|---|---|---|
+| 4q | 98 | seconds | 16 MB | feedline, outer |
+| 9q | 250 | ½ min | 177 MB | feedline, outer |
+| 17q | 795 | 1 min | 597 MB | feedline, outer, inner |
+| 21q | 780 | 2 min | 1.2 GB | feedline, outer, inner |
+| 33q | 1203 | 3 min | 1.1 GB | feedline, outer, inner |
+| 45q | 1983 | 8 min | 4.4 GB | feedline, outer, inner |
+| 57q | 3373 | 7 min | 6.1 GB | feedline, outer, inner |
+| 69q | 4663 | 13 min | 9.5 GB | feedline, outer, inner |
+
+Some 23 GB in all. They live in `artifacts/<chip>/debug/`: `dashboard-feedline.html`,
+`dashboard-outer.html` and, where the inner circuit had anything to attempt,
+`dashboard-inner.html`; `run.log` is the log they were built from, and
+`viewers/` holds one layered page per **failed** search, which is what the
+red cells of a table link to. A green cell links to the picture itself.
+
+Two things to know before regenerating one. The CLI does **not** clear the
+directory, and the picture counter starts at 1 on every run, so a second
+`-d` run over the first leaves the pictures of the longer run lying beside
+the new ones; remove `artifacts/<chip>/debug` first. And the pictures are
+what makes a run slow — 45q takes 3 minutes without them and 8 with — so
+run the chips one at a time for the three whose chain search reaches its
+budget (57q, 69q), and in parallel only the small ones.
+
+## Tests, 2026-10-03
+
+`cmake --build --preset release` and
+`ctest --test-dir build/release -E 'EveryChip/(Final|SpacedFinal)' -j 6`:
+**372 of 376 passed** in 231 s. The two suites left out are the full Final
+stage on every chip at the schema's `repair_trials = 100`, hours of work
+(`handover-chain-astar.md`, trap 4); they were not run.
+
+The four that failed are not this session's:
+
+- `FinalRouter.StartsOnTheDetailWaysAndReportsItsFails` — the stage says
+  `Fails: 0` on the nine-qubit test chip and the design-rule check still
+  finds something. It fails the same way with `SCPD_RESONATOR_STUB=1
+  SCPD_FENCE_FIXED=0`, the behaviour before this session, and under each
+  switch alone. (It takes 30 s under the old stub and 15 s under the new one:
+  half the searches were failing.)
+- `EveryChip/BenchmarkDetail.DrawsCopperTheRulesAllow/9q`, `…/57q` and
+  `EveryChip/SpacedDetail.KeepTheWireSpacing/9q` are the Detail stage, which
+  nothing here touches: `wire 0 starts at (61, 1244) and is fed at
+  (730.7, 38222.2)`.
