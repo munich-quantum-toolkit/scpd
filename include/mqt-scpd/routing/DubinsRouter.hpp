@@ -151,11 +151,18 @@ public:
 
   /// The wire proximity penalty of every cell, read through a view that
   /// the caller keeps alive while routing.
-  void attachWireProximity(const std::vector<uint8_t>* penalty);
+  ///
+  /// Sixteen bits, not eight. The static layer stays a byte because it is a
+  /// decay over a few cells, but a caller that wants to price one move in
+  /// the range of a bend — a toll for crossing a wire, say — needs more than
+  /// the 127 a byte allows: a bend is 14 950 on a 33-qubit grid, and the
+  /// term is `PENALTY_SCALE * value`, so 127 could never buy more than
+  /// 12 700 (user, 2026-10-01).
+  void attachWireProximity(const std::vector<uint16_t>* penalty);
   [[nodiscard]] uint8_t staticPenalty(const std::size_t index) const {
     return static_[index];
   }
-  [[nodiscard]] uint8_t wirePenalty(std::size_t index) const;
+  [[nodiscard]] uint16_t wirePenalty(std::size_t index) const;
 
   // --- Crossing constraints ---------------------------------------------
 
@@ -313,7 +320,7 @@ private:
   void expandFree(const QueueEntry& current, const RoutingObjective& objective,
                   bool onlyStraight, const uint8_t* blockMap,
                   const uint8_t* penaltyMap, uint8_t blockMask,
-                  uint8_t penaltyMask, const uint8_t* wireMap, bool useField);
+                  uint8_t penaltyMask, const uint16_t* wireMap, bool useField);
   template <bool USE_PENALTY>
   Path searchOrthogonal(const RoutingObjective& objective,
                         const PathPoint& source, const PathPoint& target,
@@ -337,7 +344,7 @@ private:
   const grid::BitGrid* obstacles_ = nullptr;
   const grid::BitGrid* corridor_ = nullptr;
   std::vector<uint8_t> static_;
-  const std::vector<uint8_t>* wire_ = nullptr;
+  const std::vector<uint16_t>* wire_ = nullptr;
   std::vector<uint8_t> packed_;
   bool packedValid_ = false;
 

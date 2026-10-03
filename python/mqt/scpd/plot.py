@@ -43,37 +43,51 @@ STAGES: dict[str, str] = {
 
 #: The color of each planning layer. They sit above the artwork, so each one is distinct from the
 #: obstacle fill and from every role color.
+#:
+#: Drawn from the Okabe-Ito palette, which holds its distinctions under every common colour
+#: vision deficiency, with one violet (#5D3A9B) that is a known safe partner for orange. What it
+#: replaces is a set that leaned on red against green -- a wire was #c1121f and a conventional
+#: port #2dc653, which are one colour to a red-green blind reader -- and on three reds and two
+#: oranges that were hard for anybody to tell apart.
 PLANNING_COLORS: dict[str, str] = {
-    "partition": "#8ecae6",
-    "keepout": "#c77dff",
-    "border": "#023047",
-    "bottleneck": "#d00000",
-    "launcher": "#e63946",
-    "chain": "#7b2cbf",
+    "partition": "#56B4E9",
+    "keepout": "#CC79A7",
+    "border": "#003F5C",
+    "bottleneck": "#D55E00",
+    "launcher": "#D55E00",
+    "chain": "#5D3A9B",
     "lattice": "#adb5bd",
-    "inner": "#0077b6",
-    "assignment": "#ff7f0e",
+    "inner": "#009E73",
+    "assignment": "#E69F00",
     "ring": "#606060",
-    "corridor": "#e85d04",
+    "corridor": "#D55E00",
     "slot": "#495057",
-    "wire": "#c1121f",
-    "innerwire": "#0077b6",
-    "clearance": "#c1121f",
+    "wire": "#0072B2",
+    "innerwire": "#E69F00",
+    "clearance": "#CC79A7",
 }
 
 #: The fill of each role in the port legend. The colors stay apart from the obstacle fill.
+#:
+#: The pair that has to survive is resonator against conventional, because every qubit carries
+#: one of each and they sit side by side everywhere: blue against orange is the one distinction
+#: no deficiency collapses. The rest follow from the same palette.
+#:
+#: `coupler` is read twice: as the dot of a coupler port and as the fill of a coupler polygon in
+#: the final picture, where it has to stay apart from the blue of a wire and the orange of an
+#: inner wire -- hence the green.
 ROLE_COLORS: dict[str, str] = {
-    "launcher": "#e63946",
-    "resonator": "#ffb703",
-    "conventional": "#2dc653",
-    "bridge_pair": "#9d4edd",
-    "coupler": "#ff7f0e",
+    "launcher": "#D55E00",
+    "resonator": "#0072B2",
+    "conventional": "#E69F00",
+    "bridge_pair": "#5D3A9B",
+    "coupler": "#009E73",
     "unset": "#9a9a9a",
 }
 
 #: The fill and the outline of the obstacle polygons, and the outline of the chip boundary.
-OBSTACLE_FILL = "#3d5a80"
-OBSTACLE_STROKE = "#1c2b40"
+OBSTACLE_FILL = "#5a6472"
+OBSTACLE_STROKE = "#2b313a"
 
 
 class PlotError(ValueError):
@@ -358,7 +372,14 @@ def layout_svg(
     pad = 0.02 * span
     view_width = (max_x - min_x) + 2 * pad
     view_height = (max_y - min_y) + 2 * pad
-    height = round(width * view_height / view_width)
+    # The caption used to be drawn over the top of the artwork and the legend over the bottom of
+    # it, both inside the viewBox, so each covered whatever the chip had there. They get a band
+    # of their own instead: the viewBox grows by one above and one below, the artwork keeps the
+    # middle, and neither can reach it (user, 2026-10-01).
+    font = view_height / 90
+    top_band = 2.2 * font
+    bottom_band = 2.2 * font
+    height = round(width * (view_height + top_band + bottom_band) / view_width)
 
     def to_view(x: float, y: float) -> tuple[float, float]:
         return x - min_x + pad, max_y - y + pad
@@ -387,9 +408,8 @@ def layout_svg(
         for x, y in [to_view(center.x, center.y)]
     ]
     counts = {name: sum(1 for port, _ in centers if role_name(port.role) == name) for name in ROLE_COLORS}
-    font = view_height / 90
     legend = "".join(
-        f'<g transform="translate({_number(pad + i * 11 * font)},{_number(view_height - 0.4 * font)})">'
+        f'<g transform="translate({_number(pad + i * 11 * font)},{_number(view_height + bottom_band - 0.7 * font)})">'
         f'<circle class="{name}" cx="0" cy="{_number(-0.35 * font)}" r="{_number(0.35 * font)}"/>'
         f'<text x="{_number(0.6 * font)}" y="0">{name} ({counts[name]})</text></g>'
         for i, name in enumerate(name for name in ROLE_COLORS if counts[name])
@@ -409,12 +429,16 @@ def layout_svg(
     overlay = _planning_layers(planning, to_view, radius, gate_font) if planning is not None else ""
     if overlay:
         style += _planning_style(gate_font, planning.clearance if planning is not None else 0.0)
-    caption = f'<text x="{_number(pad)}" y="{_number(1.2 * font)}">{escape(title)}</text>' if title else ""
+    caption = (
+        f'<text x="{_number(pad)}" y="{_number(-top_band + 1.5 * font)}">{escape(title)}</text>' if title else ""
+    )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-        f'viewBox="0 0 {_number(view_width)} {_number(view_height)}">'
+        f'viewBox="0 {_number(-top_band)} {_number(view_width)} '
+        f'{_number(view_height + top_band + bottom_band)}">'
         f"<style>{style}</style>"
-        f'<rect width="{_number(view_width)}" height="{_number(view_height)}" fill="#ffffff"/>'
+        f'<rect y="{_number(-top_band)}" width="{_number(view_width)}" '
+        f'height="{_number(view_height + top_band + bottom_band)}" fill="#ffffff"/>'
         f'<path class="f" d="{"".join(outlines)}"/>'
         f'<path class="o" d="{"".join(obstacles)}"/>'
         f"{''.join(ports)}{overlay}{legend}{caption}</svg>\n"

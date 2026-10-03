@@ -263,7 +263,7 @@ void DubinsRouter::computeStaticProximityWindow(const uint32_t distance,
   }
 }
 
-void DubinsRouter::attachWireProximity(const std::vector<uint8_t>* penalty) {
+void DubinsRouter::attachWireProximity(const std::vector<uint16_t>* penalty) {
   if (penalty != nullptr && penalty->size() != cells()) {
     throw std::invalid_argument(
         "the wire proximity grid does not match the router grid");
@@ -271,7 +271,7 @@ void DubinsRouter::attachWireProximity(const std::vector<uint8_t>* penalty) {
   wire_ = penalty;
 }
 
-uint8_t DubinsRouter::wirePenalty(const std::size_t index) const {
+uint16_t DubinsRouter::wirePenalty(const std::size_t index) const {
   return wire_ != nullptr ? (*wire_)[index] : 0;
 }
 
@@ -893,7 +893,7 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective,
   const uint8_t* penaltyMap = PACKED ? packed_.data() : static_.data();
   constexpr uint8_t blockMask = PACKED ? uint8_t{0x80} : uint8_t{0xFF};
   constexpr uint8_t penaltyMask = PACKED ? uint8_t{0x7F} : uint8_t{0xFF};
-  const uint8_t* wireMap = wire_ != nullptr ? wire_->data() : nullptr;
+  const uint16_t* wireMap = wire_ != nullptr ? wire_->data() : nullptr;
 
   for (uint32_t a = 0; a < NUM_HEADINGS; ++a) {
     bendLb_[a] = bendLowerBound_
@@ -958,7 +958,7 @@ void DubinsRouter::expandFree(const QueueEntry& current,
                               const bool onlyStraight, const uint8_t* blockMap,
                               const uint8_t* penaltyMap,
                               const uint8_t blockMask,
-                              const uint8_t penaltyMask, const uint8_t* wireMap,
+                              const uint8_t penaltyMask, const uint16_t* wireMap,
                               const bool useField) {
   const uint32_t heading = current.heading & 7U;
   const auto& tprims = triePrimitives_[heading];

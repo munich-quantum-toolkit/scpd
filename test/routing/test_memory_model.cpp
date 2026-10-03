@@ -70,7 +70,7 @@ TEST(MemoryModel, ARouterCopiesNeitherTheObstaclesNorTheCorridor) {
   SearchScratch scratch(side, side);
   grid::BitGrid obstacles(side, side);
   grid::BitGrid corridor(side, side);
-  std::vector<uint8_t> wire(static_cast<std::size_t>(side) * side, 0);
+  std::vector<uint16_t> wire(static_cast<std::size_t>(side) * side, 0);
   DubinsRouter router(primitives, scratch);
   router.attachObstacles(&obstacles);
   router.attachCorridorUnpacked(&corridor);

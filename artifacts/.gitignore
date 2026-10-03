@@ -19,3 +19,9 @@
 # run was made from
 00-chip.json
 config.toml
+
+# What `plan -d` draws: one picture per search, an HTML viewer per picture and
+# the three dashboards that index them. The 45-qubit chip alone comes to five
+# gigabytes of it, and `-d` reproduces all of it from the same artifacts.
+debug/
+*.html

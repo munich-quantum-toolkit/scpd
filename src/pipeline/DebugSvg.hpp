@@ -165,11 +165,12 @@ public:
   }
 
   /// A closed outline through the centres of cells.
-  void polygon(const std::vector<Cell>& cells, const std::string_view cls) {
+  void polygon(const std::vector<Cell>& cells, const std::string_view cls,
+               const std::string_view extra = {}) {
     if (cells.size() < 3) {
       return;
     }
-    out_ += std::format("<polygon class=\"{}\" points=\"", cls);
+    out_ += std::format("<polygon class=\"{}\" {} points=\"", cls, extra);
     for (const auto& [x, y] : cells) {
       out_ += std::format("{:.1f},{:.1f} ", centreX(x), centreY(y));
     }

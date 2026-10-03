@@ -42,8 +42,8 @@ struct Fixture {
   SearchScratch scratch{WIDTH, HEIGHT};
   grid::BitGrid obstacles{WIDTH, HEIGHT};
   grid::BitGrid corridor{WIDTH, HEIGHT};
-  std::vector<uint8_t> wire = std::vector<uint8_t>(
-      static_cast<std::size_t>(WIDTH) * HEIGHT, 0);
+  std::vector<uint16_t> wire =
+      std::vector<uint16_t>(static_cast<std::size_t>(WIDTH) * HEIGHT, 0);
   DubinsRouter router{primitives, scratch,
                       {.startStraightLength = 10,
                        .endStraightLength = 10,
@@ -216,9 +216,10 @@ TEST(DubinsRouter, GridsMustMatchTheRouterGrid) {
   const grid::BitGrid wrong(10, 10);
   EXPECT_THROW(f.router.attachObstacles(&wrong), std::invalid_argument);
   EXPECT_THROW(f.router.attachCorridor(&wrong), std::invalid_argument);
-  const std::vector<uint8_t> small(100, 0);
+  const std::vector<uint16_t> small(100, 0);
   EXPECT_THROW(f.router.attachWireProximity(&small), std::invalid_argument);
-  EXPECT_THROW(f.router.setStaticProximity(small), std::invalid_argument);
+  EXPECT_THROW(f.router.setStaticProximity(std::vector<uint8_t>(100, 0)),
+               std::invalid_argument);
   std::vector<uint8_t> tooLarge(f.router.cells(), 200);
   EXPECT_THROW(f.router.setStaticProximity(tooLarge), std::invalid_argument);
 }

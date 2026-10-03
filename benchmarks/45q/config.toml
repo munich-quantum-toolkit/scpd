@@ -145,6 +145,12 @@ launcher_target = 15
 # The sweep of the Final stage, for the measurement of the seeded sweep: six
 # rounds, five relaxations each way and no refinement. The defaults are 30, 10
 # and 2.
+# The band a wire may be redrawn in, as a multiple of the wire clearance.
+# The prototype carries it as a raw cell count, `outer_expansion`: 200 on
+# the 33- and 69-qubit drivers, 400 on the 57-qubit one and the header's
+# default of 800 on every other chip. 42 clearances of 19 cells span
+# 798, against the 800 the prototype uses here.
+corridor_spacings = 42
 rounds            = 6
 max_relaxation    = 5
 refinement_rounds = 5
@@ -153,4 +159,4 @@ refinement_rounds = 5
 # that what the sweep leaves is what is counted, and the run stops after the
 # feedlines.
 repair_trials = 0
-stop_after    = "couplers"
+stop_after    = "feedlines"

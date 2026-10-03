@@ -148,8 +148,16 @@ def command_plan(args: argparse.Namespace) -> int:
     # With --verbose a stage that reports its progress prints one line at a time while it runs.
     # The Final stage is minutes of work on the largest chip, and what it is doing in that time is
     # only useful live.
+    # With --debug the same lines are kept, because the dashboard built at the
+    # end of the run is read off them: one line per attempt, naming the wire,
+    # the round, the outcome and the picture it drew.
+    spoken: list[str] = []
+
     def say(line: str) -> None:
-        print(line, flush=True)
+        if args.verbose is not None:
+            print(line, flush=True)
+        if args.debug:
+            spoken.append(line)
 
     # With --debug a stage that draws pictures of what it is doing writes them into <run>/debug:
     # the Final stage draws its grid once and then every search it makes, labelled by pass, round,
@@ -169,14 +177,44 @@ def command_plan(args: argparse.Namespace) -> int:
         result = directory.run_stage(
             stage,
             config,
-            say if args.verbose is not None else None,
+            say if args.verbose is not None or args.debug else None,
             draw if args.debug else None,
             args.verbose or 0,
         )
         print(f"{result.stage:9s} -> {result.path.name} ({result.size} bytes)")
         if drawn:
             print(f"{'':9s}    {drawn} debug pictures in {directory.debug}")
+            _dashboards(directory, spoken)
+        spoken.clear()
     return 0
+
+
+def _dashboards(directory: RunDirectory, spoken: list[str]) -> None:
+    """Lay the run's pictures out as a table, one page per pass.
+
+    A directory of a thousand pictures is not a thing anybody reads. The table
+    is: a row per wire, a column per round, and every failure a link to the
+    picture of that attempt with its layers switched on and off. Built from
+    the progress lines, so it needs the second level of verbosity -- without
+    it no attempt is reported and there is nothing to lay out.
+    """
+    from . import dashboard
+
+    log = directory.debug / "run.log"
+    log.write_text("\n".join(spoken) + "\n", encoding="utf-8")
+    made = []
+    for which in ("feedline", "outer", "inner", "refinement"):
+        cells, *_ = dashboard.parse(log, which)
+        if not cells:
+            continue
+        page = directory.debug / f"dashboard-{which}.html"
+        dashboard.build(log, which, page, directory.debug / "viewers")
+        made.append((page, len(cells)))
+    if made:
+        for page, attempts in made:
+            print(f"{'':9s}    {page} ({attempts} attempts)")
+    else:
+        print(f"{'':9s}    no table: the attempts are only reported at -v 1")
 
 
 def command_drc(args: argparse.Namespace) -> int:
