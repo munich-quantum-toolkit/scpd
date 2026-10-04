@@ -541,6 +541,193 @@ TEST(ChainSearch, EveryCompleteRunIsReportedAndTheCheapestIsKept) {
             runs.end());
 }
 
+/// Every run of choices of a chain, cheapest first by `priceOf`, ties in
+/// lexicographic order of the run — the order a reader can check by hand.
+std::vector<std::pair<uint64_t, std::vector<uint32_t>>>
+everyRunOf(const Chain& chain) {
+  std::vector<std::pair<uint64_t, std::vector<uint32_t>>> runs;
+  std::vector<uint32_t> run(chain.width.size(), 0);
+  for (;;) {
+    runs.emplace_back(chain.priceOf(run), run);
+    std::size_t at = run.size();
+    while (at > 0) {
+      --at;
+      if (++run[at] < chain.width[at]) {
+        break;
+      }
+      run[at] = 0;
+      if (at == 0) {
+        std::ranges::sort(runs);
+        return runs;
+      }
+    }
+  }
+}
+
+TEST(ChainSearch, ARefusedCheapestRunYieldsTheNextCheapest) {
+  // Four layers of three choices with prices that make every run cost
+  // something different. `accept` refuses the one run that is cheapest of
+  // all; the answer must then be the second-cheapest run there is, priced
+  // as it says, and the refusal counted once.
+  auto chain =
+      chainOf(4, 3, [](const std::size_t layer, const uint32_t from,
+                       const uint32_t to) {
+        return static_cast<uint64_t>((layer * 100) + (from * 7) + (to * 3) +
+                                     ((from + to) % 2 == 0 ? 1 : 2));
+      });
+  const auto runs = everyRunOf(chain);
+  ASSERT_LT(runs[0].first, runs[1].first)
+      << "the fixture needs a unique cheapest run";
+  ASSERT_LT(runs[1].first, runs[2].first)
+      << "the fixture needs a unique second-cheapest run";
+  const auto plain = solveChainAStar(chain.problem());
+  ASSERT_TRUE(plain.solved);
+  EXPECT_EQ(plain.chosen, runs[0].second);
+
+  auto problem = chain.problem();
+  std::vector<std::vector<uint32_t>> offered;
+  problem.accept = [&](const std::span<const uint32_t> run,
+                       const uint64_t cost) {
+    offered.emplace_back(run.begin(), run.end());
+    EXPECT_EQ(chain.priceOf(offered.back()), cost);
+    return offered.back() != runs[0].second;
+  };
+  const auto result = solveChainAStar(problem);
+  ASSERT_TRUE(result.solved);
+  EXPECT_TRUE(result.optimal);
+  EXPECT_EQ(result.chosen, runs[1].second);
+  EXPECT_EQ(result.cost, runs[1].first);
+  EXPECT_EQ(result.rejected, 1U);
+  EXPECT_FALSE(result.outOfTrials);
+  // Offered cheapest first: the refused optimum, then the answer.
+  ASSERT_EQ(offered.size(), 2U);
+  EXPECT_EQ(offered[0], runs[0].second);
+  EXPECT_EQ(offered[1], runs[1].second);
+}
+
+TEST(ChainSearch, AcceptingEveryRunChangesNothing) {
+  // An `accept` that refuses nothing is the search as it was, figure for
+  // figure: the same run, the same price, the same work.
+  auto chain =
+      chainOf(5, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>(((from * 13) ^ (to * 5)) + 1);
+      });
+  const auto plain = solveChainAStar(chain.problem());
+  const auto plainAsked = chain.asked;
+  chain.asked = 0;
+  auto problem = chain.problem();
+  problem.accept = [](std::span<const uint32_t>, uint64_t) { return true; };
+  const auto accepting = solveChainAStar(problem);
+  ASSERT_TRUE(plain.solved);
+  ASSERT_TRUE(accepting.solved);
+  EXPECT_EQ(accepting.chosen, plain.chosen);
+  EXPECT_EQ(accepting.cost, plain.cost);
+  EXPECT_EQ(accepting.optimal, plain.optimal);
+  EXPECT_EQ(accepting.routed, plain.routed);
+  EXPECT_EQ(accepting.expansions, plain.expansions);
+  EXPECT_EQ(accepting.reached, plain.reached);
+  EXPECT_EQ(chain.asked, plainAsked);
+  EXPECT_EQ(accepting.rejected, 0U);
+}
+
+TEST(ChainSearch, RefusingEveryRunExhaustsTheChain) {
+  // Three layers of two choices: eight runs, every step buildable. An
+  // `accept` that refuses them all leaves the search with every run
+  // weighed and none taken — `optimal` without `solved`, eight refusals,
+  // nothing in `chosen`, and the eight runs offered cheapest first.
+  auto chain =
+      chainOf(3, 2, [](const std::size_t layer, const uint32_t from,
+                       const uint32_t to) {
+        return static_cast<uint64_t>((layer * 10) + (from * 4) + (to * 2) + 1);
+      });
+  const auto runs = everyRunOf(chain);
+  auto problem = chain.problem();
+  std::vector<uint64_t> offered;
+  std::vector<std::vector<uint32_t>> found;
+  problem.found = [&](const std::span<const uint32_t> run, uint64_t) {
+    found.emplace_back(run.begin(), run.end());
+  };
+  problem.accept = [&](std::span<const uint32_t>, const uint64_t cost) {
+    offered.push_back(cost);
+    return false;
+  };
+  const auto result = solveChainAStar(problem);
+  EXPECT_FALSE(result.solved);
+  EXPECT_TRUE(result.optimal);
+  EXPECT_FALSE(result.outOfTime);
+  EXPECT_FALSE(result.outOfTrials);
+  EXPECT_TRUE(result.chosen.empty());
+  EXPECT_EQ(result.cost, TRELLIS_UNREACHABLE);
+  EXPECT_EQ(result.rejected, 8U);
+  EXPECT_EQ(found.size(), 8U);
+  ASSERT_EQ(offered.size(), 8U);
+  EXPECT_TRUE(std::ranges::is_sorted(offered));
+  for (std::size_t at = 0; at < runs.size(); ++at) {
+    EXPECT_EQ(offered[at], runs[at].first);
+  }
+}
+
+TEST(ChainSearch, TheTrialBoundStopsTheRefusals) {
+  // The same chain, two trials allowed: two refusals, then the search stops
+  // and says it was the trials and not the clock or the chain.
+  auto chain =
+      chainOf(3, 2, [](const std::size_t layer, const uint32_t from,
+                       const uint32_t to) {
+        return static_cast<uint64_t>((layer * 10) + (from * 4) + (to * 2) + 1);
+      });
+  auto problem = chain.problem();
+  problem.maxAccepts = 2;
+  problem.accept = [](std::span<const uint32_t>, uint64_t) { return false; };
+  const auto result = solveChainAStar(problem);
+  EXPECT_FALSE(result.solved);
+  EXPECT_FALSE(result.optimal);
+  EXPECT_FALSE(result.outOfTime);
+  EXPECT_TRUE(result.outOfTrials);
+  EXPECT_EQ(result.rejected, 2U);
+  EXPECT_TRUE(result.chosen.empty());
+  // The bound is a bound on refusals: a run accepted within it is the
+  // answer, and the search does not say it ran out.
+  auto again = chain.problem();
+  again.maxAccepts = 2;
+  uint32_t asked = 0;
+  again.accept = [&](std::span<const uint32_t>, uint64_t) {
+    return ++asked == 2;
+  };
+  const auto second = solveChainAStar(again);
+  EXPECT_TRUE(second.solved);
+  EXPECT_FALSE(second.outOfTrials);
+  EXPECT_EQ(second.rejected, 1U);
+  EXPECT_EQ(second.chosen, everyRunOf(chain)[1].second);
+}
+
+TEST(ChainSearch, TheClockIsReadAfterARefusal) {
+  // A budget the first refusal alone outlasts: the search stops on the
+  // clock right after that refusal, hands back no run — the one it reached
+  // was refused — and says it was the time.
+  auto chain =
+      chainOf(4, 3, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>((from * 7) + (to * 3) + 1);
+      });
+  auto problem = chain.problem();
+  problem.budget = std::chrono::milliseconds(1);
+  uint32_t asked = 0;
+  problem.accept = [&](std::span<const uint32_t>, uint64_t) {
+    ++asked;
+    const auto until = std::chrono::steady_clock::now() +
+                       std::chrono::milliseconds(5);
+    while (std::chrono::steady_clock::now() < until) {
+    }
+    return false;
+  };
+  const auto result = solveChainAStar(problem);
+  EXPECT_FALSE(result.solved);
+  EXPECT_TRUE(result.outOfTime);
+  EXPECT_FALSE(result.outOfTrials);
+  EXPECT_TRUE(result.chosen.empty());
+  EXPECT_EQ(asked, 1U);
+  EXPECT_EQ(result.rejected, 1U);
+}
+
 TEST(ChainSearch, IsDeterministicUnderTies) {
   auto chain = chainOf(5, 6, [](std::size_t, uint32_t, uint32_t) {
     return static_cast<uint64_t>(1);

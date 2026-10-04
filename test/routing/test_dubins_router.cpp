@@ -304,6 +304,69 @@ TEST(DubinsRouter, TheOrthogonalSearchCrossesAWireAtARightAngle) {
   }
 }
 
+/// Whether every cell of a path passes the crossing rule **on the heading
+/// the cell carries** — the reading the final router's count and the
+/// design-rule check make of a committed path.
+std::size_t cellsAgainstTheRule(const DubinsRouter& router, const Path& path) {
+  std::size_t against = 0;
+  for (const PathPoint& point : path) {
+    against += router.crossingAllowedOrthogonal(point.x, point.y, point.heading) ? 0 : 1;
+  }
+  return against;
+}
+
+TEST(DubinsRouter, TheExitHeadingCheckMakesTheSearchAgreeWithTheCount) {
+  // The same wire as above, and routes that have to cross it and turn
+  // north soon after. The search tests the cells a move sweeps with the
+  // heading the move entered on, while `reconstruct` records a move's end
+  // cell with the heading it leaves on — so a route that crosses straight
+  // and begins its turn on the last cell of the halo passes the search and
+  // fails the count that reads the path (12 of the 22 crossing wires of the
+  // 2026-10-04 baseline). With the exit heading tested as well, the search
+  // refuses what the count refuses, and still finds a way.
+  Path wire;
+  for (uint32_t y = 20; y < 180; ++y) {
+    wire.push_back({.x = 150, .y = y, .heading = 4, .primitive = 0});
+  }
+  std::size_t violationsWithout = 0;
+  std::size_t routedWith = 0;
+  std::size_t routedWithout = 0;
+  for (const uint32_t targetX : {158U, 160U, 163U, 166U, 170U}) {
+    for (const uint32_t targetY : {60U, 70U, 80U, 120U, 130U, 140U}) {
+      for (const Heading heading : {Heading{4}, Heading{0}, Heading{6}}) {
+        const RoutingObjective objective{
+            {.x = 30, .y = 100, .heading = 6, .primitive = 0},
+            {.x = targetX, .y = targetY, .heading = heading, .primitive = 0}};
+        Fixture plain;
+        plain.router.buildOrthogonalConstraints({wire}, {false}, 6);
+        const Path without = plain.router.routeOrthogonal(objective);
+        if (!without.empty()) {
+          ++routedWithout;
+          violationsWithout += cellsAgainstTheRule(plain.router, without) == 0 ? 0 : 1;
+        }
+        Fixture strict;
+        strict.router.buildOrthogonalConstraints({wire}, {false}, 6);
+        strict.router.setOrthogonalExitCheck(true);
+        const Path with = strict.router.routeOrthogonal(objective);
+        if (!with.empty()) {
+          ++routedWith;
+          // What the search returns under the check is what the count
+          // accepts, cell by cell.
+          EXPECT_EQ(cellsAgainstTheRule(strict.router, with), 0U)
+              << "target " << targetX << "," << targetY << " heading " << heading;
+        }
+      }
+    }
+  }
+  // The check costs no route: every objective the plain search joins, the
+  // strict one joins too.
+  EXPECT_EQ(routedWith, routedWithout);
+  EXPECT_GT(routedWith, 0U);
+  // And the defect is real: without the check, some of these routes break
+  // the rule the count reads.
+  EXPECT_GT(violationsWithout, 0U);
+}
+
 TEST(DubinsRouter, ASingleCrossingWireCannotComeBack) {
   Fixture f;
   // The feedline splits the grid; the wire has to cross it once.

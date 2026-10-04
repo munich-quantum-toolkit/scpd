@@ -280,7 +280,12 @@ void checkOrthogonality(const CellView& view, fbdrc::DrcReportT& report) {
   // do, so the artifact's cells and headings are all they need.
   std::vector<routing::Path> feedlines;
   for (const auto& wire : view.wires) {
-    if (!wire.feedline) {
+    // The terminal edges are not in the rule. The router builds its mask
+    // from the edges between couplers only (`rebuildCrossingRule` under
+    // `feedlineLikePrototype`), so a mask over every feedline here reported
+    // crossings of launcher runs the search was never asked to refuse — a
+    // divergence that matters once the rule is the default (2026-10-04).
+    if (!wire.feedline || wire.terminal) {
       continue;
     }
     routing::Path path;
@@ -471,6 +476,7 @@ CellView viewOfFinal(const fbd::ChipT& chip, const fba::GlobalRoutingT& global,
          // by the wires that pass it; the two ends are what `edge` says.
          .feedline = true,
          .edge = true,
+         .terminal = described && edge.terminal,
          .ports = {described ? edge.from.index() : CheckedWire::NO_PORT,
                    described ? edge.to.index() : CheckedWire::NO_PORT}});
   }

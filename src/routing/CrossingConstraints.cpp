@@ -12,6 +12,7 @@
 
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
+#include "mqt-scpd/routing/RoomRules.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -49,26 +50,10 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
     if (wire.empty()) {
       continue;
     }
-    // A cell that steps to the next cell along its own heading is on a
-    // straight run. The router lists a cell again where its heading changes
-    // on it, so the step to test is the one to the next cell somewhere
-    // else; a cell listed twice is no bend of its own.
-    std::vector<bool> straight(wire.size(), false);
-    for (std::size_t at = 0; at < wire.size(); ++at) {
-      const PathPoint& cell = wire[at];
-      std::size_t ahead = at + 1;
-      while (ahead < wire.size() && wire[ahead].samePlace(cell)) {
-        ++ahead;
-      }
-      if (ahead >= wire.size()) {
-        continue;
-      }
-      const HeadingVector v = headingVector(cell.heading);
-      const PathPoint& next = wire[ahead];
-      straight[at] =
-          static_cast<int64_t>(next.x) - static_cast<int64_t>(cell.x) == v.dx &&
-          static_cast<int64_t>(next.y) - static_cast<int64_t>(cell.y) == v.dy;
-    }
+    // A cell that steps to the next distinct cell along its own heading is
+    // on a straight run. `straightCells` is that definition, shared with the
+    // coupler insertion's room rules so that the two count the same cells.
+    const std::vector<bool> straight = straightCells(wire);
     for (std::size_t at = 0; at < wire.size(); ++at) {
       if (!straight[at]) {
         continue;

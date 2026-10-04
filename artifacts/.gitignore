@@ -25,3 +25,15 @@ config.toml
 # gigabytes of it, and `-d` reproduces all of it from the same artifacts.
 debug/
 *.html
+
+# The measurement arms of 2026-10-04 (`logs/<arm>/<chip>.log`, one directory an
+# arm) and the dev overlay under `dev/` — a copy of the installed package and
+# run directories of their own — are output: every arm reproduces from the
+# installed build and the benchmark configs. The scripts that run and read the
+# arms are kept: `run-arm.sh`, `dev-sync.sh`, `dev-run.sh`, `dev-mqt-scpd.py`,
+# `keylines.sh`, `arm-table.py`, `repair-summary.py`, `calibration.py`,
+# `fcross.py`, `pinch.py`, `around.py`, `bends.py`.
+logs/*
+!logs/*.sh
+!logs/*.py
+dev/

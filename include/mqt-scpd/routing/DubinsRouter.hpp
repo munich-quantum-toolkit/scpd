@@ -196,6 +196,17 @@ public:
   [[nodiscard]] bool crossingAllowedOrthogonal(uint32_t x, uint32_t y,
                                                Heading heading) const;
 
+  /// Whether the orthogonal search also tests the cell a move ends on with
+  /// the heading the move **leaves** it on. Off, it tests every cell a move
+  /// sweeps — the end cell included — with the heading the move entered on,
+  /// while `reconstruct` records the end cell with the exit heading, which
+  /// is what a check of the path then reads: a wire that crossed a feedline
+  /// straight and turned on the last cell of its halo passed the search and
+  /// failed the check (12 of the 22 crossing wires of 2026-10-04's baseline,
+  /// each "10 cells from edge"). On, the search refuses what the check
+  /// refuses.
+  void setOrthogonalExitCheck(const bool on) { exitCheck_ = on; }
+
   /// The constraint mask of a cell: 0 free, 0xFF a curve or pin zone, else
   /// the bits of the headings of the straight runs present there.
   [[nodiscard]] uint8_t constraintMaskAt(uint32_t x, uint32_t y) const;
@@ -351,6 +362,7 @@ private:
   CrossingConstraints constraints_;
   std::vector<uint8_t> exempt_;
   std::vector<uint32_t> exemptCells_;
+  bool exitCheck_ = false;
   std::vector<uint8_t> crossingSide_;
   std::vector<uint32_t> crossingSideCells_;
   bool crossingSideActive_ = false;

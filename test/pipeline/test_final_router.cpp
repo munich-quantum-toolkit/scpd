@@ -31,6 +31,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <set>
@@ -505,6 +506,42 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   EXPECT_FALSE(lineWith("resonators:", "in all").empty());
 
   EXPECT_EQ(fails == 0, holdsEverywhere(benchmark, planned, routing)) << total;
+}
+
+/// A pass flagged `onlyUnsettled` redraws the flagged wire and no other.
+/// The probe behind `SCPD_PROBE_ONLY_UNSETTLED` flags one ring wire of the
+/// four-qubit chip after the feedline pass, sweeps the whole ring once with
+/// the flag, says how many wires were tried and whose ways moved, and puts
+/// everything back; the stage's own result is unchanged by it.
+TEST(FinalRouter, OnlyUnsettledRedrawsOneWire) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  const auto plain = routeFinal(benchmark, planned);
+  setenv("SCPD_PROBE_ONLY_UNSETTLED", "3", 1);
+  std::vector<std::string> lines;
+  const auto probed = finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config,
+      [&lines](const std::string_view line) { lines.emplace_back(line); });
+  unsetenv("SCPD_PROBE_ONLY_UNSETTLED");
+
+  const auto found = std::ranges::find_if(lines, [](const std::string& line) {
+    return line.find("probe onlyUnsettled:") != std::string::npos;
+  });
+  ASSERT_NE(found, lines.end());
+  EXPECT_NE(found->find("wire 3 flagged (1 member)"), std::string::npos)
+      << *found;
+  EXPECT_NE(found->find("1 wire tried"), std::string::npos) << *found;
+  // The one way that may move is the flagged wire's own.
+  const bool none = found->find("0 ways moved") != std::string::npos;
+  const bool own = found->find("1 way moved: 3") != std::string::npos;
+  EXPECT_TRUE(none || own) << *found;
+  // And the probe leaves the stage on what it ends on without it.
+  ASSERT_EQ(probed.wires.size(), plain.wires.size());
+  for (std::size_t index = 0; index < plain.wires.size(); ++index) {
+    EXPECT_EQ(probed.wires[index]->path, plain.wires[index]->path)
+        << "wire " << index << " differs under the probe";
+  }
 }
 
 /// With a debug sink the stage hands out a picture of its grid and then one

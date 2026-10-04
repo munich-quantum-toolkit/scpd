@@ -142,6 +142,35 @@ TEST(FeedlineOrthogonality, ARunBesideAFeedlineIsAFinding) {
   EXPECT_EQ(countOf(report, DrcRule::FeedlineOrthogonality), 1U);
 }
 
+TEST(FeedlineOrthogonality, ATerminalEdgeIsNotInTheRule) {
+  // The same run beside a feedline, but the feedline is the first or last
+  // edge of its chain. The router builds its crossing rule from the edges
+  // between couplers only and never refused this run, so the check does not
+  // report it either: the two ask one question.
+  const auto feedline = along(200, 10, 390);
+  const auto wire = along(205, 100, 300);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.wires = {{.connection = 0,
+                 .cells = wire,
+                 .components = {},
+                 .feedline = false},
+                {.connection = 1,
+                 .cells = feedline,
+                 .components = {},
+                 .feedline = true,
+                 .edge = true,
+                 .terminal = true}};
+
+  EXPECT_EQ(countOf(checkCells(view, rules()), DrcRule::FeedlineOrthogonality),
+            0U);
+  // Between two couplers the same edge is in the rule, and the run beside
+  // it is the finding `ARunBesideAFeedlineIsAFinding` describes.
+  view.wires[1].terminal = false;
+  EXPECT_EQ(countOf(checkCells(view, rules()), DrcRule::FeedlineOrthogonality),
+            1U);
+}
+
 TEST(WireClearance, AFeedlineKeepsTheRuleFromAResonatorButNotFromOtherWires) {
   // An edge between two couplers ten cells from a conventional wire is
   // nothing — the wire crosses such edges on purpose — but ten cells from a

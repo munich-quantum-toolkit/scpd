@@ -68,6 +68,14 @@ struct CheckedWire {
   /// bind on an edge: two edges beside each other are the clearance rule's
   /// business.
   bool edge = false;
+  /// Whether it is an edge at a launcher: the first or last edge of its
+  /// chain. The router builds the crossing rule from the edges between
+  /// couplers and leaves the terminal ones out (`feedlineLikePrototype`, the
+  /// prototype's `is_first_last_feedline`): a terminal edge runs from the
+  /// border to the first coupler, and a rule over it would close the plane
+  /// from outside in. The check asks the question the search asked, so it
+  /// leaves them out of its mask too (2026-10-04).
+  bool terminal = false;
   /// Whether it is a resonator.
   bool resonator = false;
   /// The ports its two ends stand on, by index, `NO_PORT` where an end is

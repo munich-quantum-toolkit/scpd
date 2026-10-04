@@ -205,6 +205,12 @@ inline Benchmark load(const std::string& chip, const std::string& resonator,
   config.stages->final->feedline_refinement_rounds =
       readScalar(configText, "feedline_refinement_rounds",
                  config.stages->final->feedline_refinement_rounds);
+  // The repair's budget as the benchmark ships it, so that the pipeline
+  // tests run the repair the CLI runs: at the schema's 100 the Final suites
+  // over every chip ran the blind repair for hours (handover-chain-astar,
+  // trap 4), and the targeted repair's budget is this figure too.
+  config.stages->final->repair_trials = readScalar(
+      configText, "repair_trials", config.stages->final->repair_trials);
   config.stages->final->meander_length = readLength(
       configText, "meander_length", config.stages->final->meander_length);
 

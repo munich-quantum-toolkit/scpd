@@ -1,11 +1,17 @@
 # The feedline routing
 
-Written for whoever takes the feedline stage further. The stage now draws
+Written for whoever takes the feedline stage further. The stage draws
 **every feedline edge of every chip** — 305 of 305 over the eight benchmarks
-— and holds three guarantees it did not hold before: a feedline keeps the
-design rule from every coupler lead, two edges meeting at a coupler do not
-cross, and no feedline crosses a resonator. Each is checked at the end of the
-insertion and each is green on all eight chips.
+— and holds four guarantees: a feedline keeps the design rule from every
+coupler lead, two edges meeting at a coupler do not cross, no feedline
+crosses a resonator, and no feedline crosses a feedline of another chain.
+Each is checked at the end of the insertion, the fourth again after the
+repair; the first three are green on all eight chips, the fourth is red on
+69q at the insertion and green once the pass has redrawn the terminal
+edges. The figure the stage is judged by is `bad = unrouted + open +
+crossing` over every wire at the end of the stage; lengths are not read
+(user, 2026-10-04). On 2026-10-04 evening it stands at **34 over the eight
+chips**, from 77 in the morning — see *Where it stands*.
 
 Read [handover-cpw-coupler-insertion.md](handover-cpw-coupler-insertion.md)
 for the coupler options, the geometry and the chain search this stands on,
@@ -14,19 +20,51 @@ that settles a chain. This document is about what happens to the wires
 afterwards, and about the obstacles the insertion builds for its own edges.
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch: `phase-2-grid-router`. HEAD is **`8941853` Progress fixing feedline
-  routing fails**, which carries everything up to *The resonator's exit*
-  below. That section, its two switches, the `dead on arrival` line and the
-  `feedline routing settings` line are **uncommitted** on top of it — the
-  user commits per phase.
-- Benchmarks: `repair_trials = 0` and `stop_after = "feedlines"` in all eight
-  `benchmarks/*/config.toml`, so a run ends where this document ends.
+- Branch: `phase-4-routing-stages`. HEAD is **`63851cf` feedline routing 7
+  fails remain**, which carries everything up to *The resonator's exit*
+  below. **Uncommitted** on top of it, the user committing per phase, all of
+  2026-10-03/04: the room rules (*The room rules* in
+  [handover-cpw-coupler-insertion.md](handover-cpw-coupler-insertion.md));
+  the orthogonal crossing rule as the default and the targeted repair in
+  place of the blind one ([handover-targeted-repair.md](handover-targeted-repair.md));
+  the bridge check (*The bridge check*); the length-point clearance of the
+  outer routing with its recovery, the one-zone rule and the band of the
+  wire let go of (*The length-point clearance*,
+  `plan-resonator-lenpoint.md`); the outer routing's relaxation pricing as
+  switches (`SCPD_OUTER_LANE`, `SCPD_OUTER_PENALTY`, both at what it always
+  did); and the exit-heading check of the orthogonal search, off until the
+  user decides (`SCPD_CROSSING_EXIT_HEADING`).
+- Benchmarks: `repair_trials = 0`, `stop_after = "feedlines"` and
+  `max_relaxation = 5` in all eight `benchmarks/*/config.toml`, so a run
+  ends where this document ends. The evening's figures were measured with
+  `max_relaxation = 8` set in the run directory's copy
+  (`MAX_RELAXATION=8 artifacts/logs/run-arm.sh …`); whether the configs
+  follow is the user's decision.
 - Run one chip with
   `.venv/bin/mqt-scpd plan -c benchmarks/45q/config.toml -o artifacts/45q --stage final -v 1`.
   `--stage final` resumes on the artifacts already in the run directory; it
   does **not** recompute the earlier stages, and it fails if they are missing.
 
 ## Where it stands
+
+**2026-10-04 evening** (`artifacts/logs/full-r8`: the eight chips to the
+feedline routing, no repair, `max_relaxation` 8, the switches at their
+defaults — crossing rule on, bridge check on, length-point clearance k 40
+hard with recovery, polygon and per-level halos in the outer routing),
+against the morning's `base-ortho2` and the `bridge-check` arm between
+them; `bad` = unrouted + open + crossing at the end of the stage:
+
+| | 4q | 9q | 17q | 21q | 33q | 45q | 57q | 69q | all | s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| base-ortho2, the rule on | 0 | 0 | 8 | 0 | 5 | 8 | 25 | 31 | 77 | 2287 |
+| + bridge check | 0 | 0 | 8 | 0 | 4 | 8 | 23 | 28 | 71 | 2400 |
+| + length-point clearance, relaxation 8 | 0 | 0 | 12 | 0 | 0 | 4 | 2 | 16 | **34** | 1276 |
+
+Every outer routing ends at 0 unrouted / 0 open (17q through the recovery),
+every edge is drawn, and 17q is the one chip that got worse. The per-chip
+columns, the angle and the length-point figures are in *The length-point
+clearance*; the targeted repair's arms (`research`, `research-exit`) were
+measured on the morning's outer routing and are owed again on this one.
 
 Two figures say how the pass stands, and they are not the same figure.
 
@@ -42,11 +80,35 @@ Two figures say how the pass stands, and they are not the same figure.
   twice the first. The `is open in the room of` lines say who, where, and
   how far from each end.
 
+**The regime changed on 2026-10-04**: the orthogonal crossing rule is on by
+default, and the stage is judged by `bad = unrouted + open + crossing` at the
+end of the stage (user). Under it, before any repair
+(`artifacts/logs/base-ortho2`, 2026-10-04, identical in every judged line to
+`base-ortho` of 2026-10-03):
+
+| rule on | 4q | 9q | 17q | 21q | 33q | 45q | 57q | 69q | all |
+|---|---|---|---|---|---|---|---|---|---|
+| open, last round | 0 | 0 | 4 | 0 | 3 | 2 | 9 | 10 | 28 |
+| open, end | 0 | 0 | 4 | 0 | 4 | 6 | 17 | 24 | 55 |
+| crossing a feedline | 0 | 0 | 4 | 0 | 1 | 2 | 8 | 7 | 22 |
+| **bad** | 0 | 0 | 8 | 0 | 5 | 8 | 25 | 31 | **77** |
+| fails, lengths included | 4 | 1 | 15 | 2 | 12 | 21 | 47 | 59 | 161 |
+
+Twelve of the 22 crossing wires found a way in their last search and are
+crossing by the count alone — see *The search and the count disagree at the
+halo's edge* in [handover-targeted-repair.md](handover-targeted-repair.md).
+What the repairs make of these figures, `bad` summed over the eight chips
+(every arm 20 trials, 2026-10-04): the blind `repair` 73, the targeted
+re-search 69, the re-search with the search's exit heading tested
+(`SCPD_CROSSING_EXIT_HEADING=1`) 51, that rule alone 61 — tables and the
+per-chip figures in the same document. The tables below are the rule-off
+figures the stage was handed over on, kept as the control arm.
+
 Measured over the eight benchmarks, no environment variable set, one run at
 a time, 2026-10-03 — `SCPD_RESONATOR_STUB` off and `SCPD_FENCE_FIXED` on,
-the defaults since *The resonator's exit*. The five small chips have no open
-wire by either figure, under any setting tried, so the tables show the three
-that do:
+the defaults since *The resonator's exit*, and the rule **off**, which was
+the default then. The five small chips have no open wire by either figure,
+under any setting tried, so the tables show the three that do:
 
 | open | 45q | 57q | 69q | all |
 |---|---|---|---|---|
@@ -93,9 +155,9 @@ f1 are one case: the insertion laid 9's lead one cell from 10's way, 10 has
 no room to leave once that lead is fenced, and 9 is *dead on arrival* in
 every round — the repair's case (`repair_trials`), not the sweep's.
 
-## The three checks
+## The four checks
 
-They run at the end of `insertCouplers` and print one line each. All three
+They run at the end of `insertCouplers` and print one line each. All of them
 measure **what the corridor actually builds**, not a rule of their own — that
 is the point of them, and it is what makes a green line mean something.
 `checkClearance` in the DRC is the second opinion about the design rule, and
@@ -105,7 +167,15 @@ it has the whole chip to look at rather than this stage's fence.
 coupler insertion: CHECK feedline room — 0 feedline/lead pairs closer than the rule; the check is GREEN
 coupler insertion: CHECK coupler crossings — 0 pairs of edges meeting at a coupler cross; the check is GREEN
 coupler insertion: CHECK resonator crossings — 0 feedlines cross a resonator; the check is GREEN
+coupler insertion: CHECK feedline crossings — 0 pairs of edges of different chains cross; the check is GREEN
 ```
+
+- **`checkFeedlineCrossings`** (2026-10-04) — every pair of drawn edges of
+  **different** chains, `waysCross` prefiltered by the boxes the ways span.
+  It is **red on 69q** with the four pairs *The room rules* found and
+  `artifacts/logs/fcross.py` confirmed — `f32 (chain 4) x f33 (chain 5) ·
+  f46 x f47 · f60 x f61 · f73 x f74` — and green on the other seven. The
+  targeted repair reads the same pairs as fails of both edges.
 
 - **`checkFeedlineRoom`** — every feedline against what the corridor fences,
   inflated by the rule in layout units (unrounded, as `conflictsIn` takes
@@ -116,6 +186,12 @@ coupler insertion: CHECK resonator crossings — 0 feedlines cross a resonator; 
 - **`checkCouplerCrossings`** — every pair of edges that meet at a coupler.
 - **`checkResonatorCrossings`** — every feedline against every resonator past
   its lead.
+- **`checkBridgers`** (2026-10-04), after `assignBridges` in phase 4: whether
+  the edge every plain wire was told to cross is the one the insertion
+  counted it against (`bridgersOf`, R0 of the room rules). Green on all eight
+  chips. And `checkChainChannels` prints a fourth line at the end of the
+  insertion, `CHECK chain channels`, which is a report and not a guarantee:
+  see *The room rules* in [handover-cpw-coupler-insertion.md](handover-cpw-coupler-insertion.md).
 
 Both crossing checks use `waysCross`, which does **not** only compare cells:
 two diagonal steps through one unit square pass through each other without
@@ -356,6 +432,8 @@ marked:
 
 | switch | default | |
 |---|---|---|
+| `SCPD_ROOM_REPORT` | on | new, 2026-10-04: the room-rule calibration lines and the `CHECK chain channels` line; report only |
+| `SCPD_ROOM_PITCH` / `SCPD_ROOM_MARGIN` / `SCPD_ROOM_CHANNEL_REACH` / `SCPD_ROOM_CHANNEL_COUNT` | 20 / 10 / 80 / 1 | new, 2026-10-04: what the calibration measures with; no rule is live — see *The room rules* in [handover-cpw-coupler-insertion.md](handover-cpw-coupler-insertion.md) |
 | `SCPD_RESONATOR_STUB` | **off** | new, 2026-10-03: no second straight run after the lead |
 | `SCPD_FENCE_FIXED` | **on** | new, 2026-10-03: the fixed places keep their clearance in every fence |
 | `SCPD_EDGE_LEAD_ONLY` | on | new |
@@ -369,7 +447,16 @@ marked:
 | `SCPD_FENCE_LATER_EDGES` | off | new |
 | `SCPD_LAUNCHER_LEAD` | 10.0 | new |
 | `SCPD_CHAIN_KEEP_WAYS` | **off** | was on |
-| `SCPD_ORTHO_CROSSING` | **off** | was on |
+| `SCPD_ORTHO_CROSSING` | **on** | was off 2026-10-02 to 2026-10-04; the regime now, see [handover-targeted-repair.md](handover-targeted-repair.md) |
+| `SCPD_BRIDGE_CHECK` | **on** | new, 2026-10-04: a way found that does not cross the wire's bridged edge is refused as no way — see *The bridge check* below |
+| `SCPD_FEEDLINE_LANE` | on | new, 2026-10-04: the lane polygon of a relaxation priced in the feedline pass; `=0` leaves it out, measured once at the user's request — see *The lane polygon, measured* below |
+| `SCPD_OUTER_LANE` | on | new, 2026-10-04: the lane polygon of the outer routing's relaxation; `=0` leaves it out and the released halos alone price the relaxation. Measured on 57q under the hard length-point clearance, see *The length-point clearance* |
+| `SCPD_OUTER_PENALTY` | 0 | new, 2026-10-04: how the outer routing prices the wires it let go of — 0 a halo of one clearance more per level, as it always had; 1 the feedline pass's flat halo (`SCPD_HALO_REACH` clearances) and crossing toll; 2 not at all |
+| `SCPD_LENPOINT_RECOVERY` | on | new, 2026-10-04: the outer routing ends on one more pass over its failing wires with the length-point bands off — the hard clearance's fallback, after the rounds rather than inside them |
+| `SCPD_LENPOINT_K` / `SCPD_LENPOINT_PCT` / `SCPD_LENPOINT_REPORT` | 40 cells / 10 / on | new, 2026-10-04: the length-point clearance of the outer routing and the outer refinement, hard — see *The length-point clearance* below; `K=0` is off |
+| `SCPD_CROSSING_EXIT_HEADING` | off | new, 2026-10-04: the orthogonal search tests a move's end cell with its exit heading, as the count reads it; measured, the user decides — see [handover-targeted-repair.md](handover-targeted-repair.md) |
+| `SCPD_REPAIR_SEARCH`, `SCPD_RESEARCH_K` / `GROW` / `SECONDS` / `ROUNDS` / `JOGS` / `SEES_CHAINS` / `FINAL_SWEEP` | on, 2 / 1 / 20 / 2 / on / on / off | new, 2026-10-04: the targeted repair that replaces `repair`; its own `targeted repair settings:` line names them |
+| `SCPD_RESEARCH_VERBOSE` / `SCPD_PROBE_ONLY_UNSETTLED` | off / unset | new, 2026-10-04: the repair's local passes speak; a test seam for `Pass::onlyUnsettled` — see [handover-targeted-repair.md](handover-targeted-repair.md) |
 | `SCPD_EDGE_BEND_FACTOR` | 1.0 | may now go below 1 |
 | `SCPD_FEEDLINE_MEANDER` | off | |
 | `SCPD_FEEDLINE_PROTOTYPE` | on | |
@@ -383,7 +470,245 @@ marked:
 | `SCPD_HALO_REACH` | 3, `SCPD_HALO_DECAY` 0 (decay off) | |
 
 `RESONATOR_COPPER` (2) and `COUPLER_LEAD_STRAIGHT` (14) are constants, not
-switches.
+switches. Three settings lines say what is in force and where each value
+came from: `outer routing settings:` before the outer routing (length
+point, recovery, polygon, released halos), `feedline routing settings:` at
+every feedline pass (stub, fixed places, crossing rule, exit heading, bridge
+check, lane polygon) and `targeted repair settings:` before the repair.
+
+## The bridge check
+
+Written 2026-10-04 (user). `assignBridges` tells every plain wire between
+two couplers which chain edge it may cross — its bridge — and
+`constrainByFeedlines` fences every other edge but the terminal ones. That
+leaves a search two ways home: across the bridge at a right angle, or round
+the chain's end through a terminal edge, which fences nobody, and so onto
+the wrong side of the feedline without crossing anything the rule sees. On
+33q wires 9 and 11 came home that way, and the lane pairs 9–12 then never
+settled: a wire on the wrong side stands in the following rounds, and every
+wire drawn after it is drawn against it.
+
+`SCPD_BRIDGE_CHECK` (on) refuses such a way in `attempt`: a found way that
+does not cross the wire's bridge (`waysCross` against the bridge's way, in
+phase 1 and at every relaxation level) is cleared as if the search had
+found nothing, so the wire fails where it stands rather than poisoning the
+rip-up. The pass says how often at its end — `feedline routing: N ways
+refused for not crossing the wire's bridge` — and names each refusal at
+`-v 1`. A wire without a bridge, and a wire whose bridge is not drawn, is
+not held to it. Measured over the eight chips with `stop_after =
+"feedlines"` and no repair (`artifacts/logs/bridge-check` against
+`base-ortho2`, 2026-10-04), open / crossing at the end of the stage and
+`bad` = their sum (unrouted is 0 everywhere), the ways refused, and open in
+the last round:
+
+| chip | base-ortho2 | bridge-check | refused | open, last round | CPU s |
+|---|---|---|---|---|---|
+| 4q | 0 / 0 (0) | 0 / 0 (0) | 0 | 0 → 0 | 2 → 2 |
+| 9q | 0 / 0 (0) | 0 / 0 (0) | 0 | 0 → 0 | 10 → 11 |
+| 17q | 4 / 4 (8) | 4 / 4 (8) | 20 | 4 → 4 | 35 → 32 |
+| 21q | 0 / 0 (0) | 0 / 0 (0) | 4 | 0 → 0 | 53 → 48 |
+| 33q | 4 / 1 (5) | 2 / 2 (4) | 6 | 3 → 1 | 123 → 85 |
+| 45q | 6 / 2 (8) | 7 / 1 (8) | 9 | 2 → 3 | 449 → 490 |
+| 57q | 17 / 8 (25) | 15 / 8 (23) | 39 | 9 → 7 | 609 → 483 |
+| 69q | 24 / 7 (31) | 22 / 6 (28) | 25 | 10 → 10 | 938 → 837 |
+| **sum** | **77** | **71** | 103 | 28 → 25 | |
+
+No chip is worse; 33q's bundle 9–12 shrinks to 12/13 (12 keeps its outer way
+and now counts as crossing f2), 45q's 132 fails instead of taking its way
+round f46 and ends open instead of crossing, 57q and 69q lose two open
+wires each. On 17q the twenty refusals are the lane pairs 18/19 and 32/33
+at relaxation levels 2 to 5, round after round; the figures do not move,
+but the forward rounds no longer carry the follow-on fails f5, f10, 20 and
+34 that stood behind those detours. The pass is faster where it refuses
+much: a refused way is a search not followed by the rounds it would have
+cost.
+
+## The length-point clearance
+
+Written 2026-10-04 (user). The coupler insertion puts a resonator's pad
+where what is left of the way to the qubit is the target length
+(`couplerPlace`), and the pad and the lead stick out beside the way there.
+A plain wire the outer routing laid too close to that place is what the
+insertion and the feedline pass fail on afterwards — the room rules found
+exactly that after the fact (R3, the lane pairs leaning on a pad). The
+prototype's answer is the RRR-Lenpoint-Constraint of its outer routing
+(`FinalGrid.cpp:6193-6600`, its refinement `:7620-7760`;
+`plan-resonator-lenpoint.md` is the analysis). This is that mechanism, for
+the **outer routing and the outer refinement only** — under the feedline
+constraints the couplers stand and the lead and pad are fenced themselves —
+and **hard**: a wire that cannot be routed with the clearance fails; the
+prototype's second try without it is deliberately not built (user).
+
+- `lengthMarksOf(wire)`: on the way a resonator has now, the cell where what
+  is left to the target end is the target length less the anchor gap — the
+  prototype's `meander_length − anchor`, plainly, nothing derived (user) —
+  and the band of cells within `SCPD_LENPOINT_PCT` of it, measured as the
+  insertion measures (`reconstructSegments` on a drawn way, the cells'
+  polyline on a seeded one). The pad the insertion then centres lies the
+  lead's length nearer the target end, inside the band. The band, not the
+  point: the point moves with every reroute and every meander.
+- `closeLengthBands(wire, others, pass)`, called after every `fence` of
+  `attempt` (phase 1: both ring neighbours; each relaxation level: the
+  neighbour on the far side only — the wire let go of at that level is
+  fenced by its way alone, its band goes with it, as the prototype's does
+  since its stamp lands before the corridor buffer is reset) and of
+  `refine`, outside the feedline passes: a fenced neighbour that is a
+  resonator has its band inflated by `SCPD_LENPOINT_K` instead of the
+  clearance; a resonator being routed has the stretch of each fenced
+  neighbour that runs alongside its own band — its two marks projected onto
+  the neighbour's way — inflated by the same radius; **one zone per
+  neighbour** (user): a resonator neighbour gets its band and nothing else,
+  a plain neighbour the alongside stretch only — a plain wire beside a
+  routed resonator used to carry both and showed two inflated zones in the
+  pictures. Cells within the larger of `k + 2` and the meeting radius of the
+  routed wire's own **fixed places** — its ends, the run out of its source, the run into its target —
+  are left out, the two wires' meeting too. The prototype guards the two
+  ends alone and falls back to a search without the constraint; here it is
+  hard, and the first version with the ends alone left 17q's wires 2 and 31
+  dead on arrival in every round: the length point of the resonator beside
+  them lies 24 cells from their launcher stub, and a band cell 30 cells from
+  the source, inflated by `k`, closed the cells the search has to step onto
+  behind the stub. With the fixed places guarded both route again in some
+  rounds; what the hard constraint still costs the outer routing is in the
+  table below.
+- `k` is the prototype's flat **40** cells (user: as the prototype has it).
+  A first version derived it from the pad — `couplerHeight + clearance +
+  BEND_RADIUS`, 27 on the benchmarks — and that arm is kept for 4q–45q as
+  `artifacts/logs/lenpoint-k27`. The `outer routing settings:` line says
+  which is in force.
+- `outer routing: LENPT k=… band=±…%: N length points, nearest other wire
+  min … mean … cells, M below k; histogram <20:… 20-25:… 25-30:… 30-40:…
+  40-60:… 60-100:… >=100:…` ends the outer refinement — the prototype's
+  `[LENPT]` report at fixed edges, so that arms compare — with one line per
+  resonator at `-v 1`.
+
+Measured over the eight chips with `stop_after = "feedlines"` and no repair
+(`artifacts/logs/lenpoint40` against `bridge-check`, the build it was added
+to, 2026-10-04). Three figures per chip, as the user asked: the outer
+routing's own verdict (unrouted / open after the refinement), the
+insertion's feedline angle cost with the edges it could not draw, and
+`bad` = unrouted + open + crossing after the feedline routing with no
+repair; beside them the length-point line's nearest-wire figures and the
+seconds of the whole stage.
+
+| chip | outer unrouted/open | edges not drawn | angle (before) | LENPT min / mean / below k | bad (before) | s (before) |
+|---|---|---|---|---|---|---|
+| 4q | 0 / 0 | 0 | 12 (8) | 80 / 81 / 0 | 0 (0) | 2 (2) |
+| 9q | 0 / 0 | 0 | 20 (20) | 90 / 97 / 0 | 0 (0) | 10 (11) |
+| 17q | **1 / 1** | 0 | 49 (49) | 48 / 63 / 0 | 12 (8) | 24 (33) |
+| 21q | 0 / 0 | 0 | 50 (50) | 42 / 70 / 0 | 0 (0) | 51 (49) |
+| 33q | 0 / 0 | 0 | 76 (74) | 50 / 70 / 0 | **0** (4) | 57 (86) |
+| 45q | 0 / 0 | 0 | 109 (111) | 44 / 61 / 0 | **5** (8) | 157 (882) |
+| 57q | **0 / 23** | **1** | 146 (144) | 1 / 52 / 8 | 23 (23) | 372 (486) |
+| 69q | 0 / 0 | 0 | 176 (176) | 38 / 57 / 1 | **16** (28) | 682 (852) |
+| **sum** | | 1 | | | **56** (71) | 1354 (2400) |
+
+What it says:
+
+- **The outer routing is no longer at 0 fails everywhere.** On 17q the
+  hard clearance leaves resonator 30 unrouted and one wire open: 30's own
+  band and its neighbours' leave it no lane. On 57q the outer routing ends
+  with 23 open wires (35 unrouted after round 0, 23 open after five rounds
+  — the pairs that trade a lane inside a band), and the insertion then loses
+  edge f4 of chain 0. Six chips keep 0 / 0.
+- **Where the outer routing holds, the feedline pass gains**: 33q to 0, 45q
+  from 8 to 5, 69q from 28 to 16 — the length points there have no wire
+  closer than 38 cells, where the baseline had plain wires at 1 to 10 cells
+  from leads (R3). 57q's 23 is unchanged in sum but has an edge missing.
+- **The angle** moves by the layout, not by the rule: 4q 8 → 12, 33q 74 → 76,
+  45q 111 → 109, 57q 144 → 146, the rest equal.
+- **The stage is faster** wherever the ring has room: 1354 s against 2400 s
+  over the eight, 45q 157 s against 882 s — fewer relaxations in the
+  feedline pass once the pads have their room.
+
+A first version derived `k` from the pad (27 cells) and subtracted the lead
+from the figure (`artifacts/logs/lenpoint-k27`, 4q–45q): outer routing 0 / 2
+on 17q and 0 / 0 elsewhere, 33q to 0, but 21q from 0 to 4 and 45q from 8
+to 10. The user set `k = 40` and the plain band instead.
+
+**57q's outer routing, the evening's matrix** (`artifacts/logs/outer-*`
+and `outer57-*`, `stop_after = "outer"`, k 40 hard; "band" is the band of
+the wire let go of at a relaxation level):
+
+| pricing of the relaxation | band | relaxation | outer routing |
+|---|---|---|---|
+| polygon + halos per level (as it was) | stamped | 5 | 23 open |
+| halos per level alone | stamped | 5 | 12 open |
+| polygon + flat halo and toll | stamped | 5 | 19 open |
+| flat halo and toll alone | stamped | 5 | 35 open |
+| halos per level alone | free | 5 | **0** |
+| halos per level alone | free | 8 | **0** |
+| polygon alone, no halos | free | 5 | 28 open, 1 unrouted |
+| polygon + halos per level | free | 5 | 18 open, 1 unrouted |
+| polygon + halos per level, one zone per neighbour | free | 5 | 18 open, 1 unrouted |
+| **polygon + halos per level, one zone per neighbour** | free | **8** | **0**, min 40 cells |
+
+Two things close 57q: letting the band of the wire let go of go with it
+(stamped at its own level it kept the released lane shut), and either the
+polygon left out at relaxation 5 or the polygon kept at relaxation 8. The
+user chose the original pricing — polygon and per-level halos — with
+relaxation 8 and one zone per neighbour; `artifacts/logs/outer-orig-r8` is
+the eight chips under it (seven at 0 / 0, 17q 1 / 1), `outer-noband` the
+eight chips under the halos alone at relaxation 5 (six at 0, 17q 1 / 1,
+21q 0 / 3).
+
+**17q closes with the recovery** (`SCPD_LENPOINT_RECOVERY`, on): resonator
+30 cannot route under its own band — the alongside stamp inflates both
+plain neighbours by `k` and the lane between them is too narrow — so the
+outer routing ends on one more pass over its failing wires with the bands
+off (`recoverWithoutBands`, before the refinement). On 17q that pass draws
+the three wires the rounds left (`tried 3, routed 3`), the outer routing
+ends at 58 of 58 with 0 / 0, and the nearest wire to any length point is
+still 41 cells (`artifacts/logs/outer17-recovery`). The hard constraint
+holds inside the rounds; the recovery is its fallback after them, where the
+prototype has it inside (its second `process_wire` without the constraint).
+`artifacts/logs/outer-recovery-r8` is the eight chips under the whole
+setting.
+
+**The whole stage under that setting** (`artifacts/logs/full-r8`, the eight
+chips to `stop_after = "feedlines"`, no repair, `max_relaxation` 8 in the
+run directory's copy — the benchmark configs still say 5 — against
+`bridge-check`, the same build before the length-point work):
+
+| chip | outer unrouted / open | edges not drawn | angle (before) | unrouted / open / crossing | bad (before) | s (before) |
+|---|---|---|---|---|---|---|
+| 4q | 0 / 0 | 0 | 12 (8) | 0 / 0 / 0 | 0 (0) | 2 (2) |
+| 9q | 0 / 0 | 0 | 20 (20) | 0 / 0 / 0 | 0 (0) | 10 (11) |
+| 17q | 0 / 0 after the recovery | 0 | 49 (49) | 0 / 6 / 6 | 12 (8) | 36 (33) |
+| 21q | 0 / 0 | 0 | 50 (50) | 0 / 0 / 0 | 0 (0) | 51 (49) |
+| 33q | 0 / 0 | 0 | 76 (74) | 0 / 0 / 0 | **0** (4) | 58 (86) |
+| 45q | 0 / 0 | 0 | 109 (111) | 0 / 3 / 1 | **4** (8) | 240 (882) |
+| 57q | 0 / 0 | 0 | 132 (144) | 0 / 0 / 2 | **2** (23) | 211 (486) |
+| 69q | 0 / 0 | 0 | 178 (176) | 0 / 15 / 1 | **16** (28) | 669 (852) |
+| **sum** | | 0 | | | **34** (71) | 1276 (2400) |
+
+Every outer routing at 0, every edge drawn, `bad` 71 → 34, the stage half
+the time. 17q is the one chip that loses — its feedline pass ends with
+three open edges (f0, f1, f12) and six crossing wires where the baseline had
+four and four — and 69q's fifteen open include f5 and f6. The lengths are
+not read (user).
+
+## The lane polygon, measured
+
+Asked for by the user on 2026-10-04: what the feedline pass loses without
+the lane polygon of its relaxation — `fillLane` over `laneOf`, the
+prototype's `compute_corridor_polygon_proximity`, everything outside the
+lane between the two neighbours' ways priced. `SCPD_FEEDLINE_LANE=0` leaves
+it out and keeps the halos and the toll of the wires let go of
+(`artifacts/logs/nolane` against `lenpoint40`, the same build otherwise,
+eight chips, no repair):
+
+| chip | with the polygon: unrouted / open / crossing (bad) | without (bad) | CPU s with → without |
+|---|---|---|---|
+| 4q – 33q | as with | identical | ≈ |
+| 45q | 0 / 3 / 2 (5) | 0 / 3 / 2 (5) | 156 → 168 |
+| 57q | 1 / 16 / 6 (23) | 1 / 16 / 6 (23) | 370 → 390 |
+| 69q | 0 / 9 / 7 (16) | **0 / 14 / 6 (20)** | 675 → 750 |
+| sum | 56 | 60 | |
+
+Seven chips end on the same figures (the searches differ, the keylines are
+not identical, the verdicts are); 69q loses five open wires to it and gains
+one crossing. The polygon stays on.
 
 ## The traps
 
@@ -505,12 +830,33 @@ Written down so nobody pays for them twice.
 
 - `src/pipeline/FinalRouter.cpp` — all of it. `corridorOfEdge` is the
   obstacle construction, `ensureForeignRoom` the grid, `checkFeedlineRoom`,
-  `checkCouplerCrossings` and `checkResonatorCrossings` the three checks,
-  `waysCross` the crossing test, `applyOption` the lead trim and the
-  resonator's stub (`resonatorStub`), `fence` and `closeRoomOf` the fence of
-  ways and fixed places (`fenceFixed`), `fenceFixedPlaces` the heads of the
-  wires let go of, `deadOnArrival` and `whatIsNear` the line that says a
-  search was over before it began.
+  `checkCouplerCrossings`, `checkResonatorCrossings` and
+  `checkFeedlineCrossings` the four checks, `waysCross` the crossing test,
+  `repairFeedlines` → `researchSegments` / `blameFails` / `researchSegment` /
+  `tryRun` the targeted repair and `Pass::onlyUnsettled` the local pass it
+  sweeps with, `applyOption` the lead trim and the resonator's stub
+  (`resonatorStub`), `fence` and `closeRoomOf` the fence of ways and fixed
+  places (`fenceFixed`), `fenceFixedPlaces` the heads of the wires let go
+  of, `deadOnArrival` and `whatIsNear` the line that says a search was over
+  before it began. Of 2026-10-04 evening: `refuseTheDetour` in `attempt` is
+  the bridge check; `lengthMarksOf`, `closeBandCells`, `closeLengthBands`,
+  `recoverWithoutBands`, `sayLengthPoints` and `sayOuterSettings` the
+  length-point clearance; `priceLane` carries `outerLane`, `outerPenalty`
+  and `feedlineLane`.
+- `artifacts/logs/` — the arms and the tools that read them: `run-arm.sh
+  <arm> [ENV=…]` (the eight chips one at a time on the installed binding;
+  `REPAIR_TRIALS=`, `STOP_AFTER=`, `MAX_RELAXATION=` edit the run
+  directory's config copy, `CHIPS=` restricts the chips), `dev-sync.sh` /
+  `dev-run.sh` / `dev-mqt-scpd.py` (the same on the build tree's binding
+  through an overlay, so a build can be tried while an arm runs),
+  `keylines.sh` (the lines an arm is judged by, for identity), `arm-table.py`
+  (outer verdict, angle, length points, `bad` per chip), `repair-summary.py`
+  (the repair's lines), `calibration.py`, `fcross.py`, `pinch.py`. The arms
+  of 2026-10-04 are `base-ortho2`, `repair-old`, `research`,
+  `research-exit`, `exit-base`, `bridge-check`, `nolane`, `lenpoint-k27`,
+  `lenpoint40`, `outer-*`, `outer57-*`, `outer-recovery-r8`, `full-r8`.
+- `plan-coupler-repair-search.md` and `plan-resonator-lenpoint.md` — the
+  two plans of 2026-10-04, each with the analysis it rests on.
 - `python/mqt/scpd/debugview.py` — wraps a debug SVG in an HTML page with
   per-class layer toggles. In the tree since `8941853`.
 - `python/mqt/scpd/dashboard.py` — parses a `-v 1 -d` log into a table of
@@ -530,15 +876,40 @@ Written down so nobody pays for them twice.
 
 ## What is not done
 
-- **The meander is off**, and 102 of the 117 fail verdicts are lengths.
-  Nobody has measured what `SCPD_FEEDLINE_MEANDER=1` catches. It is not this
-  phase's figure (user, 2026-10-03), but it should not be allowed to grow
-  unnoticed either: the two switches cost 17q two short resonators.
-- **The orthogonal crossing rule is off** (`SCPD_ORTHO_CROSSING`), set aside
-  so the rip-up could be read without it. Measured over the eight chips it
-  accounted for 35 of 207 fails when it was last on, and most of those were
-  wires grazing the ten-cell halo of an edge rather than crossing one. It is
-  the right rule and should come back.
+- **17q is the one chip the day left worse**: `bad` 8 → 12 under the
+  length-point clearance, its feedline pass ending with three open edges
+  (f0, f1, f12) and six crossing wires where it had four and four. The outer
+  routing itself is at 0 there only through the recovery; what the
+  recovered resonator 30 does to the pass has not been read.
+- **The evening's figures ran at `max_relaxation = 8`**, set in the run
+  directory's copy, for the outer routing *and* the feedline pass; the
+  configs say 5. 57q's outer routing needs the 8 (`outer57-*`), the others
+  do not. Whether the configs change, and whether the feedline pass should
+  keep 5, is the user's.
+- **The targeted repair has not run on the new outer routing.** Its arms
+  (`research`, `research-exit`, 20 tests a chip) stand on the morning's
+  outer routing: 69 and 51 against the 77 of then. On today's 34 it is owed
+  again, as are the user's three decisions of the morning — the exit-heading
+  default, the strict window criterion, and the sweep over k / grow /
+  trials / the 20 s clock per segment.
+- **69q's length point at 20 cells.** One resonator ends the outer routing
+  with a wire 20 cells from its length point (the `LENPT` line, 1 below k):
+  a wire the recovery or the refinement laid there, or a band that
+  collapsed onto its point. Not read.
+- **Feedlines of different chains cross each other on 69q at the end of the
+  insertion** — f32/f33, f46/f47, f60/f61, f73/f74, `CHECK feedline
+  crossings` red there — and the pass redraws the terminal edges so that
+  the second line, after the repair, is green. `SCPD_EDGE_SEES_CHAINS` is
+  off, so the insertion itself never routes an edge against another chain.
+- **Lengths are not read** (user): `SCPD_FEEDLINE_MEANDER` is off and the
+  short and long columns are nobody's figure in this phase.
+- **The orthogonal crossing rule is on** (`SCPD_ORTHO_CROSSING`), and the
+  DRC's `checkOrthogonality` leaves the terminal edges out of its mask as
+  the router does (`CheckedWire::terminal`). The search and the count still
+  disagree at the halo's edge unless `SCPD_CROSSING_EXIT_HEADING` is on —
+  twelve of the morning's 22 crossing wires were crossing by the count
+  alone; measured, off, the user's decision
+  ([handover-targeted-repair.md](handover-targeted-repair.md)).
 - **The bend penalty of a chain edge** has never been measured below 1.0. Ours
   is the outer routing's own figure, 7125 on 17q and 27000 on 69q, where the
   prototype routes its coupler edges at a flat 4000. The clamp now allows it;
@@ -547,17 +918,18 @@ Written down so nobody pays for them twice.
   length counts for nothing — a detour is free. Lowering that number changes
   nothing, because it is the only term; loosening it would mean adding a
   length term.
-- **The eighteen that are left** are in *Where it stands*: lane-trading
-  pairs of plain wires, which the one-sided relaxation never frees together
-  (it releases along the sweep only, as the prototype's does — a two-sided
-  release would be ours, and has not been measured), and 69q's resonator 9,
-  whose lead the insertion laid one cell from wire 10. That one wants the
-  repair, which has never run against the prefix search.
+- **What is left at the end of the stage** are lane-trading pairs of plain
+  wires, which the one-sided relaxation never frees together (it releases
+  along the sweep only, as the prototype's does — a two-sided release would
+  be ours, and has not been measured): 69q's fifteen open wires, 45q's three,
+  17q's. The targeted repair is the mechanism built for these.
 - **`whatBlocks` costs five searches** per failed phase 1 at `-v 1`, and its
   `in the way` verdict leaves the second pair of neighbours out. The
-  `dead on arrival` line is the cheaper and sharper of the two.
+  `dead on arrival` line is the cheaper and sharper of the two, and it does
+  not know the length-point bands: a cell they close reads `within the
+  clearance of nothing named`.
 - **`ctest`**: see the note at the end of this document for what ran on
-  2026-10-03 and what did not.
+  2026-10-04 and what did not.
 
 ## The dashboards
 
@@ -581,31 +953,43 @@ Some 23 GB in all. They live in `artifacts/<chip>/debug/`: `dashboard-feedline.h
 `viewers/` holds one layered page per **failed** search, which is what the
 red cells of a table link to. A green cell links to the picture itself.
 
-Two things to know before regenerating one. The CLI does **not** clear the
-directory, and the picture counter starts at 1 on every run, so a second
-`-d` run over the first leaves the pictures of the longer run lying beside
-the new ones; remove `artifacts/<chip>/debug` first. And the pictures are
+Three things to know before regenerating one. The table needs `-v 1`, not
+`-v` alone, or the attempts are not reported and there is nothing to lay
+out. The CLI does **not** clear the directory, and the picture counter
+starts at 1 on every run, so a second `-d` run over the first leaves the
+pictures of the longer run lying beside the new ones; remove
+`artifacts/<chip>/debug` first. And the targeted repair's local passes have
+no dashboard and draw no pictures: they are silenced, and with
+`SCPD_RESEARCH_VERBOSE=1` their lines land in the log, where the rounds of
+every candidate start at 0 again. And the pictures are
 what makes a run slow — 45q takes 3 minutes without them and 8 with — so
 run the chips one at a time for the three whose chain search reaches its
 budget (57q, 69q), and in parallel only the small ones.
 
-## Tests, 2026-10-03
+## Tests, 2026-10-04
 
 `cmake --build --preset release` and
 `ctest --test-dir build/release -E 'EveryChip/(Final|SpacedFinal)' -j 6`:
-**372 of 376 passed** in 231 s. The two suites left out are the full Final
-stage on every chip at the schema's `repair_trials = 100`, hours of work
-(`handover-chain-astar.md`, trap 4); they were not run.
+**393 of 396 passed** in about 190 s, run last after the length-point
+recovery. The two suites left out are the full Final stage on every chip —
+hours of work; `test/pipeline/Benchmarks.hpp` now reads `repair_trials`
+from the benchmark configs, so they would run the stage as the CLI runs it,
+but they were not run.
 
-The four that failed are not this session's:
+The three that fail are the Detail stage's, which nothing here touches:
+`EveryChip/BenchmarkDetail.DrawsCopperTheRulesAllow/9q`, `…/57q` and
+`EveryChip/SpacedDetail.KeepTheWireSpacing/9q` (`wire 0 starts at (61,
+1244) and is fed at (730.7, 38222.2)`).
+`FinalRouter.StartsOnTheDetailWaysAndReportsItsFails`, which failed on
+2026-10-03, passes again since the tests run the benchmark's
+`repair_trials`: the stage and the design-rule check now agree about the
+nine-qubit chip.
 
-- `FinalRouter.StartsOnTheDetailWaysAndReportsItsFails` — the stage says
-  `Fails: 0` on the nine-qubit test chip and the design-rule check still
-  finds something. It fails the same way with `SCPD_RESONATOR_STUB=1
-  SCPD_FENCE_FIXED=0`, the behaviour before this session, and under each
-  switch alone. (It takes 30 s under the old stub and 15 s under the new one:
-  half the searches were failing.)
-- `EveryChip/BenchmarkDetail.DrawsCopperTheRulesAllow/9q`, `…/57q` and
-  `EveryChip/SpacedDetail.KeepTheWireSpacing/9q` are the Detail stage, which
-  nothing here touches: `wire 0 starts at (61, 1244) and is fed at
-  (730.7, 38222.2)`.
+New on 2026-10-04: `ChainSearch.ARefusedCheapestRunYieldsTheNextCheapest`,
+`AcceptingEveryRunChangesNothing`, `RefusingEveryRunExhaustsTheChain`,
+`TheTrialBoundStopsTheRefusals`, `TheClockIsReadAfterARefusal`;
+`FinalRouter.OnlyUnsettledRedrawsOneWire`;
+`FeedlineOrthogonality.ATerminalEdgeIsNotInTheRule`;
+`DubinsRouter.TheExitHeadingCheckMakesTheSearchAgreeWithTheCount`. The
+bridge check, the length-point clearance and the outer routing's pricing
+switches have no unit test of their own; their measurements are above.

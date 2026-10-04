@@ -1225,7 +1225,12 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
     if (onlyStraight && (p.exit & 1U) != 0U) {
       continue;
     }
-    if (!cellOk(nx, ny)) {
+    // The end cell is recorded with the heading the move leaves on, so under
+    // `exitCheck_` it has to pass the rule on that heading too — see
+    // `setOrthogonalExitCheck`.
+    if (!cellOk(nx, ny) ||
+        (exitCheck_ &&
+         !canCrossOrthogonal(nx, ny, static_cast<Heading>(p.exit)))) {
       continue;
     }
     const uint32_t index = stateIndex(nx, ny, static_cast<Heading>(p.exit));

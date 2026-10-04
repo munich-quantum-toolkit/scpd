@@ -188,8 +188,12 @@ ChainSolution solveChainAStar(const ChainProblem& problem) {
         // an optimum, that is the answer. They do not arrive cheapest first
         // — the end of the chain is reached in order of the *bound* on what
         // a run costs, and its last step is priced only once it is reached.
+        //
+        // Not with an `accept`: then `solved` means an accepted run exists,
+        // and a run recorded here could be one the caller refuses when it
+        // pops — the budget would hand back a run that failed the test.
         prefixOf(top.node);
-        if (!out.solved || price < out.cost) {
+        if (!problem.accept && (!out.solved || price < out.cost)) {
           out.solved = true;
           out.cost = price;
           out.chosen = prefix;
@@ -207,10 +211,27 @@ ChainSolution solveChainAStar(const ChainProblem& problem) {
       // Every step of this prefix is real, and every prefix still on the
       // queue carries a price that cannot be too high. Nothing can undercut
       // it.
+      prefixOf(top.node);
+      if (problem.accept &&
+          !problem.accept(prefix, arena[top.node].price)) {
+        // Refused. The next real pop of a last-layer node is the
+        // next-cheapest complete run, so the search simply goes on — after
+        // reading the clock again, because a test that routes takes
+        // seconds and the loop head reads it only once per pop.
+        ++out.rejected;
+        if (problem.budget.count() > 0 && spent() > problem.budget) {
+          out.outOfTime = true;
+          return out;
+        }
+        if (problem.maxAccepts > 0 && out.rejected >= problem.maxAccepts) {
+          out.outOfTrials = true;
+          return out;
+        }
+        continue;
+      }
       out.solved = true;
       out.optimal = !out.relaid;
       out.cost = arena[top.node].price;
-      prefixOf(top.node);
       out.chosen = prefix;
       return out;
     }
@@ -236,7 +257,9 @@ ChainSolution solveChainAStar(const ChainProblem& problem) {
   }
   // The queue ran dry: every run of choices there is has been weighed, so
   // the answer is settled whether or not a step was ever relaid — nothing is
-  // left in the queue for an out-of-order price to have hidden.
+  // left in the queue for an out-of-order price to have hidden. With an
+  // `accept` that refused every run this is `optimal` and not `solved`: the
+  // search saw every run there is and none passed.
   out.optimal = true;
   return out;
 }

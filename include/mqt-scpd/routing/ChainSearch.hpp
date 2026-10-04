@@ -99,6 +99,31 @@ struct ChainProblem {
   /// reached. `ChainSolution::chosen` keeps the cheapest of them.
   /// Optional.
   std::function<void(std::span<const uint32_t> chosen, uint64_t cost)> found;
+
+  /// Whether the search may stop on a complete run of choices, asked at the
+  /// moment it would otherwise hand that run back as the answer: the run
+  /// and its real price. `false` refuses it, and the search runs on to the
+  /// next-cheapest complete run. Every entry of the open list carries a
+  /// lower bound on the true cost through it, so complete runs pop with
+  /// their real price in non-decreasing order — unless a step was `redone`,
+  /// which already costs the proof — and the next real pop after a refusal
+  /// is the next-cheapest run there is. Optional; without it the first
+  /// complete run to pop is the answer, as before.
+  ///
+  /// With it set, `ChainSolution::solved` means an **accepted** run exists.
+  /// A refused run is never handed back, not even when the budget runs out:
+  /// the caller asked for a run that passes its test and gets none rather
+  /// than one that failed it. `found` keeps firing for every complete run as
+  /// it is priced, accepted or not. The coupler insertion's targeted repair
+  /// is what this is for (2026-10-04): its test of a run is a local rip-up
+  /// and re-route that takes seconds, so the clock is read again after
+  /// every refusal, and `maxAccepts` bounds how often it is asked.
+  std::function<bool(std::span<const uint32_t> chosen, uint64_t cost)> accept;
+
+  /// How many complete runs `accept` may refuse before the search stops with
+  /// nothing, zero for no limit. `ChainSolution::outOfTrials` says when it
+  /// struck.
+  uint32_t maxAccepts = 0;
 };
 
 /// What the search found.
@@ -140,6 +165,16 @@ struct ChainSolution {
   /// costs it the proof: a prefix can then be cheaper than the prefix it
   /// extends, and A\* rests on the opposite.
   bool relaid = false;
+
+  /// How many complete runs `accept` refused. Zero without an `accept`.
+  uint32_t rejected = 0;
+
+  /// Whether `maxAccepts` stopped the search: every run it was allowed to
+  /// offer was refused and it was not allowed to offer another. Its own
+  /// field for the reason `outOfTime` is one: a search that ran out of
+  /// trials, one that ran out of time and one that saw every run there is
+  /// must never be reported by one name.
+  bool outOfTrials = false;
 };
 
 /// Solve one chain exactly, pricing as few steps as the bound allows.

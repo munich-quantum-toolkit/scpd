@@ -761,6 +761,110 @@ is what says a row is clean.
 | `Driver::drawCouplerOptions` | `final-coupler-options.svg` |
 | `DubinsRouter::setBendLowerBound` | the bend term in the free search's heuristic |
 
+## The room rules (2026-10-03/04, calibration only — nothing refuses yet)
+
+The plan is `plan-coupler-room-rules.md`, the task `prompt-coupler-room-rules.md`.
+Steps 1 to 3 of it are in the tree, **uncommitted**: the baseline logs, the
+geometry library, R0, and the calibration lines that say what each rule
+would have refused at the options the search chose. No rule is live, no
+switch changes a decision, and the eight chips reproduce the baseline in
+every `==>`, `CHECK`, `feedline routing` and `final routing` line (only the
+work counts of the chains that reach the 10 s budget differ, as
+[handover-chain-astar.md](handover-chain-astar.md) says they may).
+
+**The geometry** is `include/mqt-scpd/routing/RoomRules.hpp`, router-free
+and unit-tested (`test/routing/test_room_rules.cpp`, twelve tests):
+`straightCells` is the crossing rule's own definition of a straight cell,
+and `CrossingConstraints::build` now calls it, so R1 counts exactly the
+cells the orthogonal rule accepts; `crossingCapacity` groups them into runs
+and `lanesOf(run, pitch, margin) = 1 + ⌊(run − 1 − 2·margin) / pitch⌋`, zero
+below; `channelBetween` reads the in-edge backwards past its pad run and the
+out-edge forwards past its own and returns the least distance between the
+two arms, where it occurs, and `startGap`, the distance where the arms leave
+their runs; `supercoverLine`, `sideOf`, `sameSide`.
+
+**R0** is `Driver::bridgersOf`: the `assignBridges` walk, both arcs, the
+shorter kept, precomputed into `bridgers_[chain][at]` with one `tell` per
+edge. `checkBridgers` runs after `assignBridges` in phase 4 and prints
+`feedline routing: CHECK bridges — 0 wires whose bridged edge differs from
+the insertion's count`; it is 0 on all eight chips, and the shorter-arc
+guard never fired.
+
+**The calibration lines** come from `reportRoom`, after the three checks,
+under `SCPD_ROOM_REPORT` (on): one `room R1` line per edge between two
+couplers, one `room R2` and one `room R3` line per coupler, and a fourth
+`CHECK` line, `CHECK chain channels` (R4). The `settings:` line names
+`SCPD_ROOM_PITCH` (clearance + 1 = 20), `SCPD_ROOM_MARGIN` (10),
+`SCPD_ROOM_CHANNEL_REACH` (80), `SCPD_ROOM_CHANNEL_COUNT` (1) and
+`SCPD_ROOM_REPORT`; a `room rules —` summary line stands before `==>`.
+`artifacts/logs/calibration.py <log>` reads the verdicts out of a log,
+`artifacts/logs/keylines.sh` strips a log to the lines an arm is judged by,
+and `artifacts/logs/run-arm.sh <arm> [ENV=…]` runs the eight chips into
+`artifacts/logs/<arm>/`. The baseline is `artifacts/logs/base` and
+`artifacts/logs/base-ortho` (`SCPD_ORTHO_CROSSING=1`), the identity proof
+`artifacts/logs/control`, the calibration `artifacts/logs/calib2`.
+
+**What the calibration found, at the start values (pitch 20, margin 10,
+reach 80).** The four known cases and the healthy chips:
+
+| | 45q coupler 64 (f22/f23) | 57q coupler 8 (f2/f3) | 69q coupler 9 / wire 10 | 69q f5/f6 |
+|---|---|---|---|---|
+| R1 | room enough (f23: 13 lanes for 2) | room enough (f3: 9 lanes for 2) | — | — |
+| R2 | silent: the arms leave the pad 64 apart and never come closer | silent, 62 at the pad | — | — |
+| R3 | — | — | **red**: wire 10 lies 1.0 cell from the lead | — |
+| R4 | — | — | — | **red**: gap 31 against 60 |
+
+- **R1** flags 0 / 0 / 0 / 3 / 2 / 1 / 3 / 7 edges on 4q … 69q, none of
+  them an open pair; it never flags the known cases. Under
+  `SCPD_ORTHO_CROSSING` off a plain wire crosses its bridged edge anywhere,
+  which is why 21q and 33q pass with 0 open while R1 would refuse edges on
+  them.
+- **R2** as the plan defines it — the least distance between the two arms —
+  cannot see the two in-chain cases. In the artifact (`artifacts/logs/pinch.py`)
+  the conflict point of 45q 65/66 lies 22 cells from the **in port** of
+  coupler 64 and 22 from its **out port**: wire 65 runs along the pad at the
+  clearance (19.8 cells from the pad axis), wire 66 at 38, and the two are
+  0.65 cells short of the rule. The arms of f22 and f23 are 64 apart there
+  and never come closer. 57q 9/10 is the same picture at coupler 8 (wire 9 at
+  20 from the axis, wire 10 at 18.4 from 9). Nothing else is within 60 cells
+  of either point in the `couplers` snapshot, so the second wall is not at
+  the coupler: these are the lane-trading pairs of plain wires
+  `handover-feedline-routing.md` describes, leaning on the pad. R2 with the
+  divergence condition (silent when the arms never come closer than where
+  they leave the pad — 62 of 69 couplers on 69q) flags 1 / 1 / 1 / 5 couplers
+  on 17q / 45q / 57q / 69q, all healthy; most are jog options whose two edges
+  run back side by side 19–20 cells apart.
+- **"Bends right after the pad"** is not the discriminator either:
+  `artifacts/logs/bends.py` shows a third of the edges with two or more
+  crossers on 45q and 57q bend as soon as their stub allows, and one of them
+  is open.
+- **R3** at the chosen options, read as the nearest plain copper to the
+  pad and to the lead apart (a wire at the run is where it crosses its
+  bridged edge and says nothing). **The lead is the signal and the pad is
+  noise.** A plain wire within one cell of a lead: 45q couplers 6 and 104,
+  57q 128 and 149, 69q 9, 101, 106 and 212 — eight in all, 69q's coupler 9
+  among them, and not one coupler anywhere between 1 and 10 cells. A plain
+  wire *in* a pad (0 cells): 8 couplers on 57q, 7 on 69q, none on the
+  others — these are seeds the feedline pass redraws around the body, and
+  none of them is open. So R3 on the lead at a reach of 1 would move the one
+  coupler that is open and seven that are not; R3 on the pad would move
+  fifteen couplers for nothing.
+- **R4** flags 69q f5/f6 (gap 31 at (2218,4182) against 60), the plan's
+  case, and besides it found something the three checks do not look for:
+  on 69q the terminal edges of four pairs of neighbouring chains **cross
+  each other**, twice each — f32/f33, f46/f47, f60/f61, f73/f74 — two of
+  them within three cells of a coupler's in port (`artifacts/logs/fcross.py`).
+  `SCPD_EDGE_SEES_CHAINS` is off, so an edge is never routed against another
+  chain, and nothing reports a feedline crossing a feedline. 45q and 57q have
+  no such pair.
+
+**Where the pieces are.** `Driver::roomPitch/roomMargin/roomChannelReach/
+roomChannelCount/roomReport` (the switches), `RoomStats room_`, `ring_`,
+`ringPlace_`, `bridgers_`, `chainOfCoupler_`, `liftedR1_/R2_/R3_` (reset per
+insertion, read by nothing yet), `bridgersOf`, `checkBridgers`,
+`channelAt` (R2's measurement, `CouplerChannel`), `capacityOfEdge` (R1's),
+`reportRoom`, `checkChainChannels` (R4).
+
 ## What is open
 
 **The first two below are closed by the prefix search, and are kept because
