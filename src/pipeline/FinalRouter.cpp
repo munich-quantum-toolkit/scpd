@@ -322,9 +322,16 @@ constexpr double COUPLER_BIAS = 1.0;
 ///
 /// `SCPD_HALO_REACH` is the reach in clearances, `SCPD_HALO_DECAY` the shape:
 /// 0 flat, as it was, 1 linear to nothing at the rim, 2 exponential.
+///
+/// **1 since 2026-10-05** (user), which with the decay off is the
+/// prototype's own disc of one clearance around a wire let go of. Measured
+/// on 69q with the terminal stub guard and three fenced pairs: reach 3
+/// `bad` 5 (183/184 and 190/191 open, 191 crossing), reach 1 `bad` 4
+/// (183/184 open, 191 and 15 crossing at the halo's edge), 550 s against
+/// 576. `=3` is the reach that stood from 2026-10-01 to 2026-10-05.
 [[nodiscard]] inline std::uint32_t haloReach() {
   static const auto reach = static_cast<std::uint32_t>(
-      std::clamp(envWhole("SCPD_HALO_REACH", 3), 1, 12));
+      std::clamp(envWhole("SCPD_HALO_REACH", 1), 1, 12));
   return reach;
 }
 /// **Off by default.** A falling halo is a mitigation, not a cure: it is
@@ -894,6 +901,92 @@ constexpr std::uint32_t CEILING = 4000;
 [[nodiscard]] inline bool bridgeCheck() {
   static const bool on = envFlag("SCPD_BRIDGE_CHECK", true);
   return on;
+}
+
+/// How many pairs of ring neighbours the feedline pass fences:
+/// `SCPD_FEEDLINE_FENCE_PAIRS`, **3** (user, 2026-10-05). The prototype
+/// fences two (`additional_paths_1`). In phase 1 the pairs are `slot ± k`
+/// for `k = 1..pairs`; at a relaxation level they are the `k`-th wire
+/// beyond the one let go of and the `k`-th behind the wire being drawn,
+/// the released wires never — they are the ones meant to stay crossable —
+/// and a pair that would wrap round onto the wire or a released one is
+/// left out.
+///
+/// **Measured 2026-10-05 on 69q** (5 rounds, relaxation 8, the terminal
+/// stub guard on): 2 pairs `bad` 10, 3 pairs **5**, 4 pairs 5 — three and
+/// four end on the same wires in every round (183/184, 190/191) and the
+/// pass is a third faster, round 0 failing 10 wires instead of 17. 17q is
+/// unchanged at 12. `=2` is the prototype's fence.
+[[nodiscard]] inline std::uint32_t feedlineFencePairs() {
+  static const auto pairs = static_cast<std::uint32_t>(
+      std::clamp(envWhole("SCPD_FEEDLINE_FENCE_PAIRS", 3), 1, 8));
+  return pairs;
+}
+
+/// Whether the fence beyond the wire let go of runs on to the next
+/// conventional wire: `SCPD_FENCE_TO_CONVENTIONAL`, **off**.
+///
+/// **Measured 2026-10-05 on 69q** (6 rounds, relaxation 8, against
+/// `full-r8`): the walk fired in 47 of 1195 relaxation searches, changed
+/// the outcome of 4 — all in the pair 180–184 beside f60/f61, which stays
+/// open either way — and ended on the same failed wires in every round and
+/// the same `bad` 16. The hypothesis below is not what the rounds trade
+/// on (user). Kept as a switch so the arm can be run again; `=1` turns it
+/// on.
+///
+/// At a relaxation level the prototype fences the two wires beyond the one
+/// it let go of and the two behind the wire being drawn, and leaves the
+/// released one crossable. The two beyond are what bounds the room the
+/// released wire gives up — and a resonator does not bound it: it starts at
+/// its coupler out in the fan-in, not at the border, so a resonator in one
+/// of those two slots leaves the room open on that side, and the wire drawn
+/// into it settles where the next conventional wire runs. On 69q one round
+/// fewer ended with fewer fails for exactly that reason (user). Under this
+/// switch the fence beyond the released wire walks on until it has closed a
+/// conventional wire — a resonator is closed and passed, a feedline edge is
+/// passed and left to `constrainByFeedlines`, which fences every edge but
+/// the bridged and the terminal ones — and never fewer than the prototype's
+/// two. `=0` fences the two alone, as the prototype does.
+[[nodiscard]] inline bool fenceToConventional() {
+  static const bool on = envFlag("SCPD_FENCE_TO_CONVENTIONAL", false);
+  return on;
+}
+
+/// Whether the straight run a terminal edge has to make at its coupler is
+/// closed to every other wire of the feedline pass:
+/// `SCPD_TERMINAL_STUB_GUARD`, **on** (user, 2026-10-05).
+///
+/// A terminal edge runs from a launcher to the first coupler of its chain,
+/// or from the last coupler to a launcher, and the prototype fences it for
+/// nobody (`forbidden_feedline_paths` leaves `is_first_last_feedline` out).
+/// Its launcher end is walled by the port band in the obstacle mask; its
+/// coupler end is not a port of the chip and has no band. So the run the
+/// edge has to arrive on at the first coupler — the target of a starting
+/// edge — and the run it has to leave the last coupler on — the source of
+/// an ending edge — were open to every wire that is not a ring neighbour of
+/// the edge, and a wire drawn across them leaves the edge no way when it is
+/// drawn again: 69q's f5 and f6, 17q's f0, f1 and f12 end open there.
+///
+/// Under this switch `constrainByFeedlines` closes that run, inflated by
+/// the clearance, in every search but the edge's own — drawn or not, since
+/// the run follows from the coupler alone — and `SCPD_TERMINAL_STUB_EXTRA`
+/// (5) cells beyond it, so that the bend into the run has room as well
+/// (user). The meeting at the coupler stays open as `closeRoomOf` leaves
+/// it, so the resonator and the next edge of the same coupler keep their
+/// exits. And the coupler insertion closes the same runs of every chain
+/// already settled in the corridor of every later edge search
+/// (`guardSettledTerminalRuns`), where `SCPD_EDGE_SEES_CHAINS` otherwise
+/// lets a chain ignore the others: that is where 69q's f5 and f6 crossed,
+/// and a terminal edge that finds no way afterwards keeps that crossing.
+/// `=0` leaves the runs open in both places, as before.
+[[nodiscard]] inline bool terminalStubGuard() {
+  static const bool on = envFlag("SCPD_TERMINAL_STUB_GUARD", true);
+  return on;
+}
+[[nodiscard]] inline std::uint32_t terminalStubExtra() {
+  static const auto extra = static_cast<std::uint32_t>(
+      std::clamp(envWhole("SCPD_TERMINAL_STUB_EXTRA", 5), 0, 100));
+  return extra;
 }
 
 /// Whether the feedline pass prices the room outside the lane polygon in a
@@ -2363,6 +2456,12 @@ public:
     std::vector<std::uint32_t> unroutedKeys;
     std::vector<std::uint32_t> openKeys;
     std::vector<std::uint32_t> crossingKeys;
+    /// The verdict against every wire of the list, by key, as the bits of
+    /// `FinalVerdict`: zero where nothing is held against a wire, and for
+    /// every wire outside the members counted. This is what the artifact
+    /// carries on its end state, so a picture can mark the wires the stage
+    /// left failing by the stage's own count.
+    std::vector<std::uint8_t> verdicts;
     [[nodiscard]] std::uint32_t total() const { return failing; }
     /// The figure the targeted repair is judged by: unrouted, open and
     /// crossing, the lengths left out (user, 2026-10-04).
@@ -2381,6 +2480,12 @@ public:
   [[nodiscard]] Fails failsOf(std::vector<Wire>& wires,
                               const std::vector<std::uint32_t>& members) {
     Fails fails;
+    fails.verdicts.assign(wires.size(), 0);
+    const auto hold = [&fails](const Wire& wire, const fba::FinalVerdict bit) {
+      if (wire.key < fails.verdicts.size()) {
+        fails.verdicts[wire.key] |= static_cast<std::uint8_t>(bit);
+      }
+    };
     for (const auto member : members) {
       auto& wire = wires[member];
       if (!wire.drawn) {
@@ -2389,6 +2494,7 @@ public:
         fails.feedlinesUnrouted += wire.feedline ? 1 : 0;
         fails.unroutedIds.push_back(wireId(wire));
         fails.unroutedKeys.push_back(wire.key);
+        hold(wire, fba::FinalVerdict::Unrouted);
         continue;
       }
       ++fails.drawn;
@@ -2419,23 +2525,28 @@ public:
         ++fails.open;
         fails.openIds.push_back(wireId(wire));
         fails.openKeys.push_back(wire.key);
+        hold(wire, fba::FinalVerdict::Open);
       }
       if (wire.tooShort) {
         ++fails.tooShort;
         fails.shortIds.push_back(wireId(wire));
+        hold(wire, fba::FinalVerdict::Short);
       }
       if (wire.tooLong) {
         ++fails.tooLong;
         fails.longIds.push_back(wireId(wire));
+        hold(wire, fba::FinalVerdict::Long);
       }
       if (crossing) {
         ++fails.crossing;
         fails.crossingIds.push_back(wireId(wire));
         fails.crossingKeys.push_back(wire.key);
+        hold(wire, fba::FinalVerdict::Crossing);
       }
       if (loop) {
         ++fails.loops;
         fails.loopIds.push_back(wireId(wire));
+        hold(wire, fba::FinalVerdict::Loop);
       }
       if (open || wire.tooShort || wire.tooLong || crossing || loop) {
         ++fails.failing;
@@ -5023,6 +5134,17 @@ public:
              .y = place.y(),
              .heading = found->second,
              .primitive = 0});
+    }
+
+    // The runs the terminal edges of every chain already settled have to
+    // make at their couplers — into the first coupler, out of the last —
+    // and `terminalStubExtra` cells beyond, inflated by the clearance,
+    // whatever `edgesSeeOtherChains` says: an edge of a later chain drawn
+    // across them is a crossing of two chains the feedline pass cannot
+    // undo, because a terminal edge that finds no way keeps its way. 69q's
+    // f5 and f6 crossed at the insertion that way. See `terminalStubGuard`.
+    if (terminalStubGuard()) {
+      guardSettledTerminalRuns(edge);
     }
 
     // **The slot**, and the only thing that opens again — last, so that it
@@ -8253,7 +8375,8 @@ public:
                       "places fenced {} ({}), crossing rule {} ({}), the "
                       "exit heading tested {} ({}), a way that misses the "
                       "wire's bridge refused {} ({}), lane polygon priced {} "
-                      "({})",
+                      "({}), the terminal edges' coupler runs guarded {} "
+                      "({}) by {} cells more ({})",
                       resonatorStub() ? "yes" : "no",
                       origin("SCPD_RESONATOR_STUB"),
                       fenceFixed() ? "yes" : "no", origin("SCPD_FENCE_FIXED"),
@@ -8263,7 +8386,10 @@ public:
                       origin("SCPD_CROSSING_EXIT_HEADING"),
                       bridgeCheck() ? "yes" : "no", origin("SCPD_BRIDGE_CHECK"),
                       feedlineLane() ? "yes" : "no",
-                      origin("SCPD_FEEDLINE_LANE")));
+                      origin("SCPD_FEEDLINE_LANE"),
+                      terminalStubGuard() ? "yes" : "no",
+                      origin("SCPD_TERMINAL_STUB_GUARD"), terminalStubExtra(),
+                      origin("SCPD_TERMINAL_STUB_EXTRA")));
     }
     if (feedlinePass_ && verbosity_ >= 1) {
       std::string order;
@@ -8322,6 +8448,11 @@ public:
     }
     for (const auto& edge : edges_) {
       const auto& other = wires[edge.wire];
+      // The run a terminal edge has to make at its coupler, closed whether
+      // or not the edge is drawn: see `terminalStubGuard`.
+      if (edge.terminal && other.key != wire.key && terminalStubGuard()) {
+        guardTerminalStub(wire, other);
+      }
       if (!other.drawn || other.key == wire.key || other.key == wire.bridged) {
         continue;
       }
@@ -8374,6 +8505,73 @@ public:
         stampDisc(other.way, tuning_.clearance, strong);
       }
     }
+  }
+
+  /// Close, in the corridor of an edge search, the coupler-end runs of the
+  /// terminal edges of every **other** chain whose edges are committed:
+  /// the run into the first coupler and the run out of the last, each with
+  /// `terminalStubExtra` cells beyond it and the clearance around the
+  /// whole. The chain being searched is left out — its own terminal edges
+  /// are fenced by `fenceCommittedEdges` and `prefixFence_` as the rules
+  /// there say, and its couplers may still move. See `terminalStubGuard`.
+  void guardSettledTerminalRuns(const Edge& edge) {
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto& stencil = stencilFor(tuning_.clearance);
+    const auto close = [&](const Path& cells) {
+      alongDisc(cells, stencil,
+                [&](const std::int64_t x, const std::int64_t y) {
+                  corridor_.set(static_cast<std::size_t>((y * width) + x),
+                                true);
+                });
+    };
+    for (std::uint32_t other = 0; other < chains_.size(); ++other) {
+      if (other == edge.chain || other >= chainEdgePaths_.size()) {
+        continue;
+      }
+      const auto& points = chains_[other];
+      const auto& ways = chainEdgePaths_[other];
+      if (points.size() < 3 || ways.size() + 1 != points.size()) {
+        continue;
+      }
+      // The first edge, committed, from a launcher into the first coupler.
+      if (points.front().fixed && !points[1].fixed && !ways.front().empty()) {
+        const auto run = couplerRunOf(points[1].coupler);
+        close(router_.straightStub(targetOf(points[1]), true,
+                                   run + terminalStubExtra()));
+      }
+      // The last edge, committed, out of the last coupler to a launcher.
+      const auto last = points.size() - 2;
+      if (points.back().fixed && !points[last].fixed && !ways.back().empty()) {
+        const auto run = couplerRunOf(points[last].coupler);
+        close(router_.straightStub(sourceOf(points[last]), false,
+                                   run + terminalStubExtra()));
+      }
+    }
+  }
+
+  /// Close the straight run a terminal edge makes at its coupler — into the
+  /// first coupler for an edge that starts at a launcher, out of the last
+  /// for one that ends at a launcher — and `terminalStubExtra` cells beyond
+  /// it, inflated by the clearance, to the search of `wire`. The launcher
+  /// end needs nothing: the port band walls it. See `terminalStubGuard`.
+  void guardTerminalStub(const Wire& wire, const Wire& edge) {
+    Path cells;
+    if (startsAtLauncher(edge)) {
+      const auto in = router_.straightStub(edge.objective.target, true,
+                                           edge.endStub + terminalStubExtra());
+      cells.insert(cells.end(), in.begin(), in.end());
+    }
+    if (endsAtLauncher(edge)) {
+      const auto out = router_.straightStub(
+          edge.objective.source, false,
+          startStubOf(edge, tuning_.straightStart) + terminalStubExtra());
+      cells.insert(cells.end(), out.begin(), out.end());
+    }
+    if (cells.empty()) {
+      return;
+    }
+    closeRoomOf(wire, edge, cells);
+    openFixedPlaces(wire);
   }
 
   /// A test seam and nothing else. `SCPD_PROBE_ONLY_UNSETTLED=<slot>` flags
@@ -10003,8 +10201,12 @@ private:
     // no longer planar, and one neighbour either side no longer says where
     // a wire may run.
     if (pass.feedlines && feedlineLikePrototype() && total > 4) {
-      fence(wire, {&wires[members[(slot + total - 2) % total]],
-                   &wires[members[(slot + 2) % total]]});
+      // And the pairs beyond it as `feedlineFencePairs` says, 2 by default.
+      for (std::uint32_t k = 2; k <= feedlineFencePairs() && 2 * k < total;
+           ++k) {
+        fence(wire, {&wires[members[(slot + total - k) % total]],
+                     &wires[members[(slot + k) % total]]});
+      }
     }
     // The length-point clearance of the outer routing: see `lengthPointK`.
     closeLengthBands(wire, {&before, &after}, pass);
@@ -10133,21 +10335,59 @@ private:
         const auto onward = [&](const std::uint32_t at) {
           return forward ? (at + 1) % total : (at + total - 1) % total;
         };
+        const auto backward = [&](const std::uint32_t at) {
+          return forward ? (at + total - 1) % total : (at + 1) % total;
+        };
         const auto firstOn = onward(step);
         const auto secondOn = onward(firstOn);
-        const auto firstBack =
-            forward ? (slot + total - 1) % total : (slot + 1) % total;
-        const auto secondBack =
-            forward ? (slot + total - 2) % total : (slot + 2) % total;
-        fence(wire,
-              {&wires[members[firstOn]], &wires[members[firstBack]]});
-        fence(wire,
-              {&wires[members[secondOn]], &wires[members[secondBack]]});
-        for (const auto at : {firstOn, firstBack, secondOn, secondBack}) {
-          const auto key = wires[members[at]].key;
-          if (key != wire.key &&
-              std::ranges::find(closed, key) == closed.end()) {
-            closed.push_back(key);
+        // `feedlineFencePairs` pairs: the k-th beyond the released wire and
+        // the k-th behind this one, stopping before a pair wraps round.
+        auto on = step;
+        auto back = slot;
+        for (std::uint32_t k = 1; k <= feedlineFencePairs(); ++k) {
+          on = onward(on);
+          back = backward(back);
+          if (on == slot || back == step || on == back) {
+            break;
+          }
+          // Never a wire let go of at this level or one before: those are
+          // the ones meant to stay crossable (user, 2026-10-05).
+          for (const auto at : {on, back}) {
+            const auto& other = wires[members[at]];
+            const bool ripped = std::ranges::any_of(
+                released, [&](const auto& r) { return r.first == other.key; });
+            if (ripped || other.key == wire.key) {
+              continue;
+            }
+            fence(wire, {&other});
+            if (std::ranges::find(closed, other.key) == closed.end()) {
+              closed.push_back(other.key);
+            }
+          }
+        }
+        // Beyond the two, on to the next conventional wire: a resonator
+        // does not bound the room the released wire gave up. See
+        // `fenceToConventional`.
+        if (fenceToConventional()) {
+          const auto conventional = [&](const std::uint32_t at) {
+            const auto& other = wires[members[at]];
+            return !other.resonator && !other.feedline;
+          };
+          bool bounded = conventional(firstOn) || conventional(secondOn);
+          auto at = onward(secondOn);
+          for (std::uint32_t walked = 0;
+               !bounded && walked + 4 < total && at != slot && at != step;
+               ++walked, at = onward(at)) {
+            const auto& other = wires[members[at]];
+            if (other.feedline) {
+              continue;
+            }
+            fence(wire, {&other});
+            if (other.key != wire.key &&
+                std::ranges::find(closed, other.key) == closed.end()) {
+              closed.push_back(other.key);
+            }
+            bounded = conventional(at);
           }
         }
       } else {
@@ -12993,14 +13233,15 @@ private:
 /// How long a way is, in layout units.
 using Measure = std::function<double(const Path&)>;
 
-[[nodiscard]] std::unique_ptr<fba::FinalWireT> wireOf(const Path& way,
-                                                      const double length) {
+[[nodiscard]] std::unique_ptr<fba::FinalWireT>
+wireOf(const Path& way, const double length, const std::uint8_t verdict = 0) {
   auto drawn = std::make_unique<fba::FinalWireT>();
   drawn->path.reserve(way.size());
   for (const auto& point : way) {
     drawn->path.emplace_back(point.x, point.y, point.heading);
   }
   drawn->length = length;
+  drawn->verdict = static_cast<fba::FinalVerdict>(verdict);
   return drawn;
 }
 
@@ -13016,18 +13257,29 @@ using CouplerList = std::vector<std::unique_ptr<fbd::CpwCouplerT>>;
   return copy;
 }
 
-/// The state of every wire, as one phase left it.
+/// The state of every wire, as one phase left it. `verdicts` is what the
+/// stage holds against each wire by key, as `failsOf` counted it, and only
+/// the end state is handed one: a phase snapshot is not judged and carries
+/// zero on every wire.
 [[nodiscard]] std::unique_ptr<fba::FinalPhaseT>
 snapshotOf(std::string name, const std::vector<Wire>& wires,
            const std::uint32_t ring, const std::size_t inner,
            const Measure& measure, const std::vector<std::uint32_t>& edges = {},
-           const CouplerList& couplers = {}) {
+           const CouplerList& couplers = {},
+           const std::vector<std::uint8_t>* verdicts = nullptr) {
+  const auto verdictOf = [verdicts](const std::uint32_t key) -> std::uint8_t {
+    return verdicts != nullptr && key < verdicts->size() ? (*verdicts)[key]
+                                                         : 0;
+  };
+  const auto entryOf = [&](const Wire& wire) {
+    return wire.drawn
+               ? wireOf(wire.way, measure(wire.way), verdictOf(wire.key))
+               : wireOf({}, 0.0, verdictOf(wire.key));
+  };
   auto phase = std::make_unique<fba::FinalPhaseT>();
   phase->name = std::move(name);
   for (const auto key : edges) {
-    const auto& wire = wires[key];
-    phase->feedlines.push_back(wire.drawn ? wireOf(wire.way, measure(wire.way))
-                                          : wireOf({}, 0.0));
+    phase->feedlines.push_back(entryOf(wires[key]));
   }
   phase->couplers = copyOf(couplers);
   phase->wires.reserve(ring);
@@ -13039,12 +13291,14 @@ snapshotOf(std::string name, const std::vector<Wire>& wires,
     phase->inner.push_back(wireOf({}, 0.0));
   }
   for (const auto& wire : wires) {
-    if (!wire.drawn || wire.feedline) {
+    if (wire.feedline) {
       continue;
     }
     auto& into = wire.inner ? phase->inner : phase->wires;
     if (wire.slot < into.size()) {
-      into[wire.slot] = wireOf(wire.way, measure(wire.way));
+      // An undrawn wire stays an empty entry, as before, and carries the
+      // verdict against it — `Unrouted`, when the end state is judged.
+      into[wire.slot] = entryOf(wire);
     }
   }
   return phase;
@@ -13319,11 +13573,14 @@ public:
                              PHASES[lastPhase]));
     }
     driver.sayResonatorLengths(wires, outer);
-    driver.sayFails("final routing", driver.failsOf(wires, everyWire()),
+    const auto fails = driver.failsOf(wires, everyWire());
+    driver.sayFails("final routing", fails,
                     static_cast<std::uint32_t>(wires.size()));
 
+    // The end state carries the verdict against every wire, so that a
+    // picture of the run marks what the last line counted.
     auto last = snapshotOf("", wires, ring, global.connections.size(), measure,
-                           edges, couplersNow());
+                           edges, couplersNow(), &fails.verdicts);
     routing.wires = std::move(last->wires);
     routing.inner = std::move(last->inner);
     routing.feedlines = std::move(last->feedlines);

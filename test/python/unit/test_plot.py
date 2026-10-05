@@ -20,6 +20,7 @@ import pytest
 from mqt.scpd.chip import decode_chip, load_chip, obstacles_of, ports_of, vertices_of
 from mqt.scpd.config import load_config
 from mqt.scpd.flatbuffers.design.Chip import ChipT
+from mqt.scpd.planning import PlanningGeometry
 from mqt.scpd.plot import OBSTACLE_FILL, PlotError, layout_svg, simplify
 
 BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
@@ -87,6 +88,43 @@ def test_a_tolerance_trades_vertices_for_size() -> None:
 
     assert len(coarse) < len(exact) / 2
     assert len(exact.encode("utf-8")) < 10_000_000
+
+
+def test_the_failing_wires_are_marked_over_the_picture() -> None:
+    """Each wire the Final stage left failing is one marked element naming its verdicts; the legend counts them all."""
+    config_path = BENCHMARKS / "9q" / "config.toml"
+    model = decode_chip(load_chip(load_config(config_path), config_path))
+    open_wire = [(1000.0, 1000.0), (1400.0, 1000.0), (1400.0, 1600.0)]
+    edge = [(2000.0, 900.0), (2000.0, 1800.0)]
+    planning = PlanningGeometry(
+        wires=[open_wire],
+        inner_wires=[edge],
+        failing=[
+            ("3", ["open", "short"], open_wire),
+            ("f1", ["crossing"], edge),
+            # An unrouted wire has nothing to draw, and is counted all the same.
+            ("7", ["unrouted"], []),
+        ],
+    )
+
+    svg = layout_svg(model, planning=planning)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    groups = [group for group in root.iter(f"{SVG}g") if group.get("class") == "l-failing"]
+    assert len(groups) == 1
+    marks = groups[0].findall(f"{SVG}path")
+    assert [mark.findtext(f"{SVG}title") for mark in marks] == ["wire 3: open, short", "wire f1: crossing"]
+    # The mark follows the wire's own bends.
+    assert (marks[0].get("d") or "").count("L") == 2
+    assert any(text.text == "failing (3)" for text in root.iter(f"{SVG}text"))
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert "g.l-failing>path" in style.text
+    # Without a failing wire there is neither the layer nor the legend entry.
+    plain = layout_svg(model, planning=PlanningGeometry(wires=[open_wire]))
+    assert "l-failing" not in plain
+    assert "failing (" not in plain
 
 
 def test_an_empty_chip_cannot_be_drawn() -> None:

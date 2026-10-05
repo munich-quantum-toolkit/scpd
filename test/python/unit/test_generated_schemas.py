@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import flatbuffers
 
+from mqt.scpd.flatbuffers.artifacts.FinalVerdict import FinalVerdict
+from mqt.scpd.flatbuffers.artifacts.FinalWire import FinalWireT
 from mqt.scpd.flatbuffers.config.GridParams import GridParamsT
 from mqt.scpd.flatbuffers.config.PortConfig import PortConfigT
 from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
@@ -41,6 +43,23 @@ def test_role_enums_match_the_wire_format() -> None:
     assert AssignedRole.ConventionalTarget == 6
     assert Rotation.Unset == 0
     assert Rotation.R315 == 8
+
+
+def test_the_final_verdict_is_a_bit_set() -> None:
+    """The verdicts of the Final stage combine, so each is its own bit, and a wire starts with none."""
+    bits = [
+        FinalVerdict.Unrouted,
+        FinalVerdict.Open,
+        FinalVerdict.Crossing,
+        FinalVerdict.Short,
+        FinalVerdict.Long,
+        FinalVerdict.Loop,
+    ]
+    assert bits == [1, 2, 4, 8, 16, 32]
+    assert FinalWireT().verdict == 0
+    wire = FinalWireT(verdict=FinalVerdict.Open | FinalVerdict.Short)
+    assert wire.verdict & FinalVerdict.Open
+    assert not wire.verdict & FinalVerdict.Crossing
 
 
 def test_chip_round_trips_through_object_api() -> None:

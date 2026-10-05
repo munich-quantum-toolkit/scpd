@@ -19,11 +19,24 @@ from mqt.scpd.chip import decode_chip
 from mqt.scpd.export.klayout import PLANNING_LAYERS, write_layout
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from mqt.scpd.flatbuffers.artifacts.FinalPhase import FinalPhaseT
+from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
+from mqt.scpd.flatbuffers.artifacts.FinalVerdict import FinalVerdict
+from mqt.scpd.flatbuffers.artifacts.FinalWire import FinalWireT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.geometry.Point import PointT
-from mqt.scpd.planning import FINAL_PHASES, PLANNING_STAGES, PlanningError, blockade, planning_geometry
+from mqt.scpd.flatbuffers.geometry.RCoord import RCoordT
+from mqt.scpd.planning import (
+    BAD_VERDICTS,
+    FINAL_PHASES,
+    PLANNING_STAGES,
+    PlanningError,
+    blockade,
+    planning_geometry,
+    verdict_names,
+)
 from mqt.scpd.plot import layout_svg
 from mqt.scpd.run import IMPLEMENTED, RunDirectory
 
@@ -264,6 +277,54 @@ def test_one_phase_of_the_final_routing_is_drawn_on_its_own(run: RunDirectory, c
     assert not outer.couplers
     assert couplers.couplers
     assert len(couplers.inner_wires) > len(outer.inner_wires)
+
+
+def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:  # noqa: ANN001
+    """The end state carries the stage's verdict per wire; a picture marks the unrouted, open and crossing ones."""
+
+    def wire(cells: list[tuple[int, int]], verdict: int = 0) -> FinalWireT:
+        return FinalWireT(path=[RCoordT(x, y, 6) for x, y in cells], length=100.0, verdict=verdict)
+
+    grid = GridExtentT(width=100, height=100, origin=PointT(0.0, 0.0), cellWidth=10.0, cellHeight=10.0)
+    end = {
+        "wires": [
+            wire([(1, 1), (5, 1)], FinalVerdict.Open),
+            wire([(1, 3), (5, 3)]),
+            # Off its length alone: carried, named, not marked.
+            wire([(1, 5), (5, 5)], FinalVerdict.Short),
+            wire([(1, 7), (5, 7)], FinalVerdict.Open | FinalVerdict.Long),
+        ],
+        "inner": [wire([(8, 1), (8, 5)], FinalVerdict.Crossing)],
+        "feedlines": [wire([], FinalVerdict.Unrouted), wire([(0, 9), (9, 9)])],
+    }
+    # A phase snapshot is not judged and carries no verdict, whatever its wires hold.
+    snapshot = FinalPhaseT(name="feedlines", wires=[wire([(1, 1), (5, 1)])], inner=[], feedlines=[], couplers=[])
+    data = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.FinalRouting,
+            output=FinalRoutingT(
+                grid=grid, **end, feedlineEdges=[], phases=[snapshot], couplers=[], bridges=[], unresolved=[]
+            ),
+        )
+    )
+
+    geometry = planning_geometry(data, chip, "final")
+
+    # One entry per failing wire, named as the stage's log names it, with every verdict against it.
+    assert [(name, verdicts) for name, verdicts, _ in geometry.failing] == [
+        ("0", ["open"]),
+        ("3", ["open", "long"]),
+        ("i0", ["crossing"]),
+        ("f0", ["unrouted"]),
+    ]
+    # The mark is the wire's own polyline; an unrouted wire has none.
+    assert geometry.failing[0][2] == [(10.0, 10.0), (50.0, 10.0)]
+    assert geometry.failing[3][2] == []
+    assert not planning_geometry(data, chip, "final", phase="feedlines").failing
+    assert FinalVerdict.Unrouted | FinalVerdict.Open | FinalVerdict.Crossing == BAD_VERDICTS
+    assert verdict_names(FinalVerdict.Short | FinalVerdict.Loop) == ["short", "meeting itself"]
+    assert verdict_names(0) == []
 
 
 def test_a_stage_that_is_not_a_planning_stage_is_refused(chip) -> None:  # noqa: ANN001

@@ -506,6 +506,30 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   EXPECT_FALSE(lineWith("resonators:", "in all").empty());
 
   EXPECT_EQ(fails == 0, holdsEverywhere(benchmark, planned, routing)) << total;
+
+  // The end state carries the verdict against every wire, and the count of
+  // the wires with one is the count the last line said. An undrawn wire is
+  // `Unrouted` and nothing else; a drawn one is not. The phase snapshots are
+  // not judged and carry none.
+  std::size_t held = 0;
+  for (const auto* list : {&routing.wires, &routing.inner, &routing.feedlines}) {
+    for (const auto& wire : *list) {
+      const auto verdict = static_cast<std::uint8_t>(wire->verdict);
+      held += verdict != 0 ? 1 : 0;
+      const bool unrouted =
+          (verdict & static_cast<std::uint8_t>(
+                         mqt::scpd::flatbuffers::artifacts::FinalVerdict::Unrouted)) != 0;
+      EXPECT_EQ(unrouted, wire->path.empty());
+    }
+  }
+  EXPECT_EQ(held, fails) << total;
+  for (const auto& phase : routing.phases) {
+    for (const auto* list : {&phase->wires, &phase->inner, &phase->feedlines}) {
+      for (const auto& wire : *list) {
+        EXPECT_EQ(static_cast<std::uint8_t>(wire->verdict), 0) << phase->name;
+      }
+    }
+  }
 }
 
 /// A pass flagged `onlyUnsettled` redraws the flagged wire and no other.

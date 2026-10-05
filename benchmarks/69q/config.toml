@@ -188,8 +188,8 @@ launcher_offset_y = 0
 launcher_target = 24
 
 [stages.final]
-# The sweep of the Final stage, for the measurement of the seeded sweep: six
-# rounds, five relaxations each way and no refinement. The defaults are 30, 10
+# The sweep of the Final stage, for the measurement of the seeded sweep: five
+# rounds, eight relaxations each way and no refinement. The defaults are 30, 10
 # and 2.
 # The band a wire may be redrawn in, as a multiple of the wire clearance.
 # The prototype carries it as a raw cell count, `outer_expansion`: 200 on
@@ -197,8 +197,8 @@ launcher_target = 24
 # default of 800 on every other chip. 11 clearances of 19 cells span
 # 209, against the 200 the prototype uses here.
 corridor_spacings = 11
-rounds            = 6
-max_relaxation    = 5
+rounds            = 5
+max_relaxation    = 8
 refinement_rounds = 10
 
 # The measurement of the feedline routing on its own: the repair is off, so

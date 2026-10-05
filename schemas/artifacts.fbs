@@ -266,6 +266,25 @@ table DetailRouting {
   inner: [DetailWire] (required);
 }
 
+/// The verdicts the Final stage holds against one wire at its end, as bit
+/// flags: a wire can be open and off its length at once. Counted by the
+/// stage's own test, the one its last log line reports, with every wire down.
+enum FinalVerdict : ubyte (bit_flags) {
+  /// The wire has no way of its own: still on its seed, or not on the grid.
+  Unrouted,
+  /// Its way comes within the wire clearance of another wire.
+  Open,
+  /// It crosses a feedline edge other than at a right angle, or enters the
+  /// room around a feedline's bend.
+  Crossing,
+  /// A resonator shorter than its target length allows.
+  Short,
+  /// A resonator longer than its target length allows.
+  Long,
+  /// Its way crosses or touches itself.
+  Loop,
+}
+
 /// One wire's path on the router grid, cell by cell.
 ///
 /// The cells run from the point the wire is fed at to the cell its target port
@@ -280,6 +299,12 @@ table FinalWire {
   /// that carries no cells. The Final stage lengthens a resonator's way to
   /// `meander_length` with a meander, and this is the figure it measured.
   length: double;
+  /// What the stage held against the wire when it ended, as the bits of
+  /// `FinalVerdict`; zero for a wire nothing was held against. Set on the
+  /// end state only — the phase snapshots carry zero, because they are not
+  /// judged — so that a renderer can mark the wires the stage left failing
+  /// without re-deriving the stage's own count.
+  verdict: FinalVerdict;
 }
 
 /// What the Final stage had drawn at the end of one of its phases.

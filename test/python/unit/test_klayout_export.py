@@ -16,9 +16,10 @@ import pytest
 
 from mqt.scpd.chip import decode_chip, load_chip
 from mqt.scpd.config import load_config
-from mqt.scpd.export.klayout import OBSTACLE_LAYER, PORT_LAYER, ExportError, write_layout
+from mqt.scpd.export.klayout import OBSTACLE_LAYER, PLANNING_LAYERS, PORT_LAYER, ExportError, write_layout
 from mqt.scpd.flatbuffers.design.Chip import ChipT
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
+from mqt.scpd.planning import PlanningGeometry
 
 kdb = pytest.importorskip("klayout.db")
 
@@ -45,6 +46,27 @@ def test_the_unrouted_chip_is_written_and_reads_back(tmp_path: Path, suffix: str
     assert len(labels) == 16
     assert "Chip.port0" in labels
     assert layout.dbu == pytest.approx(0.001)
+
+
+def test_the_failing_wires_get_a_layer_of_their_own(tmp_path: Path) -> None:
+    """A wire the Final stage left failing is written on its own layer beside the wire it is."""
+    config_path = BENCHMARKS / "4q" / "config.toml"
+    chip = decode_chip(load_chip(load_config(config_path), config_path))
+    route = [(1000.0, 1000.0), (1400.0, 1000.0), (1400.0, 1600.0)]
+    planning = PlanningGeometry(
+        wires=[route, [(2000.0, 2000.0), (2500.0, 2000.0)]],
+        failing=[("1", ["open"], route), ("f0", ["unrouted"], [])],
+    )
+
+    summary = write_layout(chip, tmp_path / "chip.gds", planning=planning)
+
+    layout = kdb.Layout()
+    layout.read(str(summary.path))
+    top = layout.top_cell()
+    assert top.shapes(layout.layer(*PLANNING_LAYERS["wires"])).size() == 2
+    # The one failing wire with a way; the unrouted one has nothing to write.
+    assert top.shapes(layout.layer(*PLANNING_LAYERS["failing"])).size() == 1
+    assert summary.planning == 3
 
 
 def test_the_suffix_selects_the_format(tmp_path: Path) -> None:

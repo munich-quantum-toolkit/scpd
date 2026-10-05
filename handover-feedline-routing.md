@@ -7,11 +7,13 @@ coupler lead, two edges meeting at a coupler do not cross, no feedline
 crosses a resonator, and no feedline crosses a feedline of another chain.
 Each is checked at the end of the insertion, the fourth again after the
 repair; the first three are green on all eight chips, the fourth is red on
-69q at the insertion and green once the pass has redrawn the terminal
-edges. The figure the stage is judged by is `bad = unrouted + open +
+69q at the insertion (four pairs since the insertion closes the terminal
+edges' coupler runs, six before) and green once the pass has redrawn the
+terminal edges. The figure the stage is judged by is `bad = unrouted + open +
 crossing` over every wire at the end of the stage; lengths are not read
-(user, 2026-10-04). On 2026-10-04 evening it stands at **34 over the eight
-chips**, from 77 in the morning — see *Where it stands*.
+(user, 2026-10-04). On 2026-10-05 it stands at **20 over the eight
+chips**, from 34 the evening before and 77 the morning before that — see
+*Where it stands*.
 
 Read [handover-cpw-coupler-insertion.md](handover-cpw-coupler-insertion.md)
 for the coupler options, the geometry and the chain search this stands on,
@@ -20,26 +22,27 @@ that settles a chain. This document is about what happens to the wires
 afterwards, and about the obstacles the insertion builds for its own edges.
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch: `phase-4-routing-stages`. HEAD is **`63851cf` feedline routing 7
-  fails remain**, which carries everything up to *The resonator's exit*
-  below. **Uncommitted** on top of it, the user committing per phase, all of
-  2026-10-03/04: the room rules (*The room rules* in
-  [handover-cpw-coupler-insertion.md](handover-cpw-coupler-insertion.md));
-  the orthogonal crossing rule as the default and the targeted repair in
-  place of the blind one ([handover-targeted-repair.md](handover-targeted-repair.md));
-  the bridge check (*The bridge check*); the length-point clearance of the
-  outer routing with its recovery, the one-zone rule and the band of the
-  wire let go of (*The length-point clearance*,
-  `plan-resonator-lenpoint.md`); the outer routing's relaxation pricing as
-  switches (`SCPD_OUTER_LANE`, `SCPD_OUTER_PENALTY`, both at what it always
-  did); and the exit-heading check of the orthogonal search, off until the
-  user decides (`SCPD_CROSSING_EXIT_HEADING`).
+- Branch: `phase-4-routing-stages`. HEAD is **`d8d1a06` 34 Fails
+  remaining**, which carries everything of 2026-10-03/04 — the room rules,
+  the orthogonal crossing rule as the default, the targeted repair, the
+  bridge check, the length-point clearance with its recovery, the outer
+  routing's pricing switches and the exit-heading check
+  (`SCPD_CROSSING_EXIT_HEADING`, still off). **Uncommitted** on top of it,
+  the user committing per phase, all of 2026-10-05: the verdict every wire
+  carries in the artifact and the failing wires marked in the picture
+  (*Where the pieces are*); the terminal edges' coupler runs closed in the
+  feedline pass and the insertion (*The terminal edges' coupler runs*);
+  three fenced pairs of ring neighbours in the feedline pass
+  (`SCPD_FEEDLINE_FENCE_PAIRS` 3) and the halo of a wire let go of at one
+  clearance (`SCPD_HALO_REACH` 1), both defaults now; the walk to the next
+  conventional wire as a switch that is off (`SCPD_FENCE_TO_CONVENTIONAL`);
+  `max_relaxation = 8` in every benchmark config and `rounds = 5` on 69q.
 - Benchmarks: `repair_trials = 0`, `stop_after = "feedlines"` and
-  `max_relaxation = 5` in all eight `benchmarks/*/config.toml`, so a run
-  ends where this document ends. The evening's figures were measured with
-  `max_relaxation = 8` set in the run directory's copy
-  (`MAX_RELAXATION=8 artifacts/logs/run-arm.sh …`); whether the configs
-  follow is the user's decision.
+  `max_relaxation = 8` in all eight `benchmarks/*/config.toml` (8 since
+  2026-10-05, user; the 2026-10-04 figures were measured with the 8 set
+  in the run directory's copy), so a run ends where this document ends.
+  69q also says `rounds = 5` (user, 2026-10-05: one round fewer ended with
+  fewer fails there).
 - Run one chip with
   `.venv/bin/mqt-scpd plan -c benchmarks/45q/config.toml -o artifacts/45q --stage final -v 1`.
   `--stage final` resumes on the artifacts already in the run directory; it
@@ -59,6 +62,18 @@ them; `bad` = unrouted + open + crossing at the end of the stage:
 | base-ortho2, the rule on | 0 | 0 | 8 | 0 | 5 | 8 | 25 | 31 | 77 | 2287 |
 | + bridge check | 0 | 0 | 8 | 0 | 4 | 8 | 23 | 28 | 71 | 2400 |
 | + length-point clearance, relaxation 8 | 0 | 0 | 12 | 0 | 0 | 4 | 2 | 16 | **34** | 1276 |
+| + terminal stub guard, 3 fenced pairs, halo reach 1 (2026-10-05, `guard-pairs3-halo1-all`) | 0 | 0 | 12 | 1 | 0 | 1 | 2 | 4 | **20** | 1075 |
+
+**2026-10-05**: the last row is the stage as it stands at the end of the
+day — `SCPD_TERMINAL_STUB_GUARD`, `SCPD_FEEDLINE_FENCE_PAIRS` 3 and
+`SCPD_HALO_REACH` 1, all defaults now, see *The terminal edges' coupler
+runs* — measured with `run-arm.sh` on the installed binding, 69q on its
+config (5 rounds, relaxation 8), the others at `MAX_RELAXATION=8` as
+`full-r8` was. On the configs as committed (relaxation 5) 57q ends at 13
+instead of 2: its outer routing needs the 8 (`outer57-*`), as before.
+The wires: 17q 2, 10, 11, 14, 31, 33, 40, 56, f0, f1, f12; 21q 27
+crossing; 45q 65 crossing; 57q 15, 171 crossing; 69q 183/184 open, 15 and
+191 crossing. `artifacts/logs/bad-table.py <arm> …` prints this table.
 
 Every outer routing ends at 0 unrouted / 0 open (17q through the recovery),
 every edge is drawn, and 17q is the one chip that got worse. The per-chip
@@ -449,6 +464,9 @@ marked:
 | `SCPD_CHAIN_KEEP_WAYS` | **off** | was on |
 | `SCPD_ORTHO_CROSSING` | **on** | was off 2026-10-02 to 2026-10-04; the regime now, see [handover-targeted-repair.md](handover-targeted-repair.md) |
 | `SCPD_BRIDGE_CHECK` | **on** | new, 2026-10-04: a way found that does not cross the wire's bridged edge is refused as no way — see *The bridge check* below |
+| `SCPD_FENCE_TO_CONVENTIONAL` | off | new, 2026-10-05: the fence beyond the wire let go of walks on to the next conventional wire, a resonator not bounding the room; measured on 69q at 6 rounds / relaxation 8 and identical in every judged line to `full-r8` (47 searches fenced more, 4 outcomes moved inside the 180–184 pair) — not the cause of the round-5 loss (user) |
+| `SCPD_FEEDLINE_FENCE_PAIRS` | **3** | new, 2026-10-05: how many pairs of ring neighbours the feedline pass fences, in phase 1 (`slot ± k`) and at every relaxation level (the k-th beyond the wire let go of and the k-th behind the wire drawn, released wires never); 2 is the prototype. 3 and 4 both take 69q from 10 to 5 with the terminal stub guard — see *The terminal edges' coupler runs*; 3 is the default (user) |
+| `SCPD_TERMINAL_STUB_GUARD` / `SCPD_TERMINAL_STUB_EXTRA` | **on** / 5 | new, 2026-10-05: the run a terminal edge has to make at its coupler — into the first coupler, out of the last — plus 5 cells, inflated by the clearance, closed to every other wire's search in the feedline pass, drawn or not; the launcher end is the port band's. Terminal edges are fenced for nobody otherwise (user) — see *The terminal edges' coupler runs* |
 | `SCPD_FEEDLINE_LANE` | on | new, 2026-10-04: the lane polygon of a relaxation priced in the feedline pass; `=0` leaves it out, measured once at the user's request — see *The lane polygon, measured* below |
 | `SCPD_OUTER_LANE` | on | new, 2026-10-04: the lane polygon of the outer routing's relaxation; `=0` leaves it out and the released halos alone price the relaxation. Measured on 57q under the hard length-point clearance, see *The length-point clearance* |
 | `SCPD_OUTER_PENALTY` | 0 | new, 2026-10-04: how the outer routing prices the wires it let go of — 0 a halo of one clearance more per level, as it always had; 1 the feedline pass's flat halo (`SCPD_HALO_REACH` clearances) and crossing toll; 2 not at all |
@@ -467,14 +485,17 @@ marked:
 | `SCPD_PRICE_APPROACHES` | on (outer routing only) | |
 | `SCPD_PORT_BANDS` | on | |
 | `SCPD_CROSS_TOLL` | 150, width 2 | |
-| `SCPD_HALO_REACH` | 3, `SCPD_HALO_DECAY` 0 (decay off) | |
+| `SCPD_HALO_REACH` | **1**, `SCPD_HALO_DECAY` 0 (decay off) | was 3 from 2026-10-01 to 2026-10-05. Measured once on 69q with the guard and three pairs (`artifacts/dev/69q-halo1`): `bad` 5 → 4 — 190/191 close, 183/184 stay open, 191 and now 15 cross an edge at 10 cells, the halo's-edge case; 4 wires either way, 550 s against 576. The user made 1 the default on that run; with the decay off it is the prototype's disc of one clearance |
 
 `RESONATOR_COPPER` (2) and `COUPLER_LEAD_STRAIGHT` (14) are constants, not
 switches. Three settings lines say what is in force and where each value
 came from: `outer routing settings:` before the outer routing (length
 point, recovery, polygon, released halos), `feedline routing settings:` at
 every feedline pass (stub, fixed places, crossing rule, exit heading, bridge
-check, lane polygon) and `targeted repair settings:` before the repair.
+check, lane polygon, the terminal edges' coupler runs and the cells beyond
+them) and `targeted repair settings:` before the repair. The fence pairs
+and the halo reach have no line; the `fence …` of every relaxation search
+names the pairs, and the reach shows only in the pictures.
 
 ## The bridge check
 
@@ -688,6 +709,73 @@ three open edges (f0, f1, f12) and six crossing wires where the baseline had
 four and four — and 69q's fifteen open include f5 and f6. The lengths are
 not read (user).
 
+## The terminal edges' coupler runs
+
+Written 2026-10-05 (user). A terminal edge runs from a launcher to the
+first coupler of its chain or from the last coupler to a launcher, and the
+prototype fences it for nobody; `constrainByFeedlines` follows it. Its
+launcher end is walled by the port band in the obstacle mask. Its coupler
+end is not a port of the chip and had no wall at all: the run the edge has
+to arrive on at the first coupler, and the run it has to leave the last
+coupler on, were open to every wire that is not a ring neighbour of the
+edge, and a wire drawn across them leaves the edge no way when it is drawn
+again. 69q's f5 and f6 ended open there, 17q's f0, f1 and f12 do not
+(their conflicts lie 69 and 77 cells from the coupler, and f12's is a
+resonator that finds no way in any round and keeps its seed).
+
+`SCPD_TERMINAL_STUB_GUARD` (on) closes that run — `endStub` into the first
+coupler, `startStub` out of the last — plus `SCPD_TERMINAL_STUB_EXTRA` (5)
+cells beyond it, inflated by the clearance, in every search of the
+feedline pass but the edge's own, drawn or not (`guardTerminalStub`, from
+`constrainByFeedlines`); the meeting at the coupler stays open as
+`closeRoomOf` leaves it. The insertion closes the same runs of every chain
+already settled in the corridor of every later edge search
+(`guardSettledTerminalRuns`, from `corridorOfEdge`), whatever
+`SCPD_EDGE_SEES_CHAINS` says. Measured on 69q with the benchmark config
+(5 rounds, relaxation 8, band 209), no repair, `bad` = unrouted + open +
+crossing at the end of the stage:
+
+| 69q | insertion pairs crossing | bad | open | crossing | s |
+|---|---|---|---|---|---|
+| no guard (`artifacts/dev/69q-stubguard-off`) | 6 | 14 | 13 | 1 | 645 |
+| no guard, 6 rounds (`full-r8`) | 6 | 16 | 15 | 1 | 669 |
+| guard in the feedline pass (`artifacts/dev/69q-stubguard`) | 6 | **10** | 9 | 1 | 884 (`-d`) |
+| guard in the pass and the insertion (`artifacts/dev/69q-stubguard-ins`) | 4 | **10** | 9 | 1 | 912 (`-d`) |
+
+f5 and f6 end drawn and clear in both guard arms, and the `CHECK feedline
+crossings` line after the pass is green. What is left is plain-wire pairs
+alone: 20/22, 183/184, 190/191, 203/206/208, with 191 crossing f65. The
+insertion guard takes two of the six crossing pairs of the insertion away
+(f32/f33, f73/f74) and changes nothing at the end; f5 and f6 still cross
+at the insertion, away from the coupler end, which the guard does not
+reach. 17q is identical in every judged line with the guard in the pass
+(the insertion guard was not run there). `artifacts/69q` holds the
+feedline-pass-guard run since 2026-10-05 (`06-final.fb`, `run.log`,
+`debug/`), at the user's request.
+
+**More ring neighbours fenced** (`SCPD_FEEDLINE_FENCE_PAIRS`, user,
+2026-10-05), on top of the guard in the pass and the insertion, same
+config, no `-d`:
+
+| 69q | bad | open | crossing | last round failed | s |
+|---|---|---|---|---|---|
+| 2 pairs (the prototype) | 10 | 9 | 1 | 20, f6, 184, 191 | 912 |
+| 3 pairs (`artifacts/dev/69q-pairs3`) | **5** | 4 | 1 | 184, 191 | 576 |
+| 4 pairs (`artifacts/dev/69q-pairs4`) | **5** | 4 | 1 | 184, 191 | 565 |
+
+Three and four end on the same wires in every round — 183/184 and
+190/191 open, 191 crossing f65 — and the pass is a third faster, because
+round 0 fails 10 instead of 17 and the later rounds have less to redo.
+On 17q three pairs change nothing (`bad` 12). **3 is the default** (user,
+2026-10-05); `=2` is the prototype's fence, kept as the control arm.
+
+Two things tried the same day and found not to be the cause of the round
+count trading fails (6 rounds 16, 5 rounds 14): the fence beyond the wire
+let go of walked on to the next conventional wire
+(`SCPD_FENCE_TO_CONVENTIONAL`, identical in every judged line), and the
+band raised from 11 to 16 clearances (`artifacts/dev/69q-corridor16`,
+`bad` 16 at 5 rounds).
+
 ## The lane polygon, measured
 
 Asked for by the user on 2026-10-04: what the feedline pass loses without
@@ -842,7 +930,13 @@ Written down so nobody pays for them twice.
   the bridge check; `lengthMarksOf`, `closeBandCells`, `closeLengthBands`,
   `recoverWithoutBands`, `sayLengthPoints` and `sayOuterSettings` the
   length-point clearance; `priceLane` carries `outerLane`, `outerPenalty`
-  and `feedlineLane`.
+  and `feedlineLane`. Of 2026-10-05: `guardTerminalStub` (from
+  `constrainByFeedlines`) and `guardSettledTerminalRuns` (from
+  `corridorOfEdge`) are the terminal edges' coupler runs;
+  `feedlineFencePairs` the pairs fenced in phase 1 and the relaxation of
+  `attempt`, where the walk of `fenceToConventional` follows them;
+  `Fails::verdicts`, `wireOf` and `snapshotOf` the verdict in the
+  artifact.
 - `artifacts/logs/` — the arms and the tools that read them: `run-arm.sh
   <arm> [ENV=…]` (the eight chips one at a time on the installed binding;
   `REPAIR_TRIALS=`, `STOP_AFTER=`, `MAX_RELAXATION=` edit the run
@@ -854,9 +948,28 @@ Written down so nobody pays for them twice.
   (the repair's lines), `calibration.py`, `fcross.py`, `pinch.py`. The arms
   of 2026-10-04 are `base-ortho2`, `repair-old`, `research`,
   `research-exit`, `exit-base`, `bridge-check`, `nolane`, `lenpoint-k27`,
-  `lenpoint40`, `outer-*`, `outer57-*`, `outer-recovery-r8`, `full-r8`.
+  `lenpoint40`, `outer-*`, `outer57-*`, `outer-recovery-r8`, `full-r8`;
+  of 2026-10-05 `guard-pairs3-halo1` (the eight chips on the day's
+  defaults, four of them at relaxation 5), `guard-pairs3-halo1-r8` (17q,
+  21q, 45q, 57q at 8) and `guard-pairs3-halo1-all` (the two joined, the
+  table in *Where it stands*), with `bad-table.py <arm> …` printing
+  `bad` and the wires per chip. The single-chip arms of the day are run
+  directories under `artifacts/dev/69q-*` (`stubguard`, `stubguard-off`,
+  `stubguard-ins`, `pairs3`, `pairs4`, `halo1`, `corridor16`), each with
+  its `run.log` and, where `-d` was on, its `debug/`.
 - `plan-coupler-repair-search.md` and `plan-resonator-lenpoint.md` — the
   two plans of 2026-10-04, each with the analysis it rests on.
+- **The failing wires in the picture** (2026-10-05, uncommitted): the end
+  state of `06-final.fb` carries `FinalWire.verdict`, the bits of
+  `FinalVerdict` (unrouted, open, crossing, short, long, meeting itself) as
+  `failsOf` counted them over every wire for the `final routing:` line; the
+  phase snapshots carry zero. `mqt-scpd plot --stage final` draws every
+  wire with an unrouted, open or crossing bit in red over the picture
+  (`l-failing`), names it and its verdicts in a tooltip (`wire 40: open,
+  crossing`, the ids of the log) and counts them in the legend; `render`
+  puts them on layer 29 `final.failing`. The lengths are carried and named,
+  not marked. A `06-final.fb` written before this carries no verdict and
+  marks nothing — the stage has to run again on the new binding.
 - `python/mqt/scpd/debugview.py` — wraps a debug SVG in an HTML page with
   per-class layer toggles. In the tree since `8941853`.
 - `python/mqt/scpd/dashboard.py` — parses a `-v 1 -d` log into a table of
@@ -876,31 +989,43 @@ Written down so nobody pays for them twice.
 
 ## What is not done
 
-- **17q is the one chip the day left worse**: `bad` 8 → 12 under the
-  length-point clearance, its feedline pass ending with three open edges
-  (f0, f1, f12) and six crossing wires where it had four and four. The outer
-  routing itself is at 0 there only through the recovery; what the
-  recovered resonator 30 does to the pass has not been read.
-- **The evening's figures ran at `max_relaxation = 8`**, set in the run
-  directory's copy, for the outer routing *and* the feedline pass; the
-  configs say 5. 57q's outer routing needs the 8 (`outer57-*`), the others
-  do not. Whether the configs change, and whether the feedline pass should
-  keep 5, is the user's.
-- **The targeted repair has not run on the new outer routing.** Its arms
-  (`research`, `research-exit`, 20 tests a chip) stand on the morning's
-  outer routing: 69 and 51 against the 77 of then. On today's 34 it is owed
-  again, as are the user's three decisions of the morning — the exit-heading
+- **17q is untouched by the day**: `bad` 12 under every arm of 2026-10-05
+  — three open edges (f0, f1, f12) and six crossing wires. Its terminal
+  edges fail 69 and 77 cells from the coupler, outside the guard, and
+  f12's partner is resonator 40, which finds no way in any round and keeps
+  its seed. The outer routing is at 0 there only through the recovery;
+  what the recovered resonator 30 does to the pass has not been read.
+- **21q gained a crossing wire** (27, at 10 cells from an edge) under the
+  day's defaults, where it was at 0; which of the three changes did it has
+  not been read. 45q went 4 → 1, 57q stays at 2 and 69q 16 → 4.
+- **The relaxation is 8 in every config now** (user, 2026-10-05) and 69q
+  runs five rounds; `rounds` on the other seven is still 6. 57q at
+  relaxation 5 ends at 13, so the 8 is not optional there.
+- **The targeted repair has not run on any of the day's outer routings.**
+  Its arms (`research`, `research-exit`, 20 tests a chip) stand on the
+  2026-10-04 morning's: 69 and 51 against the 77 of then. On today's 20 it
+  is owed again, as are the user's three decisions — the exit-heading
   default, the strict window criterion, and the sweep over k / grow /
-  trials / the 20 s clock per segment.
+  trials / the 20 s clock per segment. Note that the repair's local pass
+  fences three pairs now, as the feedline pass does.
+- **`SCPD_HALO_REACH` 1 rests on one 69q run** (`artifacts/dev/69q-halo1`):
+  5 → 4 there, and the eight-chip table was run at 1 from the start, so
+  what the reach alone does on the other chips is not separated out. The
+  re-measurement of the prices that *Negative results* asks for is still
+  owed; with reach 1 the halo is the prototype's disc, so the one price
+  that is ours now is the toll.
 - **69q's length point at 20 cells.** One resonator ends the outer routing
   with a wire 20 cells from its length point (the `LENPT` line, 1 below k):
   a wire the recovery or the refinement laid there, or a band that
   collapsed onto its point. Not read.
 - **Feedlines of different chains cross each other on 69q at the end of the
-  insertion** — f32/f33, f46/f47, f60/f61, f73/f74, `CHECK feedline
-  crossings` red there — and the pass redraws the terminal edges so that
-  the second line, after the repair, is green. `SCPD_EDGE_SEES_CHAINS` is
-  off, so the insertion itself never routes an edge against another chain.
+  insertion** — f5/f6, f45/f47, f46/f47, f60/f61 since the insertion closes
+  the terminal edges' coupler runs (f32/f33 and f73/f74 went with that),
+  `CHECK feedline crossings` red there — and the pass redraws the edges so
+  that the second line, after the repair, is green. `SCPD_EDGE_SEES_CHAINS`
+  is off, so the insertion itself never routes an edge against another
+  chain; f5 and f6 cross away from the coupler end, which the guard does
+  not reach.
 - **Lengths are not read** (user): `SCPD_FEEDLINE_MEANDER` is off and the
   short and long columns are nobody's figure in this phase.
 - **The orthogonal crossing rule is on** (`SCPD_ORTHO_CROSSING`), and the
@@ -921,15 +1046,19 @@ Written down so nobody pays for them twice.
 - **What is left at the end of the stage** are lane-trading pairs of plain
   wires, which the one-sided relaxation never frees together (it releases
   along the sweep only, as the prototype's does — a two-sided release would
-  be ours, and has not been measured): 69q's fifteen open wires, 45q's three,
-  17q's. The targeted repair is the mechanism built for these.
+  be ours, and has not been measured): 69q's 183/184, 17q's. The targeted
+  repair is the mechanism built for these. The rest of the day's 20 is
+  crossing wires at 10 cells from an edge — 21q 27, 45q 65, 57q 15 and 171,
+  69q 15 and 191 — the halo's-edge case of `SCPD_CROSSING_EXIT_HEADING`.
 - **`whatBlocks` costs five searches** per failed phase 1 at `-v 1`, and its
   `in the way` verdict leaves the second pair of neighbours out. The
   `dead on arrival` line is the cheaper and sharper of the two, and it does
   not know the length-point bands: a cell they close reads `within the
   clearance of nothing named`.
 - **`ctest`**: see the note at the end of this document for what ran on
-  2026-10-04 and what did not.
+  2026-10-05 and what did not. The terminal stub guard, the fence pairs and
+  the halo reach have no unit test of their own; their measurements are in
+  *The terminal edges' coupler runs*.
 
 ## The dashboards
 
@@ -965,6 +1094,28 @@ every candidate start at 0 again. And the pictures are
 what makes a run slow — 45q takes 3 minutes without them and 8 with — so
 run the chips one at a time for the three whose chain search reaches its
 budget (57q, 69q), and in parallel only the small ones.
+
+## Tests, 2026-10-05
+
+`cmake --build --preset release` and
+`ctest --test-dir build/release -E 'EveryChip/(Final|SpacedFinal)' -j 6`,
+run last after the halo reach went to 1: **393 of 396 passed**, the same
+three Detail-stage tests failing as on 2026-10-04 (below). The Python
+suite, `.venv/bin/python -m pytest test/python/unit`: **143 of 145**. The
+two that fail are not the day's: `test_the_detail_routing_carries_a_drawn_wire_per_connection`
+is the 9q Detail defect the three C++ tests fail on (wire 0 starts where
+it is not fed), and `test_the_final_routing_carries_a_snapshot_of_every_phase`
+expects the `refined` phase of a run that the benchmark configs stop after
+`feedlines` since 2026-10-04 — the test or the config has to give. New on
+2026-10-05: `FinalRouter.StartsOnTheDetailWaysAndReportsItsFails` checks
+the verdicts of the end state against the `Fails:` line and the phase
+snapshots for none; `test_the_final_routing_marks_the_wires_the_stage_left_failing`,
+`test_the_failing_wires_are_marked_over_the_picture`,
+`test_the_failing_wires_get_a_layer_of_their_own` and
+`test_the_final_verdict_is_a_bit_set` cover the verdict, the picture, the
+GDS layer and the schema. The terminal stub guard, the fence pairs and
+the halo reach have no unit test; their measurements are in *The terminal
+edges' coupler runs*.
 
 ## Tests, 2026-10-04
 

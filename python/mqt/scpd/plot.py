@@ -65,6 +65,10 @@ PLANNING_COLORS: dict[str, str] = {
     "wire": "#0072B2",
     "innerwire": "#E69F00",
     "clearance": "#CC79A7",
+    # The wires the Final stage left failing, drawn over everything: a red the palette otherwise
+    # avoids, so that it stands apart from the blue of a wire and the orange of an inner wire,
+    # and wide enough to be found at the zoom of a whole chip.
+    "failing": "#E6002E",
 }
 
 #: The fill of each role in the port legend. The colors stay apart from the obstacle fill.
@@ -266,6 +270,16 @@ def _planning_layers(
     if planning.couplers:
         data = "".join(polyline(ring, close=True) for ring in planning.couplers)
         parts.append(f'<g class="l-coupler"><path d="{data}"/></g>')
+    if planning.failing:
+        # What the stage's last line counted, one element per wire so that hovering one names it
+        # and what is held against it. Over every other layer: a failing wire lies on its own
+        # copper, and the mark has to be found at the zoom of a whole chip.
+        marks = "".join(
+            f'<path d="{polyline(points)}"><title>{escape("wire " + name + ": " + ", ".join(verdicts))}</title></path>'
+            for name, verdicts, points in planning.failing
+            if len(points) >= 2
+        )
+        parts.append(f'<g class="l-failing">{marks}</g>')
     if planning.launchers:
         circles = "".join(
             f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 1.4)}"/>'
@@ -276,12 +290,13 @@ def _planning_layers(
     return "".join(parts)
 
 
-def _planning_style(font: float, clearance: float = 0.0) -> str:
+def _planning_style(font: float, clearance: float = 0.0, *, failing: bool = False) -> str:
     """The stroke of every planning layer, and the type of the capacity labels.
 
     Args:
         font: The size of a gate label, in layout units.
         clearance: The width of the band drawn around every wire, in layout units. Zero draws none.
+        failing: Whether the picture marks wires the Final stage left failing.
 
     Returns:
         The CSS of the overlay.
@@ -323,6 +338,11 @@ def _planning_style(font: float, clearance: float = 0.0) -> str:
         f"g.l-coupler>path{{fill:{ROLE_COLORS['coupler']};fill-opacity:0.45;"
         f"stroke:{ROLE_COLORS['coupler']};stroke-width:1.2;vector-effect:non-scaling-stroke}}"
     )
+    if failing:
+        style += (
+            f"g.l-failing>path{{fill:none;stroke:{PLANNING_COLORS['failing']};stroke-width:3.4;"
+            "stroke-opacity:0.85;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}"
+        )
     if clearance > 0:
         style += (
             f"g.l-clearance>path{{fill:none;stroke:{PLANNING_COLORS['clearance']};"
@@ -408,12 +428,25 @@ def layout_svg(
         for x, y in [to_view(center.x, center.y)]
     ]
     counts = {name: sum(1 for port, _ in centers if role_name(port.role) == name) for name in ROLE_COLORS}
+    shown = [name for name in ROLE_COLORS if counts[name]]
     legend = "".join(
         f'<g transform="translate({_number(pad + i * 11 * font)},{_number(view_height + bottom_band - 0.7 * font)})">'
         f'<circle class="{name}" cx="0" cy="{_number(-0.35 * font)}" r="{_number(0.35 * font)}"/>'
         f'<text x="{_number(0.6 * font)}" y="0">{name} ({counts[name]})</text></g>'
-        for i, name in enumerate(name for name in ROLE_COLORS if counts[name])
+        for i, name in enumerate(shown)
     )
+    if planning is not None and planning.failing:
+        # The wires the Final stage left failing, counted as the stage counts them — the unrouted
+        # ones included, which have nothing to draw — beside the port roles, in the stroke they
+        # are drawn with.
+        legend += (
+            f'<g transform="translate({_number(pad + len(shown) * 11 * font)},'
+            f'{_number(view_height + bottom_band - 0.7 * font)})">'
+            f'<path d="M0 {_number(-0.35 * font)}L{_number(0.9 * font)} {_number(-0.35 * font)}" '
+            f'stroke="{PLANNING_COLORS["failing"]}" stroke-width="3.4" stroke-linecap="round" '
+            'vector-effect="non-scaling-stroke"/>'
+            f'<text x="{_number(1.2 * font)}" y="0">failing ({len(planning.failing)})</text></g>'
+        )
     style = (
         f"path.o{{fill:{OBSTACLE_FILL};stroke:{OBSTACLE_STROKE};stroke-width:0.6;vector-effect:non-scaling-stroke}}"
         f"path.f{{fill:none;stroke:{OBSTACLE_STROKE};stroke-width:1;vector-effect:non-scaling-stroke}}"
@@ -428,7 +461,11 @@ def layout_svg(
     gate_font = 0.8 * font
     overlay = _planning_layers(planning, to_view, radius, gate_font) if planning is not None else ""
     if overlay:
-        style += _planning_style(gate_font, planning.clearance if planning is not None else 0.0)
+        style += _planning_style(
+            gate_font,
+            planning.clearance if planning is not None else 0.0,
+            failing=planning is not None and bool(planning.failing),
+        )
     caption = (
         f'<text x="{_number(pad)}" y="{_number(-top_band + 1.5 * font)}">{escape(title)}</text>' if title else ""
     )

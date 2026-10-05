@@ -12,6 +12,34 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Close the run a terminal feedline edge has to make at its coupler to
+  every other wire: the run into the first coupler of a chain and the run
+  out of its last, five cells beyond it, inflated by the wire clearance, in
+  every search of the feedline pass but the edge's own, and in the coupler
+  insertion for every chain already settled. The launcher end was walled by
+  the port band already; the coupler end was open to every wire that is not
+  a ring neighbour of the edge, and a wire drawn across it left the edge no
+  way. `SCPD_TERMINAL_STUB_GUARD` (on) and `SCPD_TERMINAL_STUB_EXTRA` (5).
+  On the 69-qubit benchmark the feedline routing ends with 10 failing wires
+  instead of 14, and the two terminal edges that ended open now hold.
+- ✨ Fence three pairs of ring neighbours in the feedline pass rather than
+  the prototype's two, in phase 1 and at every relaxation level, the wires
+  let go of never among them: `SCPD_FEEDLINE_FENCE_PAIRS` (3). With the
+  terminal runs closed the 69-qubit benchmark ends with 5 failing wires
+  instead of 10, and the pass is a third faster.
+- 🔧 Price a wire let go of in a relaxation of the feedline pass within one
+  wire clearance rather than three, `SCPD_HALO_REACH` 1: the prototype's
+  own disc. On the 69-qubit benchmark one more pair of wires closes.
+- ✨ Carry the Final stage's verdict against every wire in its artifact and
+  mark the failing wires in the picture. `FinalWire.verdict` holds the bits
+  of the new `FinalVerdict` — unrouted, open, crossing, short, long, meeting
+  itself — as the stage's own count sets them on the end state; the phase
+  snapshots are not judged and carry none. `mqt-scpd plot --stage final`
+  draws every unrouted, open or crossing wire in red over the picture, names
+  it and its verdicts in a tooltip and counts them in the legend, and
+  `render` writes them on a layer of their own (`final.failing`). The two
+  length verdicts are carried and named but do not mark a wire.
+
 - ✨ Insert a CPW coupler on every resonator of the Final stage and route
   the feedline chains through them, the prototype's
   `run_optimized_cpw_coupler_insertion`. A resonator's way is cut where the

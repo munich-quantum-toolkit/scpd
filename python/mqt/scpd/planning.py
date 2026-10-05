@@ -27,6 +27,7 @@ from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
+from .flatbuffers.artifacts.FinalVerdict import FinalVerdict
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 
 if TYPE_CHECKING:
@@ -37,6 +38,32 @@ if TYPE_CHECKING:
 __all__ = ["FINAL_PHASES", "PLANNING_STAGES", "PlanningError", "PlanningGeometry", "planning_geometry"]
 
 #: The planning stages that can be drawn, and the artifact each one is read from.
+#: The verdicts of the Final stage that count a wire as failing: unrouted, open or crossing a
+#: feedline. The two length verdicts and a way that meets itself are carried in the artifact and
+#: named in a wire's tooltip, but they do not mark it — the lengths are the meander's business and
+#: not the figure the stage is judged by (user, 2026-10-04).
+BAD_VERDICTS: int = FinalVerdict.Unrouted | FinalVerdict.Open | FinalVerdict.Crossing
+
+#: The name of every verdict bit, in the order the stage's own log line names them.
+VERDICT_NAMES: tuple[tuple[int, str], ...] = (
+    (FinalVerdict.Unrouted, "unrouted"),
+    (FinalVerdict.Open, "open"),
+    (FinalVerdict.Short, "short"),
+    (FinalVerdict.Long, "long"),
+    (FinalVerdict.Crossing, "crossing"),
+    (FinalVerdict.Loop, "meeting itself"),
+)
+
+
+def verdict_names(verdict: int) -> list[str]:
+    """The verdicts a wire's bits stand for, by name.
+
+    Returns:
+        The names, in the order the stage's log line uses; empty for a wire nothing is held against.
+    """
+    return [name for bit, name in VERDICT_NAMES if verdict & bit]
+
+
 #: The five phases of the Final stage, in the order it runs them. Each one changes what the phase
 #: before it produced, so each leaves its own snapshot in the artifact and gets its own picture.
 FINAL_PHASES: tuple[str, ...] = ("inner", "outer", "couplers", "feedlines", "refined")
@@ -96,6 +123,13 @@ class PlanningGeometry:
     inner_wires: list[list[Point]] = field(default_factory=list)
     #: The body of every coupler the Final stage placed, as a closed ring of four corners.
     couplers: list[list[Point]] = field(default_factory=list)
+    #: The wires the Final stage left failing at its end — unrouted, open or crossing a feedline,
+    #: ``BAD_VERDICTS`` — each as the wire's id in the stage's own log (``183``, ``i12``, ``f5``),
+    #: the names of every verdict against it, and its bends. Drawn over every other layer so that
+    #: what the run's last line counted can be found in the picture. Only the end state is judged,
+    #: so a picture of one phase carries none; an unrouted wire has no bends to draw and is
+    #: carried with an empty polyline, so that it is still counted.
+    failing: list[tuple[str, list[str], list[Point]]] = field(default_factory=list)
     #: What the Final stage had drawn at the end of each of its five phases, by phase name.
     #:
     #: A phase changes what the phase before it produced, so a picture of one cannot be derived
@@ -396,6 +430,16 @@ def _final(routing: FinalRoutingT, geometry: PlanningGeometry, wire_spacing: flo
             ])
         return rings
 
+    def failing(wires: list[Any] | None, prefix: str) -> list[tuple[str, list[str], list[Point]]]:
+        # The id is the one the stage's log uses: the slot of a ring wire, `i` and the slot of an
+        # inner wire, `f` and the index of a feedline edge.
+        found = []
+        for index, wire in enumerate(_entries(wires)):
+            verdict = int(wire.verdict or 0)
+            if verdict & BAD_VERDICTS:
+                found.append((f"{prefix}{index}", verdict_names(verdict), _bends(_entries(wire.path), to_layout)))
+        return found
+
     for snapshot in _entries(routing.phases):
         name = snapshot.name or ""
         geometry.phases[name] = drawn(snapshot.wires) + drawn(snapshot.inner) + drawn(snapshot.feedlines)
@@ -418,6 +462,8 @@ def _final(routing: FinalRoutingT, geometry: PlanningGeometry, wire_spacing: flo
         geometry.wires = drawn(routing.wires)
         geometry.inner_wires = drawn(routing.inner) + drawn(routing.feedlines)
         geometry.couplers = bodies(routing.couplers)
+        # The verdicts are the end state's alone: the phase snapshots are not judged.
+        geometry.failing = failing(routing.wires, "") + failing(routing.inner, "i") + failing(routing.feedlines, "f")
 
 
 def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: float) -> None:

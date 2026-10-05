@@ -72,8 +72,20 @@ class FinalWire(object):
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.0
 
+    # What the stage held against the wire when it ended, as the bits of
+    # `FinalVerdict`; zero for a wire nothing was held against. Set on the
+    # end state only — the phase snapshots carry zero, because they are not
+    # judged — so that a renderer can mark the wires the stage left failing
+    # without re-deriving the stage's own count.
+    # FinalWire
+    def Verdict(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint8Flags, o + self._tab.Pos)
+        return 0
+
 def FinalWireStart(builder: flatbuffers.Builder):
-    builder.StartObject(2)
+    builder.StartObject(3)
 
 def Start(builder: flatbuffers.Builder):
     FinalWireStart(builder)
@@ -96,6 +108,12 @@ def FinalWireAddLength(builder: flatbuffers.Builder, length: float):
 def AddLength(builder: flatbuffers.Builder, length: float):
     FinalWireAddLength(builder, length)
 
+def FinalWireAddVerdict(builder: flatbuffers.Builder, verdict: int):
+    builder.PrependUint8Slot(2, verdict, 0)
+
+def AddVerdict(builder: flatbuffers.Builder, verdict: int):
+    FinalWireAddVerdict(builder, verdict)
+
 def FinalWireEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -115,9 +133,11 @@ class FinalWireT(object):
         self,
         path = None,
         length = 0.0,
+        verdict = 0,
     ):
         self.path = path  # type: Optional[List[mqt.scpd.flatbuffers.geometry.RCoord.RCoordT]]
         self.length = length  # type: float
+        self.verdict = verdict  # type: int
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -149,6 +169,7 @@ class FinalWireT(object):
                     rCoord_ = mqt.scpd.flatbuffers.geometry.RCoord.RCoordT.InitFromObj(finalWire.Path(i))
                     self.path.append(rCoord_)
         self.length = finalWire.Length()
+        self.verdict = finalWire.Verdict()
 
     # FinalWireT
     def Pack(self, builder):
@@ -161,5 +182,6 @@ class FinalWireT(object):
         if self.path is not None:
             FinalWireAddPath(builder, path)
         FinalWireAddLength(builder, self.length)
+        FinalWireAddVerdict(builder, self.verdict)
         finalWire = FinalWireEnd(builder)
         return finalWire

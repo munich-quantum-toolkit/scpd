@@ -62,6 +62,9 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "phase.couplers": (26, 0, "final.coupler-insertion"),
     "phase.feedlines": (27, 0, "final.feedline-routing"),
     "phase.refined": (28, 0, "final.feedline-refinement"),
+    # The wires the Final stage left failing at its end, by its own count, so that a boolean
+    # against `plan.wire` finds them without the log.
+    "failing": (29, 0, "final.failing"),
 }
 
 #: How wide a planning line is drawn, in layout units. A path needs a width to be a shape at all;
@@ -228,6 +231,12 @@ def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # noq
     for name, routes in (("wires", planning.wires), ("inner_wires", planning.inner_wires)):
         target = layer(name)
         for route in routes:
+            if len(route) >= 2:
+                top.shapes(target).insert(path(route))
+                written += 1
+    if planning.failing:
+        target = layer("failing")
+        for _, _, route in planning.failing:
             if len(route) >= 2:
                 top.shapes(target).insert(path(route))
                 written += 1
