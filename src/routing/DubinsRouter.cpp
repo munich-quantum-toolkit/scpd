@@ -922,6 +922,7 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective,
               .g = 0},
              0);
 
+  cutOff_ = false;
   while (!open_.empty()) {
     const QueueEntry current = open_.pop();
     if (const QueueEntry* next = open_.peek()) {
@@ -961,6 +962,20 @@ void DubinsRouter::expandFree(const QueueEntry& current,
                               const uint8_t penaltyMask, const uint16_t* wireMap,
                               const bool useField) {
   const uint32_t heading = current.heading & 7U;
+  // Whether a move that exits on `exit` keeps the way within `maxTurns_`;
+  // a move that would not is dropped and said so. See `setMaxTurns`.
+  const auto turnsAfter = [&](const uint8_t exit) {
+    return static_cast<uint32_t>(current.turns) +
+           headingDistance(static_cast<Heading>(heading),
+                           static_cast<Heading>(exit & 7U));
+  };
+  const auto withinTurns = [&](const uint8_t exit) {
+    if (maxTurns_ < 0 || turnsAfter(exit) <= static_cast<uint32_t>(maxTurns_)) {
+      return true;
+    }
+    cutOff_ = true;
+    return false;
+  };
   const auto& tprims = triePrimitives_[heading];
   const auto& tflat = trie_[heading];
   const uint32_t cx = current.x;
@@ -1064,7 +1079,8 @@ void DubinsRouter::expandFree(const QueueEntry& current,
       penaltyAcc[tn.depth + 1U] =
           penaltyAcc[tn.depth] + (penaltyMap[cell] & penaltyMask);
     }
-    if (tn.completes != NO_PRIMITIVE && (alive & (1U << tn.completes)) != 0) {
+    if (tn.completes != NO_PRIMITIVE && (alive & (1U << tn.completes)) != 0 &&
+        withinTurns(tprims[tn.completes].exit)) {
       const TriePrimitive& p = tprims[tn.completes];
       const uint32_t index = endIndex[tn.completes];
       uint32_t penaltyTerm = 0;
@@ -1106,6 +1122,8 @@ void DubinsRouter::expandFree(const QueueEntry& current,
         open_.push({.x = endX[tn.completes],
                     .y = endY[tn.completes],
                     .heading = static_cast<uint8_t>(p.exit),
+                    .turns = static_cast<uint8_t>(
+                        std::min<uint32_t>(255U, turnsAfter(p.exit))),
                     .primitive = p.id,
                     .f = f,
                     .g = tentative},
@@ -1167,6 +1185,7 @@ Path DubinsRouter::searchOrthogonal(const RoutingObjective& objective,
               .f = 0,
               .g = 0},
              0);
+  cutOff_ = false;
   while (!open_.empty()) {
     const QueueEntry current = open_.pop();
     const uint32_t currentIndex =
@@ -1193,6 +1212,20 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
                                     const RoutingObjective& objective,
                                     const bool onlyStraight) {
   const uint32_t heading = current.heading & 7U;
+  // Whether a move that exits on `exit` keeps the way within `maxTurns_`;
+  // a move that would not is dropped and said so. See `setMaxTurns`.
+  const auto turnsAfter = [&](const uint8_t exit) {
+    return static_cast<uint32_t>(current.turns) +
+           headingDistance(static_cast<Heading>(heading),
+                           static_cast<Heading>(exit & 7U));
+  };
+  const auto withinTurns = [&](const uint8_t exit) {
+    if (maxTurns_ < 0 || turnsAfter(exit) <= static_cast<uint32_t>(maxTurns_)) {
+      return true;
+    }
+    cutOff_ = true;
+    return false;
+  };
   const auto& tprims = triePrimitives_[heading];
   const auto& tflat = trie_[heading];
   const uint32_t cx = current.x;
@@ -1277,7 +1310,8 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
     if constexpr (USE_PENALTY) {
       penaltyAcc[tn.depth + 1U] = penaltyAcc[tn.depth] + static_[cell];
     }
-    if (tn.completes != NO_PRIMITIVE && (alive & (1U << tn.completes)) != 0) {
+    if (tn.completes != NO_PRIMITIVE && (alive & (1U << tn.completes)) != 0 &&
+        withinTurns(tprims[tn.completes].exit)) {
       const TriePrimitive& p = tprims[tn.completes];
       const std::size_t linear =
           (static_cast<std::size_t>(endY[tn.completes]) * width_) +
@@ -1318,6 +1352,8 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
         open_.push({.x = endX[tn.completes],
                     .y = endY[tn.completes],
                     .heading = static_cast<uint8_t>(p.exit),
+                    .turns = static_cast<uint8_t>(
+                        std::min<uint32_t>(255U, turnsAfter(p.exit))),
                     .primitive = p.id,
                     .f = f,
                     .g = tentative},

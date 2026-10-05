@@ -46,6 +46,17 @@ costs everything and the search takes another combination.
 
 ## Where it stands
 
+**2026-10-05**: the search carries a step budget now
+(`SCPD_CHAIN_STEP_BUDGET`, on): a placeholder whose bound reaches the
+cheapest complete run priced so far is dropped unpriced, and the edge
+search is told the turns its way may still make (`DubinsRouter::setMaxTurns`).
+Exact — the same runs of options chain for chain — and worth a tenth of
+17q's insertion; the four 69q chains that reach the clock still reach it,
+and *What is open* says why and what else was tried that night (a length
+term, a learned bound, an obstacle-aware bound: none of it helps). The
+insertion's figures of the day are in handover-cpw-coupler-insertion's
+*Where it stands*. What follows is the state of 2026-09-30.
+
 Defaults throughout, no environment variable set, one run per chip,
 `stop_after = "couplers"`, `repair_trials = 0`, `--stage final`. One sweep,
 2026-09-30.
@@ -380,8 +391,10 @@ share was not swept; 15 % and 20 % are one run each.
 
 | Piece | What it does |
 | --- | --- |
-| `routing::ChainProblem` | `width`, `bound(layer, from, to)`, `step(prefix, to, redone)`, `budget`, `found` |
-| `routing::ChainSolution` | `chosen`, `cost`, `expansions`, `routed`, `reached`, `solved`, `optimal`, `outOfTime`, `relaid` |
+| `routing::ChainProblem` | `width`, `bound(layer, from, to)`, `step(prefix, to, redone)`, `budget`, `found`, `stepBudget` (set before every `step`: the most it may cost and still win) |
+| `routing::ChainSolution` | `chosen`, `cost`, `expansions`, `pruned` (placeholders dropped unpriced), `routed`, `reached`, `solved`, `optimal`, `outOfTime`, `relaid` |
+| `Driver::chainStepBudget`, `DubinsRouter::setMaxTurns` | `SCPD_CHAIN_STEP_BUDGET`: the budget handed to `routeEdge` as a bound on turns, 2026-10-05 |
+| `Driver::chainLearnedBound`, `Driver::lengthWeight`, `AnalyticDubins::minTurnsAround` | the three arms of 2026-10-05 that did not help: `SCPD_CHAIN_LEARNED_BOUND` (off), `SCPD_CHAIN_LENGTH_WEIGHT` (0), `SCPD_CHAIN_BOUND=3` |
 | `routing::solveChainAStar` | the search: the arena, the heuristic, the queue, the budget |
 | `Driver::optimizeChainsPrefix` | **one pass over the chains, no rounds** |
 | `Driver::solveChainAStar` | one chain: the bounds built, `step` supplied, the end-pair reorder, the winner's ways read back |
@@ -431,6 +444,14 @@ Two are that reason written down as something that runs.
   the brute-force optimum on every one. The trellis, priced honestly, is above
   it on more than a tenth of the chains it solves at all.
 
+New on 2026-10-05:
+`AnalyticDubins.AroundTheObstaclesNeverExceedsTheRouterAndIsSharper` holds
+the family bound below the router's way on the pillar lattice and reports
+how often it rose (on that lattice: never). The step budget and the
+learned bound have no test of their own; the arms of *What is open* are
+their measurement, and the step budget's exactness shows as identical
+chain costs against the arm without it.
+
 The rest hold the contract: an exact bound prices exactly `L-1` steps, a zero
 bound gives the same price and strictly more steps, an unbuildable step is
 routed round, a layer nothing reaches is named by `reached`, a chain of one
@@ -472,6 +493,69 @@ and `steps routed` per chain**, and for every chain whether it read `optimum`,
 given`.
 
 ## What is open
+
+**Why most chains settle in a second and some run to the clock** (read
+2026-10-05, user's question, `SCPD_CHAIN_BOUND=2` on 17q): no defect in
+the loop. The queue pops the cheapest bound first, a real last-layer node
+before any placeholder at the same `f` (`Worse`: deeper layer first), so
+ties cost nothing; the search ends the moment a complete run is the
+cheapest thing in the queue. What decides the length of the proof is how
+far the bound sits below the real price of the steps the optimum shares
+with other runs. The audit over 179 priced steps: analytic bound mean
+2.08 eighth-turns, real 3.23, exact on 92. A chain whose first complete
+run meets its bound is proved at once (69q chains 0, 2, 3, 5, 7, 9, 11: 6
+to 12 prefixes). 17q's chain 3 has a last step bound 3 / real 5 on every
+one of its 10 priced runs, chain 0 steps with bound 1 / real 3 and 5; 69q's
+chain 1 priced 36 complete runs, all at 180000, chain 4 42 at 140000 and
+160000 — every prefix that shares an underestimated step has to be priced
+before the proof closes, and at 60–85 ms a step the clock holds about 120.
+The answer is there after 1.5 s; the rest is the proof, as *The time
+limit* says. What would shorten it is a bound that knows the obstacles:
+the cheapest the pair `(layer, i → j)` has ever cost, routed against no
+prefix fence, is a candidate — a prefix only adds fences, so the price
+only rises — but only a heuristic as long as the edge search optimises
+bends and proximity and length together rather than turns alone. Not
+built; the user decides.
+
+**Three things tried the same evening** (user), all against
+`artifacts/logs/squeeze-reject2`, 17q and 69q:
+
+| arm | 17q insertion | 69q insertion | 69q chains at the clock | costs |
+|---|---|---|---|---|
+| exact, the reference | 8.7 s | 87.5 s | 4 (1, 4, 6, 10) | — |
+| `SCPD_CHAIN_LENGTH_WEIGHT=1`, cells added to the objective (`length`) | 20.4 s | 276 s | 8 | worse: angle 180 → 246, an edge undrawn |
+| `SCPD_CHAIN_LEARNED_BOUND=1`, the cheapest price a pair has cost raises its bound, placeholders re-bounded when popped (`learned`, `learned2`) | 8.6 s | 87.3 s | 4 | same, 0 bounds above a real price |
+| `SCPD_CHAIN_STEP_BUDGET` (on now): a placeholder whose bound reaches the incumbent is dropped unpriced, and the edge search is told the turns its way may still make (`DubinsRouter::setMaxTurns`) | 7.7 s | 87.0 s | 4 | same, chain for chain |
+
+**And the obstacle-aware bound, the same night** (`SCPD_CHAIN_BOUND=3`,
+`AnalyticDubins::minTurnsAround`, user): every family of ways of `k`
+turns — an arc sequence turning `k` in all, with whole-cell straight runs
+solved from the displacement, one or two of them enumerated — tried
+against the artwork and the edge box, the bound raised where all are
+blocked; three-arc families with more than two runs to enumerate left
+unsettled, `SCPD_CHAIN_FAMILY_PATHS` (20000) ways per pair at most. Sound
+(0 bounds above a real price on either chip, the unit test
+`AroundTheObstaclesNeverExceedsTheRouterAndIsSharper`) and **useless**:
+17q raised the bound by 4 eighth turns over 2656 pairs for 4.9 s of
+bounds, 69q by 4 over 13626 pairs for 23 s (`artifacts/logs/family`),
+2697 pairs unsettled, the same four chains at the clock with the same
+expansions. The reason is in the audit: the gap is not obstacles. On 17q
+the bend penalty is 7125 against 100 a cell, so the router trades two
+turns for 142 cells of length — a three-turn way exists, is long, and
+the router does not take it; the bound counts turns and cannot see that.
+On 69q (bend 27000) the gaps that remain sit in families of three arcs
+or more, which the enumeration cannot exhaust. Mode 3 stays as a switch;
+the default is 1.
+
+The step budget is exact and stays on: 37 searches cut off on 17q, 127
+on 69q. It saves little on 69q because a search under a turn bound still
+has to exhaust the region within the bound before it can say no, which
+is nearly the whole search; and the learned bound bites nothing because
+the runs that share an underestimated step differ in the option they
+leave from, so each pair learns alone. The length term loses the bounds
+their pruning (above). What would settle the four chains is a bound that
+knows the obstacles, or the clock; the user decides.
+
 
 1. **69q draws every edge, and seventeen of them do not survive the chip they
    lie on.** That is the open number now, and *Keeping the ways* says why the

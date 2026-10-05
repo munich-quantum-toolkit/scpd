@@ -84,6 +84,15 @@ public:
   void setParams(const SearchParams& params);
   void setHeuristic(const Heuristic heuristic) { heuristic_ = heuristic; }
 
+  /// Bound the eighth-turns a way may make: a move that would take a way
+  /// past `turns` is not generated, so a search under the bound explores
+  /// only the ways within it and finds the cheapest of those or nothing.
+  /// `-1` is no bound. `lastSearchCutOff` says whether the last search
+  /// dropped a move for it — a search that found nothing under a bound and
+  /// dropped nothing would have found nothing without it either.
+  void setMaxTurns(const int16_t turns) { maxTurns_ = turns; }
+  [[nodiscard]] bool lastSearchCutOff() const { return cutOff_; }
+
   /// Add the unavoidable turning toward the target heading to the heuristic.
   ///
   /// A way has to arrive on the target heading, and every eighth turn it
@@ -261,6 +270,8 @@ private:
     uint16_t x = 0;
     uint16_t y = 0;
     uint8_t heading = 0;
+    /// Eighth-turns made so far on the way to this state, for `setMaxTurns`.
+    uint8_t turns = 0;
     uint16_t primitive = 0;
     uint32_t f = 0;
     uint32_t g = 0;
@@ -346,6 +357,8 @@ private:
   uint32_t width_;
   uint32_t height_;
   Heuristic heuristic_ = Heuristic::DistanceField;
+  int16_t maxTurns_ = -1;
+  bool cutOff_ = false;
   bool bendLowerBound_ = true;
   /// Per heading, what a state facing it still owes in turning, in the cost
   /// units of the search. Filled once per search; all zeroes when the bend

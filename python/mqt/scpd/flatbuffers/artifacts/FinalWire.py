@@ -84,8 +84,44 @@ class FinalWire(object):
             return self._tab.Get(flatbuffers.number_types.Uint8Flags, o + self._tab.Pos)
         return 0
 
+    # What the stage says about the wire in words, for a picture's tooltip:
+    # the figures behind a `Squeezed` verdict, say. Empty for most wires.
+    # FinalWire
+    def Note(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # Cells of a line the stage draws beside the wire to show what `note`
+    # measured: for a `Squeezed` edge the two ends of the line from the
+    # edge to the wall of its channel, the worst line it found. Empty for
+    # most wires.
+    # FinalWire
+    def Marks(self, j: int) -> Optional[RCoord]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 12
+            obj = RCoord()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # FinalWire
+    def MarksLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # FinalWire
+    def MarksIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        return o == 0
+
 def FinalWireStart(builder: flatbuffers.Builder):
-    builder.StartObject(3)
+    builder.StartObject(5)
 
 def Start(builder: flatbuffers.Builder):
     FinalWireStart(builder)
@@ -114,6 +150,24 @@ def FinalWireAddVerdict(builder: flatbuffers.Builder, verdict: int):
 def AddVerdict(builder: flatbuffers.Builder, verdict: int):
     FinalWireAddVerdict(builder, verdict)
 
+def FinalWireAddNote(builder: flatbuffers.Builder, note: int):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(note), 0)
+
+def AddNote(builder: flatbuffers.Builder, note: int):
+    FinalWireAddNote(builder, note)
+
+def FinalWireAddMarks(builder: flatbuffers.Builder, marks: int):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(marks), 0)
+
+def AddMarks(builder: flatbuffers.Builder, marks: int):
+    FinalWireAddMarks(builder, marks)
+
+def FinalWireStartMarksVector(builder, numElems: int) -> int:
+    return builder.StartVector(12, numElems, 4)
+
+def StartMarksVector(builder, numElems: int) -> int:
+    return FinalWireStartMarksVector(builder, numElems)
+
 def FinalWireEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -134,10 +188,14 @@ class FinalWireT(object):
         path = None,
         length = 0.0,
         verdict = 0,
+        note = None,
+        marks = None,
     ):
         self.path = path  # type: Optional[List[mqt.scpd.flatbuffers.geometry.RCoord.RCoordT]]
         self.length = length  # type: float
         self.verdict = verdict  # type: int
+        self.note = note  # type: Optional[str]
+        self.marks = marks  # type: Optional[List[mqt.scpd.flatbuffers.geometry.RCoord.RCoordT]]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -170,6 +228,17 @@ class FinalWireT(object):
                     self.path.append(rCoord_)
         self.length = finalWire.Length()
         self.verdict = finalWire.Verdict()
+        self.note = finalWire.Note()
+        if self.note is not None:
+            self.note = self.note.decode('utf-8')
+        if not finalWire.MarksIsNone():
+            self.marks = []
+            for i in range(finalWire.MarksLength()):
+                if finalWire.Marks(i) is None:
+                    self.marks.append(None)
+                else:
+                    rCoord_ = mqt.scpd.flatbuffers.geometry.RCoord.RCoordT.InitFromObj(finalWire.Marks(i))
+                    self.marks.append(rCoord_)
 
     # FinalWireT
     def Pack(self, builder):
@@ -178,10 +247,21 @@ class FinalWireT(object):
             for i in reversed(range(len(self.path))):
                 self.path[i].Pack(builder)
             path = builder.EndVector()
+        if self.note is not None:
+            note = builder.CreateString(self.note)
+        if self.marks is not None:
+            FinalWireStartMarksVector(builder, len(self.marks))
+            for i in reversed(range(len(self.marks))):
+                self.marks[i].Pack(builder)
+            marks = builder.EndVector()
         FinalWireStart(builder)
         if self.path is not None:
             FinalWireAddPath(builder, path)
         FinalWireAddLength(builder, self.length)
         FinalWireAddVerdict(builder, self.verdict)
+        if self.note is not None:
+            FinalWireAddNote(builder, note)
+        if self.marks is not None:
+            FinalWireAddMarks(builder, marks)
         finalWire = FinalWireEnd(builder)
         return finalWire

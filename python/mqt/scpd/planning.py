@@ -52,6 +52,7 @@ VERDICT_NAMES: tuple[tuple[int, str], ...] = (
     (FinalVerdict.Long, "long"),
     (FinalVerdict.Crossing, "crossing"),
     (FinalVerdict.Loop, "meeting itself"),
+    (FinalVerdict.Squeezed, "squeezed"),
 )
 
 
@@ -130,6 +131,13 @@ class PlanningGeometry:
     #: so a picture of one phase carries none; an unrouted wire has no bends to draw and is
     #: carried with an empty polyline, so that it is still counted.
     failing: list[tuple[str, list[str], list[Point]]] = field(default_factory=list)
+    #: The feedline edges the coupler insertion found leaving too little room beside them for the
+    #: wires that have to pass between them and the nearest qubit or coupler (``Squeezed``): the
+    #: edge's id, the insertion's note with the figures, and its bends. Carried on every snapshot
+    #: from the ``couplers`` phase on, so a picture of that phase shows the bottlenecks before
+    #: the feedline pass has run into them. The fourth element is the line the insertion
+    #: measured, from the edge to the wall of its channel: the worst line it found.
+    squeezed: list[tuple[str, str, list[Point], list[Point]]] = field(default_factory=list)
     #: What the Final stage had drawn at the end of each of its five phases, by phase name.
     #:
     #: A phase changes what the phase before it produced, so a picture of one cannot be derived
@@ -440,6 +448,18 @@ def _final(routing: FinalRoutingT, geometry: PlanningGeometry, wire_spacing: flo
                 found.append((f"{prefix}{index}", verdict_names(verdict), _bends(_entries(wire.path), to_layout)))
         return found
 
+    def squeezed(feedlines: list[Any] | None) -> list[tuple[str, str, list[Point], list[Point]]]:
+        return [
+            (
+                f"f{index}",
+                str(wire.note or ""),
+                _bends(_entries(wire.path), to_layout),
+                [to_layout(int(mark.x), int(mark.y)) for mark in _entries(wire.marks)],
+            )
+            for index, wire in enumerate(_entries(feedlines))
+            if int(wire.verdict or 0) & FinalVerdict.Squeezed
+        ]
+
     for snapshot in _entries(routing.phases):
         name = snapshot.name or ""
         geometry.phases[name] = drawn(snapshot.wires) + drawn(snapshot.inner) + drawn(snapshot.feedlines)
@@ -458,12 +478,14 @@ def _final(routing: FinalRoutingT, geometry: PlanningGeometry, wire_spacing: flo
         geometry.wires = drawn(chosen.wires)
         geometry.inner_wires = drawn(chosen.inner) + drawn(chosen.feedlines)
         geometry.couplers = bodies(chosen.couplers)
+        geometry.squeezed = squeezed(chosen.feedlines)
     else:
         geometry.wires = drawn(routing.wires)
         geometry.inner_wires = drawn(routing.inner) + drawn(routing.feedlines)
         geometry.couplers = bodies(routing.couplers)
         # The verdicts are the end state's alone: the phase snapshots are not judged.
         geometry.failing = failing(routing.wires, "") + failing(routing.inner, "i") + failing(routing.feedlines, "f")
+        geometry.squeezed = squeezed(routing.feedlines)
 
 
 def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: float) -> None:

@@ -190,6 +190,45 @@ TEST(AnalyticDubins, NeverExceedsTheRouterThroughObstacles) {
   }
 }
 
+TEST(AnalyticDubins, AroundTheObstaclesNeverExceedsTheRouterAndIsSharper) {
+  // The family bound sees the pillars: it may rise above the empty-plane
+  // answer, never above the router's way, and on this lattice it rises
+  // somewhere.
+  Fixture f(true);
+  const AnalyticDubins analytic(*f.primitives);
+  const AnalyticDubins::Blocked blocked = [&f](const int64_t x, const int64_t y) {
+    return f.corridor.testCell(static_cast<uint32_t>(x), static_cast<uint32_t>(y));
+  };
+  const AnalyticDubins::Box box{.minX = 0,
+                                .minY = 0,
+                                .maxX = GRID_DIMENSION - 1,
+                                .maxY = GRID_DIMENSION - 1};
+  AnalyticDubins::AroundStats stats;
+  uint32_t sharper = 0;
+  for (int t = 0; t < TOTAL_ROUTES; ++t) {
+    const RoutingObjective objective = requestFor(t);
+    const Path way = f.router.route(objective);
+    if (way.empty()) {
+      continue;
+    }
+    const auto real = angleCostOf(*f.primitives, way, objective.target.heading);
+    const auto plain = analytic.minTurns(objective.source, objective.target);
+    const auto around = analytic.minTurnsAround(
+        objective.source, objective.target, blocked, box, 10, 10, 200000, &stats);
+    EXPECT_GE(around, plain) << "route " << t;
+    EXPECT_LE(around, real) << "route " << t;
+    sharper += around > plain ? 1 : 0;
+  }
+  // How often it rose, and how often a level was left unsettled, for the
+  // record; the lattice's pillars sit mid-cell, so the U-turn requests of
+  // the harness mostly keep an open way at the floor.
+  RecordProperty("sharper", static_cast<int>(sharper));
+  RecordProperty("unsettled", static_cast<int>(stats.budgetOut));
+  std::cout << "[          ] family bound sharper than the plane on " << sharper
+            << " of " << TOTAL_ROUTES << " requests, unsettled on "
+            << stats.budgetOut << ", " << stats.paths << " ways tried\n";
+}
+
 TEST(AnalyticDubins, IsAtLeastAsSharpAsTheBoundItReplaces) {
   // The analytic answer is the exact least turning with nothing in the way,
   // so it cannot fall below any valid bound on the same thing. A pair where

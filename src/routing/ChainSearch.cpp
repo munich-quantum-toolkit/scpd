@@ -157,12 +157,45 @@ ChainSolution solveChainAStar(const ChainProblem& problem) {
     const auto choice = arena[top.node].choice;
 
     if (!arena[top.node].real) {
+      // A bound may have risen since this placeholder was pushed — the
+      // caller's bound is allowed to learn — so ask it again before paying
+      // for the step: a placeholder whose `f` is no longer the cheapest in
+      // the queue goes back with the new one, unpriced.
+      {
+        const auto parent = arena[top.node].parent;
+        const auto guess = plus(arena[parent].price,
+                                problem.bound(layer - 1, arena[parent].choice,
+                                              choice));
+        const auto again = plus(guess, rest[layer][choice]);
+        if (again > top.f) {
+          arena[top.node].price = guess;
+          open.push({.f = again, .layer = layer, .node = top.node});
+          continue;
+        }
+      }
+      // A prefix whose bound already reaches the cheapest complete run
+      // priced so far cannot win; it is dropped unpriced. One that can is
+      // told how much its step may cost and still win, so that the step can
+      // stop early. Both are exact: the complete run is in the queue as a
+      // real node and comes out when nothing cheaper is left.
+      if (out.solved && top.f >= out.cost) {
+        ++out.pruned;
+        continue;
+      }
+      {
+        const auto parent = arena[top.node].parent;
+        const auto floor = plus(arena[parent].price, rest[layer][choice]);
+        problem.stepBudget = out.solved && out.cost > floor
+                                 ? out.cost - 1 - floor
+                                 : TRELLIS_UNREACHABLE;
+      }
       // The search has committed to looking at this prefix, so pay for its
       // last step: routed against the ways the prefix before it laid, which
       // is the whole reason this search exists.
       prefixOf(arena[top.node].parent);
       int64_t redone = 0;
       const auto priced = problem.step(prefix, choice, redone);
+      problem.stepBudget = TRELLIS_UNREACHABLE;
       ++out.routed;
       if (priced == TRELLIS_UNREACHABLE) {
         // This prefix blocks itself. Nothing that extends it is a chain.

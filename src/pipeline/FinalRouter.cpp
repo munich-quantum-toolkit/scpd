@@ -3176,6 +3176,18 @@ public:
     return couplers_;
   }
   [[nodiscard]] const std::vector<Edge>& edges() const { return edges_; }
+
+  /// What `reportSqueeze` found on one edge: the figures in words and the
+  /// worst line it measured, from the edge's cell to the wall it hit.
+  struct Squeeze {
+    std::string note;
+    PathPoint from;
+    PathPoint to;
+  };
+  [[nodiscard]] const std::unordered_map<std::uint32_t, Squeeze>&
+  squeezed() const {
+    return squeezed_;
+  }
   [[nodiscard]] const std::vector<std::vector<Waypoint>>& chains() const {
     return chains_;
   }
@@ -3243,6 +3255,15 @@ public:
     couplers_.clear();
     chains_.clear();
     edges_.clear();
+    familyStats_ = {};
+    familyViolations_ = 0;
+    learnedRaised_ = 0;
+    learnedAbove_ = 0;
+    budgetCutoffs_ = 0;
+    stepBudget_ = routing::TRELLIS_UNREACHABLE;
+    squeezeRefusals_ = 0;
+    squeezeRecovered_ = 0;
+    squeezeSuspended_ = false;
     room_ = RoomStats{};
     bodies_ = grid::BitGrid(scene_.router.width, scene_.router.height);
     aimAtTarget(true);
@@ -3607,10 +3628,29 @@ public:
       const bool runsRight = !chosen.empty() &&
                              chosen.front().samePlace(wire.objective.source) &&
                              chosen.back().samePlace(wire.objective.target);
-      const bool fits =
+      bool fits =
           runsRight && (chainKeepWays() ||
                         edgeWayStillOpen(wires, wire.objective, edge, chosen));
+      if (fits) {
+        // Held to the room rule like a way the search finds now.
+        const auto [startRun, endRun] = runsOfEdge(edge);
+        fits = !refuseSqueezed(wires, edge, chosen, startRun, endRun);
+      }
       wire.way = fits ? chosen : routeEdge(wires, wire.objective, edge);
+      if (wire.way.empty() && squeezeReject() && squeezeRecover()) {
+        // Once more with the rule suspended: an edge not drawn is worse
+        // than one that is squeezed. See `squeezeRecover`.
+        squeezeSuspended_ = true;
+        wire.way = routeEdge(wires, wire.objective, edge);
+        squeezeSuspended_ = false;
+        if (!wire.way.empty()) {
+          ++squeezeRecovered_;
+          tell(std::format("[Coupler Insertion] edge f{} chain {} ({}->{}): "
+                           "drawn with the squeeze rule suspended "
+                           "(SCPD_SQUEEZE_RECOVER)",
+                           wire.slot, edge.chain, edge.from, edge.to));
+        }
+      }
       wire.drawn = !wire.way.empty();
       // A way the greedy chose and the commit kept was drawn by no search of
       // this loop, so it has no picture of its own. Draw it against the
@@ -3659,6 +3699,7 @@ public:
     static_cast<void>(checkResonatorCrossings(wires));
     static_cast<void>(checkFeedlineCrossings(wires));
     reportRoom(wires);
+    reportSqueeze(wires);
     const auto seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
             .count();
@@ -3708,7 +3749,28 @@ public:
           static_cast<double>(boundNanos_) / 1e6,
           static_cast<double>(boundNanos_) / 1000.0 /
               static_cast<double>(boundPairs_),
-          chainBound() == 0 ? "turnBound" : "analytic"));
+          chainBound() == 0   ? "turnBound"
+          : chainBound() == 3 ? "analytic around the artwork"
+                              : "analytic"));
+    }
+    if (chainBound() == 3) {
+      say(std::format("coupler insertion: the family bound tried {} ways "
+                      "against the artwork, raised the bound by {} eighth "
+                      "turns in all, ran out of its path budget on {} pairs, "
+                      "{} bounds above a real price (SCPD_CHAIN_BOUND=3)",
+                      familyStats_.paths, familyStats_.raised,
+                      familyStats_.budgetOut, familyViolations_));
+    }
+    if (chainStepBudget()) {
+      say(std::format("coupler insertion: the step budget cut off {} edge "
+                      "searches (SCPD_CHAIN_STEP_BUDGET)",
+                      budgetCutoffs_));
+    }
+    if (chainLearnedBound()) {
+      say(std::format("coupler insertion: the learned bound stood above the "
+                      "analytic one on {} bounds asked and above the real "
+                      "price on {} steps priced (SCPD_CHAIN_LEARNED_BOUND)",
+                      learnedRaised_, learnedAbove_));
     }
     if (auditSteps_ > 0) {
       say(std::format(
@@ -5259,8 +5321,14 @@ public:
   }
 
   /// Which bound the layered search leans on, on the same reasoning as
-  /// `exactChainSearch` above: 0 is `turnBound`, 1 the analytic answer, and
-  /// 2 the analytic answer with every step it priced reported beside both.
+  /// `exactChainSearch` above: 0 is `turnBound`, 1 the analytic answer, 2
+  /// the analytic answer with every step it priced reported beside both,
+  /// and 3 the analytic answer **around the artwork** — every family of
+  /// ways of `k` turns tried against the artwork and the edge box, the
+  /// bound raised where all of them are blocked
+  /// (`AnalyticDubins::minTurnsAround`, user, 2026-10-05) — with the same
+  /// audit. `SCPD_CHAIN_FAMILY_PATHS` (20000) bounds the ways tried per
+  /// pair; past it the family is left unsettled.
   [[nodiscard]] static int chainBound() {
     static const int mode = [] {
       return envWhole("SCPD_CHAIN_BOUND", 1);
@@ -5274,8 +5342,40 @@ public:
   /// and a sharper bound is fewer steps priced.
   [[nodiscard]] std::uint32_t boundTurns(const PathPoint& from,
                                          const PathPoint& to) const {
-    return chainBound() == 0 ? turnBound(from, to)
-                             : analytic_.minTurns(from, to);
+    if (chainBound() == 0) {
+      return turnBound(from, to);
+    }
+    if (chainBound() == 3) {
+      return boundTurnsAround(from, to);
+    }
+    return analytic_.minTurns(from, to);
+  }
+
+  [[nodiscard]] static std::uint64_t familyPathBudget() {
+    static const auto paths = static_cast<std::uint64_t>(
+        std::clamp(envWhole("SCPD_CHAIN_FAMILY_PATHS", 20000), 100, 100000000));
+    return paths;
+  }
+
+  /// The analytic bound with the artwork in the way: the box is the one
+  /// `corridorOfEdge` keeps, the runs at the two ends are left at zero,
+  /// which is below what any edge is forced to make.
+  [[nodiscard]] std::uint32_t boundTurnsAround(const PathPoint& from,
+                                               const PathPoint& to) const {
+    const auto margin = static_cast<std::int64_t>(EDGE_BOX_MARGIN);
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    const routing::AnalyticDubins::Box box{
+        .minX = std::max<std::int64_t>(0, std::min<std::int64_t>(from.x, to.x) - margin),
+        .minY = std::max<std::int64_t>(0, std::min<std::int64_t>(from.y, to.y) - margin),
+        .maxX = std::min<std::int64_t>(width - 1, std::max<std::int64_t>(from.x, to.x) + margin),
+        .maxY = std::min<std::int64_t>(height - 1, std::max<std::int64_t>(from.y, to.y) + margin)};
+    const routing::AnalyticDubins::Blocked blocked =
+        [this, width](const std::int64_t x, const std::int64_t y) {
+          return scene_.components.test(static_cast<std::size_t>((y * width) + x));
+        };
+    return analytic_.minTurnsAround(from, to, blocked, box, 0, 0,
+                                    familyPathBudget(), &familyStats_);
   }
 
   /// A round's total, or the word for a round holding a chain that nothing
@@ -5301,6 +5401,15 @@ public:
     const auto truth = static_cast<std::uint32_t>(real / 10000ULL);
     const auto loose = turnBound(from, to);
     const auto sharp = analytic_.minTurns(from, to);
+    if (chainBound() == 3) {
+      const auto around = boundTurnsAround(from, to);
+      if (around > truth) {
+        ++familyViolations_;
+        say(std::format("[Coupler Insertion]   AUDIT chain {} step {}: the "
+                        "family bound {} is ABOVE the real {} — not admissible",
+                        chain, layer, around, truth));
+      }
+    }
     ++auditSteps_;
     auditTurnBound_ += loose;
     auditAnalytic_ += sharp;
@@ -5323,6 +5432,19 @@ public:
 
   /// What the bound cost and how sharp it was, over the whole insertion.
   std::uint64_t boundPairs_ = 0;
+  /// What the family bound did, summed over the insertion.
+  mutable routing::AnalyticDubins::AroundStats familyStats_;
+  std::uint32_t familyViolations_ = 0;
+  /// The learned bound: how often it stood above the analytic one when a
+  /// bound was asked, and how often a real price came in below it.
+  std::uint64_t learnedRaised_ = 0;
+  std::uint64_t learnedAbove_ = 0;
+  /// The step budget of the chain A*: what the step being priced may cost,
+  /// handed from the search to `routeEdge`; how many searches it cut off,
+  /// and whether the last one was.
+  std::uint64_t stepBudget_ = routing::TRELLIS_UNREACHABLE;
+  std::uint64_t budgetCutoffs_ = 0;
+  bool lastCutOff_ = false;
   std::uint64_t boundNanos_ = 0;
   std::uint32_t auditSteps_ = 0;
   std::uint32_t auditUnreachable_ = 0;
@@ -5377,6 +5499,38 @@ public:
   /// every one of its 66 where the trellis lost two and the greedy six, and
   /// it does so in a quarter of the time. It also needs no rounds; see
   /// `optimizeChainsPrefix`.
+  /// Whether the chain search raises the bound of a pair of options to the
+  /// cheapest price that pair has cost in this solve so far:
+  /// `SCPD_CHAIN_LEARNED_BOUND`, **off** until measured (user, 2026-10-05).
+  /// The analytic bound knows no obstacle, and on 17q the last step of
+  /// chain 3 was bound 3 against real 5 on every one of ten priced runs —
+  /// the whole proof was refuting prefixes the first pricing had already
+  /// told the price of. A prefix only adds fences, so a pair cannot cost
+  /// less under one prefix than under none; but the price seen was under
+  /// *some* prefix, and the edge search minimises bends with proximity and
+  /// length rather than turns alone, so this is a heuristic, not a proof:
+  /// `learnedAbove_` counts the steps whose real price came in below the
+  /// learned bound, which is how far from admissible it was.
+  /// Whether an edge search of the chain A* is told how many turns its way
+  /// may make and still leave the prefix able to beat the cheapest complete
+  /// run priced so far: `SCPD_CHAIN_STEP_BUDGET`, **on** (user,
+  /// 2026-10-05). The budget is what the run has left — its cost less the
+  /// prefix's price less the bound on the rest — in eighth-turns, and the
+  /// router drops every move that would take a way past it
+  /// (`setMaxTurns`), so a step whose way needs more turns ends as no way
+  /// for that prefix instead of being searched to the end. Exact: the
+  /// prefix could not have won, and the complete run is in the queue. A way
+  /// cut off is not put in the greedy's memo, which knows no budget.
+  [[nodiscard]] static bool chainStepBudget() {
+    static const bool on = envFlag("SCPD_CHAIN_STEP_BUDGET", true);
+    return on;
+  }
+
+  [[nodiscard]] static bool chainLearnedBound() {
+    static const bool on = envFlag("SCPD_CHAIN_LEARNED_BOUND", false);
+    return on;
+  }
+
   [[nodiscard]] static bool chainAStar() {
     static const bool on = [] {
       return envFlag("SCPD_CHAIN_ASTAR", true);
@@ -5770,6 +5924,59 @@ public:
     return on;
   }
 
+  /// Whether the insertion measures, at its end, the room every edge leaves
+  /// beside it for the wires that have to pass between it and the nearest
+  /// qubit or coupler: `SCPD_SQUEEZE_REPORT`, on (user, 2026-10-05). Report
+  /// only — nothing is refused by it — and what marks an edge `Squeezed` in
+  /// the artifact, so that a picture of the `couplers` phase shows where
+  /// the feedline pass is going to run out of room before it has run. See
+  /// `reportSqueeze`.
+  [[nodiscard]] static bool squeezeReport() {
+    static const bool on = envFlag("SCPD_SQUEEZE_REPORT", true);
+    return on;
+  }
+  /// Every how many cells of an edge the room beside it is measured:
+  /// `SCPD_SQUEEZE_STEP`, 5.
+  [[nodiscard]] static std::uint32_t squeezeStep() {
+    static const auto step = static_cast<std::uint32_t>(
+        std::clamp(envWhole("SCPD_SQUEEZE_STEP", 5), 1, 100));
+    return step;
+  }
+  /// How far from an edge an obstacle still counts as the wall of its
+  /// channel, in cells: `SCPD_SQUEEZE_REACH`, 300. Beyond it the room is
+  /// open and nothing is measured.
+  [[nodiscard]] static std::uint32_t squeezeReach() {
+    static const auto reach = static_cast<std::uint32_t>(
+        std::clamp(envWhole("SCPD_SQUEEZE_REACH", 300), 10, 5000));
+    return reach;
+  }
+
+  /// Whether an edge search refuses a way that leaves too little room
+  /// beside it, as `measureSqueeze` reads it: `SCPD_SQUEEZE_REJECT`, **on**
+  /// (user, 2026-10-05). The way is cleared as if the search had found
+  /// nothing, in the prefix search and at the commit alike, so the chain
+  /// search looks for a run of options whose edges all leave their room;
+  /// a way the greedy chose is held to it as well. `SCPD_SQUEEZE_TOLERANCE`
+  /// (0) cells of shortfall are let through. Measured against the arm
+  /// without it — see *The squeeze report* in handover-feedline-routing.md.
+  [[nodiscard]] static bool squeezeReject() {
+    static const bool on = envFlag("SCPD_SQUEEZE_REJECT", true);
+    return on;
+  }
+  [[nodiscard]] static std::uint32_t squeezeTolerance() {
+    static const auto cells = static_cast<std::uint32_t>(
+        std::clamp(envWhole("SCPD_SQUEEZE_TOLERANCE", 0), 0, 1000));
+    return cells;
+  }
+  /// Whether an edge the commit could not draw under the rule is drawn
+  /// once more with the rule suspended: `SCPD_SQUEEZE_RECOVER`, **on**. An
+  /// edge not drawn is worse than one that is squeezed, and the report at
+  /// the end says which edges came through that way.
+  [[nodiscard]] static bool squeezeRecover() {
+    static const bool on = envFlag("SCPD_SQUEEZE_RECOVER", true);
+    return on;
+  }
+
   /// What the room rules did in one insertion, for the summary line.
   struct RoomStats {
     std::uint32_t r1Asked = 0;
@@ -5804,6 +6011,16 @@ public:
     std::uint32_t crossChainTight = 0;
   };
   RoomStats room_;
+  /// The edges `reportSqueeze` found leaving too little room, by wire key,
+  /// with the figures in words — what the artifact carries as `Squeezed`
+  /// and `note` on every snapshot from the coupler insertion on.
+  std::unordered_map<std::uint32_t, Squeeze> squeezed_;
+  /// How many ways the edge searches refused under `squeezeReject`, how
+  /// many edges the commit drew with the rule suspended, and whether it is
+  /// suspended now (the recovery's one search).
+  std::uint32_t squeezeRefusals_ = 0;
+  std::uint32_t squeezeRecovered_ = 0;
+  bool squeezeSuspended_ = false;
 
   /// The outer ring in ring order — every wire that is not inner, in the
   /// order the assignment feeds them — and the ring place of every slot.
@@ -6295,6 +6512,234 @@ public:
     checkChainChannels(wires);
   }
 
+  /// The room a way leaves beside it, measured as `reportSqueeze` says:
+  /// the worst of the straight lines from every `squeezeStep`-th cell past
+  /// `skipStart` and before `skipEnd`, to either side at a right angle, to
+  /// the first artwork cell inside the launcher rectangle. `selfKey` is the
+  /// wire whose own copper is not a wire in the channel. Returns the
+  /// shortfall in cells, zero when nothing is short, and what was found.
+  [[nodiscard]] std::pair<double, Squeeze>
+  measureSqueeze(const std::vector<Wire>& wires, const Path& way,
+                 const std::size_t skipStart, const std::size_t skipEnd,
+                 const std::uint32_t selfKey) const {
+    double worst = 0.0;
+    Squeeze found;
+    if (way.size() < 3 || skipStart + skipEnd >= way.size()) {
+      return {worst, found};
+    }
+    const auto pitch = roomPitch();
+    const auto clearance = tuning_.clearance;
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    const auto reach = squeezeReach();
+    // The rectangle the launcher cells span: the artwork inside it is the
+    // circuit, the artwork outside it the launcher pads.
+    std::int64_t inMinX = width;
+    std::int64_t inMinY = height;
+    std::int64_t inMaxX = -1;
+    std::int64_t inMaxY = -1;
+    for (const auto& [port, slot] : scene_.launcherCell) {
+      const auto place = scene_.router.cell(slot);
+      inMinX = std::min<std::int64_t>(inMinX, place.x());
+      inMaxX = std::max<std::int64_t>(inMaxX, place.x());
+      inMinY = std::min<std::int64_t>(inMinY, place.y());
+      inMaxY = std::max<std::int64_t>(inMaxY, place.y());
+    }
+    const auto inside = [&](const std::int64_t x, const std::int64_t y) {
+      return x > inMinX && x < inMaxX && y > inMinY && y < inMaxY;
+    };
+    // A resonator whose coupler is not applied yet holds its whole outer
+    // way in the field, the tail past the anchor included — copper the cut
+    // takes away. Measured at search time that tail counted as a wire in
+    // the channel, and on 17q a chain whose edges were squeezed by nothing
+    // at the end paid 40000 to keep clear of its own resonators' tails
+    // (user, 2026-10-05). So such a resonator counts only where the cell
+    // lies on its way as the chosen option cuts it, `wayOfResonator`.
+    std::unordered_map<std::uint32_t, std::unordered_set<std::size_t>> cut;
+    const auto onCutWay = [&](const std::uint32_t owner, const std::size_t index) {
+      const auto coupler = couplerOfWire_.find(owner);
+      if (coupler == couplerOfWire_.end()) {
+        return true;
+      }
+      const auto& wire = wires[owner];
+      if (wire.couplerAtSource == coupler->second && wire.drawn) {
+        return true;
+      }
+      auto found = cut.find(owner);
+      if (found == cut.end()) {
+        std::unordered_set<std::size_t> cells;
+        for (const auto& point : wayOfResonator(wire)) {
+          if (point.x < scene_.router.width && point.y < scene_.router.height) {
+            cells.insert(scene_.router.index(point.x, point.y));
+          }
+        }
+        found = cut.emplace(owner, std::move(cells)).first;
+      }
+      return found->second.contains(index);
+    };
+    for (std::size_t at = skipStart; at + skipEnd < way.size();
+         at += squeezeStep()) {
+      const auto& cell = way[at];
+      for (const int side : {2, -2}) {
+        const auto v = routing::headingVector(routing::turned(cell.heading, side));
+        if (v.dx == 0 && v.dy == 0) {
+          continue;
+        }
+        const bool diagonal = v.dx != 0 && v.dy != 0;
+        std::unordered_set<std::uint32_t> owners;
+        bool wall = false;
+        std::int64_t x = cell.x;
+        std::int64_t y = cell.y;
+        std::uint32_t steps = 0;
+        const auto noteOwner = [&](const std::int64_t ox, const std::int64_t oy) {
+          const auto index = static_cast<std::size_t>((oy * width) + ox);
+          const auto owner = field_.owner(index);
+          if (owner != NO_OWNER && owner != selfKey && owner < wires.size() &&
+              onCutWay(owner, index)) {
+            owners.insert(owner);
+          }
+        };
+        for (std::uint32_t s = 1; s <= reach; ++s) {
+          x += v.dx;
+          y += v.dy;
+          if (!inside(x, y)) {
+            break;
+          }
+          const auto index = static_cast<std::size_t>((y * width) + x);
+          if (scene_.components.test(index) && !bodies_.test(index)) {
+            wall = true;
+            steps = s;
+            break;
+          }
+          noteOwner(x, y);
+          if (diagonal) {
+            // A way may pass between two diagonal cells without standing
+            // on either; the two axis neighbours of the step catch it.
+            noteOwner(x - v.dx, y);
+            noteOwner(x, y - v.dy);
+          }
+        }
+        if (!wall || owners.empty()) {
+          continue;
+        }
+        const auto k = static_cast<std::uint32_t>(owners.size());
+        const double length =
+            static_cast<double>(steps) * (diagonal ? std::numbers::sqrt2 : 1.0);
+        const double need = static_cast<double>(clearance) +
+                            static_cast<double>(k) * static_cast<double>(pitch);
+        const double shortfall = need - length;
+        if (shortfall > worst) {
+          worst = shortfall;
+          std::vector<std::uint32_t> keys(owners.begin(), owners.end());
+          std::ranges::sort(keys);
+          found.from = cell;
+          found.to = {.x = static_cast<std::uint32_t>(x),
+                      .y = static_cast<std::uint32_t>(y),
+                      .heading = cell.heading,
+                      .primitive = 0};
+          found.note = std::format(
+              "squeezed at ({},{}): {} wire{} ({}) in {:.0f} cells to the "
+              "artwork, need {:.0f} ({} + {} x {})",
+              cell.x, cell.y, k, k == 1 ? "" : "s", namesOf(wires, keys),
+              length, need, clearance, k, pitch);
+        }
+      }
+    }
+    return {worst, found};
+  }
+
+  /// Whether a way an edge search found is refused for the room it leaves:
+  /// `squeezeReject` on, the rule not suspended for a recovery, and the
+  /// shortfall above `squeezeTolerance`. Says so at `-v 1` and counts it.
+  [[nodiscard]] bool refuseSqueezed(const std::vector<Wire>& wires,
+                                    const Edge& edge, const Path& way,
+                                    const std::uint32_t startRun,
+                                    const std::uint32_t endRun) {
+    if (!squeezeReject() || squeezeSuspended_ || way.empty()) {
+      return false;
+    }
+    const auto selfKey = edge.wire < wires.size() ? edge.wire : NO_OWNER;
+    const auto [shortfall, found] =
+        measureSqueeze(wires, way, startRun + BEND_RADIUS, endRun + BEND_RADIUS,
+                       selfKey);
+    if (shortfall <= static_cast<double>(squeezeTolerance())) {
+      return false;
+    }
+    ++squeezeRefusals_;
+    tell(std::format("[Coupler Insertion] chain {} edge {}->{}: a way of {} "
+                     "cells refused, {}, short by {:.0f}",
+                     edge.chain, edge.from, edge.to, way.size(), found.note,
+                     shortfall));
+    return true;
+  }
+
+  /// The room every edge leaves beside it, measured at the end of the
+  /// insertion (user, 2026-10-05): from every `squeezeStep`-th cell of the
+  /// edge, past its two runs at the couplers, a straight line to either
+  /// side at a right angle to the edge's heading, as far as the first cell
+  /// of the artwork **inside the chip** — the wall of the channel: a qubit
+  /// or a tunable coupler, never a launcher pad, which lies outside the
+  /// rectangle the launcher cells span, and never a CPW coupler body the
+  /// insertion put there (user, 2026-10-05: the room in question is the
+  /// room between the feedlines and the circuit, not the room at the
+  /// border). A line that leaves that rectangle measures nothing. Every
+  /// distinct wire whose copper the line crosses is a wire that has to pass
+  /// through that channel, and `k` of them need `clearance + k · pitch`
+  /// cells: the feedline's own exclusion zone and one pitch each. A line
+  /// that finds no wall within `squeezeReach`, or no wire, measures nothing.
+  /// The worst line of an edge is its figure; an edge whose worst line is
+  /// short of what its wires need is `Squeezed`, said at `-v 1` and kept in
+  /// `squeezed_` for the artifact. This is the bottleneck the feedline pass
+  /// fails in afterwards, read before it has run and without the repair's
+  /// trials. On 17q and 69q every edge marked carried a fail and every open
+  /// wire lay on a marked edge (2026-10-05), which is why `squeezeReject`
+  /// now refuses such a way in every edge search; what this report then
+  /// counts is what the recovery let through.
+  void reportSqueeze(const std::vector<Wire>& wires) {
+    squeezed_.clear();
+    if (!squeezeReport()) {
+      return;
+    }
+    std::vector<std::string> marked;
+    for (const auto& edge : edges_) {
+      if (edge.wire >= wires.size()) {
+        continue;
+      }
+      const auto& wire = wires[edge.wire];
+      if (!wire.drawn) {
+        continue;
+      }
+      const auto [worst, found] = measureSqueeze(
+          wires, wire.way,
+          static_cast<std::size_t>(startStubOf(wire, tuning_.straightStart) +
+                                   BEND_RADIUS),
+          static_cast<std::size_t>(wire.endStub + BEND_RADIUS), wire.key);
+      if (worst > 0.0) {
+        marked.push_back(std::format("f{} ({})", wire.slot, found.note));
+        tell(std::format("[Coupler Insertion] squeeze chain {} edge {}->{} "
+                         "(f{}): {}, short by {:.0f}, the line ends at ({},{})",
+                         edge.chain, edge.from, edge.to, wire.slot, found.note,
+                         worst, found.to.x, found.to.y));
+        squeezed_[wire.key] = found;
+      }
+    }
+    std::string list;
+    for (const auto& one : marked) {
+      list += (list.empty() ? "" : " · ") + one;
+    }
+    say(std::format("coupler insertion: SQUEEZE — {} of {} edges leave too "
+                    "little room beside them for the wires that have to "
+                    "pass (pitch {}, clearance {}, step {}, reach {}); {} "
+                    "way{} refused in the searches for it ({}), {} edge{} "
+                    "drawn with the rule suspended{}{}",
+                    marked.size(), edges_.size(), roomPitch(), tuning_.clearance,
+                    squeezeStep(), squeezeReach(), squeezeRefusals_,
+                    squeezeRefusals_ == 1 ? "" : "s",
+                    squeezeReject() ? "SCPD_SQUEEZE_REJECT on" : "off",
+                    squeezeRecovered_, squeezeRecovered_ == 1 ? "" : "s",
+                    marked.empty() ? "" : ": ", list));
+  }
+
   /// R4, report only: the channels between the terminal edges of two
   /// chains. Walking the ring, every maximal run of plain wires between two
   /// resonators whose couplers belong to different chains lies between the
@@ -6468,7 +6913,22 @@ public:
     router_.setSingleCrossingFeedline(nullptr, 0, 1);
     router_.attachCorridor(&corridor_);
     router_.attachWireProximity(&zeroProximity_);
+    // The turns this way may make and still let its prefix win, when the
+    // chain search said: see `chainStepBudget`.
+    if (stepBudget_ != routing::TRELLIS_UNREACHABLE) {
+      router_.setMaxTurns(static_cast<std::int16_t>(
+          std::min<std::uint64_t>(stepBudget_ / 10000ULL, 255ULL)));
+    }
     auto found = router_.route(objective, true);
+    lastCutOff_ = stepBudget_ != routing::TRELLIS_UNREACHABLE &&
+                  found.empty() && router_.lastSearchCutOff();
+    budgetCutoffs_ += lastCutOff_ ? 1 : 0;
+    router_.setMaxTurns(-1);
+    // A way that leaves its wires too little room is no way: see
+    // `squeezeReject`.
+    if (refuseSqueezed(wires, edge, found, startRun, endRun)) {
+      found.clear();
+    }
     // One picture per search, as the outer routing draws one: what the
     // corridor left open, what the search paid for and the way it took. The
     // ones that found nothing are the point of it, but a way that came out
@@ -6529,6 +6989,34 @@ public:
           describe(objective.target, true), ways));
     }
     return found;
+  }
+
+  /// What an edge's way costs the chain search: ten thousand an eighth
+  /// turn, as it always did, and `SCPD_CHAIN_LENGTH_WEIGHT` per cell of
+  /// the way, **0** by default. The idea (user, 2026-10-05) was that the
+  /// length tells two runs with the same turns apart, where the exact
+  /// search keeps whichever it reached first. The bounds (`turnBound`, the
+  /// analytic one) count turns alone and stay admissible, but they then
+  /// sit below the true cost by the whole length, and an A* whose bound is
+  /// loose prunes nothing: **measured at weight 1** (`artifacts/logs/length`
+  /// against `squeeze-reject2`), 17q's chain 0 expanded 252 prefixes
+  /// instead of 43 and the insertion took 20.4 s instead of 8.7 for `bad`
+  /// 4 → 3; on 69q the insertion took 276 s instead of 88, four chains
+  /// that had settled ran out of their clock, the angle cost went 180 →
+  /// 246, one edge was not drawn and `bad` went 1 → 2. The switch stays
+  /// for a bound that counts length too; at 0 the objective is as it was.
+  [[nodiscard]] static std::uint64_t lengthWeight() {
+    static const auto weight = static_cast<std::uint64_t>(
+        std::clamp(envWhole("SCPD_CHAIN_LENGTH_WEIGHT", 0), 0, 1000));
+    return weight;
+  }
+  [[nodiscard]] std::uint64_t wayCostOf(const Path& way,
+                                        const Heading targetHeading) const {
+    if (way.empty()) {
+      return 0;
+    }
+    return (10000ULL * angleCostOf(way, targetHeading)) +
+           (lengthWeight() * static_cast<std::uint64_t>(way.size()));
   }
 
   /// How much a way turns, in eighths, its arrival at the target counted:
@@ -6712,13 +7200,11 @@ public:
       }
       if (hasBefore) {
         out.lost += out.first.empty() ? 1 : 0;
-        out.cost += 10000 * angleCostOf(out.first,
-                                        objectiveOf(at - 1, at).target.heading);
+        out.cost += wayCostOf(out.first, objectiveOf(at - 1, at).target.heading);
       }
       if (hasAfter) {
         out.lost += out.second.empty() ? 1 : 0;
-        out.cost += 10000 * angleCostOf(out.second,
-                                        objectiveOf(at, at + 1).target.heading);
+        out.cost += wayCostOf(out.second, objectiveOf(at, at + 1).target.heading);
       }
       return out;
     };
@@ -6748,13 +7234,13 @@ public:
         ++memoHits_;
         if (hasBefore) {
           known.lost += known.first.empty() ? 1 : 0;
-          known.cost += 10000 * angleCostOf(
-              known.first, objectiveOf(at - 1, at).target.heading);
+          known.cost += wayCostOf(known.first,
+                                  objectiveOf(at - 1, at).target.heading);
         }
         if (hasAfter) {
           known.lost += known.second.empty() ? 1 : 0;
-          known.cost += 10000 * angleCostOf(
-              known.second, objectiveOf(at, at + 1).target.heading);
+          known.cost += wayCostOf(known.second,
+                                  objectiveOf(at, at + 1).target.heading);
         }
         first = std::move(known.first);
         lost = known.lost;
@@ -7017,7 +7503,7 @@ public:
       prefixFence_ = fence;
       way = routeEdge(wires, objective, edge);
       prefixFence_ = nullptr;
-      if (remember) {
+      if (remember && !lastCutOff_) {
         edgeMemo_[key] = way;
       }
     }
@@ -7030,7 +7516,7 @@ public:
     if (way.empty()) {
       return routing::TRELLIS_UNREACHABLE;
     }
-    return 10000ULL * angleCostOf(way, objective.target.heading);
+    return wayCostOf(way, objective.target.heading);
   }
 
   /// What one round of the exact search made of one chain: the options it
@@ -7045,6 +7531,8 @@ public:
     /// How many prefixes the prefix search grew children from. Zero on the
     /// trellis, which has no prefixes.
     std::uint32_t expansions = 0;
+    /// Placeholders the search dropped unpriced against its incumbent.
+    std::uint32_t pruned = 0;
     /// Whether the budget stopped the search rather than the search settling
     /// the chain — the one thing that separates a chain with no answer from
     /// one there was no time to answer.
@@ -7315,7 +7803,7 @@ public:
           const auto real =
               edgeCost(wires, chain, at, open[at][c], open[at + 1][d],
                        aheadCode, ahead.empty() ? nullptr : &laid);
-          if (chainBound() == 2) {
+          if (chainBound() >= 2) {
             audit(chain, at, portOf(at, static_cast<std::uint32_t>(c), true),
                   portOf(at + 1, static_cast<std::uint32_t>(d), false), real);
           }
@@ -7535,10 +8023,26 @@ public:
       for (const auto& choices : open) {
         problem.width.push_back(static_cast<std::uint32_t>(choices.size()));
       }
+      // The cheapest a pair of options has cost in this solve, by layer and
+      // pair: see `chainLearnedBound`.
+      std::unordered_map<std::uint64_t, std::uint64_t> learned;
+      const auto pairKey = [](const std::size_t at, const std::uint32_t i,
+                              const std::uint32_t j) {
+        return (static_cast<std::uint64_t>(at) << 40U) |
+               (static_cast<std::uint64_t>(i) << 20U) | j;
+      };
       problem.bound = [&](const std::size_t at, const std::uint32_t i,
                           const std::uint32_t j) {
-        return turns[at][(static_cast<std::size_t>(i) * open[at + 1].size()) +
-                         j];
+        auto bound =
+            turns[at][(static_cast<std::size_t>(i) * open[at + 1].size()) + j];
+        if (chainLearnedBound()) {
+          const auto known = learned.find(pairKey(at, i, j));
+          if (known != learned.end() && known->second > bound) {
+            ++learnedRaised_;
+            bound = known->second;
+          }
+        }
+        return bound;
       };
       problem.budget = chainAStarBudget();
       // Every time a run of options comes back with all of its feedline
@@ -7621,10 +8125,13 @@ public:
         const bool fresh =
             at < CHAIN_FRESH_EDGES || at + CHAIN_FRESH_EDGES >= edges;
         Path way;
+        stepBudget_ = chainStepBudget() ? problem.stepBudget
+                                        : routing::TRELLIS_UNREACHABLE;
         auto real =
             edgeCost(wires, chain, at, open[at][prefix[at]], open[at + 1][j],
                      0, fence.empty() ? nullptr : &fence, &way, !fresh);
-        if (chainBound() == 2) {
+        stepBudget_ = routing::TRELLIS_UNREACHABLE;
+        if (chainBound() >= 2) {
           audit(chain, at, portOfOption(chain, at, open[at][prefix[at]], true),
                 portOfOption(chain, at + 1, open[at + 1][j], false), real);
         }
@@ -7649,7 +8156,7 @@ public:
         if (real == routing::TRELLIS_UNREACHABLE && pairAtAnEnd &&
             !fence.empty()) {
           const Path* stood = fence.back();
-          const auto wasTurning = 10000ULL * angleCostOf(
+          const auto wasTurning = wayCostOf(
               *stood,
               portOfOption(chain, at, open[at][prefix[at]], false).heading);
           std::vector<const Path*> without(fence.begin(), fence.end() - 1);
@@ -7684,6 +8191,15 @@ public:
           // extends it is a chain, and the search takes another combination
           // — which is the whole of what the trellis cannot do.
           return real;
+        }
+        if (chainLearnedBound()) {
+          auto& known = learned[pairKey(at, prefix[at], j)];
+          if (known == 0) {
+            known = real;
+          } else {
+            learnedAbove_ += known > real ? 1 : 0;
+            known = std::min(known, real);
+          }
         }
         key.push_back(j);
         laid[std::move(key)] = Laid{.way = std::move(way),
@@ -7727,6 +8243,7 @@ public:
     out.evaluations = answer.routed;
     out.routed = static_cast<std::uint32_t>(memoMisses_ - routedBefore);
     out.expansions = answer.expansions;
+    out.pruned = answer.pruned;
     out.outOfTime = answer.outOfTime;
     for (std::size_t at = 0; at + 1 < layers; ++at) {
       out.pairs +=
@@ -8058,7 +8575,10 @@ public:
                                                  "laid the other way round"
                                                : "best in the time given",
                               answer.cost, points.size(), answer.expansions,
-                              answer.routed)
+                              answer.routed) +
+                      (answer.pruned == 0
+                           ? std::string{}
+                           : std::format(", {} left unpriced", answer.pruned))
                 : std::format("[Coupler Insertion] chain {} round {}: optimum "
                               "{} over {} layers, {} of {} pairs priced, {} "
                               "of them searched",
@@ -13233,8 +13753,13 @@ private:
 /// How long a way is, in layout units.
 using Measure = std::function<double(const Path&)>;
 
+/// What the insertion says about an edge, by wire key: the `Squeezed` bit,
+/// the note behind it and the line it measured. See `Driver::reportSqueeze`.
+using Notes = std::unordered_map<std::uint32_t, Driver::Squeeze>;
+
 [[nodiscard]] std::unique_ptr<fba::FinalWireT>
-wireOf(const Path& way, const double length, const std::uint8_t verdict = 0) {
+wireOf(const Path& way, const double length, const std::uint8_t verdict = 0,
+       const Driver::Squeeze* squeeze = nullptr) {
   auto drawn = std::make_unique<fba::FinalWireT>();
   drawn->path.reserve(way.size());
   for (const auto& point : way) {
@@ -13242,6 +13767,13 @@ wireOf(const Path& way, const double length, const std::uint8_t verdict = 0) {
   }
   drawn->length = length;
   drawn->verdict = static_cast<fba::FinalVerdict>(verdict);
+  if (squeeze != nullptr) {
+    drawn->note = squeeze->note;
+    drawn->marks.emplace_back(squeeze->from.x, squeeze->from.y,
+                              squeeze->from.heading);
+    drawn->marks.emplace_back(squeeze->to.x, squeeze->to.y,
+                              squeeze->to.heading);
+  }
   return drawn;
 }
 
@@ -13266,15 +13798,27 @@ snapshotOf(std::string name, const std::vector<Wire>& wires,
            const std::uint32_t ring, const std::size_t inner,
            const Measure& measure, const std::vector<std::uint32_t>& edges = {},
            const CouplerList& couplers = {},
-           const std::vector<std::uint8_t>* verdicts = nullptr) {
-  const auto verdictOf = [verdicts](const std::uint32_t key) -> std::uint8_t {
-    return verdicts != nullptr && key < verdicts->size() ? (*verdicts)[key]
-                                                         : 0;
+           const std::vector<std::uint8_t>* verdicts = nullptr,
+           const Notes* notes = nullptr) {
+  const auto verdictOf = [&](const std::uint32_t key) -> std::uint8_t {
+    std::uint8_t bits =
+        verdicts != nullptr && key < verdicts->size() ? (*verdicts)[key] : 0;
+    if (notes != nullptr && notes->contains(key)) {
+      bits |= static_cast<std::uint8_t>(fba::FinalVerdict::Squeezed);
+    }
+    return bits;
+  };
+  const auto noteOf = [notes](const std::uint32_t key) -> const Driver::Squeeze* {
+    if (notes == nullptr) {
+      return nullptr;
+    }
+    const auto found = notes->find(key);
+    return found == notes->end() ? nullptr : &found->second;
   };
   const auto entryOf = [&](const Wire& wire) {
-    return wire.drawn
-               ? wireOf(wire.way, measure(wire.way), verdictOf(wire.key))
-               : wireOf({}, 0.0, verdictOf(wire.key));
+    return wire.drawn ? wireOf(wire.way, measure(wire.way), verdictOf(wire.key),
+                               noteOf(wire.key))
+                      : wireOf({}, 0.0, verdictOf(wire.key), noteOf(wire.key));
   };
   auto phase = std::make_unique<fba::FinalPhaseT>();
   phase->name = std::move(name);
@@ -13517,7 +14061,8 @@ public:
       }
       routing.phases.push_back(snapshotOf("couplers", wires, ring,
                                           global.connections.size(), measure,
-                                          edges, couplersNow()));
+                                          edges, couplersNow(), nullptr,
+                                          &driver.squeezed()));
     }
 
     // Phase 4. Every wire again under the feedline constraints, in the ring
@@ -13547,7 +14092,8 @@ public:
       driver.repairFeedlines(wires, members, everyWire(), feedlinePass);
       routing.phases.push_back(snapshotOf("feedlines", wires, ring,
                                           global.connections.size(), measure,
-                                          edges, couplersNow()));
+                                          edges, couplersNow(), nullptr,
+                                          &driver.squeezed()));
 
       // Phase 5. The refinement of the feedline routing.
       if (runs(4)) {
@@ -13561,7 +14107,8 @@ public:
                        .feedlines = true});
         routing.phases.push_back(snapshotOf("refined", wires, ring,
                                             global.connections.size(), measure,
-                                            edges, couplersNow()));
+                                            edges, couplersNow(), nullptr,
+                                            &driver.squeezed()));
       }
     }
 
@@ -13580,7 +14127,8 @@ public:
     // The end state carries the verdict against every wire, so that a
     // picture of the run marks what the last line counted.
     auto last = snapshotOf("", wires, ring, global.connections.size(), measure,
-                           edges, couplersNow(), &fails.verdicts);
+                           edges, couplersNow(), &fails.verdicts,
+                           &driver.squeezed());
     routing.wires = std::move(last->wires);
     routing.inner = std::move(last->inner);
     routing.feedlines = std::move(last->feedlines);

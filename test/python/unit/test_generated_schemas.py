@@ -56,7 +56,9 @@ def test_the_final_verdict_is_a_bit_set() -> None:
         FinalVerdict.Loop,
     ]
     assert bits == [1, 2, 4, 8, 16, 32]
+    assert FinalVerdict.Squeezed == 64
     assert FinalWireT().verdict == 0
+    assert FinalWireT().note is None
     wire = FinalWireT(verdict=FinalVerdict.Open | FinalVerdict.Short)
     assert wire.verdict & FinalVerdict.Open
     assert not wire.verdict & FinalVerdict.Crossing

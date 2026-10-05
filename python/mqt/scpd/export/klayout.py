@@ -65,6 +65,8 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     # The wires the Final stage left failing at its end, by its own count, so that a boolean
     # against `plan.wire` finds them without the log.
     "failing": (29, 0, "final.failing"),
+    # The feedline edges the coupler insertion found leaving too little room beside them.
+    "squeezed": (30, 0, "final.squeezed"),
 }
 
 #: How wide a planning line is drawn, in layout units. A path needs a width to be a shape at all;
@@ -240,6 +242,13 @@ def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # noq
             if len(route) >= 2:
                 top.shapes(target).insert(path(route))
                 written += 1
+    if planning.squeezed:
+        target = layer("squeezed")
+        for _, _, route, line in planning.squeezed:
+            for shape in (route, line):
+                if len(shape) >= 2:
+                    top.shapes(target).insert(path(shape))
+                    written += 1
     # The room every wire is entitled to, as a path one clearance wide — the design rule as the
     # router converted it to whole cells, not the rule itself. Two wires closer than that are two
     # of these that overlap, which is what a boolean on this layer finds; the layer carries no

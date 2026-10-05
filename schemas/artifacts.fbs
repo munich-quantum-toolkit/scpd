@@ -283,6 +283,11 @@ enum FinalVerdict : ubyte (bit_flags) {
   Long,
   /// Its way crosses or touches itself.
   Loop,
+  /// A feedline edge that leaves too little room beside it, at the coupler
+  /// insertion, for the wires that have to pass between it and the nearest
+  /// qubit or coupler: a bottleneck the feedline pass then fails in. Set on
+  /// the snapshots from the coupler insertion on; `note` says where.
+  Squeezed,
 }
 
 /// One wire's path on the router grid, cell by cell.
@@ -305,6 +310,14 @@ table FinalWire {
   /// judged — so that a renderer can mark the wires the stage left failing
   /// without re-deriving the stage's own count.
   verdict: FinalVerdict;
+  /// What the stage says about the wire in words, for a picture's tooltip:
+  /// the figures behind a `Squeezed` verdict, say. Empty for most wires.
+  note: string;
+  /// Cells of a line the stage draws beside the wire to show what `note`
+  /// measured: for a `Squeezed` edge the two ends of the line from the
+  /// edge to the wall of its channel, the worst line it found. Empty for
+  /// most wires.
+  marks: [geometry.RCoord];
 }
 
 /// What the Final stage had drawn at the end of one of its phases.

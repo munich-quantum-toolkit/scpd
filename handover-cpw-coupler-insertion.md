@@ -32,6 +32,28 @@ know that the geometry described here differs from
 
 ## Where it stands
 
+**2026-10-05**: the insertion refuses, in every edge search, a way that
+leaves the wires beside it too little room — *The squeeze rule* below —
+and closes the coupler-end runs of every settled chain's terminal edges
+in its corridor (`guardSettledTerminalRuns`, handover-feedline-routing's
+*The terminal edges' coupler runs*). On the day's defaults
+(`artifacts/logs/squeeze-reject2`, the feedline pass run after it):
+
+| chip | not drawn | angle | insertion | ways refused | `bad` after the pass |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 4q | 0 | 12 | 0.5 s | 0 | 0 |
+| 9q | 0 | 20 | 0.6 s | 0 | 0 |
+| 17q | 0 | 51 | 8.7 s | 81 | 4 |
+| 21q | 0 | 50 | 3.3 s | 0 | 1 |
+| 33q | 0 | 76 | 8.8 s | 0 | 0 |
+| 45q | 0 | 109 | 29.0 s | 21 | 0 |
+| 57q | 0 | 132 | 31.1 s | 63 | 2 |
+| 69q | 0 | 180 | 87.5 s | 7 | 1 |
+
+Every edge drawn on every chip, no edge squeezed at the end, and the
+feedline pass behind it ends with no open wire anywhere. What follows is
+the state the search was handed over on, kept for the measurements.
+
 Measured chip by chip, **one run at a time**, with `stop_after = "couplers"`
 and `repair_trials = 0` in all eight benchmarks. **Phase 4 does not run at
 these settings**, so a resonator that is short here has not yet had the pass
@@ -748,7 +770,8 @@ is what says a row is clean.
 | `Driver::edgeCost` | one edge priced for a named pair of options, through the memo |
 | `Driver::turnBound` | the original admissible bound, `SCPD_CHAIN_BOUND=0` |
 | `Driver::boundTurns` | which bound the trellis leans on |
-| `routing::AnalyticDubins` | **the analytic bound**: the least turning with nothing in the way, the default |
+| `routing::AnalyticDubins` | **the analytic bound**: the least turning with nothing in the way, the default; `minTurnsAround` the same with the artwork in the way, `SCPD_CHAIN_BOUND=3`, sound and measured useless (handover-chain-astar, *What is open*) |
+| `Driver::measureSqueeze`, `refuseSqueezed`, `reportSqueeze`, `guardSettledTerminalRuns` | **the squeeze rule** and the terminal runs closed in the corridor, 2026-10-05 |
 | `Driver::audit` | `SCPD_CHAIN_BOUND=2`: both bounds against the real price of a step |
 | `Driver::stateFaults` | how many edges of a state would not survive its own fence — **the figure to read**, and about twice what the commit has to repair |
 | `Driver::chainAStar`, `chainSolo`, `chainKeepWays` | the three switches of the prefix path, all on by default |
@@ -760,6 +783,28 @@ is what says a row is clean.
 | `Driver::routeEdge` | one edge, searched |
 | `Driver::drawCouplerOptions` | `final-coupler-options.svg` |
 | `DubinsRouter::setBendLowerBound` | the bend term in the free search's heuristic |
+
+## The squeeze rule (2026-10-05)
+
+The one room rule that refuses. `measureSqueeze` reads, from every fifth
+cell of a way past its two coupler runs, a straight line to either side at
+a right angle until the first artwork cell inside the launcher rectangle
+— a qubit or a tunable coupler, never a launcher pad or a CPW coupler
+body — and counts the distinct wires whose copper the line crosses; `k`
+of them need `clearance + k · pitch` cells, and the worst line of the way
+is its shortfall. A resonator whose coupler is not applied yet counts only
+on its way as the chosen option cuts it (`wayOfResonator`): its uncut
+tail in the field is not a wire in the channel, and reading it as one cost
+17q's chain 1 40000 before that was found (user). `refuseSqueezed`, from
+`routeEdge` and from the commit's kept way, clears a way with a shortfall
+above `SCPD_SQUEEZE_TOLERANCE` (0) as no way (`SCPD_SQUEEZE_REJECT`, on);
+an edge the commit then cannot draw is drawn once more with the rule
+suspended (`SCPD_SQUEEZE_RECOVER`, on, never needed on the eight chips).
+`reportSqueeze` at the end says what came through and marks it in the
+artifact (`FinalVerdict.Squeezed`, `note`, `marks`) for the pictures. The
+measurements, the diagnostic it grew out of and what it did to the fails
+are in handover-feedline-routing's *The squeeze report*: 17q 12 → 4, 69q
+4 → 1, 20 → 8 over the eight chips, no open wire left.
 
 ## The room rules (2026-10-03/04, calibration only — nothing refuses yet)
 
@@ -866,6 +911,12 @@ insertion, read by nothing yet), `bridgersOf`, `checkBridgers`,
 `reportRoom`, `checkChainChannels` (R4).
 
 ## What is open
+
+**2026-10-05**: what is open now is in handover-feedline-routing's *What
+is not done* and handover-chain-astar's *What is open* — the four 69q
+chains at the clock, the eight crossing wires at the halo's edge, the
+repair not rerun. The list below is the state of 2026-09-30, kept for
+what it says.
 
 **The first two below are closed by the prefix search, and are kept because
 they say what it was for.** Items 1 and 2 describe the trellis; on the prefix

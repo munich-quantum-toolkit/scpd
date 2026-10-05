@@ -92,6 +92,13 @@ struct ChainProblem {
   /// always the true optimum.
   std::chrono::nanoseconds budget{0};
 
+  /// Set by the search before every call of `step`: the most the step may
+  /// cost and still leave the prefix able to beat the cheapest complete run
+  /// priced so far, or TRELLIS_UNREACHABLE while no run has been priced. A
+  /// `step` may stop early once it knows it will cost more — the answer it
+  /// gives then is not read, because the prefix cannot win.
+  mutable uint64_t stepBudget = TRELLIS_UNREACHABLE;
+
   /// Called every time the search completes a run of choices whose every
   /// step is routed — the run and what it costs. They arrive in no
   /// particular order of price: a run is reached in order of the *bound* on
@@ -136,6 +143,9 @@ struct ChainSolution {
 
   /// How many prefixes the search grew children from.
   uint32_t expansions = 0;
+  /// Placeholders dropped unpriced because their bound already reached
+  /// the cheapest complete run priced so far.
+  uint32_t pruned = 0;
 
   /// How many steps were really priced — the figure to watch, because every
   /// one of them is a full search of the chip.

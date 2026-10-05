@@ -69,6 +69,10 @@ PLANNING_COLORS: dict[str, str] = {
     # avoids, so that it stands apart from the blue of a wire and the orange of an inner wire,
     # and wide enough to be found at the zoom of a whole chip.
     "failing": "#E6002E",
+    # The feedline edges the coupler insertion found squeezed: a magenta that is neither the red
+    # of a failing wire nor the violet of a chain, dashed so that the two read apart where both
+    # lie on one edge.
+    "squeezed": "#C800B4",
 }
 
 #: The fill of each role in the port legend. The colors stay apart from the obstacle fill.
@@ -280,6 +284,24 @@ def _planning_layers(
             if len(points) >= 2
         )
         parts.append(f'<g class="l-failing">{marks}</g>')
+    if planning.squeezed:
+        # The edges the insertion found leaving too little room, each with the insertion's own
+        # figures in its tooltip.
+        marks = "".join(
+            f'<path d="{polyline(points)}"><title>{escape("wire " + name + ": " + note)}</title></path>'
+            for name, note, points, _ in planning.squeezed
+            if len(points) >= 2
+        )
+        # The line the insertion measured, solid and wider, from the edge to the wall it hit,
+        # with a dot on the wall.
+        lines = "".join(
+            f'<path class="m" d="{polyline(line)}"><title>{escape("wire " + name + ": " + note)}</title></path>'
+            f'<circle cx="{_number(wx)}" cy="{_number(wy)}" r="{_number(radius * 0.6)}"/>'
+            for name, note, _, line in planning.squeezed
+            if len(line) >= 2
+            for wx, wy in [to_view(*line[-1])]
+        )
+        parts.append(f'<g class="l-squeezed">{marks}{lines}</g>')
     if planning.launchers:
         circles = "".join(
             f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 1.4)}"/>'
@@ -290,13 +312,14 @@ def _planning_layers(
     return "".join(parts)
 
 
-def _planning_style(font: float, clearance: float = 0.0, *, failing: bool = False) -> str:
+def _planning_style(font: float, clearance: float = 0.0, *, failing: bool = False, squeezed: bool = False) -> str:
     """The stroke of every planning layer, and the type of the capacity labels.
 
     Args:
         font: The size of a gate label, in layout units.
         clearance: The width of the band drawn around every wire, in layout units. Zero draws none.
         failing: Whether the picture marks wires the Final stage left failing.
+        squeezed: Whether the picture marks feedline edges the coupler insertion found squeezed.
 
     Returns:
         The CSS of the overlay.
@@ -342,6 +365,13 @@ def _planning_style(font: float, clearance: float = 0.0, *, failing: bool = Fals
         style += (
             f"g.l-failing>path{{fill:none;stroke:{PLANNING_COLORS['failing']};stroke-width:3.4;"
             "stroke-opacity:0.85;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}"
+        )
+    if squeezed:
+        style += (
+            f"g.l-squeezed>path{{fill:none;stroke:{PLANNING_COLORS['squeezed']};stroke-width:3.4;"
+            "stroke-opacity:0.85;stroke-dasharray:10 6;stroke-linejoin:round;vector-effect:non-scaling-stroke}"
+            f"g.l-squeezed>path.m{{stroke-dasharray:none;stroke-width:5;stroke-opacity:1;stroke-linecap:round}}"
+            f"g.l-squeezed>circle{{fill:{PLANNING_COLORS['squeezed']};stroke:none}}"
         )
     if clearance > 0:
         style += (
@@ -447,6 +477,16 @@ def layout_svg(
             'vector-effect="non-scaling-stroke"/>'
             f'<text x="{_number(1.2 * font)}" y="0">failing ({len(planning.failing)})</text></g>'
         )
+    if planning is not None and planning.squeezed:
+        slot = len(shown) + (1 if planning.failing else 0)
+        legend += (
+            f'<g transform="translate({_number(pad + slot * 11 * font)},'
+            f'{_number(view_height + bottom_band - 0.7 * font)})">'
+            f'<path d="M0 {_number(-0.35 * font)}L{_number(0.9 * font)} {_number(-0.35 * font)}" '
+            f'stroke="{PLANNING_COLORS["squeezed"]}" stroke-width="3.4" stroke-dasharray="4 3" '
+            'vector-effect="non-scaling-stroke"/>'
+            f'<text x="{_number(1.2 * font)}" y="0">squeezed ({len(planning.squeezed)})</text></g>'
+        )
     style = (
         f"path.o{{fill:{OBSTACLE_FILL};stroke:{OBSTACLE_STROKE};stroke-width:0.6;vector-effect:non-scaling-stroke}}"
         f"path.f{{fill:none;stroke:{OBSTACLE_STROKE};stroke-width:1;vector-effect:non-scaling-stroke}}"
@@ -465,10 +505,9 @@ def layout_svg(
             gate_font,
             planning.clearance if planning is not None else 0.0,
             failing=planning is not None and bool(planning.failing),
+            squeezed=planning is not None and bool(planning.squeezed),
         )
-    caption = (
-        f'<text x="{_number(pad)}" y="{_number(-top_band + 1.5 * font)}">{escape(title)}</text>' if title else ""
-    )
+    caption = f'<text x="{_number(pad)}" y="{_number(-top_band + 1.5 * font)}">{escape(title)}</text>' if title else ""
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 {_number(-top_band)} {_number(view_width)} '

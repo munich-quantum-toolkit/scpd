@@ -17,6 +17,25 @@ Three documents go with this one:
 | [summary-final-routing.md](summary-final-routing.md) | what the Final stage does, what was measured, and what is deliberately different from the prototype |
 | [handover-final-couplers.md](handover-final-couplers.md) | the coupler insertion, the feedlines and the repair: where they stand, where the pieces are, and the traps |
 
+## Status 2026-10-05
+
+This document is the state of the stage when phases 3 to 5 were still
+open; it is kept for what it says about the first two phases, the DRC and
+the pictures. **The current state is in
+[handover-feedline-routing.md](handover-feedline-routing.md)** — all five
+phases are built, every feedline edge of every chip is drawn, and the
+stage ends on `bad = unrouted + open + crossing` of **8 over the eight
+chips**, no wire unrouted or open, the eight all crossing wires at the
+halo's edge of the orthogonal crossing rule (17q 14, 31, 33, 56; 21q 27;
+57q 15, 171; 69q 15). The documents that go with it:
+[handover-cpw-coupler-insertion.md](handover-cpw-coupler-insertion.md)
+(the couplers and the chains, the squeeze rule),
+[handover-chain-astar.md](handover-chain-astar.md) (the search that
+settles a chain, the clock) and
+[handover-targeted-repair.md](handover-targeted-repair.md) (the repair,
+not yet rerun on this state). HEAD is `454df86`; the afternoon's and
+evening's work of 2026-10-05 is uncommitted on top of it.
+
 ## The pipeline now
 
 ```text
@@ -33,9 +52,9 @@ The Final stage runs five phases and leaves a snapshot after each:
 | --- | --- | --- |
 | 1 | `inner` — the inner circuit, inside its unit cells | **built** |
 | 2 | `outer` — the ring, against the inner circuit and itself | **built** |
-| 3 | `couplers` — the CPW couplers and the ports they create | open |
-| 4 | `feedlines` — the launcher-to-launcher chains | open |
-| 5 | `refined` — the refinement of those chains | open |
+| 3 | `couplers` — the CPW couplers and the ports they create | **built** |
+| 4 | `feedlines` — the launcher-to-launcher chains | **built** |
+| 5 | `refined` — the refinement of those chains | **built**, not run under `stop_after = "feedlines"` |
 
 A phase that changes nothing leaves the state of the phase before it, so the
 last three snapshots are the outer routing again until they are built. Each has
@@ -89,11 +108,10 @@ chip, and its `FG_OBSTACLE_INFLATE` environment override is not carried over.
 
 ## What is open
 
-1. **The routing quality of phases 3 to 5 from 17 qubits up.** All five
-   phases are built and the 4- and 9-qubit chips end on no fail and no
-   finding; the larger chips do not.
-   [handover-final-couplers.md](handover-final-couplers.md) says where it
-   stands, what was measured and rejected, and what to try next.
+1. **The routing quality of phases 3 to 5 from 17 qubits up** — as of
+   2026-10-05 down to eight crossing wires over the eight chips, none open;
+   see *Status 2026-10-05* above and
+   [handover-feedline-routing.md](handover-feedline-routing.md).
 2. **The lenpoint constraint is not ported.** It keeps a disc clear around
    the point where a resonator reaches its target length, which is where
    phase 3 splices the coupler. Read `outer_res_lenpoint_clearance` in

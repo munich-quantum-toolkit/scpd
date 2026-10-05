@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace mqt::scpd::routing {
@@ -68,13 +69,69 @@ public:
 
   [[nodiscard]] std::uint32_t cap() const { return cap_; }
 
+  /// A cell the ways may not sweep: `true` for one that is closed.
+  using Blocked = std::function<bool(std::int64_t x, std::int64_t y)>;
+
+  /// The box every way has to stay in, inclusive on all four sides: what the
+  /// edge corridor closes everything outside of. It is also what bounds the
+  /// straight runs the enumeration below has to try.
+  struct Box {
+    std::int64_t minX = 0;
+    std::int64_t minY = 0;
+    std::int64_t maxX = 0;
+    std::int64_t maxY = 0;
+  };
+
+  /// What `minTurnsAround` did, summed by the caller.
+  struct AroundStats {
+    /// Concrete ways tried against the obstacles.
+    std::uint64_t paths = 0;
+    /// Eighth turns the answer rose above `minTurns` by.
+    std::uint64_t raised = 0;
+    /// Pairs on which the path budget ran out, or a family had too many
+    /// runs to enumerate, before it was settled.
+    std::uint64_t budgetOut = 0;
+  };
+
+  /// The fewest eighth turns from one pose to the other **with the obstacles
+  /// in the way**, as far as the families of ways can be exhausted. A way of
+  /// `k` eighth turns is a run of arcs turning `k` in all with a straight run
+  /// before, between and after them, and on the grid every such run is a
+  /// whole number of cells: the family of a given arc sequence is the set of
+  /// non-negative integer run lengths that add up to the displacement, which
+  /// is finite once the box bounds every run. When every way of every
+  /// sequence of `k` turns sweeps a blocked cell or leaves the box, no way
+  /// of `k` turns exists and the answer is at least `k + 1`. The straight
+  /// run out of the source is at least `minFirstRun` cells and the run into
+  /// the target at least `minLastRun`, as the router forces them.
+  ///
+  /// A lower bound on what the grid search returns, exactly as `minTurns`
+  /// is, as long as `blocked` and `box` close nothing the search leaves
+  /// open: the search's moves are the same arcs and straight cells, so a way
+  /// it finds is one of the ways tried here. Where the enumeration would
+  /// exceed `pathBudget` concrete ways, the family is left unsettled and the
+  /// answer stays at the turns proved so far.
+  /// `maxRaise` bounds how far above `minTurns` the answer is looked for:
+  /// each family is dearer to exhaust than the one below it, and a family
+  /// with more than two runs to enumerate (three arcs or more between the
+  /// ends) is left unsettled rather than walked, which ends the raising
+  /// there. Default 2: the gaps the audit found.
+  [[nodiscard]] std::uint32_t
+  minTurnsAround(const PathPoint& from, const PathPoint& to,
+                 const Blocked& blocked, const Box& box,
+                 std::uint32_t minFirstRun, std::uint32_t minLastRun,
+                 std::uint64_t pathBudget, AroundStats* stats = nullptr,
+                 std::uint32_t maxRaise = 2) const;
+
 private:
-  /// One arc: where it comes out, how far it moves and what it turns.
+  /// One arc: where it comes out, how far it moves and what it turns, and
+  /// the cells it sweeps from its start.
   struct Arc {
     Heading exit = 0;
     std::int32_t dx = 0;
     std::int32_t dy = 0;
     std::uint32_t turn = 0;
+    std::vector<CellOffset> swept;
   };
 
   /// Whether a run of arcs can be joined by straight runs into a way that

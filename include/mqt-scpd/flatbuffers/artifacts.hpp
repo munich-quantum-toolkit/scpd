@@ -217,19 +217,25 @@ enum class FinalVerdict : uint8_t {
   Long = 16,
   /// Its way crosses or touches itself.
   Loop = 32,
+  /// A feedline edge that leaves too little room beside it, at the coupler
+  /// insertion, for the wires that have to pass between it and the nearest
+  /// qubit or coupler: a bottleneck the feedline pass then fails in. Set on
+  /// the snapshots from the coupler insertion on; `note` says where.
+  Squeezed = 64,
   NONE = 0,
-  ANY = 63
+  ANY = 127
 };
 FLATBUFFERS_DEFINE_BITMASK_OPERATORS(FinalVerdict, uint8_t)
 
-inline const FinalVerdict (&EnumValuesFinalVerdict())[6] {
+inline const FinalVerdict (&EnumValuesFinalVerdict())[7] {
   static const FinalVerdict values[] = {
     FinalVerdict::Unrouted,
     FinalVerdict::Open,
     FinalVerdict::Crossing,
     FinalVerdict::Short,
     FinalVerdict::Long,
-    FinalVerdict::Loop
+    FinalVerdict::Loop,
+    FinalVerdict::Squeezed
   };
   return values;
 }
@@ -242,6 +248,7 @@ inline const char *EnumNameFinalVerdict(FinalVerdict e) {
     case FinalVerdict::Short: return "Short";
     case FinalVerdict::Long: return "Long";
     case FinalVerdict::Loop: return "Loop";
+    case FinalVerdict::Squeezed: return "Squeezed";
     default: return "";
   }
 }
@@ -2388,6 +2395,8 @@ struct FinalWireT : public ::flatbuffers::NativeTable {
   std::vector<mqt::scpd::flatbuffers::geometry::RCoord> path{};
   double length = 0.0;
   mqt::scpd::flatbuffers::artifacts::FinalVerdict verdict = static_cast<mqt::scpd::flatbuffers::artifacts::FinalVerdict>(0);
+  std::string note{};
+  std::vector<mqt::scpd::flatbuffers::geometry::RCoord> marks{};
 };
 
 /// One wire's path on the router grid, cell by cell.
@@ -2404,7 +2413,9 @@ struct FinalWire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PATH = 4,
     VT_LENGTH = 6,
-    VT_VERDICT = 8
+    VT_VERDICT = 8,
+    VT_NOTE = 10,
+    VT_MARKS = 12
   };
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *> *path() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *> *>(VT_PATH);
@@ -2424,6 +2435,18 @@ struct FinalWire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   mqt::scpd::flatbuffers::artifacts::FinalVerdict verdict() const {
     return static_cast<mqt::scpd::flatbuffers::artifacts::FinalVerdict>(GetField<uint8_t>(VT_VERDICT, 0));
   }
+  /// What the stage says about the wire in words, for a picture's tooltip:
+  /// the figures behind a `Squeezed` verdict, say. Empty for most wires.
+  const ::flatbuffers::String *note() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_NOTE);
+  }
+  /// Cells of a line the stage draws beside the wire to show what `note`
+  /// measured: for a `Squeezed` edge the two ends of the line from the
+  /// edge to the wall of its channel, the worst line it found. Empty for
+  /// most wires.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *> *marks() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *> *>(VT_MARKS);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -2431,6 +2454,10 @@ struct FinalWire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(path()) &&
            VerifyField<double>(verifier, VT_LENGTH, 8) &&
            VerifyField<uint8_t>(verifier, VT_VERDICT, 1) &&
+           VerifyOffset(verifier, VT_NOTE) &&
+           verifier.VerifyString(note()) &&
+           VerifyOffset(verifier, VT_MARKS) &&
+           verifier.VerifyVector(marks()) &&
            verifier.EndTable();
   }
   FinalWireT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -2451,6 +2478,12 @@ struct FinalWireBuilder {
   void add_verdict(mqt::scpd::flatbuffers::artifacts::FinalVerdict verdict) {
     fbb_.AddElement<uint8_t>(FinalWire::VT_VERDICT, static_cast<uint8_t>(verdict), 0);
   }
+  void add_note(::flatbuffers::Offset<::flatbuffers::String> note) {
+    fbb_.AddOffset(FinalWire::VT_NOTE, note);
+  }
+  void add_marks(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *>> marks) {
+    fbb_.AddOffset(FinalWire::VT_MARKS, marks);
+  }
   explicit FinalWireBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -2467,9 +2500,13 @@ inline ::flatbuffers::Offset<FinalWire> CreateFinalWire(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *>> path = 0,
     double length = 0.0,
-    mqt::scpd::flatbuffers::artifacts::FinalVerdict verdict = static_cast<mqt::scpd::flatbuffers::artifacts::FinalVerdict>(0)) {
+    mqt::scpd::flatbuffers::artifacts::FinalVerdict verdict = static_cast<mqt::scpd::flatbuffers::artifacts::FinalVerdict>(0),
+    ::flatbuffers::Offset<::flatbuffers::String> note = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::RCoord *>> marks = 0) {
   FinalWireBuilder builder_(_fbb);
   builder_.add_length(length);
+  builder_.add_marks(marks);
+  builder_.add_note(note);
   builder_.add_path(path);
   builder_.add_verdict(verdict);
   return builder_.Finish();
@@ -2484,13 +2521,19 @@ inline ::flatbuffers::Offset<FinalWire> CreateFinalWireDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const std::vector<mqt::scpd::flatbuffers::geometry::RCoord> *path = nullptr,
     double length = 0.0,
-    mqt::scpd::flatbuffers::artifacts::FinalVerdict verdict = static_cast<mqt::scpd::flatbuffers::artifacts::FinalVerdict>(0)) {
+    mqt::scpd::flatbuffers::artifacts::FinalVerdict verdict = static_cast<mqt::scpd::flatbuffers::artifacts::FinalVerdict>(0),
+    const char *note = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::geometry::RCoord> *marks = nullptr) {
   auto path__ = path ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::RCoord>(*path) : 0;
+  auto note__ = note ? _fbb.CreateString(note) : 0;
+  auto marks__ = marks ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::RCoord>(*marks) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateFinalWire(
       _fbb,
       path__,
       length,
-      verdict);
+      verdict,
+      note__,
+      marks__);
 }
 
 ::flatbuffers::Offset<FinalWire> CreateFinalWire(::flatbuffers::FlatBufferBuilder &_fbb, const FinalWireT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -4218,7 +4261,9 @@ inline bool operator==(const FinalWireT &lhs, const FinalWireT &rhs) {
   return
       (lhs.path == rhs.path) &&
       (lhs.length == rhs.length) &&
-      (lhs.verdict == rhs.verdict);
+      (lhs.verdict == rhs.verdict) &&
+      (lhs.note == rhs.note) &&
+      (lhs.marks == rhs.marks);
 }
 
 inline bool operator!=(const FinalWireT &lhs, const FinalWireT &rhs) {
@@ -4238,6 +4283,8 @@ inline void FinalWire::UnPackTo(FinalWireT *_o, const ::flatbuffers::resolver_fu
   { auto _e = path(); if (_e) { _o->path.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->path[_i] = *_e->Get(_i); } } else { _o->path.resize(0); } }
   { auto _e = length(); _o->length = _e; }
   { auto _e = verdict(); _o->verdict = _e; }
+  { auto _e = note(); if (_e) _o->note = _e->str(); }
+  { auto _e = marks(); if (_e) { _o->marks.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->marks[_i] = *_e->Get(_i); } } else { _o->marks.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<FinalWire> CreateFinalWire(::flatbuffers::FlatBufferBuilder &_fbb, const FinalWireT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -4251,11 +4298,15 @@ inline ::flatbuffers::Offset<FinalWire> FinalWire::Pack(::flatbuffers::FlatBuffe
   auto _path = _fbb.CreateVectorOfStructs(_o->path);
   auto _length = _o->length;
   auto _verdict = _o->verdict;
+  auto _note = _o->note.empty() ? 0 : _fbb.CreateString(_o->note);
+  auto _marks = _o->marks.size() ? _fbb.CreateVectorOfStructs(_o->marks) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateFinalWire(
       _fbb,
       _path,
       _length,
-      _verdict);
+      _verdict,
+      _note,
+      _marks);
 }
 
 

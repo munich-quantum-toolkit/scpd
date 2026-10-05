@@ -27,6 +27,29 @@ releases may include breaking changes.
   let go of never among them: `SCPD_FEEDLINE_FENCE_PAIRS` (3). With the
   terminal runs closed the 69-qubit benchmark ends with 5 failing wires
   instead of 10, and the pass is a third faster.
+- ✨ Measure, at the end of the coupler insertion, the room every feedline
+  edge leaves beside it for the wires that have to pass between it and the
+  nearest qubit or tunable coupler, and mark the edges that leave too
+  little: `FinalWire.verdict` carries `Squeezed`, `note` the figures and
+  `marks` the line measured; `plot --stage final --phase couplers` draws
+  them in magenta with the line and the note, `render` on layer 30
+  `final.squeezed` (`SCPD_SQUEEZE_REPORT`, `SCPD_SQUEEZE_STEP`,
+  `SCPD_SQUEEZE_REACH`). On the 17- and 69-qubit benchmarks every marked
+  edge carries a failing wire of the feedline routing and every open wire
+  lies on a marked edge.
+- ✨ Refuse, in every edge search of the coupler insertion, a way that
+  leaves too little room beside it, so that the chain search finds a run
+  of options whose edges all leave their room; an edge the commit cannot
+  draw under the rule is drawn once more without it (`SCPD_SQUEEZE_REJECT`,
+  `SCPD_SQUEEZE_TOLERANCE`, `SCPD_SQUEEZE_RECOVER`). The 17-qubit benchmark
+  ends with 4 failing wires instead of 12 and the 69-qubit one with 1
+  instead of 4, no wire open on either.
+- ⚡️ Tell every edge search of the chain A* how many turns its way may
+  still make and leave its prefix able to beat the cheapest complete run
+  priced so far, and drop a prefix whose bound already reaches that run
+  without pricing it (`SCPD_CHAIN_STEP_BUDGET`; `DubinsRouter::setMaxTurns`).
+  Exact: the same runs of options chain for chain, a tenth off the
+  17-qubit insertion.
 - 🔧 Price a wire let go of in a relaxation of the feedline pass within one
   wire clearance rather than three, `SCPD_HALO_REACH` 1: the prototype's
   own disc. On the 69-qubit benchmark one more pair of wires closes.

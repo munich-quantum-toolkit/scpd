@@ -297,6 +297,10 @@ def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:
         "inner": [wire([(8, 1), (8, 5)], FinalVerdict.Crossing)],
         "feedlines": [wire([], FinalVerdict.Unrouted), wire([(0, 9), (9, 9)])],
     }
+    # An edge the insertion found squeezed: not a failure, carried with its note.
+    end["feedlines"][1].verdict = FinalVerdict.Squeezed
+    end["feedlines"][1].note = "squeezed at (4,9): 2 wires (3, 5) in 30 cells to the artwork, need 59"
+    end["feedlines"][1].marks = [RCoordT(4, 9, 6), RCoordT(4, 6, 6)]
     # A phase snapshot is not judged and carries no verdict, whatever its wires hold.
     snapshot = FinalPhaseT(name="feedlines", wires=[wire([(1, 1), (5, 1)])], inner=[], feedlines=[], couplers=[])
     data = write_artifact(
@@ -321,6 +325,8 @@ def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:
     # The mark is the wire's own polyline; an unrouted wire has none.
     assert geometry.failing[0][2] == [(10.0, 10.0), (50.0, 10.0)]
     assert geometry.failing[3][2] == []
+    note = "squeezed at (4,9): 2 wires (3, 5) in 30 cells to the artwork, need 59"
+    assert geometry.squeezed == [("f1", note, [(0.0, 90.0), (90.0, 90.0)], [(40.0, 90.0), (40.0, 60.0)])]
     assert not planning_geometry(data, chip, "final", phase="feedlines").failing
     assert FinalVerdict.Unrouted | FinalVerdict.Open | FinalVerdict.Crossing == BAD_VERDICTS
     assert verdict_names(FinalVerdict.Short | FinalVerdict.Loop) == ["short", "meeting itself"]

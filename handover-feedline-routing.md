@@ -11,9 +11,10 @@ repair; the first three are green on all eight chips, the fourth is red on
 edges' coupler runs, six before) and green once the pass has redrawn the
 terminal edges. The figure the stage is judged by is `bad = unrouted + open +
 crossing` over every wire at the end of the stage; lengths are not read
-(user, 2026-10-04). On 2026-10-05 it stands at **20 over the eight
-chips**, from 34 the evening before and 77 the morning before that — see
-*Where it stands*.
+(user, 2026-10-04). On 2026-10-05 evening it stands at **8 over the
+eight chips**, every one a crossing wire at the halo's edge and none
+open, from 20 at midday, 34 the evening before and 77 the morning before
+that — see *Where it stands*.
 
 Read [handover-cpw-coupler-insertion.md](handover-cpw-coupler-insertion.md)
 for the coupler options, the geometry and the chain search this stands on,
@@ -22,21 +23,19 @@ that settles a chain. This document is about what happens to the wires
 afterwards, and about the obstacles the insertion builds for its own edges.
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch: `phase-4-routing-stages`. HEAD is **`d8d1a06` 34 Fails
-  remaining**, which carries everything of 2026-10-03/04 — the room rules,
-  the orthogonal crossing rule as the default, the targeted repair, the
-  bridge check, the length-point clearance with its recovery, the outer
-  routing's pricing switches and the exit-heading check
-  (`SCPD_CROSSING_EXIT_HEADING`, still off). **Uncommitted** on top of it,
-  the user committing per phase, all of 2026-10-05: the verdict every wire
-  carries in the artifact and the failing wires marked in the picture
-  (*Where the pieces are*); the terminal edges' coupler runs closed in the
-  feedline pass and the insertion (*The terminal edges' coupler runs*);
-  three fenced pairs of ring neighbours in the feedline pass
-  (`SCPD_FEEDLINE_FENCE_PAIRS` 3) and the halo of a wire let go of at one
-  clearance (`SCPD_HALO_REACH` 1), both defaults now; the walk to the next
-  conventional wire as a switch that is off (`SCPD_FENCE_TO_CONVENTIONAL`);
-  `max_relaxation = 8` in every benchmark config and `rounds = 5` on 69q.
+- Branch: `phase-4-routing-stages`. HEAD is **`454df86` 20 fails
+  remain**, which carries everything up to midday 2026-10-05: the room
+  rules, the crossing rule, the targeted repair, the bridge check, the
+  length-point clearance, the verdict every wire carries in the artifact
+  and the failing wires marked in the picture, the terminal edges' coupler
+  runs closed in the feedline pass and the insertion, three fenced pairs,
+  the halo at one clearance, `max_relaxation = 8` everywhere and `rounds =
+  5` on 69q. **Uncommitted** on top of it, the user committing per phase,
+  the afternoon and evening of 2026-10-05: the squeeze report and rule
+  with its marks in the artifact and the pictures (*The squeeze report*);
+  the chain A*'s step budget (`SCPD_CHAIN_STEP_BUDGET`, on) and three
+  arms that did not help and are off — the length term, the learned bound,
+  the obstacle-aware bound (handover-chain-astar, *What is open*).
 - Benchmarks: `repair_trials = 0`, `stop_after = "feedlines"` and
   `max_relaxation = 8` in all eight `benchmarks/*/config.toml` (8 since
   2026-10-05, user; the 2026-10-04 figures were measured with the 8 set
@@ -63,6 +62,40 @@ them; `bad` = unrouted + open + crossing at the end of the stage:
 | + bridge check | 0 | 0 | 8 | 0 | 4 | 8 | 23 | 28 | 71 | 2400 |
 | + length-point clearance, relaxation 8 | 0 | 0 | 12 | 0 | 0 | 4 | 2 | 16 | **34** | 1276 |
 | + terminal stub guard, 3 fenced pairs, halo reach 1 (2026-10-05, `guard-pairs3-halo1-all`) | 0 | 0 | 12 | 1 | 0 | 1 | 2 | 4 | **20** | 1075 |
+| + squeeze reject (2026-10-05 afternoon, `squeeze-reject`) | 0 | 0 | 4 | 1 | 0 | 0 | 2 | 1 | **8** | 1021 |
+| + the resonator-tail fix of the squeeze measurement and the step budget (`squeeze-reject2`, the state handed over) | 0 | 0 | 4 | 1 | 0 | 0 | 2 | 1 | **8** | 1017 |
+
+**The feedline pass itself at that state**, chip by chip: every edge of
+every chain drawn, no wire open, no edge squeezed, the crossing check
+between chains green on all eight, and in the last round of the pass only
+17q's wire 31 without a way.
+
+| chip | edges drawn | wires drawn | open | crossing | crossing check | last round failed |
+|---|---|---|---|---|---|---|
+| 4q | 5 / 5 | 14 / 14 | 0 | 0 | green | – |
+| 9q | 10 / 10 | 33 / 33 | 0 | 0 | green | – |
+| 17q | 20 / 20 | 65 / 65 | 0 | 4 | green | 31 |
+| 21q | 26 / 26 | 80 / 80 | 0 | 1 | green | – |
+| 33q | 40 / 40 | 124 / 124 | 0 | 0 | green | – |
+| 45q | 52 / 52 | 165 / 165 | 0 | 0 | green | – |
+| 57q | 66 / 66 | 208 / 208 | 0 | 2 | green | – |
+| 69q | 81 / 81 | 254 / 254 | 0 | 1 | green | – |
+
+The eight that remain are one case: a plain wire crossing a chain edge at
+10 cells from it (31 on 17q at 11) — the halo's edge of the orthogonal
+crossing rule, where the search lets a wire cross straight and turn on
+the last cell of the halo and the count reads that cell with its exit
+heading. `SCPD_CROSSING_EXIT_HEADING` is the switch that makes the two
+agree; it is off, measured on 2026-10-04 (crossing 22 → 7 then), and the
+user's decision. The lengths are not read.
+
+**2026-10-05 afternoon**: the squeeze rule (*The squeeze report*) takes
+the eight chips to **8**, every one of them a crossing wire at 10 to 14
+cells from an edge — 17q 14, 31, 33, 56; 21q 27; 57q 15, 171; 69q 15 —
+and no wire open anywhere. The insertion refused 121 ways on 17q, 63 on
+57q, 21 on 45q and 7 on 69q, none elsewhere, and no edge needed the
+recovery; 17q's insertion took 9.5 s instead of 4.0, the others within a
+second of before.
 
 **2026-10-05**: the last row is the stage as it stands at the end of the
 day — `SCPD_TERMINAL_STUB_GUARD`, `SCPD_FEEDLINE_FENCE_PAIRS` 3 and
@@ -467,6 +500,11 @@ marked:
 | `SCPD_FENCE_TO_CONVENTIONAL` | off | new, 2026-10-05: the fence beyond the wire let go of walks on to the next conventional wire, a resonator not bounding the room; measured on 69q at 6 rounds / relaxation 8 and identical in every judged line to `full-r8` (47 searches fenced more, 4 outcomes moved inside the 180–184 pair) — not the cause of the round-5 loss (user) |
 | `SCPD_FEEDLINE_FENCE_PAIRS` | **3** | new, 2026-10-05: how many pairs of ring neighbours the feedline pass fences, in phase 1 (`slot ± k`) and at every relaxation level (the k-th beyond the wire let go of and the k-th behind the wire drawn, released wires never); 2 is the prototype. 3 and 4 both take 69q from 10 to 5 with the terminal stub guard — see *The terminal edges' coupler runs*; 3 is the default (user) |
 | `SCPD_TERMINAL_STUB_GUARD` / `SCPD_TERMINAL_STUB_EXTRA` | **on** / 5 | new, 2026-10-05: the run a terminal edge has to make at its coupler — into the first coupler, out of the last — plus 5 cells, inflated by the clearance, closed to every other wire's search in the feedline pass, drawn or not; the launcher end is the port band's. Terminal edges are fenced for nobody otherwise (user) — see *The terminal edges' coupler runs* |
+| `SCPD_SQUEEZE_REPORT` / `SCPD_SQUEEZE_STEP` / `SCPD_SQUEEZE_REACH` | on / 5 / 300 | new, 2026-10-05: the squeeze report at the end of the insertion — see *The squeeze report* |
+| `SCPD_CHAIN_BOUND` 3 / `SCPD_CHAIN_FAMILY_PATHS` | 1 / 20000 | new, 2026-10-05 night: the analytic bound around the artwork (families of ways exhausted against the obstacles), sound and measured useless on 17q and 69q — see *What is open* in handover-chain-astar.md |
+| `SCPD_CHAIN_STEP_BUDGET` / `SCPD_CHAIN_LEARNED_BOUND` | on / off | new, 2026-10-05 evening: the chain A*'s step budget (exact, placeholders at the incumbent dropped, the edge search bounded in turns) and the learned pair bound (heuristic, measured useless) — see *What is open* in handover-chain-astar.md |
+| `SCPD_CHAIN_LENGTH_WEIGHT` | 0 | new, 2026-10-05: cells of an edge's way added to the chain objective beside the 10000 per eighth turn. Measured at 1 (`artifacts/logs/length`): 17q insertion 8.7 → 20.4 s for `bad` 4 → 3, 69q 88 → 276 s, angle 180 → 246, an edge undrawn, `bad` 1 → 2 — the turn-only bounds stop pruning. Off; see *What is not done* |
+| `SCPD_SQUEEZE_REJECT` / `SCPD_SQUEEZE_TOLERANCE` / `SCPD_SQUEEZE_RECOVER` | **on** / 0 / on | new, 2026-10-05: every edge search refuses a way that leaves too little room beside it; an edge the commit cannot draw under the rule is drawn once more without it. 17q 12 → 4, 69q 4 → 1, no open wire left — see *The squeeze report* |
 | `SCPD_FEEDLINE_LANE` | on | new, 2026-10-04: the lane polygon of a relaxation priced in the feedline pass; `=0` leaves it out, measured once at the user's request — see *The lane polygon, measured* below |
 | `SCPD_OUTER_LANE` | on | new, 2026-10-04: the lane polygon of the outer routing's relaxation; `=0` leaves it out and the released halos alone price the relaxation. Measured on 57q under the hard length-point clearance, see *The length-point clearance* |
 | `SCPD_OUTER_PENALTY` | 0 | new, 2026-10-04: how the outer routing prices the wires it let go of — 0 a halo of one clearance more per level, as it always had; 1 the feedline pass's flat halo (`SCPD_HALO_REACH` clearances) and crossing toll; 2 not at all |
@@ -776,6 +814,93 @@ let go of walked on to the next conventional wire
 band raised from 11 to 16 clearances (`artifacts/dev/69q-corridor16`,
 `bad` 16 at 5 rounds).
 
+## The squeeze report
+
+Written 2026-10-05 (user). An experiment, not a rule: the idea is that
+what is left open at the end of the stage is edges that leave the wires
+beside them too little room, and that a bottleneck detection at the end of
+the insertion could find those edges before the feedline pass runs into
+them — where the repair's trials cost the runtime. `reportSqueeze` runs
+after the four checks and the room report, prints one line per edge at
+`-v 1` and a `coupler insertion: SQUEEZE — N of M edges …` summary, and
+marks the edges in the artifact: `FinalWire.verdict` carries `Squeezed`
+(bit 64), `note` the figures and `marks` the two ends of the worst line,
+on every snapshot from the `couplers` phase on. `plot --stage final
+--phase couplers` draws them dashed magenta (`l-squeezed`), the measured
+line solid with a dot on the wall, the note in the tooltip and `squeezed
+(N)` in the legend; `render` puts both on layer 30 `final.squeezed`.
+
+The measurement: from every `SCPD_SQUEEZE_STEP` (5) cells of an edge's
+way, its two runs at the couplers skipped, a straight line to either side
+at a right angle to the edge's heading, until the first cell of the
+artwork **inside the chip** — a qubit or a tunable coupler — which is the
+wall. Not a launcher pad: those lie outside the rectangle the launcher
+cells span, and a line that leaves that rectangle measures nothing (the
+first version measured against them and drew most of its lines to the
+border, user). Not a CPW coupler body the insertion put there either
+(user). `SCPD_SQUEEZE_REACH` (300) cells without a wall measure nothing.
+Every distinct wire whose copper the line crosses (`field.owner`, the two
+axis neighbours of a diagonal step included) has to pass through that
+channel; `k` of them need `clearance + k · pitch` cells (19 + 20k on the
+benchmarks), and a line shorter than that is short by the difference. The
+worst line of an edge is its figure. `SCPD_SQUEEZE_REPORT=0` turns the
+report off.
+
+What it found, against the fails of the same run (the day's defaults,
+`artifacts/logs/squeeze-inner`; the pictures are
+`artifacts/<chip>/<chip>-final-couplers.svg` and `-final.svg`):
+
+| chip | edges marked | fail sites on a marked edge | fail sites not marked | marked without a fail |
+|---|---|---|---|---|
+| 17q | 3 of 20: f1, f12, f18 | f1 (11 in 21 cells, short by 18: f0, f1, 11 open), f12 (40 in 16, short by 23: 40 open and crossing), f18 (1 and 2 in 44, short by 15: 2 crossing) | f2 (14), f8 (31), f9 (33), f17 (56), all crossing at 10 cells | none |
+| 69q | 1 of 81: f63 | f63 (179–184, six wires in 132 cells to the artwork, short by 7: 183/184 open) | f3 (15), f65 (191), both crossing at 10 cells | none |
+
+Every marked edge carries a fail and every open wire of the two chips
+lies on a marked edge; what the report does not see is the crossing
+fails at 10 cells from an edge, the halo's-edge case of
+`SCPD_CROSSING_EXIT_HEADING`, which is not a question of room. The
+version that took launcher pads and coupler bodies as walls marked 9 of
+20 on 17q and 5 of 81 on 69q, four and four of them without a fail
+(`artifacts/logs/squeeze`, `squeeze-marks`).
+
+**The rule** (`SCPD_SQUEEZE_REJECT`, on, user, 2026-10-05 afternoon):
+every edge search — the prefix search, the memo fill, the commit, the
+targeted repair's re-search, all through `routeEdge` — measures the way
+it found with `measureSqueeze` and clears it as no way when the shortfall
+is above `SCPD_SQUEEZE_TOLERANCE` (0), as the bridge check clears a way
+that misses its bridge; a way the greedy chose is held to it at the
+commit as well (`refuseSqueezed`). An edge the commit then cannot draw
+is drawn once more with the rule suspended (`SCPD_SQUEEZE_RECOVER`, on)
+and counted — an edge not drawn is worse than one that is squeezed. The
+`SQUEEZE` line says how many ways were refused and how many edges came
+through the recovery. Measured against the report-only run of the same
+day (`artifacts/logs/squeeze-reject` against `squeeze-inner`):
+
+| chip | ways refused | recovered | insertion s | angle | `bad` before → after | left |
+|---|---|---|---|---|---|---|
+| 17q | 121 | 0 | 4.0 → 9.5 | 49 → 55 | 12 → **4** | 14, 31, 33, 56 crossing at 10–14 cells |
+| 69q | 7 | 0 | 90 → 88 | 180 → 180 | 4 → **1** | 15 crossing at 10 cells |
+
+No open wire is left on either chip, and no edge is squeezed at the end;
+69q's feedline pass ends after round 3 with nothing failing, the whole
+run 515 s against 569. The cost is the chain search on 17q, where the
+rule refused 121 ways and the insertion took 9.5 s instead of 4.0 and
+the angle cost went 49 → 55; on 69q the time-boxed chains expanded two to
+five prefixes more and ended on the same costs. What is left is the
+crossing fails at the halo's edge, which no room rule reaches.
+
+**A defect the user found in that arm** (2026-10-05): 17q's chain 1,
+whose edges were squeezed by nothing in the report-only run, changed its
+options under the rule and paid 100000 → 140000. The refused ways named
+wires 26 and 30 — chain 1's **own resonators**. A resonator whose coupler
+is not applied yet still holds its whole outer way in the field, the
+tail past the anchor included, and `measureSqueeze` read that tail as a
+wire in the channel. It now counts such a resonator only where the cell
+lies on `wayOfResonator`, the way as the chosen option cuts it
+(`squeeze-reject2`): chain 1 is back at 100000 on the options it had,
+17q refuses 81 ways instead of 121, the angle is 51, `bad` stays 4. The
+eight-chip table of `squeeze-reject2` is in *Where it stands*.
+
 ## The lane polygon, measured
 
 Asked for by the user on 2026-10-04: what the feedline pass loses without
@@ -936,7 +1061,9 @@ Written down so nobody pays for them twice.
   `feedlineFencePairs` the pairs fenced in phase 1 and the relaxation of
   `attempt`, where the walk of `fenceToConventional` follows them;
   `Fails::verdicts`, `wireOf` and `snapshotOf` the verdict in the
-  artifact.
+  artifact; `measureSqueeze`, `refuseSqueezed` (from `routeEdge` and the
+  commit), `reportSqueeze` and `Driver::Squeeze` the squeeze rule and
+  report, its marks carried by the same `snapshotOf`.
 - `artifacts/logs/` — the arms and the tools that read them: `run-arm.sh
   <arm> [ENV=…]` (the eight chips one at a time on the installed binding;
   `REPAIR_TRIALS=`, `STOP_AFTER=`, `MAX_RELAXATION=` edit the run
@@ -989,15 +1116,13 @@ Written down so nobody pays for them twice.
 
 ## What is not done
 
-- **17q is untouched by the day**: `bad` 12 under every arm of 2026-10-05
-  — three open edges (f0, f1, f12) and six crossing wires. Its terminal
-  edges fail 69 and 77 cells from the coupler, outside the guard, and
-  f12's partner is resonator 40, which finds no way in any round and keeps
-  its seed. The outer routing is at 0 there only through the recovery;
-  what the recovered resonator 30 does to the pass has not been read.
-- **21q gained a crossing wire** (27, at 10 cells from an edge) under the
-  day's defaults, where it was at 0; which of the three changes did it has
-  not been read. 45q went 4 → 1, 57q stays at 2 and 69q 16 → 4.
+- **What is left is eight crossing wires at the halo's edge** and nothing
+  else — 17q 14, 31, 33, 56; 21q 27; 57q 15, 171; 69q 15 — see the table
+  in *Where it stands*. The squeeze rule took 17q from 12 to 4 (its three
+  open edges f0, f1, f12 and the open pairs are gone) and 69q from 4 to 1;
+  the one lever on the eight is `SCPD_CROSSING_EXIT_HEADING`, the user's
+  decision. 17q's outer routing is at 0 only through the recovery; what
+  the recovered resonator 30 does to the pass has not been read.
 - **The relaxation is 8 in every config now** (user, 2026-10-05) and 69q
   runs five rounds; `rounds` on the other seven is still 6. 57q at
   relaxation 5 ends at 13, so the 8 is not optional there.
@@ -1040,9 +1165,14 @@ Written down so nobody pays for them twice.
   prototype routes its coupler edges at a flat 4000. The clamp now allows it;
   the sweep has not been run.
 - **The chain objective counts only turns.** Ten thousand an eighth turn, and
-  length counts for nothing — a detour is free. Lowering that number changes
-  nothing, because it is the only term; loosening it would mean adding a
-  length term.
+  length counts for nothing — a detour is free. A length term was tried on
+  2026-10-05 (`SCPD_CHAIN_LENGTH_WEIGHT` 1, `artifacts/logs/length`): with
+  the bounds still counting turns alone the exact search lost its pruning
+  — 17q's chain 0 252 prefixes instead of 43, 69q's insertion 276 s
+  instead of 88 with four chains out of their clock, a worse angle and an
+  edge undrawn. Off. A length term needs a bound that counts length too
+  (the analytic Dubins bound has the length of its own curves, which would
+  be the place) before it can be afforded.
 - **What is left at the end of the stage** are lane-trading pairs of plain
   wires, which the one-sided relaxation never frees together (it releases
   along the sweep only, as the prototype's does — a two-sided release would
@@ -1099,8 +1229,8 @@ budget (57q, 69q), and in parallel only the small ones.
 
 `cmake --build --preset release` and
 `ctest --test-dir build/release -E 'EveryChip/(Final|SpacedFinal)' -j 6`,
-run last after the halo reach went to 1: **393 of 396 passed**, the same
-three Detail-stage tests failing as on 2026-10-04 (below). The Python
+run last at the end of the day after the family bound: **394 of 397 passed**,
+the same three Detail-stage tests failing as on 2026-10-04 (below). The Python
 suite, `.venv/bin/python -m pytest test/python/unit`: **143 of 145**. The
 two that fail are not the day's: `test_the_detail_routing_carries_a_drawn_wire_per_connection`
 is the 9q Detail defect the three C++ tests fail on (wire 0 starts where

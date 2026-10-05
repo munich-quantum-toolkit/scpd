@@ -404,6 +404,17 @@ At `-v 1`, in order:
 
 ## What is not done
 
+- **The repair has not run on the state of 2026-10-05.** Everything the
+  day added sits under it: the terminal stub guard, three fenced pairs in
+  the feedline pass — the repair's local pass fences three now as well —
+  the halo at one clearance, and the squeeze rule, which its edge
+  re-searches obey through `routeEdge` (the step budget does not reach
+  them: the search runs with an `accept` and so has no incumbent). The
+  stage ends at `bad` 8 over the eight chips before any repair, all eight
+  crossing wires at the halo's edge (17q 14, 31, 33, 56; 21q 27; 57q 15,
+  171; 69q 15), none open — which is the exit-heading decision below more
+  than it is the repair's. The arms of 2026-10-04 (`research`,
+  `research-exit`) stand on the 77 of then.
 - **Three decisions are the user's** (2026-10-04): whether
   `SCPD_CROSSING_EXIT_HEADING` becomes the default — it changes the regime's
   figures, and without it the targeted repair accepts nothing on 17q; the

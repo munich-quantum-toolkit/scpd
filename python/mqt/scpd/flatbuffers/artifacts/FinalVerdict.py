@@ -19,3 +19,8 @@ class FinalVerdict(object):
     Long = 16
     # Its way crosses or touches itself.
     Loop = 32
+    # A feedline edge that leaves too little room beside it, at the coupler
+    # insertion, for the wires that have to pass between it and the nearest
+    # qubit or coupler: a bottleneck the feedline pass then fails in. Set on
+    # the snapshots from the coupler insertion on; `note` says where.
+    Squeezed = 64

@@ -14,8 +14,11 @@
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
+#include <vector>
 
 namespace mqt::scpd::routing {
 
@@ -144,8 +147,11 @@ AnalyticDubins::AnalyticDubins(const MovePrimitives& primitives,
         // the cone of the headings stands for every straight run at once.
         continue;
       }
-      arcs_[heading].push_back(
-          {.exit = p.exitHeading, .dx = p.dx, .dy = p.dy, .turn = turn});
+      arcs_[heading].push_back({.exit = p.exitHeading,
+                                .dx = p.dx,
+                                .dy = p.dy,
+                                .turn = turn,
+                                .swept = p.swept});
     }
   }
   (void)coneTable();
@@ -185,6 +191,272 @@ bool AnalyticDubins::within(const Heading heading, const std::int64_t dx,
     }
   }
   return false;
+}
+
+namespace {
+
+/// The enumeration of one family: the ways of one arc sequence, as
+/// `AnalyticDubins::minTurnsAround` describes them.
+struct Family {
+  const AnalyticDubins::Blocked& blocked;
+  const AnalyticDubins::Box& box;
+  std::uint64_t budget;
+  std::uint64_t paths = 0;
+  bool budgetOut = false;
+  /// A family of this level had too many runs to walk: the level cannot be
+  /// proved blocked, whatever the other families say.
+  bool unsettled = false;
+
+  [[nodiscard]] bool inBox(const std::int64_t x, const std::int64_t y) const {
+    return x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY;
+  }
+  [[nodiscard]] bool closed(const std::int64_t x, const std::int64_t y) const {
+    return !inBox(x, y) || blocked(x, y);
+  }
+
+  /// Whether one concrete way — the runs `lambda` between the arcs of
+  /// `seq`, from `start` — sweeps only open cells.
+  template <typename ArcT>
+  [[nodiscard]] bool open(const std::int64_t startX, const std::int64_t startY,
+                          const Heading source,
+                          const std::vector<const ArcT*>& seq,
+                          const std::vector<std::int64_t>& lambda) {
+    ++paths;
+    std::int64_t x = startX;
+    std::int64_t y = startY;
+    Heading heading = source;
+    for (std::size_t i = 0; i <= seq.size(); ++i) {
+      const auto v = headingVector(heading);
+      for (std::int64_t t = 0; t < lambda[i]; ++t) {
+        x += v.dx;
+        y += v.dy;
+        if (closed(x, y)) {
+          return false;
+        }
+      }
+      if (i == seq.size()) {
+        break;
+      }
+      const ArcT& arc = *seq[i];
+      for (const auto& cell : arc.swept) {
+        if (closed(x + cell.dx, y + cell.dy)) {
+          return false;
+        }
+      }
+      x += arc.dx;
+      y += arc.dy;
+      heading = arc.exit;
+    }
+    return true;
+  }
+};
+
+constexpr std::int64_t det(const std::int64_t ux, const std::int64_t uy,
+                           const std::int64_t wx, const std::int64_t wy) {
+  return (ux * wy) - (uy * wx);
+}
+
+} // namespace
+
+std::uint32_t AnalyticDubins::minTurnsAround(
+    const PathPoint& from, const PathPoint& to, const Blocked& blocked,
+    const Box& box, const std::uint32_t minFirstRun,
+    const std::uint32_t minLastRun, const std::uint64_t pathBudget,
+    AroundStats* stats, const std::uint32_t maxRaise) const {
+  const auto dx =
+      static_cast<std::int64_t>(to.x) - static_cast<std::int64_t>(from.x);
+  const auto dy =
+      static_cast<std::int64_t>(to.y) - static_cast<std::int64_t>(from.y);
+  const auto source = static_cast<Heading>(from.heading & 7U);
+  const auto target = static_cast<Heading>(to.heading & 7U);
+  const auto floor = minTurns(from, to);
+  if (floor > cap_) {
+    return floor;
+  }
+  // No run can be longer than the box in either direction.
+  const auto longest = std::max<std::int64_t>(
+      0, std::max(box.maxX - box.minX, box.maxY - box.minY));
+  Family family{.blocked = blocked, .box = box, .budget = pathBudget};
+
+  // Every sequence of arcs turning exactly `k` in all from the source
+  // heading to the target heading.
+  std::vector<const Arc*> seq;
+  std::vector<std::int64_t> lambda;
+  bool found = false;
+  const auto tryFamily = [&](const std::int64_t rx, const std::int64_t ry) {
+    // Headings of the runs: the source, then each arc's exit.
+    const auto runs = seq.size() + 1;
+    std::vector<HeadingVector> v(runs);
+    std::vector<std::int64_t> lo(runs, 0);
+    v[0] = headingVector(source);
+    for (std::size_t i = 0; i < seq.size(); ++i) {
+      v[i + 1] = headingVector(seq[i]->exit);
+    }
+    lo[0] = std::max<std::int64_t>(lo[0], minFirstRun);
+    lo[runs - 1] = std::max<std::int64_t>(lo[runs - 1], minLastRun);
+    // Two runs on headings that are not parallel are solved for; the rest
+    // are enumerated. Prefer the last two.
+    std::size_t p = runs;
+    std::size_t q = runs;
+    for (std::size_t b = runs; b-- > 0 && p == runs;) {
+      for (std::size_t a = b; a-- > 0;) {
+        if (det(v[a].dx, v[a].dy, v[b].dx, v[b].dy) != 0) {
+          p = a;
+          q = b;
+          break;
+        }
+      }
+    }
+    std::vector<std::size_t> free;
+    for (std::size_t i = 0; i < runs; ++i) {
+      if (i != p && i != q) {
+        free.push_back(i);
+      }
+    }
+    if (free.size() > 2) {
+      // Three arcs or more: too many runs to walk. The level stays
+      // unsettled; another family of it may still find an open way.
+      family.unsettled = true;
+      return false;
+    }
+    lambda.assign(runs, 0);
+    const auto startX = static_cast<std::int64_t>(from.x);
+    const auto startY = static_cast<std::int64_t>(from.y);
+    // Recursive enumeration of the free runs, the solved pair last.
+    const std::function<bool(std::size_t, std::int64_t, std::int64_t)> walk =
+        [&](const std::size_t f, const std::int64_t leftX,
+            const std::int64_t leftY) -> bool {
+      if (family.paths >= family.budget) {
+        family.budgetOut = true;
+        return false;
+      }
+      if (f == free.size()) {
+        if (p == runs) {
+          // Every heading parallel: the last free run was the last run, and
+          // nothing is left to solve — the displacement has to be covered.
+          return leftX == 0 && leftY == 0 &&
+                 family.open(startX, startY, source, seq, lambda);
+        }
+        const auto d = det(v[p].dx, v[p].dy, v[q].dx, v[q].dy);
+        const auto na = det(leftX, leftY, v[q].dx, v[q].dy);
+        const auto nb = det(v[p].dx, v[p].dy, leftX, leftY);
+        if (na % d != 0 || nb % d != 0) {
+          return false;
+        }
+        const auto a = na / d;
+        const auto b = nb / d;
+        if (a < lo[p] || b < lo[q] || a > longest || b > longest) {
+          return false;
+        }
+        lambda[p] = a;
+        lambda[q] = b;
+        return family.open(startX, startY, source, seq, lambda);
+      }
+      const auto i = free[f];
+      for (std::int64_t n = lo[i]; n <= longest; ++n) {
+        lambda[i] = n;
+        if (walk(f + 1, leftX - (n * v[i].dx), leftY - (n * v[i].dy))) {
+          return true;
+        }
+        if (family.budgetOut) {
+          return false;
+        }
+      }
+      return false;
+    };
+    if (p == runs) {
+      // All runs parallel: enumerate all but the last, which is solved.
+      free.clear();
+      for (std::size_t i = 0; i + 1 < runs; ++i) {
+        free.push_back(i);
+      }
+      const std::function<bool(std::size_t, std::int64_t, std::int64_t)>
+          walkParallel = [&](const std::size_t f, const std::int64_t leftX,
+                             const std::int64_t leftY) -> bool {
+        if (family.paths >= family.budget) {
+          family.budgetOut = true;
+          return false;
+        }
+        if (f == free.size()) {
+          const auto& u = v[runs - 1];
+          const auto n = (u.dx != 0) ? leftX / u.dx : leftY / u.dy;
+          if (n < lo[runs - 1] || n > longest || (n * u.dx) != leftX ||
+              (n * u.dy) != leftY) {
+            return false;
+          }
+          lambda[runs - 1] = n;
+          return family.open(startX, startY, source, seq, lambda);
+        }
+        const auto i = free[f];
+        for (std::int64_t n = lo[i]; n <= longest; ++n) {
+          lambda[i] = n;
+          if (walkParallel(f + 1, leftX - (n * v[i].dx),
+                           leftY - (n * v[i].dy))) {
+            return true;
+          }
+          if (family.budgetOut) {
+            return false;
+          }
+        }
+        return false;
+      };
+      return walkParallel(0, rx, ry);
+    }
+    return walk(0, rx, ry);
+  };
+
+  // Depth-first over the arc sequences of exactly `k` turns.
+  const std::function<void(Heading, std::int64_t, std::int64_t, std::uint32_t)>
+      sequences = [&](const Heading heading, const std::int64_t rx,
+                      const std::int64_t ry, const std::uint32_t left) {
+        if (found || family.budgetOut) {
+          return;
+        }
+        if (left == 0) {
+          if (heading == target && tryFamily(rx, ry)) {
+            found = true;
+          }
+          return;
+        }
+        for (const Arc& arc : arcs_[heading]) {
+          if (arc.turn > left || headingDistance(arc.exit, target) > left - arc.turn) {
+            continue;
+          }
+          seq.push_back(&arc);
+          sequences(arc.exit, rx - arc.dx, ry - arc.dy, left - arc.turn);
+          seq.pop_back();
+          if (found || family.budgetOut) {
+            return;
+          }
+        }
+      };
+
+  const auto most = std::min<std::uint32_t>(cap_, floor + maxRaise);
+  auto turns = floor;
+  bool proved = true;
+  for (; turns <= most; ++turns) {
+    found = false;
+    family.unsettled = false;
+    seq.clear();
+    sequences(source, dx, dy, turns);
+    if (found) {
+      break;
+    }
+    if (family.budgetOut || family.unsettled) {
+      // Not every way of this level was tried: nothing above it is proved.
+      proved = false;
+      break;
+    }
+  }
+  // Past the families looked at, every one of them was blocked: the truth
+  // is above them, and the answer says so and no more.
+  const auto answer = std::min<std::uint32_t>(turns, cap_ + 1);
+  if (stats != nullptr) {
+    stats->paths += family.paths;
+    stats->raised += answer - floor;
+    stats->budgetOut += proved ? 0 : 1;
+  }
+  return answer;
 }
 
 std::uint32_t AnalyticDubins::minTurns(const PathPoint& from,
