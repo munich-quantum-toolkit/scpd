@@ -175,4 +175,68 @@ TEST(Rasterize, LineCellsAreConnectedAndClipped) {
       5.0);
 }
 
+TEST(Rasterize, MissingAndEmptyObstaclesAddNoCells) {
+  RasterOptions options;
+  options.keepout = 5.0;
+  const RasterizedObstacles alone =
+      rasterizeObstacles(chipWith({square()}), unitGrid(), options);
+
+  ChipT chip = chipWith({square(), {}});
+  chip.obstacles.push_back(nullptr);
+  const RasterizedObstacles raster =
+      rasterizeObstacles(chip, unitGrid(), options);
+  EXPECT_EQ(raster.blocked, alone.blocked);
+  EXPECT_EQ(raster.keepoutCells, alone.keepoutCells);
+  EXPECT_EQ(raster.exemptedCells, alone.exemptedCells);
+}
+
+TEST(Rasterize, APolygonOfTwoVerticesBlocksOnlyItsEdges) {
+  const GridMetrics& grid = unitGrid();
+  PolygonT segment;
+  segment.vertices = {Point(30.0, 30.0), Point(40.0, 35.0)};
+  BitGrid mask(grid.width, grid.height);
+  fillPolygon(mask, grid, segment);
+
+  // The edge to the second vertex and the closing edge back to the first.
+  BitGrid expected(grid.width, grid.height);
+  for (const std::size_t index :
+       lineCells(30, 30, 40, 35, grid.width, grid.height)) {
+    expected.set(index);
+  }
+  for (const std::size_t index :
+       lineCells(40, 35, 30, 30, grid.width, grid.height)) {
+    expected.set(index);
+  }
+  EXPECT_EQ(mask, expected);
+}
+
+TEST(Rasterize, APolygonWithoutVerticesKeepsTheMask) {
+  const GridMetrics& grid = unitGrid();
+  BitGrid mask(grid.width, grid.height);
+  mask.setCell(50, 50);
+  const BitGrid before = mask;
+  fillPolygon(mask, grid, PolygonT{});
+  EXPECT_EQ(mask, before);
+}
+
+TEST(Rasterize, IslandRemovalLeavesTheEdgeOfTheMaskAlone) {
+  const auto keepsItsCells = [](BitGrid mask) {
+    const BitGrid before = mask;
+    removeIslands(mask);
+    return mask == before;
+  };
+  // Every cell of a mask two cells across lies on its edge.
+  BitGrid narrow(2, 5);
+  narrow.setCell(1, 2);
+  EXPECT_TRUE(keepsItsCells(narrow));
+  BitGrid flat(5, 2);
+  flat.setCell(2, 0);
+  EXPECT_TRUE(keepsItsCells(flat));
+  // A lone cell on the edge of a wider mask stays as well.
+  BitGrid wide(10, 10);
+  wide.setCell(0, 5);
+  wide.setCell(5, 9);
+  EXPECT_TRUE(keepsItsCells(wide));
+}
+
 } // namespace

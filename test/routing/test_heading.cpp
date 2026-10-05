@@ -12,6 +12,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <numbers>
+
 namespace {
 
 using namespace mqt::scpd::routing;
@@ -72,6 +75,21 @@ TEST(Headings, OrientationsOfTheChipInputMapToHeadings) {
   EXPECT_EQ(headingOfOrientation(675.0), 3);
   // Anything off the eight directions has no heading.
   EXPECT_EQ(headingOfOrientation(30.0), NUM_HEADINGS);
+}
+
+TEST(Headings, EveryEighthTurnOfOrientationPointsAgainstThePort) {
+  // A wire arrives at a port against the direction the port faces, so its
+  // step is the opposite of the unit vector of the orientation.
+  for (int k = 0; k < 8; ++k) {
+    const double degrees = 45.0 * k;
+    const double radians = degrees * std::numbers::pi / 180.0;
+    const Heading heading = headingOfOrientation(degrees);
+    ASSERT_LT(heading, NUM_HEADINGS) << degrees;
+    EXPECT_EQ(headingVector(heading).dx, -std::lround(std::cos(radians)))
+        << degrees;
+    EXPECT_EQ(headingVector(heading).dy, -std::lround(std::sin(radians)))
+        << degrees;
+  }
 }
 
 } // namespace

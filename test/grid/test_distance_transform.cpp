@@ -73,4 +73,10 @@ TEST(DistanceTransform, AGridWithoutObstaclesIsUnbounded) {
   }
 }
 
+TEST(DistanceTransform, AGridWithoutCellsHasNoDistances) {
+  EXPECT_TRUE(squaredDistanceTransform(BitGrid()).empty());
+  EXPECT_TRUE(squaredDistanceTransform(BitGrid(0, 4)).empty());
+  EXPECT_TRUE(squaredDistanceTransform(BitGrid(4, 0)).empty());
+}
+
 } // namespace

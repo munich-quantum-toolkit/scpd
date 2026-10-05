@@ -160,6 +160,95 @@ TEST(SelfIntersection, RasterizingFillsTheGapsAndClipsToTheGrid) {
   }
 }
 
+TEST(SelfIntersection, TheQuickCheckReportsTheFirstEventOfTheFullScan) {
+  // Two separate loops: the full scan finds both, the quick check stops at
+  // the first and reports that one.
+  std::vector<std::pair<uint32_t, uint32_t>> cells;
+  for (uint32_t x = 10; x <= 20; ++x) {
+    cells.emplace_back(x, 10);
+  }
+  for (uint32_t y = 11; y <= 20; ++y) {
+    cells.emplace_back(20, y);
+  }
+  for (uint32_t x = 19; x >= 15; --x) {
+    cells.emplace_back(x, 20);
+  }
+  for (uint32_t y = 19; y >= 5; --y) {
+    cells.emplace_back(15, y);
+  }
+  for (uint32_t x = 16; x <= 60; ++x) {
+    cells.emplace_back(x, 5);
+  }
+  for (uint32_t y = 6; y <= 15; ++y) {
+    cells.emplace_back(60, y);
+  }
+  for (uint32_t x = 59; x >= 50; --x) {
+    cells.emplace_back(x, 15);
+  }
+  for (uint32_t y = 14; y >= 1; --y) {
+    cells.emplace_back(50, y);
+  }
+  const Path path = pathOf(cells);
+  PathLoopScratch scratch;
+  std::vector<PathLoopHit> hits;
+  ASSERT_EQ(findPathSelfIntersections(path, 100, 100, scratch, &hits), 2U);
+
+  PathLoopHit first;
+  EXPECT_TRUE(pathSelfIntersects(path, 100, 100, scratch, &first));
+  EXPECT_EQ(first.kind, hits[0].kind);
+  EXPECT_EQ(first.x, hits[0].x);
+  EXPECT_EQ(first.y, hits[0].y);
+  EXPECT_EQ(first.firstIndex, hits[0].firstIndex);
+  EXPECT_EQ(first.secondIndex, hits[0].secondIndex);
+  // A caller that does not ask for the event gets the same answer.
+  EXPECT_TRUE(pathSelfIntersects(path, 100, 100, scratch));
+}
+
+TEST(SelfIntersection, ACleanPathLeavesTheCallersEventAlone) {
+  Path path;
+  for (uint32_t x = 10; x < 60; ++x) {
+    path.push_back({.x = x, .y = 20, .heading = 6, .primitive = 0});
+  }
+  PathLoopScratch scratch;
+  PathLoopHit first{.kind = PathLoopKind::DiagonalCross,
+                    .x = 7,
+                    .y = 8,
+                    .firstIndex = 9,
+                    .secondIndex = 10};
+  EXPECT_FALSE(pathSelfIntersects(path, 100, 100, scratch, &first));
+  EXPECT_EQ(first.kind, PathLoopKind::DiagonalCross);
+  EXPECT_EQ(first.x, 7U);
+  EXPECT_EQ(first.y, 8U);
+  EXPECT_EQ(first.firstIndex, 9U);
+  EXPECT_EQ(first.secondIndex, 10U);
+}
+
+TEST(SelfIntersection, TheScanAddsItsEventsAfterTheCallersEntries) {
+  std::vector<std::pair<uint32_t, uint32_t>> cells;
+  for (uint32_t x = 10; x <= 40; ++x) {
+    cells.emplace_back(x, 20);
+  }
+  for (uint32_t y = 21; y <= 30; ++y) {
+    cells.emplace_back(40, y);
+  }
+  for (uint32_t x = 39; x >= 30; --x) {
+    cells.emplace_back(x, 30);
+  }
+  for (uint32_t y = 29; y >= 10; --y) {
+    cells.emplace_back(30, y);
+  }
+  PathLoopScratch scratch;
+  std::vector<PathLoopHit> hits(1);
+  hits[0].x = 99;
+  EXPECT_EQ(findPathSelfIntersections(pathOf(cells), 100, 100, scratch, &hits),
+            1U);
+  ASSERT_EQ(hits.size(), 2U);
+  EXPECT_EQ(hits[0].x, 99U);
+  EXPECT_EQ(hits[1].kind, PathLoopKind::Revisit);
+  EXPECT_EQ(hits[1].x, 30U);
+  EXPECT_EQ(hits[1].y, 20U);
+}
+
 TEST(SelfIntersection, AShortPathHasNothingToFind) {
   PathLoopScratch scratch;
   EXPECT_FALSE(pathSelfIntersects(Path{}, 100, 100, scratch));

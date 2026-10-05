@@ -129,4 +129,54 @@ TEST(GridMetrics, ChipBoundsSpanObstaclesAndPorts) {
   EXPECT_THROW(static_cast<void>(chipBounds(empty)), std::invalid_argument);
 }
 
+TEST(GridMetrics, FitWidthKeepsAtLeastTwoRows) {
+  // A box a thousand times wider than high rounds to no row at all.
+  const BoundingBox strip{
+      .minX = 0.0, .minY = 0.0, .maxX = 1000.0, .maxY = 1.0};
+  const GridMetrics grid = GridMetrics::fitWidth(strip, 10);
+  EXPECT_EQ(grid.width, 10U);
+  EXPECT_EQ(grid.height, 2U);
+  EXPECT_DOUBLE_EQ(grid.cellHeight, 1.0);
+}
+
+TEST(GridMetrics, FitWidthRefusesAGridWithoutACellStep) {
+  const BoundingBox noWidth{
+      .minX = 5.0, .minY = 0.0, .maxX = 5.0, .maxY = 10.0};
+  EXPECT_THROW(static_cast<void>(GridMetrics::fitWidth(noWidth, 10)),
+               std::invalid_argument);
+  const BoundingBox noHeight{
+      .minX = 0.0, .minY = 5.0, .maxX = 10.0, .maxY = 5.0};
+  EXPECT_THROW(static_cast<void>(GridMetrics::fitWidth(noHeight, 10)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(GridMetrics::fitWidth(BOX, 1)),
+               std::invalid_argument);
+}
+
+TEST(GridMetrics, RefinementRefusesAZeroFactorAndAGridWithoutACellStep) {
+  const GridMetrics grid = GridMetrics::fit(BOX, 11, 6);
+  EXPECT_THROW(static_cast<void>(grid.refined(0)), std::invalid_argument);
+
+  const GridMetrics empty;
+  EXPECT_THROW(static_cast<void>(empty.refined(2)), std::invalid_argument);
+  GridMetrics flat = grid;
+  flat.cellHeight = 0.0;
+  EXPECT_THROW(static_cast<void>(flat.refined(2)), std::invalid_argument);
+}
+
+TEST(GridMetrics, ChipBoundsSkipMissingObstaclesAndPorts) {
+  mqt::scpd::flatbuffers::design::ChipT chip;
+  chip.obstacles.push_back(nullptr);
+  chip.obstacles.push_back(
+      std::make_unique<mqt::scpd::flatbuffers::geometry::PolygonT>());
+  chip.ports.push_back(nullptr);
+  // Neither a missing entry nor a polygon without vertices gives a point.
+  EXPECT_THROW(static_cast<void>(chipBounds(chip)), std::invalid_argument);
+
+  auto port = std::make_unique<mqt::scpd::flatbuffers::design::PortT>();
+  port->center = Point(5.0, 7.0);
+  chip.ports.push_back(std::move(port));
+  EXPECT_EQ(chipBounds(chip),
+            (BoundingBox{.minX = 5.0, .minY = 7.0, .maxX = 5.0, .maxY = 7.0}));
+}
+
 } // namespace

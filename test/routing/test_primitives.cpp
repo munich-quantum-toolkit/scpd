@@ -15,6 +15,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <numbers>
 #include <set>
 #include <stdexcept>
@@ -132,6 +134,50 @@ TEST(Primitives, TheBendRadiusMustBePositive) {
   EXPECT_THROW(static_cast<void>(MovePrimitives(0)), std::invalid_argument);
   EXPECT_NO_THROW(static_cast<void>(MovePrimitives(3)));
   EXPECT_NO_THROW(static_cast<void>(MovePrimitives(8)));
+}
+
+TEST(Primitives,
+     EveryRadiusGivesEachHeadingAStraightStepAndAQuarterTurnEachWay) {
+  for (uint32_t radius = 1; radius <= 40; ++radius) {
+    const MovePrimitives table(radius);
+    EXPECT_EQ(table.minRadius(), radius);
+    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
+      const auto moves = table.of(h);
+      ASSERT_FALSE(moves.empty()) << radius << " " << static_cast<int>(h);
+      bool clockwise = false;
+      bool counterClockwise = false;
+      for (std::size_t i = 0; i < moves.size(); ++i) {
+        const Primitive& p = moves[i];
+        // The span lists the moves in ascending identifier order, and every
+        // identifier fits the search state and finds its own move.
+        if (i > 0) {
+          EXPECT_GT(p.id, moves[i - 1].id) << radius;
+        }
+        EXPECT_LT(p.id, MovePrimitives::MAX_PRIMITIVE_ID) << radius;
+        EXPECT_EQ(table.find(h, p.id), &p) << radius << " " << p.id;
+        EXPECT_FALSE(p.swept.empty()) << radius << " " << p.id;
+        ASSERT_FALSE(p.samples.empty()) << radius << " " << p.id;
+        EXPECT_NEAR(p.samples.front().x(), 0.0, 1e-9) << radius << " " << p.id;
+        EXPECT_NEAR(p.samples.front().y(), 0.0, 1e-9) << radius << " " << p.id;
+        clockwise = clockwise || p.exitHeading == turned(h, 2);
+        counterClockwise = counterClockwise || p.exitHeading == turned(h, -2);
+      }
+      EXPECT_TRUE(clockwise) << radius << " " << static_cast<int>(h);
+      EXPECT_TRUE(counterClockwise) << radius << " " << static_cast<int>(h);
+
+      const Primitive* straight = table.find(h, table.straight(h));
+      ASSERT_NE(straight, nullptr) << radius << " " << static_cast<int>(h);
+      EXPECT_EQ(straight->exitHeading, h) << radius;
+      EXPECT_EQ(straight->dx, headingVector(h).dx) << radius;
+      EXPECT_EQ(straight->dy, headingVector(h).dy) << radius;
+    }
+  }
+}
+
+TEST(Primitives, ARadiusTooLargeForTheIdentifiersIsRefused) {
+  // The search state packs a move into ten bits, and a radius of a thousand
+  // cells needs more moves per heading than that.
+  EXPECT_THROW(static_cast<void>(MovePrimitives(1000)), std::invalid_argument);
 }
 
 } // namespace

@@ -180,6 +180,100 @@ TEST(PathGeometry, BendsAreDirectionChanges) {
   EXPECT_EQ(countBends(Path{}), 0U);
 }
 
+TEST(PathGeometry, AnEmptyPathRendersNothing) {
+  // Each call replaces the segments and the bounds an earlier call left.
+  std::vector<PathSegment> segments;
+  std::vector<std::pair<std::size_t, bool>> bounds;
+  Path path = straightRun(100, 100, 6, 5);
+  ASSERT_FALSE(samplePath(primitives(), path, path.front(), segments).empty());
+  ASSERT_FALSE(segments.empty());
+  Path empty;
+  EXPECT_TRUE(samplePath(primitives(), empty, PathPoint{}, segments).empty());
+  EXPECT_TRUE(segments.empty());
+
+  // Without its first point, a one-point path has nothing left to render.
+  ASSERT_FALSE(
+      samplePathFromSecond(primitives(), path, path.front(), segments, &bounds)
+          .empty());
+  ASSERT_FALSE(bounds.empty());
+  const Path single = straightRun(100, 100, 6, 0);
+  EXPECT_TRUE(samplePathFromSecond(primitives(), single, single.front(),
+                                   segments, &bounds)
+                  .empty());
+  EXPECT_TRUE(segments.empty());
+  EXPECT_TRUE(bounds.empty());
+}
+
+TEST(PathGeometry, ABrokenPathJumpsToTheCellOfTheStep) {
+  // The last step lands fifty-five cells from where a straight step ends, far
+  // more than rounding explains, so the rendering jumps there instead of
+  // stretching the step over the gap.
+  Path path = straightRun(100, 100, 6, 5);
+  path.push_back({.x = 160,
+                  .y = 100,
+                  .heading = 6,
+                  .primitive = primitives().straight(6)});
+  std::vector<PathSegment> segments;
+  const std::vector<Point> samples =
+      samplePath(primitives(), path, path.front(), segments);
+  ASSERT_GE(samples.size(), 2U);
+  EXPECT_DOUBLE_EQ(samples.back().x(), 160.0);
+  EXPECT_DOUBLE_EQ(samples.back().y(), 100.0);
+  EXPECT_DOUBLE_EQ(samples[samples.size() - 2].x(), 105.0);
+  EXPECT_DOUBLE_EQ(samples[samples.size() - 2].y(), 100.0);
+  EXPECT_NEAR(polylineLength(samples), 60.0, 1e-9);
+  EXPECT_NEAR(segments.back().lengthAt.back(), 60.0, 1e-9);
+}
+
+TEST(PathGeometry, AStepWithoutAMoveInTheTablesStillEndsOnItsCell) {
+  // Identifier 999 names no move of the tables, so the step has no curve to
+  // render; the rendering still reaches its cell and measures what it drew.
+  Path path = straightRun(100, 100, 6, 5);
+  path.push_back({.x = 108, .y = 103, .heading = 6, .primitive = 999});
+  std::vector<PathSegment> segments;
+  const std::vector<Point> samples =
+      samplePath(primitives(), path, path.front(), segments);
+  ASSERT_FALSE(samples.empty());
+  EXPECT_DOUBLE_EQ(samples.back().x(), 108.0);
+  EXPECT_DOUBLE_EQ(samples.back().y(), 103.0);
+  ASSERT_FALSE(segments.empty());
+  EXPECT_NEAR(segments.back().lengthAt.back(), polylineLength(samples), 1e-9);
+}
+
+TEST(PathGeometry, TheRenderedLengthFollowsTheArcs) {
+  EXPECT_DOUBLE_EQ(renderedLength(primitives(), Path{}), 0.0);
+  EXPECT_NEAR(renderedLength(primitives(), straightRun(100, 100, 6, 20)), 20.0,
+              1e-9);
+
+  // Ten cells north, a quarter turn onto east, ten cells east: the arc
+  // counts at its true length, not as the cells it sweeps.
+  const Primitive* quarter = nullptr;
+  for (const Primitive& p : primitives().of(0)) {
+    if (p.exitHeading == 6) {
+      quarter = &p;
+      break;
+    }
+  }
+  ASSERT_NE(quarter, nullptr);
+  Path path = straightRun(50, 80, 0, 10);
+  for (const CellOffset& c : quarter->swept) {
+    path.push_back({.x = static_cast<uint32_t>(50 + c.dx),
+                    .y = static_cast<uint32_t>(70 + c.dy),
+                    .heading = 0,
+                    .primitive = quarter->id});
+  }
+  const Path after = straightRun(55, 65, 6, 10);
+  path.insert(path.end(), after.begin(), after.end());
+  const double length = renderedLength(primitives(), path);
+  EXPECT_NEAR(length, 20.0 + (std::numbers::pi / 2.0 * 5.0), 0.05);
+
+  // It is the length of the polyline samplePath() draws from the first point.
+  Path copy = path;
+  std::vector<PathSegment> segments;
+  EXPECT_DOUBLE_EQ(length, polylineLength(samplePath(primitives(), copy,
+                                                     copy.front(), segments)));
+}
+
 TEST(PathGeometry, ARepeatedCellRendersNothing) {
   Path path = straightRun(100, 100, 6, 5);
   // The state re-emission of a heading change: the same cell twice.

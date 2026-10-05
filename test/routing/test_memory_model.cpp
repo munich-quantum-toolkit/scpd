@@ -62,6 +62,27 @@ TEST(MemoryModel, TheSearchScratchIsEightBytesPerState) {
   EXPECT_LT(largest, 600.0);
 }
 
+TEST(MemoryModel, TheScratchNeedsNoClearingWhenItsIterationWrapsAround) {
+  SearchScratch scratch(4, 4);
+  scratch.beginSearch();
+  const uint16_t first = scratch.iteration();
+  const uint32_t start = scratch.index(1, 2, 3);
+  scratch.setStart(start);
+  ASSERT_EQ(scratch.at(start).iteration, first);
+
+  // The sixteen-bit counter skips zero, so it runs through 65535 numbers and
+  // then comes back to the number of the first search. The record of that
+  // search must not pass for a record of the new one.
+  for (uint32_t search = 0; search < 0xFFFFU; ++search) {
+    scratch.beginSearch();
+  }
+  ASSERT_EQ(scratch.iteration(), first);
+  EXPECT_EQ(scratch.at(start).g, SearchNode::UNSEEN);
+  for (uint32_t i = 0; i < scratch.size(); ++i) {
+    EXPECT_NE(scratch.at(i).iteration, scratch.iteration()) << i;
+  }
+}
+
 TEST(MemoryModel, ARouterCopiesNeitherTheObstaclesNorTheCorridor) {
   constexpr uint32_t side = 200;
   auto primitives = std::make_shared<const MovePrimitives>(5);

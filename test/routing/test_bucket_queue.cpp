@@ -78,6 +78,59 @@ TEST(BucketQueue, APriorityBelowTheScanPositionIsClamped) {
   EXPECT_EQ(queue.pop().payload, 2U);
 }
 
+TEST(BucketQueue, PrioritiesPastOneTurnOfTheCoarseLevelStillPopInOrder) {
+  // The coarse level holds one bucket per block, modulo its size, so one
+  // turn of it covers FINE_SIZE times COARSE_SIZE priorities. A search whose
+  // costs grow past that wraps the bucket index around.
+  constexpr uint32_t turn = 1024U * 1024U;
+  BucketQueue<Entry> queue;
+  queue.push({.f = turn - 2000, .payload = 1}, turn - 2000);
+  EXPECT_EQ(queue.pop().payload, 1U);
+  // Both entries lie past the end of the turn, in blocks whose buckets come
+  // before the bucket of the scan position.
+  queue.push({.f = turn + 5000, .payload = 3}, turn + 5000);
+  queue.push({.f = turn + 3000, .payload = 2}, turn + 3000);
+  EXPECT_EQ(queue.pop().f, turn + 3000);
+  EXPECT_EQ(queue.pop().f, turn + 5000);
+  EXPECT_TRUE(queue.empty());
+
+  // A long run of rising priorities with a small spread at any one time, as
+  // a search produces them, crosses the turn three times without losing or
+  // reordering an entry. The run starts from a scan position of zero.
+  queue.clear();
+  uint32_t next = 17;
+  queue.push({.f = next, .payload = 0}, next);
+  for (uint32_t i = 1; i <= 1100; ++i) {
+    const uint32_t lowest = next;
+    next += 2953;
+    queue.push({.f = next, .payload = i}, next);
+    const Entry entry = queue.pop();
+    EXPECT_EQ(entry.f, lowest);
+    EXPECT_EQ(entry.payload, i - 1);
+  }
+  EXPECT_GT(next, 3 * turn);
+  EXPECT_EQ(queue.size(), 1U);
+  EXPECT_EQ(queue.pop().f, next);
+}
+
+TEST(BucketQueue, APopFromAnEmptyQueueGivesADefaultEntry) {
+  BucketQueue<Entry> queue;
+  const Entry fresh = queue.pop();
+  EXPECT_EQ(fresh.f, 0U);
+  EXPECT_EQ(fresh.payload, 0U);
+  EXPECT_TRUE(queue.empty());
+  EXPECT_EQ(queue.size(), 0U);
+
+  // The same holds once the queue has been used and drained.
+  queue.push({.f = 4000, .payload = 7}, 4000);
+  EXPECT_EQ(queue.pop().payload, 7U);
+  const Entry drained = queue.pop();
+  EXPECT_EQ(drained.f, 0U);
+  EXPECT_EQ(drained.payload, 0U);
+  EXPECT_TRUE(queue.empty());
+  EXPECT_EQ(queue.size(), 0U);
+}
+
 TEST(BucketQueue, ClearingKeepsTheQueueUsable) {
   BucketQueue<Entry> queue;
   for (uint32_t f = 0; f < 5000; f += 7) {

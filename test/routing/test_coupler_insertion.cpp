@@ -16,10 +16,13 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <map>
 #include <numbers>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -44,6 +47,49 @@ Path straightRun(const uint32_t x0, const uint32_t y0, const Heading heading,
                     .primitive = id});
   }
   return path;
+}
+
+/// Appends the cells a quarter turn sweeps from the last point of a path.
+void appendTurn(Path& path, const Heading from, const Heading to) {
+  const PathPoint start = path.back();
+  for (const Primitive& p : primitives().of(from)) {
+    if (p.exitHeading == to) {
+      for (const CellOffset& c : p.swept) {
+        path.push_back({.x = static_cast<uint32_t>(start.x + c.dx),
+                        .y = static_cast<uint32_t>(start.y + c.dy),
+                        .heading = from,
+                        .primitive = p.id});
+      }
+      return;
+    }
+  }
+}
+
+/// A hairpin: three hundred cells east along y = 300, a U-turn toward
+/// positive y, and three hundred cells back west ten cells beside the way out.
+Path hairpin() {
+  Path path = straightRun(400, 300, 6, 300);
+  appendTurn(path, 6, 4);
+  appendTurn(path, 4, 2);
+  const PathPoint end = path.back();
+  const Path back = straightRun(end.x, end.y, 2, 300);
+  path.insert(path.end(), back.begin(), back.end());
+  return path;
+}
+
+/// Whether a path occupies a cell twice other than in two consecutive points.
+bool touchesItself(const Path& path) {
+  std::map<std::pair<uint32_t, uint32_t>, std::size_t> lastVisit;
+  for (std::size_t i = 0; i < path.size(); ++i) {
+    const auto [it, fresh] = lastVisit.try_emplace({path[i].x, path[i].y}, i);
+    if (!fresh) {
+      if (it->second + 1 != i) {
+        return true;
+      }
+      it->second = i;
+    }
+  }
+  return false;
 }
 
 TEST(CouplerInsertion, ADoglegTurnsOnceAndThenRunsStraight) {
@@ -177,6 +223,75 @@ TEST(CouplerInsertion, TheMirroredDoglegTurnsTheOtherWay) {
   ASSERT_TRUE(b.has_value());
   // The two doglegs leave the resonator on opposite sides.
   EXPECT_NE(a->anchor.y, b->anchor.y);
+}
+
+TEST(CouplerInsertion, TheLeadRunsStraightFromTheAnchorAcrossTheOrientation) {
+  constexpr uint32_t lead = 8;
+  Path path = straightRun(400, 300, 6, 300);
+  const std::optional<CouplerSplice> splice =
+      spliceCouplerDogleg(primitives(), 150.0, path, 0, {.leadStraight = lead});
+  ASSERT_TRUE(splice.has_value());
+  ASSERT_GT(path.size(), lead);
+
+  // The resonator couples along the lead: straight cells from the anchor,
+  // at a right angle to the direction the readout port faces.
+  const Heading across = path.front().heading;
+  EXPECT_TRUE(isOrthogonal(across, 0));
+  const HeadingVector v = headingVector(across);
+  for (uint32_t i = 0; i < lead; ++i) {
+    EXPECT_EQ(path[i].heading, across) << i;
+    EXPECT_TRUE(primitives().isStraight(across, path[i].primitive)) << i;
+    if (i > 0) {
+      EXPECT_EQ(static_cast<int64_t>(path[i].x) - path[i - 1].x, v.dx) << i;
+      EXPECT_EQ(static_cast<int64_t>(path[i].y) - path[i - 1].y, v.dy) << i;
+    }
+  }
+  // The lead is part of the resonator, so the length still meets the target.
+  EXPECT_NEAR(reconstructSegments(primitives(), path).nominalLength, 150.0,
+              3.0);
+}
+
+TEST(CouplerInsertion, TheDoglegNeverRunsIntoTheRestOfTheResonator) {
+  // A target of 450 cells puts the splice on the way out, since the U-turn
+  // and the way back are shorter. The way back runs ten cells beside it, on
+  // the side the plain dogleg takes, closer than the dogleg reaches. Every
+  // plain dogleg on the way out would cross the way back, so the splice
+  // moves onto the way back and falls short of the target instead.
+  Path plain = hairpin();
+  ASSERT_FALSE(touchesItself(plain));
+  const std::optional<CouplerSplice> blocked =
+      spliceCouplerDogleg(primitives(), 450.0, plain, 0);
+  ASSERT_TRUE(blocked.has_value());
+  EXPECT_FALSE(touchesItself(plain));
+  EXPECT_EQ(blocked->anchor.heading, 2);
+  EXPECT_LT(reconstructSegments(primitives(), plain).nominalLength, 447.0);
+
+  // The mirrored dogleg takes the free side and lands on the way out.
+  Path mirrored = hairpin();
+  const std::optional<CouplerSplice> free =
+      spliceCouplerDogleg(primitives(), 450.0, mirrored, 0, {.mirrored = true});
+  ASSERT_TRUE(free.has_value());
+  EXPECT_FALSE(touchesItself(mirrored));
+  EXPECT_EQ(free->anchor.heading, 6);
+  EXPECT_NEAR(reconstructSegments(primitives(), mirrored).nominalLength, 450.0,
+              3.0);
+}
+
+TEST(CouplerInsertion, APathWithoutAStraightRunHasNoPlaceForACoupler) {
+  // A coupler sits on a straight run. One point, or a single turn, has none,
+  // so there is no candidate and the path stays as it was.
+  Path single = straightRun(400, 300, 6, 0);
+  const Path singleBefore = single;
+  EXPECT_FALSE(spliceCouplerDogleg(primitives(), 150.0, single, 0).has_value());
+  EXPECT_EQ(single, singleBefore);
+
+  Path turn = straightRun(400, 300, 6, 0);
+  appendTurn(turn, 6, 4);
+  turn.erase(turn.begin());
+  const Path turnBefore = turn;
+  ASSERT_FALSE(turn.empty());
+  EXPECT_FALSE(spliceCouplerDogleg(primitives(), 150.0, turn, 0).has_value());
+  EXPECT_EQ(turn, turnBefore);
 }
 
 TEST(CouplerInsertion, ThereIsNothingToSpliceOntoAnEmptyPath) {

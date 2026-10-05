@@ -68,9 +68,11 @@ struct Primitive {
  *
  * For every heading, the table holds the straight step and the arcs of one
  * bend radius that leave the heading, each with its swept cells and its exact
- * curve. Cardinal headings hold arcs of a quarter turn and of an eighth turn
- * to either side. Diagonal headings hold the eighth turns and, in addition,
- * the quarter turns.
+ * curve. Every heading holds a quarter turn to either side. The eighth turns
+ * depend on how the arc of the radius rounds onto the cells: at a radius of
+ * five cells every heading holds an eighth turn to either side, while at some
+ * radii, such as one to three cells, the cardinal or the diagonal headings
+ * hold none.
  *
  * The constructor builds the tables once per radius. The tables are read-only
  * after that, so any number of routers can share one instance. The generation
