@@ -46,11 +46,18 @@ struct SegmentedPath {
  * @brief Cuts a path into segments wherever its heading or its primitive
  * changes.
  *
- * A straight run gathers one cell per step. A turn primitive is one step, and
- * its recorded cell is the last cell the turn emitted, which is the end of the
- * arc. Within a run, a point on the cell of the point before it adds no step.
- * The lengths of the segments are nominal: each step adds the cost of its
- * primitive. samplePath() replaces them with the rendered lengths.
+ * A straight run gathers one cell per step. Within it, a point on the cell of
+ * the point before it adds no step. A turn is one step, and its recorded cell
+ * is the end of its arc. In a routed path, the point after a turn is that end,
+ * even where the first point of the turn is not the start of its arc (see
+ * Path). A path can also go on with a straight step from the end of an arc,
+ * as a dogleg does. So the recorded cell is the point after the turn, unless
+ * that point lies one step beyond the first point of the turn plus the end
+ * offset of the primitive; then, and at the end of the path, it is that sum.
+ * For a primitive the tables lack, it is the point after the turn, or the
+ * last point of the path. The lengths of the segments are nominal: each step
+ * adds the cost of its primitive. samplePath() replaces them with the
+ * rendered lengths.
  *
  * @param primitives The primitive tables that @p path refers to.
  * @param path The path to cut.
@@ -65,11 +72,13 @@ reconstructSegments(const MovePrimitives& primitives, const Path& path);
  *
  * The function first removes consecutive repeats of a cell from @p path, in
  * place. Each step then renders the samples of its primitive from the current
- * position. The rendered end is pulled onto the grid cell of the step, and the
- * residual is spread linearly over the new points, so that the rendering never
- * drifts from the rasterized path. A residual above 20 cells marks a broken
- * path, and the rendering then jumps to the cell of the step. A step whose
- * cell equals the current position renders nothing.
+ * position. A turn whose arc starts one straight step ahead first renders
+ * that step, because that is where the straight run before a turn ends (see
+ * Path). The rendered end is pulled onto the grid cell of the
+ * step, and the residual is spread linearly over the new points, so that the
+ * rendering never drifts from the rasterized path. A residual above 20 cells
+ * marks a broken path, and the rendering then jumps to the cell of the step.
+ * A step whose cell equals the current position renders nothing.
  *
  * @param primitives The primitive tables that @p path refers to.
  * @param path The path to render. Consecutive repeats of a cell are removed
@@ -132,13 +141,16 @@ polylineLength(std::span<const Point> points);
 renderedLength(const MovePrimitives& primitives, const Path& path);
 
 /**
- * @brief Counts the direction changes between consecutive steps of a path.
+ * @brief Counts the heading changes between consecutive points of a path.
  *
- * A step is the move from one point of the path to the next. A direction
- * change is a pair of consecutive steps with different cell offsets.
+ * Every point carries the heading of the move that leaves it, and the cells
+ * that a turn sweeps carry the heading the turn starts on. Each turn therefore
+ * counts once, whether it turns by an eighth or by a quarter. A repeated cell
+ * on the same heading counts nothing.
  *
  * @param path The path to examine.
- * @return The number of direction changes, zero for fewer than three points.
+ * @return The number of pairs of consecutive points with different headings,
+ * zero for fewer than two points.
  */
 [[nodiscard]] MQT_SCPD_ROUTING_EXPORT uint32_t countBends(const Path& path);
 

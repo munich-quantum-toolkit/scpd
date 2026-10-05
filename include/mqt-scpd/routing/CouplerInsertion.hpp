@@ -26,11 +26,13 @@ namespace mqt::scpd::routing {
  * the start of the turn.
  *
  * The coordinates are offsets from the origin. A negative offset wraps around
- * in the unsigned fields, so the sum of a cell and an offset in unsigned
- * arithmetic is the right cell.
+ * in the unsigned fields. The sum of a cell and an offset in unsigned
+ * arithmetic is therefore the right cell when that cell has no negative
+ * coordinate.
  */
 struct DoglegGeometry {
-  /// The cells of the turn and the run, from the first swept cell to the tip.
+  /// The swept cells of the turn, then one cell per straight step from the end
+  /// of the turn to the tip.
   Path path;
   /// The end of the run; its heading is the exit heading.
   PathPoint tip;
@@ -62,9 +64,10 @@ buildDogleg(const MovePrimitives& primitives, Heading entry, int turnSign,
 
 /** @brief The shape of the dogleg that a coupler adds to a resonator. */
 struct CouplerDoglegOptions {
-  /// Straight cells before the first quarter turn: the run the resonator
-  /// couples along, from the anchor, on the heading across the coupler's
-  /// orientation. Zero for a turn right at the anchor.
+  /// Straight steps from the anchor to the first quarter turn, on the heading
+  /// across the coupler's orientation: the run the resonator couples along.
+  /// The first turn starts this many cells from the anchor. Zero starts it at
+  /// the anchor.
   uint32_t leadStraight = 0;
   /// Straight cells after the first quarter turn.
   uint32_t straightLength = 14;
@@ -94,22 +97,35 @@ struct CouplerSplice {
  * length.
  *
  * A candidate pairs a cell of a straight run of the path with a connection of
- * at most two primitives from the dogleg onto the heading of the run. The
- * mismatch of a candidate is the length of the path from its cell to the end,
- * plus the dogleg and the connection, minus the target length. A candidate
- * can win when its dogleg does not collide with the remaining path and its
- * anchor passes @p anchorAllowed. When no candidate passes the filter, every
- * collision-free candidate can win. An undershoot is charged the size of its
- * mismatch. An overshoot is charged its mismatch plus the smallest mismatch
- * size among the candidates that can win, which favors an undershoot. Of the
- * candidates that can win, the one with the lowest charge wins. The function
- * cuts the path before its cell and puts the dogleg in front.
+ * at most two primitives from the dogleg onto the heading of the run. Each
+ * primitive starts at the end of the one before it, and the connection ends on
+ * the candidate's cell. A primitive ends at the offset Primitive::dx,
+ * Primitive::dy from its start, which need not be its last swept cell. The
+ * remaining path of a candidate runs from its cell
+ * to the end. The mismatch of a candidate is the length of the remaining path,
+ * plus the dogleg and the connection, minus the target length.
+ *
+ * A candidate is collision-free when every cell of its dogleg and connection
+ * lies inside the grid, no such cell is a cell of the remaining path except
+ * the candidate's cell where the last primitive sweeps it, and no diagonal
+ * step between two consecutive such cells, or onto the candidate's cell,
+ * crosses a diagonal step of the remaining path inside a 2 by 2 block. The
+ * function does not test the dogleg against itself. A candidate can
+ * win when it is collision-free and its anchor passes @p anchorAllowed. When
+ * no candidate passes the filter, every collision-free candidate can win. An
+ * undershoot is charged the size of its mismatch. An overshoot is charged its
+ * mismatch plus the smallest mismatch size among the candidates that can win,
+ * which favors an undershoot. Of the candidates that can win, the one with the
+ * lowest charge wins. The function cuts the path before its cell and puts the
+ * dogleg in front.
  *
  * @param primitives The move primitives the path was routed with.
  * @param targetLength The length the path should have after the splice, in
  * cells.
  * @param path The routed resonator. On success, the path starts at the
  * coupler's anchor.
+ * @param width The number of cells of the router grid along x.
+ * @param height The number of cells of the router grid along y.
  * @param orientation The heading the coupler's readout port faces.
  * @param options The shape of the dogleg.
  * @param anchorAllowed An optional filter on the anchor cell, called with its
@@ -123,7 +139,8 @@ struct CouplerSplice {
 [[nodiscard]] MQT_SCPD_ROUTING_EXPORT std::optional<CouplerSplice>
 spliceCouplerDogleg(
     const MovePrimitives& primitives, double targetLength, Path& path,
-    Heading orientation, const CouplerDoglegOptions& options = {},
+    uint32_t width, uint32_t height, Heading orientation,
+    const CouplerDoglegOptions& options = {},
     const std::function<bool(uint32_t, uint32_t)>& anchorAllowed = {});
 
 } // namespace mqt::scpd::routing

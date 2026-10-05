@@ -48,6 +48,52 @@ uint64_t cellKey(const uint32_t x, const uint32_t y) {
   return (static_cast<uint64_t>(x) << 32U) | y;
 }
 
+/// The signed value of an offset that wraps around in an unsigned field.
+int64_t signedOffset(const uint32_t offset) {
+  return static_cast<int64_t>(static_cast<int32_t>(offset));
+}
+
+/// Whether two cells touch only at a corner.
+bool isDiagonalStep(const PathPoint& a, const PathPoint& b) {
+  const int64_t dx = static_cast<int64_t>(a.x) - static_cast<int64_t>(b.x);
+  const int64_t dy = static_cast<int64_t>(a.y) - static_cast<int64_t>(b.y);
+  return (dx == 1 || dx == -1) && (dy == 1 || dy == -1);
+}
+
+/// Whether the step from @p c to @p d crosses the diagonal step from @p a to
+/// @p b inside their 2 by 2 block, that is, whether it joins the two other
+/// cells of the block.
+bool crossesDiagonalStep(const PathPoint& a, const PathPoint& b,
+                         const PathPoint& c, const PathPoint& d) {
+  return (c.x == a.x && c.y == b.y && d.x == b.x && d.y == a.y) ||
+         (c.x == b.x && c.y == a.y && d.x == a.x && d.y == b.y);
+}
+
+/// A part of a coupler's dogleg: its cells, relative to its start, and the
+/// offset of its end, where the next part starts. A primitive ends at its
+/// offset Primitive::dx, Primitive::dy, which need not be its last swept cell.
+struct DoglegPiece {
+  Path cells;
+  int64_t endX = 0;
+  int64_t endY = 0;
+};
+
+/// The swept cells of a primitive that leaves a heading, tagged with the
+/// heading and the primitive.
+DoglegPiece pieceOf(const Primitive& primitive, const Heading heading) {
+  DoglegPiece piece;
+  piece.endX = primitive.dx;
+  piece.endY = primitive.dy;
+  for (const CellOffset& move : primitive.swept) {
+    piece.cells.push_back(
+        {.x = static_cast<uint32_t>(static_cast<int32_t>(move.dx)),
+         .y = static_cast<uint32_t>(static_cast<int32_t>(move.dy)),
+         .heading = heading,
+         .primitive = primitive.id});
+  }
+  return piece;
+}
+
 } // namespace
 
 DoglegGeometry buildDogleg(const MovePrimitives& primitives,
@@ -67,14 +113,9 @@ DoglegGeometry buildDogleg(const MovePrimitives& primitives,
   }
   result.cost = turn->cost;
   result.tip.primitive = turn->id;
-  PathPoint current{.x = 0, .y = 0, .heading = entry, .primitive = turn->id};
-  for (const CellOffset& move : turn->swept) {
-    current.x = static_cast<uint32_t>(static_cast<int32_t>(move.dx));
-    current.y = static_cast<uint32_t>(static_cast<int32_t>(move.dy));
-    result.path.push_back(current);
-  }
-  result.tip.x = current.x;
-  result.tip.y = current.y;
+  result.path = pieceOf(*turn, entry).cells;
+  result.tip.x = static_cast<uint32_t>(static_cast<int32_t>(turn->dx));
+  result.tip.y = static_cast<uint32_t>(static_cast<int32_t>(turn->dy));
 
   const uint16_t straight = primitives.straight(exit);
   const HeadingVector v = headingVector(exit);
@@ -92,7 +133,8 @@ DoglegGeometry buildDogleg(const MovePrimitives& primitives,
 
 std::optional<CouplerSplice> spliceCouplerDogleg(
     const MovePrimitives& primitives, const double targetLength, Path& path,
-    Heading orientation, const CouplerDoglegOptions& options,
+    const uint32_t width, const uint32_t height, Heading orientation,
+    const CouplerDoglegOptions& options,
     const std::function<bool(uint32_t, uint32_t)>& anchorAllowed) {
   if (orientation >= NUM_HEADINGS) {
     throw std::invalid_argument("a coupler orientation is a heading");
@@ -102,9 +144,8 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   }
 
   struct PathOption {
-    PathPoint end;
     double length = 0.0;
-    std::vector<Path> pieces;
+    std::vector<DoglegPiece> pieces;
   };
   std::map<uint16_t, std::vector<PathOption>> optionsByHeading;
 
@@ -116,51 +157,57 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   const int firstTurn = options.mirrored ? 1 : -1;
   const DoglegGeometry dogleg = buildDogleg(primitives, orientationStart,
                                             firstTurn, options.straightLength);
-  PathPoint tip = dogleg.tip;
   double initialCost = dogleg.cost;
-  std::vector<Path> prefix;
+  std::vector<DoglegPiece> prefix;
   if (options.leadStraight > 0) {
-    // The straight run before the turn: one cell per step from the origin,
-    // on the heading the turn starts on, tagged with the straight move.
-    Path lead;
+    // The straight run before the turn: the origin and one cell per step, on
+    // the heading the turn starts on, tagged with the straight move. The run
+    // ends on the cell the turn starts from.
+    DoglegPiece lead;
     const HeadingVector v = headingVector(orientationStart);
     const uint16_t straight = primitives.straight(orientationStart);
-    for (uint32_t s = 1; s <= options.leadStraight; ++s) {
-      lead.push_back(
+    for (uint32_t s = 0; s <= options.leadStraight; ++s) {
+      lead.cells.push_back(
           {.x = static_cast<uint32_t>(static_cast<int32_t>(s) * v.dx),
            .y = static_cast<uint32_t>(static_cast<int32_t>(s) * v.dy),
            .heading = orientationStart,
            .primitive = straight});
     }
+    lead.endX = static_cast<int64_t>(options.leadStraight) * v.dx;
+    lead.endY = static_cast<int64_t>(options.leadStraight) * v.dy;
     prefix.push_back(std::move(lead));
     initialCost += static_cast<double>(options.leadStraight);
   }
-  prefix.push_back(dogleg.path);
+  const auto pieceOfDogleg = [](const DoglegGeometry& geometry) {
+    DoglegPiece piece;
+    piece.cells = geometry.path;
+    piece.endX = signedOffset(geometry.tip.x);
+    piece.endY = signedOffset(geometry.tip.y);
+    return piece;
+  };
+  prefix.push_back(pieceOfDogleg(dogleg));
   Heading searchHeading = orientation;
   if (options.secondStraightLength > 0) {
     const int secondTurn = options.secondTurnReverse ? -firstTurn : firstTurn;
     const DoglegGeometry second = buildDogleg(
         primitives, orientation, secondTurn, options.secondStraightLength);
-    prefix.push_back(second.path);
+    prefix.push_back(pieceOfDogleg(second));
     initialCost += second.cost;
-    tip = second.tip;
     searchHeading = second.tip.heading;
   }
   optionsByHeading[searchHeading].push_back(
-      {.end = tip, .length = initialCost, .pieces = prefix});
+      {.length = initialCost, .pieces = prefix});
 
-  const auto addOption = [&](const Heading target, const PathPoint& end,
-                             const double cost,
-                             const std::vector<Path>& pieces) {
+  const auto addOption = [&](const Heading target, const double cost,
+                             const std::vector<DoglegPiece>& pieces) {
     auto it = optionsByHeading.find(target);
     if (it == optionsByHeading.end() || cost < it->second.front().length) {
-      optionsByHeading[target].push_back(
-          {.end = end, .length = cost, .pieces = pieces});
+      optionsByHeading[target].push_back({.length = cost, .pieces = pieces});
     }
   };
-  const auto with = [&](std::initializer_list<Path> extra) {
-    std::vector<Path> v = prefix;
-    for (const Path& p : extra) {
+  const auto with = [&](std::initializer_list<DoglegPiece> extra) {
+    std::vector<DoglegPiece> v = prefix;
+    for (const DoglegPiece& p : extra) {
       v.push_back(p);
     }
     return v;
@@ -169,36 +216,13 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   // Every one- and two-primitive continuation of the dogleg.
   for (const Primitive& first : primitives.of(searchHeading)) {
     const Heading intermediate = first.exitHeading;
-    Path pathOne;
-    PathPoint current{
-        .x = 0, .y = 0, .heading = searchHeading, .primitive = first.id};
-    for (const CellOffset& move : first.swept) {
-      current.x = static_cast<uint32_t>(static_cast<int32_t>(move.dx));
-      current.y = static_cast<uint32_t>(static_cast<int32_t>(move.dy));
-      pathOne.push_back(current);
-    }
+    const DoglegPiece pieceOne = pieceOf(first, searchHeading);
     const double costOne = initialCost + first.cost;
-    const PathPoint tipOne{.x = tip.x + current.x,
-                           .y = tip.y + current.y,
-                           .heading = intermediate,
-                           .primitive = first.id};
-    addOption(intermediate, tipOne, costOne, with({pathOne}));
+    addOption(intermediate, costOne, with({pieceOne}));
 
     for (const Primitive& second : primitives.of(intermediate)) {
-      Path combined;
-      PathPoint c2{
-          .x = 0, .y = 0, .heading = intermediate, .primitive = second.id};
-      for (const CellOffset& move : second.swept) {
-        c2.x = static_cast<uint32_t>(static_cast<int32_t>(move.dx));
-        c2.y = static_cast<uint32_t>(static_cast<int32_t>(move.dy));
-        combined.push_back(c2);
-      }
-      const PathPoint tipTwo{.x = tipOne.x + c2.x,
-                             .y = tipOne.y + c2.y,
-                             .heading = second.exitHeading,
-                             .primitive = second.id};
-      addOption(second.exitHeading, tipTwo, costOne + second.cost,
-                with({pathOne, combined}));
+      addOption(second.exitHeading, costOne + second.cost,
+                with({pieceOne, pieceOf(second, intermediate)}));
     }
   }
 
@@ -248,35 +272,66 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     }
   }
 
-  // Simulate a candidate's dogleg against the remaining path.
+  // Simulate a candidate's dogleg against the remaining path. Each piece
+  // starts at the end of the piece before it, and the end of the last piece
+  // is the candidate's cell, where the dogleg joins the path. The cells are
+  // signed, so that a dogleg reaching past the edge of the grid is rejected.
+  const auto gridWidth = static_cast<int64_t>(width);
+  const auto gridHeight = static_cast<int64_t>(height);
   const auto tryCandidate = [&](const Candidate& cand, Path& out) {
+    int64_t endX = 0;
+    int64_t endY = 0;
+    for (const DoglegPiece& piece : cand.option->pieces) {
+      endX += piece.endX;
+      endY += piece.endY;
+    }
+    int64_t x0 = static_cast<int64_t>(cand.cell.x) - endX;
+    int64_t y0 = static_cast<int64_t>(cand.cell.y) - endY;
     Path simulated;
-    uint32_t x0 = cand.cell.x;
-    uint32_t y0 = cand.cell.y;
-    for (const Path& piece : cand.option->pieces) {
-      for (const PathPoint& move : piece) {
-        simulated.push_back({.x = x0 + move.x,
-                             .y = y0 + move.y,
-                             .heading = move.heading,
-                             .primitive = move.primitive});
+    std::size_t lastPieceStart = 0;
+    for (const DoglegPiece& piece : cand.option->pieces) {
+      lastPieceStart = simulated.size();
+      for (const PathPoint& move : piece.cells) {
+        const int64_t x = x0 + signedOffset(move.x);
+        const int64_t y = y0 + signedOffset(move.y);
+        if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) {
+          return false;
+        }
+        const PathPoint point{.x = static_cast<uint32_t>(x),
+                              .y = static_cast<uint32_t>(y),
+                              .heading = move.heading,
+                              .primitive = move.primitive};
+        // A piece that starts on the last cell of the piece before it takes
+        // that cell over. A turn then keeps its start cell, as in a routed
+        // path, and no two consecutive points of the dogleg share a cell.
+        if (lastPieceStart > 0 && simulated.size() == lastPieceStart &&
+            simulated.back().samePlace(point)) {
+          simulated.back() = point;
+          --lastPieceStart;
+          continue;
+        }
+        simulated.push_back(point);
       }
-      if (!simulated.empty()) {
-        x0 = simulated.back().x;
-        y0 = simulated.back().y;
-      }
+      x0 += piece.endX;
+      y0 += piece.endY;
     }
-    if (!simulated.empty()) {
-      const uint32_t offsetX = cand.cell.x - simulated.back().x;
-      const uint32_t offsetY = cand.cell.y - simulated.back().y;
-      for (PathPoint& point : simulated) {
-        point.x += offsetX;
-        point.y += offsetY;
-      }
-    }
-    // The last point must meet the path; every other point must not.
-    for (std::size_t p = 0; p + 1 < simulated.size(); ++p) {
+    // Only the last piece may meet the path, and only on the cell where the
+    // dogleg joins it; the last piece can sweep a cell past its end. Two
+    // diagonal steps can also cross inside a 2 by 2 block without sharing a
+    // cell, so no diagonal step of the dogleg, including the step onto the
+    // joining cell, may cross one of the path.
+    for (std::size_t p = 0; p < simulated.size(); ++p) {
+      const PathPoint& a = simulated[p];
+      const PathPoint& b =
+          p + 1 < simulated.size() ? simulated[p + 1] : cand.cell;
+      const bool joins = p >= lastPieceStart && a.samePlace(cand.cell);
+      const bool diagonal = isDiagonalStep(a, b);
       for (std::size_t r = cand.splitIndex; r < path.size(); ++r) {
-        if (simulated[p].samePlace(path[r])) {
+        if (!joins && a.samePlace(path[r])) {
+          return false;
+        }
+        if (diagonal && r + 1 < path.size() &&
+            crossesDiagonalStep(a, b, path[r], path[r + 1])) {
           return false;
         }
       }

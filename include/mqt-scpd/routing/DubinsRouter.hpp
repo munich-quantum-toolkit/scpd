@@ -61,6 +61,21 @@ enum class Heuristic : uint8_t {
  * to the caller and outlives the router. Nothing else that a router reads is
  * copied per thread. The primitives are shared by pointer and never bound by
  * reference, so a router outlives whatever built them.
+ *
+ * The search tests the cells that a move sweeps and its end cell against the
+ * corridor, and it tests the cell it starts from. It does not test the cells
+ * of the straight stubs; the caller keeps them free. The test is coarser than
+ * the wire in two ways:
+ * - A wall of blocked cells stops the search only where its cells share
+ *   edges. A diagonal step sweeps only its end cell, so it passes between two
+ *   blocked cells that touch at a corner.
+ * - The centreline of an arc can leave the cells its move sweeps. It stays
+ *   within half a cell of them for every bend radius up to 29 cells: 0.16
+ *   cell at a radius of 5, 0.21 at 12 and 0.49 at 20. Larger radii stray
+ *   further, 0.78 cell at 30 and 0.93 at 40.
+ *
+ * The corridor and the keepout must therefore leave at least one cell beyond
+ * the half-width of the wire, for bend radii up to 29 cells.
  */
 class MQT_SCPD_ROUTING_EXPORT DubinsRouter {
 public:
@@ -102,6 +117,19 @@ public:
   [[nodiscard]] std::size_t cells() const {
     return static_cast<std::size_t>(gridWidth) * gridHeight;
   }
+
+  /**
+   * @brief Counts the bytes the router holds.
+   *
+   * The count is the size of the router object, plus every container the
+   * router owns by its capacity, plus one byte per cell for the crossing
+   * constraints while they hold any. It leaves out the scratch, which
+   * belongs to the caller, and the hash maps of the self-intersection test,
+   * which follow the length of the last path rather than the grid.
+   *
+   * @return The number of bytes.
+   */
+  [[nodiscard]] std::size_t heldBytes() const;
 
   /**
    * @brief Returns the move primitives of the router.
@@ -148,10 +176,21 @@ public:
    * cuts the number of states the search expands. routeOrthogonal() always
    * adds the term, whatever this setting.
    *
-   * The term is on by default. It is admissible on its own, but its sum with
-   * the distance term is not guaranteed to be consistent, and the search
-   * never reopens a closed state. In principle, route() can therefore return
-   * a way that turns more than the cheapest way.
+   * The term is on by default. It is consistent on its own: a move pays at
+   * least the bend penalty times the heading distance it turns, and the
+   * cyclic heading distance obeys the triangle inequality. The distance term
+   * is the part that can overestimate. A cardinal eighth turn costs about
+   * 95 % of the octile distance of its end, 421 against 441 at a bend radius
+   * of 5 and 973 against 1023 at a radius of 12. Without the bend term, the
+   * bend penalty the turn pays covers that excess when the penalty is at
+   * least as large. With the bend term, the estimate already holds the
+   * penalty, so it can exceed what a state still has to pay, and the search
+   * never reopens a closed state. route() is therefore close to optimal but
+   * not exactly optimal. A comparison with a brute-force search on 1500
+   * random grids at a radius of 5 and a bend penalty of 500 pins this: without
+   * the bend term every way is the cheapest; with it, fewer than one way in a
+   * hundred costs more, and none by more than 20, the excess of one cardinal
+   * eighth turn.
    *
    * @param on Whether route() adds the term.
    */
@@ -450,7 +489,11 @@ public:
    *
    * The search runs between the two points that sanitize() computes. The
    * result starts at the source, runs its straight stubs, and ends at the
-   * target.
+   * target. When the two points are the same cell on the same heading, the
+   * result is the two stubs joined, with their shared cell once.
+   *
+   * The way is close to the cheapest, but with the bend lower bound it can
+   * cost slightly more; setBendLowerBound() gives the reason and the figures.
    *
    * @param objective The source and the target of the wire.
    * @param usePenalty Whether the search adds the static and wire proximity
@@ -460,8 +503,9 @@ public:
    * @pre A corridor is attached. With @p usePenalty, a wire proximity is
    * attached too.
    * @return The path, or an empty path when no path exists, when a search
-   * end lies outside the router grid, or when the found path crossed itself.
-   * A rejected path counts in loopGuardRejections().
+   * end lies outside the router grid, when the corridor blocks the cell the
+   * search starts from, or when the found path crossed itself. A rejected
+   * path counts in loopGuardRejections().
    * @throws std::logic_error If no corridor is attached, or if @p usePenalty
    * is set and no wire proximity is attached.
    */
@@ -474,7 +518,9 @@ public:
    *
    * The search obeys the crossing constraints, the exemption and the single
    * crossing feedline. It steers by the octile distance plus the bend lower
-   * bound, whatever heuristic() and setBendLowerBound() select.
+   * bound, whatever heuristic() and setBendLowerBound() select. The crossing
+   * rules judge the heading on which a move enters a cell, so they do not
+   * apply to the cell the search starts from; the corridor does.
    *
    * @param objective The source and the target of the wire.
    * @param usePenalty Whether the search adds the static and wire proximity
@@ -484,8 +530,11 @@ public:
    * @pre A corridor is attached. With @p usePenalty, a wire proximity is
    * attached too.
    * @return The path, or an empty path when no path exists, when a search
-   * end lies outside the router grid, or when the found path crossed itself.
-   * A rejected path counts in loopGuardRejections().
+   * end lies outside the router grid, when the corridor blocks the cell the
+   * search starts from, or when the found path crossed itself. A rejected
+   * path counts in loopGuardRejections(). When the two search ends are the
+   * same cell on the same heading, the path is the two stubs joined, with
+   * their shared cell once.
    * @throws std::logic_error If no corridor is attached, or if @p usePenalty
    * is set and no wire proximity is attached.
    */
@@ -713,12 +762,16 @@ private:
 
   /**
    * @brief Joins the source stub, the searched way and the target stub.
-   * @param searched The way the search found.
+   * @param searched The way the search found, as reconstruct() lists it. It
+   * is empty when the search start is the search goal.
    * @param source The source of the wire.
    * @param target The target of the wire.
-   * @return The whole path, or an empty path when @p searched is empty.
+   * @return The whole path. The source stub keeps its last point, so a turn
+   * at the search start starts on a point with the tag of the stub. Without a
+   * searched way, the path is the two stubs joined, with their shared cell
+   * once.
    */
-  [[nodiscard]] Path assemble(Path searched, const PathPoint& source,
+  [[nodiscard]] Path assemble(const Path& searched, const PathPoint& source,
                               const PathPoint& target) const;
 
   /**

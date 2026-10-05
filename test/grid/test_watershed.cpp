@@ -15,6 +15,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <numeric>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -160,6 +163,42 @@ TEST(Watershed, LabelsShorterThanTheGridAreLeftAlone) {
   const std::vector<PartitionLabel> jagged = labels;
   smoothPartitionBorders(blocked, labels, 2, 1, 3);
   EXPECT_EQ(labels, jagged);
+}
+
+TEST(Watershed, MoreSeedsThanLabelsAreRefusedWithoutAChange) {
+  // Every one of the 65792 cells is a seed. The labels from
+  // FIRST_PARTITION_LABEL up to one below the largest label cover 65533 of
+  // them, because the label after the last one must fit as well.
+  constexpr PartitionLabel largest = std::numeric_limits<PartitionLabel>::max();
+  const BitGrid blocked(256, 257);
+  std::vector<std::size_t> seeds(blocked.size());
+  std::iota(seeds.begin(), seeds.end(), std::size_t{0});
+  std::vector<PartitionLabel> labels(blocked.size(), LABEL_NONE);
+  EXPECT_THROW(static_cast<void>(
+                   runWatershed(blocked, seeds, labels, FIRST_PARTITION_LABEL)),
+               std::length_error);
+  EXPECT_EQ(labels, std::vector<PartitionLabel>(blocked.size(), LABEL_NONE));
+
+  // As many seeds as labels fit: the run returns the largest label.
+  const std::size_t fitting = largest - FIRST_PARTITION_LABEL;
+  const std::vector<std::size_t> first(
+      seeds.begin(), seeds.begin() + static_cast<std::ptrdiff_t>(fitting));
+  EXPECT_EQ(runWatershed(blocked, first, labels, FIRST_PARTITION_LABEL),
+            largest);
+  EXPECT_EQ(labels[0], FIRST_PARTITION_LABEL);
+  EXPECT_EQ(labels[fitting - 1], largest - 1);
+
+  // A run that starts at the largest label cannot accept a seed. A run that
+  // accepts no seed returns its first label.
+  const BitGrid small(3, 3);
+  std::vector<PartitionLabel> fresh(small.size(), LABEL_NONE);
+  const std::vector<std::size_t> center = {4};
+  EXPECT_THROW(static_cast<void>(runWatershed(small, center, fresh, largest)),
+               std::length_error);
+  EXPECT_EQ(fresh, std::vector<PartitionLabel>(small.size(), LABEL_NONE));
+  EXPECT_EQ(runWatershed(small, {}, fresh, largest), largest);
+  EXPECT_EQ(runWatershed(small, center, fresh, largest - 1), largest);
+  EXPECT_EQ(fresh, std::vector<PartitionLabel>(small.size(), largest - 1));
 }
 
 TEST(Watershed, BlockedCellsNeitherVoteNorChangeInTheMajorityFilter) {

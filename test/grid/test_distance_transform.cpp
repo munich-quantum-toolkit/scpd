@@ -8,20 +8,22 @@
  * Licensed under the MIT License
  */
 
+#include "SplitMix.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/DistanceTransform.hpp"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <random>
 #include <vector>
 
 namespace {
 
 using namespace mqt::scpd::grid;
+using mqt::scpd::grid::test::SplitMix;
 
 std::vector<uint32_t> bruteForce(const BitGrid& blocked) {
   std::vector<uint32_t> distance(blocked.size(), DISTANCE_UNBOUNDED);
@@ -44,16 +46,53 @@ std::vector<uint32_t> bruteForce(const BitGrid& blocked) {
   return distance;
 }
 
-TEST(DistanceTransform, MatchesBruteForceOnARandomGrid) {
-  std::mt19937 rng(7);
-  std::bernoulli_distribution coin(0.08);
-  BitGrid blocked(37, 23);
-  for (std::size_t i = 0; i < blocked.size(); ++i) {
-    if (coin(rng)) {
-      blocked.set(i);
+TEST(DistanceTransform, MatchesBruteForceOnRandomSparseAndDenseGrids) {
+  SplitMix random(7);
+  const std::array<double, 4> densities = {0.003, 0.03, 0.3, 0.8};
+  int grids = 0;
+  for (int round = 0; round < 12; ++round) {
+    for (const double density : densities) {
+      const auto width = static_cast<uint32_t>(random.between(1, 40));
+      const auto height = static_cast<uint32_t>(random.between(1, 30));
+      // Four columns and three rows stay without a blocked cell, so that
+      // every grid has columns without a blocked cell.
+      const auto bandX = static_cast<uint32_t>(random.between(0, width - 1));
+      const auto bandY = static_cast<uint32_t>(random.between(0, height - 1));
+      BitGrid blocked(width, height);
+      for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+          const bool inBand =
+              (x >= bandX && x < bandX + 4) || (y >= bandY && y < bandY + 3);
+          if (!inBand && random.unit() < density) {
+            blocked.setCell(x, y);
+          }
+        }
+      }
+      EXPECT_EQ(squaredDistanceTransform(blocked), bruteForce(blocked))
+          << width << "x" << height << " at density " << density;
+      ++grids;
     }
   }
+  EXPECT_EQ(grids, 48);
+}
+
+TEST(DistanceTransform, AColumnWithoutBlockedCellsTakesTheNearestRow) {
+  // One blocked cell at the bottom left: every other column has no blocked
+  // cell, and the cells of the top row take their distance across both axes.
+  BitGrid blocked(30, 25);
+  blocked.setCell(0, 0);
   EXPECT_EQ(squaredDistanceTransform(blocked), bruteForce(blocked));
+  const std::vector<uint32_t> distance = squaredDistanceTransform(blocked);
+  EXPECT_EQ(distance[(24 * 30) + 29], (29U * 29U) + (24U * 24U));
+
+  // A single row and a single column.
+  BitGrid row(40, 1);
+  row.setCell(17, 0);
+  EXPECT_EQ(squaredDistanceTransform(row), bruteForce(row));
+  BitGrid column(1, 40);
+  column.setCell(0, 3);
+  column.setCell(0, 31);
+  EXPECT_EQ(squaredDistanceTransform(column), bruteForce(column));
 }
 
 TEST(DistanceTransform, IsExactAlongRowsAndDiagonals) {

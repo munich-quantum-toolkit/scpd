@@ -88,6 +88,8 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
    * along y.
    * @throws std::invalid_argument If @p width is less than two, or if @p box
    * has no positive extent along an axis.
+   * @throws std::length_error If the number of cells along y exceeds
+   * 2^32 - 1.
    */
   [[nodiscard]] static GridMetrics fitWidth(const BoundingBox& box,
                                             uint32_t width);
@@ -103,6 +105,8 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
    * @return The refined grid, as fit() returns it for the same box.
    * @throws std::invalid_argument If @p factor is zero, or if this grid has
    * fewer than two cells or no positive extent along an axis.
+   * @throws std::length_error If the refined grid has more than 2^32 - 1
+   * cells along an axis.
    */
   [[nodiscard]] GridMetrics refined(uint32_t factor) const;
 
@@ -203,11 +207,13 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
  * The function takes the size of a capacity cell as the extent of the box
  * divided by the number of capacity cells. It divides every capacity cell into
  * as many router cells as the capacity cell holds steps of @p unitDivision
- * layout units, rounded up and at least one. It then fits the router grid over
- * the same box with GridMetrics::fit(). That function puts the outermost cells
- * on the box, so the router cell step is the extent of the box divided by one
- * less than the number of router cells. The step can therefore exceed
- * @p unitDivision slightly.
+ * layout units, rounded up and at least one. The rounding has the tolerance of
+ * cellsFor(), so a capacity cell that holds a whole number of steps keeps that
+ * number. The function then fits the router grid over the same box with
+ * GridMetrics::fit(). That function puts the outermost cells on the box, so
+ * the router cell step is the extent of the box divided by one less than the
+ * number of router cells. The step can therefore exceed @p unitDivision
+ * slightly.
  *
  * @param capacity The capacity grid to divide.
  * @param unitDivision The router cell size to aim for, in layout units.
@@ -215,6 +221,8 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
  * axis, as every grid from GridMetrics::fit() has.
  * @return The router grid over the box of @p capacity.
  * @throws std::invalid_argument If @p unitDivision is not positive.
+ * @throws std::length_error If the router grid has more than 2^32 - 1 cells
+ * along an axis.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT GridMetrics
 routerGrid(const GridMetrics& capacity, double unitDivision);
@@ -231,7 +239,10 @@ routerGrid(const GridMetrics& capacity, double unitDivision);
  * @param grid The grid whose cell step applies.
  * @pre @p grid has a positive cell step along each axis.
  * @return The smallest number of cell steps that spans at least @p distance,
- * or zero when @p distance is not positive.
+ * or zero when @p distance is not positive. A length that exceeds a whole
+ * number of steps by less than a relative 1e-12 counts as that whole number,
+ * so a rounding error in the cell step does not add a cell.
+ * @throws std::length_error If the number of cells exceeds 2^32 - 1.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT uint32_t cellsFor(double distance,
                                                      const GridMetrics& grid);

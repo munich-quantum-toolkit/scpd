@@ -25,8 +25,10 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -37,6 +39,44 @@ using namespace mqt::scpd::routing;
 constexpr uint32_t GRID_DIMENSION = 1000;
 constexpr int TOTAL_ROUTES = 100;
 constexpr int ROUTES_PER_GRID = 50;
+
+/// A move of a routed path: the heading it leaves and its primitive.
+struct Move {
+  Heading heading = 0;
+  const Primitive* primitive = nullptr;
+};
+
+/// The moves of a routed path, read back from the tags of its points, from
+/// the target to the source. The point before each state carries the move
+/// that reached the state: the last cell a turn sweeps, or the state a
+/// straight step leaves.
+std::vector<Move> movesOf(const MovePrimitives& primitives, const Path& path) {
+  std::vector<Move> moves;
+  std::size_t at = path.size() - 1;
+  int64_t x = path.back().x;
+  int64_t y = path.back().y;
+  Heading heading = path.back().heading;
+  while (at > 0) {
+    const PathPoint& tag = path[at - 1];
+    const Primitive* move = primitives.find(tag.heading, tag.primitive);
+    if (move == nullptr || move->exitHeading != heading) {
+      return {};
+    }
+    moves.push_back({.heading = tag.heading, .primitive = move});
+    x -= move->dx;
+    y -= move->dy;
+    heading = tag.heading;
+    while (at > 0 && (std::cmp_not_equal(path[at - 1].x, x) ||
+                      std::cmp_not_equal(path[at - 1].y, y))) {
+      --at;
+    }
+    if (at == 0) {
+      return {};
+    }
+    --at;
+  }
+  return moves;
+}
 
 /// One request of the harness: the cell of the lattice it lives in, and the
 /// two ends inside that cell.
@@ -122,18 +162,29 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
         << t;
 
     // The length of the rendered curve agrees with the length the search
-    // paid for: the cost the search adds up over its moves is the physical
-    // length of the wire, so a route to a target length gets what it asked
-    // for.
-    const SegmentedPath segmented = reconstructSegments(*primitives, path);
+    // paid for. The rendering draws every move once, along its own curve, so
+    // its length is the sum of the curve lengths of the moves; rounding at
+    // the ends of the curves leaves a tenth of a cell. A move costs the
+    // length of its curve, except that a turn can cost up to a cell more.
     std::vector<PathSegment> segments;
     Path copy = path;
     const std::vector<Point> samples =
         samplePath(*primitives, copy, copy.front(), segments);
     ASSERT_FALSE(samples.empty()) << t;
     const double sampled = polylineLength(samples);
-    ASSERT_GT(segmented.nominalLength, 0.0) << t;
-    EXPECT_NEAR(sampled / segmented.nominalLength, 1.0, 0.02) << t;
+    const std::vector<Move> moves = movesOf(*primitives, path);
+    ASSERT_FALSE(moves.empty()) << t;
+    double curves = 0.0;
+    double paid = 0.0;
+    double turns = 0.0;
+    for (const Move& move : moves) {
+      curves += polylineLength(move.primitive->samples);
+      paid += move.primitive->cost;
+      turns += move.primitive->exitHeading != move.heading ? 1.0 : 0.0;
+    }
+    EXPECT_NEAR(sampled, curves, 0.15) << t;
+    EXPECT_GE(paid, curves - 0.01) << t;
+    EXPECT_LE(paid, curves + turns) << t;
     // It is at least the straight line between the two ends.
     const double beeline =
         std::hypot(static_cast<double>(request.objective.target.x) -
@@ -201,9 +252,7 @@ TEST(RouteStress, ObstaclesInEveryCellStillLeaveAWayThrough) {
   for (int t = 0; t < TOTAL_ROUTES; ++t) {
     const Request request = requestFor(t);
     const Path path = router.route(request.objective);
-    if (path.empty()) {
-      continue;
-    }
+    ASSERT_FALSE(path.empty()) << "route " << t;
     for (const PathPoint& point : path) {
       EXPECT_FALSE(corridor.testCell(point.x, point.y)) << t;
     }

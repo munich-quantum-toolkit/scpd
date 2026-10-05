@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -87,6 +88,31 @@ DubinsRouter::DubinsRouter(std::shared_ptr<const MovePrimitives> primitives,
   }
   staticPenalties.assign(cells(), 0);
   buildTables();
+}
+
+std::size_t DubinsRouter::heldBytes() const {
+  const auto capacityBytes = [](const auto& container) {
+    return container.capacity() * sizeof(container[0]);
+  };
+  std::size_t bytes =
+      sizeof(DubinsRouter) + capacityBytes(staticPenalties) +
+      capacityBytes(packedGrid) + capacityBytes(exempt) +
+      capacityBytes(exemptCells) + capacityBytes(crossingSide) +
+      capacityBytes(crossingSideCells) + capacityBytes(distanceField) +
+      capacityBytes(proximityVisited) + capacityBytes(proximityFrontA) +
+      capacityBytes(proximityFrontB) + capacityBytes(loopScratch.xs) +
+      capacityBytes(loopScratch.ys) + open.heldBytes();
+  for (uint32_t heading = 0; heading < NUM_HEADINGS; ++heading) {
+    bytes +=
+        capacityBytes(trie[heading]) + capacityBytes(triePrimitives[heading]);
+  }
+  for (const std::vector<uint32_t>& bucket : fieldBuckets) {
+    bytes += capacityBytes(bucket);
+  }
+  if (!constraints.empty()) {
+    bytes += cells();
+  }
+  return bytes;
 }
 
 void DubinsRouter::setParams(const SearchParams& params) {
@@ -390,7 +416,7 @@ bool DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
   }
 
   // Curve zones and the pin zone: never enterable on the far side.
-  const auto blockRun = [&](const std::vector<PathPoint>& run) {
+  const auto blockRun = [&](const std::span<const PathPoint> run) {
     for (std::size_t k = 0; k < run.size(); ++k) {
       const PathPoint& a = run[k];
       int64_t dx = 0;
@@ -418,17 +444,31 @@ bool DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
       mark(a.x, a.y, dx, dy, farSign, SIDE_FAR, curveRadius);
     }
   };
-  for (const PathSegment& segment : segmented.segments) {
-    if (!segment.straight) {
-      blockRun(segment.cells);
+  // A curve zone surrounds each run of points under one move that is not a
+  // straight run of two or more cells. The zone centres on the last point of
+  // the run, which for a turn is the last cell its arc sweeps.
+  const Path& feedline = *singleCrossing;
+  std::size_t runBegin = 0;
+  for (std::size_t k = 1; k <= feedline.size(); ++k) {
+    const PathPoint& first = feedline[runBegin];
+    if (k < feedline.size() && feedline[k].heading == first.heading &&
+        feedline[k].primitive == first.primitive) {
+      continue;
     }
+    const PathPoint& last = feedline[k - 1];
+    bool longStraight = false;
+    if (movePrimitives->isStraight(first.heading, first.primitive)) {
+      for (std::size_t r = runBegin + 1; r < k && !longStraight; ++r) {
+        longStraight = !feedline[r].samePlace(first);
+      }
+    }
+    if (!longStraight) {
+      blockRun(std::span<const PathPoint>(&last, 1));
+    }
+    runBegin = k;
   }
-  const std::vector<PathPoint> head(
-      singleCrossing->begin(),
-      singleCrossing->begin() +
-          static_cast<std::ptrdiff_t>(
-              std::min<std::size_t>(10, singleCrossing->size())));
-  blockRun(head);
+  blockRun(std::span<const PathPoint>(feedline).first(
+      std::min<std::size_t>(10, feedline.size())));
   crossingSideActive = !crossingSideCells.empty();
   return crossingSideActive;
 }
@@ -833,11 +873,8 @@ Path DubinsRouter::straightStub(const PathPoint point, const bool isTarget,
   return stub;
 }
 
-Path DubinsRouter::assemble(Path searched, const PathPoint& source,
+Path DubinsRouter::assemble(const Path& searched, const PathPoint& source,
                             const PathPoint& target) const {
-  if (searched.empty()) {
-    return searched;
-  }
   const Path head =
       straightStub(source, false, searchParams.startStraightLength);
   Path tail = straightStub(target, true, searchParams.endStraightLength);
@@ -849,12 +886,17 @@ Path DubinsRouter::assemble(Path searched, const PathPoint& source,
   // otherwise appear twice and every consumer would have to step over a
   // move of no length.
   auto first = searched.begin();
-  if (!path.empty() && first != searched.end() &&
-      first->samePlace(path.back())) {
+  if (first != searched.end() && first->samePlace(path.back())) {
     ++first;
   }
   path.insert(path.end(), first, searched.end());
-  path.insert(path.end(), tail.begin(), tail.end());
+  // The tail starts on the cell the search ended at. Without a searched way,
+  // the search started there too, and the head already ends on that cell.
+  auto tailFirst = tail.begin();
+  if (searched.empty()) {
+    ++tailFirst;
+  }
+  path.insert(path.end(), tailFirst, tail.end());
   return path;
 }
 
@@ -913,6 +955,17 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective,
                               const bool onlyStraight) {
   buildTables();
   open.clear();
+  // The start meets the corridor test that every cell a move enters meets.
+  const std::size_t startLinear =
+      (static_cast<std::size_t>(objective.source.y) * gridWidth) +
+      objective.source.x;
+  if constexpr (PACKED) {
+    if ((packedGrid[startLinear] & 0x80U) != 0U) {
+      return {};
+    }
+  } else if (corridorMask->test(startLinear)) {
+    return {};
+  }
   const uint8_t* blockMap = PACKED ? packedGrid.data() : nullptr;
   const uint8_t* penaltyMap =
       PACKED ? packedGrid.data() : staticPenalties.data();
@@ -1195,6 +1248,12 @@ Path DubinsRouter::searchOrthogonal(const RoutingObjective& objective,
                                     const bool onlyStraight) {
   buildTables();
   open.clear();
+  // The start meets the corridor test that every cell a move enters meets.
+  // The crossing rules judge the heading a cell is entered on, and the search
+  // does not enter its start.
+  if (corridorMask->testCell(objective.source.x, objective.source.y)) {
+    return {};
+  }
   const uint32_t startIndex = stateIndex(objective.source.x, objective.source.y,
                                          objective.source.heading);
   searchScratch->setStart(startIndex);

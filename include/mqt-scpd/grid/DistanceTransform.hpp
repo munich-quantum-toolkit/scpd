@@ -32,9 +32,12 @@ inline constexpr uint32_t DISTANCE_UNBOUNDED = 1'000'000;
  * the nearest blocked cell.
  *
  * A pass along the rows finds the nearest blocked cell in each row. A pass down
- * the columns then combines the rows, and it scans no further than the best
- * distance so far allows. The transform is exact for every squared distance
- * below DISTANCE_UNBOUNDED, that is for every distance below 1000 cells.
+ * the columns then combines the rows: for every cell it takes the minimum over
+ * the rows of the squared row distance plus the squared row offset. The pass
+ * builds the lower envelope of one parabola per row (Felzenszwalb and
+ * Huttenlocher), so its time is linear in the number of cells. The transform
+ * is exact for every squared distance below DISTANCE_UNBOUNDED, that is for
+ * every distance below 1000 cells.
  *
  * @param blocked The obstacle mask.
  * @return The squared distance of every cell, row-major. Blocked cells hold

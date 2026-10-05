@@ -28,12 +28,20 @@ namespace mqt::scpd::routing {
  *
  * The queue serves as the open list of the search. It has two levels of
  * buckets. The fine level holds one aligned block of @p FINE_SIZE consecutive
- * priorities, one bucket per priority. The coarse level holds every block
- * above it, one bucket per block. A pop takes the last entry of the lowest
- * non-empty fine bucket. When the fine block is exhausted, the next non-empty
- * coarse block moves into the fine level. Each level keeps a bitmask of its
- * non-empty buckets, so the next bucket is found by counting trailing zeros
- * instead of by a scan.
+ * priorities, one bucket per priority. The coarse level holds the next
+ * @p COARSE_SIZE blocks above it, one bucket per block. A pop takes the last
+ * entry of the lowest non-empty fine bucket. When the fine block is
+ * exhausted, the next non-empty coarse block moves into the fine level. Each
+ * level keeps a bitmask of its non-empty buckets, so the next bucket is found
+ * by counting trailing zeros instead of by a scan.
+ *
+ * An entry whose block lies beyond the coarse level waits in an overflow
+ * store, a heap ordered by block and then by the order of the pushes. When
+ * the fine level moves on to a later block, the waiting entries that the
+ * coarse level now reaches move into it, in the order they were pushed. So
+ * the queue takes any priority, and the pops stay in ascending order. The
+ * queue keeps the lowest waiting block, so a push or a move of the fine level
+ * that does not touch the store costs one comparison more.
  *
  * A bucket is a stack of chunks of @c CHUNK_ENTRIES entries each, drawn from
  * one pool that the queue owns. A chunk that a pop or a clear() empties goes
@@ -52,8 +60,6 @@ namespace mqt::scpd::routing {
  * at least 64.
  * @tparam COARSE_SIZE The number of buckets of the coarse level, a power of
  * two and at least 64.
- * @pre The span of the priorities held at one time stays below @p FINE_SIZE
- * times @p COARSE_SIZE.
  */
 template <typename Entry, uint32_t FINE_SIZE = 1024,
           uint32_t COARSE_SIZE = 1024>
@@ -100,6 +106,9 @@ public:
   void clear() {
     clearLevel(fine, fineMask);
     clearLevel(coarse, coarseMask);
+    overflow.clear();
+    overflowMinBlock = NO_BLOCK;
+    overflowPushes = 0;
     entryCount = 0;
     currentMin = 0;
   }
@@ -107,9 +116,22 @@ public:
   /**
    * @brief Counts the entries the queue has memory for.
    * @return The entries of every chunk the queue owns, in use or in the pool.
+   * The overflow store is not counted.
    */
   [[nodiscard]] std::size_t heldEntries() const {
     return chunks.size() * std::size_t{CHUNK_ENTRIES};
+  }
+
+  /**
+   * @brief Counts the bytes the queue holds outside its own object.
+   * @return The bytes of every chunk the queue owns, of the lists that track
+   * the chunks, and of the overflow store, each list by its capacity.
+   */
+  [[nodiscard]] std::size_t heldBytes() const {
+    return (chunks.size() * sizeof(Chunk)) +
+           (chunks.capacity() * sizeof(std::unique_ptr<Chunk>)) +
+           (stackScratch.capacity() * sizeof(const Chunk*)) +
+           (overflow.capacity() * sizeof(Waiting));
   }
 
   /**
@@ -126,14 +148,18 @@ public:
     // the current minimum. Clamp it, so that it is not lost behind the scan
     // position.
     priority = std::max(priority, currentMin);
-    if ((priority / FINE_SIZE) == (currentMin / FINE_SIZE)) {
-      const uint32_t index = priority & FINE_MASK;
-      pushOnto(fine[index], std::move(entry));
-      fineMask[index >> 6U] |= (uint64_t{1} << (index & 63U));
+    const uint32_t block = priority / FINE_SIZE;
+    const uint32_t currentBlock = currentMin / FINE_SIZE;
+    if (block == currentBlock) {
+      pushFine(std::move(entry), priority);
+    } else if (block - currentBlock <= COARSE_SIZE) {
+      pushCoarse(std::move(entry), block);
     } else {
-      const uint32_t index = (priority / FINE_SIZE) & COARSE_MASK;
-      pushOnto(coarse[index], std::move(entry));
-      coarseMask[index >> 6U] |= (uint64_t{1} << (index & 63U));
+      overflow.push_back({.block = block,
+                          .order = overflowPushes++,
+                          .entry = std::move(entry)});
+      std::ranges::push_heap(overflow, laterInOverflow);
+      overflowMinBlock = std::min(overflowMinBlock, block);
     }
     ++entryCount;
   }
@@ -209,6 +235,10 @@ private:
    * @brief The result of nextSet() when no bit is set.
    */
   static constexpr uint32_t NONE = std::numeric_limits<uint32_t>::max();
+  /**
+   * @brief The lowest waiting block when the overflow store is empty.
+   */
+  static constexpr uint32_t NO_BLOCK = std::numeric_limits<uint32_t>::max();
 
   /**
    * @brief Finds the first set bit of a bitmask at or after a position.
@@ -279,6 +309,79 @@ private:
   void giveBack(Chunk* chunk) {
     chunk->below = pool;
     pool = chunk;
+  }
+
+  /**
+   * @brief An entry that waits for the coarse level to reach its block.
+   */
+  struct Waiting {
+    /// The block of the priority of the entry.
+    uint32_t block = 0;
+    /// The number of entries the store took before this one. The entries of
+    /// one block that skip the store come later, because the coarse level
+    /// reaches the block only once its waiting entries have left.
+    uint64_t order = 0;
+    /// The entry.
+    Entry entry{};
+  };
+
+  /**
+   * @brief Orders the overflow store as a heap whose top is the earliest
+   * push of the lowest block.
+   * @param a An entry of the store.
+   * @param b Another entry of the store.
+   * @return @c true when @p a leaves the store after @p b.
+   */
+  static bool laterInOverflow(const Waiting& a, const Waiting& b) {
+    return a.block != b.block ? a.block > b.block : a.order > b.order;
+  }
+
+  /**
+   * @brief Adds an entry to the fine level.
+   * @param entry The entry.
+   * @param priority The priority of @p entry, in the current block.
+   */
+  void pushFine(Entry&& entry, const uint32_t priority) {
+    const uint32_t index = priority & FINE_MASK;
+    pushOnto(fine[index], std::move(entry));
+    fineMask[index >> 6U] |= (uint64_t{1} << (index & 63U));
+  }
+
+  /**
+   * @brief Adds an entry to the coarse level.
+   * @param entry The entry.
+   * @param block The block of the priority of @p entry, after the current
+   * block and at most @p COARSE_SIZE blocks after it.
+   */
+  void pushCoarse(Entry&& entry, const uint32_t block) {
+    const uint32_t index = block & COARSE_MASK;
+    pushOnto(coarse[index], std::move(entry));
+    coarseMask[index >> 6U] |= (uint64_t{1} << (index & 63U));
+  }
+
+  /**
+   * @brief Moves the waiting entries that the coarse level reaches out of
+   * the overflow store.
+   *
+   * An entry of the current block goes to the fine level, a later one to the
+   * coarse level. The entries of one block move in the order they were
+   * pushed.
+   */
+  void admitWaiting() {
+    const uint32_t currentBlock = currentMin / FINE_SIZE;
+    while (!overflow.empty() &&
+           overflow.front().block - currentBlock <= COARSE_SIZE) {
+      std::ranges::pop_heap(overflow, laterInOverflow);
+      Waiting& waiting = overflow.back();
+      if (waiting.block == currentBlock) {
+        const uint32_t priority = waiting.entry.f;
+        pushFine(std::move(waiting.entry), priority);
+      } else {
+        pushCoarse(std::move(waiting.entry), waiting.block);
+      }
+      overflow.pop_back();
+    }
+    overflowMinBlock = overflow.empty() ? NO_BLOCK : overflow.front().block;
   }
 
   /**
@@ -354,13 +457,14 @@ private:
   }
 
   /**
-   * @brief Moves the next non-empty coarse block into the fine level.
+   * @brief Moves the next non-empty block into the fine level.
    *
    * The search for the block starts after the current block and wraps around
-   * the coarse level once.
+   * the coarse level once. Without a block in the coarse level, the lowest
+   * block of the overflow store moves. Either way, the waiting entries that
+   * the coarse level then reaches leave the overflow store.
    *
-   * @return @c true when a block moved, @c false when the coarse level is
-   * empty.
+   * @return @c true when a block moved, @c false when the queue is empty.
    * @post After a move, the scan position is the first priority of the moved
    * block.
    */
@@ -374,7 +478,12 @@ private:
     } else {
       index = nextSet(coarseMask.data(), COARSE_WORDS, 0);
       if (index == NONE || index >= start) {
-        return false;
+        if (overflow.empty()) {
+          return false;
+        }
+        currentMin = overflowMinBlock * FINE_SIZE;
+        admitWaiting();
+        return true;
       }
       block = currentBlock + 1 + (COARSE_SIZE - start) + index;
     }
@@ -400,6 +509,9 @@ private:
     release(source);
     coarseMask[index >> 6U] &= ~(uint64_t{1} << (index & 63U));
     currentMin = block * FINE_SIZE;
+    if (overflowMinBlock - block <= COARSE_SIZE) {
+      admitWaiting();
+    }
     return true;
   }
 
@@ -414,6 +526,12 @@ private:
   Chunk* pool = nullptr;
   /// The chunks of one coarse bucket, top first, while it moves.
   std::vector<const Chunk*> stackScratch;
+  /// The entries beyond the coarse level, as a heap under laterInOverflow().
+  std::vector<Waiting> overflow;
+  /// The lowest block of the overflow store, or NO_BLOCK when it is empty.
+  uint32_t overflowMinBlock = NO_BLOCK;
+  /// The number of entries the overflow store took since the last clear().
+  uint64_t overflowPushes = 0;
   /// One bit per fine bucket, set when the bucket is not empty.
   std::array<uint64_t, FINE_WORDS> fineMask{};
   /// One bit per coarse bucket, set when the bucket is not empty.

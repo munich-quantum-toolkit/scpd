@@ -54,7 +54,10 @@ struct RasterOptions {
   /// disables the keepout.
   double keepout = 0.0;
   /// The corridors in which keepout cells stay free. A corridor never frees a
-  /// cell of a polygon itself.
+  /// cell that the polygons block after the island rule of
+  /// rasterizeObstacles(). A cell that the island rule frees is no longer a
+  /// polygon cell: when the keepout blocks it again, it is a keepout cell, and
+  /// a corridor can free it.
   std::vector<Corridor> keepoutExemptions;
   /// The number of columns blocked at the left edge and at the right edge.
   ///
@@ -85,16 +88,26 @@ struct RasterizedObstacles {
  *
  * Every polygon of the chip is artwork. The function fills each one at the
  * cell centers and outlines it with Bresenham lines through the rounded vertex
- * cells, so that no edge has a gap.
- * A blocked cell with at least seven free neighbors is an artifact of the
- * rasterization, and the function frees it again. Then the keepout and the
- * border of @p options apply, in this order.
+ * cells, so that no edge has a gap (fillPolygon()).
+ *
+ * The island rule follows (removeIslands()): a blocked cell with at least
+ * seven free neighbors is an artifact of the rasterization, and the function
+ * frees it again. So a line one cell wide loses one cell at each end, and a
+ * feature of one or two cells disappears. A cell that the island rule frees
+ * is no longer a polygon cell.
+ *
+ * Then the keepout and the border of @p options apply, in this order. The
+ * keepout is measured from the polygon edges, not from the mask, so it can
+ * block a cell that the island rule freed. Such a cell is a keepout cell, and
+ * a corridor can free it.
  *
  * @param chip The chip whose obstacles to rasterize.
  * @param grid The grid to rasterize onto.
  * @param options The keepout, its corridors and the border.
  * @return The mask on @p grid, and the numbers of cells the keepout blocked
  * and the corridors released.
+ * @throws std::invalid_argument If a vertex of an obstacle is not finite, as
+ * fillPolygon() throws.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT RasterizedObstacles
 rasterizeObstacles(const flatbuffers::design::ChipT& chip,
@@ -108,13 +121,19 @@ rasterizeObstacles(const flatbuffers::design::ChipT& chip,
  * two consecutive vertices, the closing edge included. These lines keep the
  * outline free of gaps where the center test misses a thin polygon. A polygon
  * with fewer than three vertices blocks only the cells of its edges. Cells off
- * the grid are skipped.
+ * the grid are skipped, so a vertex may lie far off the grid. An end of an
+ * edge more than 2^59 cells off the grid first moves along the edge to that
+ * distance, so that its cell fits into an integer. The center test computes
+ * where an edge crosses a row from the vertices in double precision, so a
+ * vertex very far off the grid makes the crossings of its edges inexact.
  *
  * @param mask The mask to block the cells in.
  * @param grid The grid that converts layout units into cells.
  * @param polygon The polygon, in layout units.
  * @pre @p mask has the width and the height of @p grid.
  * @post Every cell that was blocked before the call is still blocked.
+ * @throws std::invalid_argument If a vertex, in layout units or converted into
+ * cells, is not finite. The function then leaves @p mask unchanged.
  */
 MQT_SCPD_GRID_EXPORT void
 fillPolygon(BitGrid& mask, const GridMetrics& grid,
@@ -130,7 +149,11 @@ fillPolygon(BitGrid& mask, const GridMetrics& grid,
  * @param height The number of rows of the grid to clip the line to.
  * @return The row-major indices of the cells of the line, from the first cell
  * to the last, both ends included. Cells off the grid are left out, so either
- * end may lie off the grid.
+ * end may lie off the grid. The function starts the walk at the first cell on
+ * the grid, in the state that the walk from the first end reaches there, and
+ * stops at the last cell on the grid.
+ * @throws std::invalid_argument If the two cells lie 2^61 or more cells apart
+ * along an axis.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<std::size_t>
 lineCells(int64_t x0, int64_t y0, int64_t x1, int64_t y1, uint32_t width,
@@ -141,9 +164,10 @@ lineCells(int64_t x0, int64_t y0, int64_t x1, int64_t y1, uint32_t width,
  * eight.
  *
  * The function counts the neighbors on the mask as it was before the call, so
- * a cell it frees does not change the count of another cell. Cells on the
- * border of the grid are left alone. A mask narrower than three cells along an
- * axis stays unchanged.
+ * a cell it frees does not change the count of another cell. A line one cell
+ * wide therefore loses one cell at each end, and a group of one or two cells
+ * disappears. Cells on the border of the grid are left alone. A mask narrower
+ * than three cells along an axis stays unchanged.
  *
  * @param mask The mask to change in place.
  */

@@ -19,6 +19,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -30,10 +32,110 @@ using flatbuffers::design::ChipT;
 using flatbuffers::geometry::PolygonT;
 
 /// The keepout marks cells with 2 before the corridors release some of them,
-/// so that a corridor can never free a cell of the polygons themselves.
+/// so that a corridor can never free a cell that the polygons block after the
+/// island rule.
 constexpr uint8_t FREE = 0;
 constexpr uint8_t POLYGON = 1;
 constexpr uint8_t KEEPOUT = 2;
+
+/// lineCells() accepts two ends that lie fewer than this many cells apart
+/// along each axis. Then twice the error term of the walk fits into int64_t.
+constexpr uint64_t LINE_SPAN_LIMIT = uint64_t{1} << 61U;
+
+/// The margin around the grid, in cells, within which fillPolygon() keeps the
+/// ends of an edge. An end further out moves along its edge onto the margin,
+/// so that its rounded cell fits into int64_t and the edge stays shorter than
+/// LINE_SPAN_LIMIT.
+constexpr double EDGE_MARGIN = 576460752303423488.0; // 2^59
+
+/// The quotient and the remainder of a division of whole numbers.
+struct Division {
+  uint64_t quotient = 0;
+  uint64_t remainder = 0;
+};
+
+/// Divides @p factor times @p steps by @p length without overflow.
+/// @pre @p factor and @p steps are at most @p length, and @p length is
+/// positive and below 2^62.
+Division divideProduct(const uint64_t factor, const uint64_t steps,
+                       const uint64_t length) {
+  if (steps == 0 || factor <= std::numeric_limits<uint64_t>::max() / steps) {
+    const uint64_t product = factor * steps;
+    return {.quotient = product / length, .remainder = product % length};
+  }
+  // Long multiplication over the bits of steps. The remainder stays below
+  // length, so no sum overflows.
+  Division result;
+  for (unsigned bit = 64; bit-- > 0;) {
+    result.quotient <<= 1U;
+    result.remainder <<= 1U;
+    if (result.remainder >= length) {
+      result.remainder -= length;
+      ++result.quotient;
+    }
+    if (((steps >> bit) & 1U) != 0) {
+      result.remainder += factor;
+      if (result.remainder >= length) {
+        result.remainder -= length;
+        ++result.quotient;
+      }
+    }
+  }
+  return result;
+}
+
+/// The distance between two coordinates, without overflow.
+uint64_t span(const int64_t from, const int64_t to) {
+  return from <= to ? static_cast<uint64_t>(to) - static_cast<uint64_t>(from)
+                    : static_cast<uint64_t>(from) - static_cast<uint64_t>(to);
+}
+
+/// Moves each end of the segment from @p a to @p b that lies outside a box
+/// along the segment onto the box. An end inside the box keeps its value.
+/// @return @c false when the segment misses the box.
+bool clipToBox(Point& a, Point& b, const Point low, const Point high) {
+  const auto inside = [&](const Point point) {
+    return point.x() >= low.x() && point.x() <= high.x() &&
+           point.y() >= low.y() && point.y() <= high.y();
+  };
+  if (inside(a) && inside(b)) {
+    return true;
+  }
+  // Liang and Barsky, in half units, so that the difference of two finite
+  // coordinates cannot overflow.
+  const double ax = a.x() / 2.0;
+  const double ay = a.y() / 2.0;
+  const double dx = (b.x() / 2.0) - ax;
+  const double dy = (b.y() / 2.0) - ay;
+  double t0 = 0.0;
+  double t1 = 1.0;
+  // Keeps the part of the segment where p * t <= q.
+  const auto keep = [&](const double p, const double q) {
+    if (p == 0.0) {
+      return q >= 0.0;
+    }
+    const double t = q / p;
+    if (p < 0.0) {
+      t0 = std::max(t0, t);
+    } else {
+      t1 = std::min(t1, t);
+    }
+    return t0 <= t1;
+  };
+  if (!keep(-dx, ax - (low.x() / 2.0)) || !keep(dx, (high.x() / 2.0) - ax) ||
+      !keep(-dy, ay - (low.y() / 2.0)) || !keep(dy, (high.y() / 2.0) - ay)) {
+    return false;
+  }
+  const Point from(2.0 * (ax + (t0 * dx)), 2.0 * (ay + (t0 * dy)));
+  const Point to(2.0 * (ax + (t1 * dx)), 2.0 * (ay + (t1 * dy)));
+  if (t0 > 0.0) {
+    a = from;
+  }
+  if (t1 < 1.0) {
+    b = to;
+  }
+  return true;
+}
 
 std::vector<uint8_t> keepoutMask(const ChipT& chip, const GridMetrics& grid,
                                  const RasterOptions& options,
@@ -45,25 +147,30 @@ std::vector<uint8_t> keepoutMask(const ChipT& chip, const GridMetrics& grid,
     cells[i] = blocked.test(i) ? POLYGON : FREE;
   }
 
-  // Visit the cells of a window around an edge, given in layout units.
+  // Visit the cells of a window around an edge, given in layout units. The
+  // window is clamped onto the grid before the cast to an integer. std::fmax
+  // and std::fmin drop a NaN, so a NaN bound widens the window to the grid,
+  // and the distance test decides.
   const auto forEachCellNear = [&](const Point a, const Point b,
                                    const double halfWidth, auto&& visit) {
     const Point ca = grid.toCell(a);
     const Point cb = grid.toCell(b);
-    const auto extraX =
-        static_cast<int64_t>(std::ceil(halfWidth / grid.cellWidth)) + 1;
-    const auto extraY =
-        static_cast<int64_t>(std::ceil(halfWidth / grid.cellHeight)) + 1;
-    const int64_t x0 = std::max<int64_t>(
-        0, static_cast<int64_t>(std::floor(std::min(ca.x(), cb.x()))) - extraX);
-    const int64_t x1 = std::min<int64_t>(
-        grid.width - 1,
-        static_cast<int64_t>(std::ceil(std::max(ca.x(), cb.x()))) + extraX);
-    const int64_t y0 = std::max<int64_t>(
-        0, static_cast<int64_t>(std::floor(std::min(ca.y(), cb.y()))) - extraY);
-    const int64_t y1 = std::min<int64_t>(
-        grid.height - 1,
-        static_cast<int64_t>(std::ceil(std::max(ca.y(), cb.y()))) + extraY);
+    const double extraX = std::ceil(halfWidth / grid.cellWidth) + 1.0;
+    const double extraY = std::ceil(halfWidth / grid.cellHeight) + 1.0;
+    const double lowX = std::floor(std::min(ca.x(), cb.x())) - extraX;
+    const double highX = std::ceil(std::max(ca.x(), cb.x())) + extraX;
+    const double lowY = std::floor(std::min(ca.y(), cb.y())) - extraY;
+    const double highY = std::ceil(std::max(ca.y(), cb.y())) + extraY;
+    const auto width = static_cast<double>(grid.width);
+    const auto height = static_cast<double>(grid.height);
+    const auto x0 =
+        static_cast<int64_t>(std::fmin(std::fmax(lowX, 0.0), width));
+    const auto x1 =
+        static_cast<int64_t>(std::fmax(std::fmin(highX, width - 1.0), -1.0));
+    const auto y0 =
+        static_cast<int64_t>(std::fmin(std::fmax(lowY, 0.0), height));
+    const auto y1 =
+        static_cast<int64_t>(std::fmax(std::fmin(highY, height - 1.0), -1.0));
     for (int64_t y = y0; y <= y1; ++y) {
       for (int64_t x = x0; x <= x1; ++x) {
         const Point center =
@@ -121,32 +228,107 @@ double distanceToSegment(const Point point, const Point from, const Point to) {
   return std::hypot(point.x() - cx, point.y() - cy);
 }
 
-std::vector<std::size_t> lineCells(int64_t x0, int64_t y0, const int64_t x1,
-                                   const int64_t y1, const uint32_t width,
+std::vector<std::size_t> lineCells(const int64_t x0, const int64_t y0,
+                                   const int64_t x1, const int64_t y1,
+                                   const uint32_t width,
                                    const uint32_t height) {
+  const uint64_t dx = span(x0, x1);
+  const uint64_t dy = span(y0, y1);
+  if (dx >= LINE_SPAN_LIMIT || dy >= LINE_SPAN_LIMIT) {
+    throw std::invalid_argument("the ends of a line lie too far apart");
+  }
   std::vector<std::size_t> cells;
-  const int64_t dx = std::abs(x1 - x0);
-  const int64_t dy = -std::abs(y1 - y0);
+  if (std::max(x0, x1) < 0 || std::max(y0, y1) < 0 ||
+      std::cmp_greater_equal(std::min(x0, x1), width) ||
+      std::cmp_greater_equal(std::min(y0, y1), height)) {
+    return cells;
+  }
+
+  // The walk takes one step along the major axis per cell, and a step along
+  // the minor axis when its error term asks for one. After k steps, the
+  // offset along the minor axis is minor * k / length, rounded half up.
+  const bool alongX = dx >= dy;
+  const uint64_t length = std::max(dx, dy);
+  const uint64_t minor = std::min(dx, dy);
   const int64_t sx = (x0 < x1) ? 1 : -1;
   const int64_t sy = (y0 < y1) ? 1 : -1;
-  int64_t err = dx + dy;
-  while (true) {
-    if (x0 >= 0 && y0 >= 0 && std::cmp_less(x0, width) &&
-        std::cmp_less(y0, height)) {
-      cells.push_back((static_cast<std::size_t>(y0) * width) +
-                      static_cast<std::size_t>(x0));
+  const auto offset = [&](const int64_t steps) -> int64_t {
+    if (length == 0) {
+      return 0;
     }
-    if (x0 == x1 && y0 == y1) {
+    const Division division =
+        divideProduct(minor, static_cast<uint64_t>(steps), length);
+    const bool up = division.remainder >= length - division.remainder;
+    return static_cast<int64_t>(division.quotient) + (up ? 1 : 0);
+  };
+
+  // The steps whose cell lies on the grid along the major axis.
+  const int64_t major0 = alongX ? x0 : y0;
+  const int64_t majorStep = alongX ? sx : sy;
+  const int64_t majorLast = static_cast<int64_t>(alongX ? width : height) - 1;
+  const auto steps = static_cast<int64_t>(length);
+  const int64_t majorFirst =
+      std::max<int64_t>(0, majorStep > 0 ? -major0 : major0 - majorLast);
+  const int64_t majorEnd =
+      std::min<int64_t>(steps, majorStep > 0 ? majorLast - major0 : major0);
+
+  // Of those, the steps whose cell lies on the grid along the minor axis.
+  // The minor offset never decreases, so a binary search finds both ends.
+  const int64_t minor0 = alongX ? y0 : x0;
+  const int64_t minorStep = alongX ? sy : sx;
+  const int64_t minorLast = static_cast<int64_t>(alongX ? height : width) - 1;
+  const int64_t lowOffset = minorStep > 0 ? -minor0 : minor0 - minorLast;
+  const int64_t highOffset = minorStep > 0 ? minorLast - minor0 : minor0;
+  // The first step in [from, to] whose offset reaches the value, or to + 1.
+  const auto firstReaching = [&](int64_t from, int64_t to,
+                                 const int64_t value) {
+    while (from <= to) {
+      const int64_t middle = from + ((to - from) / 2);
+      if (offset(middle) >= value) {
+        to = middle - 1;
+      } else {
+        from = middle + 1;
+      }
+    }
+    return from;
+  };
+  const int64_t first = firstReaching(majorFirst, majorEnd, lowOffset);
+  const int64_t last = firstReaching(first, majorEnd, highOffset + 1) - 1;
+  if (first > last) {
+    return cells;
+  }
+
+  // The cell and the error term that the walk from the first end reaches
+  // after the steps off the grid.
+  const auto a = static_cast<int64_t>(dx);
+  const auto b = static_cast<int64_t>(dy);
+  int64_t err = a - b;
+  int64_t minorSteps = 0;
+  if (length > 0) {
+    const Division division =
+        divideProduct(minor, static_cast<uint64_t>(first), length);
+    const auto remainder = static_cast<int64_t>(division.remainder);
+    const bool up = division.remainder >= length - division.remainder;
+    minorSteps = static_cast<int64_t>(division.quotient) + (up ? 1 : 0);
+    err += alongX ? (up ? a : 0) - remainder : remainder - (up ? b : 0);
+  }
+  int64_t x = x0 + (sx * (alongX ? first : minorSteps));
+  int64_t y = y0 + (sy * (alongX ? minorSteps : first));
+  cells.reserve(static_cast<std::size_t>(last - first) + 1);
+  for (int64_t step = first;; ++step) {
+    cells.push_back((static_cast<std::size_t>(y) * width) +
+                    static_cast<std::size_t>(x));
+    if (step == last) {
       break;
     }
     const int64_t e2 = 2 * err;
-    if (e2 >= dy) {
-      err += dy;
-      x0 += sx;
+    if (e2 >= -b) {
+      err -= b;
+      x += sx;
     }
-    if (e2 <= dx) {
-      err += dx;
-      y0 += sy;
+    if (e2 <= a) {
+      err += a;
+      y += sy;
     }
   }
   return cells;
@@ -160,44 +342,70 @@ void fillPolygon(BitGrid& mask, const GridMetrics& grid,
   }
   std::vector<Point> nodes;
   nodes.reserve(vertices.size());
-  int64_t minX = grid.width;
-  int64_t maxX = 0;
-  int64_t minY = grid.height;
-  int64_t maxY = 0;
+  auto lowX = static_cast<double>(grid.width);
+  double highX = 0.0;
+  auto lowY = static_cast<double>(grid.height);
+  double highY = 0.0;
   for (const auto& vertex : vertices) {
     const Point node = grid.toCell(vertex);
+    if (!std::isfinite(node.x()) || !std::isfinite(node.y())) {
+      throw std::invalid_argument("a polygon vertex must be finite");
+    }
     nodes.push_back(node);
-    minX = std::min(minX, static_cast<int64_t>(std::floor(node.x())));
-    maxX = std::max(maxX, static_cast<int64_t>(std::ceil(node.x())));
-    minY = std::min(minY, static_cast<int64_t>(std::floor(node.y())));
-    maxY = std::max(maxY, static_cast<int64_t>(std::ceil(node.y())));
+    lowX = std::min(lowX, std::floor(node.x()));
+    highX = std::max(highX, std::ceil(node.x()));
+    lowY = std::min(lowY, std::floor(node.y()));
+    highY = std::max(highY, std::ceil(node.y()));
   }
-  minX = std::max<int64_t>(0, minX);
-  minY = std::max<int64_t>(0, minY);
-  maxX = std::min<int64_t>(grid.width - 1, maxX);
-  maxY = std::min<int64_t>(grid.height - 1, maxY);
+  // The window is the polygon's own box, so a polygon cannot flood the grid.
+  // It is clamped onto the grid before the cast to an integer.
+  const auto minX = static_cast<int64_t>(std::max(lowX, 0.0));
+  const auto minY = static_cast<int64_t>(std::max(lowY, 0.0));
+  const auto maxX = static_cast<int64_t>(
+      std::min(highX, static_cast<double>(grid.width) - 1.0));
+  const auto maxY = static_cast<int64_t>(
+      std::min(highY, static_cast<double>(grid.height) - 1.0));
 
-  // The area: every cell whose center lies inside, by ray casting. The
-  // window is the polygon's own box, so a polygon cannot flood the grid.
+  // The area: every cell whose center lies inside, by ray casting along each
+  // row. A cell center lies inside when an odd number of edges cross its row
+  // right of it. The edge test is half-open, so a vertex on the row counts
+  // for one of its two edges only.
   if (nodes.size() >= 3) {
+    // The first column of the window at or right of a crossing.
+    const auto firstColumnFrom = [&](const double crossing) {
+      return static_cast<int64_t>(std::ceil(std::clamp(
+          crossing, static_cast<double>(minX), static_cast<double>(maxX + 1))));
+    };
+    std::vector<double> crossings;
     for (int64_t y = minY; y <= maxY; ++y) {
       const auto py = static_cast<double>(y);
-      for (int64_t x = minX; x <= maxX; ++x) {
-        const auto px = static_cast<double>(x);
-        bool inside = false;
-        for (std::size_t i = 0, j = nodes.size() - 1; i < nodes.size();
-             j = i++) {
-          const double xi = nodes[i].x();
-          const double yi = nodes[i].y();
-          const double xj = nodes[j].x();
-          const double yj = nodes[j].y();
-          const bool crosses = ((yi > py) != (yj > py)) &&
-                               (px < ((xj - xi) * (py - yi) / (yj - yi)) + xi);
-          if (crosses) {
-            inside = !inside;
+      crossings.clear();
+      for (std::size_t i = 0, j = nodes.size() - 1; i < nodes.size(); j = i++) {
+        const double xi = nodes[i].x();
+        const double yi = nodes[i].y();
+        const double xj = nodes[j].x();
+        const double yj = nodes[j].y();
+        if ((yi > py) != (yj > py)) {
+          const double crossing = ((xj - xi) * (py - yi) / (yj - yi)) + xi;
+          // A crossing that is not a number lies right of no cell center.
+          if (!std::isnan(crossing)) {
+            crossings.push_back(crossing);
           }
         }
-        if (inside) {
+      }
+      std::ranges::sort(crossings);
+      // The cells from crossing k - 1 up to crossing k have every crossing
+      // from k on right of them.
+      const std::size_t count = crossings.size();
+      for (std::size_t k = 0; k <= count; ++k) {
+        if ((count - k) % 2 == 0) {
+          continue;
+        }
+        const int64_t from =
+            (k == 0) ? minX : firstColumnFrom(crossings[k - 1]);
+        const int64_t to =
+            (k == count) ? maxX : firstColumnFrom(crossings[k]) - 1;
+        for (int64_t x = from; x <= to; ++x) {
           mask.setCell(static_cast<uint32_t>(x), static_cast<uint32_t>(y));
         }
       }
@@ -205,10 +413,17 @@ void fillPolygon(BitGrid& mask, const GridMetrics& grid,
   }
 
   // The edges: a line of cells between the rounded vertex cells, so that the
-  // outline has no gap where the area test misses a thin polygon.
+  // outline has no gap where the area test misses a thin polygon. An end far
+  // off the grid first moves along its edge onto the margin.
+  const Point low(-EDGE_MARGIN, -EDGE_MARGIN);
+  const Point high(static_cast<double>(grid.width) + EDGE_MARGIN,
+                   static_cast<double>(grid.height) + EDGE_MARGIN);
   for (std::size_t i = 0; i < nodes.size(); ++i) {
-    const Point a = nodes[i];
-    const Point b = nodes[(i + 1) % nodes.size()];
+    Point a = nodes[i];
+    Point b = nodes[(i + 1) % nodes.size()];
+    if (!clipToBox(a, b, low, high)) {
+      continue;
+    }
     for (const std::size_t index : lineCells(
              std::llround(a.x()), std::llround(a.y()), std::llround(b.x()),
              std::llround(b.y()), grid.width, grid.height)) {

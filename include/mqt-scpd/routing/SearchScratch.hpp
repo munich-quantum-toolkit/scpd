@@ -55,8 +55,8 @@ static_assert(sizeof(SearchNode) == 8, "a search node is eight bytes");
  *
  * The scratch is the one large allocation of a router context. It takes eight
  * bytes for each of the eight headings of a cell, so 64 bytes per cell. On the
- * 3016 by 3016 cell router grid of the largest benchmark chip, that is about
- * 582 MB. A scratch belongs to the thread that searches with it. Nothing else
+ * 5400 by 5400 cell router grid of the largest benchmark chip, that is about
+ * 1.87 GB. A scratch belongs to the thread that searches with it. Nothing else
  * is copied per thread, because the grids a search reads are shared.
  */
 class MQT_SCPD_ROUTING_EXPORT SearchScratch {

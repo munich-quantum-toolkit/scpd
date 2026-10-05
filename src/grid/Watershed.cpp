@@ -22,6 +22,7 @@
 #include <map>
 #include <queue>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -67,18 +68,28 @@ PartitionLabel runWatershed(const BitGrid& blocked,
            (labels[cell] != LABEL_NONE && labels[cell] < firstLabel);
   };
 
+  // Accept every seed first and write the labels after, so that a throw
+  // leaves the labels unchanged.
   for (std::size_t i = 0; i < seeds.size(); ++i) {
     const std::size_t seed = seeds[i];
-    if (seed >= total || blocked.test(seed) || labels[seed] != LABEL_NONE) {
+    if (seed >= total || blocked.test(seed) || labels[seed] != LABEL_NONE ||
+        finalized[seed]) {
       continue;
     }
+    if (nextLabel == std::numeric_limits<PartitionLabel>::max()) {
+      throw std::length_error("a watershed run ran out of partition labels");
+    }
     time[seed] = 0.0;
-    labels[seed] = nextLabel;
     tentativeLabel[seed] = nextLabel;
     tentativeSeed[seed] = static_cast<uint32_t>(i);
     finalized[seed] = true;
     front.push({.cell = seed, .time = 0.0});
     ++nextLabel;
+  }
+  for (const std::size_t seed : seeds) {
+    if (seed < total && finalized[seed]) {
+      labels[seed] = tentativeLabel[seed];
+    }
   }
 
   // The arrival time of a cell from its finalized four-neighbors, and the

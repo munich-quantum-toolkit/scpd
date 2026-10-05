@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -73,8 +74,8 @@ TEST(GridMetrics, TheRouterGridDividesEveryCapacityCell) {
   EXPECT_EQ(router.height, 1500U);
   EXPECT_NEAR(router.cellWidth, 10.0, 0.01);
 
-  // A capacity cell that is not a multiple of the division rounds up, so a
-  // router cell is never wider than the division.
+  // A capacity cell of 595 units is not a multiple of the division. It rounds
+  // up to 60 router cells, so this router cell is narrower than the division.
   const BoundingBox odd{
       .minX = 0.0, .minY = 0.0, .maxX = 29750.0, .maxY = 29750.0};
   const GridMetrics oddRouter = routerGrid(GridMetrics::fit(odd, 50, 50), 10.0);
@@ -99,6 +100,98 @@ TEST(GridMetrics, CellsForReproducesTheClearanceLiterals) {
   EXPECT_NEAR(exact.cellWidth, 10.0, 1e-9);
   EXPECT_EQ(cellsFor(200.0, exact), 20U);
   EXPECT_EQ(cellsFor(60.0, exact), 6U);
+}
+
+TEST(GridMetrics, CellsForCountsAWholeNumberOfStepsExactly) {
+  // The cell step of this grid is 0.09999999999999999, a rounding error below
+  // 0.1.
+  const GridMetrics small = GridMetrics::fit(
+      BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 0.3, .maxY = 0.3}, 4, 4);
+  EXPECT_LT(small.cellWidth, 0.1);
+  EXPECT_EQ(cellsFor(0.1, small), 1U);
+  EXPECT_EQ(cellsFor(0.3, small), 3U);
+  // A length clearly above a whole number of steps still takes one more cell.
+  EXPECT_EQ(cellsFor(0.1 * (1.0 + 1e-6), small), 2U);
+
+  // Every whole multiple of the cell step, on grids of many sizes.
+  for (uint32_t cells = 2; cells <= 200; ++cells) {
+    for (const double extent : {0.3, 1.0, 7.7, 4000.0, 29910.0, 30000.0}) {
+      const GridMetrics grid = GridMetrics::fit(
+          BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = extent, .maxY = extent},
+          cells, cells);
+      for (uint32_t steps = 1; steps <= 25; ++steps) {
+        ASSERT_EQ(cellsFor(steps * grid.cellWidth, grid), steps)
+            << cells << " cells over " << extent;
+      }
+    }
+  }
+  // Rules in tenths on grids whose cell step is a tenth.
+  for (uint32_t cells = 2; cells <= 400; ++cells) {
+    const double extent = (cells - 1) * 0.1;
+    const GridMetrics grid = GridMetrics::fit(
+        BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = extent, .maxY = extent},
+        cells, cells);
+    for (uint32_t tenths = 1; tenths <= 20; ++tenths) {
+      ASSERT_EQ(cellsFor(tenths * 0.1, grid), tenths) << cells << " cells";
+    }
+  }
+}
+
+TEST(GridMetrics, TheRouterGridKeepsAWholeNumberOfStepsPerCapacityCell) {
+  // Capacity cells of an exact multiple of the division keep that multiple,
+  // wherever the box lies.
+  for (const uint32_t capacityCells : {20U, 30U, 40U, 50U, 60U, 64U, 100U}) {
+    for (uint32_t steps = 1; steps <= 400; ++steps) {
+      for (const double minX : {0.0, -800.0, 1234.5, -27000.0}) {
+        const double extent = capacityCells * 10.0 * steps;
+        const GridMetrics capacity =
+            GridMetrics::fit(BoundingBox{.minX = minX,
+                                         .minY = minX,
+                                         .maxX = minX + extent,
+                                         .maxY = minX + extent},
+                             capacityCells, capacityCells);
+        const GridMetrics router = routerGrid(capacity, 10.0);
+        ASSERT_EQ(router.width, capacityCells * steps)
+            << capacityCells << " capacity cells of " << steps << " steps from "
+            << minX;
+        ASSERT_EQ(router.height, capacityCells * steps);
+      }
+    }
+  }
+}
+
+TEST(GridMetrics, RefusesMoreCellsPerAxisThanAnIndexHolds) {
+  constexpr uint32_t largest = 4294967295U;
+  const GridMetrics capacity = GridMetrics::fit(
+      BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 30000.0, .maxY = 30000.0},
+      50, 50);
+  // 6e8 router cells per capacity cell, 3e10 along each axis.
+  EXPECT_THROW(static_cast<void>(routerGrid(capacity, 1e-6)),
+               std::length_error);
+  // 600 router cells per capacity cell, 30000 along each axis.
+  EXPECT_EQ(routerGrid(capacity, 1.0).width, 30000U);
+
+  // Two cells refined by 2^31 - 1 give 2^32 - 2 cells, by 2^31 give 2^32.
+  const GridMetrics pair = GridMetrics::fit(BOX, 2, 2);
+  EXPECT_EQ(pair.refined(2147483647U).width, largest - 1);
+  EXPECT_THROW(static_cast<void>(pair.refined(2147483648U)), std::length_error);
+  EXPECT_THROW(static_cast<void>(capacity.refined(100000000U)),
+               std::length_error);
+
+  // A box 1e10 times higher than wide.
+  const BoundingBox tower{.minX = 0.0, .minY = 0.0, .maxX = 1.0, .maxY = 1e10};
+  EXPECT_THROW(static_cast<void>(GridMetrics::fitWidth(tower, 10)),
+               std::length_error);
+  const BoundingBox tall{.minX = 0.0, .minY = 0.0, .maxX = 1.0, .maxY = 1e8};
+  EXPECT_EQ(GridMetrics::fitWidth(tall, 10).height, 1000000000U);
+
+  // A rule of 2^32 cells of one unit, and one of 2^32 - 1.
+  const GridMetrics unit = GridMetrics::fit(
+      BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 1.0, .maxY = 1.0}, 2, 2);
+  ASSERT_EQ(unit.cellWidth, 1.0);
+  EXPECT_EQ(cellsFor(4294967295.0, unit), largest);
+  EXPECT_THROW(static_cast<void>(cellsFor(4294967296.0, unit)),
+               std::length_error);
 }
 
 TEST(GridMetrics, RefusesAGridWithoutACellStep) {

@@ -15,7 +15,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <queue>
 #include <random>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -26,6 +29,15 @@ struct Entry {
   uint32_t f = 0;
   uint32_t payload = 0;
 };
+
+/// The next number of a fixed sequence, so that the test is the same on
+/// every platform.
+uint64_t splitmix(uint64_t& state) {
+  uint64_t z = (state += 0x9E3779B97F4A7C15ULL);
+  z = (z ^ (z >> 30U)) * 0xBF58476D1CE4E5B9ULL;
+  z = (z ^ (z >> 27U)) * 0x94D049BB133111EBULL;
+  return z ^ (z >> 31U);
+}
 
 TEST(BucketQueue, PopsInAscendingOrder) {
   BucketQueue<Entry> queue;
@@ -199,6 +211,93 @@ TEST(BucketQueue, TheMemoryIsTheLargestSearchNotTheSumOfAllSearches) {
   EXPECT_EQ(queue.heldEntries(), largest);
   // Every non-empty bucket holds at most one partly filled chunk.
   EXPECT_LE(largest, entries + (std::size_t{2048} * Queue::CHUNK_ENTRIES));
+}
+
+TEST(BucketQueue, PrioritiesBeyondTheCoarseLevelPopInOrder) {
+  // The coarse level reaches 1024 blocks of 1024 priorities past the current
+  // block. An entry beyond that waits in the overflow store.
+  BucketQueue<Entry> queue;
+  queue.push({.f = 0, .payload = 0}, 0);
+  queue.push({.f = 1'100'000, .payload = 2}, 1'100'000);
+  queue.push({.f = 60'000, .payload = 1}, 60'000);
+  EXPECT_EQ(queue.size(), 3U);
+  EXPECT_EQ(queue.pop().payload, 0U);
+  EXPECT_EQ(queue.pop().payload, 1U);
+  EXPECT_EQ(queue.size(), 1U);
+  // A jump of three million from the scan position at 60 000.
+  queue.push({.f = 3'060'000, .payload = 4}, 3'060'000);
+  queue.push({.f = 1'200'000, .payload = 3}, 1'200'000);
+  EXPECT_EQ(queue.size(), 3U);
+  EXPECT_EQ(queue.pop().payload, 2U);
+  EXPECT_EQ(queue.pop().payload, 3U);
+  EXPECT_EQ(queue.pop().payload, 4U);
+  EXPECT_TRUE(queue.empty());
+  EXPECT_EQ(queue.size(), 0U);
+  EXPECT_EQ(queue.pop().payload, 0U);
+}
+
+TEST(BucketQueue, AWaitingEntryKeepsItsPlaceAmongEqualPriorities) {
+  // Among equal priorities the pop takes the entry pushed last, whether the
+  // entries waited in the overflow store or not.
+  BucketQueue<Entry> queue;
+  constexpr uint32_t far = 5'000'000;
+  queue.push({.f = far, .payload = 1}, far);
+  queue.push({.f = far, .payload = 2}, far);
+  queue.push({.f = far - 2'000'000, .payload = 0}, far - 2'000'000);
+  EXPECT_EQ(queue.pop().payload, 0U);
+  // The scan position now reaches the far block directly.
+  queue.push({.f = far, .payload = 3}, far);
+  EXPECT_EQ(queue.pop().payload, 3U);
+  EXPECT_EQ(queue.pop().payload, 2U);
+  EXPECT_EQ(queue.pop().payload, 1U);
+  EXPECT_TRUE(queue.empty());
+}
+
+TEST(BucketQueue, LargeJumpsPopAsAReferenceQueueDoes) {
+  // Pushes and pops interleave. Most priorities lie close above the last
+  // pop, as in a search; some jump up to five million. The pops must come
+  // out in the order of a reference priority queue, and the size must agree
+  // after every step.
+  using Item = std::pair<uint32_t, uint32_t>;
+  BucketQueue<Entry> queue;
+  std::priority_queue<Item, std::vector<Item>, std::greater<>> reference;
+  uint64_t state = 7;
+  uint32_t floor = 0;
+  uint32_t payload = 0;
+  std::vector<uint32_t> poppedPayloads;
+  std::vector<uint32_t> pushedPayloads;
+  for (int step = 0; step < 200'000; ++step) {
+    const uint64_t roll = splitmix(state) % 100;
+    if (roll < 55 || reference.empty()) {
+      uint32_t f = floor + static_cast<uint32_t>(splitmix(state) % 5000);
+      if (roll < 3) {
+        f = floor + static_cast<uint32_t>(splitmix(state) % 5'000'000);
+      }
+      queue.push({.f = f, .payload = payload}, f);
+      reference.emplace(f, payload);
+      pushedPayloads.push_back(payload);
+      ++payload;
+    } else {
+      const Entry entry = queue.pop();
+      ASSERT_EQ(entry.f, reference.top().first) << step;
+      reference.pop();
+      floor = entry.f;
+      poppedPayloads.push_back(entry.payload);
+    }
+    ASSERT_EQ(queue.size(), reference.size()) << step;
+  }
+  while (!reference.empty()) {
+    const Entry entry = queue.pop();
+    ASSERT_EQ(entry.f, reference.top().first);
+    reference.pop();
+    poppedPayloads.push_back(entry.payload);
+  }
+  EXPECT_TRUE(queue.empty());
+  // Every entry came out once, and the scan position went past four turns
+  // of the coarse level on the way.
+  std::ranges::sort(poppedPayloads);
+  EXPECT_EQ(poppedPayloads, pushedPayloads);
+  EXPECT_GT(floor, 4U * 1024U * 1024U);
 }
 
 } // namespace

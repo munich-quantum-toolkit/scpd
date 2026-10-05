@@ -21,18 +21,20 @@ namespace mqt::scpd::routing {
 /**
  * @brief A point of a routed path on the router grid.
  *
- * A point holds the search state that produced it and the primitive that led
- * to the next point. The primitive makes it possible to rebuild the bends of
- * the path exactly.
+ * A point holds a cell and a tag: a heading and the identifier of a primitive
+ * of that heading. The tag names the move the point belongs to, so that the
+ * bends of the path can be rebuilt exactly. Path describes the format.
  */
 struct PathPoint {
   /// The x coordinate of the cell.
   uint32_t x = 0;
   /// The y coordinate of the cell.
   uint32_t y = 0;
-  /// The heading of the wire in the cell.
+  /// The heading the move of the point starts on. In a straight run, it is
+  /// the heading of the wire in the cell.
   Heading heading = 0;
-  /// The identifier of the primitive that led to the next point.
+  /// The identifier of the primitive of the move the point belongs to, among
+  /// the primitives of @c heading.
   uint16_t primitive = 0;
 
   /**
@@ -60,6 +62,22 @@ struct PathPoint {
 
 /**
  * @brief A routed path, from its source to its target.
+ *
+ * The router and the coupler dogleg write paths in one format:
+ * - A straight run is a sequence of points one step apart. Each point carries
+ *   the straight primitive of its heading.
+ * - A turn lists the cells it sweeps under its own tag: the heading it starts
+ *   on and its primitive. The first of these points is the start of the arc.
+ *   A point where a move starts carries that move, so the straight run before
+ *   a turn ends one step before the start of the arc.
+ * - One exception: where the search of a routed path begins with a turn, the
+ *   start of the arc is the last cell of the source stub, which keeps the tag
+ *   of the stub. The first point of that turn is the next cell the arc sweeps.
+ * - The arc ends at its start plus the end offset of the primitive,
+ *   (Primitive::dx, Primitive::dy). In a routed path, the point after a turn
+ *   is that end. A dogleg can instead go on with a straight step from the
+ *   end, so the end need not be a point of the path. The last cell a turn
+ *   sweeps is not always the end: an eighth turn can sweep a cell beyond it.
  */
 using Path = std::vector<PathPoint>;
 

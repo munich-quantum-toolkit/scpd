@@ -71,6 +71,10 @@ inline constexpr PartitionLabel FIRST_PARTITION_LABEL = 2;
  * in @p labels is below @p nextLabel.
  * @return The label after the last one this call assigned. It equals
  * @p nextLabel when the call accepts no seed.
+ * @throws std::length_error If a seed to accept would take the largest value
+ * of PartitionLabel. The label after it, which the function returns, would
+ * not fit into PartitionLabel. The function checks every seed before it
+ * changes @p labels, so @p labels stays unchanged.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT PartitionLabel
 runWatershed(const BitGrid& blocked, std::span<const std::size_t> seeds,
