@@ -20,10 +20,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -142,6 +145,42 @@ std::size_t widestMove(const MovePrimitives& primitives) {
     }
   }
   return widest;
+}
+
+/// The rendering of a path from its first point.
+std::vector<Point> rendering(const MovePrimitives& primitives, Path path) {
+  std::vector<PathSegment> segments;
+  const PathPoint start = path.front();
+  return samplePath(primitives, path, start, segments);
+}
+
+/// The angles, in degrees, by which a rendering misses a right angle where it
+/// crosses the vertical line at @p column. Each piece of the polyline that
+/// passes from one side of the line to the other gives one angle.
+std::vector<double> crossingSkews(const std::vector<Point>& points,
+                                  const double column) {
+  std::vector<double> skews;
+  for (std::size_t i = 1; i < points.size(); ++i) {
+    const Point& a = points[i - 1];
+    const Point& b = points[i];
+    if ((a.x() < column) == (b.x() < column)) {
+      continue;
+    }
+    skews.push_back(
+        std::atan2(std::abs(b.y() - a.y()), std::abs(b.x() - a.x())) * 180.0 /
+        std::numbers::pi);
+  }
+  return skews;
+}
+
+/// Whether the search enters a point of a path on a turn. The points of a
+/// turn carry its tag, and the point after a turn is the end of its arc.
+bool onTurn(const MovePrimitives& primitives, const Path& path,
+            const std::size_t i) {
+  const auto turns = [&](const PathPoint& point) {
+    return !primitives.isStraight(point.heading, point.primitive);
+  };
+  return turns(path[i]) || (i > 0 && turns(path[i - 1]));
 }
 
 const RoutingObjective ACROSS{
@@ -460,12 +499,107 @@ TEST(DubinsRouter, TheOrthogonalSearchCrossesAWireAtARightAngle) {
     EXPECT_TRUE(point.heading == 2 || point.heading == 6) << point.heading;
   }
   EXPECT_GT(onColumn, 0U);
-  // Every step onto a constrained cell is one the search's own test admits.
+  // Every point passes the search's own test: the test of a turn where a
+  // turn touches it, and else the test of the straight step into it.
   for (std::size_t i = 1; i < path.size(); ++i) {
-    EXPECT_TRUE(f.router.crossingAllowedOrthogonal(path[i].x, path[i].y,
-                                                   path[i - 1].heading))
-        << i << " at " << path[i].x << "," << path[i].y;
+    if (onTurn(*f.primitives, path, i)) {
+      EXPECT_TRUE(f.router.turnAllowedOrthogonal(path[i].x, path[i].y))
+          << i << " at " << path[i].x << "," << path[i].y;
+    } else {
+      EXPECT_TRUE(f.router.crossingAllowedOrthogonal(path[i].x, path[i].y,
+                                                     path[i - 1].heading))
+          << i << " at " << path[i].x << "," << path[i].y;
+    }
   }
+  // The rendered wire crosses the column at a right angle.
+  const std::vector<double> skews =
+      crossingSkews(rendering(*f.primitives, path), 150.0);
+  EXPECT_FALSE(skews.empty());
+  for (const double skew : skews) {
+    EXPECT_LT(skew, 1e-6);
+  }
+}
+
+TEST(DubinsRouter, AnOrthogonalRouteDoesNotTurnAcrossAWire) {
+  Fixture f;
+  f.router.setParams({.startStraightLength = 0,
+                      .endStraightLength = 0,
+                      .minRadius = 5,
+                      .bendPenalty = 500});
+  // A wire runs south down column 53, and its zone reaches one cell to
+  // either side.
+  f.router.buildOrthogonalConstraints({southRun(*f.primitives, 53)}, {false},
+                                      1);
+  const RoutingObjective quarter{
+      .source = {.x = 50, .y = 50, .heading = 6, .primitive = 0},
+      .target = {.x = 55, .y = 45, .heading = 0, .primitive = 0}};
+  // The free way is one quarter turn. Every cell it sweeps is entered on
+  // heading 6, but the arc crosses the column far off a right angle.
+  const Path free = f.router.route(quarter);
+  ASSERT_FALSE(free.empty());
+  const std::vector<double> freeSkews =
+      crossingSkews(rendering(*f.primitives, free), 53.0);
+  ASSERT_EQ(freeSkews.size(), 1U);
+  EXPECT_GT(freeSkews.front(), 30.0);
+  // The wire has to cross the zone straight along row 50. It then reaches
+  // the target on heading 0 only from the east, across its own first run,
+  // so no orthogonal way exists.
+  EXPECT_TRUE(f.router.routeOrthogonal(quarter).empty());
+
+  // Further north, the wire crosses straight, turns beyond the zone and
+  // comes back to the column of the target.
+  const RoutingObjective further{
+      .source = quarter.source,
+      .target = {.x = 55, .y = 30, .heading = 0, .primitive = 0}};
+  const std::vector<double> furtherFreeSkews =
+      crossingSkews(rendering(*f.primitives, f.router.route(further)), 53.0);
+  ASSERT_EQ(furtherFreeSkews.size(), 1U);
+  EXPECT_GT(furtherFreeSkews.front(), 30.0);
+  const Path path = f.router.routeOrthogonal(further);
+  ASSERT_FALSE(path.empty());
+  EXPECT_TRUE(path.back().samePlace(further.target));
+  const std::vector<double> skews =
+      crossingSkews(rendering(*f.primitives, path), 53.0);
+  EXPECT_FALSE(skews.empty());
+  for (const double skew : skews) {
+    EXPECT_LT(skew, 1e-6);
+  }
+}
+
+TEST(DubinsRouter, AnOrthogonalRouteDoesNotTurnFromAConstrainedStart) {
+  Fixture f;
+  f.router.setParams({.startStraightLength = 0,
+                      .endStraightLength = 0,
+                      .minRadius = 5,
+                      .bendPenalty = 500});
+  f.router.buildOrthogonalConstraints({southRun(*f.primitives, 53)}, {false},
+                                      1);
+  // The search starts on the last cell of the zone, and the free way turns
+  // there at once. Every other cell of that turn lies outside the zone.
+  const RoutingObjective fromTheZone{
+      .source = {.x = 54, .y = 100, .heading = 6, .primitive = 0},
+      .target = {.x = 59, .y = 60, .heading = 0, .primitive = 0}};
+  // Whether a piece of the rendering leaves row 100 from a point in the
+  // zone, whose last column ends at x = 54.5.
+  const auto curvesInTheZone = [&](const Path& path) {
+    const std::vector<Point> points = rendering(*f.primitives, path);
+    for (std::size_t i = 1; i < points.size(); ++i) {
+      if (points[i - 1].x() < 54.5 && points[i].y() != 100.0) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const Path free = f.router.route(fromTheZone);
+  ASSERT_FALSE(free.empty());
+  EXPECT_TRUE(curvesInTheZone(free));
+
+  // The arc would start in the zone, so the wire runs straight out of it
+  // first.
+  const Path path = f.router.routeOrthogonal(fromTheZone);
+  ASSERT_FALSE(path.empty());
+  EXPECT_TRUE(path.back().samePlace(fromTheZone.target));
+  EXPECT_FALSE(curvesInTheZone(path));
 }
 
 TEST(DubinsRouter, ASingleCrossingWireCannotComeBack) {
@@ -984,20 +1118,21 @@ TEST(DubinsRouter, AWireLeavesTheFeedlineAtARightAngle) {
   ASSERT_FALSE(free.empty());
   EXPECT_EQ(countBends(free), 0U);
 
-  // Within ten cells beyond the feedline, every move starts on the heading
-  // that leaves the feedline at a right angle.
+  // Within ten cells beyond the feedline, the wire runs straight on the
+  // heading that leaves the feedline at a right angle, so its rendering
+  // stays on one row there.
   f.router.setSingleCrossingFeedline(&feedline, 10, 1);
   const Path path = f.router.routeOrthogonal(diagonal);
   ASSERT_FALSE(path.empty());
   EXPECT_GT(countBends(path), 0U);
-  std::size_t beyond = 0;
-  for (std::size_t i = 1; i < path.size(); ++i) {
-    if (path[i].x > 150 && path[i].x <= 160) {
-      ++beyond;
-      EXPECT_EQ(path[i - 1].heading, 6) << i;
+  std::optional<double> row;
+  for (const Point& point : rendering(*f.primitives, path)) {
+    if (point.x() > 150.0 && point.x() <= 160.0) {
+      row = row.value_or(point.y());
+      EXPECT_EQ(point.y(), *row) << point.x();
     }
   }
-  EXPECT_GT(beyond, 0U);
+  EXPECT_TRUE(row.has_value());
 }
 
 TEST(DubinsRouter, TheStraightZonesOfAFeedlineCornerBlockWhereTheyMeet) {
@@ -1048,9 +1183,11 @@ TEST(DubinsRouter, TheStraightZonesOfAFeedlineCornerBlockWhereTheyMeet) {
       ADD_FAILURE() << "entered both zones at " << cell.x << "," << cell.y;
     } else if (besideSouthRun && cell.y < cornerY) {
       ++constrained;
+      EXPECT_FALSE(onTurn(*f.primitives, path, i)) << i;
       EXPECT_EQ(path[i - 1].heading, 6) << i;
     } else if (besideEastRun && cell.x > 160) {
       ++constrained;
+      EXPECT_FALSE(onTurn(*f.primitives, path, i)) << i;
       EXPECT_EQ(path[i - 1].heading, 0) << i;
     }
   }

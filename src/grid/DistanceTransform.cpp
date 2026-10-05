@@ -33,7 +33,8 @@ std::vector<uint32_t> squaredDistanceTransform(const BitGrid& blocked) {
   }
 
   // Along each row: the distance to the nearest blocked cell of the row,
-  // then squared.
+  // then squared. The square saturates at DISTANCE_UNBOUNDED, because a row
+  // distance of 65536 or more overflows its square in 32 bits.
   for (uint32_t y = 0; y < height; ++y) {
     const std::size_t row = static_cast<std::size_t>(y) * width;
     for (uint32_t x = 1; x < width; ++x) {
@@ -49,9 +50,9 @@ std::vector<uint32_t> squaredDistanceTransform(const BitGrid& blocked) {
       }
     }
     for (uint32_t x = 0; x < width; ++x) {
-      const uint32_t value = distance[row + x];
-      distance[row + x] =
-          (value >= DISTANCE_UNBOUNDED) ? DISTANCE_UNBOUNDED : value * value;
+      const uint64_t value = distance[row + x];
+      distance[row + x] = static_cast<uint32_t>(
+          std::min<uint64_t>(value * value, DISTANCE_UNBOUNDED));
     }
   }
 
@@ -61,7 +62,8 @@ std::vector<uint32_t> squaredDistanceTransform(const BitGrid& blocked) {
   // (Felzenszwalb and Huttenlocher). The envelope lists the rows whose
   // parabolas take part in it, bottom to top, and the first row at which each
   // one is the lowest. These first rows are whole numbers, so the arithmetic
-  // is exact in int64 for every height below 2^31.
+  // is exact in int64 for every height below 2^31. The minimum of a row is at
+  // most its own squared row distance, which fits in 32 bits.
   const auto rows = static_cast<int64_t>(height);
   std::vector<int64_t> column(height);
   std::vector<int64_t> apex(height);

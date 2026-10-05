@@ -523,9 +523,28 @@ bool DubinsRouter::canCrossOrthogonal(const uint32_t x, const uint32_t y,
   return constraints.allowed(x, y, heading);
 }
 
+bool DubinsRouter::canTurnOrthogonal(const uint32_t x, const uint32_t y) const {
+  if (x >= gridWidth || y >= gridHeight) {
+    return false;
+  }
+  const std::size_t index = (static_cast<std::size_t>(y) * gridWidth) + x;
+  if (!exemptCells.empty() && exempt[index] != 0U) {
+    return true;
+  }
+  if (crossingSideActive && crossingSide[index] != 0U) {
+    return false;
+  }
+  return constraints.turnAllowed(x, y);
+}
+
 bool DubinsRouter::crossingAllowedOrthogonal(const uint32_t x, const uint32_t y,
                                              const Heading heading) const {
   return canCrossOrthogonal(x, y, heading);
+}
+
+bool DubinsRouter::turnAllowedOrthogonal(const uint32_t x,
+                                         const uint32_t y) const {
+  return canTurnOrthogonal(x, y);
 }
 
 uint8_t DubinsRouter::constraintMaskAt(const uint32_t x,
@@ -1249,8 +1268,8 @@ Path DubinsRouter::searchOrthogonal(const RoutingObjective& objective,
   buildTables();
   open.clear();
   // The start meets the corridor test that every cell a move enters meets.
-  // The crossing rules judge the heading a cell is entered on, and the search
-  // does not enter its start.
+  // The search does not enter its start, so no straight step tests it; a
+  // turn from it does.
   if (corridorMask->testCell(objective.source.x, objective.source.y)) {
     return {};
   }
@@ -1298,17 +1317,24 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
       (static_cast<std::size_t>(cy) * gridWidth) + cx;
   const grid::BitGrid& corridor = *corridorMask;
 
-  const auto cellOk = [&](const uint32_t x, const uint32_t y) {
+  // The heading of an arc changes along it, so a turn may touch only cells
+  // that no crossing rule constrains, from its start to its end. That test
+  // is stricter than the one of a straight step, so a cell that passes it
+  // needs no other crossing test.
+  const auto cellOk = [&](const uint32_t x, const uint32_t y, const bool turn) {
     if (corridor.testCell(x, y)) {
       return false;
     }
-    return canCrossOrthogonal(x, y, static_cast<Heading>(heading));
+    return turn ? canTurnOrthogonal(x, y)
+                : canCrossOrthogonal(x, y, static_cast<Heading>(heading));
   };
+  const bool turnMayStart = canTurnOrthogonal(cx, cy);
   const bool fastBounds =
       (cx >= marginLeft[heading]) && (cx + marginRight[heading] < gridWidth) &&
       (cy >= marginUp[heading]) && (cy + marginDown[heading] < gridHeight);
 
   uint16_t alive = 0;
+  uint16_t turns = 0;
   std::array<uint32_t, MAX_PRIMITIVES_PER_HEADING> endIndex{};
   std::array<uint16_t, MAX_PRIMITIVES_PER_HEADING> endX{};
   std::array<uint16_t, MAX_PRIMITIVES_PER_HEADING> endY{};
@@ -1322,7 +1348,11 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
     if (onlyStraight && (p.exit & 1U) != 0U) {
       continue;
     }
-    if (!cellOk(nx, ny)) {
+    const bool turn = p.exit != heading;
+    if (turn && !turnMayStart) {
+      continue;
+    }
+    if (!cellOk(nx, ny, turn)) {
       continue;
     }
     const uint32_t index = stateIndex(nx, ny, static_cast<Heading>(p.exit));
@@ -1336,6 +1366,9 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
     endX[i] = static_cast<uint16_t>(nx);
     endY[i] = static_cast<uint16_t>(ny);
     alive |= static_cast<uint16_t>(1U << i);
+    if (turn) {
+      turns |= static_cast<uint16_t>(1U << i);
+    }
   }
   if (alive == 0) {
     return;
@@ -1363,9 +1396,15 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
       i += tn.skip;
       continue;
     }
-    if (!cellOk(nx, ny)) {
-      i += tn.skip;
-      continue;
+    // A cell closed to the turns that sweep it can still be open to the
+    // straight step that shares it.
+    const auto turning = static_cast<uint16_t>(alive & tn.primitives & turns);
+    if (turning == 0 || !cellOk(nx, ny, true)) {
+      alive &= static_cast<uint16_t>(~turning);
+      if ((alive & tn.primitives) == 0 || !cellOk(nx, ny, false)) {
+        i += tn.skip;
+        continue;
+      }
     }
     const std::size_t cell = (static_cast<std::size_t>(ny) * gridWidth) + nx;
     if constexpr (USE_PENALTY) {

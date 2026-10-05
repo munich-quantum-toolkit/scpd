@@ -105,6 +105,26 @@ TEST(DistanceTransform, IsExactAlongRowsAndDiagonals) {
   EXPECT_EQ(distance[(1 * 9) + 6], 13U);
 }
 
+TEST(DistanceTransform, AFarCellHoldsTheUnboundedValue) {
+  // A row distance of 65536 squares to 2^32, which wraps to zero in 32 bits.
+  // Every cell holds its squared distance up to the bound and the bound
+  // beyond it, along a row and down a column alike.
+  constexpr uint32_t length = 65537;
+  BitGrid row(length, 1);
+  row.setCell(0, 0);
+  BitGrid column(1, length);
+  column.setCell(0, 0);
+  const std::vector<uint32_t> alongRow = squaredDistanceTransform(row);
+  const std::vector<uint32_t> downColumn = squaredDistanceTransform(column);
+  ASSERT_EQ(alongRow.size(), length);
+  ASSERT_EQ(downColumn.size(), length);
+  for (uint32_t i = 0; i < length; ++i) {
+    const uint32_t expected = (i < 1000) ? i * i : DISTANCE_UNBOUNDED;
+    ASSERT_EQ(alongRow[i], expected) << i;
+    ASSERT_EQ(downColumn[i], expected) << i;
+  }
+}
+
 TEST(DistanceTransform, AGridWithoutObstaclesIsUnbounded) {
   const BitGrid blocked(5, 4);
   for (const uint32_t value : squaredDistanceTransform(blocked)) {

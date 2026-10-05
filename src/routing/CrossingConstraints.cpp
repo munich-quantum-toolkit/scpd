@@ -137,6 +137,17 @@ bool CrossingConstraints::allowed(const uint32_t x, const uint32_t y,
   return true;
 }
 
+bool CrossingConstraints::turnAllowed(const uint32_t x,
+                                      const uint32_t y) const {
+  if (masks.empty()) {
+    return true;
+  }
+  if (x >= gridWidth || y >= gridHeight) {
+    return false;
+  }
+  return masks[(static_cast<std::size_t>(y) * gridWidth) + x] == 0U;
+}
+
 uint8_t CrossingConstraints::maskAt(const uint32_t x, const uint32_t y) const {
   if (masks.empty() || x >= gridWidth || y >= gridHeight) {
     return 0;

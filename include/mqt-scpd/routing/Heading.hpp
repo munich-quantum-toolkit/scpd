@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 
 namespace mqt::scpd::routing {
@@ -143,19 +144,17 @@ struct HeadingVector {
  *
  * @param degrees The orientation of the port. A value outside [0, 360) is
  * folded into that range first.
- * @pre @p degrees is finite. The fold removes one full turn per step, so its
- * time grows with the magnitude of @p degrees.
  * @return The heading when the orientation is an exact multiple of 45
- * degrees, and @c NUM_HEADINGS for any other orientation.
+ * degrees, and @c NUM_HEADINGS for any other orientation, an infinite one and
+ * NaN.
  */
-[[nodiscard]] constexpr Heading headingOfOrientation(const double degrees) {
-  // Fold into [0, 360) exactly for the multiples of 45 the inputs carry.
-  double folded = degrees;
-  while (folded < 0.0) {
+[[nodiscard]] inline Heading headingOfOrientation(const double degrees) {
+  // The remainder is exact, so a multiple of 45 folds onto a multiple of 45 at
+  // any magnitude. Adding a full turn to a negative remainder is exact for a
+  // multiple of 45; any other remainder has no heading, rounded or not.
+  double folded = std::fmod(degrees, 360.0);
+  if (folded < 0.0) {
     folded += 360.0;
-  }
-  while (folded >= 360.0) {
-    folded -= 360.0;
   }
   if (folded == 0.0) {
     return 2;

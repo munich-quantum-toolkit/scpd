@@ -24,11 +24,14 @@ namespace mqt::scpd::routing {
  * @brief Records where a route may cross the feedlines, and on which heading.
  *
  * The constraints hold one byte per cell. A cell within @c expandRadius of a
- * straight run of a feedline remembers the heading of the run, so a route may
- * enter the cell at a right angle to that heading only. A cell within one
- * cell of a bend, or of the first and last ten cells of a feedline, may not
- * be entered at all. The class is separate from the router, so that a check
- * of a routed path asks exactly the question the search asked, and the two
+ * straight run of a feedline remembers the heading of the run, so a straight
+ * step may enter the cell at a right angle to that heading only. A cell
+ * within one cell of a bend, or of the first and last ten cells of a
+ * feedline, may not be entered at all. A turn may not touch any constrained
+ * cell, because the heading of an arc changes along it: only straight steps
+ * cross a feedline, so the crossing is at a right angle in the rendered
+ * geometry too. The class is separate from the router, so that a check of a
+ * routed path asks exactly the question the search asked, and the two
  * answers cannot differ.
  *
  * A straight run is read from the cells, not from the moves. A cell that
@@ -74,16 +77,26 @@ public:
   [[nodiscard]] bool empty() const { return masks.empty(); }
 
   /**
-   * @brief Tests whether a route may enter a cell under a heading.
+   * @brief Tests whether a straight step may enter a cell under a heading.
    * @param x The column of the cell.
    * @param y The row of the cell.
-   * @param heading The heading of the route.
+   * @param heading The heading of the step.
    * @return @c true when the constraints are empty, when the cell is free, or
    * when @p heading is at a right angle to the heading of every straight run
    * present in the cell. @c false for a cell outside the grid of non-empty
    * constraints.
    */
   [[nodiscard]] bool allowed(uint32_t x, uint32_t y, Heading heading) const;
+
+  /**
+   * @brief Tests whether a turn may touch a cell.
+   * @param x The column of the cell.
+   * @param y The row of the cell.
+   * @return @c true when the constraints are empty or when the cell is free.
+   * @c false for a constrained cell and for a cell outside the grid of
+   * non-empty constraints.
+   */
+  [[nodiscard]] bool turnAllowed(uint32_t x, uint32_t y) const;
 
   /**
    * @brief Returns the mask of a cell.

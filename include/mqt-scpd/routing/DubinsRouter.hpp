@@ -376,9 +376,10 @@ public:
    * wires.
    *
    * The cells within @p expandRadius of a straight run remember the heading
-   * of the run, so a route may cross them at a right angle only. The cells
-   * within one cell of a curve, or of the first and last ten cells of a wire,
-   * may not be crossed at all. CrossingConstraints describes the rules.
+   * of the run, so a straight step may cross them at a right angle only. The
+   * cells within one cell of a curve, or of the first and last ten cells of a
+   * wire, may not be crossed at all. A turn may not touch any of these cells.
+   * CrossingConstraints describes the rules.
    *
    * @param wires The routed wires.
    * @param skip One flag per wire. The function leaves out a wire whose flag
@@ -403,13 +404,14 @@ public:
    * The far side of a segment of the feedline is the side of its line that
    * holds the target of the route. A segment gets no rule when the source
    * lies on that side too, or when the target lies on the line. On the far
-   * side, within @p straightRadius of a straight run, a route may enter a
-   * cell only while it leaves the feedline at a right angle. Within
-   * @p curveRadius of a curve or of the first ten cells of the feedline, a
-   * route may not enter a cell on the far side at all. A wire that has
-   * crossed can therefore only leave. A cell in the zones of two straight
-   * runs with different exit headings may not be entered. A cell in both a
-   * straight zone and a curve zone keeps the rule of the straight zone.
+   * side, within @p straightRadius of a straight run, a straight step may
+   * enter a cell only while it leaves the feedline at a right angle, and a
+   * turn may not touch the cell at all. Within @p curveRadius of a curve or
+   * of the first ten cells of the feedline, a route may not enter a cell on
+   * the far side at all. A wire that has crossed can therefore only leave. A
+   * cell in the zones of two straight runs with different exit headings may
+   * not be entered. A cell in both a straight zone and a curve zone keeps the
+   * rule of the straight zone.
    *
    * The setting holds for every orthogonal route until the next call. The
    * rule applies only when @p straightRadius is positive and @p feedline has
@@ -428,10 +430,10 @@ public:
   /**
    * @brief Exempts cells from the crossing rules of the orthogonal routes.
    *
-   * An exempt cell passes the crossing test on every heading: neither the
-   * crossing constraints nor the single-crossing rule bind it. The exemption
-   * suits the room around a coupler, where wires pin and run beside the
-   * coupler on purpose.
+   * An exempt cell passes the crossing tests of straight steps and turns:
+   * neither the crossing constraints nor the single-crossing rule bind it.
+   * The exemption suits the room around a coupler, where wires pin and run
+   * beside the coupler on purpose.
    *
    * @param cells The row-major indices of the cells to exempt. The function
    * ignores an index outside the grid. An empty list removes the exemption.
@@ -440,23 +442,40 @@ public:
   void setCrossingExemption(const std::vector<uint32_t>& cells);
 
   /**
-   * @brief Tests whether a route may enter a cell under a heading.
+   * @brief Tests whether a straight step may enter a cell under a heading.
    *
-   * This is the test that the orthogonal search runs on every cell a move
-   * sweeps, with the heading the move starts on. A check of a routed path
-   * therefore asks what the search asked. The single-crossing rule
-   * exists only while routeOrthogonal() runs, so outside a search the test
-   * reads the exemption and the crossing constraints only. The test does not
-   * read the corridor.
+   * This is the test that the orthogonal search runs on the cell a straight
+   * step enters, with the heading of the step. turnAllowedOrthogonal() is
+   * the test of a turn. A check of a routed path therefore asks what the
+   * search asked. The single-crossing rule exists only while
+   * routeOrthogonal() runs, so outside a search the test reads the exemption
+   * and the crossing constraints only. The test does not read the corridor.
    *
    * @param x The column of the cell.
    * @param y The row of the cell.
-   * @param heading The heading of the route.
-   * @return @c true when the route may enter the cell, and @c false for a
+   * @param heading The heading of the step.
+   * @return @c true when the step may enter the cell, and @c false for a
    * cell outside the router grid.
    */
   [[nodiscard]] bool crossingAllowedOrthogonal(uint32_t x, uint32_t y,
                                                Heading heading) const;
+
+  /**
+   * @brief Tests whether a turn may touch a cell.
+   *
+   * This is the test that the orthogonal search runs on every cell of a
+   * turn: the cell the turn starts on, every cell it sweeps, and its end. The
+   * heading of an arc changes along it, so a turn passes only a cell that no
+   * crossing rule constrains, or an exempt cell. Outside a search, the test
+   * reads the exemption and the crossing constraints only, as
+   * crossingAllowedOrthogonal() does. The test does not read the corridor.
+   *
+   * @param x The column of the cell.
+   * @param y The row of the cell.
+   * @return @c true when a turn may touch the cell, and @c false for a cell
+   * outside the router grid.
+   */
+  [[nodiscard]] bool turnAllowedOrthogonal(uint32_t x, uint32_t y) const;
 
   /**
    * @brief Returns the constraint mask of a cell.
@@ -517,10 +536,15 @@ public:
    * right angles only.
    *
    * The search obeys the crossing constraints, the exemption and the single
-   * crossing feedline. It steers by the octile distance plus the bend lower
-   * bound, whatever heuristic() and setBendLowerBound() select. The crossing
-   * rules judge the heading on which a move enters a cell, so they do not
-   * apply to the cell the search starts from; the corridor does.
+   * crossing feedline. A straight step may enter a constrained cell only on
+   * a heading that crossingAllowedOrthogonal() admits. A turn may not touch
+   * a constrained cell at all, from the cell it starts on to its end (see
+   * turnAllowedOrthogonal()). A wire therefore crosses a feedline on straight
+   * steps only, at a right angle in the rendered geometry. The search steers
+   * by the octile distance plus the bend lower bound, whatever heuristic()
+   * and setBendLowerBound() select. The search does not enter the cell it
+   * starts from, so a straight step does not test that cell; a turn from it
+   * does, and so does the corridor.
    *
    * @param objective The source and the target of the wire.
    * @param usePenalty Whether the search adds the static and wire proximity
@@ -784,14 +808,27 @@ private:
   }
 
   /**
-   * @brief Runs the crossing test of the orthogonal search.
+   * @brief Runs the crossing test of the orthogonal search for a straight
+   * step.
    * @param x The column of the cell.
    * @param y The row of the cell.
-   * @param heading The heading of the route.
-   * @return @c true when the route may enter the cell.
+   * @param heading The heading of the step.
+   * @return @c true when the step may enter the cell.
    */
   [[nodiscard]] bool canCrossOrthogonal(uint32_t x, uint32_t y,
                                         Heading heading) const;
+
+  /**
+   * @brief Runs the crossing test of the orthogonal search for a turn.
+   *
+   * A cell that passes this test also passes canCrossOrthogonal() on every
+   * heading.
+   *
+   * @param x The column of the cell.
+   * @param y The row of the cell.
+   * @return @c true when a turn may touch the cell.
+   */
+  [[nodiscard]] bool canTurnOrthogonal(uint32_t x, uint32_t y) const;
 
   /**
    * @brief Runs a search and rejects a path that crosses itself.

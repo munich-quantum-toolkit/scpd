@@ -36,6 +36,7 @@ TEST(CrossingConstraints, WithoutFeedlinesEveryCellIsAllowed) {
   const CrossingConstraints constraints;
   EXPECT_TRUE(constraints.empty());
   EXPECT_TRUE(constraints.allowed(10, 10, 0));
+  EXPECT_TRUE(constraints.turnAllowed(10, 10));
   EXPECT_EQ(constraints.maskAt(10, 10), 0U);
 }
 
@@ -57,6 +58,20 @@ TEST(CrossingConstraints, AStraightRunMayOnlyBeCrossedAtARightAngle) {
   // Beyond the radius nothing is constrained.
   EXPECT_EQ(constraints.maskAt(106, 100), 0U);
   EXPECT_TRUE(constraints.allowed(106, 100, 5));
+}
+
+TEST(CrossingConstraints, ATurnMayNotTouchAConstrainedCell) {
+  CrossingConstraints constraints;
+  constraints.build(WIDTH, HEIGHT, {verticalWire(100, 20, 180)}, {false}, 5);
+  // An arc changes its heading along its length, so no heading makes a turn
+  // safe in the zone of a straight run, a bend or an end.
+  EXPECT_FALSE(constraints.turnAllowed(100, 100));
+  EXPECT_FALSE(constraints.turnAllowed(105, 100));
+  EXPECT_FALSE(constraints.turnAllowed(100, 25));
+  EXPECT_TRUE(constraints.turnAllowed(106, 100));
+  EXPECT_FALSE(constraints.turnAllowed(WIDTH, 10));
+  constraints.clear();
+  EXPECT_TRUE(constraints.turnAllowed(100, 100));
 }
 
 TEST(CrossingConstraints, TheEndsOfAFeedlineCannotBeCrossed) {

@@ -23,7 +23,8 @@ namespace mqt::scpd::grid {
  * cell.
  *
  * The value is 1000 squared. squaredDistanceTransform() is exact for every
- * squared distance below this value.
+ * squared distance below this value and returns this value for every larger
+ * one.
  */
 inline constexpr uint32_t DISTANCE_UNBOUNDED = 1'000'000;
 
@@ -41,9 +42,9 @@ inline constexpr uint32_t DISTANCE_UNBOUNDED = 1'000'000;
  *
  * @param blocked The obstacle mask.
  * @return The squared distance of every cell, row-major. Blocked cells hold
- * zero. A cell whose squared distance is DISTANCE_UNBOUNDED or more holds a
- * value of at least DISTANCE_UNBOUNDED. On a grid without any blocked cell,
- * every cell holds DISTANCE_UNBOUNDED.
+ * zero. A cell whose squared distance is DISTANCE_UNBOUNDED or more holds
+ * DISTANCE_UNBOUNDED. On a grid without any blocked cell, every cell holds
+ * DISTANCE_UNBOUNDED.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<uint32_t>
 squaredDistanceTransform(const BitGrid& blocked);

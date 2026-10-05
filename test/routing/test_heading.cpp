@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <numbers>
 
 namespace {
@@ -75,6 +76,27 @@ TEST(Headings, OrientationsOfTheChipInputMapToHeadings) {
   EXPECT_EQ(headingOfOrientation(675.0), 3);
   // Anything off the eight directions has no heading.
   EXPECT_EQ(headingOfOrientation(30.0), NUM_HEADINGS);
+}
+
+TEST(Headings, OrientationsOfAnyMagnitudeFold) {
+  // A quarter turn plus or minus 2^40 full turns is exact in a double.
+  const double turns = std::ldexp(360.0, 40);
+  EXPECT_EQ(headingOfOrientation(turns + 90.0), 0);
+  EXPECT_EQ(headingOfOrientation(-turns + 90.0), 0);
+  // At 1e20, subtracting 360 leaves the value as it is. 1e20 is no multiple
+  // of 45, and 45 times 2^1000 is a multiple of 360.
+  EXPECT_EQ(headingOfOrientation(1e20), NUM_HEADINGS);
+  EXPECT_EQ(headingOfOrientation(-1e20), NUM_HEADINGS);
+  EXPECT_EQ(headingOfOrientation(std::ldexp(45.0, 1000)), 2);
+  EXPECT_EQ(headingOfOrientation(-std::ldexp(45.0, 1000)), 2);
+  // A tiny negative value folds onto 360 after rounding and has no heading.
+  EXPECT_EQ(headingOfOrientation(-1e-300), NUM_HEADINGS);
+  EXPECT_EQ(headingOfOrientation(-0.0), 2);
+  const double infinity = std::numeric_limits<double>::infinity();
+  EXPECT_EQ(headingOfOrientation(infinity), NUM_HEADINGS);
+  EXPECT_EQ(headingOfOrientation(-infinity), NUM_HEADINGS);
+  EXPECT_EQ(headingOfOrientation(std::numeric_limits<double>::quiet_NaN()),
+            NUM_HEADINGS);
 }
 
 TEST(Headings, EveryEighthTurnOfOrientationPointsAgainstThePort) {
