@@ -101,6 +101,16 @@ Point GridMetrics::toLayout(const double x, const double y) const {
 
 std::optional<DCoord> GridMetrics::roundToCell(const Point point) const {
   const Point cell = toCell(point);
+  // std::llround leaves the result unspecified for a value that is not a
+  // number or does not fit into its result. Every value in (-1, count) fits,
+  // and every value outside rounds off the grid, so the range test comes
+  // first.
+  const auto nearGrid = [](const double value, const uint32_t count) {
+    return value > -1.0 && value < static_cast<double>(count);
+  };
+  if (!nearGrid(cell.x(), width) || !nearGrid(cell.y(), height)) {
+    return std::nullopt;
+  }
   const auto x = std::llround(cell.x());
   const auto y = std::llround(cell.y());
   if (!contains(x, y)) {
@@ -111,8 +121,16 @@ std::optional<DCoord> GridMetrics::roundToCell(const Point point) const {
 
 DCoord GridMetrics::clampToCell(const Point point) const {
   const Point cell = toCell(point);
-  const auto x = std::clamp<int64_t>(std::llround(cell.x()), 0, width - 1);
-  const auto y = std::clamp<int64_t>(std::llround(cell.y()), 0, height - 1);
+  if (std::isnan(cell.x()) || std::isnan(cell.y())) {
+    throw std::invalid_argument(
+        "a point to clamp onto the grid is not a number");
+  }
+  // The clamp comes before the rounding, so std::llround only sees values on
+  // the grid.
+  const auto x =
+      std::llround(std::clamp(cell.x(), 0.0, static_cast<double>(width) - 1.0));
+  const auto y = std::llround(
+      std::clamp(cell.y(), 0.0, static_cast<double>(height) - 1.0));
   return {static_cast<uint32_t>(x), static_cast<uint32_t>(y)};
 }
 

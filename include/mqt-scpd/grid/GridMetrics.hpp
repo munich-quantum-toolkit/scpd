@@ -23,8 +23,6 @@
 namespace mqt::scpd::grid {
 
 using flatbuffers::geometry::DCoord;
-using flatbuffers::geometry::GCoord;
-using flatbuffers::geometry::RCoord;
 using geometry::BoundingBox;
 using geometry::Point;
 
@@ -37,8 +35,10 @@ using geometry::Point;
  * step is therefore the extent of the box divided by the number of steps,
  * which is one less than the number of cells. Every conversion between layout
  * units and cells goes through this type. The same type describes the
- * capacity grid, the detail grid and the router grid. The coordinate structs
- * of the schema say which grid a cell belongs to.
+ * capacity grid, the detail grid and the router grid. The functions that
+ * return a cell return a DCoord on each of these grids, so the type of a cell
+ * does not say which grid the cell belongs to. The caller knows which grid a
+ * GridMetrics describes.
  *
  * This is a node convention: a cell is a point, and the outermost cells sit
  * exactly on the edges of the box. A raster convention would make a cell an
@@ -180,8 +180,8 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
    * @brief Rounds a layout point to the nearest cell.
    * @param point The layout point.
    * @return The nearest cell, or @c std::nullopt when that cell lies off the
-   * grid. A point less than half a cell step outside the box still rounds onto
-   * a cell on the edge of the grid.
+   * grid or a coordinate of @p point is not finite. A point less than half a
+   * cell step outside the box still rounds onto a cell on the edge of the grid.
    */
   [[nodiscard]] std::optional<DCoord> roundToCell(Point point) const;
 
@@ -190,7 +190,9 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
    * the grid.
    * @param point The layout point, which may lie outside the box.
    * @return The nearest cell, with each coordinate clamped onto the grid
-   * separately.
+   * separately. An infinite coordinate clamps onto the first or the last cell
+   * of its axis.
+   * @throws std::invalid_argument If a coordinate of @p point is not a number.
    */
   [[nodiscard]] DCoord clampToCell(Point point) const;
 

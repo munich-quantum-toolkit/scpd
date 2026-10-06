@@ -24,11 +24,14 @@
 #include <utility>
 #include <vector>
 
-// The generation below builds the moves that leave heading 2, the canonical
-// cardinal heading, and the moves that leave heading 1, the canonical
+// The generation below builds the moves that leave heading 0, the canonical
+// cardinal heading, and the moves that leave heading 7, the canonical
 // diagonal heading, and rotates and mirrors them onto the others. Every
 // rounding step is part of the definition of the tables: the swept cells and
-// the costs depend on it.
+// the costs depend on it. Where a value is a whole number in exact
+// arithmetic, as the end of a move is, the generation computes it from whole
+// numbers. A truncated floating-point value could fall one below it, and
+// whether it does depends on the compiler and the math library.
 
 namespace mqt::scpd::routing {
 
@@ -137,12 +140,17 @@ std::array<double, 2> rotate(const std::array<double, 2> p,
   return {(p[0] * c) - (p[1] * s), (p[0] * s) + (p[1] * c)};
 }
 
-void removeConsecutiveDuplicates(IntCells& cells) {
-  for (std::size_t i = 1; i < cells.size(); ++i) {
-    if (cells[i] == cells[i - 1]) {
-      cells.erase(cells.begin() + static_cast<std::ptrdiff_t>(i));
-      --i;
-    }
+/// Ends the samples of a curve exactly at its end. The spacing accumulates in
+/// floating point, so the last sample can fall just short of the end or the
+/// end can drop out. A last sample within half a spacing of the end moves
+/// onto it; otherwise the end is added.
+void endSamplesAt(Samples& samples, const std::array<double, 2> end) {
+  const std::array<double, 2>& last = samples.back();
+  if (std::hypot(last[0] - end[0], last[1] - end[1]) <
+      MovePrimitives::SAMPLE_SPACING / 2.0) {
+    samples.back() = end;
+  } else {
+    samples.push_back(end);
   }
 }
 
@@ -157,7 +165,10 @@ uint16_t headingOfDegrees(const double degrees) {
 // ---------------------------------------------------------------------------
 
 /// The swept cells, the cost and the samples of one arc that leaves the
-/// canonical cardinal heading.
+/// canonical cardinal heading. A straight lead along the heading comes
+/// before the arc. The swept cells of the arc start from the lead's end
+/// rounded to a whole cell toward the start, as in the research prototype.
+/// The samples start the arc at the exact end of the lead.
 IntCells arcCellsCardinal(const double radius, const Vector16 vector,
                           double& cost, Samples& samples) {
   IntCells cells;
@@ -189,9 +200,11 @@ IntCells arcCellsCardinal(const double radius, const Vector16 vector,
   for (double xs = 0.0; xs <= vector[0]; xs += MovePrimitives::SAMPLE_SPACING) {
     samples.push_back(
         {xs, -std::sqrt((radius * radius) - ((radius - xs) * (radius - xs))) +
-                 std::ceil(offset)});
+                 offset});
   }
-  removeConsecutiveDuplicates(cells);
+  endSamplesAt(samples, {static_cast<double>(vector[0]),
+                         static_cast<double>(vector[1])});
+  cells.erase(std::ranges::unique(cells).begin(), cells.end());
   return cells;
 }
 
@@ -244,8 +257,8 @@ void generateCardinal(const uint32_t radius,
     HeadingTables& t = tables[heading];
     for (const uint32_t idx : keys) {
       const uint16_t exit = canonical.exit[idx];
-      const auto turnedOne = static_cast<uint16_t>((heading + exit) % 8);
-      const auto turnedOther = static_cast<uint16_t>((heading + 8 - exit) % 8);
+      const Heading turnedOne = turned(static_cast<Heading>(heading), exit);
+      const Heading turnedOther = turned(static_cast<Heading>(heading), -exit);
       t.cost[idx] = canonical.cost[idx];
       t.cost[n + idx] = canonical.cost[idx];
       t.exit[idx] = turnedOther;
@@ -320,21 +333,31 @@ uint32_t roundUpSqrt2Offset(const double x) {
   }
 }
 
-/// A point of the diagonal frame, whose axes run along the diagonals, in
-/// grid cells.
-Vector16 toGridFrame(const std::array<double, 2> p) {
-  const double c = std::sqrt((p[0] * p[0]) + (p[1] * p[1]));
-  const double angle = std::atan2(p[1], p[0]) * DEGREES;
-  const double remaining = 180.0 - 45.0 - angle;
-  return {static_cast<int16_t>(c * std::sin(remaining * PI / 180.0)),
-          static_cast<int16_t>(c * std::cos(remaining * PI / 180.0))};
+// The canonical diagonal moves are built in the diagonal frame, whose axes run
+// along the diagonals: its x axis toward heading 5, its y axis toward
+// heading 7, the direction of travel. A move there ends i half diagonals
+// across and j diagonals ahead, plus half a diagonal for an odd i.
+
+/// Converts a point of the diagonal frame to grid cells.
+std::array<double, 2> fromDiagonalFrame(const double x, const double y) {
+  constexpr double half = std::numbers::sqrt2 / 2.0;
+  return {(x + y) * half, (x - y) * half};
+}
+
+/// The end of a canonical diagonal move in grid cells. In exact arithmetic
+/// the end is a whole cell, so whole numbers give it exactly.
+Vector16 diagonalEnd(const uint32_t i, const uint32_t j) {
+  const auto halfI = static_cast<int32_t>(i / 2);
+  const auto odd = static_cast<int32_t>(i % 2);
+  const auto ahead = static_cast<int32_t>(j);
+  return {static_cast<int16_t>(ahead + halfI + odd),
+          static_cast<int16_t>(halfI - ahead)};
 }
 
 IntCells arcCellsDiagonal(const double radius, const Vector16 vector,
                           const std::array<double, 2> ranges, double& cost,
                           Samples& samples) {
   IntCells result;
-  Samples obstacles;
   const double ai = vector[0] * (std::numbers::sqrt2 / 2.0);
   const double height =
       std::sqrt((radius * radius) - ((ai - radius) * (ai - radius)));
@@ -345,10 +368,14 @@ IntCells arcCellsDiagonal(const double radius, const Vector16 vector,
   const double offset = ay + height;
   cost = (radius * std::acos(1.0 - (vector[0] / radius))) - offset;
 
+  // The straight lead in the diagonal frame runs whole diagonals ahead, which
+  // are whole cells on the grid.
+  int32_t lead = 0;
   // The floating-point accumulation is part of the table definition.
   // NOLINTNEXTLINE(clang-analyzer-security.FloatLoopCounter,bugprone-float-loop-counter)
   for (double yp = 0.0; yp >= std::floor(offset); yp -= std::numbers::sqrt2) {
-    obstacles.push_back({0.0, -yp});
+    result.push_back({lead, -lead});
+    ++lead;
   }
   for (int32_t xp = 0; xp <= vector[0]; ++xp) {
     const double ax = xp * (std::numbers::sqrt2 / 2.0);
@@ -364,22 +391,19 @@ IntCells arcCellsDiagonal(const double radius, const Vector16 vector,
       if (xp % 2 == 1) {
         y -= std::numbers::sqrt2 / 2.0;
       }
-      obstacles.push_back({ax, -(y + offset)});
+      // In exact arithmetic neither coordinate is a whole number: up to
+      // MAX_BEND_RADIUS, each stays more than 0.003 away from one. A rounding
+      // error of the steps before therefore cannot change the truncation.
+      const auto cell = fromDiagonalFrame(ax, -(y + offset));
+      result.push_back(
+          {static_cast<int32_t>(cell[0]), static_cast<int32_t>(cell[1])});
     }
   }
-  // The straight lead-in, then the arc, both in the diagonal frame.
-  const auto toFrame = [](const double x,
-                          const double y) -> std::array<double, 2> {
-    const double c = std::sqrt((x * x) + (y * y));
-    const double angle = std::atan2(y, x) * DEGREES;
-    const double remaining = 180.0 - 45.0 - angle;
-    return {c * std::sin(remaining * PI / 180.0),
-            -c * std::cos(remaining * PI / 180.0)};
-  };
+  // The straight lead, then the arc.
   // The floating-point accumulation is part of the table definition.
   // NOLINTNEXTLINE(clang-analyzer-security.FloatLoopCounter,bugprone-float-loop-counter)
   for (double ys = 0.0; ys <= -offset; ys += MovePrimitives::SAMPLE_SPACING) {
-    samples.push_back(toFrame(0.0, ys));
+    samples.push_back(fromDiagonalFrame(0.0, ys));
   }
   if ((ranges[1] <= 45.0 && ranges[0] >= 45.0) ||
       (ranges[1] <= 0.0 && ranges[0] >= 0.0)) {
@@ -390,19 +414,15 @@ IntCells arcCellsDiagonal(const double radius, const Vector16 vector,
       const double ax = xs * (std::numbers::sqrt2 / 2.0);
       const double circle =
           std::sqrt((radius * radius) - ((radius - ax) * (radius - ax)));
-      samples.push_back(toFrame(ax, circle - offset));
+      samples.push_back(fromDiagonalFrame(ax, circle - offset));
     }
     // NOLINTEND(clang-analyzer-security.FloatLoopCounter,bugprone-float-loop-counter)
   }
-  for (const auto& o : obstacles) {
-    const double c = std::sqrt((o[0] * o[0]) + (o[1] * o[1]));
-    const double angle = std::atan2(o[1], o[0]) * 180.0 / PI;
-    const double remaining = 180.0 - 45.0 - angle;
-    result.push_back(
-        {static_cast<int32_t>(c * std::sin(remaining * PI / 180.0)),
-         static_cast<int32_t>(-(c * std::cos(remaining * PI / 180.0)))});
-  }
-  removeConsecutiveDuplicates(result);
+  const Vector16 end = diagonalEnd(static_cast<uint32_t>(vector[0]),
+                                   static_cast<uint32_t>(-vector[1]));
+  endSamplesAt(samples,
+               {static_cast<double>(end[0]), static_cast<double>(end[1])});
+  result.erase(std::ranges::unique(result).begin(), result.end());
   return result;
 }
 
@@ -428,16 +448,11 @@ void generateDiagonal(const uint32_t radius,
     const double offset = (i % 2 == 1) ? 1.0 : 0.0;
     for (uint32_t j = yRounded; (j + offset < yUpper) && (j <= yRounded + 5);
          ++j) {
-      double aj = j * std::numbers::sqrt2;
-      if (i % 2 == 1) {
-        aj += std::numbers::sqrt2 / 2.0;
-      }
       const double angleMax =
           std::atan((r - static_cast<double>(i)) / j) * DEGREES;
       ranges.push_back({angleMin, angleMax});
       const auto idx = static_cast<uint32_t>(ranges.size() - 1);
-      coordinateOf[idx] = toGridFrame({ai, aj});
-      coordinateOf[idx][1] = static_cast<int16_t>(-coordinateOf[idx][1]);
+      coordinateOf[idx] = diagonalEnd(i, j);
       angleOf[idx] = {static_cast<int16_t>(i), static_cast<int16_t>(j)};
       if ((angleMin <= 45.0 && angleMax >= 45.0) ||
           (angleMin <= 0.0 && angleMax >= 0.0)) {
@@ -485,8 +500,8 @@ void generateDiagonal(const uint32_t radius,
     HeadingTables& t = tables[heading];
     for (const uint32_t idx : keys) {
       const uint16_t exit = canonical.exit.at(idx);
-      const auto turnedOne = static_cast<uint16_t>((heading + exit) % 8);
-      const auto turnedOther = static_cast<uint16_t>((heading + 8 - exit) % 8);
+      const Heading turnedOne = turned(static_cast<Heading>(heading), exit);
+      const Heading turnedOther = turned(static_cast<Heading>(heading), -exit);
       t.cost[idx] = canonical.cost.at(idx);
       t.cost[n + idx] = canonical.cost.at(idx);
       t.exit[idx] = turnedOther;
@@ -519,8 +534,11 @@ void generateDiagonal(const uint32_t radius,
   }
 }
 
-/// The quarter turns that leave a diagonal heading, which the canonical
-/// diagonal tables lack. Identifiers well above every other identifier.
+/// The quarter turns that leave a diagonal heading as arcs of a full right
+/// angle. The canonical diagonal tables hold no such turn: at some radii they
+/// hold no move to the quarter-turn heading, and at others, such as 10 and 13
+/// cells, an arc of 72 to 77 degrees that ends on it. The identifiers lie
+/// well above every other identifier.
 void generateDiagonalQuarterTurns(const uint32_t radiusIn,
                                   std::array<HeadingTables, 8>& tables) {
   const auto radius = static_cast<double>(radiusIn);
@@ -552,8 +570,7 @@ void generateDiagonalQuarterTurns(const uint32_t radiusIn,
   for (Heading entry = 1; entry <= 7; entry = static_cast<Heading>(entry + 2)) {
     const auto u0 = direction(entry);
     for (const int turnSign : {-1, 1}) {
-      const auto exit = static_cast<uint16_t>(
-          (static_cast<int>(entry) + (2 * turnSign) + 8) % 8);
+      const Heading exit = turned(entry, 2 * turnSign);
       const uint32_t id = (turnSign > 0) ? clockwiseId : counterClockwiseId;
 
       IntCells cells;
@@ -602,6 +619,10 @@ MovePrimitives::MovePrimitives(const uint32_t minRadius)
   if (minRadius == 0) {
     throw std::invalid_argument("the bend radius must be at least one cell");
   }
+  if (minRadius > MAX_BEND_RADIUS) {
+    throw std::invalid_argument(
+        "the bend radius needs more primitive identifiers than a state holds");
+  }
   std::array<HeadingTables, 8> tables;
   generateCardinal(minRadius, tables);
   generateDiagonal(minRadius, tables);
@@ -639,9 +660,6 @@ MovePrimitives::MovePrimitives(const uint32_t minRadius)
       }
       indexOf[heading][id] = static_cast<int16_t>(byHeading[heading].size());
       byHeading[heading].push_back(std::move(primitive));
-    }
-    if (!haveStraight) {
-      throw std::invalid_argument("a heading has no straight primitive");
     }
   }
 }

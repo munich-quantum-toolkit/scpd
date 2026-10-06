@@ -12,6 +12,7 @@
 // over the same states, primitive tables and move rules finds the optimum on
 // small random grids, and route() is compared with it.
 
+#include "../SplitMix.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
@@ -35,19 +36,13 @@
 
 namespace {
 
+using mqt::scpd::test::SplitMix;
 using namespace mqt::scpd;
 using namespace mqt::scpd::routing;
 
 constexpr uint16_t BEND_PENALTY = 500;
 
 /// The next number of a fixed sequence, so that the grids are the same on
-/// every platform.
-uint64_t splitmix(uint64_t& state) {
-  uint64_t z = (state += 0x9E3779B97F4A7C15ULL);
-  z = (z ^ (z >> 30U)) * 0xBF58476D1CE4E5B9ULL;
-  z = (z ^ (z >> 27U)) * 0x94D049BB133111EBULL;
-  return z ^ (z >> 31U);
-}
 
 /// The cost of a move as the search charges it, in hundredths of a cell.
 uint32_t moveCost(const Heading heading, const Primitive& move) {
@@ -180,9 +175,9 @@ using Comparisons = std::array<Comparison, 2>;
 Comparisons compareWithTheOptimum() {
   auto primitives = std::make_shared<const MovePrimitives>(5);
   Comparisons result;
-  uint64_t state = 2026;
+  SplitMix random(2026);
   const auto below = [&](const uint32_t n) {
-    return static_cast<uint32_t>(splitmix(state) % n);
+    return static_cast<uint32_t>(random.next() % n);
   };
   for (int g = 0; g < GRIDS; ++g) {
     const uint32_t width = 30 + below(31);

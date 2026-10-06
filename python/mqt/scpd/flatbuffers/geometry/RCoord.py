@@ -7,7 +7,7 @@ from flatbuffers.compat import import_numpy
 from typing import Any
 np = import_numpy()
 
-# A state of the router grid: a cell of the final grid and the eight-way
+# A state of the router grid: a cell of the router grid and the eight-way
 # heading 0..7 of the wire in it. A wire leaves a heading-0 state toward
 # negative y, and the headings continue clockwise in eighth turns when y
 # points up: heading 2 travels toward negative x, heading 4 toward positive

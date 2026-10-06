@@ -32,11 +32,15 @@ namespace mqt::scpd::routing {
  */
 struct DoglegGeometry {
   /// The swept cells of the turn, then one cell per straight step from the end
-  /// of the turn to the tip.
+  /// of the turn to the tip. The cells of the turn carry its tag, the cells of
+  /// the run the straight step of the exit heading.
   Path path;
-  /// The end of the run; its heading is the exit heading.
+  /// The end of the run, on the exit heading and tagged with its straight
+  /// step. Without a straight step, the tip is the end of the turn.
   PathPoint tip;
-  /// The length of the turn and the run, in cells.
+  /// The length of the dogleg as samplePath() renders it, in cells: the curve
+  /// of the turn and the length of every straight step, the square root of
+  /// two on a diagonal heading.
   double cost = 0.0;
 };
 
@@ -45,7 +49,12 @@ struct DoglegGeometry {
  * one turn direction, followed by a straight run.
  *
  * Of several quarter turns in the same direction, the function takes the one
- * with the lowest identifier.
+ * whose curve ends closest to the direction of the exit heading, and of
+ * equally close ones the one with the lowest identifier. At some radii, such
+ * as 10 cells, a diagonal heading holds an arc of 72 to 77 degrees beside the
+ * exact quarter turn; the exact quarter turn wins. At the radii of 1 to 23
+ * cells, that turn sweeps its end, so consecutive points of the path are
+ * neighbouring cells.
  *
  * @param primitives The move primitives.
  * @param entry The heading the turn starts on.
@@ -101,9 +110,11 @@ struct CouplerSplice {
  * primitive starts at the end of the one before it, and the connection ends on
  * the candidate's cell. A primitive ends at the offset Primitive::dx,
  * Primitive::dy from its start, which need not be its last swept cell. The
- * remaining path of a candidate runs from its cell
- * to the end. The mismatch of a candidate is the length of the remaining path,
- * plus the dogleg and the connection, minus the target length.
+ * remaining path of a candidate runs from its point of the straight run to the
+ * end. The mismatch of a candidate is the length of the remaining path, plus
+ * the dogleg and the connection, minus the target length. Every length is the
+ * length of the curve as samplePath() renders it, so the rendered path meets
+ * the target as closely as the candidates allow.
  *
  * A candidate is collision-free when every cell of its dogleg and connection
  * lies inside the grid, no such cell is a cell of the remaining path except
@@ -116,12 +127,14 @@ struct CouplerSplice {
  * undershoot is charged the size of its mismatch. An overshoot is charged its
  * mismatch plus the smallest mismatch size among the candidates that can win,
  * which favors an undershoot. Of the candidates that can win, the one with the
- * lowest charge wins. The function cuts the path before its cell and puts the
- * dogleg in front.
+ * lowest charge wins. The function cuts the path before its point and puts
+ * the dogleg in front. That point is the point of the straight run, not an
+ * earlier point on the same cell, such as the end of an eighth turn that
+ * sweeps a cell past its end.
  *
  * @param primitives The move primitives the path was routed with.
- * @param targetLength The length the path should have after the splice, in
- * cells.
+ * @param targetLength The length the path should have after the splice, as
+ * samplePath() renders it from the anchor, in cells.
  * @param path The routed resonator. On success, the path starts at the
  * coupler's anchor.
  * @param width The number of cells of the router grid along x.

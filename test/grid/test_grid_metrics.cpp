@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -47,6 +48,33 @@ TEST(GridMetrics, CellsCoverTheBoxCornerToCorner) {
   EXPECT_TRUE(grid.contains(100, 50));
   EXPECT_FALSE(grid.contains(101, 0));
   EXPECT_FALSE(grid.contains(-1, 0));
+}
+
+TEST(GridMetrics, PointsFarOffTheGridOrNotFiniteRoundAndClampSafely) {
+  const GridMetrics grid = GridMetrics::fit(BOX, 101, 51);
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double infinity = std::numeric_limits<double>::infinity();
+
+  // No cell is nearest to a coordinate that is not finite or far off the grid.
+  EXPECT_FALSE(grid.roundToCell(Point(nan, 0.0)).has_value());
+  EXPECT_FALSE(grid.roundToCell(Point(500.0, nan)).has_value());
+  EXPECT_FALSE(grid.roundToCell(Point(infinity, 0.0)).has_value());
+  EXPECT_FALSE(grid.roundToCell(Point(500.0, -infinity)).has_value());
+  EXPECT_FALSE(grid.roundToCell(Point(1e300, 0.0)).has_value());
+  EXPECT_FALSE(grid.roundToCell(Point(500.0, -1e300)).has_value());
+
+  // Each coordinate clamps onto the first or the last cell of its axis.
+  EXPECT_EQ(grid.clampToCell(Point(infinity, 0.0)), DCoord(100, 5));
+  EXPECT_EQ(grid.clampToCell(Point(-infinity, 0.0)), DCoord(0, 5));
+  EXPECT_EQ(grid.clampToCell(Point(1e300, -1e300)), DCoord(100, 0));
+  EXPECT_EQ(grid.clampToCell(Point(-1e300, 1e300)), DCoord(0, 50));
+  EXPECT_EQ(grid.clampToCell(Point(1e300, 1e19)), DCoord(100, 50));
+
+  // A coordinate that is not a number has no side to clamp to.
+  EXPECT_THROW(static_cast<void>(grid.clampToCell(Point(nan, 0.0))),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(grid.clampToCell(Point(500.0, nan))),
+               std::invalid_argument);
 }
 
 TEST(GridMetrics, RefinementAndAspectRatioFollowTheBox) {

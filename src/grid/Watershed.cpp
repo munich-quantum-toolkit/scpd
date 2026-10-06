@@ -23,6 +23,7 @@
 #include <queue>
 #include <span>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -35,10 +36,17 @@ constexpr double INFINITE = std::numeric_limits<double>::infinity();
 constexpr double TIE_EPSILON = 1e-6;
 constexpr std::size_t NO_CELL = std::numeric_limits<std::size_t>::max();
 
+/// A cell on the front. The heap pops the earliest time first, then the lower
+/// seed index, then the lower cell index. So the pop order is the same on every
+/// standard library.
 struct FrontEntry {
   std::size_t cell;
   double time;
-  bool operator>(const FrontEntry& other) const { return time > other.time; }
+  uint32_t seed;
+  bool operator>(const FrontEntry& other) const {
+    return std::tie(time, seed, cell) >
+           std::tie(other.time, other.seed, other.cell);
+  }
 };
 
 } // namespace
@@ -83,7 +91,7 @@ PartitionLabel runWatershed(const BitGrid& blocked,
     tentativeLabel[seed] = nextLabel;
     tentativeSeed[seed] = static_cast<uint32_t>(i);
     finalized[seed] = true;
-    front.push({.cell = seed, .time = 0.0});
+    front.push({.cell = seed, .time = 0.0, .seed = static_cast<uint32_t>(i)});
     ++nextLabel;
   }
   for (const std::size_t seed : seeds) {
@@ -100,10 +108,20 @@ PartitionLabel runWatershed(const BitGrid& blocked,
     std::size_t aCell = NO_CELL;
     double b = INFINITE;
     std::size_t bCell = NO_CELL;
+    // Keeps the earliest time of the two neighbors along an axis. When the two
+    // times tie, the neighbor with the lower seed index is the one the cell
+    // arrives from, whichever neighbor comes first.
     const auto consider = [&](const std::size_t n, double& best,
                               std::size_t& bestCell) {
-      if (!blocked.test(n) && finalized[n] && time[n] < best) {
-        best = time[n];
+      if (blocked.test(n) || !finalized[n]) {
+        return;
+      }
+      const bool better = bestCell == NO_CELL ||
+                          (std::fabs(time[n] - best) < TIE_EPSILON
+                               ? tentativeSeed[n] < tentativeSeed[bestCell]
+                               : time[n] < best);
+      best = std::min(best, time[n]);
+      if (better) {
         bestCell = n;
       }
     };
@@ -166,7 +184,7 @@ PartitionLabel runWatershed(const BitGrid& blocked,
       time[cell] = arrival;
       tentativeLabel[cell] = tentativeLabel[from];
       tentativeSeed[cell] = tentativeSeed[from];
-      front.push({.cell = cell, .time = arrival});
+      front.push({.cell = cell, .time = arrival, .seed = tentativeSeed[cell]});
     }
   };
 
@@ -222,6 +240,8 @@ void smoothPartitionBorders(const BitGrid& blocked,
   static constexpr std::array<int64_t, 4> DX4 = {1, -1, 0, 0};
   static constexpr std::array<int64_t, 4> DY4 = {0, 0, 1, -1};
 
+  // Every pass reads the labels from before the pass. Such passes can move
+  // cells back and forth without end, so iterations caps their number.
   for (int iteration = 0; iteration < iterations; ++iteration) {
     std::vector<PartitionLabel> next = labels;
     bool changed = false;
@@ -282,8 +302,7 @@ void smoothPartitionBorders(const BitGrid& blocked,
             best = label;
           }
         }
-        // Only a clear majority moves a cell, so the pass cannot oscillate
-        // and does not eat real corners.
+        // Only a clear majority moves a cell, so the vote keeps real corners.
         if (best != own && bestCount * 2 > valid) {
           next[cell] = best;
           changed = true;

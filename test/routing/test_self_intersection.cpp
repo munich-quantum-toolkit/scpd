@@ -8,7 +8,9 @@
  * Licensed under the MIT License
  */
 
+#include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
+#include "mqt-scpd/routing/Primitives.hpp"
 #include "mqt-scpd/routing/SelfIntersection.hpp"
 
 #include <gtest/gtest.h>
@@ -88,23 +90,54 @@ TEST(SelfIntersection, ADiagonalCrossingIsFoundWithoutARepeatedCell) {
   EXPECT_EQ(hits[0].kind, PathLoopKind::DiagonalCross);
 }
 
-TEST(SelfIntersection, TheSpurWindowSwallowsTheStateReEmission) {
-  // The search emits a state sequence, so every heading change re-emits the
-  // cell it turns on. The two visits sit two steps apart.
+TEST(SelfIntersection, TheSpurWindowIgnoresTheSpurOfATurnButNotALoop) {
+  // At a bend radius of five cells, an eighth turn from a cardinal heading
+  // sweeps one cell past the end of its arc. A routed path therefore lists
+  // the end, the cell past it and the end again.
+  const MovePrimitives primitives(5);
+  const Primitive* turn = nullptr;
+  for (const Primitive& move : primitives.of(6)) {
+    if (move.exitHeading == 5) {
+      turn = &move;
+    }
+  }
+  ASSERT_NE(turn, nullptr);
   Path path;
   for (uint32_t x = 10; x < 30; ++x) {
-    path.push_back({.x = x, .y = 20, .heading = 6, .primitive = 0});
+    path.push_back(
+        {.x = x, .y = 20, .heading = 6, .primitive = primitives.straight(6)});
   }
-  path.push_back({.x = 29, .y = 20, .heading = 7, .primitive = 1});
-  for (uint32_t k = 1; k < 20; ++k) {
-    path.push_back({.x = 29 + k, .y = 20 - k, .heading = 7, .primitive = 1});
+  for (const CellOffset& offset : turn->swept) {
+    const PathPoint cell{.x = static_cast<uint32_t>(30 + offset.dx),
+                         .y = static_cast<uint32_t>(20 + offset.dy),
+                         .heading = 6,
+                         .primitive = turn->id};
+    if (!path.back().samePlace(cell)) {
+      path.push_back(cell);
+    }
+  }
+  const HeadingVector exit = headingVector(5);
+  for (int32_t k = 0; k < 20; ++k) {
+    path.push_back({.x = static_cast<uint32_t>(30 + turn->dx + (k * exit.dx)),
+                    .y = static_cast<uint32_t>(20 + turn->dy + (k * exit.dy)),
+                    .heading = 5,
+                    .primitive = primitives.straight(5)});
   }
   PathLoopScratch scratch;
   EXPECT_FALSE(pathSelfIntersects(path, 100, 100, scratch));
+  EXPECT_EQ(scratch.spurRevisitsIgnored, 1U);
+  EXPECT_EQ(scratch.maxSpurDistance, 2U);
 
-  // A path that turns many times is still clean, and the window reports
-  // that it swallowed nothing near its threshold.
-  EXPECT_LE(scratch.maxSpurDistance, PATH_LOOP_SPUR_WINDOW);
+  // A path that comes back to a cell five steps later has a loop.
+  std::vector<PathLoopHit> hits;
+  EXPECT_EQ(
+      findPathSelfIntersections(
+          pathOf({{10, 10}, {11, 10}, {12, 10}, {12, 11}, {11, 11}, {10, 10}}),
+          100, 100, scratch, &hits),
+      1U);
+  ASSERT_EQ(hits.size(), 1U);
+  EXPECT_EQ(hits[0].kind, PathLoopKind::Revisit);
+  EXPECT_GT(hits[0].secondIndex - hits[0].firstIndex, PATH_LOOP_SPUR_WINDOW);
 }
 
 TEST(SelfIntersection, ALongExactRetraceIsALoopNotASpur) {

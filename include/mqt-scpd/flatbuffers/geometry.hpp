@@ -305,7 +305,7 @@ struct GCoord::Traits {
   using type = GCoord;
 };
 
-/// A pixel of the detail grid.
+/// A cell of the detail grid.
 FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) DCoord FLATBUFFERS_FINAL_CLASS {
  private:
   uint32_t x_;
@@ -348,7 +348,7 @@ struct DCoord::Traits {
   using type = DCoord;
 };
 
-/// A state of the router grid: a cell of the final grid and the eight-way
+/// A state of the router grid: a cell of the router grid and the eight-way
 /// heading 0..7 of the wire in it. A wire leaves a heading-0 state toward
 /// negative y, and the headings continue clockwise in eighth turns when y
 /// points up: heading 2 travels toward negative x, heading 4 toward positive

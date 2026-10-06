@@ -52,14 +52,31 @@ struct Primitive {
   int16_t dx = 0;
   /// The y offset of the end of the move from its start, in cells.
   int16_t dy = 0;
-  /// The length of the move in cells. The length of an arc is rounded up.
+  /// The cost the search charges for the move, in cells. For a straight step
+  /// and for a turn that leaves a cardinal heading, the cost is the length of
+  /// the move's curve. A turn that leaves a diagonal heading costs more than
+  /// its curve, as in the research prototype: its cost takes the angle of the
+  /// turn from its count of half diagonals as if it were a count of cells.
+  /// The exact quarter turns of a diagonal heading (see MovePrimitives) cost
+  /// the length of their arc rounded up to whole cells. The polyline through
+  /// @c samples gives the length of the curve.
   double cost = 0.0;
-  /// The cells the move sweeps, relative to its start. The search tests these
-  /// cells for obstacles.
+  /// The cells the search tests for obstacles when it takes the move,
+  /// relative to its start, in the order the move sweeps them. The list is
+  /// the obstacle footprint of the research prototype, not a chain of
+  /// neighbouring cells. At most radii some eighth turns list a cell twice or
+  /// list a cell past their end; at a radius of five cells, every cardinal
+  /// eighth turn lists the cell past its end. At some radii some turns that
+  /// leave a diagonal heading do not list their end cell: at a radius of five
+  /// cells the eighth turns, at radii such as 10 and 16 cells the arcs of 72
+  /// to 77 degrees that end on the quarter-turn heading.
   std::vector<CellOffset> swept;
   /// Dense points along the exact curve of the move, relative to its start.
-  /// The first point is the origin. A rendered path is built from these
-  /// points.
+  /// The first point is the origin, and the points run forward along the
+  /// move. The last point is the end of the move, (@c dx, @c dy), except for
+  /// the exact quarter turns of a diagonal heading: their arc ends at no whole
+  /// cell, and (@c dx, @c dy) is the cell nearest to it. A rendered path is
+  /// built from these points.
   std::vector<flatbuffers::geometry::Point> samples;
 };
 
@@ -68,7 +85,11 @@ struct Primitive {
  *
  * For every heading, the table holds the straight step and the arcs of one
  * bend radius that leave the heading, each with its swept cells and its exact
- * curve. Every heading holds a quarter turn to either side. The eighth turns
+ * curve. Every heading holds a quarter turn to either side whose curve ends on
+ * its exit heading; on a diagonal heading, these exact quarter turns have the
+ * identifiers 900 and 901. At some radii, such as 10 and 13 cells, a diagonal
+ * heading also holds a second turn to each quarter-turn heading: an arc of 72
+ * to 77 degrees whose curve ends off its exit heading. The eighth turns
  * depend on how the arc of the radius rounds onto the cells: at a radius of
  * five cells every heading holds an eighth turn to either side, while at some
  * radii, such as one to three cells, the cardinal or the diagonal headings
@@ -76,8 +97,14 @@ struct Primitive {
  *
  * The constructor builds the tables once per radius. The tables are read-only
  * after that, so any number of routers can share one instance. The generation
- * reproduces the tables of the research prototype exactly, including its
- * rounding, and isStraight() answers for an unknown identifier as the
+ * follows the research prototype, including its rounding, with two
+ * differences. First, the end of a diagonal move is a whole cell in exact
+ * arithmetic, and the generation computes it from whole numbers; the
+ * prototype truncates a floating-point value there, so at some radii its ends
+ * lie one cell off and depend on the compiler and the math library. Second,
+ * the samples of a cardinal eighth turn follow the curve to its end. At a
+ * radius of five cells the identifiers, ends, costs and swept cells equal the
+ * prototype's. isStraight() answers for an unknown identifier as the
  * prototype does.
  */
 class MQT_SCPD_ROUTING_EXPORT MovePrimitives {
@@ -93,6 +120,14 @@ public:
    * @brief The spacing of the curve samples, in cells.
    */
   static constexpr double SAMPLE_SPACING = 0.1;
+  /**
+   * @brief The largest bend radius the tables can hold, in cells.
+   *
+   * The identifier of the straight step grows with the radius. From a radius
+   * of 91 cells on, the straight step of some heading needs an identifier of
+   * MAX_PRIMITIVE_ID or more.
+   */
+  static constexpr uint32_t MAX_BEND_RADIUS = 90;
 
   /**
    * @brief Builds the primitives of one bend radius.
@@ -101,9 +136,8 @@ public:
    * more.
    *
    * @param minRadius The bend radius, in cells.
-   * @throws std::invalid_argument If @p minRadius is zero, or if @p minRadius
-   * is so large that a heading has no straight step with an identifier below
-   * MAX_PRIMITIVE_ID.
+   * @throws std::invalid_argument If @p minRadius is zero or larger than
+   * MAX_BEND_RADIUS. The constructor checks this before it builds a table.
    */
   explicit MovePrimitives(uint32_t minRadius);
 

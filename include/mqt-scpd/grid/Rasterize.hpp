@@ -125,7 +125,9 @@ rasterizeObstacles(const flatbuffers::design::ChipT& chip,
  * edge more than 2^59 cells off the grid first moves along the edge to that
  * distance, so that its cell fits into an integer. The center test computes
  * where an edge crosses a row from the vertices in double precision, so a
- * vertex very far off the grid makes the crossings of its edges inexact.
+ * vertex very far off the grid makes the crossings of its edges inexact. The
+ * line of an edge is inexact as well when both of its ends lie that far off
+ * the grid.
  *
  * @param mask The mask to block the cells in.
  * @param grid The grid that converts layout units into cells.
@@ -192,7 +194,8 @@ MQT_SCPD_GRID_EXPORT void blockBorder(BitGrid& mask, uint32_t alongX,
  * @param to The other end of the segment, in layout units.
  * @return The Euclidean distance from @p point to the nearest point of the
  * segment, in layout units. A segment of almost no length counts as the
- * point @p from.
+ * point @p from. A segment whose squared length does not fit into a double
+ * gives the distance too, as long as its ends are finite.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT double
 distanceToSegment(Point point, Point from, Point to);

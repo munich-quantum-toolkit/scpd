@@ -58,6 +58,10 @@ static_assert(sizeof(SearchNode) == 8, "a search node is eight bytes");
  * 5400 by 5400 cell router grid of the largest benchmark chip, that is about
  * 1.87 GB. A scratch belongs to the thread that searches with it. Nothing else
  * is copied per thread, because the grids a search reads are shared.
+ *
+ * A router keeps a pointer to its scratch and the size of its grid. A scratch
+ * therefore cannot be copied or assigned. It can be moved into a new scratch
+ * only while no router holds it.
  */
 class MQT_SCPD_ROUTING_EXPORT SearchScratch {
 public:
@@ -70,6 +74,17 @@ public:
    * @throws std::bad_alloc If the records do not fit in memory.
    */
   SearchScratch(uint32_t width, uint32_t height);
+
+  SearchScratch(const SearchScratch&) = delete;
+  SearchScratch& operator=(const SearchScratch&) = delete;
+  /**
+   * @brief Moves the records of a scratch into a new scratch.
+   * @param other The scratch to move from.
+   * @post @p other is the scratch of a grid of zero by zero cells.
+   */
+  SearchScratch(SearchScratch&& other) noexcept;
+  SearchScratch& operator=(SearchScratch&&) = delete;
+  ~SearchScratch() = default;
 
   /**
    * @brief Returns the width of the grid.

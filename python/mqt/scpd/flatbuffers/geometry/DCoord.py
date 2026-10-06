@@ -7,7 +7,7 @@ from flatbuffers.compat import import_numpy
 from typing import Any
 np = import_numpy()
 
-# A pixel of the detail grid.
+# A cell of the detail grid.
 class DCoord(object):
     __slots__ = ['_tab']
 

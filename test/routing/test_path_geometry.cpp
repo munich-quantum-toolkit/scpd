@@ -8,7 +8,10 @@
  * Licensed under the MIT License
  */
 
+#include "../SplitMix.hpp"
+#include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
+#include "mqt-scpd/routing/CouplerInsertion.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
@@ -18,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +32,7 @@
 
 namespace {
 
+using mqt::scpd::test::SplitMix;
 using namespace mqt::scpd;
 using namespace mqt::scpd::routing;
 
@@ -37,19 +42,11 @@ const MovePrimitives& primitives() {
   return PRIMITIVES;
 }
 
-/// A straight run of a heading from a cell.
+/// A straight run of a heading from a cell, one step per cell.
 Path straightRun(const uint32_t x0, const uint32_t y0, const Heading heading,
                  const uint32_t steps) {
-  Path path;
-  const HeadingVector v = headingVector(heading);
-  const uint16_t id = primitives().straight(heading);
-  for (uint32_t i = 0; i <= steps; ++i) {
-    path.push_back({.x = static_cast<uint32_t>(x0 + (v.dx * i)),
-                    .y = static_cast<uint32_t>(y0 + (v.dy * i)),
-                    .heading = heading,
-                    .primitive = id});
-  }
-  return path;
+  return routing::straightRun(primitives(),
+                              {.x = x0, .y = y0, .heading = heading}, steps);
 }
 
 /// Appends a turn in the format of Path. The turn takes over the last point
@@ -141,12 +138,17 @@ std::vector<Point> rendering(Path path) {
 }
 
 /// The next number of a fixed sequence, so that random requests are the
-/// same on every platform.
-uint64_t splitmix(uint64_t& state) {
-  uint64_t z = (state += 0x9E3779B97F4A7C15ULL);
-  z = (z ^ (z >> 30U)) * 0xBF58476D1CE4E5B9ULL;
-  z = (z ^ (z >> 27U)) * 0x94D049BB133111EBULL;
-  return z ^ (z >> 31U);
+
+TEST(PathGeometry, APointKnowsItsSearchState) {
+  // The search state of a point is its cell and its heading. The primitive
+  // names the move the point starts and is no part of the state.
+  const PathPoint point{.x = 12, .y = 34, .heading = 5, .primitive = 7};
+  const mqt::scpd::flatbuffers::geometry::RCoord state = point.state();
+  EXPECT_EQ(state.x(), 12U);
+  EXPECT_EQ(state.y(), 34U);
+  EXPECT_EQ(state.heading(), 5U);
+  const PathPoint other{.x = 12, .y = 34, .heading = 5, .primitive = 3};
+  EXPECT_EQ(other.state(), state);
 }
 
 TEST(PathGeometry, AStraightRunIsOneSegment) {
@@ -154,7 +156,7 @@ TEST(PathGeometry, AStraightRunIsOneSegment) {
   const SegmentedPath segmented = reconstructSegments(primitives(), path);
   ASSERT_EQ(segmented.segments.size(), 1U);
   const PathSegment& segment = segmented.segments.front();
-  EXPECT_TRUE(segment.straight);
+  EXPECT_TRUE(segment.straight());
   EXPECT_EQ(segment.heading, 6);
   EXPECT_EQ(segment.steps(), 21U);
   EXPECT_EQ(segment.lengthAt.size(), 21U);
@@ -169,8 +171,8 @@ TEST(PathGeometry, AHeadingChangeStartsANewSegment) {
   ASSERT_EQ(segmented.segments.size(), 2U);
   EXPECT_EQ(segmented.segments[0].heading, 6);
   EXPECT_EQ(segmented.segments[1].heading, 4);
-  EXPECT_TRUE(segmented.segments[0].straight);
-  EXPECT_TRUE(segmented.segments[1].straight);
+  EXPECT_TRUE(segmented.segments[0].straight());
+  EXPECT_TRUE(segmented.segments[1].straight());
   // The lengths accumulate across the segments.
   EXPECT_GT(segmented.segments[1].lengthAt.back(),
             segmented.segments[0].lengthAt.back());
@@ -191,7 +193,7 @@ TEST(PathGeometry, ATurnPrimitiveStaysOneStepAtTheEndOfItsArc) {
   const SegmentedPath segmented = reconstructSegments(primitives(), path);
   ASSERT_EQ(segmented.segments.size(), 3U);
   const PathSegment& turn = segmented.segments[1];
-  EXPECT_FALSE(turn.straight);
+  EXPECT_FALSE(turn.straight());
   EXPECT_EQ(turn.steps(), 1U);
   EXPECT_TRUE(turn.cells[0].samePlace(end));
 
@@ -200,6 +202,76 @@ TEST(PathGeometry, ATurnPrimitiveStaysOneStepAtTheEndOfItsArc) {
   const SegmentedPath cut = reconstructSegments(primitives(), path);
   ASSERT_EQ(cut.segments.size(), 2U);
   EXPECT_TRUE(cut.segments[1].cells[0].samePlace(end));
+}
+
+TEST(PathGeometry, ATurnFromTheLastStubCellCountsItsMoveOnce) {
+  // Where the search of a routed path begins with a turn, the start of the
+  // arc is the last cell of the source stub, which keeps the straight tag
+  // (see Path). The move of that cell is the turn. The nominal length is
+  // therefore the same as with the turn's tag on that cell, and the same as
+  // for the route in the other direction, whose search ends with the turn.
+  auto shared = std::make_shared<const MovePrimitives>(5);
+  constexpr uint32_t width = 300;
+  constexpr uint32_t height = 200;
+  SearchScratch scratch(width, height);
+  const grid::BitGrid corridor(width, height);
+  DubinsRouter router(shared, scratch,
+                      {.startStraightLength = 10,
+                       .endStraightLength = 10,
+                       .minRadius = 5,
+                       .bendPenalty = 500});
+  router.attachCorridor(&corridor);
+  const Path routed = router.route(
+      {.source = {.x = 30, .y = 100, .heading = 0, .primitive = 0},
+       .target = {.x = 260, .y = 100, .heading = 6, .primitive = 0}});
+  ASSERT_GT(routed.size(), 12U);
+  // Ten steps of stub, then the turn.
+  const PathPoint& stubEnd = routed[10];
+  const PathPoint& turn = routed[11];
+  ASSERT_TRUE(shared->isStraight(stubEnd.heading, stubEnd.primitive));
+  ASSERT_FALSE(shared->isStraight(turn.heading, turn.primitive));
+  ASSERT_EQ(stubEnd.heading, turn.heading);
+
+  Path retagged = routed;
+  retagged[10].primitive = turn.primitive;
+  const SegmentedPath segmented = reconstructSegments(*shared, routed);
+  EXPECT_NEAR(segmented.nominalLength,
+              reconstructSegments(*shared, retagged).nominalLength, 1e-9);
+  const Path reverse = router.route(
+      {.source = {.x = 260, .y = 100, .heading = 2, .primitive = 0},
+       .target = {.x = 30, .y = 100, .heading = 4, .primitive = 0}});
+  ASSERT_FALSE(reverse.empty());
+  EXPECT_NEAR(segmented.nominalLength,
+              reconstructSegments(*shared, reverse).nominalLength, 1e-9);
+
+  // The stub keeps its cells, and its last cell adds nothing.
+  const PathSegment& stub = segmented.segments.front();
+  ASSERT_EQ(stub.steps(), 11U);
+  EXPECT_DOUBLE_EQ(stub.lengthAt[10], stub.lengthAt[9]);
+}
+
+TEST(PathGeometry, NoTurnSweepsAStepAgainstItsExitHeadingFirst) {
+  // reconstructSegments() tells a turn whose arc starts on the straight point
+  // before it from a turn in the regular form by the point after the turn.
+  // The two forms would meet if the first cell a turn sweeps after its start
+  // lay one step against its exit heading.
+  for (uint32_t radius = 1; radius <= 23; ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading heading = 0; heading < NUM_HEADINGS; ++heading) {
+      for (const Primitive& p : table.of(heading)) {
+        if (p.exitHeading == heading) {
+          continue;
+        }
+        const auto first = std::ranges::find_if(
+            p.swept, [](const CellOffset& c) { return c != CellOffset{}; });
+        ASSERT_NE(first, p.swept.end());
+        const HeadingVector exit = headingVector(p.exitHeading);
+        EXPECT_FALSE(first->dx == -exit.dx && first->dy == -exit.dy)
+            << "radius " << radius << ", heading " << static_cast<int>(heading)
+            << ", primitive " << p.id;
+      }
+    }
+  }
 }
 
 TEST(PathGeometry, AStraightStepFromTheEndOfAnArcRendersWithoutACorner) {
@@ -310,9 +382,9 @@ TEST(PathGeometry, RoutedTurnsRenderWithoutKinksOrReversals) {
   std::vector<RoutingObjective> requests{
       {.source = {.x = 30, .y = 100, .heading = 6, .primitive = 0},
        .target = {.x = 260, .y = 139, .heading = 6, .primitive = 0}}};
-  uint64_t state = 1;
+  SplitMix random(1);
   const auto below = [&](const uint32_t n) {
-    return static_cast<uint32_t>(splitmix(state) % n);
+    return static_cast<uint32_t>(random.next() % n);
   };
   for (int i = 0; i < 60; ++i) {
     RoutingObjective request;
@@ -426,6 +498,30 @@ TEST(PathGeometry, SamplingFromTheSecondPointLeavesTheCallersPathAlone) {
   ASSERT_FALSE(bounds.empty());
   EXPECT_EQ(bounds.size(), b.size());
   EXPECT_TRUE(bounds.front().second);
+}
+
+TEST(PathGeometry, SamplingFromTheSecondPointKeepsTheStartOfAFirstTurn) {
+  // A spliced path without a lead begins with the quarter turn of its dogleg,
+  // and its first point is the start of the arc. The rendering needs that
+  // point to find the end of the arc, so the point stays, and the polyline is
+  // the one samplePath() draws.
+  Path path = straightRun(400, 300, 6, 300);
+  ASSERT_TRUE(spliceCouplerDogleg(primitives(), 150.0, path, 1200, 1200, 0)
+                  .has_value());
+  ASSERT_FALSE(
+      primitives().isStraight(path.front().heading, path.front().primitive));
+  Path copy = path;
+  std::vector<PathSegment> a;
+  std::vector<PathSegment> b;
+  const std::vector<Point> full =
+      samplePath(primitives(), copy, copy.front(), a);
+  const std::vector<Point> second =
+      samplePathFromSecond(primitives(), path, path.front(), b);
+  ASSERT_EQ(second.size(), full.size());
+  for (std::size_t i = 0; i < full.size(); ++i) {
+    EXPECT_NEAR(second[i].x(), full[i].x(), 1e-9) << i;
+    EXPECT_NEAR(second[i].y(), full[i].y(), 1e-9) << i;
+  }
 }
 
 TEST(PathGeometry, BendsAreHeadingChanges) {
@@ -555,7 +651,7 @@ TEST(PathGeometry, TheRenderedLengthFollowsTheArcs) {
 
 TEST(PathGeometry, ARepeatedCellRendersNothing) {
   Path path = straightRun(100, 100, 6, 5);
-  // The state re-emission of a heading change: the same cell twice.
+  // The same cell twice in a row, under another tag the second time.
   path.push_back({.x = 105,
                   .y = 100,
                   .heading = 7,

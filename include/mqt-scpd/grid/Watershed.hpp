@@ -89,11 +89,12 @@ runWatershed(const BitGrid& blocked, std::span<const std::size_t> seeds,
  * label that holds a clear majority, more than half of the counted cells, in
  * the square window of radius @p radius around it. The vote counts only the
  * free cells of this run, that is cells with a label of at least
- * @p firstLabel. Only a clear majority moves a cell, so the pass cannot
- * oscillate and keeps real corners. Every pass reads the labels as they were
- * before the pass. The pass repeats up to @p iterations times and stops early
- * once nothing changes. When @p labels has fewer entries than @p blocked has
- * cells, the function changes nothing.
+ * @p firstLabel. Only a clear majority moves a cell, so the vote keeps real
+ * corners. Every pass reads the labels as they were before the pass. On some
+ * labels, such passes move cells back and forth on every pass and never settle.
+ * The pass therefore repeats at most @p iterations times. It stops early after
+ * a pass that changes nothing. When @p labels has fewer entries than
+ * @p blocked has cells, the function changes nothing.
  *
  * @param blocked The obstacle mask. Blocked cells neither vote nor change.
  * @param labels The label of every cell, row-major, smoothed in place.

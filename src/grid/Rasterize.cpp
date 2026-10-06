@@ -31,13 +31,6 @@ namespace {
 using flatbuffers::design::ChipT;
 using flatbuffers::geometry::PolygonT;
 
-/// The keepout marks cells with 2 before the corridors release some of them,
-/// so that a corridor can never free a cell that the polygons block after the
-/// island rule.
-constexpr uint8_t FREE = 0;
-constexpr uint8_t POLYGON = 1;
-constexpr uint8_t KEEPOUT = 2;
-
 /// lineCells() accepts two ends that lie fewer than this many cells apart
 /// along each axis. Then twice the error term of the walk fits into int64_t.
 constexpr uint64_t LINE_SPAN_LIMIT = uint64_t{1} << 61U;
@@ -102,50 +95,71 @@ bool clipToBox(Point& a, Point& b, const Point low, const Point high) {
     return true;
   }
   // Liang and Barsky, in half units, so that the difference of two finite
-  // coordinates cannot overflow.
+  // coordinates cannot overflow. The parameter t runs from a to b, and the
+  // parameter u = 1 - t runs from b to a. Each one is measured from its own
+  // end, so each stays accurate near that end.
   const double ax = a.x() / 2.0;
   const double ay = a.y() / 2.0;
-  const double dx = (b.x() / 2.0) - ax;
-  const double dy = (b.y() / 2.0) - ay;
+  const double bx = b.x() / 2.0;
+  const double by = b.y() / 2.0;
+  const double dx = bx - ax;
+  const double dy = by - ay;
   double t0 = 0.0;
   double t1 = 1.0;
+  double u0 = 0.0;
+  double u1 = 1.0;
   // Keeps the part of the segment where p * t <= q.
-  const auto keep = [&](const double p, const double q) {
+  const auto keep = [](const double p, const double q, double& first,
+                       double& last) {
     if (p == 0.0) {
       return q >= 0.0;
     }
     const double t = q / p;
     if (p < 0.0) {
-      t0 = std::max(t0, t);
+      first = std::max(first, t);
     } else {
-      t1 = std::min(t1, t);
+      last = std::min(last, t);
     }
-    return t0 <= t1;
+    return first <= last;
   };
-  if (!keep(-dx, ax - (low.x() / 2.0)) || !keep(dx, (high.x() / 2.0) - ax) ||
-      !keep(-dy, ay - (low.y() / 2.0)) || !keep(dy, (high.y() / 2.0) - ay)) {
+  const double lowX = low.x() / 2.0;
+  const double lowY = low.y() / 2.0;
+  const double highX = high.x() / 2.0;
+  const double highY = high.y() / 2.0;
+  if (!keep(-dx, ax - lowX, t0, t1) || !keep(dx, highX - ax, t0, t1) ||
+      !keep(-dy, ay - lowY, t0, t1) || !keep(dy, highY - ay, t0, t1) ||
+      !keep(dx, bx - lowX, u0, u1) || !keep(-dx, highX - bx, u0, u1) ||
+      !keep(dy, by - lowY, u0, u1) || !keep(-dy, highY - by, u0, u1)) {
     return false;
   }
-  const Point from(2.0 * (ax + (t0 * dx)), 2.0 * (ay + (t0 * dy)));
-  const Point to(2.0 * (ax + (t1 * dx)), 2.0 * (ay + (t1 * dy)));
+  // The point at parameter t from a, which is u from b. It comes from the
+  // nearer end, so that a coordinate far larger than the box cannot cancel.
+  // When both ends lie that far off the box, the point is inexact, and the
+  // clamp keeps it on the box.
+  const auto pointAt = [&](const double t, const double u) {
+    const bool fromA = t <= 0.5;
+    const double x = fromA ? ax + (t * dx) : bx - (u * dx);
+    const double y = fromA ? ay + (t * dy) : by - (u * dy);
+    return Point(2.0 * std::clamp(x, lowX, highX),
+                 2.0 * std::clamp(y, lowY, highY));
+  };
   if (t0 > 0.0) {
-    a = from;
+    a = pointAt(t0, u1);
   }
-  if (t1 < 1.0) {
-    b = to;
+  if (u0 > 0.0) {
+    b = pointAt(t1, u0);
   }
   return true;
 }
 
-std::vector<uint8_t> keepoutMask(const ChipT& chip, const GridMetrics& grid,
-                                 const RasterOptions& options,
-                                 const BitGrid& blocked,
-                                 std::size_t& keepoutCells,
-                                 std::size_t& exemptedCells) {
-  std::vector<uint8_t> cells(grid.cells(), FREE);
-  for (std::size_t i = 0; i < cells.size(); ++i) {
-    cells[i] = blocked.test(i) ? POLYGON : FREE;
-  }
+/// Blocks every free cell within the keepout of an obstacle edge, then frees
+/// the cells of the keepout that a corridor reaches. A second mask marks the
+/// cells of the keepout, so that a corridor never frees a cell that the
+/// polygons block after the island rule.
+void blockKeepout(const ChipT& chip, const GridMetrics& grid,
+                  const RasterOptions& options, BitGrid& blocked,
+                  std::size_t& keepoutCells, std::size_t& exemptedCells) {
+  BitGrid keepout(grid.width, grid.height);
 
   // Visit the cells of a window around an edge, given in layout units. The
   // window is clamped onto the grid before the cast to an integer. std::fmax
@@ -192,8 +206,9 @@ std::vector<uint8_t> keepoutMask(const ChipT& chip, const GridMetrics& grid,
       const Point a = vertices[i];
       const Point b = vertices[(i + 1) % vertices.size()];
       forEachCellNear(a, b, options.keepout, [&](const std::size_t index) {
-        if (cells[index] == FREE) {
-          cells[index] = KEEPOUT;
+        if (!blocked.test(index)) {
+          blocked.set(index);
+          keepout.set(index);
           ++keepoutCells;
         }
       });
@@ -202,13 +217,48 @@ std::vector<uint8_t> keepoutMask(const ChipT& chip, const GridMetrics& grid,
   for (const auto& corridor : options.keepoutExemptions) {
     forEachCellNear(corridor.from, corridor.to, corridor.halfWidth,
                     [&](const std::size_t index) {
-                      if (cells[index] == KEEPOUT) {
-                        cells[index] = FREE;
+                      if (keepout.test(index)) {
+                        keepout.set(index, false);
+                        blocked.set(index, false);
                         ++exemptedCells;
                       }
                     });
   }
-  return cells;
+}
+
+} // namespace
+
+namespace {
+
+/// The distance from a point to a segment whose squared length overflows.
+/// The terms are taken in half units and divided by the longer axis of the
+/// segment, so each stays finite. The nearest point comes from the end it lies
+/// nearer to, so that a coordinate far larger than the distance cannot cancel.
+double distanceToLongSegment(const Point point, const Point from,
+                             const Point to) {
+  const double fx = from.x() / 2.0;
+  const double fy = from.y() / 2.0;
+  const double tx = to.x() / 2.0;
+  const double ty = to.y() / 2.0;
+  const double px = point.x() / 2.0;
+  const double py = point.y() / 2.0;
+  const double dx = tx - fx;
+  const double dy = ty - fy;
+  const double scale = std::max(std::fabs(dx), std::fabs(dy));
+  const double ux = dx / scale;
+  const double uy = dy / scale;
+  const double length2 = (ux * ux) + (uy * uy);
+  // The parameter of the nearest point measured from either end.
+  const double fromStart = std::clamp(
+      ((((px - fx) / scale) * ux) + (((py - fy) / scale) * uy)) / length2, 0.0,
+      1.0);
+  const double fromEnd = std::clamp(
+      ((((tx - px) / scale) * ux) + (((ty - py) / scale) * uy)) / length2, 0.0,
+      1.0);
+  const bool nearStart = fromStart <= fromEnd;
+  const double cx = nearStart ? fx + (fromStart * dx) : tx - (fromEnd * dx);
+  const double cy = nearStart ? fy + (fromStart * dy) : ty - (fromEnd * dy);
+  return 2.0 * std::hypot(px - cx, py - cy);
 }
 
 } // namespace
@@ -217,6 +267,9 @@ double distanceToSegment(const Point point, const Point from, const Point to) {
   const double dx = to.x() - from.x();
   const double dy = to.y() - from.y();
   const double length2 = (dx * dx) + (dy * dy);
+  if (!std::isfinite(length2)) {
+    return distanceToLongSegment(point, from, to);
+  }
   double t = 0.0;
   if (length2 > 1e-18) {
     t = (((point.x() - from.x()) * dx) + ((point.y() - from.y()) * dy)) /
@@ -492,14 +545,8 @@ RasterizedObstacles rasterizeObstacles(const ChipT& chip,
   removeIslands(blocked);
 
   if (options.keepout > 0.0) {
-    const std::vector<uint8_t> cells =
-        keepoutMask(chip, grid, options, blocked, result.keepoutCells,
-                    result.exemptedCells);
-    for (std::size_t i = 0; i < cells.size(); ++i) {
-      if (cells[i] != FREE) {
-        blocked.set(i);
-      }
-    }
+    blockKeepout(chip, grid, options, blocked, result.keepoutCells,
+                 result.exemptedCells);
   }
   blockBorder(blocked, options.borderX, options.borderY);
   return result;

@@ -19,6 +19,7 @@
 
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
+#include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
 #include "mqt-scpd/routing/SearchScratch.hpp"
@@ -28,6 +29,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -89,6 +92,28 @@ TEST(MemoryModel, TheScratchNeedsNoClearingWhenItsIterationWrapsAround) {
   }
 }
 
+TEST(MemoryModel, AScratchMovesButIsNeitherCopiedNorAssigned) {
+  // A router keeps a pointer to its scratch and the size of its grid. A copy
+  // would double the largest allocation, and an assignment would change the
+  // size under the router.
+  static_assert(!std::is_copy_constructible_v<SearchScratch>);
+  static_assert(!std::is_copy_assignable_v<SearchScratch>);
+  static_assert(!std::is_move_assignable_v<SearchScratch>);
+  static_assert(std::is_nothrow_move_constructible_v<SearchScratch>);
+  SearchScratch scratch(4, 3);
+  const SearchScratch moved(std::move(scratch));
+  EXPECT_EQ(moved.width(), 4U);
+  EXPECT_EQ(moved.height(), 3U);
+  EXPECT_EQ(moved.size(), 4U * 3U * NUM_HEADINGS);
+  // The moved-from scratch is the scratch of an empty grid. The test reads
+  // this documented state on purpose.
+  // NOLINTBEGIN(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+  EXPECT_EQ(scratch.size(), 0U);
+  EXPECT_EQ(scratch.width(), 0U);
+  EXPECT_EQ(scratch.height(), 0U);
+  // NOLINTEND(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+}
+
 TEST(MemoryModel, ARouterCopiesNeitherTheObstaclesNorTheCorridor) {
   constexpr uint32_t side = 200;
   auto primitives = std::make_shared<const MovePrimitives>(5);
@@ -115,6 +140,26 @@ TEST(MemoryModel, ARouterCopiesNeitherTheObstaclesNorTheCorridor) {
 
   wire[(60ULL * side) + 60] = 7;
   EXPECT_EQ(router.wirePenalty((60ULL * side) + 60), 7);
+}
+
+TEST(MemoryModel, TheStaticProximityKeepsNoMemoryOfItsGrowth) {
+  // The growth of the static proximity needs a byte per cell while it runs.
+  // A router computes the proximity once and then routes for a long time, so
+  // it must not keep that memory.
+  constexpr uint32_t side = 400;
+  auto primitives = std::make_shared<const MovePrimitives>(5);
+  SearchScratch scratch(side, side);
+  grid::BitGrid obstacles(side, side);
+  for (uint32_t x = 0; x < side; ++x) {
+    obstacles.setCell(x, 200);
+  }
+  DubinsRouter router(primitives, scratch);
+  router.attachObstacles(&obstacles);
+  const std::size_t held = router.heldBytes();
+  router.computeStaticProximity(10, 40);
+  EXPECT_EQ(router.staticPenalty((200ULL * side) + 7), 40);
+  EXPECT_GT(router.staticPenalty((205ULL * side) + 7), 0);
+  EXPECT_EQ(router.heldBytes(), held);
 }
 
 TEST(MemoryModel, ARouterAndItsScratchHoldAboutEightyBytesPerCell) {
@@ -182,19 +227,18 @@ TEST(MemoryModel, ARouterAndItsScratchHoldAboutEightyBytesPerCell) {
       static_cast<double>(scratchBytes + router.heldBytes()) /
       static_cast<double>(cells);
   // Sixty-four bytes of scratch. Per cell, the router owns one byte each of
-  // static proximity, packed working grid, crossing constraints,
-  // single-crossing overlay, exemption and visited mask of the proximity
-  // growth, and four of distance field: ten bytes. The fronts of the
-  // proximity growth add two bytes here, the open list three, and the rest
-  // is small.
-  EXPECT_GT(perCell, 78.0);
-  EXPECT_LT(perCell, 82.0);
+  // static proximity, packed working grid, crossing constraints and crossing
+  // rules, and four of distance field: eight bytes. The crossing rules hold
+  // the exemption and the single-crossing overlay. The open list adds three
+  // bytes here, and the rest is small.
+  EXPECT_GT(perCell, 74.0);
+  EXPECT_LT(perCell, 78.0);
 
   // Projected to the router grid of the largest benchmark, one router takes
-  // about 2.3 GB, so three routers in parallel need about 7 GB.
+  // about 2.2 GB, so three routers in parallel need about 6.6 GB.
   const double largest = perCell * static_cast<double>(LARGEST_CELLS);
-  EXPECT_GT(largest, 2.2e9);
-  EXPECT_LT(largest, 2.4e9);
+  EXPECT_GT(largest, 2.1e9);
+  EXPECT_LT(largest, 2.3e9);
 }
 
 } // namespace

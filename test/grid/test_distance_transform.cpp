@@ -8,7 +8,7 @@
  * Licensed under the MIT License
  */
 
-#include "SplitMix.hpp"
+#include "../SplitMix.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/DistanceTransform.hpp"
 
@@ -23,7 +23,7 @@
 namespace {
 
 using namespace mqt::scpd::grid;
-using mqt::scpd::grid::test::SplitMix;
+using mqt::scpd::test::SplitMix;
 
 std::vector<uint32_t> bruteForce(const BitGrid& blocked) {
   std::vector<uint32_t> distance(blocked.size(), DISTANCE_UNBOUNDED);

@@ -21,42 +21,40 @@
 
 namespace mqt::scpd::routing {
 
-// Detection of a routed path that crosses or touches itself.
-//
-// The search runs over (cell, heading) states. The same cell at two headings
-// is two states, so a route can return to a cell it already occupies. On the
-// chip, that is a short circuit. No clearance rule sees it, because a
-// clearance rule compares two different wires. Each path therefore needs a
-// check of its own.
-//
-// The detector finds two shapes. A revisit is the same cell twice. A diagonal
-// crossing is two diagonal steps that cross inside one 2 by 2 block while all
-// four cells stay distinct. Each diagonal step is keyed on its block and its
-// orientation, and the two orientations in one block always meet at the
-// center of the block.
-//
-// The router emits a sequence of states, so every heading change emits the
-// cell it turns on a second time: an A-B-A spur. A window suppresses these
-// spurs. A revisit counts only when the two visits are more than
-// PATH_LOOP_SPUR_WINDOW steps apart. No real loop is that short at the
-// default bend radius of five cells. The detector uses a window and not a
-// stack that collapses spurs, because such a stack pops every A-B-A. It would
-// unwind a long exact retrace one cell at a time and so remove the defect the
-// detector must find.
-
 /**
  * @brief The largest distance, in steps, between two visits of one cell that
  * the detector ignores as a spur.
+ *
+ * A routed path lists the cells each move sweeps (see Path). Some eighth
+ * turns list one cell twice, two points apart: an A-B-A spur. At the default
+ * bend radius of five cells, every eighth turn from a cardinal heading sweeps
+ * one cell past the end of its arc, so the path reads the end, the cell past
+ * it, and the end again. At most other radii, some eighth turns list a cell
+ * twice in the same way, or sweep one cell twice. Quarter turns and straight
+ * steps leave no spur. A spur is not a loop, so a revisit counts only when the
+ * two visits are more than this many steps apart. No real loop is that short at
+ * the default bend radius.
+ *
+ * The detector uses a window and not a stack that collapses spurs, because
+ * such a stack pops every A-B-A. It would unwind a long exact retrace one cell
+ * at a time and so remove the defect the detector must find.
  */
 inline constexpr std::size_t PATH_LOOP_SPUR_WINDOW = 4;
 
 /**
  * @brief The shape of a self-intersection.
+ *
+ * The search runs over (cell, heading) states. The same cell at two headings
+ * is two states, so a route can return to a cell it already occupies. On the
+ * chip, that is a short circuit. No clearance rule sees it, because a
+ * clearance rule compares two different wires. Each path therefore needs a
+ * check of its own, which finds two shapes.
  */
 enum class PathLoopKind : uint8_t {
   /// The same grid cell is occupied twice.
   Revisit,
-  /// Two diagonal steps cross inside one 2 by 2 block.
+  /// Two diagonal steps cross inside one 2 by 2 block while all four cells
+  /// stay distinct. The two diagonals of a block always meet at its center.
   DiagonalCross,
 };
 
@@ -95,8 +93,8 @@ struct MQT_SCPD_ROUTING_EXPORT PathLoopScratch {
   /// The number of revisits the spur window ignored on the last scan.
   uint32_t spurRevisitsIgnored = 0;
   /// The largest distance, in steps, of a revisit the spur window ignored on
-  /// the last scan. A heading change produces a spur of two steps. While this
-  /// value stays at two, the window ignored nothing close to its limit.
+  /// the last scan. A spur of a routed path spans two steps. While this value
+  /// stays at two or below, the window ignored nothing close to its limit.
   std::size_t maxSpurDistance = 0;
 
   /**
@@ -143,9 +141,11 @@ MQT_SCPD_ROUTING_EXPORT void rasterizePathCells(const Path& path,
 /**
  * @brief Scans the rasterized cells of a scratch for self-intersections.
  *
- * After a hit, the scan forgets every earlier visit and restarts from the
- * current cell. A path that runs back along itself for two hundred cells
- * therefore counts as one event, not as two hundred.
+ * The scan keys each diagonal step on its 2 by 2 block and its orientation,
+ * and ignores a revisit within PATH_LOOP_SPUR_WINDOW steps. After a hit, the
+ * scan forgets every earlier visit and restarts from the current cell. A path
+ * that runs back along itself for two hundred cells therefore counts as one
+ * event, not as two hundred.
  *
  * @param scratch The scratch whose @c xs and @c ys hold the cells to scan. The
  * scan updates its counters and its maps.

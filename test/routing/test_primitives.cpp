@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numbers>
 #include <set>
 #include <stdexcept>
@@ -29,6 +30,31 @@ using namespace mqt::scpd::routing;
 const MovePrimitives& primitives() {
   static const MovePrimitives PRIMITIVES(5);
   return PRIMITIVES;
+}
+
+/// The largest bend radius the router accepts.
+constexpr uint32_t ROUTER_RADIUS_LIMIT = 23;
+
+/// The direction of travel at the end of the curve of a move, in degrees.
+/// The last two chords of an evenly sampled arc turn by the same angle, so
+/// the tangent at the end lies half that angle beyond the last chord.
+double endDirection(const Primitive& p) {
+  const auto& s = p.samples;
+  const std::size_t n = s.size();
+  const double last =
+      std::atan2(s[n - 1].y() - s[n - 2].y(), s[n - 1].x() - s[n - 2].x());
+  const double before =
+      std::atan2(s[n - 2].y() - s[n - 3].y(), s[n - 2].x() - s[n - 3].x());
+  const double radians =
+      last + (std::remainder(last - before, 2.0 * std::numbers::pi) / 2.0);
+  return radians * 180.0 / std::numbers::pi;
+}
+
+/// The direction of travel of a heading, in degrees.
+double headingDirection(const Heading h) {
+  const HeadingVector v = headingVector(h);
+  return std::atan2(static_cast<double>(v.dy), static_cast<double>(v.dx)) *
+         180.0 / std::numbers::pi;
 }
 
 TEST(Primitives, EveryHeadingHasAStraightAndTurnsToEitherSide) {
@@ -103,6 +129,30 @@ TEST(Primitives, ADiagonalHeadingKeepsItsQuarterTurns) {
   }
 }
 
+TEST(Primitives, EveryHeadingHoldsQuarterTurnsThatEndOnTheirExitHeading) {
+  // At some radii a diagonal heading also holds a shorter arc to the
+  // quarter-turn heading. Each side still has a quarter turn whose curve
+  // ends along its exit heading.
+  for (uint32_t radius = 1; radius <= ROUTER_RADIUS_LIMIT; ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
+      for (const int side : {-2, 2}) {
+        const Heading exit = turned(h, side);
+        bool tangent = false;
+        for (const Primitive& p : table.of(h)) {
+          if (p.exitHeading == exit && p.samples.size() >= 3) {
+            const double error =
+                std::remainder(endDirection(p) - headingDirection(exit), 360.0);
+            tangent = tangent || std::abs(error) <= 1.0;
+          }
+        }
+        EXPECT_TRUE(tangent)
+            << radius << " " << static_cast<int>(h) << " " << side;
+      }
+    }
+  }
+}
+
 TEST(Primitives, SweptCellsStayWithinTheReachOfTheirMove) {
   for (Heading h = 0; h < NUM_HEADINGS; ++h) {
     for (const Primitive& p : primitives().of(h)) {
@@ -174,10 +224,74 @@ TEST(Primitives,
   }
 }
 
+TEST(Primitives, TheSamplesOfEveryMoveRunForwardToItsEnd) {
+  for (uint32_t radius = 1; radius <= ROUTER_RADIUS_LIMIT; ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
+      for (const Primitive& p : table.of(h)) {
+        const auto& s = p.samples;
+        ASSERT_GE(s.size(), 2U) << radius << " " << p.id;
+        EXPECT_NEAR(s.front().x(), 0.0, 1e-9) << radius << " " << p.id;
+        EXPECT_NEAR(s.front().y(), 0.0, 1e-9) << radius << " " << p.id;
+        // No sample steps back against the direction from start to end.
+        for (std::size_t k = 1; k < s.size(); ++k) {
+          const double along = ((s[k].x() - s[k - 1].x()) * p.dx) +
+                               ((s[k].y() - s[k - 1].y()) * p.dy);
+          EXPECT_GE(along, -1e-9) << radius << " " << static_cast<int>(h) << " "
+                                  << p.id << " " << k;
+        }
+        // The curve reaches the end by a step of the sample spacing, not by
+        // a jump.
+        const std::size_t n = s.size();
+        EXPECT_LE(std::hypot(s[n - 1].x() - s[n - 2].x(),
+                             s[n - 1].y() - s[n - 2].y()),
+                  2.0 * MovePrimitives::SAMPLE_SPACING)
+            << radius << " " << static_cast<int>(h) << " " << p.id;
+        if (isDiagonal(h) && (p.id == 900 || p.id == 901)) {
+          // The arc of an exact diagonal quarter turn ends at no whole cell.
+          EXPECT_EQ(std::lround(s.back().x()), p.dx) << radius << " " << p.id;
+          EXPECT_EQ(std::lround(s.back().y()), p.dy) << radius << " " << p.id;
+        } else {
+          EXPECT_NEAR(s.back().x(), p.dx, 1e-9)
+              << radius << " " << static_cast<int>(h) << " " << p.id;
+          EXPECT_NEAR(s.back().y(), p.dy, 1e-9)
+              << radius << " " << static_cast<int>(h) << " " << p.id;
+        }
+      }
+    }
+  }
+}
+
+TEST(Primitives, AMoveThatLeavesACardinalHeadingCostsTheLengthOfItsCurve) {
+  for (uint32_t radius = 1; radius <= ROUTER_RADIUS_LIMIT; ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading h = 0; h < NUM_HEADINGS; h = static_cast<Heading>(h + 2)) {
+      for (const Primitive& p : table.of(h)) {
+        double length = 0.0;
+        for (std::size_t k = 1; k < p.samples.size(); ++k) {
+          length += std::hypot(p.samples[k].x() - p.samples[k - 1].x(),
+                               p.samples[k].y() - p.samples[k - 1].y());
+        }
+        EXPECT_NEAR(p.cost, length, 0.02)
+            << radius << " " << static_cast<int>(h) << " " << p.id;
+      }
+    }
+  }
+}
+
 TEST(Primitives, ARadiusTooLargeForTheIdentifiersIsRefused) {
-  // The search state packs a move into ten bits, and a radius of a thousand
-  // cells needs more moves per heading than that.
+  // The search state packs a move into ten bits. The largest radius whose
+  // moves fit builds; a larger one is refused before any table is built,
+  // even the largest radius the type holds.
+  EXPECT_NO_THROW(
+      static_cast<void>(MovePrimitives(MovePrimitives::MAX_BEND_RADIUS)));
+  EXPECT_THROW(
+      static_cast<void>(MovePrimitives(MovePrimitives::MAX_BEND_RADIUS + 1)),
+      std::invalid_argument);
   EXPECT_THROW(static_cast<void>(MovePrimitives(1000)), std::invalid_argument);
+  EXPECT_THROW(
+      static_cast<void>(MovePrimitives(std::numeric_limits<uint32_t>::max())),
+      std::invalid_argument);
 }
 
 } // namespace

@@ -117,9 +117,9 @@ uint32_t scanCellsForSelfIntersection(PathLoopScratch& scratch,
       }
     }
 
-    // A plain revisit, unless the two visits are close enough to be the
-    // heading-change re-emission, in which case the newer visit replaces the
-    // older one so that a chain of them cannot add up to a long-range hit.
+    // A plain revisit, unless the two visits are close enough to be a spur.
+    // Then the newer visit replaces the older one, so that a chain of spurs
+    // cannot add up to a long-range hit.
     if (!hit) {
       const auto it = scratch.seenCell.find(key);
       if (it == scratch.seenCell.end()) {

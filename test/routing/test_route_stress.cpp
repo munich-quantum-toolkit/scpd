@@ -11,9 +11,11 @@
 // The routing stress test: a hundred routes over two grids of a thousand
 // cells per side, each in its own cell of a lattice, with the source and the
 // target facing opposite ways. Every route must exist, end exactly on its
-// target, not cross itself, and render to the length the search paid for.
+// target, not cross itself, render to the length the search paid for, and
+// take a coupler that meets its target length.
 
 #include "mqt-scpd/grid/BitGrid.hpp"
+#include "mqt-scpd/routing/CouplerInsertion.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
@@ -24,6 +26,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -136,6 +139,19 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
                        .bendPenalty = 500});
   router.attachCorridor(&corridor);
 
+  // The largest amount by which the cost of a turn exceeds the length of its
+  // curve. At a radius of five cells, it belongs to the eighth turns that
+  // leave a diagonal heading (see Primitive::cost).
+  double largestExcess = 0.0;
+  for (Heading heading = 0; heading < NUM_HEADINGS; ++heading) {
+    for (const Primitive& p : primitives->of(heading)) {
+      if (p.exitHeading != heading) {
+        largestExcess =
+            std::max(largestExcess, p.cost - polylineLength(p.samples));
+      }
+    }
+  }
+
   PathLoopScratch loopScratch;
   int routed = 0;
   for (int t = 0; t < TOTAL_ROUTES; ++t) {
@@ -164,8 +180,8 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
     // The length of the rendered curve agrees with the length the search
     // paid for. The rendering draws every move once, along its own curve, so
     // its length is the sum of the curve lengths of the moves; rounding at
-    // the ends of the curves leaves a tenth of a cell. A move costs the
-    // length of its curve, except that a turn can cost up to a cell more.
+    // the ends of the curves leaves a tenth of a cell. A move costs at least
+    // the length of its curve, and a turn at most the largest excess more.
     std::vector<PathSegment> segments;
     Path copy = path;
     const std::vector<Point> samples =
@@ -184,7 +200,7 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
     }
     EXPECT_NEAR(sampled, curves, 0.15) << t;
     EXPECT_GE(paid, curves - 0.01) << t;
-    EXPECT_LE(paid, curves + turns) << t;
+    EXPECT_LE(paid, curves + (turns * largestExcess) + 0.01) << t;
     // It is at least the straight line between the two ends.
     const double beeline =
         std::hypot(static_cast<double>(request.objective.target.x) -
@@ -200,6 +216,25 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
     EXPECT_NEAR(samples.back().y(),
                 static_cast<double>(request.objective.target.y), 1e-6)
         << t;
+
+    // The coupler splice measures lengths as samplePath() renders them. Its
+    // dogleg ends on the middle cell of the longest straight run, if the
+    // target is the rendered length from that cell to the end plus the
+    // length of the dogleg. The spliced path then renders to the target.
+    const auto longest = std::ranges::max_element(
+        segments, {}, [](const PathSegment& s) { return s.steps(); });
+    ASSERT_TRUE(longest->straight()) << t;
+    const double fromMiddle = sampled - longest->lengthAt[longest->steps() / 2];
+    const Heading orientation = longest->heading;
+    const double target =
+        fromMiddle +
+        buildDogleg(*primitives, turned(orientation, 2), -1, 14).cost;
+    Path spliced = path;
+    ASSERT_TRUE(spliceCouplerDogleg(*primitives, target, spliced,
+                                    GRID_DIMENSION, GRID_DIMENSION, orientation)
+                    .has_value())
+        << t;
+    EXPECT_NEAR(renderedLength(*primitives, spliced), target, 1e-6) << t;
   }
   EXPECT_EQ(routed, TOTAL_ROUTES);
   EXPECT_EQ(router.loopGuardRejections(), 0U);

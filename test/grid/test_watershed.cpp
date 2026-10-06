@@ -62,6 +62,35 @@ TEST(Watershed, TiesGoToTheLowerSeedAndRunsAreDeterministic) {
   EXPECT_EQ(first, second);
 }
 
+TEST(Watershed, TheLowerSeedWinsTheMidlineInEveryLayout) {
+  // Two seeds mirrored across the midline of a free grid, swapped left and
+  // right and top and bottom. Every cell of the midline is equidistant from
+  // both seeds, so the first seed wins all of them in every layout.
+  constexpr uint32_t side = 21;
+  const BitGrid blocked(side, side);
+  const auto at = [](const uint32_t x, const uint32_t y) {
+    return (static_cast<std::size_t>(y) * side) + x;
+  };
+  const auto midlineOfFirstSeed = [&](const std::vector<std::size_t>& seeds,
+                                      const bool column) {
+    std::vector<PartitionLabel> labels(blocked.size(), LABEL_NONE);
+    static_cast<void>(
+        runWatershed(blocked, seeds, labels, FIRST_PARTITION_LABEL));
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < side; ++i) {
+      const std::size_t cell = column ? at(10, i) : at(i, 10);
+      if (labels[cell] == FIRST_PARTITION_LABEL) {
+        ++count;
+      }
+    }
+    return count;
+  };
+  EXPECT_EQ(midlineOfFirstSeed({at(5, 10), at(15, 10)}, true), side);
+  EXPECT_EQ(midlineOfFirstSeed({at(15, 10), at(5, 10)}, true), side);
+  EXPECT_EQ(midlineOfFirstSeed({at(10, 5), at(10, 15)}, false), side);
+  EXPECT_EQ(midlineOfFirstSeed({at(10, 15), at(10, 5)}, false), side);
+}
+
 TEST(Watershed, BarriersAndReservedCellsAreNotEntered) {
   BitGrid blocked(10, 5);
   for (uint32_t y = 0; y < 5; ++y) {
@@ -104,6 +133,23 @@ TEST(Watershed, TheMajorityFilterSmoothsAJaggedBorder) {
   EXPECT_EQ(labels[(3 * 10) + 4], 2);
   EXPECT_EQ(labels[(3 * 10) + 5], 3);
   EXPECT_EQ(labels[(0 * 10) + 4], 2);
+}
+
+TEST(Watershed, TheIterationCapEndsAMajorityFilterThatNeverSettles) {
+  // Every pass reads the labels from before the pass, so on these labels every
+  // free cell flips on every pass. The cells (3, 0) and (0, 1) are blocked.
+  BitGrid blocked(4, 2);
+  blocked.setCell(3, 0);
+  blocked.setCell(0, 1);
+  const std::vector<PartitionLabel> input = {2, 3, 2, 0, 0, 3, 2, 3};
+  const std::vector<PartitionLabel> flipped = {3, 2, 3, 0, 0, 2, 3, 2};
+
+  std::vector<PartitionLabel> once = input;
+  smoothPartitionBorders(blocked, once, 2, 1, 1);
+  EXPECT_EQ(once, flipped);
+  std::vector<PartitionLabel> twice = input;
+  smoothPartitionBorders(blocked, twice, 2, 1, 2);
+  EXPECT_EQ(twice, input);
 }
 
 TEST(Watershed, SkippedSeedsTakeNoLabelAndUnreachedCellsStayFree) {

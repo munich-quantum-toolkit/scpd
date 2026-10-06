@@ -8,7 +8,7 @@
  * Licensed under the MIT License
  */
 
-#include "SplitMix.hpp"
+#include "../SplitMix.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
@@ -33,7 +33,7 @@ namespace {
 using namespace mqt::scpd::grid;
 using mqt::scpd::flatbuffers::design::ChipT;
 using mqt::scpd::flatbuffers::geometry::PolygonT;
-using mqt::scpd::grid::test::SplitMix;
+using mqt::scpd::test::SplitMix;
 
 /// The Bresenham walk over the whole line, one cell after the other, which
 /// keeps the cells on the grid.
@@ -251,6 +251,77 @@ TEST(Rasterize, ACorridorReleasesKeepoutCellsButNeverPolygonCells) {
   EXPECT_GT(raster.exemptedCells, 0U);
 }
 
+TEST(Rasterize, TheKeepoutMatchesACellByCellReferenceOnRandomChips) {
+  // Overlapping random polygons and corridors. The reference measures every
+  // cell center that the polygons leave free against every obstacle edge and
+  // against every corridor.
+  SplitMix random(17);
+  const GridMetrics& grid = unitGrid();
+  const auto anywhere = [&] {
+    return Point(-10.0 + (random.unit() * 120.0),
+                 -10.0 + (random.unit() * 120.0));
+  };
+  for (int round = 0; round < 40; ++round) {
+    std::vector<std::vector<Point>> obstacles(
+        static_cast<std::size_t>(random.between(1, 6)));
+    for (auto& vertices : obstacles) {
+      const int64_t count = random.between(2, 8);
+      for (int64_t i = 0; i < count; ++i) {
+        vertices.push_back(anywhere());
+      }
+    }
+    RasterOptions options;
+    options.keepout = 0.5 + (random.unit() * 4.0);
+    const int64_t corridors = random.between(0, 6);
+    for (int64_t i = 0; i < corridors; ++i) {
+      options.keepoutExemptions.push_back({.from = anywhere(),
+                                           .to = anywhere(),
+                                           .halfWidth = random.unit() * 5.0});
+    }
+    const ChipT chip = chipWith(obstacles);
+    const RasterizedObstacles raster = rasterizeObstacles(chip, grid, options);
+    const BitGrid polygons = rasterizeObstacles(chip, grid).blocked;
+
+    BitGrid expected = polygons;
+    std::size_t keepoutCells = 0;
+    std::size_t exemptedCells = 0;
+    for (uint32_t y = 0; y < grid.height; ++y) {
+      for (uint32_t x = 0; x < grid.width; ++x) {
+        if (polygons.testCell(x, y)) {
+          continue;
+        }
+        const Point center = grid.toLayout(x, y);
+        const bool near = std::ranges::any_of(obstacles, [&](const auto& ring) {
+          for (std::size_t i = 0; i < ring.size(); ++i) {
+            if (distanceToSegment(center, ring[i],
+                                  ring[(i + 1) % ring.size()]) <=
+                options.keepout) {
+              return true;
+            }
+          }
+          return false;
+        });
+        if (!near) {
+          continue;
+        }
+        ++keepoutCells;
+        if (std::ranges::any_of(
+                options.keepoutExemptions, [&](const Corridor& corridor) {
+                  return distanceToSegment(center, corridor.from,
+                                           corridor.to) <= corridor.halfWidth;
+                })) {
+          ++exemptedCells;
+        } else {
+          expected.setCell(x, y);
+        }
+      }
+    }
+    ASSERT_EQ(raster.blocked, expected) << "round " << round;
+    ASSERT_EQ(raster.keepoutCells, keepoutCells) << "round " << round;
+    ASSERT_EQ(raster.exemptedCells, exemptedCells) << "round " << round;
+  }
+}
+
 TEST(Rasterize, LineCellsAreConnectedAndClipped) {
   const std::vector<std::size_t> cells = lineCells(0, 0, 4, 2, 10, 10);
   EXPECT_EQ(cells.size(), 5U);
@@ -268,6 +339,17 @@ TEST(Rasterize, LineCellsAreConnectedAndClipped) {
       5.0);
   EXPECT_DOUBLE_EQ(
       distanceToSegment(Point(3.0, 4.0), Point(0.0, 0.0), Point(0.0, 0.0)),
+      5.0);
+
+  // The squared length of these segments does not fit into a double.
+  EXPECT_DOUBLE_EQ(
+      distanceToSegment(Point(5.0, 4.0), Point(1e300, 3.0), Point(0.0, 3.0)),
+      1.0);
+  EXPECT_DOUBLE_EQ(
+      distanceToSegment(Point(5.0, 4.0), Point(0.0, 3.0), Point(1e300, 3.0)),
+      1.0);
+  EXPECT_DOUBLE_EQ(
+      distanceToSegment(Point(-3.0, 7.0), Point(0.0, 3.0), Point(1e300, 3.0)),
       5.0);
 }
 
@@ -486,6 +568,57 @@ TEST(Rasterize, AVertexFarOffTheGridKeepsTheDirectionOfItsEdges) {
   EXPECT_TRUE(blocked.testCell(60, 28));
   EXPECT_FALSE(blocked.testCell(60, 25));
   EXPECT_FALSE(blocked.testCell(5, 50));
+}
+
+TEST(Rasterize, AnEdgeToAVertexFarOffTheGridBlocksOnlyItsOwnCells) {
+  // One cell per layout unit over 0..9 in both axes.
+  const GridMetrics grid = GridMetrics::fit(
+      BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 9.0, .maxY = 9.0}, 10, 10);
+  const auto fill = [&](const std::vector<Point>& vertices) {
+    BitGrid mask(grid.width, grid.height);
+    PolygonT polygon;
+    polygon.vertices = vertices;
+    fillPolygon(mask, grid, polygon);
+    return mask;
+  };
+  const auto cellsOf = [&](const uint32_t minX, const uint32_t maxX,
+                           const uint32_t minY, const uint32_t maxY) {
+    BitGrid mask(grid.width, grid.height);
+    for (uint32_t y = minY; y <= maxY; ++y) {
+      for (uint32_t x = minX; x <= maxX; ++x) {
+        mask.setCell(x, y);
+      }
+    }
+    return mask;
+  };
+
+  // A triangle wholly right of the grid blocks no cell.
+  EXPECT_EQ(
+      fill({Point(1e300, 3.0), Point(6e17, 3.0), Point(6e17, 7.0)}).count(),
+      0U);
+  // The edge from (5, 3) to the far vertex runs right, not left.
+  EXPECT_EQ(fill({Point(5.0, 3.0), Point(1e300, 3.0)}), cellsOf(5, 9, 3, 3));
+  // Two far vertices: every edge stays short enough for its line.
+  BitGrid band(grid.width, grid.height);
+  EXPECT_NO_THROW(band =
+                      fill({Point(2.0, 2.0), Point(7.0, 2.0), Point(1e300, 5.0),
+                            Point(1e20, 6.0), Point(2.0, 8.0)}));
+  EXPECT_EQ(band, cellsOf(2, 9, 2, 8));
+
+  // The edges of slope 0.4 from (10, 10) and from (10, 90) to a vertex 1e300
+  // units off the grid keep their slope across the grid.
+  BitGrid wedge(unitGrid().width, unitGrid().height);
+  PolygonT polygon;
+  polygon.vertices = {Point(10.0, 10.0), Point(1e300, 4e299),
+                      Point(10.0, 90.0)};
+  fillPolygon(wedge, unitGrid(), polygon);
+  EXPECT_TRUE(wedge.testCell(35, 20));
+  EXPECT_TRUE(wedge.testCell(85, 40));
+  EXPECT_TRUE(wedge.testCell(100, 46));
+  EXPECT_TRUE(wedge.testCell(20, 94));
+  EXPECT_TRUE(wedge.testCell(35, 100));
+  EXPECT_FALSE(wedge.testCell(60, 29));
+  EXPECT_FALSE(wedge.testCell(5, 90));
 }
 
 TEST(Rasterize, ANonFiniteVertexIsRefusedAndKeepsTheMask) {

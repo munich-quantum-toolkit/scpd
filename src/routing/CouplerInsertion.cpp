@@ -22,9 +22,9 @@
 #include <functional>
 #include <initializer_list>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <stdexcept>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -32,16 +32,59 @@ namespace mqt::scpd::routing {
 
 namespace {
 
-/// The primitive of a heading with a given exit heading, the one of lowest
-/// identifier when several exist.
-const Primitive* primitiveTo(const MovePrimitives& primitives,
-                             const Heading from, const Heading exit) {
+/// The quarter turn of a heading toward an exit heading whose curve ends
+/// closest to the direction of the exit heading. The primitives come in
+/// ascending identifier order, so of equally close turns the one of lowest
+/// identifier wins.
+const Primitive* quarterTurnTo(const MovePrimitives& primitives,
+                               const Heading from, const Heading exit) {
+  const HeadingVector e = headingVector(exit);
+  const Primitive* best = nullptr;
+  double bestError = 0.0;
   for (const Primitive& p : primitives.of(from)) {
-    if (p.exitHeading == exit) {
-      return &p;
+    if (p.exitHeading != exit) {
+      continue;
+    }
+    // The angle between the last piece of the curve and the exit heading.
+    double error = std::numbers::pi;
+    if (p.samples.size() >= 2) {
+      const Point& a = p.samples[p.samples.size() - 2];
+      const Point& b = p.samples.back();
+      const double tx = b.x() - a.x();
+      const double ty = b.y() - a.y();
+      error = std::abs(
+          std::atan2((tx * e.dy) - (ty * e.dx), (tx * e.dx) + (ty * e.dy)));
+    }
+    if (best == nullptr || error < bestError) {
+      best = &p;
+      bestError = error;
     }
   }
-  return nullptr;
+  return best;
+}
+
+/// The length of one straight step of a heading, in cells.
+double stepLength(const Heading heading) {
+  return isDiagonal(heading) ? std::numbers::sqrt2 : 1.0;
+}
+
+/// The length of a move as samplePath() renders it: the curve of its samples,
+/// pulled onto the end of the move.
+double renderedMoveLength(const MovePrimitives& primitives,
+                          const Heading heading, const Primitive& move) {
+  // The move starts far enough from the origin that its end has no negative
+  // coordinate.
+  constexpr int32_t origin = 1 << 16;
+  const auto at = [](const int32_t offset) {
+    return static_cast<uint32_t>(origin + offset);
+  };
+  const Path path{
+      {.x = at(0), .y = at(0), .heading = heading, .primitive = move.id},
+      {.x = at(move.dx),
+       .y = at(move.dy),
+       .heading = move.exitHeading,
+       .primitive = primitives.straight(move.exitHeading)}};
+  return renderedLength(primitives, path);
 }
 
 uint64_t cellKey(const uint32_t x, const uint32_t y) {
@@ -60,30 +103,26 @@ bool isDiagonalStep(const PathPoint& a, const PathPoint& b) {
   return (dx == 1 || dx == -1) && (dy == 1 || dy == -1);
 }
 
-/// Whether the step from @p c to @p d crosses the diagonal step from @p a to
-/// @p b inside their 2 by 2 block, that is, whether it joins the two other
-/// cells of the block.
-bool crossesDiagonalStep(const PathPoint& a, const PathPoint& b,
-                         const PathPoint& c, const PathPoint& d) {
-  return (c.x == a.x && c.y == b.y && d.x == b.x && d.y == a.y) ||
-         (c.x == b.x && c.y == a.y && d.x == a.x && d.y == b.y);
-}
-
-/// A part of a coupler's dogleg: its cells, relative to its start, and the
-/// offset of its end, where the next part starts. A primitive ends at its
-/// offset Primitive::dx, Primitive::dy, which need not be its last swept cell.
+/// A part of a coupler's dogleg: its cells, relative to its start, the offset
+/// of its end, where the next part starts, and its length. A primitive ends at
+/// its offset Primitive::dx, Primitive::dy, which need not be its last swept
+/// cell.
 struct DoglegPiece {
   Path cells;
   int64_t endX = 0;
   int64_t endY = 0;
+  /// The length of the part as samplePath() renders it, in cells.
+  double length = 0.0;
 };
 
 /// The swept cells of a primitive that leaves a heading, tagged with the
 /// heading and the primitive.
-DoglegPiece pieceOf(const Primitive& primitive, const Heading heading) {
+DoglegPiece pieceOf(const MovePrimitives& primitives,
+                    const Primitive& primitive, const Heading heading) {
   DoglegPiece piece;
   piece.endX = primitive.dx;
   piece.endY = primitive.dy;
+  piece.length = renderedMoveLength(primitives, heading, primitive);
   for (const CellOffset& move : primitive.swept) {
     piece.cells.push_back(
         {.x = static_cast<uint32_t>(static_cast<int32_t>(move.dx)),
@@ -103,31 +142,23 @@ DoglegGeometry buildDogleg(const MovePrimitives& primitives,
     throw std::invalid_argument("a dogleg turns one way or the other");
   }
   const Heading exit = turned(entry, 2 * turnSign);
-  DoglegGeometry result;
-  result.tip = {.x = 0, .y = 0, .heading = exit, .primitive = 0};
-
-  const Primitive* turn = primitiveTo(primitives, entry, exit);
+  const Primitive* turn = quarterTurnTo(primitives, entry, exit);
   if (turn == nullptr) {
     throw std::logic_error(
         "the primitives hold no quarter turn for this heading");
   }
-  result.cost = turn->cost;
-  result.tip.primitive = turn->id;
-  result.path = pieceOf(*turn, entry).cells;
-  result.tip.x = static_cast<uint32_t>(static_cast<int32_t>(turn->dx));
-  result.tip.y = static_cast<uint32_t>(static_cast<int32_t>(turn->dy));
-
-  const uint16_t straight = primitives.straight(exit);
-  const HeadingVector v = headingVector(exit);
-  for (uint32_t s = 0; s < straightLength; ++s) {
-    result.tip.x =
-        static_cast<uint32_t>(static_cast<int32_t>(result.tip.x) + v.dx);
-    result.tip.y =
-        static_cast<uint32_t>(static_cast<int32_t>(result.tip.y) + v.dy);
-    result.tip.primitive = straight;
-    result.path.push_back(result.tip);
-  }
-  result.cost += static_cast<double>(straightLength);
+  const DoglegPiece turnPiece = pieceOf(primitives, *turn, entry);
+  DoglegGeometry result;
+  result.path = turnPiece.cells;
+  result.cost = turnPiece.length +
+                (static_cast<double>(straightLength) * stepLength(exit));
+  result.tip = {.x = static_cast<uint32_t>(static_cast<int32_t>(turn->dx)),
+                .y = static_cast<uint32_t>(static_cast<int32_t>(turn->dy)),
+                .heading = exit,
+                .primitive = primitives.straight(exit)};
+  const Path run = straightRun(primitives, result.tip, straightLength);
+  result.path.insert(result.path.end(), run.begin() + 1, run.end());
+  result.tip = run.back();
   return result;
 }
 
@@ -157,32 +188,28 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   const int firstTurn = options.mirrored ? 1 : -1;
   const DoglegGeometry dogleg = buildDogleg(primitives, orientationStart,
                                             firstTurn, options.straightLength);
-  double initialCost = dogleg.cost;
   std::vector<DoglegPiece> prefix;
   if (options.leadStraight > 0) {
     // The straight run before the turn: the origin and one cell per step, on
     // the heading the turn starts on, tagged with the straight move. The run
     // ends on the cell the turn starts from.
     DoglegPiece lead;
+    lead.cells =
+        straightRun(primitives, {.x = 0, .y = 0, .heading = orientationStart},
+                    options.leadStraight);
     const HeadingVector v = headingVector(orientationStart);
-    const uint16_t straight = primitives.straight(orientationStart);
-    for (uint32_t s = 0; s <= options.leadStraight; ++s) {
-      lead.cells.push_back(
-          {.x = static_cast<uint32_t>(static_cast<int32_t>(s) * v.dx),
-           .y = static_cast<uint32_t>(static_cast<int32_t>(s) * v.dy),
-           .heading = orientationStart,
-           .primitive = straight});
-    }
     lead.endX = static_cast<int64_t>(options.leadStraight) * v.dx;
     lead.endY = static_cast<int64_t>(options.leadStraight) * v.dy;
+    lead.length = static_cast<double>(options.leadStraight) *
+                  stepLength(orientationStart);
     prefix.push_back(std::move(lead));
-    initialCost += static_cast<double>(options.leadStraight);
   }
   const auto pieceOfDogleg = [](const DoglegGeometry& geometry) {
     DoglegPiece piece;
     piece.cells = geometry.path;
     piece.endX = signedOffset(geometry.tip.x);
     piece.endY = signedOffset(geometry.tip.y);
+    piece.length = geometry.cost;
     return piece;
   };
   prefix.push_back(pieceOfDogleg(dogleg));
@@ -192,17 +219,25 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     const DoglegGeometry second = buildDogleg(
         primitives, orientation, secondTurn, options.secondStraightLength);
     prefix.push_back(pieceOfDogleg(second));
-    initialCost += second.cost;
     searchHeading = second.tip.heading;
   }
+  double prefixLength = 0.0;
+  for (const DoglegPiece& piece : prefix) {
+    prefixLength += piece.length;
+  }
   optionsByHeading[searchHeading].push_back(
-      {.length = initialCost, .pieces = prefix});
+      {.length = prefixLength, .pieces = prefix});
 
-  const auto addOption = [&](const Heading target, const double cost,
+  // Mirrored moves render to the same length up to rounding. The margin
+  // keeps rounding from deciding whether a continuation is shorter than the
+  // first one of its heading.
+  constexpr double roundingMargin = 1e-9;
+  const auto addOption = [&](const Heading target, const double length,
                              const std::vector<DoglegPiece>& pieces) {
     auto it = optionsByHeading.find(target);
-    if (it == optionsByHeading.end() || cost < it->second.front().length) {
-      optionsByHeading[target].push_back({.length = cost, .pieces = pieces});
+    if (it == optionsByHeading.end() ||
+        length < it->second.front().length - roundingMargin) {
+      optionsByHeading[target].push_back({.length = length, .pieces = pieces});
     }
   };
   const auto with = [&](std::initializer_list<DoglegPiece> extra) {
@@ -216,18 +251,22 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   // Every one- and two-primitive continuation of the dogleg.
   for (const Primitive& first : primitives.of(searchHeading)) {
     const Heading intermediate = first.exitHeading;
-    const DoglegPiece pieceOne = pieceOf(first, searchHeading);
-    const double costOne = initialCost + first.cost;
-    addOption(intermediate, costOne, with({pieceOne}));
+    const DoglegPiece pieceOne = pieceOf(primitives, first, searchHeading);
+    const double lengthOne = prefixLength + pieceOne.length;
+    addOption(intermediate, lengthOne, with({pieceOne}));
 
     for (const Primitive& second : primitives.of(intermediate)) {
-      addOption(second.exitHeading, costOne + second.cost,
-                with({pieceOne, pieceOf(second, intermediate)}));
+      const DoglegPiece pieceTwo = pieceOf(primitives, second, intermediate);
+      addOption(second.exitHeading, lengthOne + pieceTwo.length,
+                with({pieceOne, pieceTwo}));
     }
   }
 
   // The candidates: every cell of a straight run, with every option of its
   // heading, scored by the length mismatch of the path that would remain.
+  // The lengths are those of the rendered path, so the length from a cell to
+  // the end is the rendered length of the whole path minus the rendered
+  // length up to the cell.
   struct Candidate {
     PathPoint cell;
     double mismatch = 0.0;
@@ -236,18 +275,17 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     std::size_t splitIndex = 0;
   };
   std::vector<Candidate> candidates;
-  const SegmentedPath segmented = reconstructSegments(primitives, path);
-  if (segmented.segments.empty()) {
-    return std::nullopt;
-  }
-  const double overallLength = segmented.segments.back().lengthAt.back();
-  std::unordered_map<uint64_t, std::size_t> firstIndexOf;
-  firstIndexOf.reserve(path.size() * 2);
-  for (std::size_t r = 0; r < path.size(); ++r) {
-    firstIndexOf.emplace(cellKey(path[r].x, path[r].y), r);
-  }
-  for (const PathSegment& segment : segmented.segments) {
-    if (!segment.straight) {
+  Path rendered = path;
+  std::vector<PathSegment> segments;
+  const double overallLength = polylineLength(
+      samplePath(primitives, rendered, rendered.front(), segments));
+  // A cell of a straight run is a copy of a point of the path, and the
+  // segments keep the order of the path. A cursor through the path therefore
+  // finds the candidate's own point, also where an earlier point lies on the
+  // same cell.
+  std::size_t own = 0;
+  for (const PathSegment& segment : segments) {
+    if (!segment.straight()) {
       continue;
     }
     const auto found = optionsByHeading.find(segment.heading);
@@ -256,9 +294,9 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     }
     for (std::size_t i = 0; i < segment.cells.size(); ++i) {
       const PathPoint& cell = segment.cells[i];
-      const auto it = firstIndexOf.find(cellKey(cell.x, cell.y));
-      const std::size_t routingIndex =
-          (it != firstIndexOf.end()) ? it->second : path.size();
+      while (own < path.size() && path[own] != cell) {
+        ++own;
+      }
       for (const PathOption& option : found->second) {
         const double diff =
             (overallLength - segment.lengthAt[i] + option.length) -
@@ -267,10 +305,24 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
                               .mismatch = std::abs(diff),
                               .signedDiff = diff,
                               .option = &option,
-                              .splitIndex = routingIndex});
+                              .splitIndex = own});
       }
     }
   }
+
+  // The indices of the points on each cell: pairs of a cell key and an index
+  // in ascending order, so that the indices of one cell are adjacent and
+  // ascend.
+  std::vector<std::pair<uint64_t, std::size_t>> cellIndex;
+  cellIndex.reserve(path.size());
+  for (std::size_t r = 0; r < path.size(); ++r) {
+    cellIndex.emplace_back(cellKey(path[r].x, path[r].y), r);
+  }
+  std::ranges::sort(cellIndex);
+  const auto indicesOf = [&](const uint32_t x, const uint32_t y) {
+    return std::ranges::equal_range(cellIndex, cellKey(x, y), {},
+                                    &std::pair<uint64_t, std::size_t>::first);
+  };
 
   // Simulate a candidate's dogleg against the remaining path. Each piece
   // starts at the end of the piece before it, and the end of the last piece
@@ -319,58 +371,79 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     // dogleg joins it; the last piece can sweep a cell past its end. Two
     // diagonal steps can also cross inside a 2 by 2 block without sharing a
     // cell, so no diagonal step of the dogleg, including the step onto the
-    // joining cell, may cross one of the path.
+    // joining cell, may cross one of the path. A step of the path crosses
+    // the diagonal step from a to b where it joins the two other cells of
+    // their block.
+    const std::size_t split = cand.splitIndex;
     for (std::size_t p = 0; p < simulated.size(); ++p) {
       const PathPoint& a = simulated[p];
       const PathPoint& b =
           p + 1 < simulated.size() ? simulated[p + 1] : cand.cell;
       const bool joins = p >= lastPieceStart && a.samePlace(cand.cell);
-      const bool diagonal = isDiagonalStep(a, b);
-      for (std::size_t r = cand.splitIndex; r < path.size(); ++r) {
-        if (!joins && a.samePlace(path[r])) {
+      if (!joins) {
+        const auto onCell = indicesOf(a.x, a.y);
+        if (!onCell.empty() && onCell.back().second >= split) {
           return false;
         }
-        if (diagonal && r + 1 < path.size() &&
-            crossesDiagonalStep(a, b, path[r], path[r + 1])) {
-          return false;
+      }
+      if (isDiagonalStep(a, b)) {
+        const PathPoint other{.x = b.x, .y = a.y};
+        for (const auto& entry : indicesOf(a.x, b.y)) {
+          const std::size_t r = entry.second;
+          if ((r >= split && r + 1 < path.size() &&
+               path[r + 1].samePlace(other)) ||
+              (r > split && path[r - 1].samePlace(other))) {
+            return false;
+          }
         }
       }
     }
     out = std::move(simulated);
     return true;
   };
-  const auto allowed = [&](const Path& simulated) {
-    return !anchorAllowed || simulated.empty() ||
-           anchorAllowed(simulated.front().x, simulated.front().y);
+
+  // The rule that picks a candidate, in the order of the candidates: the
+  // first collision-free one whose anchor the filter allows, or else the
+  // first collision-free one.
+  struct Choice {
+    const Candidate* candidate = nullptr;
+    Path cells;
+    bool inAllowedArea = true;
+  };
+  const auto choose = [&]() -> std::optional<Choice> {
+    std::optional<Choice> fallback;
+    for (const Candidate& cand : candidates) {
+      Path simulated;
+      if (!tryCandidate(cand, simulated)) {
+        continue;
+      }
+      if (!anchorAllowed || simulated.empty() ||
+          anchorAllowed(simulated.front().x, simulated.front().y)) {
+        return Choice{.candidate = &cand,
+                      .cells = std::move(simulated),
+                      .inAllowedArea = true};
+      }
+      if (!fallback) {
+        fallback = Choice{.candidate = &cand,
+                          .cells = std::move(simulated),
+                          .inAllowedArea = false};
+      }
+    }
+    return fallback;
+  };
+  const auto byMismatch = [](const Candidate& a, const Candidate& b) {
+    return a.mismatch < b.mismatch;
   };
 
   // The best achievable mismatch, which scales the undershoot preference.
   // The sorts are stable, so among candidates of equal mismatch the one
   // earliest along the path wins, whatever the standard library.
-  std::ranges::stable_sort(candidates,
-                           [](const Candidate& a, const Candidate& b) {
-                             return a.mismatch < b.mismatch;
-                           });
-  double best = 0.0;
-  {
-    Path discard;
-    bool got = false;
-    for (const Candidate& cand : candidates) {
-      if (tryCandidate(cand, discard) && allowed(discard)) {
-        best = cand.mismatch;
-        got = true;
-        break;
-      }
-    }
-    if (!got) {
-      for (const Candidate& cand : candidates) {
-        if (tryCandidate(cand, discard)) {
-          best = cand.mismatch;
-          break;
-        }
-      }
-    }
+  std::ranges::stable_sort(candidates, byMismatch);
+  const std::optional<Choice> nearest = choose();
+  if (!nearest) {
+    return std::nullopt;
   }
+  const double best = nearest->candidate->mismatch;
   // Prefer a slight undershoot over an equal overshoot: an overshoot only
   // loses to an undershoot within about twice the best mismatch of the
   // target, so a hard, blocked-in resonator is not dragged far away.
@@ -378,59 +451,21 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     cand.mismatch =
         cand.signedDiff <= 0.0 ? -cand.signedDiff : cand.signedDiff + best;
   }
-  std::ranges::stable_sort(candidates,
-                           [](const Candidate& a, const Candidate& b) {
-                             return a.mismatch < b.mismatch;
-                           });
-
-  bool found = false;
-  bool foundFallback = false;
-  Path chosen;
-  Path fallback;
-  std::size_t chosenSplit = 0;
-  std::size_t fallbackSplit = 0;
-  PathPoint chosenCell;
-  PathPoint fallbackCell;
-  for (const Candidate& cand : candidates) {
-    Path simulated;
-    if (!tryCandidate(cand, simulated)) {
-      continue;
-    }
-    if (!allowed(simulated)) {
-      if (!foundFallback) {
-        foundFallback = true;
-        fallback = std::move(simulated);
-        fallbackSplit = cand.splitIndex;
-        fallbackCell = cand.cell;
-      }
-      continue;
-    }
-    found = true;
-    chosen = std::move(simulated);
-    chosenSplit = cand.splitIndex;
-    chosenCell = cand.cell;
-    break;
-  }
-  bool inAllowedArea = true;
-  if (!found && foundFallback) {
-    found = true;
-    inAllowedArea = false;
-    chosen = std::move(fallback);
-    chosenSplit = fallbackSplit;
-    chosenCell = fallbackCell;
-  }
-  if (!found) {
+  std::ranges::stable_sort(candidates, byMismatch);
+  const std::optional<Choice> chosen = choose();
+  if (!chosen) {
     return std::nullopt;
   }
 
+  const Candidate& winner = *chosen->candidate;
   path.erase(path.begin(),
-             path.begin() + static_cast<std::ptrdiff_t>(chosenSplit));
-  path.insert(path.begin(), chosen.begin(), chosen.end());
+             path.begin() + static_cast<std::ptrdiff_t>(winner.splitIndex));
+  path.insert(path.begin(), chosen->cells.begin(), chosen->cells.end());
   return CouplerSplice{.anchor = {.x = path.front().x,
                                   .y = path.front().y,
-                                  .heading = chosenCell.heading,
-                                  .primitive = chosenCell.primitive},
-                       .inAllowedArea = inAllowedArea};
+                                  .heading = winner.cell.heading,
+                                  .primitive = winner.cell.primitive},
+                       .inAllowedArea = chosen->inAllowedArea};
 }
 
 } // namespace mqt::scpd::routing

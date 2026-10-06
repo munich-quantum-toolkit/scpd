@@ -36,11 +36,32 @@ using flatbuffers::geometry::Point;
 struct SegmentedPath {
   /// The runs, in the order of the path.
   std::vector<PathSegment> segments;
-  /// The sum of the primitive costs, in cells. Arcs count with their rounded
-  /// cost, so this is the length the search charges for the moves, not the
-  /// exact length of the curve.
+  /// The sum of the costs of the moves that the points carry, in cells. A
+  /// straight point counts one straight step, unless it repeats the cell and
+  /// the tag of the point before it, or its cell is the start of the arc of
+  /// the turn after it (see Path); that turn counts its move. A turn counts
+  /// its cost once. In a routed path, every move counts once, and the last
+  /// point adds the straight step that leaves the path. The cost of a turn
+  /// can exceed the length of its curve (see Primitive::cost), so this is the
+  /// length the search charges; renderedLength() measures the curve.
   double nominalLength = 0.0;
 };
+
+/**
+ * @brief Builds a straight run in the format of Path.
+ *
+ * The run starts at @p start and steps along the heading of @p start, one cell
+ * per step. Every point carries that heading and its straight primitive. The
+ * coordinates wrap around as the unsigned fields of PathPoint do, so a run of
+ * cells relative to an origin may step below zero.
+ *
+ * @param primitives The primitive tables.
+ * @param start The first point of the run. Its primitive is not read.
+ * @param steps The number of steps.
+ * @return The @p steps + 1 points of the run.
+ */
+[[nodiscard]] MQT_SCPD_ROUTING_EXPORT Path
+straightRun(const MovePrimitives& primitives, PathPoint start, uint32_t steps);
 
 /**
  * @brief Cuts a path into segments wherever its heading or its primitive
@@ -55,9 +76,9 @@ struct SegmentedPath {
  * that point lies one step beyond the first point of the turn plus the end
  * offset of the primitive; then, and at the end of the path, it is that sum.
  * For a primitive the tables lack, it is the point after the turn, or the
- * last point of the path. The lengths of the segments are nominal: each step
- * adds the cost of its primitive. samplePath() replaces them with the
- * rendered lengths.
+ * last point of the path. The lengths of the segments are nominal and count
+ * as SegmentedPath::nominalLength describes. samplePath() replaces them with
+ * the rendered lengths.
  *
  * @param primitives The primitive tables that @p path refers to.
  * @param path The path to cut.
@@ -94,12 +115,17 @@ samplePath(const MovePrimitives& primitives, Path& path, PathPoint start,
            std::vector<PathSegment>& segments);
 
 /**
- * @brief Renders a path as samplePath() does, but without its first point.
+ * @brief Renders a path as samplePath() does, but without a straight first
+ * point.
  *
- * The function works on a copy of @p path and drops the first point of the
- * copy, because that point is the start. Unlike samplePath(), it keeps
- * consecutive repeats of a cell. It also reports where each segment begins in
- * the polyline and whether the segment is straight.
+ * The function works on a copy of @p path. A straight first point adds no
+ * step to the polyline from @p start, which is normally that point, so the
+ * function drops it from the copy. A first point that carries a turn is the
+ * start of the arc, which the rendering needs to find the end of the arc, so
+ * the copy keeps it. Either way the polyline is the one samplePath() draws
+ * from the same start. Unlike samplePath(), the function keeps consecutive
+ * repeats of a cell. It also reports where each segment begins in the
+ * polyline and whether the segment is straight.
  *
  * @param primitives The primitive tables that @p path refers to.
  * @param path The path to render. The function takes a copy.

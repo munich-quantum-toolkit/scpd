@@ -24,7 +24,11 @@ namespace mqt::scpd::routing {
 inline constexpr uint32_t NUM_HEADINGS = 8;
 
 /**
- * @brief A heading of the router grid, in the range 0..7.
+ * @brief A heading of the router grid.
+ *
+ * A valid heading lies in the range 0..7. Where a function says so, the value
+ * NUM_HEADINGS marks "no heading", as the result of headingOfOrientation()
+ * does.
  *
  * A heading is the direction of travel of a wire. Heading 0 travels toward
  * negative y. With y pointing up, the headings continue clockwise in eighth
@@ -149,10 +153,15 @@ struct HeadingVector {
  * NaN.
  */
 [[nodiscard]] inline Heading headingOfOrientation(const double degrees) {
-  // The remainder is exact, so a multiple of 45 folds onto a multiple of 45 at
-  // any magnitude. Adding a full turn to a negative remainder is exact for a
-  // multiple of 45; any other remainder has no heading, rounded or not.
+  // Both remainders are exact, so a multiple of 45 folds onto a multiple of 45
+  // at any magnitude, and any other orientation keeps a remainder. The test
+  // comes before a negative remainder gets a full turn: next to -45 and -90,
+  // that sum rounds an orientation that is no multiple of 45 onto 315 or 270.
   double folded = std::fmod(degrees, 360.0);
+  if (std::fmod(folded, 45.0) != 0.0) {
+    return static_cast<Heading>(NUM_HEADINGS);
+  }
+  // Adding a full turn to a negative multiple of 45 is exact.
   if (folded < 0.0) {
     folded += 360.0;
   }
@@ -177,10 +186,8 @@ struct HeadingVector {
   if (folded == 270.0) {
     return 4;
   }
-  if (folded == 315.0) {
-    return 3;
-  }
-  return static_cast<Heading>(NUM_HEADINGS);
+  // The one multiple of 45 left is 315.
+  return 3;
 }
 
 } // namespace mqt::scpd::routing

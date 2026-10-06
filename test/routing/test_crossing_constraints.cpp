@@ -10,10 +10,13 @@
 
 #include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/Path.hpp"
+#include "mqt-scpd/routing/Primitives.hpp"
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 namespace {
@@ -29,6 +32,52 @@ Path verticalWire(const uint32_t x, const uint32_t y0, const uint32_t y1) {
   for (uint32_t y = y0; y < y1; ++y) {
     wire.push_back({.x = x, .y = y, .heading = 4, .primitive = 0});
   }
+  return wire;
+}
+
+/// Appends one move from @p state to @p wire in the format of Path, and moves
+/// @p state to the end of the move.
+void appendMove(Path& wire, PathPoint& state, const Primitive& move) {
+  PathPoint start = state;
+  start.primitive = move.id;
+  if (!wire.empty() && wire.back().samePlace(start)) {
+    wire.back() = start;
+  } else {
+    wire.push_back(start);
+  }
+  for (const CellOffset& offset : move.swept) {
+    const PathPoint cell{
+        .x = static_cast<uint32_t>(static_cast<int32_t>(state.x) + offset.dx),
+        .y = static_cast<uint32_t>(static_cast<int32_t>(state.y) + offset.dy),
+        .heading = state.heading,
+        .primitive = move.id};
+    if (!wire.back().samePlace(cell)) {
+      wire.push_back(cell);
+    }
+  }
+  state.x = static_cast<uint32_t>(static_cast<int32_t>(state.x) + move.dx);
+  state.y = static_cast<uint32_t>(static_cast<int32_t>(state.y) + move.dy);
+  state.heading = move.exitHeading;
+}
+
+/// A feedline in the format of Path: a run east along row @p y that ends on
+/// column @p x, the turn @p turn from there, and a run of forty steps on the
+/// exit heading of the turn.
+Path feedlineWithTurn(const MovePrimitives& primitives, const Primitive& turn,
+                      const uint32_t x, const uint32_t y) {
+  Path wire;
+  PathPoint state{.x = x - 40, .y = y, .heading = 6, .primitive = 0};
+  while (state.x < x) {
+    appendMove(wire, state, *primitives.find(6, primitives.straight(6)));
+  }
+  appendMove(wire, state, turn);
+  for (int step = 0; step < 40; ++step) {
+    appendMove(
+        wire, state,
+        *primitives.find(state.heading, primitives.straight(state.heading)));
+  }
+  state.primitive = primitives.straight(state.heading);
+  wire.push_back(state);
   return wire;
 }
 
@@ -85,24 +134,90 @@ TEST(CrossingConstraints, TheEndsOfAFeedlineCannotBeCrossed) {
   EXPECT_FALSE(constraints.allowed(100, 175, 2));
 }
 
-TEST(CrossingConstraints, ABendCannotBeCrossed) {
-  // East along y = 50, then south: the cell where the heading changes does
-  // not step along its own heading, so it is a bend.
-  Path wire;
-  for (uint32_t x = 20; x <= 100; ++x) {
-    wire.push_back({.x = x, .y = 50, .heading = 6, .primitive = 0});
+TEST(CrossingConstraints, ATurnCannotBeCrossed) {
+  // East along y = 50, a quarter turn south, then south along x = 105.
+  const MovePrimitives primitives(5);
+  const Primitive* turn = nullptr;
+  for (const Primitive& move : primitives.of(6)) {
+    if (move.exitHeading == 4) {
+      turn = &move;
+    }
   }
-  for (uint32_t y = 51; y < 150; ++y) {
-    wire.push_back({.x = 100, .y = y, .heading = 4, .primitive = 0});
-  }
+  ASSERT_NE(turn, nullptr);
+  const Path wire = feedlineWithTurn(primitives, *turn, 100, 50);
   CrossingConstraints constraints;
   constraints.build(WIDTH, HEIGHT, {wire}, {false}, 5);
-  EXPECT_EQ(constraints.maskAt(100, 50), CrossingConstraints::CURVE_ZONE);
-  EXPECT_EQ(constraints.maskAt(99, 49), CrossingConstraints::CURVE_ZONE);
+  // Every cell of the turn, from the start of its arc to its end, is closed.
+  for (const PathPoint& cell : wire) {
+    if (cell.x >= 100 && cell.y <= 55 && cell.x <= 105) {
+      EXPECT_EQ(constraints.maskAt(cell.x, cell.y),
+                CrossingConstraints::CURVE_ZONE)
+          << cell.x << "," << cell.y;
+    }
+  }
   EXPECT_FALSE(constraints.allowed(100, 50, 0));
-  // Away from the bend and the ends, both legs are straight runs.
-  EXPECT_EQ(constraints.maskAt(60, 50), 1U << 6U);
-  EXPECT_EQ(constraints.maskAt(100, 100), 1U << 4U);
+  EXPECT_FALSE(constraints.allowed(105, 55, 6));
+  // Away from the turn and the ends, both legs are straight runs.
+  EXPECT_EQ(constraints.maskAt(80, 50), 1U << 6U);
+  EXPECT_EQ(constraints.maskAt(105, 75), 1U << 4U);
+}
+
+TEST(CrossingConstraints, NoStraightWireCrossesTheBendingPartOfATurn) {
+  // A turn first sweeps cells straight ahead, but its rendered curve bends
+  // from its start. A north-south wire therefore finds no column from the
+  // start of the arc to its end in which every cell admits it.
+  struct Case {
+    uint32_t radius;
+    int expandRadius;
+  };
+  for (const Case c : {Case{.radius = 5, .expandRadius = 1},
+                       Case{.radius = 23, .expandRadius = 10}}) {
+    const MovePrimitives primitives(c.radius);
+    for (const Primitive& turn : primitives.of(6)) {
+      if (turn.exitHeading == 6) {
+        continue;
+      }
+      const Path wire = feedlineWithTurn(primitives, turn, 100, 100);
+      CrossingConstraints constraints;
+      constraints.build(WIDTH, HEIGHT, {wire}, {false}, c.expandRadius);
+      for (int dx = 0; dx <= std::abs(turn.dx); ++dx) {
+        const auto x = static_cast<uint32_t>(100 + dx);
+        bool closed = false;
+        for (uint32_t y = 0; y < HEIGHT && !closed; ++y) {
+          closed =
+              !constraints.allowed(x, y, 0) || !constraints.allowed(x, y, 4);
+        }
+        EXPECT_TRUE(closed) << "radius " << c.radius << ", turn " << turn.id
+                            << ", column +" << dx;
+      }
+    }
+  }
+}
+
+TEST(CrossingConstraints, AnArcThatStartsOnTheSourceStubStartsTheTurnThere) {
+  // Where the search begins with a turn, the start of the arc keeps the
+  // straight tag of the source stub (see Path). It still belongs to the turn,
+  // so the cells beside it are closed.
+  const MovePrimitives primitives(5);
+  const Primitive* turn = nullptr;
+  for (const Primitive& move : primitives.of(6)) {
+    if (move.exitHeading == 5) {
+      turn = &move;
+    }
+  }
+  ASSERT_NE(turn, nullptr);
+  Path wire = feedlineWithTurn(primitives, *turn, 100, 100);
+  std::size_t arcStart = 0;
+  while (wire[arcStart].x != 100) {
+    ++arcStart;
+  }
+  wire[arcStart].primitive = primitives.straight(6);
+  CrossingConstraints constraints;
+  constraints.build(WIDTH, HEIGHT, {wire}, {false}, 1);
+  EXPECT_FALSE(constraints.turnAllowed(100, 100));
+  EXPECT_EQ(constraints.maskAt(99, 99), CrossingConstraints::CURVE_ZONE);
+  EXPECT_EQ(constraints.maskAt(99, 101), CrossingConstraints::CURVE_ZONE);
+  EXPECT_FALSE(constraints.allowed(99, 101, 4));
 }
 
 TEST(CrossingConstraints, ASkippedFeedlineAddsNoConstraint) {
@@ -165,6 +280,15 @@ TEST(CrossingConstraints, ClearingForgetsEveryConstraint) {
   constraints.clear();
   EXPECT_TRUE(constraints.empty());
   EXPECT_TRUE(constraints.allowed(100, 100, 5));
+}
+
+TEST(CrossingConstraints, ClearingReleasesTheMasks) {
+  CrossingConstraints constraints;
+  EXPECT_EQ(constraints.heldBytes(), 0U);
+  constraints.build(WIDTH, HEIGHT, {verticalWire(100, 20, 180)}, {false}, 5);
+  EXPECT_GE(constraints.heldBytes(), std::size_t{WIDTH} * HEIGHT);
+  constraints.clear();
+  EXPECT_EQ(constraints.heldBytes(), 0U);
 }
 
 } // namespace

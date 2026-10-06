@@ -99,6 +99,28 @@ TEST(Headings, OrientationsOfAnyMagnitudeFold) {
             NUM_HEADINGS);
 }
 
+TEST(Headings, OrientationsJustOffANegativeMultipleOf45HaveNoHeading) {
+  // A full turn added to an orientation a few ulp from -45 or -90 rounds onto
+  // 315 or 270. Such an orientation is no multiple of 45 and has no heading,
+  // on either side of each multiple and in either way of writing it.
+  for (const double degrees : {-45.0, -90.0, -135.0, -315.0, 315.0, 270.0}) {
+    double below = degrees;
+    double above = degrees;
+    for (int ulp = 1; ulp <= 4; ++ulp) {
+      below = std::nextafter(below, -1000.0);
+      above = std::nextafter(above, 1000.0);
+      EXPECT_EQ(headingOfOrientation(below), NUM_HEADINGS)
+          << degrees << " " << ulp;
+      EXPECT_EQ(headingOfOrientation(above), NUM_HEADINGS)
+          << degrees << " " << ulp;
+    }
+  }
+  EXPECT_EQ(headingOfOrientation(-45.0), 3);
+  EXPECT_EQ(headingOfOrientation(-135.0), 5);
+  EXPECT_EQ(headingOfOrientation(-315.0), 1);
+  EXPECT_EQ(headingOfOrientation(315.0), 3);
+}
+
 TEST(Headings, EveryEighthTurnOfOrientationPointsAgainstThePort) {
   // A wire arrives at a port against the direction the port faces, so its
   // step is the opposite of the unit vector of the orientation.

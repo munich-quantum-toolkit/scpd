@@ -19,6 +19,49 @@
 
 namespace mqt::scpd::routing {
 
+namespace {
+
+/**
+ * @brief Marks the points of a path that lie on a turn.
+ *
+ * A run of points under one tag whose next point has another heading is a
+ * turn. The turn covers the run and the point after it, which is the end of
+ * the arc. The turn after the first run of the path also covers the point
+ * before its run, which is the start of the arc where the search began with
+ * the turn (see Path).
+ *
+ * @param wire The path.
+ * @return One flag per point of @p wire, set for a point on a turn.
+ */
+std::vector<bool> turnPoints(const Path& wire) {
+  std::vector<bool> onTurn(wire.size(), false);
+  const auto sameTag = [&](const std::size_t a, const std::size_t b) {
+    return wire[a].heading == wire[b].heading &&
+           wire[a].primitive == wire[b].primitive;
+  };
+  std::size_t firstRunEnd = 1;
+  while (firstRunEnd < wire.size() && sameTag(firstRunEnd, 0)) {
+    ++firstRunEnd;
+  }
+  std::size_t begin = 0;
+  while (begin < wire.size()) {
+    std::size_t end = begin + 1;
+    while (end < wire.size() && sameTag(end, begin)) {
+      ++end;
+    }
+    if (end < wire.size() && wire[end].heading != wire[begin].heading) {
+      const std::size_t from = begin == firstRunEnd ? begin - 1 : begin;
+      for (std::size_t at = from; at <= end; ++at) {
+        onTurn[at] = true;
+      }
+    }
+    begin = end;
+  }
+  return onTurn;
+}
+
+} // namespace
+
 void CrossingConstraints::build(const uint32_t width, const uint32_t height,
                                 const std::vector<Path>& feedlines,
                                 const std::vector<bool>& skip,
@@ -51,9 +94,8 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
       continue;
     }
     // A cell that steps to the next cell along its own heading is on a
-    // straight run. The router lists a cell again where its heading changes
-    // on it, so the step to test is the one to the next cell somewhere
-    // else; a cell listed twice is no bend of its own.
+    // straight run. A path can list a cell twice in a row, so the step to
+    // test is the one to the next cell somewhere else.
     std::vector<bool> straight(wire.size(), false);
     for (std::size_t at = 0; at < wire.size(); ++at) {
       const PathPoint& cell = wire[at];
@@ -91,8 +133,11 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
         }
       }
     }
+    // Every cell of a turn is a bend, even where the turn sweeps cells
+    // straight ahead: its rendered curve bends from the start of the arc.
+    const std::vector<bool> onTurn = turnPoints(wire);
     for (std::size_t at = 0; at < wire.size(); ++at) {
-      if (!straight[at]) {
+      if (!straight[at] || onTurn[at]) {
         blockAround(wire[at].x, wire[at].y, 1);
       }
     }
@@ -109,7 +154,7 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
 }
 
 void CrossingConstraints::clear() {
-  masks.clear();
+  masks = std::vector<uint8_t>();
   gridWidth = 0;
   gridHeight = 0;
 }
@@ -146,13 +191,6 @@ bool CrossingConstraints::turnAllowed(const uint32_t x,
     return false;
   }
   return masks[(static_cast<std::size_t>(y) * gridWidth) + x] == 0U;
-}
-
-uint8_t CrossingConstraints::maskAt(const uint32_t x, const uint32_t y) const {
-  if (masks.empty() || x >= gridWidth || y >= gridHeight) {
-    return 0;
-  }
-  return masks[(static_cast<std::size_t>(y) * gridWidth) + x];
 }
 
 } // namespace mqt::scpd::routing

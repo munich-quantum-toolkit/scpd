@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -46,8 +47,14 @@ namespace mqt::scpd::routing {
  * A bucket is a stack of chunks of @c CHUNK_ENTRIES entries each, drawn from
  * one pool that the queue owns. A chunk that a pop or a clear() empties goes
  * back to the pool, so the memory of the queue is the most chunks it held at
- * any one time, whichever buckets the entries fell into. Entries never move
- * once they are pushed, and the queue never asks for memory it already had.
+ * any one time, whichever buckets the entries fell into. The queue never asks
+ * for memory it already had. Entries do move: a block that moves from the
+ * coarse level into the fine level copies its entries into fine buckets, and
+ * the overflow store reorders its entries and moves them when it grows. A
+ * pointer to an entry is therefore valid only until the queue changes.
+ *
+ * A queue cannot be copied. A move hands the chunks to the new queue and
+ * leaves the old queue empty and without chunks, ready for use.
  *
  * Each fine bucket holds exactly one priority, so the pops come out in
  * ascending order of priority. The queue keeps a scan position: the priority
@@ -98,6 +105,46 @@ public:
    */
   BucketQueue() = default;
 
+  BucketQueue(const BucketQueue&) = delete;
+  BucketQueue& operator=(const BucketQueue&) = delete;
+
+  /**
+   * @brief Takes the entries and the chunks of another queue.
+   * @param other The queue to move from.
+   * @post @p other is empty and holds no chunk.
+   */
+  BucketQueue(BucketQueue&& other) noexcept { *this = std::move(other); }
+
+  /**
+   * @brief Releases the chunks of this queue and takes the entries and the
+   * chunks of another queue.
+   * @param other The queue to move from.
+   * @return This queue.
+   * @post @p other is empty and holds no chunk, unless it is this queue.
+   */
+  BucketQueue& operator=(BucketQueue&& other) noexcept {
+    if (this != &other) {
+      // The chunks live on the heap, so the bucket tops and the pool keep
+      // pointing at them when the list of owners moves.
+      fine = other.fine;
+      coarse = other.coarse;
+      chunks = std::move(other.chunks);
+      pool = other.pool;
+      stackScratch = std::move(other.stackScratch);
+      overflow = std::move(other.overflow);
+      overflowMinBlock = other.overflowMinBlock;
+      overflowPushes = other.overflowPushes;
+      fineMask = other.fineMask;
+      coarseMask = other.coarseMask;
+      currentMin = other.currentMin;
+      entryCount = other.entryCount;
+      other.forget();
+    }
+    return *this;
+  }
+
+  ~BucketQueue() = default;
+
   /**
    * @brief Removes every entry.
    * @post The queue is empty and the scan position is zero. Every chunk is back
@@ -137,17 +184,17 @@ public:
   /**
    * @brief Adds an entry.
    *
-   * A priority below the scan position is raised to the scan position, so
-   * that the entry is not lost behind it.
+   * The priority of the entry is its member @c f. A priority below the scan
+   * position is raised to the scan position, so that the entry is not lost
+   * behind it.
    *
    * @param entry The entry to add.
-   * @param priority The priority of @p entry, equal to its member @c f.
    */
-  void push(Entry entry, uint32_t priority) {
+  void push(Entry entry) {
     // A slightly inconsistent heuristic can produce a priority just below
     // the current minimum. Clamp it, so that it is not lost behind the scan
     // position.
-    priority = std::max(priority, currentMin);
+    const uint32_t priority = std::max(entry.f, currentMin);
     const uint32_t block = priority / FINE_SIZE;
     const uint32_t currentBlock = currentMin / FINE_SIZE;
     if (block == currentBlock) {
@@ -188,7 +235,7 @@ public:
         }
         return entry;
       }
-      const uint32_t next = nextSet(fineMask.data(), FINE_WORDS, index);
+      const uint32_t next = nextSet(fineMask, index);
       if (next != NONE) {
         currentMin = (currentMin - index) + next;
         continue;
@@ -243,28 +290,43 @@ private:
   /**
    * @brief Finds the first set bit of a bitmask at or after a position.
    * @param mask The words of the bitmask.
-   * @param words The number of words of @p mask.
    * @param from The position the search starts at.
-   * @pre @p from is below 64 times @p words.
+   * @pre @p from is below 64 times the number of words of @p mask.
    * @return The position of the first set bit at or after @p from, or @c NONE
    * when there is none.
    */
-  static uint32_t nextSet(const uint64_t* mask, const uint32_t words,
+  static uint32_t nextSet(const std::span<const uint64_t> mask,
                           const uint32_t from) {
     uint32_t word = from >> 6U;
-    // The scan reads the words of the bitmask through a raw pointer.
-    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     uint64_t current = mask[word] & (~uint64_t{0} << (from & 63U));
     while (true) {
       if (current != 0) {
         return (word << 6U) | static_cast<uint32_t>(std::countr_zero(current));
       }
-      if (++word >= words) {
+      if (++word >= mask.size()) {
         return NONE;
       }
       current = mask[word];
     }
-    // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  }
+
+  /**
+   * @brief Forgets every entry and every chunk, as a moved-from queue.
+   * @post The queue is empty, holds no chunk and has the scan position zero.
+   */
+  void forget() noexcept {
+    fine = {};
+    coarse = {};
+    chunks.clear();
+    pool = nullptr;
+    stackScratch.clear();
+    overflow.clear();
+    overflowMinBlock = NO_BLOCK;
+    overflowPushes = 0;
+    fineMask = {};
+    coarseMask = {};
+    currentMin = 0;
+    entryCount = 0;
   }
 
   /**
@@ -471,12 +533,12 @@ private:
   bool refillFine() {
     const uint32_t currentBlock = currentMin / FINE_SIZE;
     const uint32_t start = (currentBlock + 1) & COARSE_MASK;
-    uint32_t index = nextSet(coarseMask.data(), COARSE_WORDS, start);
+    uint32_t index = nextSet(coarseMask, start);
     uint32_t block = 0;
     if (index != NONE) {
       block = currentBlock + 1 + (index - start);
     } else {
-      index = nextSet(coarseMask.data(), COARSE_WORDS, 0);
+      index = nextSet(coarseMask, 0);
       if (index == NONE || index >= start) {
         if (overflow.empty()) {
           return false;

@@ -75,9 +75,13 @@ struct PathPoint {
  *   of the stub. The first point of that turn is the next cell the arc sweeps.
  * - The arc ends at its start plus the end offset of the primitive,
  *   (Primitive::dx, Primitive::dy). In a routed path, the point after a turn
- *   is that end. A dogleg can instead go on with a straight step from the
- *   end, so the end need not be a point of the path. The last cell a turn
- *   sweeps is not always the end: an eighth turn can sweep a cell beyond it.
+ *   is that end. A dogleg instead lists the end among the swept cells of its
+ *   turn and goes on with a straight step from the end.
+ * - The swept cells of a turn are the cells the search tests, not a chain of
+ *   neighbouring cells (see Primitive::swept). Some eighth turns list a cell
+ *   twice or a cell past their end, so a path can step off a cell and back
+ *   onto it two points later. Some turns that leave a diagonal heading do not
+ *   list their end; in a routed path, the end then follows as the next point.
  */
 using Path = std::vector<PathPoint>;
 
@@ -123,9 +127,6 @@ struct PathSegment {
   Heading heading = 0;
   /// The identifier of the primitive of the run.
   uint16_t primitive = 0;
-  /// @c true when the run is straight and has more than one step. A straight
-  /// run of one step reads @c false, as a turn does.
-  bool straight = false;
   /// The grid cells of the run, one per step.
   std::vector<PathPoint> cells;
   /// The path length up to and including each step, in cells.
@@ -137,6 +138,15 @@ struct PathSegment {
   [[nodiscard]] uint32_t steps() const {
     return static_cast<uint32_t>(cells.size());
   }
+  /**
+   * @brief Reports whether the run is straight with more than one step.
+   *
+   * Only a straight run gathers more than one cell, so a straight run of one
+   * step reads @c false, as a turn does.
+   *
+   * @return @c true when the run has more than one cell.
+   */
+  [[nodiscard]] bool straight() const { return cells.size() > 1; }
 };
 
 /**
