@@ -270,14 +270,23 @@ double distanceToSegment(const Point point, const Point from, const Point to) {
   if (!std::isfinite(length2)) {
     return distanceToLongSegment(point, from, to);
   }
-  double t = 0.0;
-  if (length2 > 1e-18) {
-    t = (((point.x() - from.x()) * dx) + ((point.y() - from.y()) * dy)) /
-        length2;
-    t = std::clamp(t, 0.0, 1.0);
+  if (length2 <= 1e-18) {
+    return std::hypot(point.x() - from.x(), point.y() - from.y());
   }
-  const double cx = from.x() + (t * dx);
-  const double cy = from.y() + (t * dy);
+  // The parameter of the nearest point measured from either end. The nearest
+  // point comes from the end it lies nearer to, so that a coordinate far
+  // larger than the distance cannot cancel.
+  const double fromStart = std::clamp(
+      (((point.x() - from.x()) * dx) + ((point.y() - from.y()) * dy)) / length2,
+      0.0, 1.0);
+  const double fromEnd = std::clamp(
+      (((to.x() - point.x()) * dx) + ((to.y() - point.y()) * dy)) / length2,
+      0.0, 1.0);
+  const bool nearStart = fromStart <= fromEnd;
+  const double cx =
+      nearStart ? from.x() + (fromStart * dx) : to.x() - (fromEnd * dx);
+  const double cy =
+      nearStart ? from.y() + (fromStart * dy) : to.y() - (fromEnd * dy);
   return std::hypot(point.x() - cx, point.y() - cy);
 }
 
@@ -439,7 +448,12 @@ void fillPolygon(BitGrid& mask, const GridMetrics& grid,
         const double xj = nodes[j].x();
         const double yj = nodes[j].y();
         if ((yi > py) != (yj > py)) {
-          const double crossing = ((xj - xi) * (py - yi) / (yj - yi)) + xi;
+          // From the end nearer to the row, so that a coordinate far larger
+          // than the grid cannot cancel.
+          const bool fromI = std::fabs(py - yi) <= std::fabs(py - yj);
+          const double crossing =
+              fromI ? ((xj - xi) * (py - yi) / (yj - yi)) + xi
+                    : ((xi - xj) * (py - yj) / (yi - yj)) + xj;
           // A crossing that is not a number lies right of no cell center.
           if (!std::isnan(crossing)) {
             crossings.push_back(crossing);
@@ -515,17 +529,22 @@ void removeIslands(BitGrid& mask) {
 }
 
 void blockBorder(BitGrid& mask, const uint32_t alongX, const uint32_t alongY) {
-  if (alongX == 0 && alongY == 0) {
-    return;
-  }
   const uint32_t width = mask.width();
   const uint32_t height = mask.height();
+  // The columns and the rows to block at each edge. Neither count exceeds the
+  // grid, so no index below wraps, whatever the size of the grid.
+  const uint32_t columns = std::min(alongX, width);
+  const uint32_t rows = std::min(alongY, height);
   for (uint32_t y = 0; y < height; ++y) {
-    for (uint32_t x = 0; x < width; ++x) {
-      if (x < alongX || x + alongX >= width || y < alongY ||
-          y + alongY >= height) {
+    if (y < rows || y >= height - rows) {
+      for (uint32_t x = 0; x < width; ++x) {
         mask.setCell(x, y);
       }
+      continue;
+    }
+    for (uint32_t x = 0; x < columns; ++x) {
+      mask.setCell(x, y);
+      mask.setCell(width - 1 - x, y);
     }
   }
 }

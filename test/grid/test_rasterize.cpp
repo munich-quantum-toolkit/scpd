@@ -205,6 +205,31 @@ TEST(Rasterize, IslandsAndBordersAreHandled) {
   EXPECT_FALSE(mask.testCell(5, 7));
 }
 
+TEST(Rasterize, ABorderWiderThanTheMaskBlocksAllOfIt) {
+  BitGrid columns(5, 4);
+  blockBorder(columns, 7, 0);
+  EXPECT_EQ(columns.count(), columns.size());
+  BitGrid rows(5, 4);
+  blockBorder(rows, 0, 9);
+  EXPECT_EQ(rows.count(), rows.size());
+}
+
+TEST(Rasterize, TheBorderReachesTheLastColumnOfTheWidestMask) {
+  // The widest mask holds 2^32 - 1 columns in 512 MiB. Its last column lies
+  // 2^32 - 2 columns from the left edge, and that index plus the border of two
+  // columns exceeds the range of uint32_t.
+  constexpr uint32_t width = std::numeric_limits<uint32_t>::max();
+  BitGrid mask(width, 1);
+  blockBorder(mask, 2, 0);
+  EXPECT_TRUE(mask.testCell(0, 0));
+  EXPECT_TRUE(mask.testCell(1, 0));
+  EXPECT_FALSE(mask.testCell(2, 0));
+  EXPECT_FALSE(mask.testCell(width - 3, 0));
+  EXPECT_TRUE(mask.testCell(width - 2, 0));
+  EXPECT_TRUE(mask.testCell(width - 1, 0));
+  EXPECT_EQ(mask.count(), 4U);
+}
+
 TEST(Rasterize, TheKeepoutIsAnExactDistanceAroundTheEdges) {
   RasterOptions options;
   options.keepout = 5.0;
@@ -233,6 +258,33 @@ TEST(Rasterize, TheKeepoutIsAnExactDistanceAroundTheEdges) {
   EXPECT_TRUE(bordered.testCell(50, 100));
   EXPECT_TRUE(bordered.testCell(50, 98));
   EXPECT_FALSE(bordered.testCell(50, 97));
+}
+
+TEST(Rasterize, TheKeepoutOfACenterOneRoundingAwayIsTheSameOnEveryBuild) {
+  // The center of column 100 is the origin plus 100 cell steps. Rounded once
+  // after the product and once after the sum, it lies at -237.23455585195074.
+  // The edge of the obstacle lies 25 units and one rounding error right of
+  // it, so the keepout of 25 units leaves column 100 free. A fused
+  // multiply-add would round once, put the center exactly 25 units from the
+  // edge and block the column. The build turns floating-point contraction off,
+  // so every build rounds twice.
+  const GridMetrics grid = GridMetrics::fit(BoundingBox{.minX = -1234.567,
+                                                        .minY = -1234.567,
+                                                        .maxX = 28675.433,
+                                                        .maxY = 28675.433},
+                                            3000, 3000);
+  EXPECT_EQ(grid.toLayout(100.0, 0.0).x(), -237.23455585195074);
+  const double edge = -212.23455585195072;
+  RasterOptions options;
+  options.keepout = 25.0;
+  const RasterizedObstacles raster = rasterizeObstacles(
+      chipWith({{Point(edge, 1000.0), Point(edge + 500.0, 1000.0),
+                 Point(edge + 500.0, 2000.0), Point(edge, 2000.0)}}),
+      grid, options);
+  // Row 274 lies halfway up the edge.
+  EXPECT_FALSE(raster.blocked.testCell(100, 274));
+  EXPECT_TRUE(raster.blocked.testCell(101, 274));
+  EXPECT_EQ(raster.keepoutCells, 620U);
 }
 
 TEST(Rasterize, ACorridorReleasesKeepoutCellsButNeverPolygonCells) {
@@ -351,6 +403,15 @@ TEST(Rasterize, LineCellsAreConnectedAndClipped) {
   EXPECT_DOUBLE_EQ(
       distanceToSegment(Point(-3.0, 7.0), Point(0.0, 3.0), Point(1e300, 3.0)),
       5.0);
+
+  // The squared length of these segments fits into a double. One end lies
+  // 1e17 units away, and the nearest point lies next to the other end.
+  EXPECT_DOUBLE_EQ(
+      distanceToSegment(Point(5.0, 4.0), Point(1e17, 3.0), Point(0.0, 3.0)),
+      1.0);
+  EXPECT_DOUBLE_EQ(
+      distanceToSegment(Point(5.0, 4.0), Point(0.0, 3.0), Point(1e17, 3.0)),
+      1.0);
 }
 
 TEST(Rasterize, MissingAndEmptyObstaclesAddNoCells) {
@@ -548,26 +609,41 @@ TEST(Rasterize, LineCellsRefuseEndsTooFarApart) {
 
 TEST(Rasterize, AVertexFarOffTheGridKeepsTheDirectionOfItsEdges) {
   // Two edges of slope 0.4 run from (10, 10) and from (10, 90) to a vertex
-  // 1e30 units off the grid. The rasterization finishes, and the lines of
-  // both edges keep their slope across the grid.
-  const std::vector<Point> band = {Point(10.0, 10.0), Point(1e30, 4e29),
-                                   Point(10.0, 90.0)};
-  RasterOptions options;
-  options.keepout = 2.0;
-  const RasterizedObstacles raster =
-      rasterizeObstacles(chipWith({band}), unitGrid(), options);
-  const BitGrid& blocked = raster.blocked;
-  EXPECT_TRUE(blocked.testCell(35, 20));
-  EXPECT_TRUE(blocked.testCell(60, 30));
-  EXPECT_TRUE(blocked.testCell(85, 40));
-  EXPECT_TRUE(blocked.testCell(100, 46));
-  EXPECT_TRUE(blocked.testCell(20, 94));
-  EXPECT_TRUE(blocked.testCell(35, 100));
-  // The keepout reaches the cell 1.86 units below the lower edge, but not the
-  // cell 4.64 units below it.
-  EXPECT_TRUE(blocked.testCell(60, 28));
-  EXPECT_FALSE(blocked.testCell(60, 25));
-  EXPECT_FALSE(blocked.testCell(5, 50));
+  // 1e17 or 1e30 units off the grid, in both vertex orders. The rasterization
+  // finishes, the lines of both edges keep their slope across the grid, and
+  // the band between them is filled.
+  for (const double far : {1e17, 1e30}) {
+    for (const bool reversed : {false, true}) {
+      SCOPED_TRACE(testing::Message()
+                   << "vertex at " << far << (reversed ? ", reversed" : ""));
+      std::vector<Point> band = {Point(10.0, 10.0), Point(far, 0.4 * far),
+                                 Point(10.0, 90.0)};
+      if (reversed) {
+        std::ranges::reverse(band);
+      }
+      RasterOptions options;
+      options.keepout = 2.0;
+      const RasterizedObstacles raster =
+          rasterizeObstacles(chipWith({band}), unitGrid(), options);
+      const BitGrid& blocked = raster.blocked;
+      EXPECT_TRUE(blocked.testCell(35, 20));
+      EXPECT_TRUE(blocked.testCell(60, 30));
+      EXPECT_TRUE(blocked.testCell(85, 40));
+      EXPECT_TRUE(blocked.testCell(100, 46));
+      EXPECT_TRUE(blocked.testCell(20, 94));
+      EXPECT_TRUE(blocked.testCell(35, 100));
+      EXPECT_TRUE(blocked.testCell(60, 50));
+      EXPECT_TRUE(blocked.testCell(30, 60));
+      // The keepout reaches the cells 1.86 units below the lower edge and
+      // above the upper edge, but not the cells 4.64 units below the lower
+      // edge and 2.79 units above the upper edge.
+      EXPECT_TRUE(blocked.testCell(60, 28));
+      EXPECT_TRUE(blocked.testCell(20, 96));
+      EXPECT_FALSE(blocked.testCell(60, 25));
+      EXPECT_FALSE(blocked.testCell(20, 97));
+      EXPECT_FALSE(blocked.testCell(5, 50));
+    }
+  }
 }
 
 TEST(Rasterize, AnEdgeToAVertexFarOffTheGridBlocksOnlyItsOwnCells) {

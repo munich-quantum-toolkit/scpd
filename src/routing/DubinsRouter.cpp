@@ -28,6 +28,7 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -183,9 +184,9 @@ void DubinsRouter::rebuildPacked() {
   const std::span<const uint64_t> words(corridorMask->words());
   const std::span<const uint8_t> penalties(staticPenalties);
   const std::span<uint8_t> packed(packedGrid);
-  // A word of the corridor holds 64 cells. A clear word copies their
-  // penalties and a full word sets the corridor bit of all of them. Only a
-  // mixed word is read bit by bit.
+  // A word of the corridor mask holds 64 cells. A clear word copies their
+  // penalties, and a full word sets the high bit, which marks a cell outside
+  // the corridor, in all of them. Only a mixed word is read bit by bit.
   for (std::size_t word = 0; word < words.size(); ++word) {
     const std::size_t begin = word * 64;
     const std::size_t end = std::min(begin + 64, n);
@@ -200,9 +201,9 @@ void DubinsRouter::rebuildPacked() {
       }
     } else {
       for (std::size_t i = begin; i < end; ++i) {
-        const auto blocked =
+        const auto outside =
             static_cast<uint8_t>(((bits >> (i - begin)) & 1U) << 7U);
-        packed[i] = static_cast<uint8_t>(blocked | penalties[i]);
+        packed[i] = static_cast<uint8_t>(outside | penalties[i]);
       }
     }
   }
@@ -374,13 +375,18 @@ void DubinsRouter::clearOrthogonalConstraints() {
   }
 }
 
-void DubinsRouter::buildOrthogonalConstraints(const std::vector<Path>& wires,
-                                              const std::vector<bool>& skip,
-                                              const int expandRadius) {
-  constraints.build(gridWidth, gridHeight, wires, skip, expandRadius);
+void DubinsRouter::buildOrthogonalConstraints(
+    const std::vector<Path>& feedlines, const std::vector<bool>& skip,
+    const int expandRadius) {
+  // Every allocation runs before the first change, so a failed call keeps the
+  // previous constraints and their rule bits.
+  CrossingConstraints built;
+  built.build(gridWidth, gridHeight, feedlines, skip, expandRadius);
   // The search reads from the rule byte of a cell whether the constraints
   // constrain it, so that it calls them only for such a cell.
   holdCrossingRules();
+  static_assert(std::is_nothrow_move_assignable_v<CrossingConstraints>);
+  constraints = std::move(built);
   const std::span<const uint8_t> masks = constraints.cellMasks();
   for (std::size_t index = 0; index < masks.size(); ++index) {
     uint8_t& rules = crossingRules[index];
@@ -445,11 +451,14 @@ void DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
                           static_cast<std::size_t>(x)];
         const auto m = static_cast<uint8_t>(rules & SIDE_BITS);
         if (m == 0U) {
-          rules |= value;
+          // The list grows before the bits change, so a failed allocation
+          // leaves no bit that endSingleCrossingOverlay() does not clear.
           crossingSideCells.push_back(static_cast<uint32_t>((y * w) + x));
+          rules |= value;
         } else if ((m & SIDE_STRAIGHT) != 0U && m != value) {
-          // Two straights with different exit headings, a bend: block. A
-          // curve over a straight's corridor: the corridor wins.
+          // The straight zones of two segments with different exit headings
+          // meet near a turn of the feedline, so the cell is blocked. A curve
+          // zone over a straight zone keeps the rule of the straight zone.
           if (!isCurve) {
             rules = static_cast<uint8_t>((rules & ~SIDE_BITS) | SIDE_FAR);
           }
@@ -458,8 +467,8 @@ void DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
     }
   };
 
-  // Straight zones: the exit run travels away from the feedline, toward the
-  // far side; the state heading that travels that way is its reverse.
+  // Straight zones: a step may enter a cell of the zone only on the heading
+  // that leaves the feedline at a right angle, toward the far side.
   for (const PathSegment& segment : segmented.segments) {
     if (!segment.straight()) {
       continue;
@@ -481,7 +490,7 @@ void DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
     }
   }
 
-  // Curve zones and the pin zone: never enterable on the far side.
+  // Curve zones and the head zone: never enterable on the far side.
   const auto blockRun = [&](const std::span<const PathPoint> run) {
     for (std::size_t k = 0; k < run.size(); ++k) {
       const PathPoint& a = run[k];
@@ -511,7 +520,7 @@ void DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
     }
   };
   // A curve zone surrounds each run of points under one move that is not a
-  // straight run of two or more cells. The zone centres on the last point of
+  // straight run of two or more cells. The zone centers on the last point of
   // the run, which for a turn is the last cell its arc sweeps.
   const Path& feedline = *singleCrossing;
   std::size_t runBegin = 0;
@@ -545,18 +554,20 @@ void DubinsRouter::endSingleCrossingOverlay() {
 }
 
 void DubinsRouter::setCrossingExemption(const std::vector<uint32_t>& cells) {
+  // Every allocation runs before the first change, so a failed call keeps the
+  // previous exemption.
+  exemptCells.reserve(cells.size());
+  if (!cells.empty()) {
+    holdCrossingRules();
+  }
   for (const uint32_t index : exemptCells) {
     crossingRules[index] &= static_cast<uint8_t>(~EXEMPT);
   }
   exemptCells.clear();
-  if (!cells.empty()) {
-    holdCrossingRules();
-    for (const uint32_t index : cells) {
-      if (index < crossingRules.size() &&
-          (crossingRules[index] & EXEMPT) == 0U) {
-        crossingRules[index] |= EXEMPT;
-        exemptCells.push_back(index);
-      }
+  for (const uint32_t index : cells) {
+    if (index < crossingRules.size() && (crossingRules[index] & EXEMPT) == 0U) {
+      crossingRules[index] |= EXEMPT;
+      exemptCells.push_back(index);
     }
   }
   releaseUnusedCrossingRules();
@@ -629,8 +640,7 @@ uint8_t DubinsRouter::constraintMaskAt(const uint32_t x,
   return constraints.maskAt(x, y);
 }
 
-// --- Search tables
-// -------------------------------------------------------------
+// --- Search tables ---------------------------------------------------------
 
 void DubinsRouter::buildTables() {
   const uint32_t bend = searchParams.bendPenalty;
@@ -651,10 +661,10 @@ void DubinsRouter::buildTables() {
     tflat.clear();
     std::vector<TempNode> nodes;
     std::vector<uint32_t> roots;
-    int32_t left = 0;
-    int32_t right = 0;
-    int32_t up = 0;
-    int32_t down = 0;
+    int32_t negativeX = 0;
+    int32_t positiveX = 0;
+    int32_t negativeY = 0;
+    int32_t positiveY = 0;
 
     const auto prims = movePrimitives->of(static_cast<Heading>(heading));
     if (prims.size() > MAX_PRIMITIVES_PER_HEADING) {
@@ -671,22 +681,22 @@ void DubinsRouter::buildTables() {
       tp.sweptCount = static_cast<uint16_t>(p.swept.size());
       // The move cost in hundredths of a cell: rounded to single precision
       // first, then scaled and truncated. The rounding is part of the cost
-      // definition, so a change to it can change the way a search returns.
+      // definition, so a change to it can change the path a search returns.
       const auto moveCost = static_cast<uint32_t>(
           static_cast<double>(static_cast<float>(p.cost)) * 100.0);
       tp.costBend =
           moveCost +
           (headingDistance(static_cast<Heading>(heading), tp.exit) * bend);
 
-      left = std::max<int32_t>(left, -p.dx);
-      right = std::max<int32_t>(right, p.dx);
-      up = std::max<int32_t>(up, -p.dy);
-      down = std::max<int32_t>(down, p.dy);
+      negativeX = std::max<int32_t>(negativeX, -p.dx);
+      positiveX = std::max<int32_t>(positiveX, p.dx);
+      negativeY = std::max<int32_t>(negativeY, -p.dy);
+      positiveY = std::max<int32_t>(positiveY, p.dy);
       for (const CellOffset& c : p.swept) {
-        left = std::max<int32_t>(left, -c.dx);
-        right = std::max<int32_t>(right, c.dx);
-        up = std::max<int32_t>(up, -c.dy);
-        down = std::max<int32_t>(down, c.dy);
+        negativeX = std::max<int32_t>(negativeX, -c.dx);
+        positiveX = std::max<int32_t>(positiveX, c.dx);
+        negativeY = std::max<int32_t>(negativeY, -c.dy);
+        positiveY = std::max<int32_t>(positiveY, c.dy);
       }
 
       // The normalized cell sequence: the origin first, the end last.
@@ -751,10 +761,10 @@ void DubinsRouter::buildTables() {
       tprims.push_back(tp);
     }
 
-    marginLeft[heading] = static_cast<uint32_t>(left);
-    marginRight[heading] = static_cast<uint32_t>(right);
-    marginUp[heading] = static_cast<uint32_t>(up);
-    marginDown[heading] = static_cast<uint32_t>(down);
+    marginNegativeX[heading] = static_cast<uint32_t>(negativeX);
+    marginPositiveX[heading] = static_cast<uint32_t>(positiveX);
+    marginNegativeY[heading] = static_cast<uint32_t>(negativeY);
+    marginPositiveY[heading] = static_cast<uint32_t>(positiveY);
 
     // Emit the trie in preorder with the subtree size as skip.
     const auto emit = [&](const auto& self, const uint32_t n,
@@ -782,8 +792,7 @@ void DubinsRouter::buildTables() {
   }
 }
 
-// --- Distance field
-// --------------------------------------------------------------
+// --- Distance field --------------------------------------------------------
 
 void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
   const std::size_t n = cells();
@@ -856,8 +865,7 @@ void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
   }
 }
 
-// --- States and paths
-// ----------------------------------------------------------
+// --- States and paths ------------------------------------------------------
 
 PathPoint DubinsRouter::unpackState(const uint32_t index) const {
   const auto heading = static_cast<Heading>(index & 7U);
@@ -975,8 +983,9 @@ Path DubinsRouter::assemble(const Path& searched, const PathPoint& source,
     ++first;
   }
   path.insert(path.end(), first, searched.end());
-  // The tail starts on the cell the search ended at. Without a searched way,
-  // the search started there too, and the head already ends on that cell.
+  // The tail starts on the cell the search ended at. Without a searched
+  // path, the search started there too, and the head already ends on that
+  // cell.
   auto tailFirst = tail.begin();
   if (searched.empty()) {
     ++tailFirst;
@@ -999,8 +1008,7 @@ template <typename Search> Path DubinsRouter::guarded(const Search& search) {
   return {};
 }
 
-// --- The free search
-// -------------------------------------------------------------
+// --- The free search -------------------------------------------------------
 
 Path DubinsRouter::route(const RoutingObjective& objective,
                          const bool usePenalty, const bool onlyStraight) {
@@ -1041,14 +1049,18 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective,
                               const bool onlyStraight) {
   open.clear();
   // The start meets the corridor test that every cell a move enters meets.
-  const std::size_t startLinear =
-      (static_cast<std::size_t>(objective.source.y) * gridWidth) +
-      objective.source.x;
-  if constexpr (PACKED) {
-    if ((packedGrid[startLinear] & 0x80U) != 0U) {
-      return {};
+  // A goal outside the corridor cannot be reached, so the search does not
+  // run.
+  const auto outside = [&](const PathPoint& point) {
+    const std::size_t linear =
+        (static_cast<std::size_t>(point.y) * gridWidth) + point.x;
+    if constexpr (PACKED) {
+      return (packedGrid[linear] & 0x80U) != 0U;
+    } else {
+      return corridorMask->test(linear);
     }
-  } else if (corridorMask->test(startLinear)) {
+  };
+  if (outside(objective.source) || outside(objective.target)) {
     return {};
   }
   const std::span<const uint8_t> blockMap =
@@ -1134,7 +1146,7 @@ void DubinsRouter::expandFree(
   const std::span<const uint32_t> field(distanceField);
   const grid::BitGrid* corridor = corridorMask;
 
-  const auto blocked = [&](const std::size_t index) {
+  const auto outside = [&](const std::size_t index) {
     if constexpr (PACKED) {
       return (blockMap[index] & blockMask) != 0U;
     } else {
@@ -1142,12 +1154,14 @@ void DubinsRouter::expandFree(
     }
   };
 
-  const bool fastBounds =
-      (cx >= marginLeft[heading]) && (cx + marginRight[heading] < gridWidth) &&
-      (cy >= marginUp[heading]) && (cy + marginDown[heading] < gridHeight);
+  const bool fastBounds = (cx >= marginNegativeX[heading]) &&
+                          (cx + marginPositiveX[heading] < gridWidth) &&
+                          (cy >= marginNegativeY[heading]) &&
+                          (cy + marginPositiveY[heading] < gridHeight);
 
-  // The candidates: every primitive whose end is in the grid, allowed, not
-  // blocked, not dominated and, with a field, able to reach the target.
+  // The candidates: every primitive whose end is in the grid and in the
+  // corridor, allowed, not dominated and, with a field, able to reach the
+  // target.
   uint16_t alive = 0;
   std::array<uint32_t, MAX_PRIMITIVES_PER_HEADING> endField{};
   std::array<uint32_t, MAX_PRIMITIVES_PER_HEADING> endIndex{};
@@ -1164,7 +1178,7 @@ void DubinsRouter::expandFree(
       continue;
     }
     const std::size_t linear = (static_cast<std::size_t>(ny) * gridWidth) + nx;
-    if (blocked(linear)) {
+    if (outside(linear)) {
       continue;
     }
     const uint32_t index = stateIndex(nx, ny, static_cast<Heading>(p.exit));
@@ -1219,7 +1233,7 @@ void DubinsRouter::expandFree(
       }
       cell = (static_cast<std::size_t>(ny) * gridWidth) + nx;
     }
-    if (blocked(cell)) {
+    if (outside(cell)) {
       i += tn.skip;
       continue;
     }
@@ -1242,7 +1256,7 @@ void DubinsRouter::expandFree(
             (static_cast<std::size_t>(endY[tn.completes]) * gridWidth) +
             endX[tn.completes];
         if (p.endExtra != 0U) {
-          sum += penaltyMap[linear] & penaltyMask;
+          sum += static_cast<uint32_t>(penaltyMap[linear] & penaltyMask);
         }
         penaltyTerm =
             PENALTY_SCALE * (sum + (static_cast<uint32_t>(wireMap[linear]) *
@@ -1279,8 +1293,7 @@ void DubinsRouter::expandFree(
   }
 }
 
-// --- The orthogonal search
-// ------------------------------------------------------
+// --- The orthogonal search -------------------------------------------------
 
 Path DubinsRouter::routeOrthogonal(const RoutingObjective& objective,
                                    const bool usePenalty,
@@ -1300,7 +1313,7 @@ Path DubinsRouter::routeOrthogonal(const RoutingObjective& objective,
     return {};
   }
   searchScratch->beginSearch();
-  // The overlay ends on every way out of this function, an exception
+  // The overlay ends on every exit from this function, an exception
   // included.
   const auto endOverlay = [](DubinsRouter* router) {
     router->endSingleCrossingOverlay();
@@ -1309,8 +1322,12 @@ Path DubinsRouter::routeOrthogonal(const RoutingObjective& objective,
       this, endOverlay);
   beginSingleCrossingOverlay(objective.source, objective.target);
   // The stubs are fixed, so their cells meet the crossing test of a straight
-  // step before the search runs.
-  if (!stubCrossingAllowed(objective.source,
+  // step before the search runs. The last step into the target tests the
+  // target. The source meets the same test on its own heading, as if a
+  // straight step entered it, so both ends of the wire meet the test.
+  if (!canCrossOrthogonal(objective.source.x, objective.source.y,
+                          objective.source.heading) ||
+      !stubCrossingAllowed(objective.source,
                            searchParams.startStraightLength) ||
       !stubCrossingAllowed(moved.target, searchParams.endStraightLength)) {
     return {};
@@ -1330,9 +1347,10 @@ Path DubinsRouter::searchOrthogonal(const RoutingObjective& objective,
                                     const bool onlyStraight) {
   open.clear();
   // The start meets the corridor test that every cell a move enters meets.
-  // The search does not enter its start, so no straight step tests it; a
-  // turn from it does.
-  if (corridorMask->testCell(objective.source.x, objective.source.y)) {
+  // A goal outside the corridor cannot be reached, so the search does not
+  // run.
+  if (corridorMask->testCell(objective.source.x, objective.source.y) ||
+      corridorMask->testCell(objective.target.x, objective.target.y)) {
     return {};
   }
   const uint32_t startIndex = stateIndex(objective.source.x, objective.source.y,
@@ -1406,9 +1424,10 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
                 : canCrossOrthogonal(x, y, static_cast<Heading>(heading));
   };
   const bool turnMayStart = !ruled(currentLinear) || canTurnOrthogonal(cx, cy);
-  const bool fastBounds =
-      (cx >= marginLeft[heading]) && (cx + marginRight[heading] < gridWidth) &&
-      (cy >= marginUp[heading]) && (cy + marginDown[heading] < gridHeight);
+  const bool fastBounds = (cx >= marginNegativeX[heading]) &&
+                          (cx + marginPositiveX[heading] < gridWidth) &&
+                          (cy >= marginNegativeY[heading]) &&
+                          (cy + marginPositiveY[heading] < gridHeight);
 
   uint16_t alive = 0;
   uint16_t turns = 0;
@@ -1548,8 +1567,7 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
   }
 }
 
-// --- Free strip
-// -----------------------------------------------------------------
+// --- Free strip ------------------------------------------------------------
 
 CellBox DubinsRouter::freeStripAlong(const PathPoint from,
                                      const PathPoint to) const {
@@ -1560,15 +1578,19 @@ CellBox DubinsRouter::freeStripAlong(const PathPoint from,
   const grid::BitGrid& obstacles = *obstacleMask;
   const auto w = static_cast<int64_t>(gridWidth);
   const auto h = static_cast<int64_t>(gridHeight);
-  const auto fromX = static_cast<int64_t>(from.x);
-  const auto fromY = static_cast<int64_t>(from.y);
-  const auto toX = static_cast<int64_t>(to.x);
-  const auto toY = static_cast<int64_t>(to.y);
+  // An end off the grid moves to the nearest cell of the grid. The grid has
+  // at most 65535 cells per axis, so every product below fits 64 bits.
+  const auto fromX = static_cast<int64_t>(std::min(from.x, gridWidth - 1));
+  const auto fromY = static_cast<int64_t>(std::min(from.y, gridHeight - 1));
+  const auto toX = static_cast<int64_t>(std::min(to.x, gridWidth - 1));
+  const auto toY = static_cast<int64_t>(std::min(to.y, gridHeight - 1));
   const int64_t dx = toX - fromX;
   const int64_t dy = toY - fromY;
   const int64_t lengthSquared = (dx * dx) + (dy * dy);
   if (lengthSquared == 0) {
-    return {.minX = from.x, .maxX = from.x, .minY = from.y, .maxY = from.y};
+    const auto x = static_cast<uint32_t>(fromX);
+    const auto y = static_cast<uint32_t>(fromY);
+    return {.minX = x, .maxX = x, .minY = y, .maxY = y};
   }
   const double length = std::sqrt(static_cast<double>(lengthSquared));
   const double inverseLength = 1.0 / length;
@@ -1591,7 +1613,7 @@ CellBox DubinsRouter::freeStripAlong(const PathPoint from,
     y1 = roundFixed((toY << shift) + (ny * offset));
   };
 
-  // The centre of a cell lies at the offset cross / length from the line of
+  // The center of a cell lies at the offset cross / length from the line of
   // the segment, along the normal (-dy, dx) / length, where cross is an exact
   // integer. Growth step k on a side covers the cells whose offset on that
   // side lies in (k - 1, k] and whose projection falls on the segment. Each

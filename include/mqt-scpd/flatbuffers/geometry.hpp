@@ -305,7 +305,9 @@ struct GCoord::Traits {
   using type = GCoord;
 };
 
-/// A cell of the detail grid.
+/// A cell of a grid: its column and its row. The capacity grid, the detail
+/// grid and the router grid all give their cells as DCoord, so the type does
+/// not say which grid a cell belongs to.
 FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) DCoord FLATBUFFERS_FINAL_CLASS {
  private:
   uint32_t x_;

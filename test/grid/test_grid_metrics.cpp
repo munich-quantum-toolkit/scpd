@@ -77,6 +77,17 @@ TEST(GridMetrics, PointsFarOffTheGridOrNotFiniteRoundAndClampSafely) {
                std::invalid_argument);
 }
 
+TEST(GridMetrics, AGridWithoutCellsHasNoCellToClampTo) {
+  const GridMetrics empty;
+  EXPECT_FALSE(empty.roundToCell(Point(3.0, 4.0)).has_value());
+  EXPECT_THROW(static_cast<void>(empty.clampToCell(Point(3.0, 4.0))),
+               std::invalid_argument);
+  GridMetrics noColumns = GridMetrics::fit(BOX, 101, 51);
+  noColumns.width = 0;
+  EXPECT_THROW(static_cast<void>(noColumns.clampToCell(Point(500.0, 0.0))),
+               std::invalid_argument);
+}
+
 TEST(GridMetrics, RefinementAndAspectRatioFollowTheBox) {
   const GridMetrics coarse = GridMetrics::fit(BOX, 11, 6);
   const GridMetrics fine = coarse.refined(10);
@@ -116,17 +127,21 @@ TEST(GridMetrics, CellsForReproducesTheClearanceLiterals) {
       .minX = 0.0, .minY = 0.0, .maxX = 29910.0, .maxY = 29910.0};
   const GridMetrics router = routerGrid(GridMetrics::fit(chip, 50, 50), 10.0);
   EXPECT_NEAR(router.cellWidth, 9.97, 0.01);
-  // The wire clearance of 185 units is 19 cells on every benchmark, the
-  // coupler footprint 20 by 3 cells, the bridge 6 by 6.
+  // The wire clearance of 185 units is 19 cells on every benchmark. The cell
+  // step lies below 10 units, so the coupler footprint of 200 by 26 units
+  // takes 21 by 3 cells and the bridge of 60 by 60 units takes 7 by 7.
   EXPECT_EQ(cellsFor(185.0, router), 19U);
   EXPECT_EQ(cellsFor(200.0, router), 21U);
   EXPECT_EQ(cellsFor(26.0, router), 3U);
   EXPECT_EQ(cellsFor(60.0, router), 7U);
   EXPECT_EQ(cellsFor(0.0, router), 0U);
 
+  // At a cell step of 10 units, the footprint takes 20 by 3 cells and the
+  // bridge 6 by 6.
   const GridMetrics exact = GridMetrics::fit(chip, 2992, 2992);
   EXPECT_NEAR(exact.cellWidth, 10.0, 1e-9);
   EXPECT_EQ(cellsFor(200.0, exact), 20U);
+  EXPECT_EQ(cellsFor(26.0, exact), 3U);
   EXPECT_EQ(cellsFor(60.0, exact), 6U);
 }
 

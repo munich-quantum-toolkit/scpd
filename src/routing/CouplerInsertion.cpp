@@ -116,19 +116,29 @@ struct DoglegPiece {
 };
 
 /// The swept cells of a primitive that leaves a heading, tagged with the
-/// heading and the primitive.
+/// heading and the primitive. A turn that does not sweep its end lists the end
+/// after its last swept cell, which touches the end. The cells of every turn
+/// of a dogleg therefore include its end (see Path), and the piece after it
+/// starts next to its last cell.
 DoglegPiece pieceOf(const MovePrimitives& primitives,
                     const Primitive& primitive, const Heading heading) {
   DoglegPiece piece;
   piece.endX = primitive.dx;
   piece.endY = primitive.dy;
   piece.length = renderedMoveLength(primitives, heading, primitive);
-  for (const CellOffset& move : primitive.swept) {
+  const auto add = [&](const CellOffset& move) {
     piece.cells.push_back(
         {.x = static_cast<uint32_t>(static_cast<int32_t>(move.dx)),
          .y = static_cast<uint32_t>(static_cast<int32_t>(move.dy)),
          .heading = heading,
          .primitive = primitive.id});
+  };
+  for (const CellOffset& move : primitive.swept) {
+    add(move);
+  }
+  const CellOffset end{.dx = primitive.dx, .dy = primitive.dy};
+  if (std::ranges::find(primitive.swept, end) == primitive.swept.end()) {
+    add(end);
   }
   return piece;
 }
@@ -164,11 +174,11 @@ DoglegGeometry buildDogleg(const MovePrimitives& primitives,
 
 std::optional<CouplerSplice> spliceCouplerDogleg(
     const MovePrimitives& primitives, const double targetLength, Path& path,
-    const uint32_t width, const uint32_t height, Heading orientation,
+    const uint32_t width, const uint32_t height, const Heading couplerHeading,
     const CouplerDoglegOptions& options,
     const std::function<bool(uint32_t, uint32_t)>& anchorAllowed) {
-  if (orientation >= NUM_HEADINGS) {
-    throw std::invalid_argument("a coupler orientation is a heading");
+  if (couplerHeading >= NUM_HEADINGS) {
+    throw std::invalid_argument("the coupler heading lies outside 0 to 7");
   }
   if (path.empty()) {
     return std::nullopt;
@@ -180,28 +190,27 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   };
   std::map<uint16_t, std::vector<PathOption>> optionsByHeading;
 
-  // The mandatory dogleg, and a second one when asked for.
-  const Heading orientationStart = turned(orientation, 2);
-  if (options.mirrored) {
-    orientation = reverse(orientation);
-  }
+  // The mandatory dogleg, and a second one when asked for. The lead and the
+  // first turn start on the heading across the coupler heading.
+  const Heading across = turned(couplerHeading, 2);
+  const Heading afterFirstTurn =
+      options.mirrored ? reverse(couplerHeading) : couplerHeading;
   const int firstTurn = options.mirrored ? 1 : -1;
-  const DoglegGeometry dogleg = buildDogleg(primitives, orientationStart,
-                                            firstTurn, options.straightLength);
+  const DoglegGeometry dogleg =
+      buildDogleg(primitives, across, firstTurn, options.straightLength);
   std::vector<DoglegPiece> prefix;
   if (options.leadStraight > 0) {
     // The straight run before the turn: the origin and one cell per step, on
     // the heading the turn starts on, tagged with the straight move. The run
     // ends on the cell the turn starts from.
     DoglegPiece lead;
-    lead.cells =
-        straightRun(primitives, {.x = 0, .y = 0, .heading = orientationStart},
-                    options.leadStraight);
-    const HeadingVector v = headingVector(orientationStart);
+    lead.cells = straightRun(primitives, {.x = 0, .y = 0, .heading = across},
+                             options.leadStraight);
+    const HeadingVector v = headingVector(across);
     lead.endX = static_cast<int64_t>(options.leadStraight) * v.dx;
     lead.endY = static_cast<int64_t>(options.leadStraight) * v.dy;
-    lead.length = static_cast<double>(options.leadStraight) *
-                  stepLength(orientationStart);
+    lead.length =
+        static_cast<double>(options.leadStraight) * stepLength(across);
     prefix.push_back(std::move(lead));
   }
   const auto pieceOfDogleg = [](const DoglegGeometry& geometry) {
@@ -213,11 +222,11 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     return piece;
   };
   prefix.push_back(pieceOfDogleg(dogleg));
-  Heading searchHeading = orientation;
+  Heading searchHeading = afterFirstTurn;
   if (options.secondStraightLength > 0) {
     const int secondTurn = options.secondTurnReverse ? -firstTurn : firstTurn;
     const DoglegGeometry second = buildDogleg(
-        primitives, orientation, secondTurn, options.secondStraightLength);
+        primitives, afterFirstTurn, secondTurn, options.secondStraightLength);
     prefix.push_back(pieceOfDogleg(second));
     searchHeading = second.tip.heading;
   }
@@ -266,7 +275,10 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   // heading, scored by the length mismatch of the path that would remain.
   // The lengths are those of the rendered path, so the length from a cell to
   // the end is the rendered length of the whole path minus the rendered
-  // length up to the cell.
+  // length up to the cell. The mismatches and the charges are whole numbers
+  // of billionths of a cell, so that the rounding of the lengths cannot break
+  // a tie between two equal charges.
+  constexpr double stepsPerCell = 1e9;
   struct Candidate {
     PathPoint cell;
     double mismatch = 0.0;
@@ -299,8 +311,9 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
       }
       for (const PathOption& option : found->second) {
         const double diff =
-            (overallLength - segment.lengthAt[i] + option.length) -
-            targetLength;
+            std::round(((overallLength - segment.lengthAt[i] + option.length) -
+                        targetLength) *
+                       stepsPerCell);
         candidates.push_back({.cell = cell,
                               .mismatch = std::abs(diff),
                               .signedDiff = diff,
@@ -366,6 +379,15 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
       }
       x0 += piece.endX;
       y0 += piece.endY;
+    }
+    // The candidate's own point follows the dogleg. A last dogleg point on
+    // the same cell would hide the own point from samplePath(), which keeps
+    // the first of two consecutive points on one cell. The own point can be
+    // the start of the arc of the next turn (see Path), so it stays and the
+    // dogleg point goes. The collision test below still covers the step onto
+    // the candidate's cell.
+    if (simulated.size() > 1 && simulated.back().samePlace(cand.cell)) {
+      simulated.pop_back();
     }
     // Only the last piece may meet the path, and only on the cell where the
     // dogleg joins it; the last piece can sweep a cell past its end. Two
@@ -436,8 +458,10 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   };
 
   // The best achievable mismatch, which scales the undershoot preference.
-  // The sorts are stable, so among candidates of equal mismatch the one
-  // earliest along the path wins, whatever the standard library.
+  // The sorts are stable and the charges are whole numbers, so of candidates
+  // with equal charges the one earliest along the path wins, and on one cell
+  // the one whose option came first, whatever the standard library and the
+  // rounding of the lengths.
   std::ranges::stable_sort(candidates, byMismatch);
   const std::optional<Choice> nearest = choose();
   if (!nearest) {

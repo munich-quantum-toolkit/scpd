@@ -41,9 +41,14 @@ struct SegmentedPath {
   /// the tag of the point before it, or its cell is the start of the arc of
   /// the turn after it (see Path); that turn counts its move. A turn counts
   /// its cost once. In a routed path, every move counts once, and the last
-  /// point adds the straight step that leaves the path. The cost of a turn
-  /// can exceed the length of its curve (see Primitive::cost), so this is the
-  /// length the search charges; renderedLength() measures the curve.
+  /// point adds the straight step that leaves the path. One limit: at a
+  /// radius of one cell, where the search begins with the exact quarter turn
+  /// of a diagonal heading, no point carries that turn (see Path). The last
+  /// stub cell then counts a diagonal step in place of the turn, and the
+  /// length falls short by two cells minus the square root of two, about
+  /// 0.586 cells. The cost of a turn can exceed the length of its curve (see
+  /// Primitive::cost), so this is the length the search charges;
+  /// renderedLength() measures the curve.
   double nominalLength = 0.0;
 };
 
@@ -76,9 +81,11 @@ straightRun(const MovePrimitives& primitives, PathPoint start, uint32_t steps);
  * that point lies one step beyond the first point of the turn plus the end
  * offset of the primitive; then, and at the end of the path, it is that sum.
  * For a primitive the tables lack, it is the point after the turn, or the
- * last point of the path. The lengths of the segments are nominal and count
- * as SegmentedPath::nominalLength describes. samplePath() replaces them with
- * the rendered lengths.
+ * last point of the path. A turn that leaves no point of its own, as at a
+ * radius of one cell where the search begins with the exact quarter turn of a
+ * diagonal heading (see Path), gives no segment. The lengths of the segments
+ * are nominal and count as SegmentedPath::nominalLength describes.
+ * samplePath() replaces them with the rendered lengths.
  *
  * @param primitives The primitive tables that @p path refers to.
  * @param path The path to cut.

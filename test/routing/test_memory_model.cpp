@@ -12,10 +12,10 @@
 //
 // Two things drive the cost: the search scratch, which is one record per cell
 // and heading, and the grids a router owns. The scratch is eight bytes per
-// state and belongs to one thread; the obstacle mask and the corridor are bit
-// grids attached by pointer and shared by every thread; the wire proximity is
-// a view. The per-cell cost of a router is measured from what it allocates,
-// and a peak figure is projected from it.
+// state and belongs to one thread; the obstacle mask and the corridor mask are
+// bit grids attached by pointer and shared by every thread; the wire
+// proximity is a view. The per-cell cost of a router is measured from what it
+// allocates, and a peak figure is projected from it.
 
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
@@ -119,20 +119,20 @@ TEST(MemoryModel, ARouterCopiesNeitherTheObstaclesNorTheCorridor) {
   auto primitives = std::make_shared<const MovePrimitives>(5);
   SearchScratch scratch(side, side);
   grid::BitGrid obstacles(side, side);
-  grid::BitGrid corridor(side, side);
+  grid::BitGrid outsideCorridor(side, side);
   std::vector<uint8_t> wire(static_cast<std::size_t>(side) * side, 0);
   DubinsRouter router(primitives, scratch);
   router.attachObstacles(&obstacles);
-  router.attachCorridorUnpacked(&corridor);
+  router.attachCorridorUnpacked(&outsideCorridor);
   router.attachWireProximity(&wire);
 
   // The router reads the caller's grids, so a change made after attaching
   // them is the one the router sees. Nothing was copied.
   EXPECT_FALSE(router.corridorBlocked(50, 50));
-  corridor.setCell(50, 50);
+  outsideCorridor.setCell(50, 50);
   EXPECT_TRUE(router.corridorBlocked(50, 50));
   EXPECT_EQ(router.obstacles(), &obstacles);
-  EXPECT_EQ(router.corridor(), &corridor);
+  EXPECT_EQ(router.corridor(), &outsideCorridor);
 
   obstacles.setCell(100, 100);
   router.computeStaticProximity(4, 20);
@@ -162,7 +162,7 @@ TEST(MemoryModel, TheStaticProximityKeepsNoMemoryOfItsGrowth) {
   EXPECT_EQ(router.heldBytes(), held);
 }
 
-TEST(MemoryModel, ARouterAndItsScratchHoldAboutEightyBytesPerCell) {
+TEST(MemoryModel, ARouterAndItsScratchHoldAboutSeventySixBytesPerCell) {
   // A router that has used everything it owns: obstacles on a third of the
   // grid, the static proximity grown from them, crossing constraints, an
   // exemption, a single-crossing feedline, and a search of each kind. Each

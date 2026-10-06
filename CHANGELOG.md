@@ -46,6 +46,9 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🔧 Build with `-ffp-contract=off` on GCC and Clang, so that no result depends
+  on whether the compiler fuses a multiply and an add ([#134])
+  ([**@FeldmeierMichael**])
 - ♻️ Make `[ports.sequences]` required and drop the `detection` and
   `start_component` keys of the configuration schema; the outer port ring is
   configuration only ([#111]) ([**@FeldmeierMichael**])

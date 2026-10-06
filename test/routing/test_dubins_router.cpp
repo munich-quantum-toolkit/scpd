@@ -28,6 +28,7 @@
 #include <memory>
 #include <numbers>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -47,7 +48,8 @@ struct Fixture {
       std::make_shared<const MovePrimitives>(5);
   SearchScratch scratch{WIDTH, HEIGHT};
   grid::BitGrid obstacles{WIDTH, HEIGHT};
-  grid::BitGrid corridor{WIDTH, HEIGHT};
+  /// The corridor mask: a set bit marks a cell outside the corridor.
+  grid::BitGrid outsideCorridor{WIDTH, HEIGHT};
   std::vector<uint8_t> wire =
       std::vector<uint8_t>(static_cast<std::size_t>(WIDTH) * HEIGHT, 0);
   DubinsRouter router{primitives,
@@ -59,20 +61,21 @@ struct Fixture {
 
   Fixture() {
     router.attachObstacles(&obstacles);
-    router.attachCorridor(&corridor);
+    router.attachCorridor(&outsideCorridor);
     router.attachWireProximity(&wire);
   }
 
-  /// Block a rectangle of the corridor, both bounds included.
+  /// Puts a rectangle outside the corridor and makes it an obstacle, both
+  /// bounds included.
   void block(const uint32_t x0, const uint32_t y0, const uint32_t x1,
              const uint32_t y1) {
     for (uint32_t y = y0; y <= y1; ++y) {
       for (uint32_t x = x0; x <= x1; ++x) {
-        corridor.setCell(x, y);
+        outsideCorridor.setCell(x, y);
         obstacles.setCell(x, y);
       }
     }
-    router.attachCorridor(&corridor);
+    router.attachCorridor(&outsideCorridor);
   }
 };
 
@@ -89,8 +92,8 @@ uint32_t cellIndex(const uint32_t x, const uint32_t y) {
   return (y * WIDTH) + x;
 }
 
-/// A straight run south down one column of the whole grid.
-Path southRun(const MovePrimitives& primitives, const uint32_t x) {
+/// A straight run toward positive y along one column of the whole grid.
+Path columnRun(const MovePrimitives& primitives, const uint32_t x) {
   Path run;
   for (uint32_t y = 0; y < HEIGHT; ++y) {
     run.push_back(
@@ -99,8 +102,8 @@ Path southRun(const MovePrimitives& primitives, const uint32_t x) {
   return run;
 }
 
-/// A straight run east along one row of the whole grid.
-Path eastRun(const MovePrimitives& primitives, const uint32_t y) {
+/// A straight run toward positive x along one row of the whole grid.
+Path rowRun(const MovePrimitives& primitives, const uint32_t y) {
   Path run;
   for (uint32_t x = 0; x < WIDTH; ++x) {
     run.push_back(
@@ -109,7 +112,7 @@ Path eastRun(const MovePrimitives& primitives, const uint32_t y) {
   return run;
 }
 
-/// Raises a ridge of penalty along the straight way of ACROSS.
+/// Raises a ridge of penalty along the straight path of ACROSS.
 void raiseRidge(std::vector<uint8_t>& penalty) {
   for (uint32_t x = 100; x < 200; ++x) {
     for (uint32_t y = 95; y <= 105; ++y) {
@@ -208,8 +211,8 @@ bool onTurn(const MovePrimitives& primitives, const Path& path,
 
 /// The points of a path that fail the crossing test that the orthogonal
 /// search asks there: the test of a turn for a point on a turn, and else the
-/// test of the straight step into the point. No step enters the first point,
-/// so it is tested only when a turn starts there.
+/// test of the straight step into the point. The router tests the first
+/// point as if a straight step on its own heading entered it.
 std::vector<std::size_t> crossingFailures(const DubinsRouter& router,
                                           const Path& path) {
   const std::size_t stubEnd = router.params().startStraightLength;
@@ -218,9 +221,9 @@ std::vector<std::size_t> crossingFailures(const DubinsRouter& router,
     bool passes = true;
     if (onTurn(router.primitives(), path, i, stubEnd)) {
       passes = router.turnAllowedOrthogonal(path[i].x, path[i].y);
-    } else if (i > 0) {
-      passes = router.crossingAllowedOrthogonal(path[i].x, path[i].y,
-                                                path[i - 1].heading);
+    } else {
+      const Heading step = path[i > 0 ? i - 1 : 0].heading;
+      passes = router.crossingAllowedOrthogonal(path[i].x, path[i].y, step);
     }
     if (!passes) {
       failures.push_back(i);
@@ -266,21 +269,21 @@ TEST(DubinsRouter, TheStubsOutOfTheEndsAreStraight) {
   }
 }
 
-TEST(DubinsRouter, TheCorridorIsNeverEntered) {
+TEST(DubinsRouter, ThePathStaysInTheCorridor) {
   Fixture f;
   f.block(120, 60, 180, 140);
   const Path path = f.router.route(ACROSS);
   ASSERT_FALSE(path.empty());
-  EXPECT_TRUE(avoids(path, f.corridor));
+  EXPECT_TRUE(avoids(path, f.outsideCorridor));
   EXPECT_GT(countBends(path), 0U);
 }
 
 TEST(DubinsRouter, AnUnreachableTargetGivesAnEmptyPath) {
   Fixture f;
   for (uint32_t y = 0; y < HEIGHT; ++y) {
-    f.corridor.setCell(150, y);
+    f.outsideCorridor.setCell(150, y);
   }
-  f.router.attachCorridor(&f.corridor);
+  f.router.attachCorridor(&f.outsideCorridor);
   EXPECT_TRUE(f.router.route(ACROSS).empty());
 }
 
@@ -330,7 +333,7 @@ TEST(DubinsRouter, EveryTurnOfThePathIsAnArcOfThePrimitives) {
   EXPECT_EQ(countBends(path), turns);
 }
 
-TEST(DubinsRouter, TheOctileHeuristicFindsAPathOfTheSameCost) {
+TEST(DubinsRouter, TheOctileHeuristicFindsAPathWithAsManyBends) {
   Fixture f;
   f.block(120, 60, 180, 140);
   const Path field = f.router.route(ACROSS);
@@ -344,18 +347,18 @@ TEST(DubinsRouter, TheOctileHeuristicFindsAPathOfTheSameCost) {
 
 TEST(DubinsRouter, BothHeuristicsWeaveThroughAFieldOfPosts) {
   Fixture f;
-  // Short posts stand in rows across the grid, one row on the straight way.
+  // Short posts stand in rows across the grid, one row on the straight path.
   // The distance field runs between them, so it no longer equals the octile
   // distance.
   for (uint32_t y = 20; y <= 180; y += 20) {
     for (uint32_t x = 60; x <= 240; x += 20) {
-      f.corridor.setCell(x, y);
-      f.corridor.setCell(x + 1, y);
+      f.outsideCorridor.setCell(x, y);
+      f.outsideCorridor.setCell(x + 1, y);
     }
   }
-  f.router.attachCorridor(&f.corridor);
+  f.router.attachCorridor(&f.outsideCorridor);
   const auto weaves = [&](const Path& path) {
-    return !path.empty() && avoids(path, f.corridor) &&
+    return !path.empty() && avoids(path, f.outsideCorridor) &&
            path.back().samePlace(ACROSS.target);
   };
   EXPECT_TRUE(weaves(f.router.route(ACROSS)));
@@ -363,12 +366,12 @@ TEST(DubinsRouter, BothHeuristicsWeaveThroughAFieldOfPosts) {
   EXPECT_TRUE(weaves(f.router.route(ACROSS)));
 }
 
-TEST(DubinsRouter, TheBendLowerBoundKeepsTheCheapestWay) {
+TEST(DubinsRouter, TheBendLowerBoundKeepsTheCheapestPath) {
   // The turning a state still owes is a lower bound on what it has left to
   // pay. On these objectives, adding it to the estimate changes how many
-  // states the search expands, not the cost of the way it finds. The
+  // states the search expands, not the cost of the path it finds. The
   // comparison with a brute-force search in test_route_optimality.cpp pins
-  // how much dearer the way can get on other grids.
+  // how much dearer the path can get on other grids.
   const std::vector<RoutingObjective> objectives{
       ACROSS,
       {.source = {.x = 30, .y = 100, .heading = 6, .primitive = 0},
@@ -458,7 +461,7 @@ TEST(DubinsRouter, GridsMustMatchTheRouterGrid) {
   EXPECT_THROW(f.router.attachCorridorUnpacked(&transposed),
                std::invalid_argument);
   EXPECT_EQ(f.router.obstacles(), &f.obstacles);
-  EXPECT_EQ(f.router.corridor(), &f.corridor);
+  EXPECT_EQ(f.router.corridor(), &f.outsideCorridor);
   const std::vector<uint8_t> small(100, 0);
   EXPECT_THROW(f.router.attachWireProximity(&small), std::invalid_argument);
   EXPECT_THROW(f.router.setStaticProximity(small), std::invalid_argument);
@@ -524,7 +527,7 @@ TEST(DubinsRouter, TheWindowedProximityMatchesTheFullOne) {
 
 TEST(DubinsRouter, ACrossingOfAStraightWireMustBeOrthogonal) {
   Fixture f;
-  // A wire running north to south across the middle of the grid.
+  // A wire running toward positive y across the middle of the grid.
   Path wire;
   for (uint32_t y = 20; y < 180; ++y) {
     wire.push_back({.x = 150,
@@ -534,10 +537,10 @@ TEST(DubinsRouter, ACrossingOfAStraightWireMustBeOrthogonal) {
   }
   f.router.buildOrthogonalConstraints({wire}, {false}, 6);
 
-  // A route travelling east crosses it at a right angle and is allowed.
+  // A route traveling east crosses it at a right angle and is allowed.
   EXPECT_TRUE(f.router.crossingAllowedOrthogonal(150, 100, 6));
   EXPECT_TRUE(f.router.crossingAllowedOrthogonal(150, 100, 2));
-  // A route travelling at 45 degrees is not.
+  // A route traveling at 45 degrees is not.
   EXPECT_FALSE(f.router.crossingAllowedOrthogonal(150, 100, 5));
   EXPECT_FALSE(f.router.crossingAllowedOrthogonal(150, 100, 4));
   EXPECT_EQ(f.router.constraintMaskAt(150, 100), 1U << 4U);
@@ -646,20 +649,69 @@ TEST(DubinsRouter, AStubCrossesAWireAtARightAngleOnly) {
   EXPECT_FALSE(f.router.routeOrthogonal(diagonalSource).empty());
 }
 
+TEST(DubinsRouter, BothEndsOfAnOrthogonalRouteMeetTheCrossingTest) {
+  // A pin lies in the zone of a wire. Heading 3 runs at 45 degrees to the
+  // wire, and heading 2 at a right angle. The source meets the test that
+  // the last step into the target meets, so a route may leave the pin on a
+  // heading only where it may arrive on the reverse heading.
+  for (const uint32_t stub : {0U, 3U}) {
+    Fixture f;
+    f.router.setParams({.startStraightLength = stub,
+                        .endStraightLength = stub,
+                        .minRadius = 5,
+                        .bendPenalty = 500});
+    f.router.buildOrthogonalConstraints({columnRun(*f.primitives, 150)},
+                                        {false}, 6);
+    const PathPoint pin{.x = 144, .y = 100, .heading = 3, .primitive = 0};
+    ASSERT_FALSE(f.router.crossingAllowedOrthogonal(pin.x, pin.y, 3));
+    const PathPoint distant{.x = 60, .y = 160, .heading = 3, .primitive = 0};
+    const RoutingObjective leaving{.source = pin, .target = distant};
+    const RoutingObjective arriving{
+        .source = {.x = distant.x,
+                   .y = distant.y,
+                   .heading = 7,
+                   .primitive = 0},
+        .target = {.x = pin.x, .y = pin.y, .heading = 7, .primitive = 0}};
+    // The stubs end outside the zone, so the pin alone decides. The free
+    // search, which ignores the constraints, finds both paths.
+    EXPECT_FALSE(f.router.route(leaving).empty()) << stub;
+    EXPECT_FALSE(f.router.route(arriving).empty()) << stub;
+    EXPECT_TRUE(f.router.routeOrthogonal(leaving).empty()) << stub;
+    EXPECT_TRUE(f.router.routeOrthogonal(arriving).empty()) << stub;
+
+    const RoutingObjective leavingAcross{
+        .source = {.x = pin.x, .y = pin.y, .heading = 2, .primitive = 0},
+        .target = {
+            .x = distant.x, .y = distant.y, .heading = 2, .primitive = 0}};
+    const RoutingObjective arrivingAcross{
+        .source = {.x = distant.x,
+                   .y = distant.y,
+                   .heading = 6,
+                   .primitive = 0},
+        .target = {.x = pin.x, .y = pin.y, .heading = 6, .primitive = 0}};
+    const Path out = f.router.routeOrthogonal(leavingAcross);
+    const Path back = f.router.routeOrthogonal(arrivingAcross);
+    ASSERT_FALSE(out.empty()) << stub;
+    ASSERT_FALSE(back.empty()) << stub;
+    EXPECT_TRUE(crossingFailures(f.router, out).empty()) << stub;
+    EXPECT_TRUE(crossingFailures(f.router, back).empty()) << stub;
+  }
+}
+
 TEST(DubinsRouter, AnOrthogonalRouteDoesNotTurnAcrossAWire) {
   Fixture f;
   f.router.setParams({.startStraightLength = 0,
                       .endStraightLength = 0,
                       .minRadius = 5,
                       .bendPenalty = 500});
-  // A wire runs south down column 53, and its zone reaches one cell to
-  // either side.
-  f.router.buildOrthogonalConstraints({southRun(*f.primitives, 53)}, {false},
+  // A wire runs along column 53, and its zone reaches one cell to either
+  // side.
+  f.router.buildOrthogonalConstraints({columnRun(*f.primitives, 53)}, {false},
                                       1);
   const RoutingObjective quarter{
       .source = {.x = 50, .y = 50, .heading = 6, .primitive = 0},
       .target = {.x = 55, .y = 45, .heading = 0, .primitive = 0}};
-  // The free way is one quarter turn. Every cell it sweeps is entered on
+  // The free path is one quarter turn. Every cell it sweeps is entered on
   // heading 6, but the arc crosses the column far off a right angle.
   const Path free = f.router.route(quarter);
   ASSERT_FALSE(free.empty());
@@ -669,11 +721,11 @@ TEST(DubinsRouter, AnOrthogonalRouteDoesNotTurnAcrossAWire) {
   EXPECT_GT(freeSkews.front(), 30.0);
   // The wire has to cross the zone straight along row 50. It then reaches
   // the target on heading 0 only from the east, across its own first run,
-  // so no orthogonal way exists.
+  // so no orthogonal path exists.
   EXPECT_TRUE(f.router.routeOrthogonal(quarter).empty());
 
-  // Further north, the wire crosses straight, turns beyond the zone and
-  // comes back to the column of the target.
+  // With the target 15 rows further on, the wire crosses straight, turns
+  // beyond the zone and comes back to the column of the target.
   const RoutingObjective further{
       .source = quarter.source,
       .target = {.x = 55, .y = 30, .heading = 0, .primitive = 0}};
@@ -698,9 +750,9 @@ TEST(DubinsRouter, AnOrthogonalRouteDoesNotTurnFromAConstrainedStart) {
                       .endStraightLength = 0,
                       .minRadius = 5,
                       .bendPenalty = 500});
-  f.router.buildOrthogonalConstraints({southRun(*f.primitives, 53)}, {false},
+  f.router.buildOrthogonalConstraints({columnRun(*f.primitives, 53)}, {false},
                                       1);
-  // The search starts on the last cell of the zone, and the free way turns
+  // The search starts on the last cell of the zone, and the free path turns
   // there at once. Every other cell of that turn lies outside the zone.
   const RoutingObjective fromTheZone{
       .source = {.x = 54, .y = 100, .heading = 6, .primitive = 0},
@@ -730,9 +782,9 @@ TEST(DubinsRouter, AnOrthogonalRouteDoesNotTurnFromAConstrainedStart) {
 
 TEST(DubinsRouter, ACheckSeesATurnThatStartsOnTheLastCellOfTheStub) {
   Fixture f;
-  f.router.buildOrthogonalConstraints({southRun(*f.primitives, 63)}, {false},
+  f.router.buildOrthogonalConstraints({columnRun(*f.primitives, 63)}, {false},
                                       1);
-  // The source stub ends on the last column of the zone. The free way turns
+  // The source stub ends on the last column of the zone. The free path turns
   // there at once, so its arc starts on a cell with the straight tag of the
   // stub. The check asks the test of a turn there, as the search does.
   const RoutingObjective fromTheZone{
@@ -785,11 +837,18 @@ TEST(DubinsRouter, ASingleCrossingWireCannotComeBack) {
   const Path path = f.router.routeOrthogonal(down);
   ASSERT_FALSE(path.empty());
   EXPECT_EQ(crossingsOf(path), 1U);
-  EXPECT_TRUE(avoids(path, f.corridor));
+  EXPECT_TRUE(avoids(path, f.outsideCorridor));
 
-  // The overlay is undone after the search, so the next route is free.
-  f.router.setSingleCrossingFeedline(nullptr, 0, 0);
+  // The rule exists only while the search runs. With the feedline still
+  // set, no cell keeps a rule after the search.
   EXPECT_TRUE(f.router.crossingAllowedOrthogonal(160, 100, 4));
+  std::size_t ruled = 0;
+  for (uint32_t y = 0; y < HEIGHT; ++y) {
+    for (uint32_t x = 0; x < WIDTH; ++x) {
+      ruled += f.router.turnAllowedOrthogonal(x, y) ? 0U : 1U;
+    }
+  }
+  EXPECT_EQ(ruled, 0U);
 }
 
 TEST(DubinsRouter, TheSingleCrossingRuleBindsTheStubsToo) {
@@ -798,7 +857,7 @@ TEST(DubinsRouter, TheSingleCrossingRuleBindsTheStubsToo) {
                       .endStraightLength = 20,
                       .minRadius = 5,
                       .bendPenalty = 500});
-  const Path feedline = southRun(*f.primitives, 150);
+  const Path feedline = columnRun(*f.primitives, 150);
   f.router.setSingleCrossingFeedline(&feedline, 5, 1);
   // The source stub runs on a diagonal through the far side of the feedline,
   // where a straight step may only leave the feedline at a right angle. The
@@ -808,10 +867,11 @@ TEST(DubinsRouter, TheSingleCrossingRuleBindsTheStubsToo) {
       .target = {.x = 260, .y = 160, .heading = 6, .primitive = 0}};
   EXPECT_TRUE(f.router.routeOrthogonal(diagonal).empty());
 
-  // The overlay is undone after the refusal too, so without the feedline the
-  // stub passes.
-  f.router.setSingleCrossingFeedline(nullptr, 0, 0);
+  // The rule ends with the refusal too: with the feedline still set, the
+  // cells of the stub keep no rule after the call.
   EXPECT_TRUE(f.router.crossingAllowedOrthogonal(155, 105, 5));
+  // Without the feedline the stub passes.
+  f.router.setSingleCrossingFeedline(nullptr, 0, 0);
   EXPECT_FALSE(f.router.routeOrthogonal(diagonal).empty());
 }
 
@@ -823,10 +883,9 @@ TEST(DubinsRouter, ARoutedPathNeverCrossesItself) {
   f.block(150, 50, 160, HEIGHT - 1);
   f.block(220, 0, 230, 150);
   const Path path = f.router.route(ACROSS, true);
-  if (!path.empty()) {
-    PathLoopScratch scratch;
-    EXPECT_FALSE(pathSelfIntersects(path, WIDTH, HEIGHT, scratch));
-  }
+  ASSERT_FALSE(path.empty());
+  PathLoopScratch scratch;
+  EXPECT_FALSE(pathSelfIntersects(path, WIDTH, HEIGHT, scratch));
   // Nothing was rejected here, but the guard is the reason a caller may
   // trust the result.
   EXPECT_EQ(f.router.loopGuardRejections(), 0U);
@@ -885,7 +944,7 @@ TEST(DubinsRouter, ABendPenaltyChangeRebuildsTheTables) {
 }
 
 TEST(DubinsRouter, ThePackedAndTheUnpackedGridsAgree) {
-  // The packed working grid folds the corridor and the static proximity
+  // The packed working grid folds the corridor mask and the static proximity
   // into one byte per cell so that the search touches one cache line per
   // swept cell. It is a cache, so the two forms must route alike.
   Fixture f;
@@ -894,35 +953,35 @@ TEST(DubinsRouter, ThePackedAndTheUnpackedGridsAgree) {
   f.router.attachObstacles(&f.obstacles);
   f.router.computeStaticProximity(12, 30);
 
-  f.router.attachCorridor(&f.corridor);
+  f.router.attachCorridor(&f.outsideCorridor);
   const Path packed = f.router.route(ACROSS, true);
-  f.router.attachCorridorUnpacked(&f.corridor);
+  f.router.attachCorridorUnpacked(&f.outsideCorridor);
   const Path unpacked = f.router.route(ACROSS, true);
   ASSERT_FALSE(packed.empty());
   EXPECT_EQ(packed, unpacked);
 
   // Without the penalties the two forms agree as well.
-  f.router.attachCorridor(&f.corridor);
+  f.router.attachCorridor(&f.outsideCorridor);
   const Path packedPlain = f.router.route(ACROSS);
-  f.router.attachCorridorUnpacked(&f.corridor);
+  f.router.attachCorridorUnpacked(&f.outsideCorridor);
   const Path unpackedPlain = f.router.route(ACROSS);
   ASSERT_FALSE(packedPlain.empty());
   EXPECT_EQ(packedPlain, unpackedPlain);
 
-  // A corridor closed outside a band of rows holds words of 64 cells that
-  // are all clear, all blocked or mixed, and the grid ends in a part word.
-  f.corridor.fill(true);
+  // A corridor of a band of rows gives a mask whose words of 64 cells are
+  // all clear, all set or mixed, and the grid ends in a part word.
+  f.outsideCorridor.fill(true);
   for (uint32_t y = 85; y <= 115; ++y) {
     for (uint32_t x = 0; x < WIDTH; ++x) {
-      f.corridor.setCell(x, y, false);
+      f.outsideCorridor.setCell(x, y, false);
     }
   }
-  f.router.attachCorridor(&f.corridor);
+  f.router.attachCorridor(&f.outsideCorridor);
   const Path packedBand = f.router.route(ACROSS, true);
-  f.router.attachCorridorUnpacked(&f.corridor);
+  f.router.attachCorridorUnpacked(&f.outsideCorridor);
   const Path unpackedBand = f.router.route(ACROSS, true);
   ASSERT_FALSE(packedBand.empty());
-  EXPECT_TRUE(avoids(packedBand, f.corridor));
+  EXPECT_TRUE(avoids(packedBand, f.outsideCorridor));
   EXPECT_EQ(packedBand, unpackedBand);
 }
 
@@ -934,7 +993,7 @@ TEST(DubinsRouter, AnUnpackedCorridorStaysUnpackedWhenTheProximityChanges) {
     // The octile estimate does not read the corridor, so only the search
     // can stop at the wall.
     f.router.setHeuristic(Heuristic::Octile);
-    f.router.attachCorridorUnpacked(&f.corridor);
+    f.router.attachCorridorUnpacked(&f.outsideCorridor);
     if (computed) {
       f.obstacles.setCell(100, 20);
       f.router.computeStaticProximity(4, 20);
@@ -943,7 +1002,7 @@ TEST(DubinsRouter, AnUnpackedCorridorStaysUnpackedWhenTheProximityChanges) {
     }
     // A wall across the whole grid, drawn after the change.
     for (uint32_t y = 0; y < HEIGHT; ++y) {
-      f.corridor.setCell(150, y);
+      f.outsideCorridor.setCell(150, y);
     }
     EXPECT_TRUE(f.router.route(ACROSS).empty()) << computed;
     EXPECT_TRUE(f.router.route(ACROSS, true).empty()) << computed;
@@ -954,7 +1013,7 @@ TEST(DubinsRouter, ARouterOutlivesWhateverBuiltItsPrimitives) {
   // The router shares ownership of its primitive table, so a router that
   // outlives the scope it was built in still routes.
   SearchScratch scratch(WIDTH, HEIGHT);
-  const grid::BitGrid corridor(WIDTH, HEIGHT);
+  const grid::BitGrid outsideCorridor(WIDTH, HEIGHT);
   auto router = [&] {
     auto primitives = std::make_shared<const MovePrimitives>(5);
     return DubinsRouter(primitives, scratch,
@@ -963,7 +1022,7 @@ TEST(DubinsRouter, ARouterOutlivesWhateverBuiltItsPrimitives) {
                          .minRadius = 5,
                          .bendPenalty = 500});
   }();
-  router.attachCorridor(&corridor);
+  router.attachCorridor(&outsideCorridor);
   EXPECT_EQ(router.primitives().minRadius(), 5U);
   EXPECT_FALSE(router.route(ACROSS).empty());
 }
@@ -1178,16 +1237,16 @@ TEST(DubinsRouter, ARouteReadsAWindowedProximityBeforeTheGridIsPacked) {
   ASSERT_FALSE(straight.empty());
   EXPECT_EQ(countBends(straight), 0U);
 
-  // New obstacles on the straight way raise penalties inside the window.
+  // New obstacles on the straight path raise penalties inside the window.
   for (uint32_t x = 140; x <= 160; ++x) {
     f.obstacles.setCell(x, 100);
   }
   f.router.computeStaticProximityWindow(
       12, 30, {.minX = 120, .maxX = 180, .minY = 80, .maxY = 120});
-  // The working grid is out of date, so the route reads the corridor and the
-  // new penalties directly, and agrees with the route on the packed grid.
+  // The working grid is out of date, so the route reads the corridor mask and
+  // the new penalties directly, and agrees with the route on the packed grid.
   const Path unpacked = f.router.route(ACROSS, true);
-  f.router.attachCorridor(&f.corridor);
+  f.router.attachCorridor(&f.outsideCorridor);
   const Path packed = f.router.route(ACROSS, true);
   ASSERT_FALSE(unpacked.empty());
   EXPECT_GT(countBends(unpacked), 0U);
@@ -1196,7 +1255,7 @@ TEST(DubinsRouter, ARouteReadsAWindowedProximityBeforeTheGridIsPacked) {
 
 TEST(DubinsRouter, OnlyStraightMovesNeverEndOnADiagonalHeading) {
   Fixture f;
-  // The target lies off the line of the source, so the cheapest way runs
+  // The target lies off the line of the source, so the cheapest path runs
   // diagonally.
   const RoutingObjective offset{
       .source = {.x = 30, .y = 40, .heading = 6, .primitive = 0},
@@ -1220,8 +1279,8 @@ TEST(DubinsRouter, OnlyStraightMovesNeverEndOnADiagonalHeading) {
 
 TEST(DubinsRouter, APathThatCrossesItselfIsRejectedAndCounted) {
   Fixture f;
-  // The target stub runs north across the source stub, so every way between
-  // the two stubs closes a loop.
+  // The target stub runs across the source stub, so every path between the
+  // two stubs closes a loop.
   const RoutingObjective looped{
       .source = {.x = 100, .y = 100, .heading = 6, .primitive = 0},
       .target = {.x = 105, .y = 95, .heading = 0, .primitive = 0}};
@@ -1242,16 +1301,16 @@ TEST(DubinsRouter, ManySearchesInARowRouteAlike) {
   constexpr uint32_t width = 80;
   constexpr uint32_t height = 40;
   SearchScratch scratch(width, height);
-  grid::BitGrid corridor(width, height);
+  grid::BitGrid outsideCorridor(width, height);
   for (uint32_t y = 0; y < 25; ++y) {
-    corridor.setCell(40, y);
+    outsideCorridor.setCell(40, y);
   }
   DubinsRouter router(std::make_shared<const MovePrimitives>(5), scratch,
                       {.startStraightLength = 10,
                        .endStraightLength = 10,
                        .minRadius = 5,
                        .bendPenalty = 500});
-  router.attachCorridor(&corridor);
+  router.attachCorridor(&outsideCorridor);
   const RoutingObjective east{
       .source = {.x = 5, .y = 10, .heading = 6, .primitive = 0},
       .target = {.x = 75, .y = 10, .heading = 6, .primitive = 0}};
@@ -1271,13 +1330,13 @@ TEST(DubinsRouter, ManySearchesInARowRouteAlike) {
 
 TEST(DubinsRouter, TheOrthogonalSearchStaysInTheCorridor) {
   Fixture f;
-  // A wall leaves a gap along the top edge of the grid only.
+  // A wall leaves a gap along the edge at y = 0 only.
   f.block(120, 8, 180, HEIGHT - 1);
   EXPECT_TRUE(f.router.corridorBlocked(150, 100));
   EXPECT_FALSE(f.router.corridorBlocked(150, 3));
   const Path path = f.router.routeOrthogonal(ACROSS);
   ASSERT_FALSE(path.empty());
-  EXPECT_TRUE(avoids(path, f.corridor));
+  EXPECT_TRUE(avoids(path, f.outsideCorridor));
   EXPECT_TRUE(std::ranges::all_of(path, [](const PathPoint& point) {
     return point.x < WIDTH && point.y < HEIGHT;
   }));
@@ -1322,9 +1381,9 @@ TEST(DubinsRouter, AnOrthogonalRouteIsEmptyWhenNoPathExists) {
 
 TEST(DubinsRouter, AFeedlineThatDoesNotSeparateTheEndsSetsNoRule) {
   Fixture f;
-  // The feedline runs beside the straight way, with the source and the target
-  // on the same side of it. A rule there would bar the straight way.
-  const Path feedline = eastRun(*f.primitives, 95);
+  // The feedline runs beside the straight path, with the source and the
+  // target on the same side of it. A rule there would bar the straight path.
+  const Path feedline = rowRun(*f.primitives, 95);
   f.router.setSingleCrossingFeedline(&feedline, 19, 1);
   const Path path = f.router.routeOrthogonal(ACROSS);
   ASSERT_FALSE(path.empty());
@@ -1333,7 +1392,7 @@ TEST(DubinsRouter, AFeedlineThatDoesNotSeparateTheEndsSetsNoRule) {
 
 TEST(DubinsRouter, TheHeadOfTheFeedlineBlocksItsFarSide) {
   Fixture f;
-  const Path feedline = southRun(*f.primitives, 150);
+  const Path feedline = columnRun(*f.primitives, 150);
   const RoutingObjective nearHead{
       .source = {.x = 30, .y = 20, .heading = 6, .primitive = 0},
       .target = {.x = 260, .y = 20, .heading = 6, .primitive = 0}};
@@ -1353,11 +1412,11 @@ TEST(DubinsRouter, TheHeadOfTheFeedlineBlocksItsFarSide) {
 
 TEST(DubinsRouter, AWireLeavesTheFeedlineAtARightAngle) {
   Fixture f;
-  const Path feedline = southRun(*f.primitives, 150);
+  const Path feedline = columnRun(*f.primitives, 150);
   const RoutingObjective diagonal{
       .source = {.x = 20, .y = 10, .heading = 5, .primitive = 0},
       .target = {.x = 200, .y = 190, .heading = 5, .primitive = 0}};
-  // Without the feedline the way is one diagonal line.
+  // Without the feedline the path is one diagonal line.
   const Path free = f.router.routeOrthogonal(diagonal);
   ASSERT_FALSE(free.empty());
   EXPECT_EQ(countBends(free), 0U);
@@ -1381,8 +1440,9 @@ TEST(DubinsRouter, AWireLeavesTheFeedlineAtARightAngle) {
 
 TEST(DubinsRouter, TheStraightZonesOfAFeedlineCornerBlockWhereTheyMeet) {
   Fixture f;
-  // The feedline runs south from the top edge, turns east on a quarter turn,
-  // and runs to the right edge, so it fences in the top right of the grid.
+  // The feedline runs toward positive y from the edge at y = 0, turns onto
+  // heading 6 on a quarter turn, and runs to the edge at x = WIDTH - 1, so it
+  // fences in the corner of the grid at x = WIDTH - 1 and y = 0.
   const auto moves = f.primitives->of(4);
   const auto turn = std::ranges::find_if(
       moves, [](const Primitive& move) { return move.exitHeading == 6; });
@@ -1409,7 +1469,7 @@ TEST(DubinsRouter, TheStraightZonesOfAFeedlineCornerBlockWhereTheyMeet) {
                         .primitive = f.primitives->straight(6)});
   }
   // The straight zones reach ten cells. The corner lies close enough to the
-  // column of the south run for the two zones to overlap there.
+  // column of the first run for the two zones to overlap there.
   ASSERT_LE(cornerX, 160U);
   f.router.setSingleCrossingFeedline(&feedline, 10, 3);
 
@@ -1421,15 +1481,15 @@ TEST(DubinsRouter, TheStraightZonesOfAFeedlineCornerBlockWhereTheyMeet) {
   std::size_t constrained = 0;
   for (std::size_t i = 1; i < path.size(); ++i) {
     const PathPoint& cell = path[i];
-    const bool besideSouthRun = cell.x > 150 && cell.x <= 160;
-    const bool besideEastRun = cell.y + 10 >= cornerY && cell.y < cornerY;
-    if (besideSouthRun && besideEastRun) {
+    const bool besideFirstRun = cell.x > 150 && cell.x <= 160;
+    const bool besideLastRun = cell.y + 10 >= cornerY && cell.y < cornerY;
+    if (besideFirstRun && besideLastRun) {
       ADD_FAILURE() << "entered both zones at " << cell.x << "," << cell.y;
-    } else if (besideSouthRun && cell.y < cornerY) {
+    } else if (besideFirstRun && cell.y < cornerY) {
       ++constrained;
       EXPECT_FALSE(onTurn(*f.primitives, path, i, 10)) << i;
       EXPECT_EQ(path[i - 1].heading, 6) << i;
-    } else if (besideEastRun && cell.x > 160) {
+    } else if (besideLastRun && cell.x > 160) {
       ++constrained;
       EXPECT_FALSE(onTurn(*f.primitives, path, i, 10)) << i;
       EXPECT_EQ(path[i - 1].heading, 0) << i;
@@ -1440,7 +1500,7 @@ TEST(DubinsRouter, TheStraightZonesOfAFeedlineCornerBlockWhereTheyMeet) {
 
 TEST(DubinsRouter, AnExemptCellPassesTheCrossingTestOnEveryHeading) {
   Fixture f;
-  const Path wire = southRun(*f.primitives, 150);
+  const Path wire = columnRun(*f.primitives, 150);
   f.router.buildOrthogonalConstraints({wire}, {false}, 6);
   ASSERT_FALSE(f.router.crossingAllowedOrthogonal(150, 100, 5));
 
@@ -1462,6 +1522,13 @@ TEST(DubinsRouter, AnExemptCellPassesTheCrossingTestOnEveryHeading) {
   EXPECT_TRUE(f.router.crossingAllowedOrthogonal(150, 101, 5));
   f.router.setCrossingExemption({});
   EXPECT_FALSE(f.router.crossingAllowedOrthogonal(150, 101, 5));
+  // Without the exemption, the search still obeys the constraints.
+  const RoutingObjective slanted{
+      .source = {.x = 30, .y = 40, .heading = 6, .primitive = 0},
+      .target = {.x = 260, .y = 160, .heading = 6, .primitive = 0}};
+  const Path path = f.router.routeOrthogonal(slanted);
+  ASSERT_FALSE(path.empty());
+  EXPECT_TRUE(crossingFailures(f.router, path).empty());
 
   // A cell outside the grid is never allowed.
   EXPECT_FALSE(f.router.crossingAllowedOrthogonal(WIDTH, 100, 6));
@@ -1471,10 +1538,9 @@ TEST(DubinsRouter, AnExemptCellPassesTheCrossingTestOnEveryHeading) {
 TEST(DubinsRouter, TheCrossingConstraintsAreTheOnesBuiltLast) {
   Fixture f;
   EXPECT_TRUE(f.router.crossingConstraints().empty());
-  f.router.buildOrthogonalConstraints({southRun(*f.primitives, 150)}, {false},
+  f.router.buildOrthogonalConstraints({columnRun(*f.primitives, 150)}, {false},
                                       6);
-  f.router.buildOrthogonalConstraints({eastRun(*f.primitives, 100)}, {false},
-                                      6);
+  f.router.buildOrthogonalConstraints({rowRun(*f.primitives, 100)}, {false}, 6);
   const CrossingConstraints& constraints = f.router.crossingConstraints();
   ASSERT_FALSE(constraints.empty());
   EXPECT_EQ(constraints.maskAt(150, 50), 0U);
@@ -1492,7 +1558,7 @@ TEST(DubinsRouter, TheCrossingConstraintsAreTheOnesBuiltLast) {
 
 TEST(DubinsRouter, AnExemptCellIsFreeOfTheSingleCrossingRule) {
   Fixture f;
-  const Path feedline = southRun(*f.primitives, 150);
+  const Path feedline = columnRun(*f.primitives, 150);
   f.router.setSingleCrossingFeedline(&feedline, 5, 40);
   const RoutingObjective nearHead{
       .source = {.x = 30, .y = 20, .heading = 6, .primitive = 0},
@@ -1501,7 +1567,7 @@ TEST(DubinsRouter, AnExemptCellIsFreeOfTheSingleCrossingRule) {
   ASSERT_FALSE(detour.empty());
   EXPECT_GT(countBends(detour), 0U);
 
-  // A band of exempt cells along the straight way opens it again.
+  // A band of exempt cells along the straight path opens it again.
   std::vector<uint32_t> band;
   for (uint32_t y = 15; y <= 25; ++y) {
     for (uint32_t x = 140; x <= 200; ++x) {
@@ -1546,6 +1612,38 @@ TEST(DubinsRouter, TheFreeStripStopsAtTheGridEdge) {
   EXPECT_EQ(box.maxX, 200U);
   EXPECT_EQ(box.minY, 0U);
   EXPECT_EQ(box.maxY, HEIGHT - 1);
+}
+
+TEST(DubinsRouter, AFreeStripEndOffTheGridCountsAsTheNearestCell) {
+  Fixture f;
+  f.obstacles.setCell(150, 60);
+  const auto sameBox = [](const CellBox& a, const CellBox& b) {
+    return a.minX == b.minX && a.maxX == b.maxX && a.minY == b.minY &&
+           a.maxY == b.maxY;
+  };
+  // A source two cells from the edge at x = 0 faces toward negative x, so
+  // its search start lies off the grid, where the coordinate wraps.
+  const PathPoint wrapped = f.router.sanitize(
+      {.x = 2, .y = 100, .heading = 2, .primitive = 0}, false);
+  ASSERT_GE(wrapped.x, WIDTH);
+  const PathPoint inside{.x = 100, .y = 100, .heading = 2, .primitive = 0};
+  EXPECT_TRUE(
+      sameBox(f.router.freeStripAlong(wrapped, inside),
+              f.router.freeStripAlong({.x = WIDTH - 1, .y = 100}, inside)));
+  EXPECT_TRUE(
+      sameBox(f.router.freeStripAlong(inside, wrapped),
+              f.router.freeStripAlong(inside, {.x = WIDTH - 1, .y = 100})));
+  // An end past the last row moves onto the last row.
+  EXPECT_TRUE(
+      sameBox(f.router.freeStripAlong({.x = 100, .y = HEIGHT + 5}, inside),
+              f.router.freeStripAlong({.x = 100, .y = HEIGHT - 1}, inside)));
+  // Two ends that meet on the nearest cell give that cell.
+  const CellBox corner = f.router.freeStripAlong(
+      {.x = WIDTH + 1, .y = HEIGHT + 1}, {.x = WIDTH + 7, .y = HEIGHT + 3});
+  EXPECT_TRUE(sameBox(corner, {.minX = WIDTH - 1,
+                               .maxX = WIDTH - 1,
+                               .minY = HEIGHT - 1,
+                               .maxY = HEIGHT - 1}));
 }
 
 TEST(DubinsRouter, TheFreeStripOfAColumnGrowsSideways) {
@@ -1668,10 +1766,11 @@ TEST(DubinsRouter, SearchEndsOnTheSamePoseJoinTheStubs) {
 }
 
 TEST(DubinsRouter, ATurnAtTheSearchStartStartsOnTheLastCellOfTheStub) {
-  // The source faces north and the target lies east, so the search turns
-  // right away. The arc starts on the last cell of the source stub, which
-  // keeps the tag of the stub. The first point of the turn is the next cell
-  // the arc sweeps, and the point after the turn is the end of the arc.
+  // The source faces heading 0 and the target lies toward positive x, so the
+  // search turns right away. The arc starts on the last cell of the source
+  // stub, which keeps the tag of the stub. The first point of the turn is the
+  // next cell the arc sweeps, and the point after the turn is the end of the
+  // arc.
   Fixture f;
   const RoutingObjective turning{
       .source = {.x = 30, .y = 100, .heading = 0, .primitive = 0},
@@ -1704,47 +1803,45 @@ TEST(DubinsRouter, ATurnAtTheSearchStartStartsOnTheLastCellOfTheStub) {
   EXPECT_TRUE(segmented.segments[1].cells[0].samePlace(path[after]));
 }
 
-TEST(DubinsRouter, ADiagonalStepPassesBetweenCellsThatTouchAtACorner) {
-  // A one-cell wall along x + y = 150 is eight-connected: its cells touch at
-  // corners only. The search sees blocked cells as four-connected, so a
-  // diagonal step slips through. Grown by one cell, the wall closes.
+TEST(DubinsRouter, AWallWhoseCellsShareEdgesStopsTheSearch) {
+  // A staircase two cells thick along x + y = 150 cuts the grid in two. Its
+  // cells share edges, so no step of either search passes it, diagonal steps
+  // included.
   constexpr uint32_t side = 300;
   auto primitives = std::make_shared<const MovePrimitives>(5);
   SearchScratch scratch(side, side);
-  grid::BitGrid corridor(side, side);
+  grid::BitGrid outsideCorridor(side, side);
   DubinsRouter router(primitives, scratch,
                       {.startStraightLength = 10,
                        .endStraightLength = 10,
                        .minRadius = 5,
                        .bendPenalty = 500});
-  for (uint32_t x = 0; x <= 150; ++x) {
-    corridor.setCell(x, 150 - x);
+  for (uint32_t x = 0; x <= 151; ++x) {
+    outsideCorridor.setCell(x, 151 - x);
+    if (x <= 150) {
+      outsideCorridor.setCell(x, 150 - x);
+    }
   }
-  router.attachCorridor(&corridor);
+  router.attachCorridor(&outsideCorridor);
   const RoutingObjective across{
       .source = {.x = 20, .y = 20, .heading = 5, .primitive = 0},
       .target = {.x = 100, .y = 100, .heading = 5, .primitive = 0}};
-  const Path path = router.route(across);
-  ASSERT_FALSE(path.empty());
-  EXPECT_TRUE(avoids(path, corridor));
-
-  for (uint32_t x = 0; x <= 151; ++x) {
-    corridor.setCell(x, 151 - x);
-  }
-  router.attachCorridor(&corridor);
+  EXPECT_TRUE(router.route(across).empty());
+  EXPECT_TRUE(router.routeOrthogonal(across).empty());
+  router.setHeuristic(Heuristic::Octile);
   EXPECT_TRUE(router.route(across).empty());
 }
 
-TEST(DubinsRouter, ABlockedSearchStartGivesNoPath) {
+TEST(DubinsRouter, ASearchStartOutsideTheCorridorGivesNoPath) {
   // The search starts on the cell ten cells east of the source of ACROSS. It
   // tests that cell as it tests every cell a move enters.
   for (const bool packed : {true, false}) {
     Fixture f;
-    f.corridor.setCell(40, 100);
+    f.outsideCorridor.setCell(40, 100);
     if (packed) {
-      f.router.attachCorridor(&f.corridor);
+      f.router.attachCorridor(&f.outsideCorridor);
     } else {
-      f.router.attachCorridorUnpacked(&f.corridor);
+      f.router.attachCorridorUnpacked(&f.outsideCorridor);
     }
     EXPECT_TRUE(f.router.route(ACROSS).empty()) << packed;
     EXPECT_TRUE(f.router.route(ACROSS, true).empty()) << packed;
@@ -1753,14 +1850,43 @@ TEST(DubinsRouter, ABlockedSearchStartGivesNoPath) {
   }
 }
 
+TEST(DubinsRouter, ASearchGoalOutsideTheCorridorGivesNoPathWithoutASearch) {
+  // The search ends on the cell ten cells west of the target of ACROSS. No
+  // move can reach a goal outside the corridor, so the call returns before
+  // the search writes a single record to the scratch.
+  for (const bool packed : {true, false}) {
+    Fixture f;
+    f.outsideCorridor.setCell(250, 100);
+    if (packed) {
+      f.router.attachCorridor(&f.outsideCorridor);
+    } else {
+      f.router.attachCorridorUnpacked(&f.outsideCorridor);
+    }
+    const auto records = [&] {
+      const std::span<const SearchNode> nodes(f.scratch.data(),
+                                              f.scratch.size());
+      return std::ranges::count_if(nodes, [&](const SearchNode& node) {
+        return node.iteration == f.scratch.iteration();
+      });
+    };
+    for (const bool usePenalty : {false, true}) {
+      EXPECT_TRUE(f.router.route(ACROSS, usePenalty).empty()) << packed;
+      EXPECT_EQ(records(), 0) << packed << usePenalty;
+      EXPECT_TRUE(f.router.routeOrthogonal(ACROSS, usePenalty).empty())
+          << packed;
+      EXPECT_EQ(records(), 0) << packed << usePenalty;
+    }
+  }
+}
+
 TEST(DubinsRouter, TheCellsOfTheStubsAreNotTested) {
   // The caller keeps the stubs free. A blocked cell under the source stub
   // or under the target stub, other than the search ends, is not seen.
   Fixture f;
-  f.corridor.setCell(30, 100);
-  f.corridor.setCell(35, 100);
-  f.corridor.setCell(255, 100);
-  f.router.attachCorridor(&f.corridor);
+  f.outsideCorridor.setCell(30, 100);
+  f.outsideCorridor.setCell(35, 100);
+  f.outsideCorridor.setCell(255, 100);
+  f.router.attachCorridor(&f.outsideCorridor);
   for (const Path& path :
        {f.router.route(ACROSS), f.router.routeOrthogonal(ACROSS)}) {
     ASSERT_FALSE(path.empty());

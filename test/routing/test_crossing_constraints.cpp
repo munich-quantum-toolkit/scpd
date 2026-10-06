@@ -26,7 +26,7 @@ using namespace mqt::scpd::routing;
 constexpr uint32_t WIDTH = 200;
 constexpr uint32_t HEIGHT = 200;
 
-/// A straight wire from (x, y0) to (x, y1 - 1), travelling toward positive y.
+/// A straight wire from (x, y0) to (x, y1 - 1), traveling toward positive y.
 Path verticalWire(const uint32_t x, const uint32_t y0, const uint32_t y1) {
   Path wire;
   for (uint32_t y = y0; y < y1; ++y) {
@@ -97,7 +97,7 @@ TEST(CrossingConstraints, AStraightRunMayOnlyBeCrossedAtARightAngle) {
   // On the wire and within the radius, the mask holds the wire's heading.
   EXPECT_EQ(constraints.maskAt(100, 100), 1U << 4U);
   EXPECT_EQ(constraints.maskAt(105, 100), 1U << 4U);
-  // Travelling east or west crosses it at a right angle.
+  // Traveling east or west crosses it at a right angle.
   EXPECT_TRUE(constraints.allowed(100, 100, 6));
   EXPECT_TRUE(constraints.allowed(100, 100, 2));
   // Along it, or at forty-five degrees, is refused.
@@ -135,7 +135,8 @@ TEST(CrossingConstraints, TheEndsOfAFeedlineCannotBeCrossed) {
 }
 
 TEST(CrossingConstraints, ATurnCannotBeCrossed) {
-  // East along y = 50, a quarter turn south, then south along x = 105.
+  // Toward positive x along y = 50, a quarter turn onto heading 4, then
+  // toward positive y along x = 105.
   const MovePrimitives primitives(5);
   const Primitive* turn = nullptr;
   for (const Primitive& move : primitives.of(6)) {

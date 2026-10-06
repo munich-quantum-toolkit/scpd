@@ -8,9 +8,9 @@
  * Licensed under the MIT License
  */
 
-// The routing stress test: a hundred routes over two grids of a thousand
-// cells per side, each in its own cell of a lattice, with the source and the
-// target facing opposite ways. Every route must exist, end exactly on its
+// The routing stress test: a hundred routes over one grid of a thousand cells
+// per side, two in each cell of a lattice of fifty cells, with the source and
+// the target facing opposite ways. Every route must exist, end exactly on its
 // target, not cross itself, render to the length the search paid for, and
 // take a coupler that meets its target length.
 
@@ -41,7 +41,7 @@ using namespace mqt::scpd::routing;
 
 constexpr uint32_t GRID_DIMENSION = 1000;
 constexpr int TOTAL_ROUTES = 100;
-constexpr int ROUTES_PER_GRID = 50;
+constexpr int LATTICE_CELLS = 50;
 
 /// A move of a routed path: the heading it leaves and its primitive.
 struct Move {
@@ -81,16 +81,11 @@ std::vector<Move> movesOf(const MovePrimitives& primitives, const Path& path) {
   return moves;
 }
 
-/// One request of the harness: the cell of the lattice it lives in, and the
-/// two ends inside that cell.
-struct Request {
-  RoutingObjective objective;
-  uint32_t lowerX = 0;
-  uint32_t lowerY = 0;
-};
-
-Request requestFor(const int t) {
-  const int local = (t < ROUTES_PER_GRID) ? t : (t - ROUTES_PER_GRID);
+/// The request with number @p t: two ends inside one cell of the lattice.
+/// Requests @p t and @p t + LATTICE_CELLS share a cell and differ in their
+/// headings.
+RoutingObjective requestFor(const int t) {
+  const int local = t % LATTICE_CELLS;
   const uint32_t cellX = static_cast<uint32_t>(local % 5) * 200;
   const uint32_t cellY = static_cast<uint32_t>(local / 5) * 100;
 
@@ -116,28 +111,24 @@ Request requestFor(const int t) {
   }
   const auto startHeading = static_cast<Heading>(t % 8);
   const auto endHeading = static_cast<Heading>((t + 4) % 8);
-  return {.objective = {.source = {.x = startX,
-                                   .y = startY,
-                                   .heading = startHeading,
-                                   .primitive = 0},
-                        .target = {.x = endX,
-                                   .y = endY,
-                                   .heading = endHeading,
-                                   .primitive = 0}},
-          .lowerX = cellX,
-          .lowerY = cellY};
+  return {
+      .source = {.x = startX,
+                 .y = startY,
+                 .heading = startHeading,
+                 .primitive = 0},
+      .target = {.x = endX, .y = endY, .heading = endHeading, .primitive = 0}};
 }
 
-TEST(RouteStress, AHundredRoutesOverTwoGrids) {
+TEST(RouteStress, AHundredRoutesOverOneGrid) {
   auto primitives = std::make_shared<const MovePrimitives>(5);
   SearchScratch scratch(GRID_DIMENSION, GRID_DIMENSION);
-  const grid::BitGrid corridor(GRID_DIMENSION, GRID_DIMENSION);
+  const grid::BitGrid outsideCorridor(GRID_DIMENSION, GRID_DIMENSION);
   DubinsRouter router(primitives, scratch,
                       {.startStraightLength = 10,
                        .endStraightLength = 10,
                        .minRadius = 5,
                        .bendPenalty = 500});
-  router.attachCorridor(&corridor);
+  router.attachCorridor(&outsideCorridor);
 
   // The largest amount by which the cost of a turn exceeds the length of its
   // curve. At a radius of five cells, it belongs to the eighth turns that
@@ -155,18 +146,18 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
   PathLoopScratch loopScratch;
   int routed = 0;
   for (int t = 0; t < TOTAL_ROUTES; ++t) {
-    const Request request = requestFor(t);
-    Path path = router.route(request.objective);
+    const RoutingObjective request = requestFor(t);
+    Path path = router.route(request);
     ASSERT_FALSE(path.empty()) << "route " << t;
     ++routed;
 
     // The route runs from the source to the target, on their headings.
-    EXPECT_EQ(path.front().x, request.objective.source.x) << t;
-    EXPECT_EQ(path.front().y, request.objective.source.y) << t;
-    EXPECT_EQ(path.front().heading, request.objective.source.heading) << t;
-    EXPECT_EQ(path.back().x, request.objective.target.x) << t;
-    EXPECT_EQ(path.back().y, request.objective.target.y) << t;
-    EXPECT_EQ(path.back().heading, request.objective.target.heading) << t;
+    EXPECT_EQ(path.front().x, request.source.x) << t;
+    EXPECT_EQ(path.front().y, request.source.y) << t;
+    EXPECT_EQ(path.front().heading, request.source.heading) << t;
+    EXPECT_EQ(path.back().x, request.target.x) << t;
+    EXPECT_EQ(path.back().y, request.target.y) << t;
+    EXPECT_EQ(path.back().heading, request.target.heading) << t;
 
     // It stays on the grid and never crosses itself.
     for (const PathPoint& point : path) {
@@ -203,18 +194,14 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
     EXPECT_LE(paid, curves + (turns * largestExcess) + 0.01) << t;
     // It is at least the straight line between the two ends.
     const double beeline =
-        std::hypot(static_cast<double>(request.objective.target.x) -
-                       request.objective.source.x,
-                   static_cast<double>(request.objective.target.y) -
-                       request.objective.source.y);
+        std::hypot(static_cast<double>(request.target.x) - request.source.x,
+                   static_cast<double>(request.target.y) - request.source.y);
     EXPECT_GE(sampled, beeline) << t;
 
     // The rendering ends on the target rather than drifting away from it.
-    EXPECT_NEAR(samples.back().x(),
-                static_cast<double>(request.objective.target.x), 1e-6)
+    EXPECT_NEAR(samples.back().x(), static_cast<double>(request.target.x), 1e-6)
         << t;
-    EXPECT_NEAR(samples.back().y(),
-                static_cast<double>(request.objective.target.y), 1e-6)
+    EXPECT_NEAR(samples.back().y(), static_cast<double>(request.target.y), 1e-6)
         << t;
 
     // The coupler splice measures lengths as samplePath() renders them. Its
@@ -225,13 +212,14 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
         segments, {}, [](const PathSegment& s) { return s.steps(); });
     ASSERT_TRUE(longest->straight()) << t;
     const double fromMiddle = sampled - longest->lengthAt[longest->steps() / 2];
-    const Heading orientation = longest->heading;
+    const Heading couplerHeading = longest->heading;
     const double target =
         fromMiddle +
-        buildDogleg(*primitives, turned(orientation, 2), -1, 14).cost;
+        buildDogleg(*primitives, turned(couplerHeading, 2), -1, 14).cost;
     Path spliced = path;
     ASSERT_TRUE(spliceCouplerDogleg(*primitives, target, spliced,
-                                    GRID_DIMENSION, GRID_DIMENSION, orientation)
+                                    GRID_DIMENSION, GRID_DIMENSION,
+                                    couplerHeading)
                     .has_value())
         << t;
     EXPECT_NEAR(renderedLength(*primitives, spliced), target, 1e-6) << t;
@@ -240,38 +228,51 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
   EXPECT_EQ(router.loopGuardRejections(), 0U);
 }
 
-TEST(RouteStress, EveryRouteIsTheSameOnASecondRun) {
-  // A search is deterministic: the same request over the same grids gives
-  // the same path, whichever scratch it runs in.
+TEST(RouteStress, EarlierSearchesDoNotChangeARoute) {
+  // A search keeps nothing from the searches before it: a router that has
+  // routed other requests in its scratch returns the path that a new router
+  // with a new scratch returns.
   auto primitives = std::make_shared<const MovePrimitives>(5);
-  SearchScratch first(GRID_DIMENSION, GRID_DIMENSION);
-  SearchScratch second(GRID_DIMENSION, GRID_DIMENSION);
-  const grid::BitGrid corridor(GRID_DIMENSION, GRID_DIMENSION);
+  SearchScratch shared(GRID_DIMENSION, GRID_DIMENSION);
+  const grid::BitGrid outsideCorridor(GRID_DIMENSION, GRID_DIMENSION);
   const SearchParams params{.startStraightLength = 10,
                             .endStraightLength = 10,
                             .minRadius = 5,
                             .bendPenalty = 500};
-  DubinsRouter a(primitives, first, params);
-  DubinsRouter b(primitives, second, params);
-  a.attachCorridor(&corridor);
-  b.attachCorridor(&corridor);
+  DubinsRouter used(primitives, shared, params);
+  used.attachCorridor(&outsideCorridor);
 
-  for (int t = 0; t < 20; ++t) {
-    const Request request = requestFor(t);
-    EXPECT_EQ(a.route(request.objective), b.route(request.objective)) << t;
+  constexpr int requests = 20;
+  std::vector<Path> fresh;
+  for (int t = 0; t < requests; ++t) {
+    SearchScratch scratch(GRID_DIMENSION, GRID_DIMENSION);
+    DubinsRouter router(primitives, scratch, params);
+    router.attachCorridor(&outsideCorridor);
+    fresh.push_back(router.route(requestFor(t)));
+    ASSERT_FALSE(fresh.back().empty()) << t;
+  }
+  // Forward and then backward, so that every request also runs after the
+  // searches that follow it in the forward order.
+  for (int t = 0; t < requests; ++t) {
+    EXPECT_EQ(used.route(requestFor(t)), fresh[static_cast<std::size_t>(t)])
+        << t;
+  }
+  for (int t = requests - 1; t >= 0; --t) {
+    EXPECT_EQ(used.route(requestFor(t)), fresh[static_cast<std::size_t>(t)])
+        << t;
   }
 }
 
-TEST(RouteStress, ObstaclesInEveryCellStillLeaveAWayThrough) {
+TEST(RouteStress, ObstaclesInEveryCellStillLeaveAPathThrough) {
   auto primitives = std::make_shared<const MovePrimitives>(5);
   SearchScratch scratch(GRID_DIMENSION, GRID_DIMENSION);
-  grid::BitGrid corridor(GRID_DIMENSION, GRID_DIMENSION);
+  grid::BitGrid outsideCorridor(GRID_DIMENSION, GRID_DIMENSION);
   // A pillar in the middle of every cell of the lattice.
   for (uint32_t cellY = 0; cellY < GRID_DIMENSION; cellY += 100) {
     for (uint32_t cellX = 0; cellX < GRID_DIMENSION; cellX += 200) {
       for (uint32_t y = cellY + 35; y < cellY + 65; ++y) {
         for (uint32_t x = cellX + 90; x < cellX + 110; ++x) {
-          corridor.setCell(x, y);
+          outsideCorridor.setCell(x, y);
         }
       }
     }
@@ -281,15 +282,14 @@ TEST(RouteStress, ObstaclesInEveryCellStillLeaveAWayThrough) {
                        .endStraightLength = 10,
                        .minRadius = 5,
                        .bendPenalty = 500});
-  router.attachCorridor(&corridor);
+  router.attachCorridor(&outsideCorridor);
 
   PathLoopScratch loopScratch;
   for (int t = 0; t < TOTAL_ROUTES; ++t) {
-    const Request request = requestFor(t);
-    const Path path = router.route(request.objective);
+    const Path path = router.route(requestFor(t));
     ASSERT_FALSE(path.empty()) << "route " << t;
     for (const PathPoint& point : path) {
-      EXPECT_FALSE(corridor.testCell(point.x, point.y)) << t;
+      EXPECT_FALSE(outsideCorridor.testCell(point.x, point.y)) << t;
     }
     EXPECT_FALSE(
         pathSelfIntersects(path, GRID_DIMENSION, GRID_DIMENSION, loopScratch))

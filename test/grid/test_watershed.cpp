@@ -8,6 +8,7 @@
  * Licensed under the MIT License
  */
 
+#include "../SplitMix.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/Watershed.hpp"
 
@@ -23,6 +24,7 @@
 namespace {
 
 using namespace mqt::scpd::grid;
+using mqt::scpd::test::SplitMix;
 
 TEST(Watershed, TwoSeedsSplitAFreeGridAtTheMidline) {
   const BitGrid blocked(20, 10);
@@ -89,6 +91,110 @@ TEST(Watershed, TheLowerSeedWinsTheMidlineInEveryLayout) {
   EXPECT_EQ(midlineOfFirstSeed({at(15, 10), at(5, 10)}, true), side);
   EXPECT_EQ(midlineOfFirstSeed({at(10, 5), at(10, 15)}, false), side);
   EXPECT_EQ(midlineOfFirstSeed({at(10, 15), at(10, 5)}, false), side);
+}
+
+TEST(Watershed, TheLowerSeedWinsTheDiagonalInEveryLayout) {
+  // Two seeds mirrored across the diagonal x = y, in both orders. Every cell
+  // of the diagonal is equidistant from both seeds, but one front reaches it
+  // along x and the other along y. So the first seed wins every diagonal cell
+  // that a front reaches, and the labels of the two seed orders mirror each
+  // other. The first layout is a free grid; the others carry random obstacles
+  // mirrored across the diagonal.
+  SplitMix random(29);
+  for (int round = 0; round < 100; ++round) {
+    const auto side =
+        static_cast<uint32_t>(round == 0 ? 21 : random.between(9, 31));
+    const auto at = [&](const uint32_t x, const uint32_t y) {
+      return (static_cast<std::size_t>(y) * side) + x;
+    };
+    BitGrid blocked(side, side);
+    const double density = round == 0 ? 0.0 : 0.05 + (0.3 * random.unit());
+    for (uint32_t y = 0; y < side; ++y) {
+      for (uint32_t x = 0; x <= y; ++x) {
+        if (random.unit() < density) {
+          blocked.setCell(x, y);
+          blocked.setCell(y, x);
+        }
+      }
+    }
+    uint32_t seedX = 5;
+    uint32_t seedY = 10;
+    while (round > 0 && (seedX == seedY || blocked.testCell(seedX, seedY))) {
+      seedX = static_cast<uint32_t>(random.between(0, side - 1));
+      seedY = static_cast<uint32_t>(random.between(0, side - 1));
+    }
+    const std::vector<std::size_t> seeds = {at(seedX, seedY), at(seedY, seedX)};
+    const std::vector<std::size_t> swapped = {seeds[1], seeds[0]};
+    std::vector<PartitionLabel> labels(blocked.size(), LABEL_NONE);
+    static_cast<void>(
+        runWatershed(blocked, seeds, labels, FIRST_PARTITION_LABEL));
+    std::vector<PartitionLabel> mirrored(blocked.size(), LABEL_NONE);
+    static_cast<void>(
+        runWatershed(blocked, swapped, mirrored, FIRST_PARTITION_LABEL));
+    uint32_t reached = 0;
+    for (uint32_t y = 0; y < side; ++y) {
+      for (uint32_t x = 0; x < side; ++x) {
+        ASSERT_EQ(labels[at(x, y)], mirrored[at(y, x)])
+            << "round " << round << ", cell " << x << "," << y;
+      }
+      const PartitionLabel diagonal = labels[at(y, y)];
+      ASSERT_NE(diagonal, FIRST_PARTITION_LABEL + 1)
+          << "round " << round << ", cell " << y << "," << y;
+      reached += diagonal == FIRST_PARTITION_LABEL ? 1 : 0;
+    }
+    if (round == 0) {
+      EXPECT_EQ(reached, side);
+    }
+  }
+}
+
+TEST(Watershed, TheLowerSeedWinsWhereTheArrivalTimesDifferByRoundingOnly) {
+  // Two square rooms of 3 to 5 cells on a side, joined by a corridor one cell
+  // wide along their top rows. All other cells are blocked.
+  // The first seed sits left of the bottom row of the left room. Its front
+  // crosses that room and then m + k corridor cells to the meeting cell. The
+  // second seed sits m + 1 cells right of the right room, on a corridor along
+  // its bottom row. Its front crosses m corridor cells, that room and k
+  // corridor cells to the meeting cell. Both fronts take the same steps in
+  // another order, so their arrival times at the meeting cell differ by
+  // rounding only. The first seed wins the meeting cell in both seed orders.
+  for (uint32_t room = 3; room <= 5; ++room) {
+    for (uint32_t m = 1; m <= 4; ++m) {
+      for (uint32_t k = 0; k <= 2; ++k) {
+        const uint32_t top = room - 1;
+        const uint32_t meetingX = room + 1 + m + k;
+        const uint32_t rightRoomX = meetingX + k + 1;
+        const uint32_t secondX = rightRoomX + room + m;
+        const uint32_t width = secondX + 1;
+        BitGrid blocked(width, room, true);
+        blocked.setCell(0, 0, false);
+        for (uint32_t y = 0; y < room; ++y) {
+          for (uint32_t x = 1; x <= room; ++x) {
+            blocked.setCell(x, y, false);
+            blocked.setCell(rightRoomX + x - 1, y, false);
+          }
+        }
+        for (uint32_t x = room + 1; x < rightRoomX; ++x) {
+          blocked.setCell(x, top, false);
+        }
+        for (uint32_t x = rightRoomX + room; x <= secondX; ++x) {
+          blocked.setCell(x, 0, false);
+        }
+        const std::size_t meeting =
+            (static_cast<std::size_t>(top) * width) + meetingX;
+        for (const std::vector<std::size_t>& seeds :
+             {std::vector<std::size_t>{0, secondX},
+              std::vector<std::size_t>{secondX, 0}}) {
+          std::vector<PartitionLabel> labels(blocked.size(), LABEL_NONE);
+          static_cast<void>(
+              runWatershed(blocked, seeds, labels, FIRST_PARTITION_LABEL));
+          EXPECT_EQ(labels[meeting], FIRST_PARTITION_LABEL)
+              << "room " << room << ", m " << m << ", k " << k
+              << ", first seed at " << seeds[0];
+        }
+      }
+    }
+  }
 }
 
 TEST(Watershed, BarriersAndReservedCellsAreNotEntered) {

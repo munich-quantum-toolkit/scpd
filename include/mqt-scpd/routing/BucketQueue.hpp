@@ -24,8 +24,8 @@
 namespace mqt::scpd::routing {
 
 /**
- * @brief A priority queue over integer priorities with constant-time push and
- * pop.
+ * @brief A priority queue over integer priorities whose push and pop take
+ * constant time within the reach of its two levels of buckets.
  *
  * The queue serves as the open list of the search. It has two levels of
  * buckets. The fine level holds one aligned block of @p FINE_SIZE consecutive
@@ -37,7 +37,10 @@ namespace mqt::scpd::routing {
  * by counting trailing zeros instead of by a scan.
  *
  * An entry whose block lies beyond the coarse level waits in an overflow
- * store, a heap ordered by block and then by the order of the pushes. When
+ * store, a heap ordered by block and then by the order of the pushes. A push
+ * into the store takes time logarithmic in the size of the store. A move of
+ * the fine level to the next block copies the entries of that block, so a pop
+ * takes constant time amortized over the entries of a block. When
  * the fine level moves on to a later block, the waiting entries that the
  * coarse level now reaches move into it, in the order they were pushed. So
  * the queue takes any priority, and the pops stay in ascending order. The

@@ -120,6 +120,9 @@ std::optional<DCoord> GridMetrics::roundToCell(const Point point) const {
 }
 
 DCoord GridMetrics::clampToCell(const Point point) const {
+  if (width == 0 || height == 0) {
+    throw std::invalid_argument("a grid without cells has no cell to clamp to");
+  }
   const Point cell = toCell(point);
   if (std::isnan(cell.x()) || std::isnan(cell.y())) {
     throw std::invalid_argument(

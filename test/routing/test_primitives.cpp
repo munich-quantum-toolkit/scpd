@@ -169,13 +169,37 @@ TEST(Primitives, SweptCellsStayWithinTheReachOfTheirMove) {
   }
 }
 
+TEST(Primitives, EveryTurnSweepsItsStartFirst) {
+  // A path lists the swept cells of a turn from the start of its arc on, and
+  // a dogleg takes the first swept cell as that start. The straight step
+  // sweeps only its end.
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
+      for (const Primitive& p : table.of(h)) {
+        ASSERT_FALSE(p.swept.empty()) << radius << " " << p.id;
+        if (p.exitHeading == h) {
+          EXPECT_EQ(p.swept.size(), 1U) << radius << " " << p.id;
+          EXPECT_EQ(p.swept.front(), (CellOffset{.dx = p.dx, .dy = p.dy}))
+              << radius << " " << p.id;
+        } else {
+          EXPECT_EQ(p.swept.front(), CellOffset{})
+              << "radius " << radius << ", heading " << static_cast<int>(h)
+              << ", primitive " << p.id;
+        }
+      }
+    }
+  }
+}
+
 TEST(Primitives, LookupsOfAnUnknownMoveAreSafe) {
   EXPECT_EQ(primitives().find(0, MovePrimitives::MAX_PRIMITIVE_ID + 5),
             nullptr);
   EXPECT_EQ(primitives().find(0, 999), nullptr);
   EXPECT_DOUBLE_EQ(primitives().cost(0, 999), 0.0);
-  // An unknown move reads as heading zero, which is what the search's own
-  // lookup did, so heading zero is the one that reports it as straight.
+  // An unknown move reads as exit heading zero, as in the research
+  // prototype, so only heading zero reports it as straight.
   EXPECT_TRUE(primitives().isStraight(0, 999));
   EXPECT_FALSE(primitives().isStraight(3, 999));
 }

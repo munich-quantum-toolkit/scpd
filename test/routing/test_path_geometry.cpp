@@ -137,8 +137,6 @@ std::vector<Point> rendering(Path path) {
   return samplePath(primitives(), path, start, segments);
 }
 
-/// The next number of a fixed sequence, so that random requests are the
-
 TEST(PathGeometry, APointKnowsItsSearchState) {
   // The search state of a point is its cell and its heading. The primitive
   // names the move the point starts and is no part of the state.
@@ -625,8 +623,9 @@ TEST(PathGeometry, TheRenderedLengthFollowsTheArcs) {
   EXPECT_NEAR(renderedLength(primitives(), straightRun(100, 100, 6, 20)), 20.0,
               1e-9);
 
-  // Ten cells north, a quarter turn onto east, ten cells east: the arc
-  // counts at its true length, not as the cells it sweeps.
+  // Ten cells toward negative y, a quarter turn onto positive x, ten cells
+  // toward positive x: the arc counts at its true length, not as the cells it
+  // sweeps.
   const Primitive* quarter = nullptr;
   for (const Primitive& p : primitives().of(0)) {
     if (p.exitHeading == 6) {

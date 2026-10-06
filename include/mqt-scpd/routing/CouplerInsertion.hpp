@@ -31,9 +31,9 @@ namespace mqt::scpd::routing {
  * coordinate.
  */
 struct DoglegGeometry {
-  /// The swept cells of the turn, then one cell per straight step from the end
-  /// of the turn to the tip. The cells of the turn carry its tag, the cells of
-  /// the run the straight step of the exit heading.
+  /// The swept cells of the turn and its end, then one cell per straight step
+  /// from the end of the turn to the tip. The cells of the turn carry its tag,
+  /// the cells of the run the straight step of the exit heading.
   Path path;
   /// The end of the run, on the exit heading and tagged with its straight
   /// step. Without a straight step, the tip is the end of the turn.
@@ -52,9 +52,12 @@ struct DoglegGeometry {
  * whose curve ends closest to the direction of the exit heading, and of
  * equally close ones the one with the lowest identifier. At some radii, such
  * as 10 cells, a diagonal heading holds an arc of 72 to 77 degrees beside the
- * exact quarter turn; the exact quarter turn wins. At the radii of 1 to 23
- * cells, that turn sweeps its end, so consecutive points of the path are
- * neighbouring cells.
+ * exact quarter turn; the exact quarter turn wins. The path lists the end of
+ * the turn also where the turn does not sweep it. At the radii of 1 to 24, 26
+ * to 32, 37 to 40 and 50 cells, consecutive points of the path are
+ * neighboring cells. At the other radii, the swept cells of a quarter turn
+ * that leaves a cardinal heading skip one or more cells (see
+ * Primitive::swept), and so does the path.
  *
  * @param primitives The move primitives.
  * @param entry The heading the turn starts on.
@@ -74,9 +77,9 @@ buildDogleg(const MovePrimitives& primitives, Heading entry, int turnSign,
 /** @brief The shape of the dogleg that a coupler adds to a resonator. */
 struct CouplerDoglegOptions {
   /// Straight steps from the anchor to the first quarter turn, on the heading
-  /// across the coupler's orientation: the run the resonator couples along.
-  /// The first turn starts this many cells from the anchor. Zero starts it at
-  /// the anchor.
+  /// two eighth turns clockwise from the coupler heading: the run the
+  /// resonator couples along. The first turn starts this many cells from the
+  /// anchor. Zero starts it at the anchor.
   uint32_t leadStraight = 0;
   /// Straight cells after the first quarter turn.
   uint32_t straightLength = 14;
@@ -127,10 +130,21 @@ struct CouplerSplice {
  * undershoot is charged the size of its mismatch. An overshoot is charged its
  * mismatch plus the smallest mismatch size among the candidates that can win,
  * which favors an undershoot. Of the candidates that can win, the one with the
- * lowest charge wins. The function cuts the path before its point and puts
- * the dogleg in front. That point is the point of the straight run, not an
- * earlier point on the same cell, such as the end of an eighth turn that
- * sweeps a cell past its end.
+ * lowest charge wins. The function compares the charges to a billionth of a
+ * cell, so that the rounding of the lengths cannot break a tie. Of candidates
+ * with equal charges, the one whose cell comes first along the path wins.
+ *
+ * The function cuts the path before the point of the winner and puts the
+ * dogleg and the connection in front. That point is the point of the straight
+ * run, not an earlier point on the same cell, such as the end of an eighth
+ * turn that sweeps a cell past its end. The point keeps its tag, and the last
+ * point in front of it lies on another cell. So where the search of a routed
+ * path begins with a turn and the point is the start of its arc (see Path),
+ * the turn still renders from that point. The spliced path lists the end of
+ * every turn of the dogleg and the connection, also where the turn does not
+ * sweep it. At the radii where the points of a dogleg are neighboring cells
+ * (see buildDogleg()), consecutive points of the spliced path from the anchor
+ * to the point of the winner are neighboring cells.
  *
  * @param primitives The move primitives the path was routed with.
  * @param targetLength The length the path should have after the splice, as
@@ -139,20 +153,20 @@ struct CouplerSplice {
  * coupler's anchor.
  * @param width The number of cells of the router grid along x.
  * @param height The number of cells of the router grid along y.
- * @param orientation The heading the coupler's readout port faces.
+ * @param couplerHeading The heading the coupler's readout port faces.
  * @param options The shape of the dogleg.
  * @param anchorAllowed An optional filter on the anchor cell, called with its
  * x and y. An empty filter allows every cell.
  * @return The splice, or @c std::nullopt when @p path is empty or no candidate
  * is collision-free. In that case @p path is unchanged.
- * @throws std::invalid_argument If @p orientation is not a heading.
+ * @throws std::invalid_argument If @p couplerHeading is not a heading.
  * @throws std::logic_error If the primitives hold no quarter turn that the
  * dogleg needs.
  */
 [[nodiscard]] MQT_SCPD_ROUTING_EXPORT std::optional<CouplerSplice>
 spliceCouplerDogleg(
     const MovePrimitives& primitives, double targetLength, Path& path,
-    uint32_t width, uint32_t height, Heading orientation,
+    uint32_t width, uint32_t height, Heading couplerHeading,
     const CouplerDoglegOptions& options = {},
     const std::function<bool(uint32_t, uint32_t)>& anchorAllowed = {});
 

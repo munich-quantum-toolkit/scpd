@@ -73,12 +73,20 @@ struct PathPoint {
  * - One exception: where the search of a routed path begins with a turn, the
  *   start of the arc is the last cell of the source stub, which keeps the tag
  *   of the stub. The first point of that turn is the next cell the arc sweeps.
+ *   At a radius of one cell, the exact quarter turn of a diagonal heading
+ *   sweeps only its start and its end. Where the search begins with that
+ *   turn, no point carries its tag: reconstructSegments() finds no turn
+ *   there and counts a straight step in place of it, and samplePath() draws
+ *   no arc there.
  * - The arc ends at its start plus the end offset of the primitive,
  *   (Primitive::dx, Primitive::dy). In a routed path, the point after a turn
- *   is that end. A dogleg instead lists the end among the swept cells of its
- *   turn and goes on with a straight step from the end.
+ *   is that end. A coupler dogleg instead lists the end as a point of the
+ *   turn, also where the turn does not sweep it, and goes on with a straight
+ *   step from the end. A turn that follows directly takes that point over as
+ *   the start of its arc. The last point of a dogleg never lies on the cell
+ *   of the point of the routed path that follows it.
  * - The swept cells of a turn are the cells the search tests, not a chain of
- *   neighbouring cells (see Primitive::swept). Some eighth turns list a cell
+ *   neighboring cells (see Primitive::swept). Some eighth turns list a cell
  *   twice or a cell past their end, so a path can step off a cell and back
  *   onto it two points later. Some turns that leave a diagonal heading do not
  *   list their end; in a routed path, the end then follows as the next point.

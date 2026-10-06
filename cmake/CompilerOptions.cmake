@@ -28,6 +28,11 @@ function(enable_project_options target_name)
     # ensure that exceptions are enabled
     target_compile_options(${target_name} INTERFACE -fexceptions)
 
+    # never contract a * b + c into one FMA instruction: the fused result rounds once instead of
+    # twice, so exact ties in the obstacle mask would depend on the compiler and the target. MSVC
+    # does not contract by default.
+    target_compile_options(${target_name} INTERFACE -ffp-contract=off)
+
     # enable coverage collection options
     option(ENABLE_COVERAGE "Enable coverage reporting for gcc/clang" FALSE)
     if(ENABLE_COVERAGE)

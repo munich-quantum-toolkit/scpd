@@ -30,8 +30,10 @@ namespace mqt::scpd::routing {
  * bend radius of five cells, every eighth turn from a cardinal heading sweeps
  * one cell past the end of its arc, so the path reads the end, the cell past
  * it, and the end again. At most other radii, some eighth turns list a cell
- * twice in the same way, or sweep one cell twice. Quarter turns and straight
- * steps leave no spur. A spur is not a loop, so a revisit counts only when the
+ * twice in the same way, or sweep one cell twice. Straight steps leave no
+ * spur. Quarter turns leave none either, except at a radius of one cell: there
+ * a U-turn of two quarter turns lists the cell between its two arcs twice,
+ * three steps apart. A spur is not a loop, so a revisit counts only when the
  * two visits are more than this many steps apart. No real loop is that short at
  * the default bend radius.
  *
@@ -93,19 +95,20 @@ struct MQT_SCPD_ROUTING_EXPORT PathLoopScratch {
   /// The number of revisits the spur window ignored on the last scan.
   uint32_t spurRevisitsIgnored = 0;
   /// The largest distance, in steps, of a revisit the spur window ignored on
-  /// the last scan. A spur of a routed path spans two steps. While this value
-  /// stays at two or below, the window ignored nothing close to its limit.
+  /// the last scan. A spur of a routed path spans two steps, or three at a
+  /// radius of one cell (see PATH_LOOP_SPUR_WINDOW). While this value stays at
+  /// that span or below, the window ignored nothing close to its limit.
   std::size_t maxSpurDistance = 0;
 
   /**
    * @brief The diagonal steps seen in one 2 by 2 block.
    */
   struct DiagonalVisit {
-    /// One bit per orientation: bit 0 for a step whose x and y offsets have
-    /// the same sign, bit 1 for a step whose offsets have opposite signs.
+    /// One bit per slope: bit 0 for a step whose x and y offsets have the
+    /// same sign, bit 1 for a step whose offsets have opposite signs.
     uint8_t mask = 0;
-    /// The step at which the latest diagonal step of each orientation
-    /// arrived, in the order of the bits.
+    /// The step at which the latest diagonal step of each slope arrived, in
+    /// the order of the bits.
     std::array<std::size_t, 2> at = {0, 0};
   };
   /// The step of the last recorded visit of each cell, keyed on the cell.
@@ -141,7 +144,7 @@ MQT_SCPD_ROUTING_EXPORT void rasterizePathCells(const Path& path,
 /**
  * @brief Scans the rasterized cells of a scratch for self-intersections.
  *
- * The scan keys each diagonal step on its 2 by 2 block and its orientation,
+ * The scan keys each diagonal step on its 2 by 2 block and its slope,
  * and ignores a revisit within PATH_LOOP_SPUR_WINDOW steps. After a hit, the
  * scan forgets every earlier visit and restarts from the current cell. A path
  * that runs back along itself for two hundred cells therefore counts as one

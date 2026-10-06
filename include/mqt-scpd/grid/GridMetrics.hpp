@@ -192,7 +192,9 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
    * @return The nearest cell, with each coordinate clamped onto the grid
    * separately. An infinite coordinate clamps onto the first or the last cell
    * of its axis.
-   * @throws std::invalid_argument If a coordinate of @p point is not a number.
+   * @throws std::invalid_argument If the grid has no cell, that is if
+   * @c width or @c height is zero, or if a coordinate of @p point is not a
+   * number.
    */
   [[nodiscard]] DCoord clampToCell(Point point) const;
 

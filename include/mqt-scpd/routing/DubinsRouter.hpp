@@ -36,8 +36,8 @@ namespace mqt::scpd::routing {
  * setting.
  */
 enum class Heuristic : uint8_t {
-  /// The shortest eight-connected distance to the target over the free cells
-  /// of the corridor, from one backward Dijkstra search per route. It follows
+  /// The shortest eight-connected distance to the target over the cells of
+  /// the corridor, from one backward Dijkstra search per route. It follows
   /// the corridor, so a search in a winding corridor does not flood the
   /// corridor. The search also drops every move that ends on a cell from
   /// which the target cannot be reached. The default.
@@ -53,10 +53,14 @@ enum class Heuristic : uint8_t {
  *
  * A router reads shared grids and writes only its own scratch. The threading
  * model is therefore one router per thread over the same grids. The obstacle
- * mask and the corridor are bit grids attached by pointer. The router owns
- * the static proximity penalty. The wire proximity penalty is a view. The
- * router packs the corridor and the static proximity into one working byte
- * per cell, so the inner loop touches one cache line per swept cell.
+ * mask and the corridor mask are bit grids attached by pointer. The router
+ * owns the static proximity penalty. The wire proximity penalty is a view.
+ * The router packs the corridor mask and the static proximity into one
+ * working byte per cell, so the inner loop touches one cache line per swept
+ * cell.
+ *
+ * The corridor is the region that the search may use. The router takes it as
+ * a mask whose set bits mark the cells outside the corridor.
  *
  * A router and its scratch form one per-thread context. The scratch belongs
  * to the caller and outlives the router. Nothing else that a router reads is
@@ -65,14 +69,14 @@ enum class Heuristic : uint8_t {
  * copied nor moved. A copy would share the scratch of the original, and a
  * moved-from router would keep the state of tables it no longer holds.
  *
- * The search tests the cells that a move sweeps and its end cell against the
- * corridor, and it tests the cell it starts from. It does not test the cells
- * of the straight stubs against the corridor; the caller keeps them clear of
- * it. The test is coarser than the wire in two ways:
- * - A wall of blocked cells stops the search only where its cells share
- *   edges. A diagonal step sweeps only its end cell, so it passes between two
- *   blocked cells that touch at a corner.
- * - The centreline of an arc can leave the cells its move sweeps. It stays
+ * The search tests whether the cells that a move sweeps and its end cell lie
+ * in the corridor, and it tests the cells it starts from and ends at. It does
+ * not test the cells of the straight stubs; the caller keeps them in the
+ * corridor. The test is coarser than the wire in two ways:
+ * - A wall of cells outside the corridor stops the search only where its
+ *   cells share edges. A diagonal step sweeps only its end cell, so it passes
+ *   between two cells of the wall that touch at a corner.
+ * - The centerline of an arc can leave the cells its move sweeps. It stays
  *   within half a cell of them for every bend radius up to 29 cells: 0.16
  *   cell at a radius of 5, 0.21 at 12 and 0.49 at 20. Larger radii stray
  *   further, 0.78 cell at 30 and 0.93 at 40.
@@ -179,7 +183,7 @@ public:
    * @brief Selects whether route() adds the unavoidable turning toward the
    * target heading to its heuristic.
    *
-   * A way has to arrive on the target heading, and every eighth turn it still
+   * A path has to arrive on the target heading, and every eighth turn it still
    * owes costs one bend penalty. The term is therefore @c bendPenalty times
    * the cyclic distance from the heading of a state to the target heading. It
    * is a lower bound on the turning that the state still has to pay, and it
@@ -198,8 +202,8 @@ public:
    * never reopens a closed state. route() is therefore close to optimal but
    * not exactly optimal. A comparison with a brute-force search on 1500
    * random grids at a radius of 5 and a bend penalty of 500 pins this: without
-   * the bend term every way is the cheapest; with it, fewer than one way in a
-   * hundred costs more, and none by more than 20, the excess of one cardinal
+   * the bend term every path is the cheapest; with it, fewer than one path in
+   * a hundred costs more, and none by more than 20, the excess of one cardinal
    * eighth turn.
    *
    * @param on Whether route() adds the term.
@@ -237,15 +241,15 @@ public:
   /**
    * @brief Attaches the corridor of the wire about to be routed.
    *
-   * The search enters the clear cells of the corridor only. The function
-   * packs the corridor with the static proximity into the working grid, which
+   * The search enters only the cells of the corridor. The function packs the
+   * corridor mask with the static proximity into the working grid, which
    * costs one pass over the grid.
    *
-   * The packed grid is a copy of the corridor at the time of the call. After
-   * a change to the corridor, attach the corridor again.
+   * The packed grid is a copy of the corridor mask at the time of the call.
+   * After a change to the mask, attach the corridor again.
    *
-   * @param corridor The corridor, in which a set bit blocks its cell, or
-   * @c nullptr to detach the corridor.
+   * @param corridor The corridor mask, in which a set bit marks a cell
+   * outside the corridor, or @c nullptr to detach the corridor.
    * @pre @p corridor stays alive while it is attached, and it does not change
    * after the call.
    * @throws std::invalid_argument If @p corridor does not have the width and
@@ -256,14 +260,14 @@ public:
   /**
    * @brief Attaches the corridor without the packing pass.
    *
-   * The search then reads the corridor bits and the proximity bytes
-   * separately. Each search is slower, but the attachment costs nothing. This
-   * suits a fresh corridor for each of many short searches. A change of the
-   * static proximity does not pack the corridor either, so every search reads
-   * the corridor as it is at the time of the search.
+   * The search then reads the bits of the corridor mask and the proximity
+   * bytes separately. Each search is slower, but the attachment costs
+   * nothing. This suits a fresh corridor for each of many short searches. A
+   * change of the static proximity does not pack the corridor mask either, so
+   * every search reads the mask as it is at the time of the search.
    *
-   * @param corridor The corridor, in which a set bit blocks its cell, or
-   * @c nullptr to detach the corridor.
+   * @param corridor The corridor mask, in which a set bit marks a cell
+   * outside the corridor, or @c nullptr to detach the corridor.
    * @pre @p corridor stays alive while it is attached.
    * @throws std::invalid_argument If @p corridor does not have the width and
    * the height of the router grid.
@@ -272,17 +276,17 @@ public:
 
   /**
    * @brief Returns the attached corridor.
-   * @return The corridor, or @c nullptr when none is attached.
+   * @return The corridor mask, or @c nullptr when no corridor is attached.
    */
   [[nodiscard]] const grid::BitGrid* corridor() const { return corridorMask; }
 
   /**
-   * @brief Tests whether the attached corridor blocks a cell.
+   * @brief Tests whether a cell lies outside the attached corridor.
    * @param x The column of the cell.
    * @param y The row of the cell.
    * @pre The cell lies in the router grid.
-   * @return @c true when a corridor is attached and blocks the cell, and
-   * @c false otherwise.
+   * @return @c true when a corridor is attached and the cell lies outside it,
+   * and @c false otherwise.
    */
   [[nodiscard]] bool corridorBlocked(uint32_t x, uint32_t y) const;
 
@@ -290,7 +294,7 @@ public:
    * @brief Sets the static proximity penalty of every cell.
    *
    * The limit of @c 127 leaves the high bit of the working byte for the
-   * corridor.
+   * corridor mask.
    *
    * @param penalty One penalty per cell in row-major order, each from @c 0 to
    * @c 127.
@@ -390,22 +394,27 @@ public:
 
   /**
    * @brief Builds the crossing constraints of routeOrthogonal() from routed
-   * wires.
+   * feedlines.
    *
    * The cells within @p expandRadius of a straight run remember the heading
    * of the run, so a straight step may cross them at a right angle only. The
-   * cells within one cell of a curve, or of the first and last ten cells of a
-   * wire, may not be crossed at all. A turn may not touch any of these cells.
-   * CrossingConstraints describes the rules.
+   * cells within one cell of a turn, or of the first and last ten cells of a
+   * feedline, may not be entered at all. A turn may not touch any of these
+   * cells. CrossingConstraints describes the rules.
    *
-   * @param wires The routed wires.
-   * @param skip One flag per wire. The function leaves out a wire whose flag
-   * is set. A wire beyond the end of @p skip counts.
+   * The function builds the new constraints before it releases the previous
+   * ones, so it holds both for the time of the call.
+   *
+   * @param feedlines The routed feedlines.
+   * @param skip One flag per feedline. The function leaves out a feedline
+   * whose flag is set. A feedline beyond the end of @p skip counts.
    * @param expandRadius The distance in cells, along each axis, up to which a
    * straight run constrains the cells around it.
    * @post The new constraints replace the previous ones.
+   * @throws std::bad_alloc If the memory runs out. The previous constraints
+   * then stay as they were.
    */
-  void buildOrthogonalConstraints(const std::vector<Path>& wires,
+  void buildOrthogonalConstraints(const std::vector<Path>& feedlines,
                                   const std::vector<bool>& skip,
                                   int expandRadius = 10);
 
@@ -470,6 +479,8 @@ public:
    * @param cells The row-major indices of the cells to exempt. The function
    * ignores an index outside the grid. An empty list removes the exemption.
    * @post The new exemption replaces the previous one.
+   * @throws std::bad_alloc If the memory runs out. The previous exemption
+   * then stays as it was.
    */
   void setCrossingExemption(const std::vector<uint32_t>& cells);
 
@@ -478,17 +489,19 @@ public:
    *
    * This is the test that routeOrthogonal() runs, with the heading of the
    * step, on each cell that a straight step of the search or of a straight
-   * stub enters. turnAllowedOrthogonal() is the test of a turn. A check of a
-   * routed path asks the same questions: this test for each cell that a
-   * straight step enters, and turnAllowedOrthogonal() for each cell of a
-   * turn, from the start of its arc to its end. The tags of the path show
-   * the turns, with one exception (see Path). Where the search began with a
-   * turn, the arc starts on the last cell of the source stub, which keeps
-   * the straight tag of the stub. The tags alone do not show this: a search
-   * that begins with a straight step of one cell and then turns gives the
-   * same tags. The arc starts on the last cell of the stub when the point
-   * after it carries a turn tag and the arc ends at that cell plus the
-   * offset of the move of the tag.
+   * stub enters. It runs the test on the source too, with the heading of the
+   * source, as if a straight step entered the source.
+   * turnAllowedOrthogonal() is the test of a turn. A check of a routed path
+   * asks the same questions: this test for the first cell of the path with
+   * its own heading and for each cell that a straight step enters, and
+   * turnAllowedOrthogonal() for each cell of a turn, from the start of its
+   * arc to its end. The tags of the path show the turns, with one exception
+   * (see Path). Where the search began with a turn, the arc starts on the
+   * last cell of the source stub, which keeps the straight tag of the stub.
+   * The tags alone do not show this: a search that begins with a straight
+   * step of one cell and then turns gives the same tags. The arc starts on
+   * the last cell of the stub when the point after it carries a turn tag and
+   * the arc ends at that cell plus the offset of the move of the tag.
    *
    * The single-crossing rule exists only while routeOrthogonal() runs, so
    * outside a search the test reads the exemption and the crossing
@@ -524,10 +537,10 @@ public:
    * @brief Returns the constraint mask of a cell.
    * @param x The column of the cell.
    * @param y The row of the cell.
-   * @return @c 0 for a free cell, @c 0xFF for a curve or pin zone, or else
-   * the set of the headings of the straight runs present there, bit @c h for
-   * heading @c h. The mask is also @c 0 for a cell outside the router grid
-   * and when no constraints are built.
+   * @return @c 0 for a free cell, CrossingConstraints::CURVE_ZONE for a cell
+   * that no route may enter, or else the set of the headings of the straight
+   * runs present there, bit @c h for heading @c h. The mask is also @c 0 for
+   * a cell outside the router grid and when no constraints are built.
    */
   [[nodiscard]] uint8_t constraintMaskAt(uint32_t x, uint32_t y) const;
 
@@ -554,7 +567,7 @@ public:
    * target. When the two points are the same cell on the same heading, the
    * result is the two stubs joined, with their shared cell once.
    *
-   * The way is close to the cheapest, but with the bend lower bound it can
+   * The path is close to the cheapest, but with the bend lower bound it can
    * cost slightly more; setBendLowerBound() gives the reason and the figures.
    *
    * @param objective The source and the target of the wire.
@@ -565,9 +578,10 @@ public:
    * @pre A corridor is attached. With @p usePenalty, a wire proximity is
    * attached too. The source and the target lie in the router grid.
    * @return The path, or an empty path when no path exists, when a search
-   * end lies outside the router grid, when the corridor blocks the cell the
-   * search starts from, or when the found path crossed itself. A rejected
-   * path counts in loopGuardRejections().
+   * end lies outside the router grid or outside the corridor, or when the
+   * found path crossed itself. A search end outside the corridor ends the
+   * call before the search runs. A rejected path counts in
+   * loopGuardRejections().
    * @throws std::logic_error If no corridor is attached, or if @p usePenalty
    * is set and no wire proximity is attached.
    * @throws std::invalid_argument If the heading of the source or of the
@@ -577,8 +591,8 @@ public:
                            bool usePenalty = false, bool onlyStraight = false);
 
   /**
-   * @brief Routes a wire as route() does, but crosses constrained wires at
-   * right angles only.
+   * @brief Routes a wire as route() does, but crosses feedlines at right
+   * angles only.
    *
    * The search obeys the crossing constraints, the exemption and the single
    * crossing feedline. A straight step may enter a constrained cell only on
@@ -586,14 +600,13 @@ public:
    * a constrained cell at all, from the cell it starts on to its end (see
    * turnAllowedOrthogonal()). The straight stubs are fixed, so the function
    * tests them before the search: each cell that a step of a stub enters
-   * must pass the test of a straight step on the heading of the stub. A wire
-   * therefore crosses a feedline on straight steps only, at a right angle in
-   * the rendered geometry. The search steers by the octile distance plus the
-   * bend lower bound, whatever heuristic() and setBendLowerBound() select.
-   * The search does not enter the cell it starts from, so no step of the
-   * search tests that cell as a straight step; the last step of the source
-   * stub does. A turn from that cell tests it as a turn, and the corridor
-   * test reads it too.
+   * must pass the test of a straight step on the heading of the stub. The
+   * last step into the target tests the target. The source passes the same
+   * test on its own heading, as if a straight step entered it, so both ends
+   * of the wire meet the test of a straight step. A wire therefore crosses a
+   * feedline on straight steps only, at a right angle in the rendered
+   * geometry. The search steers by the octile distance plus the bend lower
+   * bound, whatever heuristic() and setBendLowerBound() select.
    *
    * @param objective The source and the target of the wire.
    * @param usePenalty Whether the search adds the static and wire proximity
@@ -603,12 +616,12 @@ public:
    * @pre A corridor is attached. With @p usePenalty, a wire proximity is
    * attached too. The source and the target lie in the router grid.
    * @return The path, or an empty path when no path exists, when a search
-   * end lies outside the router grid, when the corridor blocks the cell the
-   * search starts from, when a cell of a stub fails its crossing test, or
-   * when the found path crossed itself. A rejected path counts in
-   * loopGuardRejections(). When the two search ends are the same cell on the
-   * same heading, the path is the two stubs joined, with their shared cell
-   * once.
+   * end lies outside the router grid or outside the corridor, when the
+   * source or a cell of a stub fails its crossing test, or when the found
+   * path crossed itself. A search end outside the corridor ends the call
+   * before the search runs. A rejected path counts in loopGuardRejections().
+   * When the two search ends are the same cell on the same heading, the path
+   * is the two stubs joined, with their shared cell once.
    * @throws std::logic_error If no corridor is attached, or if @p usePenalty
    * is set and no wire proximity is attached.
    * @throws std::invalid_argument If the heading of the source or of the
@@ -664,7 +677,7 @@ public:
    * two cells.
    *
    * The function grows the segment to either side, one cell of offset at a
-   * time. A step of growth covers every cell whose centre lies between the
+   * time. A step of growth covers every cell whose center lies between the
    * previous edge of the strip and the new one and whose projection onto the
    * line of the segment falls on the segment. A side stops growing when a
    * covered cell is an obstacle or when an end of the new edge leaves the
@@ -673,9 +686,12 @@ public:
    *
    * @param from The first end of the segment.
    * @param to The second end of the segment.
+   * @pre @p from and @p to lie in the router grid. The function moves an end
+   * outside the grid to the nearest cell of the grid, so the result stays
+   * defined.
    * @return The bounding box of the strip, clamped to the grid. The box is
-   * the whole grid when no obstacles are attached, and the single cell
-   * @p from when the two ends coincide.
+   * the whole grid when no obstacles are attached, and the cell of the two
+   * ends when they coincide.
    */
   [[nodiscard]] CellBox freeStripAlong(PathPoint from, PathPoint to) const;
 
@@ -699,8 +715,8 @@ private:
    *
    * The trie holds the cells that the primitives of the heading sweep,
    * merged by common prefix, in preorder with a subtree skip. An expansion
-   * walks the shared cells once and drops every primitive behind a blocked
-   * cell in one step.
+   * walks the shared cells once and drops every primitive behind a cell
+   * outside the corridor in one step.
    */
   struct TrieNode {
     /// The offset of the cell from the cell of the state, as a row-major
@@ -716,7 +732,8 @@ private:
     uint8_t completes = NO_PRIMITIVE;
     /// The depth of the node, @c 0 for a root.
     uint8_t depth = 0;
-    /// The size of the subtree of the node, which a blocked cell skips.
+    /// The size of the subtree of the node, which a cell outside the corridor
+    /// skips.
     uint16_t skip = 0;
   };
 
@@ -784,18 +801,18 @@ private:
   void buildTables();
 
   /**
-   * @brief Packs the corridor and the static proximity into the working
-   * grid. Does nothing without a corridor.
+   * @brief Packs the corridor mask and the static proximity into the
+   * working grid. Does nothing without a corridor.
    */
   void rebuildPacked();
 
   /**
-   * @brief Computes the distance field toward a target cell over the free
-   * cells of the corridor.
+   * @brief Computes the distance field toward a target cell over the cells
+   * of the corridor.
    * @param tx The column of the target cell.
    * @param ty The row of the target cell.
    * @pre A corridor is attached, and the target cell lies in the router
-   * grid.
+   * grid and in the corridor.
    */
   void buildDistanceField(uint32_t tx, uint32_t ty);
 
@@ -857,7 +874,7 @@ private:
   [[nodiscard]] uint32_t parentState(uint32_t index) const;
 
   /**
-   * @brief Lists the cells of the way from the start state to the goal
+   * @brief Lists the cells of the path from the start state to the goal
    * state.
    * @param goalIndex The index of the goal state.
    * @param startIndex The index of the start state.
@@ -867,14 +884,14 @@ private:
   [[nodiscard]] Path reconstruct(uint32_t goalIndex, uint32_t startIndex) const;
 
   /**
-   * @brief Joins the source stub, the searched way and the target stub.
-   * @param searched The way the search found, as reconstruct() lists it. It
-   * is empty when the search start is the search goal.
+   * @brief Joins the source stub, the searched path and the target stub.
+   * @param searched The path the search found, as reconstruct() lists it.
+   * It is empty when the search start is the search goal.
    * @param source The source of the wire.
    * @param target The target of the wire.
    * @return The whole path. The source stub keeps its last point, so a turn
    * at the search start starts on a point with the tag of the stub. Without a
-   * searched way, the path is the two stubs joined, with their shared cell
+   * searched path, the path is the two stubs joined, with their shared cell
    * once.
    */
   [[nodiscard]] Path assemble(const Path& searched, const PathPoint& source,
@@ -942,9 +959,10 @@ private:
    * @param objective The moved source and target the search runs between.
    * @param onlyStraight Whether the search forbids diagonal exit headings.
    * @param blockMap The packed working grid, or empty when the search reads
-   * the corridor instead.
+   * the corridor mask instead.
    * @param penaltyMap The packed working grid or the static proximity.
-   * @param blockMask The mask of the corridor bit in @p blockMap.
+   * @param blockMask The bit of @p blockMap that marks a cell outside the
+   * corridor.
    * @param penaltyMask The mask of the penalty bits in @p penaltyMap.
    * @param wireMap The wire proximity, or empty.
    * @param useField Whether the heuristic reads the distance field.
@@ -1003,16 +1021,17 @@ private:
 
   /// The attached obstacles, or null.
   const grid::BitGrid* obstacleMask = nullptr;
-  /// The attached corridor, or null.
+  /// The attached corridor mask, or null.
   const grid::BitGrid* corridorMask = nullptr;
   /// The static proximity penalty of every cell, from 0 to 127.
   std::vector<uint8_t> staticPenalties;
   /// The attached wire proximity, or null.
   const std::vector<uint8_t>* wireProximity = nullptr;
-  /// The working grid: per cell, the corridor in the high bit and the static
-  /// proximity in the low seven bits.
+  /// The working grid: per cell, the corridor mask in the high bit and the
+  /// static proximity in the low seven bits.
   std::vector<uint8_t> packedGrid;
-  /// Whether the working grid matches the corridor and the static proximity.
+  /// Whether the working grid matches the corridor mask and the static
+  /// proximity.
   bool packedValid = false;
   /// Whether attachCorridor() attached the corridor, so that a change of the
   /// static proximity packs the working grid again.
@@ -1037,9 +1056,10 @@ private:
   std::vector<uint32_t> crossingSideCells;
   /// The feedline that an orthogonal route may cross once, or null.
   const Path* singleCrossing = nullptr;
-  /// The reach of a straight run of the single crossing feedline, in cells.
+  /// The reach of a straight zone of the single crossing feedline, in cells.
   int singleCrossingStraightRadius = 0;
-  /// The reach of a curve of the single crossing feedline, in cells.
+  /// The reach of a curve zone and of the head zone of the single crossing
+  /// feedline, in cells.
   int singleCrossingCurveRadius = 1;
 
   /// Per heading, the swept-cell trie in preorder.
@@ -1047,13 +1067,13 @@ private:
   /// Per heading, the moves of the trie, in the order of the primitives.
   std::array<std::vector<TriePrimitive>, NUM_HEADINGS> triePrimitives;
   /// Per heading, how far a move reaches toward negative x, in cells.
-  std::array<uint32_t, NUM_HEADINGS> marginLeft{};
+  std::array<uint32_t, NUM_HEADINGS> marginNegativeX{};
   /// Per heading, how far a move reaches toward positive x, in cells.
-  std::array<uint32_t, NUM_HEADINGS> marginRight{};
+  std::array<uint32_t, NUM_HEADINGS> marginPositiveX{};
   /// Per heading, how far a move reaches toward negative y, in cells.
-  std::array<uint32_t, NUM_HEADINGS> marginUp{};
+  std::array<uint32_t, NUM_HEADINGS> marginNegativeY{};
   /// Per heading, how far a move reaches toward positive y, in cells.
-  std::array<uint32_t, NUM_HEADINGS> marginDown{};
+  std::array<uint32_t, NUM_HEADINGS> marginPositiveY{};
 
   /// The distance field: per cell, a stamp and a distance.
   std::vector<uint32_t> distanceField;

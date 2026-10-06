@@ -18,7 +18,6 @@
 #include <cstdint>
 #include <functional>
 #include <queue>
-#include <random>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -33,15 +32,12 @@ struct Entry {
   uint32_t payload = 0;
 };
 
-/// The next number of a fixed sequence, so that the test is the same on
-
 TEST(BucketQueue, PopsInAscendingOrder) {
   BucketQueue<Entry> queue;
-  std::mt19937 rng(11);
-  std::uniform_int_distribution<uint32_t> priorities(0, 500'000);
+  SplitMix rng(11);
   std::vector<uint32_t> pushed;
   for (int i = 0; i < 20'000; ++i) {
-    const uint32_t f = priorities(rng);
+    const auto f = static_cast<uint32_t>(rng.between(0, 500'000));
     queue.push({.f = f, .payload = static_cast<uint32_t>(i)});
     pushed.push_back(f);
   }

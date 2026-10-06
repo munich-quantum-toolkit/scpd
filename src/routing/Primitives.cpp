@@ -165,10 +165,10 @@ uint16_t headingOfDegrees(const double degrees) {
 // ---------------------------------------------------------------------------
 
 /// The swept cells, the cost and the samples of one arc that leaves the
-/// canonical cardinal heading. A straight lead along the heading comes
-/// before the arc. The swept cells of the arc start from the lead's end
-/// rounded to a whole cell toward the start, as in the research prototype.
-/// The samples start the arc at the exact end of the lead.
+/// canonical cardinal heading. A straight part along the heading comes
+/// before the arc. The swept cells of the arc start from the end of the
+/// straight part rounded to a whole cell toward the start, as in the research
+/// prototype. The samples start the arc at the exact end of the straight part.
 IntCells arcCellsCardinal(const double radius, const Vector16 vector,
                           double& cost, Samples& samples) {
   IntCells cells;
@@ -368,14 +368,14 @@ IntCells arcCellsDiagonal(const double radius, const Vector16 vector,
   const double offset = ay + height;
   cost = (radius * std::acos(1.0 - (vector[0] / radius))) - offset;
 
-  // The straight lead in the diagonal frame runs whole diagonals ahead, which
+  // The straight part in the diagonal frame runs whole diagonals ahead, which
   // are whole cells on the grid.
-  int32_t lead = 0;
+  int32_t ahead = 0;
   // The floating-point accumulation is part of the table definition.
   // NOLINTNEXTLINE(clang-analyzer-security.FloatLoopCounter,bugprone-float-loop-counter)
   for (double yp = 0.0; yp >= std::floor(offset); yp -= std::numbers::sqrt2) {
-    result.push_back({lead, -lead});
-    ++lead;
+    result.push_back({ahead, -ahead});
+    ++ahead;
   }
   for (int32_t xp = 0; xp <= vector[0]; ++xp) {
     const double ax = xp * (std::numbers::sqrt2 / 2.0);
@@ -399,7 +399,7 @@ IntCells arcCellsDiagonal(const double radius, const Vector16 vector,
           {static_cast<int32_t>(cell[0]), static_cast<int32_t>(cell[1])});
     }
   }
-  // The straight lead, then the arc.
+  // The straight part, then the arc.
   // The floating-point accumulation is part of the table definition.
   // NOLINTNEXTLINE(clang-analyzer-security.FloatLoopCounter,bugprone-float-loop-counter)
   for (double ys = 0.0; ys <= -offset; ys += MovePrimitives::SAMPLE_SPACING) {
@@ -537,8 +537,13 @@ void generateDiagonal(const uint32_t radius,
 /// The quarter turns that leave a diagonal heading as arcs of a full right
 /// angle. The canonical diagonal tables hold no such turn: at some radii they
 /// hold no move to the quarter-turn heading, and at others, such as 10 and 13
-/// cells, an arc of 72 to 77 degrees that ends on it. The identifiers lie
-/// well above every other identifier.
+/// cells, an arc of 72 to 77 degrees that ends on it. The identifiers are 900
+/// and 901. Up to a radius of 80 cells, they lie above every other identifier.
+/// At the radii of 81 and of 84 to 90 cells, other moves of a diagonal heading
+/// have higher identifiers, but no other move has 900 or 901.
+///
+/// @throws std::logic_error If another move of a diagonal heading already has
+/// the identifier of an exact quarter turn.
 void generateDiagonalQuarterTurns(const uint32_t radiusIn,
                                   std::array<HeadingTables, 8>& tables) {
   const auto radius = static_cast<double>(radiusIn);
@@ -573,22 +578,23 @@ void generateDiagonalQuarterTurns(const uint32_t radiusIn,
       const Heading exit = turned(entry, 2 * turnSign);
       const uint32_t id = (turnSign > 0) ? clockwiseId : counterClockwiseId;
 
-      IntCells cells;
+      // The cells start with the start of the arc, as those of every other
+      // turn do. Up to a radius of 80 cells, the first sample rounds onto
+      // that cell; at a larger radius it rounds onto a neighbor.
+      IntCells cells = {{0, 0}};
       int32_t lastX = 0;
       int32_t lastY = 0;
-      bool first = true;
       for (int s = 1; s <= arcSamples; ++s) {
         const double theta = (PI / 2.0) * (static_cast<double>(s) / arcSamples);
         const auto [px, py] = arcPoint(u0, turnSign, radius, theta);
         const auto gx = static_cast<int32_t>(std::lround(px));
         const auto gy = static_cast<int32_t>(std::lround(py));
-        if (!first && gx == lastX && gy == lastY) {
+        if (gx == lastX && gy == lastY) {
           continue;
         }
         cells.push_back({gx, gy});
         lastX = gx;
         lastY = gy;
-        first = false;
       }
 
       Samples samples;
@@ -603,6 +609,10 @@ void generateDiagonalQuarterTurns(const uint32_t radiusIn,
       }
 
       HeadingTables& t = tables[entry];
+      if (t.vector.contains(id)) {
+        throw std::logic_error(
+            "a diagonal move has the identifier of an exact quarter turn");
+      }
       t.exit[id] = exit;
       t.vector[id] = {static_cast<int16_t>(lastX), static_cast<int16_t>(lastY)};
       t.swept[id] = std::move(cells);

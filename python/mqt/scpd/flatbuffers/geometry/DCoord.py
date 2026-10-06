@@ -7,7 +7,9 @@ from flatbuffers.compat import import_numpy
 from typing import Any
 np = import_numpy()
 
-# A cell of the detail grid.
+# A cell of a grid: its column and its row. The capacity grid, the detail
+# grid and the router grid all give their cells as DCoord, so the type does
+# not say which grid a cell belongs to.
 class DCoord(object):
     __slots__ = ['_tab']
 

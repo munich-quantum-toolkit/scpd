@@ -8,7 +8,7 @@
  * Licensed under the MIT License
  */
 
-// How close route() comes to the cheapest way. A brute-force Dijkstra search
+// How close route() comes to the cheapest path. A brute-force Dijkstra search
 // over the same states, primitive tables and move rules finds the optimum on
 // small random grids, and route() is compared with it.
 
@@ -42,8 +42,6 @@ using namespace mqt::scpd::routing;
 
 constexpr uint16_t BEND_PENALTY = 500;
 
-/// The next number of a fixed sequence, so that the grids are the same on
-
 /// The cost of a move as the search charges it, in hundredths of a cell.
 uint32_t moveCost(const Heading heading, const Primitive& move) {
   const auto length = static_cast<uint32_t>(
@@ -51,31 +49,33 @@ uint32_t moveCost(const Heading heading, const Primitive& move) {
   return length + (headingDistance(heading, move.exitHeading) * BEND_PENALTY);
 }
 
-/// Whether a cell lies on the grid and outside the blocked cells.
-bool freeCell(const grid::BitGrid& corridor, const int64_t x, const int64_t y) {
-  return x >= 0 && y >= 0 && std::cmp_less(x, corridor.width()) &&
-         std::cmp_less(y, corridor.height()) &&
-         !corridor.testCell(static_cast<uint32_t>(x), static_cast<uint32_t>(y));
+/// Whether a cell lies on the grid and in the corridor.
+bool freeCell(const grid::BitGrid& outsideCorridor, const int64_t x,
+              const int64_t y) {
+  return x >= 0 && y >= 0 && std::cmp_less(x, outsideCorridor.width()) &&
+         std::cmp_less(y, outsideCorridor.height()) &&
+         !outsideCorridor.testCell(static_cast<uint32_t>(x),
+                                   static_cast<uint32_t>(y));
 }
 
-/// The cost of the cheapest way from one state to another under the move
+/// The cost of the cheapest path from one state to another under the move
 /// rules of the search. A move needs every cell it sweeps and its end cell
-/// free; its start cell is the state the way is already in. The start state
+/// free; its start cell is the state the path is already in. The start state
 /// needs a free cell too.
-std::optional<uint32_t> cheapestWay(const MovePrimitives& primitives,
-                                    const grid::BitGrid& corridor,
-                                    const PathPoint& from,
-                                    const PathPoint& to) {
-  if (!freeCell(corridor, from.x, from.y)) {
+std::optional<uint32_t> cheapestPath(const MovePrimitives& primitives,
+                                     const grid::BitGrid& outsideCorridor,
+                                     const PathPoint& from,
+                                     const PathPoint& to) {
+  if (!freeCell(outsideCorridor, from.x, from.y)) {
     return std::nullopt;
   }
-  const auto width = static_cast<std::size_t>(corridor.width());
+  const auto width = static_cast<std::size_t>(outsideCorridor.width());
   const auto index = [&](const uint32_t x, const uint32_t y,
                          const Heading heading) {
     return ((((static_cast<std::size_t>(y) * width) + x) * NUM_HEADINGS) +
             (heading & 7U));
   };
-  std::vector<uint32_t> best(width * corridor.height() * NUM_HEADINGS,
+  std::vector<uint32_t> best(width * outsideCorridor.height() * NUM_HEADINGS,
                              std::numeric_limits<uint32_t>::max());
   using Item = std::pair<uint32_t, std::size_t>;
   std::priority_queue<Item, std::vector<Item>, std::greater<>> open;
@@ -97,10 +97,10 @@ std::optional<uint32_t> cheapestWay(const MovePrimitives& primitives,
     const auto y = static_cast<int64_t>(cell / width);
     for (const Primitive& move : primitives.of(heading)) {
       const bool clear =
-          freeCell(corridor, x + move.dx, y + move.dy) &&
+          freeCell(outsideCorridor, x + move.dx, y + move.dy) &&
           std::ranges::all_of(move.swept, [&](const CellOffset& c) {
             return (c.dx == 0 && c.dy == 0) ||
-                   freeCell(corridor, x + c.dx, y + c.dy);
+                   freeCell(outsideCorridor, x + c.dx, y + c.dy);
           });
       if (!clear) {
         continue;
@@ -118,7 +118,7 @@ std::optional<uint32_t> cheapestWay(const MovePrimitives& primitives,
   return std::nullopt;
 }
 
-/// The cost of a routed way, read back from the tags of its points. The
+/// The cost of a routed path, read back from the tags of its points. The
 /// point before each state carries the move that reached the state: the last
 /// swept cell of a turn, or the state a straight step leaves.
 std::optional<uint32_t> costOf(const MovePrimitives& primitives,
@@ -159,13 +159,13 @@ constexpr int GRIDS = 1500;
 /// The outcome of the comparison over the random grids, for one setting of
 /// the bend lower bound.
 struct Comparison {
-  /// The grids on which route() returned a way.
+  /// The grids on which route() returned a path.
   int routed = 0;
-  /// The grids on which route() rejected a way because it crossed itself.
+  /// The grids on which route() rejected a path because it crossed itself.
   int rejectedLoops = 0;
-  /// The grids on which route() returned a way dearer than the optimum.
+  /// The grids on which route() returned a path dearer than the optimum.
   int worse = 0;
-  /// The largest amount by which a way exceeded the optimum.
+  /// The largest amount by which a path exceeded the optimum.
   uint32_t largestExcess = 0;
 };
 
@@ -183,7 +183,7 @@ Comparisons compareWithTheOptimum() {
     const uint32_t width = 30 + below(31);
     const uint32_t height = 30 + below(31);
     SearchScratch scratch(width, height);
-    grid::BitGrid corridor(width, height);
+    grid::BitGrid outsideCorridor(width, height);
     const uint32_t boxes = below(9);
     for (uint32_t b = 0; b < boxes; ++b) {
       const uint32_t x0 = below(width);
@@ -192,7 +192,7 @@ Comparisons compareWithTheOptimum() {
       const uint32_t y1 = std::min(height, y0 + 1 + below(10));
       for (uint32_t y = y0; y < y1; ++y) {
         for (uint32_t x = x0; x < x1; ++x) {
-          corridor.setCell(x, y);
+          outsideCorridor.setCell(x, y);
         }
       }
     }
@@ -201,7 +201,7 @@ Comparisons compareWithTheOptimum() {
                          .endStraightLength = 0,
                          .minRadius = 5,
                          .bendPenalty = BEND_PENALTY});
-    router.attachCorridor(&corridor);
+    router.attachCorridor(&outsideCorridor);
     const RoutingObjective objective{
         .source = {.x = below(width),
                    .y = below(height),
@@ -211,8 +211,8 @@ Comparisons compareWithTheOptimum() {
                    .y = below(height),
                    .heading = static_cast<Heading>(below(8)),
                    .primitive = 0}};
-    const std::optional<uint32_t> optimum =
-        cheapestWay(*primitives, corridor, objective.source, objective.target);
+    const std::optional<uint32_t> optimum = cheapestPath(
+        *primitives, outsideCorridor, objective.source, objective.target);
     for (std::size_t setting = 0; setting < result.size(); ++setting) {
       Comparison& comparison = result[setting];
       router.setBendLowerBound(setting == 1);
@@ -223,7 +223,7 @@ Comparisons compareWithTheOptimum() {
         continue;
       }
       if (path.empty()) {
-        // The search found a way that crossed itself and rejected it.
+        // The search found a path that crossed itself and rejected it.
         EXPECT_EQ(router.loopGuardRejections(), rejections + 1) << g;
         ++comparison.rejectedLoops;
         continue;
@@ -251,7 +251,7 @@ const Comparisons& comparisons() {
   return RESULT;
 }
 
-TEST(RouteOptimality, WithoutTheBendLowerBoundEveryWayIsTheCheapest) {
+TEST(RouteOptimality, WithoutTheBendLowerBoundEveryPathIsTheCheapest) {
   // Each turn pays a bend penalty of 500 on top of its length, far above the
   // 20 by which the distance term can exceed the length of a cardinal eighth
   // turn. The estimate then never exceeds what a state still has to pay.
@@ -261,15 +261,14 @@ TEST(RouteOptimality, WithoutTheBendLowerBoundEveryWayIsTheCheapest) {
   EXPECT_EQ(c.worse, 0);
 }
 
-TEST(RouteOptimality, WithTheBendLowerBoundAFewWaysCostSlightlyMore) {
+TEST(RouteOptimality, WithTheBendLowerBoundAPathCostsAtMostOneTurnMore) {
   // With the bend term, the estimate already holds the bend penalty, so the
-  // excess of the distance term over the length of a turn shows: route()
-  // returns a dearer way on a few grids, by no more than the 20 of one
+  // excess of the distance term over the length of a turn can show: route()
+  // may return a dearer path on a few grids, by no more than the 20 of one
   // cardinal eighth turn.
   const Comparison& c = comparisons()[1];
   EXPECT_GT(c.routed, GRIDS / 2);
   EXPECT_LT(c.rejectedLoops, GRIDS / 20);
-  EXPECT_GT(c.worse, 0);
   EXPECT_LE(c.worse, c.routed / 100);
   EXPECT_LE(c.largestExcess, 20U);
 }

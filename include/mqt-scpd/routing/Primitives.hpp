@@ -62,19 +62,30 @@ struct Primitive {
   /// @c samples gives the length of the curve.
   double cost = 0.0;
   /// The cells the search tests for obstacles when it takes the move,
-  /// relative to its start, in the order the move sweeps them. The list is
-  /// the obstacle footprint of the research prototype, not a chain of
-  /// neighbouring cells. At most radii some eighth turns list a cell twice or
-  /// list a cell past their end; at a radius of five cells, every cardinal
-  /// eighth turn lists the cell past its end. At some radii some turns that
-  /// leave a diagonal heading do not list their end cell: at a radius of five
-  /// cells the eighth turns, at radii such as 10 and 16 cells the arcs of 72
-  /// to 77 degrees that end on the quarter-turn heading.
+  /// relative to its start, in the order the move sweeps them. The first cell
+  /// of a turn is its start, (0, 0). The one cell of the straight step is its
+  /// end. The list is the obstacle footprint of the research prototype, not a
+  /// chain of neighboring cells. At most radii some eighth turns list a cell
+  /// twice or list a cell past their end; at a radius of five cells, every
+  /// cardinal eighth turn lists the cell past its end. At some radii some
+  /// turns that leave a diagonal heading do not list their end cell: at a
+  /// radius of five cells the eighth turns, at radii such as 10 and 16 cells
+  /// the arcs of 72 to 77 degrees that end on the quarter-turn heading. Their
+  /// last cell then touches the end cell. At the radii of 25, 33 to 36, 41 to
+  /// 49 and 51 to 90 cells, every turn that leaves a cardinal heading skips
+  /// one or more cells where its straight part meets its arc.
   std::vector<CellOffset> swept;
-  /// Dense points along the exact curve of the move, relative to its start.
-  /// The first point is the origin, and the points run forward along the
-  /// move. The last point is the end of the move, (@c dx, @c dy), except for
-  /// the exact quarter turns of a diagonal heading: their arc ends at no whole
+  /// Points along the exact curve of the move, relative to its start. The
+  /// first point is the origin, and the points run forward along the move.
+  /// The points step by about SAMPLE_SPACING along one axis: a straight
+  /// piece along its heading or along the axes of the grid, an arc along the
+  /// axis across the heading it starts on. So the points of an arc lie far
+  /// apart where the arc runs almost along that heading: at a radius of five
+  /// cells, the first chord of a quarter turn is about one cell long. The
+  /// exact quarter turns of a diagonal heading (see MovePrimitives) instead
+  /// have points at equal angles, at most SAMPLE_SPACING apart along the arc.
+  /// The last point is the end of the move, (@c dx, @c dy), except for the
+  /// exact quarter turns of a diagonal heading: their arc ends at no whole
   /// cell, and (@c dx, @c dy) is the cell nearest to it. A rendered path is
   /// built from these points.
   std::vector<flatbuffers::geometry::Point> samples;
@@ -117,7 +128,10 @@ public:
    */
   static constexpr uint32_t MAX_PRIMITIVE_ID = 1024;
   /**
-   * @brief The spacing of the curve samples, in cells.
+   * @brief The step of the curve samples, in cells.
+   *
+   * The samples of a move step by about this amount along one axis. Along an
+   * arc, two samples can lie much further apart (see Primitive::samples).
    */
   static constexpr double SAMPLE_SPACING = 0.1;
   /**

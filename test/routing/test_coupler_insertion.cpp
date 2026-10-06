@@ -8,6 +8,7 @@
  * Licensed under the MIT License
  */
 
+#include "../SplitMix.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/CouplerInsertion.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
@@ -25,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <memory>
 #include <numbers>
@@ -35,6 +37,7 @@
 
 namespace {
 
+using mqt::scpd::test::SplitMix;
 using namespace mqt::scpd;
 using namespace mqt::scpd::routing;
 
@@ -135,6 +138,64 @@ bool touchesItself(const Path& path) {
   return false;
 }
 
+/// The number of points at the end of a spliced path that equal the points at
+/// the end of the path before the splice.
+std::size_t sharedEnd(const Path& original, const Path& spliced) {
+  std::size_t n = 0;
+  while (n < original.size() && n < spliced.size() &&
+         original[original.size() - 1 - n] == spliced[spliced.size() - 1 - n]) {
+    ++n;
+  }
+  return n;
+}
+
+/// The index of a straight point of a spliced path from which on the path
+/// equals the path before the splice. The last points of a connection can
+/// equal points of the path before the splice, so the shared end can start
+/// on a turn. The first straight point of the shared end is then a point of
+/// the straight run the connection joins.
+std::size_t junctionOf(const MovePrimitives& table, const Path& original,
+                       const Path& spliced) {
+  std::size_t at = spliced.size() - sharedEnd(original, spliced);
+  while (at < spliced.size() &&
+         !table.isStraight(spliced[at].heading, spliced[at].primitive)) {
+    ++at;
+  }
+  return at;
+}
+
+/// The largest step along either axis between two consecutive points of a
+/// path, up to the point at index @p last.
+int64_t largestStep(const Path& path, const std::size_t last) {
+  int64_t largest = 0;
+  for (std::size_t i = 1; i <= last && i < path.size(); ++i) {
+    const int64_t dx =
+        static_cast<int64_t>(path[i].x) - static_cast<int64_t>(path[i - 1].x);
+    const int64_t dy =
+        static_cast<int64_t>(path[i].y) - static_cast<int64_t>(path[i - 1].y);
+    largest = std::max({largest, std::abs(dx), std::abs(dy)});
+  }
+  return largest;
+}
+
+/// The rendered length of a spliced path minus the rendered lengths of its two
+/// parts: up to the junction, and the path before the splice from the
+/// junction on. It is zero when the dogleg leaves the rendering of the
+/// remaining path as it was, and infinite without a junction.
+double lengthOffParts(const MovePrimitives& table, const Path& original,
+                      const Path& spliced) {
+  const std::size_t junction = junctionOf(table, original, spliced);
+  if (junction >= spliced.size()) {
+    return std::numeric_limits<double>::infinity();
+  }
+  const auto shared = static_cast<std::ptrdiff_t>(spliced.size() - junction);
+  const Path front(spliced.begin(),
+                   spliced.begin() + static_cast<std::ptrdiff_t>(junction) + 1);
+  const Path rest(original.end() - shared, original.end());
+  return renderedLength(table, spliced) - renderedLength(table, front) -
+         renderedLength(table, rest);
+}
+
 TEST(CouplerInsertion, ADoglegTurnsOnceAndThenRunsStraight) {
   const DoglegGeometry dogleg = buildDogleg(primitives(), 6, -1, 12);
   // A quarter turn against the clock from heading 6 ends on heading 4.
@@ -166,15 +227,21 @@ TEST(CouplerInsertion, ADoglegTurnsOnceAndThenRunsStraight) {
 
 TEST(CouplerInsertion, ADoglegCostsTheLengthOfItsRenderedPath) {
   // A diagonal step is the square root of two cells long, and the turn counts
-  // the curve samplePath() draws for it.
-  for (Heading entry = 0; entry < NUM_HEADINGS; ++entry) {
-    for (const int sign : {-1, 1}) {
-      for (const uint32_t run : {0U, 14U}) {
-        const DoglegGeometry dogleg =
-            buildDogleg(primitives(), entry, sign, run);
-        EXPECT_NEAR(dogleg.cost,
-                    renderedLength(primitives(), placed(dogleg.path)), 1e-9)
-            << static_cast<int>(entry) << " " << sign << " " << run;
+  // the curve samplePath() draws for it. The rendering starts the turn on the
+  // first point of the path, so that point must be the start of the turn at
+  // every radius.
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading entry = 0; entry < NUM_HEADINGS; ++entry) {
+      for (const int sign : {-1, 1}) {
+        for (const uint32_t run : {0U, 14U}) {
+          const DoglegGeometry dogleg = buildDogleg(table, entry, sign, run);
+          EXPECT_NEAR(dogleg.cost, renderedLength(table, placed(dogleg.path)),
+                      1e-9)
+              << "radius " << radius << ", entry " << static_cast<int>(entry)
+              << ", turn " << sign << ", run " << run;
+        }
       }
     }
   }
@@ -232,11 +299,15 @@ TEST(CouplerInsertion, TheTurnOfADoglegEndsAlongItsRun) {
   }
 }
 
-TEST(CouplerInsertion, ADoglegStepsFromCellToNeighbouringCell) {
+TEST(CouplerInsertion, ADoglegStepsFromCellToNeighboringCell) {
   // The splice tests the cells of a dogleg against the rest of the path. A
   // dogleg that skipped a cell, such as the end of its turn, would let the
-  // path cross it there unseen.
-  for (uint32_t radius = 1; radius <= 23; ++radius) {
+  // path cross it there unseen. At every radius the dogleg lists the end of
+  // its turn. At the radii that buildDogleg() names, it skips no cell.
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
+    const bool chain = radius <= 24 || (radius >= 26 && radius <= 32) ||
+                       (radius >= 37 && radius <= 40) || radius == 50;
     const MovePrimitives table(radius);
     for (Heading entry = 0; entry < NUM_HEADINGS; ++entry) {
       for (const int sign : {-1, 1}) {
@@ -252,6 +323,9 @@ TEST(CouplerInsertion, ADoglegStepsFromCellToNeighbouringCell) {
         EXPECT_NE(end, dogleg.path.end())
             << "radius " << radius << ", entry " << static_cast<int>(entry)
             << ", turn " << sign;
+        if (!chain) {
+          continue;
+        }
         for (std::size_t i = 1; i < dogleg.path.size(); ++i) {
           const auto dx =
               static_cast<int32_t>(dogleg.path[i].x - dogleg.path[i - 1].x);
@@ -297,19 +371,52 @@ TEST(CouplerInsertion, TheSplicePrefersAnUndershoot) {
   EXPECT_LE(renderedLength(primitives(), path), 150.5);
 }
 
+TEST(CouplerInsertion, OfEqualChargesTheCandidateEarliestAlongThePathWins) {
+  // Three candidates on this diagonal resonator give the same length. Two of
+  // them join the resonator a cell after the first, with connections one
+  // diagonal step longer. The first and one of the two later ones put the
+  // anchor on the same cell, the third two cells away. All three overshoot
+  // the target by the same length, so their charges are equal, and the first
+  // wins whatever the rounding of their lengths.
+  const MovePrimitives table(10);
+  const Path resonator =
+      routing::straightRun(table, {.x = 120, .y = 120, .heading = 5}, 120);
+  const CouplerDoglegOptions options{.straightLength = 9, .mirrored = true};
+  constexpr double target = 192.2;
+  Path first = resonator;
+  const std::optional<CouplerSplice> winner =
+      spliceCouplerDogleg(table, target, first, WIDTH, HEIGHT, 7, options);
+  ASSERT_TRUE(winner.has_value());
+  EXPECT_GT(renderedLength(table, first), target);
+
+  // With the anchor of the winner forbidden, the third candidate wins. It
+  // gives the same length and keeps one point less of the resonator.
+  Path third = resonator;
+  const std::optional<CouplerSplice> other = spliceCouplerDogleg(
+      table, target, third, WIDTH, HEIGHT, 7, options,
+      [&](const uint32_t x, const uint32_t y) {
+        return x != winner->anchor.x || y != winner->anchor.y;
+      });
+  ASSERT_TRUE(other.has_value());
+  EXPECT_TRUE(other->inAllowedArea);
+  EXPECT_NEAR(renderedLength(table, third), renderedLength(table, first), 1e-9);
+  EXPECT_EQ(sharedEnd(resonator, first), sharedEnd(resonator, third) + 1);
+}
+
 TEST(CouplerInsertion, TheRenderedSpliceMeetsItsTarget) {
   // The splice measures the remaining path and the dogleg as samplePath()
   // renders them. The candidates of a straight run lie one step apart, so the
   // best one misses the target by at most half a step. An overshoot is that
   // best one, and an undershoot wins only within twice its miss. A diagonal
-  // step is the square root of two cells long. Every orientation is tested
+  // step is the square root of two cells long. Every coupler heading is tested
   // whose dogleg does not end against the resonator, where only a dogleg at
   // an end of the resonator fits.
   for (const Heading heading : {Heading{6}, Heading{7}}) {
     const double step = isDiagonal(heading) ? std::numbers::sqrt2 : 1.0;
-    for (Heading orientation = 0; orientation < NUM_HEADINGS; ++orientation) {
+    for (Heading couplerHeading = 0; couplerHeading < NUM_HEADINGS;
+         ++couplerHeading) {
       for (const bool mirrored : {false, true}) {
-        if ((mirrored ? reverse(orientation) : orientation) ==
+        if ((mirrored ? reverse(couplerHeading) : couplerHeading) ==
             reverse(heading)) {
           continue;
         }
@@ -319,17 +426,17 @@ TEST(CouplerInsertion, TheRenderedSpliceMeetsItsTarget) {
             Path path = straightRun(400, 400, heading, 300);
             ASSERT_TRUE(spliceCouplerDogleg(
                             primitives(), target, path, WIDTH, HEIGHT,
-                            orientation,
+                            couplerHeading,
                             {.leadStraight = lead, .mirrored = mirrored})
                             .has_value());
             const double miss = renderedLength(primitives(), path) - target;
             EXPECT_LE(miss, (step / 2.0) + 1e-9)
                 << static_cast<int>(heading) << " "
-                << static_cast<int>(orientation) << " " << mirrored << " "
+                << static_cast<int>(couplerHeading) << " " << mirrored << " "
                 << lead << " " << target;
             EXPECT_GE(miss, -step - 1e-9)
                 << static_cast<int>(heading) << " "
-                << static_cast<int>(orientation) << " " << mirrored << " "
+                << static_cast<int>(couplerHeading) << " " << mirrored << " "
                 << lead << " " << target;
           }
         }
@@ -388,6 +495,73 @@ TEST(CouplerInsertion, TheSpliceCutsAtTheCandidatesOwnPoint) {
     previous = i;
   }
   EXPECT_NEAR(polylineLength(points), 100.0, std::numbers::sqrt2);
+}
+
+TEST(CouplerInsertion, ASpliceOnTheStubOfAFirstTurnKeepsTheStartOfItsArc) {
+  // Where the search of a routed path begins with a turn, the last cell of
+  // the source stub is the start of the arc and keeps the straight tag of the
+  // stub (see Path). Each path here is such a path: twelve diagonal steps of
+  // stub, then an exact quarter turn, which ends the path. The stub is the
+  // only straight run, and a target of zero puts the splice on its last cell.
+  // The point there must stay the point before the arc, so that the turn
+  // renders from it: the spliced path renders as long as its two parts.
+  for (Heading stub = 1; stub < NUM_HEADINGS; stub += 2) {
+    for (const uint16_t id : {900, 901}) {
+      const Primitive* turn = primitives().find(stub, id);
+      ASSERT_NE(turn, nullptr);
+      Path path = straightRun(300, 300, stub, 12);
+      const PathPoint start = path.back();
+      const PathPoint end{
+          .x = static_cast<uint32_t>(static_cast<int32_t>(start.x) + turn->dx),
+          .y = static_cast<uint32_t>(static_cast<int32_t>(start.y) + turn->dy),
+          .heading = turn->exitHeading,
+          .primitive = primitives().straight(turn->exitHeading)};
+      for (std::size_t k = 1; k < turn->swept.size(); ++k) {
+        const PathPoint cell{
+            .x = static_cast<uint32_t>(static_cast<int32_t>(start.x) +
+                                       turn->swept[k].dx),
+            .y = static_cast<uint32_t>(static_cast<int32_t>(start.y) +
+                                       turn->swept[k].dy),
+            .heading = stub,
+            .primitive = id};
+        if (!cell.samePlace(end)) {
+          path.push_back(cell);
+        }
+      }
+      path.push_back(end);
+      // The path from the last stub cell on.
+      const Path rest(path.begin() + 12, path.end());
+
+      for (Heading couplerHeading = 0; couplerHeading < NUM_HEADINGS;
+           ++couplerHeading) {
+        for (const bool mirrored : {false, true}) {
+          Path spliced = path;
+          ASSERT_TRUE(
+              spliceCouplerDogleg(primitives(), 0.0, spliced, WIDTH, HEIGHT,
+                                  couplerHeading,
+                                  {.straightLength = 3, .mirrored = mirrored})
+                  .has_value());
+          ASSERT_GT(spliced.size(), rest.size());
+          const std::size_t junction = spliced.size() - rest.size();
+          EXPECT_TRUE(std::equal(rest.begin(), rest.end(),
+                                 spliced.begin() +
+                                     static_cast<std::ptrdiff_t>(junction)));
+          EXPECT_FALSE(spliced[junction - 1].samePlace(spliced[junction]))
+              << static_cast<int>(stub) << " " << id << " "
+              << static_cast<int>(couplerHeading) << " " << mirrored;
+          const Path front(spliced.begin(),
+                           spliced.begin() +
+                               static_cast<std::ptrdiff_t>(junction) + 1);
+          EXPECT_NEAR(renderedLength(primitives(), spliced),
+                      renderedLength(primitives(), front) +
+                          renderedLength(primitives(), rest),
+                      1e-9)
+              << static_cast<int>(stub) << " " << id << " "
+              << static_cast<int>(couplerHeading) << " " << mirrored;
+        }
+      }
+    }
+  }
 }
 
 TEST(CouplerInsertion, AnAllowedAreaMovesTheCouplerAlongItsResonator) {
@@ -468,7 +642,8 @@ TEST(CouplerInsertion, TheMirroredDoglegTurnsTheOtherWay) {
   EXPECT_NE(a->anchor.y, b->anchor.y);
 }
 
-TEST(CouplerInsertion, TheLeadRunsStraightFromTheAnchorAcrossTheOrientation) {
+TEST(CouplerInsertion,
+     TheLeadRunsStraightFromTheAnchorAcrossTheCouplerHeading) {
   constexpr uint32_t lead = 8;
   Path path = straightRun(400, 300, 6, 300);
   const std::optional<CouplerSplice> splice = spliceCouplerDogleg(
@@ -540,11 +715,11 @@ TEST(CouplerInsertion, AConnectionThroughAnEighthTurnRendersWithoutAKink) {
   // or on a cell it does not sweep. The next primitive and the resonator
   // start at the end of the turn, so the rendered path neither jumps nor
   // turns sharply where they meet.
-  for (const auto& [heading, orientation] :
+  for (const auto& [heading, couplerHeading] :
        {std::pair<Heading, Heading>{7, 0}, std::pair<Heading, Heading>{6, 7}}) {
     Path path = straightRun(600, 600, heading, 300);
     ASSERT_TRUE(spliceCouplerDogleg(primitives(), 150.0, path, WIDTH, HEIGHT,
-                                    orientation)
+                                    couplerHeading)
                     .has_value());
     bool eighthTurn = false;
     for (const PathPoint& point : path) {
@@ -588,6 +763,45 @@ TEST(CouplerInsertion, AConnectionThroughAnEighthTurnRendersWithoutAKink) {
   }
 }
 
+TEST(CouplerInsertion, ASplicedPathStepsFromCellToNeighboringCell) {
+  // The splice tests the cells of the dogleg and its connection against the
+  // rest of the path, so the spliced path must not skip a cell. Some turns of
+  // a connection do not sweep their end: the eighth turns off a diagonal
+  // heading at a radius of five cells, and the arcs of 72 to 77 degrees at 10
+  // and 16 cells. A straight step after such a turn starts from its end. The
+  // targets put the splice all along the diagonal resonator.
+  for (const uint32_t radius : {5U, 10U, 16U}) {
+    const MovePrimitives table(radius);
+    const Path resonator =
+        routing::straightRun(table, {.x = 600, .y = 600, .heading = 7}, 200);
+    const double length = renderedLength(table, resonator);
+    for (Heading couplerHeading = 0; couplerHeading < NUM_HEADINGS;
+         ++couplerHeading) {
+      for (const bool mirrored : {false, true}) {
+        for (CouplerDoglegOptions options :
+             {CouplerDoglegOptions{.straightLength = 3},
+              CouplerDoglegOptions{.leadStraight = 8,
+                                   .straightLength = 3,
+                                   .secondStraightLength = 2}}) {
+          options.mirrored = mirrored;
+          for (int step = 0; step < 12; ++step) {
+            const double target =
+                length * (0.1 + (1.1 * static_cast<double>(step) / 12.0));
+            Path path = resonator;
+            ASSERT_TRUE(spliceCouplerDogleg(table, target, path, WIDTH, HEIGHT,
+                                            couplerHeading, options)
+                            .has_value());
+            EXPECT_EQ(largestStep(path, path.size()), 1)
+                << "radius " << radius << ", coupler heading "
+                << static_cast<int>(couplerHeading) << ", mirrored " << mirrored
+                << ", lead " << options.leadStraight << ", target " << target;
+          }
+        }
+      }
+    }
+  }
+}
+
 TEST(CouplerInsertion, ADoglegNeverCrossesADiagonalResonator) {
   // Two diagonal steps can cross inside a 2 by 2 block while all four cells
   // stay distinct. The lead of this mirrored dogleg runs at a right angle to
@@ -607,7 +821,8 @@ TEST(CouplerInsertion, ADoglegNeverCrossesADiagonalResonator) {
 
   // Every dogleg shape on every diagonal resonator, far from the edges.
   for (Heading heading = 1; heading < NUM_HEADINGS; heading += 2) {
-    for (Heading orientation = 0; orientation < NUM_HEADINGS; ++orientation) {
+    for (Heading couplerHeading = 0; couplerHeading < NUM_HEADINGS;
+         ++couplerHeading) {
       for (const bool mirrored : {false, true}) {
         for (const uint32_t lead : {0U, 8U}) {
           for (CouplerDoglegOptions options :
@@ -618,15 +833,16 @@ TEST(CouplerInsertion, ADoglegNeverCrossesADiagonalResonator) {
             options.leadStraight = lead;
             options.mirrored = mirrored;
             Path path = straightRun(600, 600, heading, 300);
-            const std::optional<CouplerSplice> splice = spliceCouplerDogleg(
-                primitives(), 126.0, path, WIDTH, HEIGHT, orientation, options);
+            const std::optional<CouplerSplice> splice =
+                spliceCouplerDogleg(primitives(), 126.0, path, WIDTH, HEIGHT,
+                                    couplerHeading, options);
             ASSERT_TRUE(splice.has_value());
             EXPECT_FALSE(pathSelfIntersects(path, WIDTH, HEIGHT, scratch))
-                << "heading " << static_cast<int>(heading) << ", orientation "
-                << static_cast<int>(orientation) << ", mirrored " << mirrored
-                << ", lead " << lead << ", second run "
-                << options.secondStraightLength << ", reverse "
-                << options.secondTurnReverse;
+                << "heading " << static_cast<int>(heading)
+                << ", coupler heading " << static_cast<int>(couplerHeading)
+                << ", mirrored " << mirrored << ", lead " << lead
+                << ", second run " << options.secondStraightLength
+                << ", reverse " << options.secondTurnReverse;
           }
         }
       }
@@ -635,20 +851,20 @@ TEST(CouplerInsertion, ADoglegNeverCrossesADiagonalResonator) {
 }
 
 TEST(CouplerInsertion, ADoglegStaysInsideTheGrid) {
-  // Each resonator ends on an edge of the grid. With this orientation the
+  // Each resonator ends on an edge of the grid. With this coupler heading the
   // dogleg runs back across the resonator, so only a dogleg at the end of the
   // resonator is collision-free, and its lead reaches past the end.
   struct Edge {
     uint32_t x;
     uint32_t y;
     Heading heading;
-    Heading orientation;
+    Heading couplerHeading;
   };
   for (const Edge edge :
-       {Edge{.x = 400, .y = 300, .heading = 0, .orientation = 4},
-        Edge{.x = 799, .y = 899, .heading = 4, .orientation = 0},
-        Edge{.x = 899, .y = 400, .heading = 6, .orientation = 2},
-        Edge{.x = 300, .y = 799, .heading = 2, .orientation = 6}}) {
+       {Edge{.x = 400, .y = 300, .heading = 0, .couplerHeading = 4},
+        Edge{.x = 799, .y = 899, .heading = 4, .couplerHeading = 0},
+        Edge{.x = 899, .y = 400, .heading = 6, .couplerHeading = 2},
+        Edge{.x = 300, .y = 799, .heading = 2, .couplerHeading = 6}}) {
     const int heading = edge.heading;
     Path atEdge = straightRun(edge.x, edge.y, edge.heading, 300);
     const PathPoint end = atEdge.back();
@@ -657,7 +873,7 @@ TEST(CouplerInsertion, ADoglegStaysInsideTheGrid) {
         << heading;
     const Path before = atEdge;
     EXPECT_FALSE(spliceCouplerDogleg(primitives(), 150.0, atEdge, WIDTH, HEIGHT,
-                                     edge.orientation, {.leadStraight = 8})
+                                     edge.couplerHeading, {.leadStraight = 8})
                      .has_value())
         << heading;
     EXPECT_EQ(atEdge, before) << heading;
@@ -669,7 +885,7 @@ TEST(CouplerInsertion, ADoglegStaysInsideTheGrid) {
                     static_cast<uint32_t>(static_cast<int64_t>(edge.y) - v.dy),
                     edge.heading, 300);
     ASSERT_TRUE(spliceCouplerDogleg(primitives(), 150.0, inside, WIDTH, HEIGHT,
-                                    edge.orientation, {.leadStraight = 8})
+                                    edge.couplerHeading, {.leadStraight = 8})
                     .has_value())
         << heading;
     bool reachesEdge = false;
@@ -709,9 +925,10 @@ TEST(CouplerInsertion, TheDoglegNeverRunsIntoTheRestOfTheResonator) {
 }
 
 TEST(CouplerInsertion, ADoglegOfALargerRadiusNeverRunsIntoTheResonator) {
-  // At a radius of ten cells, the resonator runs south-east, south, west and
-  // then north, past the cells where a dogleg spliced onto its first run
-  // turns. Whatever the target, the spliced path must not cross itself.
+  // At a radius of ten cells, the resonator runs toward positive x and y,
+  // then toward positive y, negative x and negative y, past the cells where a
+  // dogleg spliced onto its first run turns. Whatever the target, the spliced
+  // path must not cross itself.
   const MovePrimitives table(10);
   Path path;
   PathPoint state{.x = 300, .y = 300, .heading = 5, .primitive = 0};
@@ -782,6 +999,96 @@ TEST(CouplerInsertion, ADoglegOfALargerRadiusNeverRunsIntoTheResonator) {
       EXPECT_FALSE(pathSelfIntersects(spliced, 1000, 1000, scratch)) << target;
     }
   }
+}
+
+TEST(CouplerInsertion, ASpliceOntoRoutesOfALargerRadiusStaysWhole) {
+  // Routes at a radius of ten cells around a block, each with couplers
+  // spliced on in several shapes and at several targets. Up to the point
+  // where it joins the route, the spliced path steps from cell to neighboring
+  // cell. Where the route does not cross itself, neither does the spliced
+  // path. It renders as long as its two parts, so the length the splice aims
+  // at is the length drawn.
+  constexpr uint32_t width = 400;
+  constexpr uint32_t height = 400;
+  auto shared = std::make_shared<const MovePrimitives>(10);
+  const MovePrimitives& table = *shared;
+  SearchScratch scratch(width, height);
+  grid::BitGrid corridor(width, height);
+  for (uint32_t y = 170; y < 230; ++y) {
+    for (uint32_t x = 180; x < 220; ++x) {
+      corridor.setCell(x, y);
+    }
+  }
+  DubinsRouter router(shared, scratch,
+                      {.startStraightLength = 12,
+                       .endStraightLength = 12,
+                       .minRadius = 10,
+                       .bendPenalty = 500});
+  router.attachCorridor(&corridor);
+  SplitMix random(10);
+  const auto below = [&](const uint32_t n) {
+    return static_cast<uint32_t>(random.next() % n);
+  };
+
+  PathLoopScratch loops;
+  int splices = 0;
+  for (int request = 0; request < 12; ++request) {
+    const Path path =
+        router.route({.source = {.x = 40 + below(80),
+                                 .y = 40 + below(320),
+                                 .heading = static_cast<Heading>(below(8)),
+                                 .primitive = 0},
+                      .target = {.x = 280 + below(80),
+                                 .y = 40 + below(320),
+                                 .heading = static_cast<Heading>(below(8)),
+                                 .primitive = 0}});
+    if (path.empty()) {
+      continue;
+    }
+    const bool clean = !pathSelfIntersects(path, width, height, loops);
+    const double length = renderedLength(table, path);
+    for (Heading couplerHeading = 0; couplerHeading < NUM_HEADINGS;
+         ++couplerHeading) {
+      for (const bool mirrored : {false, true}) {
+        for (CouplerDoglegOptions options :
+             {CouplerDoglegOptions{.straightLength = 3},
+              CouplerDoglegOptions{.leadStraight = 8,
+                                   .straightLength = 14,
+                                   .secondStraightLength = 3,
+                                   .secondTurnReverse = true}}) {
+          options.mirrored = mirrored;
+          for (const double share : {0.3, 0.6, 0.9}) {
+            Path spliced = path;
+            if (!spliceCouplerDogleg(table, length * share, spliced, width,
+                                     height, couplerHeading, options)
+                     .has_value()) {
+              continue;
+            }
+            ++splices;
+            const std::size_t junction = junctionOf(table, path, spliced);
+            ASSERT_LT(junction, spliced.size());
+            ASSERT_GT(junction, 0U);
+            EXPECT_EQ(largestStep(spliced, junction), 1)
+                << "request " << request << ", coupler heading "
+                << static_cast<int>(couplerHeading) << ", mirrored " << mirrored
+                << ", lead " << options.leadStraight << ", share " << share;
+            if (clean) {
+              EXPECT_FALSE(pathSelfIntersects(spliced, width, height, loops))
+                  << "request " << request << ", coupler heading "
+                  << static_cast<int>(couplerHeading) << ", mirrored "
+                  << mirrored << ", lead " << options.leadStraight << ", share "
+                  << share;
+            }
+            EXPECT_NEAR(lengthOffParts(table, path, spliced), 0.0, 1e-9)
+                << "request " << request << ", coupler heading "
+                << static_cast<int>(couplerHeading) << ", mirrored " << mirrored
+                << ", lead " << options.leadStraight << ", share " << share;
+          }
+        }
+      }
+    }
+  }
+  EXPECT_GT(splices, 500);
 }
 
 TEST(CouplerInsertion, APathWithoutAStraightRunHasNoPlaceForACoupler) {
