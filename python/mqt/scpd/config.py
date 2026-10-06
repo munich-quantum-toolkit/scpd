@@ -96,7 +96,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "inner_rounds": 4,
         "max_relaxation": 10,
         "refinement_rounds": 2,
-        "feedline_refinement_rounds": 0,
+        "feedline_refinement_rounds": 2,
         "meander_length": 3000.0,
         "bend_penalty_norm": 2.5,
         "wire_proximity_penalty_norm": 0.00125,

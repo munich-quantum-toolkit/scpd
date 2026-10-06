@@ -39,10 +39,15 @@ __all__ = ["FINAL_PHASES", "PLANNING_STAGES", "PlanningError", "PlanningGeometry
 
 #: The planning stages that can be drawn, and the artifact each one is read from.
 #: The verdicts of the Final stage that count a wire as failing: unrouted, open or crossing a
-#: feedline. The two length verdicts and a way that meets itself are carried in the artifact and
-#: named in a wire's tooltip, but they do not mark it — the lengths are the meander's business and
-#: not the figure the stage is judged by (user, 2026-10-04).
+#: feedline. A way that meets itself is carried in the artifact and named in a wire's tooltip but
+#: does not mark it; the two length verdicts have a layer of their own, ``LENGTH_VERDICTS``.
 BAD_VERDICTS: int = FinalVerdict.Unrouted | FinalVerdict.Open | FinalVerdict.Crossing
+
+#: The verdicts about a resonator's length: shorter or longer than ``target_resonator_length`` by
+#: more than the tolerance. Their own layer and their own colour, drawn under ``BAD_VERDICTS``, so
+#: that a wire which is both reads as failing: a wire off its length is still routed, and the fifth
+#: phase of the Final stage is the first that is judged by both figures (2026-10-05).
+LENGTH_VERDICTS: int = FinalVerdict.Short | FinalVerdict.Long
 
 #: The name of every verdict bit, in the order the stage's own log line names them.
 VERDICT_NAMES: tuple[tuple[int, str], ...] = (
@@ -131,6 +136,10 @@ class PlanningGeometry:
     #: so a picture of one phase carries none; an unrouted wire has no bends to draw and is
     #: carried with an empty polyline, so that it is still counted.
     failing: list[tuple[str, list[str], list[Point]]] = field(default_factory=list)
+    #: The resonators the Final stage left off their target length — ``LENGTH_VERDICTS`` — in the
+    #: same shape as ``failing`` and on a layer of their own under it. Only the end state is
+    #: judged, so a picture of one phase carries none.
+    off_length: list[tuple[str, list[str], list[Point]]] = field(default_factory=list)
     #: The feedline edges the coupler insertion found leaving too little room beside them for the
     #: wires that have to pass between them and the nearest qubit or coupler (``Squeezed``): the
     #: edge's id, the insertion's note with the figures, and its bends. Carried on every snapshot
@@ -438,13 +447,13 @@ def _final(routing: FinalRoutingT, geometry: PlanningGeometry, wire_spacing: flo
             ])
         return rings
 
-    def failing(wires: list[Any] | None, prefix: str) -> list[tuple[str, list[str], list[Point]]]:
+    def marked(wires: list[Any] | None, prefix: str, bits: int) -> list[tuple[str, list[str], list[Point]]]:
         # The id is the one the stage's log uses: the slot of a ring wire, `i` and the slot of an
         # inner wire, `f` and the index of a feedline edge.
         found = []
         for index, wire in enumerate(_entries(wires)):
             verdict = int(wire.verdict or 0)
-            if verdict & BAD_VERDICTS:
+            if verdict & bits:
                 found.append((f"{prefix}{index}", verdict_names(verdict), _bends(_entries(wire.path), to_layout)))
         return found
 
@@ -484,7 +493,18 @@ def _final(routing: FinalRoutingT, geometry: PlanningGeometry, wire_spacing: flo
         geometry.inner_wires = drawn(routing.inner) + drawn(routing.feedlines)
         geometry.couplers = bodies(routing.couplers)
         # The verdicts are the end state's alone: the phase snapshots are not judged.
-        geometry.failing = failing(routing.wires, "") + failing(routing.inner, "i") + failing(routing.feedlines, "f")
+        geometry.failing = (
+            marked(routing.wires, "", BAD_VERDICTS)
+            + marked(routing.inner, "i", BAD_VERDICTS)
+            + marked(routing.feedlines, "f", BAD_VERDICTS)
+        )
+        # A wire that is both failing and off its length is on both layers, and the failing layer
+        # is drawn over this one, so what shows is the verdict that matters more.
+        geometry.off_length = (
+            marked(routing.wires, "", LENGTH_VERDICTS)
+            + marked(routing.inner, "i", LENGTH_VERDICTS)
+            + marked(routing.feedlines, "f", LENGTH_VERDICTS)
+        )
         geometry.squeezed = squeezed(routing.feedlines)
 
 

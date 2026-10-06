@@ -12,6 +12,52 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Build the fifth phase of the Final stage, the refinement of the
+  feedline routing, and make every resonator its target length in it. The
+  phase draws every wire of the ring once more with a price on the room it
+  leaves, fences three pairs of ring neighbours, and keeps the way a wire
+  had when the new one is worse; a resonator is lengthened by the meander
+  there, under `SCPD_REFINE_MEANDER` (on) rather than the sweep's
+  `SCPD_FEEDLINE_MEANDER`, because the two passes ask different questions.
+  Where a meander finds no room the search is made once more with the room
+  price taken off and the hard corridor standing, for a resonator that has
+  never reached its length — the prototype's own fallback
+  (`SCPD_REFINE_FALLBACK`, measured to buy nothing and kept only because it
+  is the prototype's). Three pairs of ring neighbours rather than one is
+  the one figure here with a measured case for it: with one pair the
+  69-qubit benchmark ends with eight resonators off their length instead of
+  one. The room price is built after the feedline
+  constraints, so the chamfer to the middle of a channel sees the walls of
+  that channel (`SCPD_REFINE_PRICE_LAST`), and the four checks of the
+  coupler insertion are said again at the end of the phase, because the
+  refinement moves feedline edges and nothing looked at the result
+  (`SCPD_REFINE_CHECKS`). **The phase is the default**:
+  `feedline_refinement_rounds` is 2, `SCPD_FEEDLINE_MEANDER` is on, and the
+  eight benchmark configs run to `stop_after = "refined"`. Over those eight
+  the stage ends at `bad` 2 instead of 8 and 6 resonators off their target
+  length instead of 102, no long anywhere and five chips clean on both
+  figures, for about twice the runtime.
+- ✨ Make a resonator its length in the feedline sweep as well, within a
+  band five times `resonator_length_tolerance` wide
+  (`SCPD_SWEEP_LENGTH_BAND`), and leave what is left to the refinement:
+  the prototype aims roughly in its sweep (`meander_insertion_proximity`)
+  and exactly in its refinement (`meander_insertion_proximity_strict`). The
+  figure the stage is judged by is unchanged — short and long are counted
+  against the tolerance itself.
+- ✨ Say why a meander found no room rather than only how many placements
+  were tried: `MeanderResult::Refusals` counts each refusal by its reason —
+  the ends not facing each other, no pair far enough apart for the legs,
+  no depth, no room beside the way, a closed cell, a self-crossing, a
+  rendering off the tolerance — and the stage's line names them with the
+  budget the pairs were drawn from.
+- ✨ Mark the resonators the Final stage left off their target length in
+  the picture, on a layer of their own under the failing one:
+  `planning.off_length` from the `Short` and `Long` verdicts, amber and
+  dashed in `plot --stage final`, layer 31 `final.off-length` in `render`.
+- 🔧 Make the place the coupler cuts a resonator's way a switch,
+  `SCPD_COUPLER_BIAS` (1.0): a way the coupler leaves longer than the
+  target is a `long` verdict nothing in the stage can mend, and cutting at
+  less than the target hands the difference to the meander.
 - ✨ Close the run a terminal feedline edge has to make at its coupler to
   every other wire: the run into the first coupler of a chain and the run
   out of its last, five cells beyond it, inflated by the wire clearance, in
@@ -355,6 +401,21 @@ releases may include breaking changes.
 - ✨ Add `[stages.capacity] crossing_pitch`: how finely a partition border is
   divided into places a wire may cross. It is a planning figure and not a
   clearance rule ([#115]) ([**@FeldmeierMichael**])
+
+### Fixed
+
+- 🐛 Let the meander reach the near end of a resonator's way again. The
+  cells it leaves alone at the start were `coupler_length` plus the
+  straight start plus four, where the straight start is the second run
+  after the coupler's lead that `SCPD_RESONATOR_STUB` took away on
+  2026-10-03 — the margin did not follow. On the 4-qubit benchmark that
+  reserved 35 of the 70 straight cells of a 111-cell way while a loop needs
+  35 cells of span between its two ends, so every one of the 4760
+  placements tried was refused for want of span and not one for want of
+  room. The margin is `coupler_length + 4` now
+  (`SCPD_MEANDER_MARGIN_STUB`, `SCPD_MEANDER_START_MARGIN`,
+  `SCPD_MEANDER_LEG_SPACING`), and the chip ends with no failing wire and
+  no resonator off its length.
 
 ### Changed
 

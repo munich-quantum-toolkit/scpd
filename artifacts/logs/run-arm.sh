@@ -5,6 +5,9 @@
 #   CHIPS="45q 57q 69q" ./run-arm.sh <arm> ...  — only these chips, in this order.
 #   STOP_AFTER=outer ./run-arm.sh <arm> ...  — sets `stop_after` in the run directory's copy.
 #   MAX_RELAXATION=8 ./run-arm.sh <arm> ...  — sets `max_relaxation` in the run directory's copy.
+#   REFINE_ROUNDS=2 ./run-arm.sh <arm> ...  — sets `feedline_refinement_rounds` in the run
+#   directory's copy, adding the key when the benchmark config does not carry it. The fifth
+#   phase only runs with STOP_AFTER=refined as well.
 set -u
 cd /Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4
 arm=$1; shift
@@ -19,6 +22,14 @@ for chip in ${=CHIPS:-4q 9q 17q 21q 33q 45q 57q 69q}; do
   fi
   if [[ -n "${MAX_RELAXATION:-}" ]]; then
     sed -i '' -E "s/^max_relaxation( *)= .*/max_relaxation\1= ${MAX_RELAXATION}/" artifacts/$chip/config.toml
+  fi
+  if [[ -n "${REFINE_ROUNDS:-}" ]]; then
+    awk -v n="${REFINE_ROUNDS}" '
+      /^feedline_refinement_rounds/ { print "feedline_refinement_rounds = " n; seen = 1; next }
+      { print }
+      /^refinement_rounds/ && !seen { print "feedline_refinement_rounds = " n; seen = 1 }
+    ' artifacts/$chip/config.toml > artifacts/$chip/config.toml.new
+    mv artifacts/$chip/config.toml.new artifacts/$chip/config.toml
   fi
   spot=$(ps -A -o %cpu,comm -r | awk 'NR>1 && ($2 ~ /mds_stores|mediaanalysisd/) {s+=$1} END {print s"%"}')
   echo "### $chip start $(date '+%H:%M:%S') spotlight $spot repair_trials $(grep -E '^repair_trials' artifacts/$chip/config.toml | tr -s ' ' | cut -d' ' -f3) env: $*" > artifacts/logs/$arm/$chip.log

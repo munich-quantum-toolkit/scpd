@@ -256,8 +256,10 @@ const Primitive* quarterTurn(const MovePrimitives& primitives,
 std::optional<Piece> buildLoop(const MovePrimitives& primitives, const Spot& a,
                                const Spot& b, const double wanted,
                                const Box& box, const uint32_t safety,
-                               const uint32_t minStraight) {
+                               const uint32_t minStraight,
+                               MeanderResult::Refusals& why) {
   if (isDiagonal(a.heading) || b.heading != reverse(a.heading)) {
+    ++why.headingsApart;
     return std::nullopt;
   }
   const auto radius = static_cast<int64_t>(primitives.minRadius());
@@ -279,11 +281,13 @@ std::optional<Piece> buildLoop(const MovePrimitives& primitives, const Spot& a,
   }
   const int64_t run = span - (2 * radius);
   if (span <= 0 || run < static_cast<int64_t>(minStraight)) {
+    ++why.tooClose;
     return std::nullopt;
   }
   const Primitive* first = quarterTurn(primitives, a.heading, across);
   const Primitive* second = quarterTurn(primitives, across, b.heading);
   if (first == nullptr || second == nullptr) {
+    ++why.headingsApart;
     return std::nullopt;
   }
   // The loop is out + first turn + run + second turn + back long, and back
@@ -294,11 +298,13 @@ std::optional<Piece> buildLoop(const MovePrimitives& primitives, const Spot& a,
                  second->cost + static_cast<double>(forward)) /
                 2.0);
   if (out < 0.0) {
+    ++why.noDepth;
     return std::nullopt;
   }
   const auto outSteps = static_cast<int64_t>(out);
   const int64_t back = outSteps - forward;
   if (back < 0) {
+    ++why.noDepth;
     return std::nullopt;
   }
   // The far edge of the loop, `safety` cells short of the box.
@@ -307,6 +313,7 @@ std::optional<Piece> buildLoop(const MovePrimitives& primitives, const Spot& a,
   const auto margin = static_cast<int64_t>(safety);
   if (farX < box.minX + margin || farX > box.maxX - margin ||
       farY < box.minY + margin || farY > box.maxY - margin) {
+    ++why.outsideBox;
     return std::nullopt;
   }
 
@@ -320,6 +327,7 @@ std::optional<Piece> buildLoop(const MovePrimitives& primitives, const Spot& a,
   at = after(at, *second);
   appendStraight(loop, at, primitives, back);
   if (at.x != b.x || at.y != b.y) {
+    ++why.noJoin;
     return std::nullopt;
   }
   return loop;
@@ -398,6 +406,22 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
   const std::size_t step = std::max<std::size_t>(1, count / 100);
   const std::size_t start =
       count > options.startMargin ? options.startMargin : 0;
+  result.straightCells = static_cast<uint32_t>(count);
+  result.reserved = static_cast<uint32_t>(start);
+  // The widest span any pair of the cells left over spans, which is the
+  // room a loop has to be built in: measured here so that an insertion
+  // that never built one says why in one figure.
+  for (std::size_t a = start; a < count; ++a) {
+    for (std::size_t b = a + 1; b < count; ++b) {
+      const auto dx = static_cast<int64_t>(straights[b].spot.x) -
+                      static_cast<int64_t>(straights[a].spot.x);
+      const auto dy = static_cast<int64_t>(straights[b].spot.y) -
+                      static_cast<int64_t>(straights[a].spot.y);
+      const auto apart =
+          static_cast<uint32_t>(std::max(std::abs(dx), std::abs(dy)));
+      result.widestSpan = std::max(result.widestSpan, apart);
+    }
+  }
   const Box box{.minX = options.box.minX,
                 .maxX = options.box.maxX,
                 .minY = options.box.minY,
@@ -465,7 +489,7 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
                             const double loopLength) -> std::optional<Piece> {
     const auto loop =
         buildLoop(primitives, head.to, tail.from, loopLength, pairBox,
-                  options.safety, options.minStraightLength);
+                  options.safety, options.minStraightLength, result.refusals);
     if (!loop.has_value()) {
       return std::nullopt;
     }
@@ -477,6 +501,7 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
         if (!box.holds(spot.x, spot.y) ||
             !enterable(static_cast<uint32_t>(spot.x),
                        static_cast<uint32_t>(spot.y))) {
+          ++result.refusals.blocked;
           return std::nullopt;
         }
         piece.push_back(spot);
@@ -504,6 +529,7 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
                    path.begin() + static_cast<std::ptrdiff_t>(g1.index),
                    path.end());
     if (pathSelfIntersects(spliced, options.width, options.height, scratch)) {
+      ++result.refusals.selfCrossing;
       return {};
     }
     return spliced;
@@ -542,6 +568,7 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
     }
     if (options.exact ? std::abs(after - required) > tolerance
                       : after < required) {
+      ++result.refusals.offLength;
       return false;
     }
     path = std::move(candidate);
@@ -657,6 +684,7 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
              tailsOf(static_cast<std::size_t>(i), key, target)) {
           ++result.candidates;
           if (tail.from.heading != reverse(head.to.heading)) {
+            ++result.refusals.headingsApart;
             continue;
           }
           const double loopLength = lengthToAdd - head.cost - tail.cost;
@@ -692,6 +720,29 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
     }
   }
   return result;
+}
+
+std::vector<std::pair<const char*, uint32_t>>
+MeanderResult::Refusals::said() const {
+  const std::array<std::pair<const char*, uint32_t>, 8> all{{
+      {"the two ends do not face each other", headingsApart},
+      {"no pair far enough apart for the legs", tooClose},
+      {"the stretch it replaces is already longer", noDepth},
+      {"no room beside the way for the loop", outsideBox},
+      {"the loop does not come back to the pair", noJoin},
+      {"a cell of the loop is closed", blocked},
+      {"the way would meet itself", selfCrossing},
+      {"the rendering never landed in the tolerance", offLength},
+  }};
+  std::vector<std::pair<const char*, uint32_t>> found;
+  for (const auto& one : all) {
+    if (one.second != 0) {
+      found.push_back(one);
+    }
+  }
+  std::ranges::stable_sort(found, std::ranges::greater{},
+                           &std::pair<const char*, uint32_t>::second);
+  return found;
 }
 
 } // namespace mqt::scpd::routing

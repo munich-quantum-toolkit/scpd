@@ -131,10 +131,24 @@ constexpr std::uint8_t BEND_RADIUS = 5;
 constexpr std::uint32_t RESONATOR_COPPER = 2;
 
 /// How much of `target_resonator_length` is left to run from the centre of
-/// the coupler to the qubit. Short of the design figure on purpose: the
-/// meander is what makes the way exact afterwards, and it can only lengthen
-/// a way, never shorten one. The tenth held back is what it has to work in.
-constexpr double COUPLER_BIAS = 1.0;
+/// the coupler to the qubit, as a share of that figure.
+///
+/// **Short of the design figure on purpose**, and the reason is that the
+/// meander can only lengthen a way, never shorten one: a way the coupler
+/// leaves longer than the target is a `long` verdict nothing in the stage
+/// can mend, where one left short is what the meander is for. Cutting at
+/// `bias · target` puts the coupler that much further up the way and hands
+/// the rest to the meander.
+///
+/// A switch since 2026-10-05 (user), because the feedline sweep makes
+/// lengths again from then on and the `long` fails are what it cannot fix.
+/// `couplerPlace` subtracts the lead from the figure, so the place is where
+/// the lead and what is left together come to `bias · target`.
+[[nodiscard]] inline double couplerBias() {
+  static const auto bias =
+      std::clamp(envReal("SCPD_COUPLER_BIAS", 1.0), 0.5, 1.0);
+  return bias;
+}
 
 /// How far below `target_resonator_length` a coupler may leave the
 /// resonator, as a share of that figure. Three tenths by default, so a chip
@@ -224,24 +238,177 @@ constexpr double COUPLER_BIAS = 1.0;
   return on;
 }
 
-/// Whether a resonator is meandered while the feedline constraints hold.
+/// Whether a resonator is meandered in the feedline **sweep**.
 ///
-/// **Off by default** (user, 2026-09-30). The pass then routes and does not
-/// try to make a resonator its length: a way found is taken as it is drawn,
-/// however long it came out. Nothing else changes — the length is still
-/// measured and a resonator off its target still counts as a fail at the
-/// end of the stage, so what the pass gives up is visible rather than
-/// hidden.
+/// **On since 2026-10-05** (user), where it had been off since
+/// 2026-09-30. It was off because in the exact regime the only tool is the
+/// meander, which adds, so a way that comes out too long can only be
+/// refused as no way — and a resonator refused in the sweep goes back on
+/// its seed and costs the whole round. What answers that is not switching
+/// the insertion off but giving the sweep a wide band and leaving the rest
+/// to the refinement, which is the prototype's own arrangement: see
+/// `sweepLengthBand`.
 ///
-/// What it is for: in the exact regime the only tool is the meander, which
-/// adds, and a way that comes out too long can only be refused. Turning the
-/// insertion off separates the two questions — whether a resonator can be
-/// routed at all, and whether it can be made its length — which were
-/// answered by one number before.
-///
-/// `=1` puts the meander back.
+/// Measured over the eight benchmarks (`artifacts/logs/sweep6` against
+/// `base6`): the resonators off their target length go from 102 to 6 and
+/// `bad` from 8 to 2, for about twice the runtime. `=0` leaves the sweep
+/// routing alone, as it was; the refinement then makes the lengths by
+/// itself under `SCPD_REFINE_MEANDER`.
 [[nodiscard]] inline bool feedlineMeander() {
-  static const bool on = envFlag("SCPD_FEEDLINE_MEANDER", false);
+  static const bool on = envFlag("SCPD_FEEDLINE_MEANDER", true);
+  return on;
+}
+
+/// How many cells at the start of a resonator's way the meander leaves
+/// alone, and what the two legs of its loop keep between them.
+///
+/// Both were derived rather than chosen, and on the 4-qubit chip the two
+/// together made the insertion arithmetically impossible: wire 4's way is
+/// 111 cells, of which 70 lie on a straight run; the margin reserved the
+/// first 35 of them and a loop needs `legSpacing + 2 · BEND_RADIUS` = 35
+/// cells of span between its two ends, which the 34 left over cannot give.
+/// Every one of the 4760 placements it tried was refused for that and for
+/// nothing else — not one for want of room, a closed cell or a crossing
+/// (`artifacts/logs/refine-probe/4q-diag.log`).
+///
+/// **The margin is `couplerLength + 4` now**, where it was
+/// `couplerLength + straightStart + 4`. What it is for is to keep the loop
+/// out of the run the resonator couples along, which is the coupler's own
+/// length; the straight start was the second run after the lead, and
+/// `SCPD_RESONATOR_STUB` took that away on 2026-10-03 without this figure
+/// following. The four cells are the prototype's own start margin.
+[[nodiscard]] inline std::uint32_t meanderStartMargin(
+    const std::uint32_t couplerLength, const std::uint32_t straightStart) {
+  static const auto asked = envWhole("SCPD_MEANDER_START_MARGIN", -1);
+  if (asked >= 0) {
+    return static_cast<std::uint32_t>(asked);
+  }
+  static const bool withStub = envFlag("SCPD_MEANDER_MARGIN_STUB", false);
+  return couplerLength + (withStub ? straightStart : 0U) + 4U;
+}
+
+/// What the two legs of a loop keep between them, in cells.
+///
+/// The prototype's `min_straight_length`, which is **not** the design rule
+/// of that name (decision 0019 keeps the two apart): the rule is 100 layout
+/// units, about ten cells, and the figure here is what holds the two legs of
+/// one resonator apart. 25 is the prototype's. The floor that means
+/// something is the wire clearance, 19 cells — two legs of one wire are not
+/// a pair the design-rule check looks at, so nothing below the clearance is
+/// defensible on its own.
+[[nodiscard]] inline std::uint32_t meanderLegSpacing() {
+  static const auto cells = static_cast<std::uint32_t>(
+      std::clamp(envWhole("SCPD_MEANDER_LEG_SPACING", 25), 4, 200));
+  return cells;
+}
+
+/// How wide the length band of the feedline **sweep** is, as a multiple of
+/// `resonator_length_tolerance`.
+///
+/// **5** (user, 2026-10-05): the meander goes back on in the feedline pass,
+/// and it aims roughly rather than exactly there; the refinement tightens
+/// what is left. This is the prototype's own arrangement, and it is not a
+/// knob it has to tune: its sweep calls `meander_insertion_proximity` and
+/// its refinement `meander_insertion_proximity_strict`
+/// (`FinalGrid.cpp:11809` against `:13570`), so the sweep aims at *at
+/// least* the length and nothing there can be too long, where the strict
+/// insertion aims at the length itself.
+///
+/// What it buys: in the exact regime the only tool is the meander, which
+/// adds, so a way that comes out long can only be refused as no way. A
+/// resonator refused in the sweep goes back on its seed and the whole round
+/// is spent on it. A wide band lets the sweep place a loop that is roughly
+/// right and leaves the last few hundred units to the phase whose business
+/// they are.
+///
+/// The band the **stage is judged by** is not this one: `failsOf` counts
+/// short and long against `resonator_length_tolerance` itself, whatever the
+/// sweep allowed itself. `=1` is the band the sweep had.
+[[nodiscard]] inline double sweepLengthBand() {
+  static const auto band =
+      std::max(1.0, envReal("SCPD_SWEEP_LENGTH_BAND", 5.0));
+  return band;
+}
+
+/// Whether the **refinement** of the feedline routing makes a resonator its
+/// length, whatever `SCPD_FEEDLINE_MEANDER` says about the sweep.
+///
+/// **On** (2026-10-05). The fifth phase is where the lengths are finally
+/// read, and the two passes want different answers: the sweep is judged by
+/// whether a resonator can be routed at all, the refinement by whether it
+/// can be made its length. One switch over both passes could not say that,
+/// and the cost of the sweep's meander is not small — measured on 17q, the
+/// sweep with the meander takes 21.5 s to 72.2 s and opens the 30/31 pair,
+/// for 4 of the 7 short resonators; the refinement closes 4 of them in
+/// 11 s more and opens nothing (`artifacts/logs/refine-probe`).
+///
+/// `=0` leaves the refinement routing alone, as it was while
+/// `feedline_refinement_rounds` was 0.
+[[nodiscard]] inline bool refineMeander() {
+  static const bool on = envFlag("SCPD_REFINE_MEANDER", true);
+  return on;
+}
+
+/// Whether a refinement attempt whose meander found no room is searched
+/// once more with the room price taken off.
+///
+/// **On**, and it is the prototype's own fallback
+/// (`FinalGrid.cpp:13600`): the clearance-maximising way is a detour, and a
+/// detour is long — long enough that the meander has no slack left and in
+/// the exact regime long enough to be refused outright. Zeroing the wire
+/// proximity field leaves the hard corridor standing and gives a direct way
+/// with room to pad. Only for a resonator that has never reached its length
+/// in this phase (the prototype's `fitted`): one that has will roll back
+/// onto a way that is still at its length, so a second search buys nothing.
+///
+/// What it is for, measured on 17q before it existed: of 34 resonator
+/// attempts in two refinement rounds, **12 were refused as too long for
+/// their target** and 15 found no room for a loop.
+[[nodiscard]] inline bool refineFallback() {
+  static const bool on = envFlag("SCPD_REFINE_FALLBACK", true);
+  return on;
+}
+
+/// Whether the refinement's room price is built **after** the feedline
+/// constraints rather than before them.
+///
+/// **On**. `priceRoom` is the chamfer distance to the middle of the channel
+/// — the prototype's `compute_corridor_proximity_decay` — and it reads the
+/// corridor. Built before `constrainByFeedlines`, it reads a corridor in
+/// which the fences of the chain edges and the terminal edges' coupler runs
+/// are not yet closed, so the field pulls a wire into the middle of a
+/// channel whose feedline walls it cannot see. The prototype computes the
+/// decay on the fully marked buffer. `=0` is the order the phase was
+/// written with.
+[[nodiscard]] inline bool refinePriceLast() {
+  static const bool on = envFlag("SCPD_REFINE_PRICE_LAST", true);
+  return on;
+}
+
+/// How many pairs of ring neighbours the refinement fences.
+///
+/// The prototype marks **i ± 1 … i ± 4** as hard obstacles at
+/// `ref_min_clearance`, which is the design rule itself
+/// (`FinalGrid.cpp:13410`); the phase was written with one pair, where the
+/// feedline sweep fences three (`SCPD_FEEDLINE_FENCE_PAIRS`). A way taken
+/// here is tested against every other wire afterwards, so a loose fence
+/// does not break the rule — it wastes searches on ways that are then
+/// refused.
+[[nodiscard]] inline std::uint32_t refineFencePairs() {
+  static const auto pairs = static_cast<std::uint32_t>(
+      std::clamp(envWhole("SCPD_REFINE_FENCE_PAIRS", 3), 1, 8));
+  return pairs;
+}
+
+/// Whether the four checks of the coupler insertion are said again at the
+/// end of the refinement.
+///
+/// **On**. They run at the end of `insertCouplers` and the crossing check
+/// once more after the repair, but the refinement **moves feedline edges**
+/// — 7 of 20 on 17q — and nothing looked at the result: `failsOf` sees a
+/// conventional wire crossing an edge and not an edge crossing an edge.
+[[nodiscard]] inline bool refineChecks() {
+  static const bool on = envFlag("SCPD_REFINE_CHECKS", true);
   return on;
 }
 
@@ -475,6 +642,104 @@ constexpr std::uint32_t CEILING = 4000;
 [[nodiscard]] inline double launcherLead() {
   static const double lead = std::max(0.0, envReal("SCPD_LAUNCHER_LEAD", 10.0));
   return lead;
+}
+
+/// Whether the coupler box reserves the quarter turn a wire has to make
+/// after its straight run, and how much margin it keeps on top, in cells
+/// (user, 2026-10-06).
+///
+/// The box was drawn tangent to the launcher stubs: `launcherStraight +
+/// clearance + 1` from every launcher cell. A wire leaving that launcher is
+/// forced straight for `straightStart`, so between the end of its own stub
+/// and a feedline edge sitting on the box edge there are
+/// `launcherStraight + 1 - straightStart` cells — two on every benchmark.
+/// It takes `BEND_RADIUS` to turn out of that channel, so the wire cannot
+/// turn at all: it may only cross the edge straight, and if that edge is not
+/// its bridge it is fenced and the wire is dead on arrival.
+///
+/// That is not a corner case, because `closeOutsideBox` makes the same
+/// rectangle the hard corridor bound of every non-terminal edge search: an
+/// edge runs *on* the box edge whenever that is the straight line between
+/// its two couplers. On 17q f8 is `y` ≡ 77 ≡ `minY` for 396 cells and f2 is
+/// `x` ≡ 1347 ≡ `maxX` for 273, and wire 31 — whose launcher sits behind f8
+/// — is the wire that cannot leave.
+///
+/// So the box would keep clear the launcher's own run **or** that run plus a
+/// quarter turn, whichever is longer, and then the clearance, the one cell
+/// and the margin. On the benchmarks `straightStart + BEND_RADIUS` = 16 is
+/// the longer of the two against `launcherStraight` 12, so the reach grows
+/// from 32 to 36 + margin.
+///
+/// **Off (user, 2026-10-06), and it only means anything together with
+/// `SCPD_LAUNCHER_FENCE_TURN`.** That pairing is the whole measurement, and
+/// each half on its own buys nothing — 17q to `feedlines`, `bad =
+/// unrouted + open + crossing`:
+///
+///   | box turn | launcher fence | bad |
+///   | off | off | 4 (14, 31, 33, 56) |
+///   | **on** | off | 4 (30, 31 open + 31, 56) |
+///   | off | **on** | 4 |
+///   | **on** | **on** | **2** (31, 56), and no open wire |
+///
+/// Why it is off: with the margin taken out again (below) the pair leaves 17q
+/// at `bad` **4** — the figure it started from, with other wires (31 and 32
+/// open plus 27 and 56 crossing, against 14, 31, 33 and 56 crossing) — and
+/// costs 45 % of the run, 54 s against 38. So for that chip it is a trade and
+/// not a gain, and the geometry it corrects has to earn its keep somewhere
+/// else before it is the default. **What it corrects is still real** and the
+/// check says so: the box side was 32 cells from a launcher cell where the
+/// wire off it needs 11 straight + 5 turn + 19 clearance = 35, and five of
+/// 17q's seventeen couplers sat with their feedline run on that side.
+///
+/// The reason the box alone fails is that it is not what pins an *edge*
+/// beside a launcher: `closeOutsideBox` has no caller, and what the edge
+/// searches keep clear is the fence `corridorOfEdge` lays on every launcher
+/// that is not their own. That fence was one cell *tighter* than the box, so
+/// pushing the box in moved the couplers and the edge hugged the fence
+/// instead — on 17q wire 31 stayed dead on arrival against f8 at 18.0 cells
+/// where it had been 19.0. Correct both and the channel is the figure the
+/// wire needs on both sides of it.
+///
+/// **A margin on top was built, swept and taken out again** (user,
+/// 2026-10-06). It kept a coupler that many cells further off the box side
+/// than the rule asks. On 17q to `feedlines` it was a threshold and not a
+/// slope — `bad` 4, 5, 4, 4, 2, 1 at margins 0 to 5, the two open wires 31
+/// and 32 falling away at 4 and two of three crossings at 5 — so the best
+/// figure measured at this stage, `bad` 1, stood on a margin of 5. The rule
+/// here is what the geometry asks for and nothing beyond it; whoever wants
+/// the margin back wants `holds`'s own `margin` parameter, which is unused,
+/// at the four call sites in `terminalsInBox` and `makeOption`.
+[[nodiscard]] inline bool couplerBoxTurn() {
+  static const bool on = envFlag("SCPD_COUPLER_BOX_TURN", false);
+  return on;
+}
+
+/// Whether the fence an edge search keeps around every launcher reserves the
+/// quarter turn the wire off that launcher has to make, and the margin on
+/// top, in cells (user, 2026-10-06).
+///
+/// `corridorOfEdge` closes, around every launcher but the one the edge docks
+/// on, the cell, the straight run of `straightStart` the wire off it is
+/// forced to make, and the clearance around both. The first cell an edge may
+/// then use is `straightStart + clearance` away — and the wire whose room
+/// that is needs `BEND_RADIUS` more, because at the end of its forced
+/// straight it has to *turn* to go anywhere but across the edge. If that
+/// edge is not the wire's bridge it is fenced at the clearance and the wire
+/// has no first step at all.
+///
+/// On 17q that is wire 31: its launcher is (361,46), its stub ends at
+/// (361,57), f8 runs at y=77, and (361,58) is at exactly 19.0 cells —
+/// closed to the search and acceptable to every judge. The fence reserves
+/// 11 + 19 = 30 cells where the wire needs 11 + 5 + 19 = 35.
+///
+/// **Off (user, 2026-10-06)**, with `SCPD_COUPLER_BOX_TURN`, which is the
+/// only switch it means anything beside — the table there is the
+/// measurement for both. On its own it removes wire 31's dead on arrival and
+/// changes no judged figure; with the box and no margin the pair leaves 17q
+/// at the `bad` it started from and costs 45 % of the run.
+[[nodiscard]] inline bool launcherFenceTurn() {
+  static const bool on = envFlag("SCPD_LAUNCHER_FENCE_TURN", false);
+  return on;
 }
 
 /// Whether an edge of a chain keeps the full clearance from the resonator of
@@ -1742,6 +2007,11 @@ struct Pass {
   /// `members[slot ± 1]`, and the relaxation releases `members[slot ± level]`.
   /// Needs `keepDrawn`, which is what makes the sweep skip a routed member.
   bool onlyUnsettled = false;
+  /// Whether this is a refinement pass — one attempt per wire, no rip-up,
+  /// a rollback onto the way the wire had. `refine` sets nothing itself; the
+  /// flag is what tells `lengthensIn` that `SCPD_REFINE_MEANDER` applies
+  /// and the checks at the end of the pass which name to say.
+  bool refinement = false;
 };
 
 // ------------------------------------------------------------ Joining cells
@@ -2120,9 +2390,13 @@ public:
   /// switched on; every resonator once it is drawn from its coupler.
   /// Whether a wire is lengthened in this pass: a resonator that needs a
   /// length, and — under the feedline constraints — only while the meander
-  /// is switched on there. See `feedlineMeander`.
+  /// is switched on there. The refinement has its own switch, because the
+  /// fifth phase is where the lengths are read and the sweep's meander is
+  /// dear: see `feedlineMeander` and `refineMeander`.
   [[nodiscard]] bool lengthensIn(const Wire& wire, const Pass& pass) const {
-    return needsLength(wire) && (!pass.feedlines || feedlineMeander());
+    return needsLength(wire) &&
+           (!pass.feedlines || feedlineMeander() ||
+            (pass.refinement && refineMeander()));
   }
 
   [[nodiscard]] bool needsLength(const Wire& wire) const {
@@ -2188,8 +2462,13 @@ public:
   /// meander may enter what the search could enter — the band less the
   /// fence — and nothing else, so it cannot cross a neighbour the way itself
   /// could not.
+  /// @param band How wide the length band is, as a multiple of
+  ///   `resonator_length_tolerance`: one in the refinement, which aims at
+  ///   the length itself, and `sweepLengthBand` in the sweep, which aims
+  ///   roughly. See `sweepLengthBand`.
   [[nodiscard]] Lengthened lengthen(const Wire& wire, Path& way,
-                                    const bool priced) {
+                                    const bool priced,
+                                    const double band = 1.0) {
     const auto required = requiredLength(wire);
     routing::MeanderOptions options{.width = scene_.router.width,
                                     .height = scene_.router.height,
@@ -2202,8 +2481,10 @@ public:
       // rule's tolerance, in the widest free strip along the pair, and
       // never in the run the resonator couples along.
       options.exact = true;
-      options.tolerance = tuning_.lengthTolerance;
-      options.startMargin = tuning_.couplerLength + tuning_.straightStart + 4;
+      options.tolerance = band * tuning_.lengthTolerance;
+      options.startMargin =
+          meanderStartMargin(tuning_.couplerLength, tuning_.straightStart);
+      options.minStraightLength = meanderLegSpacing();
       options.boxFor = [this](const PathPoint& a, const PathPoint& b) {
         return router_.freeStripAlong(a, b);
       };
@@ -2230,9 +2511,21 @@ public:
           std::format("too long for its target: {:.0f} of {:.0f} cells",
                       made.lengthBefore, required);
     } else if (!made.reached) {
+      // What stood in the way, not only how many placements were counted: a
+      // loop refused for want of room is a different problem from one no
+      // pair of the way lies far enough apart to carry. See
+      // `MeanderResult::Refusals`.
+      std::string said;
+      for (const auto& [reason, times] : made.refusals.said()) {
+        said += std::format("{}{} {}", said.empty() ? "" : ", ", times, reason);
+      }
       result.note = std::format(
-          "no room for a meander: {:.0f} of {:.0f} cells, {} placements tried",
-          made.lengthBefore, required, made.candidates);
+          "no room for a meander: {:.0f} of {:.0f} cells, {} placements "
+          "tried over {} straight cells less {} reserved, widest span {} of "
+          "the {} a loop needs — {}",
+          made.lengthBefore, required, made.candidates, made.straightCells,
+          made.reserved, made.widestSpan,
+          options.minStraightLength + (2U * primitives_->minRadius()), said);
     } else if (made.inserted) {
       result.note = std::format("meander: {:.0f} → {:.0f} cells for {:.0f}",
                                 made.lengthBefore, made.lengthAfter, required);
@@ -2953,8 +3246,28 @@ public:
     if (pass.rounds != 0) {
       say(std::format("{}: {} wires, {} rounds", pass.name, total,
                       pass.rounds));
+      if (pass.refinement && pass.feedlines) {
+        say(std::format("{} settings: meander {} (SCPD_REFINE_MEANDER {}, "
+                        "SCPD_FEEDLINE_MEANDER {}), fallback {}, {} pair{} "
+                        "fenced, the room price {} the feedline constraints, "
+                        "checks {}",
+                        pass.name,
+                        (refineMeander() || feedlineMeander()) ? "on" : "off",
+                        refineMeander() ? 1 : 0, feedlineMeander() ? 1 : 0,
+                        refineFallback() ? "on" : "off", refineFencePairs(),
+                        refineFencePairs() == 1 ? "" : "s",
+                        refinePriceLast() ? "after" : "before",
+                        refineChecks() ? "on" : "off"));
+      }
     }
+    // Has this resonator ever been at its length in this pass? The
+    // prototype's `fitted`, and the one thing the fallback is gated on: a
+    // resonator that has reached it rolls back onto a way that is still at
+    // its length, so a second search buys nothing. See `refineFallback`.
+    std::vector<std::uint8_t> fitted(wires.size(), 0);
     for (std::uint32_t round = 0; round < pass.rounds; ++round) {
+      std::uint32_t fallbacksTried = 0;
+      std::uint32_t fallbacksTaken = 0;
       const bool forward = (round % 2) == 0;
       frame_.pass = passTag(pass.name);
       frame_.round = round;
@@ -2971,14 +3284,38 @@ public:
         const auto& after = wires[members[(slot + 1) % total]];
         lift(wire);
         buildCorridor(wire, pass.reach);
-        fence(wire, {&before, &after});
+        // The ring neighbours, `refineFencePairs` pairs of them: the pair
+        // beside the wire first, so that one pair is the fence the phase was
+        // written with, cell for cell.
+        for (std::uint32_t pair = 1; pair <= refineFencePairs(); ++pair) {
+          if (2 * pair >= total) {
+            break;
+          }
+          fence(wire, {&wires[members[(slot + total - pair) % total]]});
+          fence(wire, {&wires[members[(slot + pair) % total]]});
+        }
         // The outer refinement keeps the length-point clearance too, or it
         // would level the room the rounds won (the prototype turned it back
         // on there for that reason, `FinalGrid.cpp:7628`). Nothing under
         // the feedline constraints.
         closeLengthBands(wire, {&before, &after}, pass);
-        priceRoom();
+        // The chamfer to the middle of the channel reads the corridor, so it
+        // is built after everything that closes a cell of it — the fences of
+        // the chain edges and the terminal edges' coupler runs included. See
+        // `refinePriceLast`.
+        if (!refinePriceLast()) {
+          priceRoom();
+        }
         constrainByFeedlines(wire, wires, pass);
+        if (refinePriceLast()) {
+          priceRoom();
+          // `priceRoom` fills the field, so the 5× discs around the chain
+          // edges `constrainByFeedlines` stamped are gone with it; they go
+          // back on top, which is the order the prototype stamps them in
+          // (`compute_corridor_proximity_decay`, then
+          // `compute_proximity_grid`).
+          priceTheEdges(wire, wires, pass);
+        }
         frame_.wires = &wires;
         frame_.before = before.key;
         frame_.after = after.key;
@@ -2988,6 +3325,9 @@ public:
         auto found =
             search(wire, pass.straightStart, true, !lengthensIn(wire, pass));
         std::string note;
+        // Whether the way in hand is at this resonator's length, which is
+        // what `fitted` records once the way is actually taken.
+        bool atLength = false;
         if (lengthensIn(wire, pass)) {
           // A resonator is lengthened here as it is in the relaxation, and
           // keeps the way it had when the wider way has no room for it.
@@ -3003,6 +3343,35 @@ public:
           if (!reached) {
             found.clear();
           }
+          // The prototype's fallback: the way that was found is a detour
+          // around the neighbours and a detour has no slack, so the search
+          // is made once more with the room price taken off and the hard
+          // corridor standing. Only while this resonator has never been at
+          // its length. See `refineFallback`.
+          if (found.empty() && refineFallback() && fitted[wire.key] == 0) {
+            ++fallbacksTried;
+            // Nothing reads the price again in this iteration, and the next
+            // wire's `priceRoom` fills it from scratch, so it is zeroed
+            // rather than saved and put back: a grid-sized copy per failed
+            // resonator is 24 MB on the 69-qubit chip. The prototype does
+            // not restore it either.
+            std::ranges::fill(proximity_, 0);
+            auto again = search(wire, pass.straightStart, true, false);
+            std::string saidAgain("no way");
+            bool reachedAgain = false;
+            if (!again.empty()) {
+              const auto made = lengthen(wire, again, true);
+              saidAgain = made.note;
+              reachedAgain = made.reached;
+            }
+            drawSearch(wire, again, saidAgain);
+            if (reachedAgain) {
+              found = std::move(again);
+              ++fallbacksTaken;
+            }
+            note += std::format(" · without the room price: {}", saidAgain);
+          }
+          atLength = !found.empty();
         }
         tell(std::format("wire {} · round {} {} · refine: {}{}{}", wireId(wire),
                          round, forward ? "forward" : "backward",
@@ -3036,6 +3405,14 @@ public:
         }
         wire.way = found.empty() ? had : found;
         moved += found.empty() ? 0 : 1;
+        // Only a way that is taken makes a resonator fitted. A way at its
+        // length that the test above refused leaves the wire on the way it
+        // had, which this pass has not measured, so the fallback is offered
+        // again next round — one search more than the prototype pays, and
+        // the conservative way round.
+        if (atLength && !found.empty()) {
+          fitted[wire.key] = 1;
+        }
         wire.drawn = true;
         place(wire);
       }
@@ -3049,9 +3426,25 @@ public:
         crowded += conflictsOf(wire, wires) == 0 ? 0 : 1;
         place(wire);
       }
-      say(std::format("{} round {} {}: moved {} of {}, {} too close to another",
+      say(std::format("{} round {} {}: moved {} of {}, {} too close to "
+                      "another{}",
                       pass.name, round, forward ? "forward " : "backward",
-                      moved, total, crowded));
+                      moved, total, crowded,
+                      fallbacksTried == 0
+                          ? std::string{}
+                          : std::format(", {} of {} searches without the room "
+                                        "price took their length",
+                                        fallbacksTaken, fallbacksTried)));
+    }
+    // The guarantees of the insertion, said again on what the refinement
+    // left: it moves feedline edges, and the insertion's lines were about
+    // the edges as it drew them. See `refineChecks`.
+    if (pass.rounds != 0 && pass.feedlines && pass.refinement &&
+        refineChecks()) {
+      static_cast<void>(checkFeedlineRoom(wires, pass.name));
+      static_cast<void>(checkCouplerCrossings(wires, pass.name));
+      static_cast<void>(checkResonatorCrossings(wires, pass.name));
+      static_cast<void>(checkFeedlineCrossings(wires, pass.name));
     }
   }
 
@@ -3272,11 +3665,17 @@ public:
                     "launcher stubs leave open at a run of {} cells inflated "
                     "by {} ({} cells of lead over the stub itself); a place "
                     "is taken where one of the eight orientations puts both "
-                    "feedline ports and their runs inside it",
+                    "feedline ports, their runs and the {} cells of the turn "
+                    "after them inside it",
                     couplerBox_.minX, couplerBox_.maxX, couplerBox_.minY,
-                    couplerBox_.maxY, tuning_.launcherStraight,
+                    couplerBox_.maxY,
+                    couplerBoxTurn()
+                        ? std::max(tuning_.launcherStraight,
+                                   tuning_.straightStart + BEND_RADIUS)
+                        : tuning_.launcherStraight,
                     tuning_.clearance,
-                    tuning_.launcherStraight - tuning_.straightStart));
+                    tuning_.launcherStraight - tuning_.straightStart,
+                    couplerBoxTurn() ? std::uint32_t{BEND_RADIUS} : 0U));
 
     // The approaches of every port, inflated by the clearance: no coupler
     // may sit in one and no feedline edge may run through one, because the
@@ -3695,6 +4094,7 @@ public:
       sayCoupler(wires, index);
     }
     static_cast<void>(checkFeedlineRoom(wires));
+    static_cast<void>(checkCouplerBodies(wires));
     static_cast<void>(checkCouplerCrossings(wires));
     static_cast<void>(checkResonatorCrossings(wires));
     static_cast<void>(checkFeedlineCrossings(wires));
@@ -3735,10 +4135,11 @@ public:
       kinked += found == 0 ? 0 : 1;
       kinks += found;
     }
-    say(std::format("coupler insertion: lead {} cells straight, {} of margin; "
-                    "{} of {} resonators keep a way with a corner no "
-                    "primitive makes, {} corners in all",
-                    leadStraight(), couplerLeadMargin(), kinked,
+    say(std::format("coupler insertion: lead {} cells straight, {} of margin, "
+                    "cut at {:.2f} of the target length; {} of {} resonators "
+                    "keep a way with a corner no primitive makes, {} corners "
+                    "in all",
+                    leadStraight(), couplerLeadMargin(), couplerBias(), kinked,
                     couplers_.size(), kinks));
     const auto missing = static_cast<std::uint32_t>(edges_.size()) - drawn;
     if (boundPairs_ > 0) {
@@ -3923,6 +4324,26 @@ public:
     [[nodiscard]] bool empty() const { return maxX < minX || maxY < minY; }
   };
 
+  /// The room a chain's edge has no choice about beyond a coupler's feedline
+  /// port: the straight run it is forced to make off it and the quarter turn
+  /// at the end of that run, in cells, exactly as `runsOfEdge` and
+  /// `corridorOfEdge` reckon it.
+  ///
+  /// `max(terminalSlot(), run + BEND_RADIUS)` with `run` the pad's own run on
+  /// this orientation — 26 cells axial and 20 diagonal on the benchmarks,
+  /// against the 16 a launcher's `straightStart + BEND_RADIUS` comes to. With
+  /// `couplerBoxTurn` off it is the figure the box had, `straightStart`.
+  [[nodiscard]] std::int64_t edgeRunOffPort(const Heading orientation) const {
+    if (!couplerBoxTurn()) {
+      return static_cast<std::int64_t>(tuning_.straightStart);
+    }
+    const auto run = couplerStubs()
+                         ? cellsOn(tuning_.couplerLength, orientation)
+                         : tuning_.straightStart;
+    return static_cast<std::int64_t>(
+        std::max(terminalSlot(), run + static_cast<std::uint32_t>(BEND_RADIUS)));
+  }
+
   /// Whether a coupler centred on a cell, in one orientation, keeps both of
   /// its feedline ports and the straight run the chain is forced to make off
   /// each of them inside the box.
@@ -3954,8 +4375,20 @@ public:
     }
     const auto edgeX = cx + ((halfDepth + 1) * across.dx);
     const auto edgeY = cy + ((halfDepth + 1) * across.dy);
-    const std::int64_t reach =
-        halfRun + static_cast<std::int64_t>(tuning_.straightStart);
+    // The straight run off the port, and the quarter turn the edge has to
+    // make at the end of it: a run that ends on the box edge leaves the
+    // curve after it nowhere but in a launcher's stub.
+    //
+    // **The run off a coupler port is not `straightStart`.** The two ends of
+    // a chain's edge are forced straight by different figures, and
+    // `runsOfEdge` is where they are said: `straightStart` at a launcher, the
+    // pad's own run — `cellsOn(couplerLength, orientation)`, 21 cells axial
+    // and 15 diagonal — at a coupler. `corridorOfEdge` then leaves
+    // `max(terminalSlot(), run + BEND_RADIUS)` open at each terminal, 26 at a
+    // coupler against 20 at a launcher. A box drawn on `straightStart` is ten
+    // cells short of the room the edge off this port has no choice about, so
+    // the same figure is used here. See `edgeRunOffPort`.
+    const std::int64_t reach = halfRun + edgeRunOffPort(orientation);
     for (const std::int64_t end : {-reach, reach}) {
       if (!couplerBox_.holds(edgeX + (end * along.dx),
                              edgeY + (end * along.dy))) {
@@ -4001,9 +4434,17 @@ public:
     // the launchers a little more room than their own stubs take, so that an
     // edge into a coupler at the box edge has somewhere to run. See
     // `launcherLead`.
-    const auto reach = static_cast<std::int64_t>(tuning_.launcherStraight +
-                                                 tuning_.clearance) +
-                       1;
+    //
+    // And the launcher's run alone is not what the wire off it needs: it is
+    // forced straight for `straightStart` and then has to *turn* to leave
+    // the channel, which takes `BEND_RADIUS` more. The longer of the two
+    // runs is what the box keeps clear — see `couplerBoxTurn`.
+    const auto run = couplerBoxTurn()
+                         ? std::max(tuning_.launcherStraight,
+                                    tuning_.straightStart + BEND_RADIUS)
+                         : tuning_.launcherStraight;
+    const auto reach =
+        static_cast<std::int64_t>(run + tuning_.clearance) + 1;
     for (const auto& [port, slot] : scene_.launcherCell) {
       const auto found = scene_.launcherHeading.find(port);
       if (found == scene_.launcherHeading.end()) {
@@ -4076,7 +4517,7 @@ public:
     // target of 2500, over by exactly the lead, and nothing downstream
     // shortens a way.
     const double wanted =
-        std::max(0.0, (target * COUPLER_BIAS) - leadLength());
+        std::max(0.0, (target * couplerBias()) - leadLength());
     // Where each cell of the way sits, so a cell of a segment can be named as
     // an index into the way again.
     std::unordered_map<std::uint64_t, std::size_t> indexOf;
@@ -4526,6 +4967,14 @@ public:
             std::abs(onDepth) > halfDepth * acrossNorm) {
           continue;
         }
+        // The pad's own copper. Nothing tested this against the box. The
+        // run is on the pad's far edge, so an axial body whose run is inside
+        // is inside too — but a diagonal one turns its corners out, and the
+        // rule is about the copper and not about the four axial cases.
+        if (!couplerBox_.holds(x, y)) {
+          return refuse(
+              std::format("the body leaves the box at ({},{})", x, y));
+        }
         const auto cell = static_cast<std::size_t>((y * width) + x);
         if (!free(cell)) {
           return refuse(std::format("the body meets {}", blocker));
@@ -4579,6 +5028,27 @@ public:
     // from and the edge that leaves nowhere else to go. These cells are the
     // feedline's terminal stubs, and the resonator's own head is let through
     // them below — they are what the coupling is made of.
+    //
+    // Both ports, the run the chain is forced to make off each of them and
+    // the quarter turn at the end of that run have to be in the box. The
+    // place was chosen so that at least one orientation manages it; the ones
+    // that do not are refused here, or the greedy would take a port past a
+    // launcher's stub and the edge into it would have to come back around —
+    // the detour the box exists to stop. The run is a straight line and the
+    // box is convex, so its two ends decide it, and these are the same two
+    // ends `terminalsInBox` tested when the place was picked.
+    {
+      const std::int64_t beyond = halfRun + edgeRunOffPort(option.orientation);
+      for (const std::int64_t end : {-beyond, beyond}) {
+        const auto x = edgeX + (end * along.dx);
+        const auto y = edgeY + (end * along.dy);
+        if (!couplerBox_.holds(x, y)) {
+          return refuse(std::format(
+              "the feedline's run along the pad leaves the box at ({},{})", x,
+              y));
+        }
+      }
+    }
     std::unordered_set<std::size_t> stubs;
     for (std::int64_t k = -halfRun - tuning_.straightStart;
          k <= halfRun + tuning_.straightStart; ++k) {
@@ -4586,17 +5056,6 @@ public:
       const auto y = edgeY + (k * along.dy);
       if (x < 0 || y < 0 || x >= width || y >= height) {
         return refuse("the feedline's run along the pad leaves the grid");
-      }
-      // Both ports and the run the chain is forced to make off each of them
-      // have to be in the box. The place was chosen so that at least one
-      // orientation manages it; the ones that do not are refused here, or
-      // the greedy would take a port past a launcher's stub and the edge
-      // into it would have to come back around — the detour the box exists
-      // to stop.
-      if (!couplerBox_.holds(x, y)) {
-        return refuse(std::format(
-            "the feedline's run along the pad leaves the box at ({},{})", x,
-            y));
       }
       const auto cell = static_cast<std::size_t>((y * width) + x);
       if (!free(cell)) {
@@ -4713,6 +5172,32 @@ public:
     }
     option.anchor = leaveFrom;
     option.arcEnd = tip;
+    // **The resonator's own turn.** The lead already carries the straight
+    // run the rule asks for off the pad — it is the quarter turn and
+    // `max(COUPLER_LEAD_STRAIGHT, straightStart)` — and the search begins
+    // on its tip. The first thing that search may want to do is bend, and a
+    // tip on the box edge leaves it no room to, exactly as a feedline port
+    // there leaves its edge none. So the `BEND_RADIUS` cells beyond the tip,
+    // on the heading the tip holds, are in the rule too.
+    if (couplerBoxTurn()) {
+      const auto onward = routing::headingVector(tip.heading);
+      // The lead already carries the resonator's own straight run. What
+      // comes after it is the second one the pass may hold it to —
+      // `SCPD_RESONATOR_STUB`, off by default — and then the bend.
+      const auto beyondTip =
+          static_cast<std::int64_t>(BEND_RADIUS) +
+          (resonatorStub() ? static_cast<std::int64_t>(tuning_.straightStart)
+                           : 0);
+      for (std::int64_t k = 1; k <= beyondTip; ++k) {
+        const auto x = static_cast<std::int64_t>(tip.x) + (k * onward.dx);
+        const auto y = static_cast<std::int64_t>(tip.y) + (k * onward.dy);
+        if (!couplerBox_.holds(x, y)) {
+          return refuse(std::format(
+              "the turn after the resonator's lead leaves the box at ({},{})",
+              x, y));
+        }
+      }
+    }
     // The way the option carries is the lead **and what is left to the
     // qubit**: the arc, the straight after it, and the old route onward
     // from the insertion point.
@@ -5161,12 +5646,18 @@ public:
       mine.insert(chain[edge.from].port);
     }
     const auto& stencil = stencilFor(tuning_.clearance);
+    // The straight run the wire off a launcher is forced to make, and the
+    // quarter turn at the end of it: the run alone leaves the wire able to
+    // cross the edge and nothing else — see `launcherFenceTurn`.
+    const auto launcherRun =
+        static_cast<std::int64_t>(tuning_.straightStart) +
+        (launcherFenceTurn() ? static_cast<std::int64_t>(BEND_RADIUS) : 0);
     const auto close = [&](const PathPoint& at) {
       // The straight run off the terminal, on the heading the wire leaves it
       // on, and the clearance around it.
       const auto v = routing::headingVector(at.heading);
       Path places;
-      for (std::int64_t k = 0; k <= tuning_.straightStart; ++k) {
+      for (std::int64_t k = 0; k <= launcherRun; ++k) {
         const auto x = static_cast<std::int64_t>(at.x) + (k * v.dx);
         const auto y = static_cast<std::int64_t>(at.y) + (k * v.dy);
         if (x < 0 || y < 0 || x >= width || y >= height) {
@@ -9006,17 +9497,29 @@ public:
     // overlay the router offers asks for a straight run on the far side
     // that a port beside the feedline cannot give.
     router_.setSingleCrossingFeedline(nullptr, 0, 1);
-    // The room around an edge, five times the price of the room around any
-    // other wire, as the prototype prices `all_feedline_paths`
-    // (`FinalGrid.cpp:11733`). Inflated by the clearance, which is the
-    // radius `compute_proximity_grid` is handed there.
-    //
-    // **The terminal edges are priced with the rest.** The prototype leaves
-    // them out of this list and closes them hard instead
-    // (`forbidden_paths_start_end`, `FinalGrid.cpp:11747`), so under it they
-    // need no price. Here they are drawn again like any other edge, and a
-    // wire that is neither fenced by them nor made to pay for their room
-    // treats a launcher run as free ground (user, 2026-09-30).
+    priceTheEdges(wire, wires, pass);
+  }
+
+  /// The room around an edge, five times the price of the room around any
+  /// other wire, as the prototype prices `all_feedline_paths`
+  /// (`FinalGrid.cpp:11733`). Inflated by the clearance, which is the
+  /// radius `compute_proximity_grid` is handed there.
+  ///
+  /// **The terminal edges are priced with the rest.** The prototype leaves
+  /// them out of this list and closes them hard instead
+  /// (`forbidden_paths_start_end`, `FinalGrid.cpp:11747`), so under it they
+  /// need no price. Here they are drawn again like any other edge, and a
+  /// wire that is neither fenced by them nor made to pay for their room
+  /// treats a launcher run as free ground (user, 2026-09-30).
+  ///
+  /// Its own method because the refinement builds the room price after the
+  /// constraints and so has to stamp these again on top of it: see
+  /// `refinePriceLast`.
+  void priceTheEdges(const Wire& wire, const std::vector<Wire>& wires,
+                     const Pass& pass) {
+    if (!pass.feedlines) {
+      return;
+    }
     const auto strong = static_cast<std::uint8_t>(
         std::min<std::uint32_t>(127U, 5U * tuning_.wireProximityPenalty));
     for (const auto& edge : edges_) {
@@ -10520,6 +11023,13 @@ public:
     // is not the last word on it. Only here, under the switch, so that
     // `SCPD_REPAIR_SEARCH=0` reproduces the stage's lines exactly.
     static_cast<void>(checkFeedlineCrossings(wires, "feedline routing"));
+    // And the first guarantee on what the sweep left, so that a pair the
+    // refinement's own line reports can be told from one the sweep made:
+    // the insertion's line is about the edges as the insertion drew them,
+    // and every pass after it draws them again. See `refineChecks`.
+    if (refineChecks()) {
+      static_cast<void>(checkFeedlineRoom(wires, "feedline routing"));
+    }
     const auto seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
             .count();
@@ -10780,7 +11290,9 @@ private:
       }
       std::string said;
       if (!found.empty()) {
-        const auto made = lengthen(wire, found, priced);
+        const auto made =
+            lengthen(wire, found, priced,
+                     pass.refinement ? 1.0 : sweepLengthBand());
         said = made.note;
         note = " · " + said;
         if (!made.reached) {
@@ -11461,7 +11973,9 @@ private:
   /// there, through the terminal slot, and `checkFeedlineRoom` is what has
   /// something to say about that stretch.
   [[nodiscard]] std::uint32_t
-  checkResonatorCrossings(const std::vector<Wire>& wires) {
+  checkResonatorCrossings(const std::vector<Wire>& wires,
+                          const std::string_view stage =
+                              "coupler insertion") {
     std::uint32_t pairs = 0;
     std::string named;
     for (const auto& edge : edges_) {
@@ -11491,9 +12005,9 @@ private:
         }
       }
     }
-    say(std::format("coupler insertion: CHECK resonator crossings — {} "
+    say(std::format("{}: CHECK resonator crossings — {} "
                     "feedline{} cross a resonator{}{}",
-                    pairs, pairs == 1 ? "" : "s",
+                    stage, pairs, pairs == 1 ? "" : "s",
                     pairs == 0 ? "; the check is GREEN" : ": ", named));
     return pairs;
   }
@@ -11507,7 +12021,8 @@ private:
   /// with them, and the edge leaving a coupler was drawn through the edge
   /// arriving at it (user, 2026-10-03).
   [[nodiscard]] std::uint32_t checkCouplerCrossings(
-      const std::vector<Wire>& wires) {
+      const std::vector<Wire>& wires,
+      const std::string_view stage = "coupler insertion") {
     std::uint32_t pairs = 0;
     std::string named;
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
@@ -11530,11 +12045,185 @@ private:
         }
       }
     }
-    say(std::format("coupler insertion: CHECK coupler crossings — {} pair{} "
+    say(std::format("{}: CHECK coupler crossings — {} pair{} "
                     "of edges meeting at a coupler cross{}{}",
-                    pairs, pairs == 1 ? "" : "s",
+                    stage, pairs, pairs == 1 ? "" : "s",
                     pairs == 0 ? "; the check is GREEN" : ": ", named));
     return pairs;
+  }
+
+  /// Whether every committed coupler lies wholly inside the box, measured on
+  /// all three pieces of copper it puts on the chip.
+  ///
+  /// **The body alone is the wrong half.** The feedline runs along the pad's
+  /// *far* edge, `halfDepth + 1` cells across the centre, so the body always
+  /// lies inside the run and a check on the body says GREEN while the run
+  /// sits on the box edge. On 17q that is five couplers of seventeen — 3 and
+  /// 4 with their run on `maxX` 1347, 8 on `minY` 77, 12 on `minX` 77, 16
+  /// four cells off `maxY` — and the edges f2, f8, f12/f13 and f17 then run
+  /// the length of the chip along that line. So the check measures:
+  ///
+  /// - the **body**, `couplerLength` along the orientation by
+  ///   `couplerHeight` across it, as `option.body` holds it;
+  /// - the **run**, the pad's two feedline ports and the straight run the
+  ///   chain is forced to make off each of them plus its turn — the pad's own
+  ///   run at a coupler and not `straightStart`, see `edgeRunOffPort`;
+  /// - the **lead**, the resonator's own quarter turn off the near edge and
+  ///   the straight run after it, `option.arc`;
+  /// - the **turn**, the `BEND_RADIUS` cells beyond the lead's tip on the
+  ///   heading it holds — the room the resonator's search needs to bend at
+  ///   all, which is the same thing the run's straight stubs need.
+  ///
+  /// Per piece: how many couplers reach outside, the worst overshoot in
+  /// cells, and — so that the line carries a measured figure when it is
+  /// green — how far the piece that comes nearest a side of the box still
+  /// stays off it. A slack of 0 is a piece *on* the box edge: legal, and one
+  /// cell from not being. The box side is the first cell a launcher's stub
+  /// and its clearance leave open, so a coupler there keeps the design rule
+  /// from that stub by exactly one cell and leaves the wire off that
+  /// launcher nothing to turn in — see `launcherFenceTurn`.
+  ///
+  /// Said once, at the end of the insertion: a coupler does not move again —
+  /// the feedline passes redraw edges and resonators, never a pad — so a
+  /// second line in the refinement would re-print this one rather than
+  /// re-measure it.
+  [[nodiscard]] std::uint32_t checkCouplerBodies(
+      const std::vector<Wire>& wires,
+      const std::string_view stage = "coupler insertion") {
+    /// One piece of copper, measured against the box.
+    struct Piece {
+      std::string_view what;
+      std::uint32_t outside = 0;
+      std::int64_t worst = 0;
+      std::string named;
+      std::int64_t tightest = std::numeric_limits<std::int64_t>::max();
+      std::string closest;
+    };
+    std::array<Piece, 4> pieces{Piece{.what = "body"}, Piece{.what = "run"},
+                                Piece{.what = "lead"}, Piece{.what = "turn"}};
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    // How far a cell reaches past a side of the box; negative inside. The
+    // slack reported is to the box side itself, which is the figure a
+    // picture shows: zero is a piece *on* the edge, which the rule allows.
+    const auto past = [this](const std::int64_t x, const std::int64_t y) {
+      return std::max({couplerBox_.minX - x, x - couplerBox_.maxX,
+                       couplerBox_.minY - y, y - couplerBox_.maxY});
+    };
+    const auto measure = [&](Piece& piece, const std::string& id,
+                             const std::vector<std::pair<std::int64_t,
+                                                         std::int64_t>>& at) {
+      std::int64_t over = 0;
+      std::int64_t overX = 0;
+      std::int64_t overY = 0;
+      for (const auto& [x, y] : at) {
+        const auto out = past(x, y);
+        if (out > over) {
+          over = out;
+          overX = x;
+          overY = y;
+        }
+        if (-past(x, y) < piece.tightest) {
+          piece.tightest = -past(x, y);
+          piece.closest = std::format("'{}' at ({},{})", id, x, y);
+        }
+      }
+      if (over <= 0) {
+        return;
+      }
+      ++piece.outside;
+      piece.worst = std::max(piece.worst, over);
+      if (piece.outside <= 8) {
+        piece.named +=
+            std::format("{}'{}' by {} cell{} at ({},{})",
+                        piece.named.empty() ? "" : " · ", id, over,
+                        over == 1 ? "" : "s", overX, overY);
+      }
+    };
+
+    for (const auto& coupler : couplers_) {
+      if (coupler.wire >= wires.size() ||
+          coupler.chosen >= coupler.options.size()) {
+        continue;
+      }
+      const auto& option = coupler.options[coupler.chosen];
+      const auto id = wireId(wires[coupler.wire]);
+
+      std::vector<std::pair<std::int64_t, std::int64_t>> at;
+      at.reserve(option.body.size());
+      for (const auto cell : option.body) {
+        at.emplace_back(static_cast<std::int64_t>(cell) % width,
+                        static_cast<std::int64_t>(cell) / width);
+      }
+      measure(pieces[0], id, at);
+
+      // The run: the line through the two feedline ports, carried
+      // `straightStart` past each of them on the orientation. Built the way
+      // `makeOption` builds it, off the ports rather than off the centre, so
+      // that a diagonal orientation is measured where its copper is.
+      at.clear();
+      const auto along = routing::headingVector(option.orientation);
+      const auto fromX = static_cast<std::int64_t>(option.in.x);
+      const auto fromY = static_cast<std::int64_t>(option.in.y);
+      // The span from port to port, read off the two ports themselves.
+      // **Not `option.run`**: that is `cellsOn(couplerLength, orientation)`
+      // and the ports sit at `± cellsOn(...) / 2` of the centre, so on an odd
+      // run the two differ by a cell and the check reported a cell of
+      // overshoot that `makeOption` had never allowed (17q coupler '40').
+      const auto span = std::max(
+          std::abs(static_cast<std::int64_t>(option.out.x) - fromX),
+          std::abs(static_cast<std::int64_t>(option.out.y) - fromY));
+      // The same figure `terminalsInBox` and `corridorOfEdge` use, which at
+      // a coupler port is the pad's own run and not `straightStart` — see
+      // `edgeRunOffPort`.
+      const auto off = edgeRunOffPort(option.orientation);
+      for (std::int64_t k = -off; k <= span + off; ++k) {
+        at.emplace_back(fromX + (k * along.dx), fromY + (k * along.dy));
+      }
+      measure(pieces[1], id, at);
+
+      at.clear();
+      at.reserve(option.arc.size());
+      for (const auto& step : option.arc) {
+        at.emplace_back(static_cast<std::int64_t>(step.x),
+                        static_cast<std::int64_t>(step.y));
+      }
+      measure(pieces[2], id, at);
+
+      // The quarter turn the resonator's search may want off the lead's tip.
+      at.clear();
+      const auto onward = routing::headingVector(option.arcEnd.heading);
+      const auto beyondTip =
+          static_cast<std::int64_t>(BEND_RADIUS) +
+          (resonatorStub() ? static_cast<std::int64_t>(tuning_.straightStart)
+                           : 0);
+      for (std::int64_t k = 1; k <= beyondTip; ++k) {
+        at.emplace_back(
+            static_cast<std::int64_t>(option.arcEnd.x) + (k * onward.dx),
+            static_cast<std::int64_t>(option.arcEnd.y) + (k * onward.dy));
+      }
+      measure(pieces[3], id, at);
+    }
+
+    std::uint32_t outside = 0;
+    std::string line;
+    for (auto& piece : pieces) {
+      outside += piece.outside;
+      if (piece.closest.empty()) {
+        piece.tightest = 0;
+        piece.closest = "nothing";
+      }
+      line += std::format("{}{} {} outside (worst {}, tightest {} off, {}){}",
+                          line.empty() ? "" : "; ", piece.outside, piece.what,
+                          piece.worst, piece.tightest, piece.closest,
+                          piece.named.empty() ? "" : ": " + piece.named);
+    }
+    say(std::format("{}: CHECK coupler bodies — of {} coupler{} against the "
+                    "box x {}..{} y {}..{}: {}{}",
+                    stage, couplers_.size(), couplers_.size() == 1 ? "" : "s",
+                    couplerBox_.minX, couplerBox_.maxX, couplerBox_.minY,
+                    couplerBox_.maxY, line,
+                    outside == 0 ? "; the check is GREEN" : ""));
+    return outside;
   }
 
   /// The pairs of drawn edges of **different** chains whose ways cross, by
@@ -11631,7 +12320,9 @@ private:
   /// stage's own fence.
   ///
   /// @returns How many feedline/coupler pairs break it.
-  [[nodiscard]] std::uint32_t checkFeedlineRoom(std::vector<Wire>& wires) {
+  [[nodiscard]] std::uint32_t
+  checkFeedlineRoom(std::vector<Wire>& wires,
+                    const std::string_view stage = "coupler insertion") {
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     const auto height = static_cast<std::int64_t>(scene_.router.height);
     // What the corridor closes, by coupler, so a pair can be named.
@@ -11711,9 +12402,9 @@ private:
       }
     }
     say(std::format(
-        "coupler insertion: CHECK feedline room — {} feedline/{} pair{} "
+        "{}: CHECK feedline room — {} feedline/{} pair{} "
         "closer than the rule{}{}",
-        pairs, fenceTheLeadOnly() ? "lead" : "resonator",
+        stage, pairs, fenceTheLeadOnly() ? "lead" : "resonator",
         pairs == 1 ? "" : "s",
         pairs == 0 ? "; the check is GREEN" : ": ", named));
     return pairs;
@@ -14033,7 +14724,8 @@ public:
                      .maxRelaxation = 0,
                      .reach = tuning.reach,
                      .straightStart = tuning.straightStart,
-                     .keepDrawn = false});
+                     .keepDrawn = false,
+                     .refinement = true});
       driver.sayLengthPoints(wires, outer);
       routing.phases.push_back(
           snapshotOf("outer", wires, ring, global.connections.size(), measure));
@@ -14104,7 +14796,8 @@ public:
                        .reach = tuning.reach,
                        .straightStart = tuning.straightStart,
                        .keepDrawn = false,
-                       .feedlines = true});
+                       .feedlines = true,
+                       .refinement = true});
         routing.phases.push_back(snapshotOf("refined", wires, ring,
                                             global.connections.size(), measure,
                                             edges, couplersNow(), nullptr,

@@ -69,6 +69,9 @@ PLANNING_COLORS: dict[str, str] = {
     # avoids, so that it stands apart from the blue of a wire and the orange of an inner wire,
     # and wide enough to be found at the zoom of a whole chip.
     "failing": "#E6002E",
+    # The resonators the Final stage left off their target length: an amber that reads under the
+    # red of a failing wire, so a wire that is both shows as failing.
+    "offlength": "#E08A00",
     # The feedline edges the coupler insertion found squeezed: a magenta that is neither the red
     # of a failing wire nor the violet of a chain, dashed so that the two read apart where both
     # lie on one edge.
@@ -274,6 +277,15 @@ def _planning_layers(
     if planning.couplers:
         data = "".join(polyline(ring, close=True) for ring in planning.couplers)
         parts.append(f'<g class="l-coupler"><path d="{data}"/></g>')
+    if planning.off_length:
+        # The resonators off their target length, under the failing layer: both figures of the
+        # fifth phase are in the picture, and the one that matters more is drawn last.
+        marks = "".join(
+            f'<path d="{polyline(points)}"><title>{escape("wire " + name + ": " + ", ".join(verdicts))}</title></path>'
+            for name, verdicts, points in planning.off_length
+            if len(points) >= 2
+        )
+        parts.append(f'<g class="l-offlength">{marks}</g>')
     if planning.failing:
         # What the stage's last line counted, one element per wire so that hovering one names it
         # and what is held against it. Over every other layer: a failing wire lies on its own
@@ -312,13 +324,21 @@ def _planning_layers(
     return "".join(parts)
 
 
-def _planning_style(font: float, clearance: float = 0.0, *, failing: bool = False, squeezed: bool = False) -> str:
+def _planning_style(
+    font: float,
+    clearance: float = 0.0,
+    *,
+    failing: bool = False,
+    squeezed: bool = False,
+    off_length: bool = False,
+) -> str:
     """The stroke of every planning layer, and the type of the capacity labels.
 
     Args:
         font: The size of a gate label, in layout units.
         clearance: The width of the band drawn around every wire, in layout units. Zero draws none.
         failing: Whether the picture marks wires the Final stage left failing.
+        off_length: Whether the picture marks resonators the Final stage left off their length.
         squeezed: Whether the picture marks feedline edges the coupler insertion found squeezed.
 
     Returns:
@@ -361,6 +381,12 @@ def _planning_style(font: float, clearance: float = 0.0, *, failing: bool = Fals
         f"g.l-coupler>path{{fill:{ROLE_COLORS['coupler']};fill-opacity:0.45;"
         f"stroke:{ROLE_COLORS['coupler']};stroke-width:1.2;vector-effect:non-scaling-stroke}}"
     )
+    if off_length:
+        style += (
+            f"g.l-offlength>path{{fill:none;stroke:{PLANNING_COLORS['offlength']};stroke-width:3.4;"
+            "stroke-opacity:0.8;stroke-dasharray:14 5;stroke-linejoin:round;"
+            "vector-effect:non-scaling-stroke}"
+        )
     if failing:
         style += (
             f"g.l-failing>path{{fill:none;stroke:{PLANNING_COLORS['failing']};stroke-width:3.4;"
@@ -374,9 +400,15 @@ def _planning_style(font: float, clearance: float = 0.0, *, failing: bool = Fals
             f"g.l-squeezed>circle{{fill:{PLANNING_COLORS['squeezed']};stroke:none}}"
         )
     if clearance > 0:
+        # 0.26, where it was 0.13 (user, 2026-10-06). At 0.13 a single band is
+        # all but invisible at the zoom of a whole chip and only the places
+        # where two bands overlap read, so the picture looks as if the room
+        # were drawn at the crossings alone. The overlap still reads darker,
+        # which is what the band is for; it is just no longer the only thing
+        # that reads.
         style += (
             f"g.l-clearance>path{{fill:none;stroke:{PLANNING_COLORS['clearance']};"
-            f"stroke-width:{_number(clearance)};stroke-opacity:0.13;"
+            f"stroke-width:{_number(clearance)};stroke-opacity:0.26;"
             "stroke-linejoin:round;stroke-linecap:round}"
         )
     return style
@@ -477,8 +509,18 @@ def layout_svg(
             'vector-effect="non-scaling-stroke"/>'
             f'<text x="{_number(1.2 * font)}" y="0">failing ({len(planning.failing)})</text></g>'
         )
-    if planning is not None and planning.squeezed:
+    if planning is not None and planning.off_length:
         slot = len(shown) + (1 if planning.failing else 0)
+        legend += (
+            f'<g transform="translate({_number(pad + slot * 11 * font)},'
+            f'{_number(view_height + bottom_band - 0.7 * font)})">'
+            f'<path d="M0 {_number(-0.35 * font)}L{_number(0.9 * font)} {_number(-0.35 * font)}" '
+            f'stroke="{PLANNING_COLORS["offlength"]}" stroke-width="3.4" stroke-dasharray="6 3" '
+            'vector-effect="non-scaling-stroke"/>'
+            f'<text x="{_number(1.2 * font)}" y="0">off its length ({len(planning.off_length)})</text></g>'
+        )
+    if planning is not None and planning.squeezed:
+        slot = len(shown) + (1 if planning.failing else 0) + (1 if planning.off_length else 0)
         legend += (
             f'<g transform="translate({_number(pad + slot * 11 * font)},'
             f'{_number(view_height + bottom_band - 0.7 * font)})">'
@@ -506,6 +548,7 @@ def layout_svg(
             planning.clearance if planning is not None else 0.0,
             failing=planning is not None and bool(planning.failing),
             squeezed=planning is not None and bool(planning.squeezed),
+            off_length=planning is not None and bool(planning.off_length),
         )
     caption = f'<text x="{_number(pad)}" y="{_number(-top_band + 1.5 * font)}">{escape(title)}</text>' if title else ""
     return (

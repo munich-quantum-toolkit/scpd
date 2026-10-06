@@ -33,8 +33,16 @@ halo's edge of the orthogonal crossing rule (17q 14, 31, 33, 56; 21q 27;
 [handover-chain-astar.md](handover-chain-astar.md) (the search that
 settles a chain, the clock) and
 [handover-targeted-repair.md](handover-targeted-repair.md) (the repair,
-not yet rerun on this state). HEAD is `454df86`; the afternoon's and
-evening's work of 2026-10-05 is uncommitted on top of it.
+not yet rerun on this state).
+
+**The fifth phase has been built since then**, and with it the lengths are
+read for the first time:
+[handover-feedline-refinement.md](handover-feedline-refinement.md). Under
+it the stage ends at `bad` **2** over the eight chips and **6** resonators
+off their target length, no long anywhere and five chips clean on both
+figures; the two that are left are 17q's 31 and 69q's 15, the same
+halo's-edge case. HEAD is `624130f`; that phase is uncommitted on top of
+it.
 
 ## The pipeline now
 

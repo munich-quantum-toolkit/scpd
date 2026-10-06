@@ -104,18 +104,21 @@ class FinalParams(object):
 
     # The same after the feedline routing, over the ring with the edges of
     # the chains, under the feedline constraints: the fifth phase of the
-    # stage, the prototype's feedline refinement.
+    # stage, the prototype's feedline refinement, and the phase in which a
+    # resonator is finally made its target length.
     #
-    # Off by default for now, by the user's decision: the phase is built and
-    # keeps its verdict, but while the coupler rules are being worked out the
-    # measurements are to show what the sweep and the repair leave, not what
-    # a later pass moved. Set it to five to run it again.
+    # **On since 2026-10-05** (user). Over the eight benchmarks it takes the
+    # stage from `bad` 8 to 2 and from 102 resonators off their length to 6,
+    # for about twice the runtime; five of the eight end clean on both
+    # figures. The prototype runs five rounds; two is what was measured.
+    # Zero switches the phase off and leaves the stage where the feedline
+    # routing ends.
     # FinalParams
     def FeedlineRefinementRounds(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 0
+        return 2
 
     # How long a resonator's way is made before the coupler is spliced into
     # it, in layout units. Zero switches the meander off.
@@ -262,7 +265,7 @@ def AddRefinementRounds(builder: flatbuffers.Builder, refinementRounds: int):
     FinalParamsAddRefinementRounds(builder, refinementRounds)
 
 def FinalParamsAddFeedlineRefinementRounds(builder: flatbuffers.Builder, feedlineRefinementRounds: int):
-    builder.PrependUint32Slot(7, feedlineRefinementRounds, 0)
+    builder.PrependUint32Slot(7, feedlineRefinementRounds, 2)
 
 def AddFeedlineRefinementRounds(builder: flatbuffers.Builder, feedlineRefinementRounds: int):
     FinalParamsAddFeedlineRefinementRounds(builder, feedlineRefinementRounds)
@@ -340,7 +343,7 @@ class FinalParamsT(object):
         innerRounds = 4,
         maxRelaxation = 10,
         refinementRounds = 2,
-        feedlineRefinementRounds = 0,
+        feedlineRefinementRounds = 2,
         meanderLength = 3000.0,
         bendPenaltyNorm = 2.5,
         wireProximityPenaltyNorm = 0.00125,

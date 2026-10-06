@@ -69,8 +69,10 @@ rounds            = 6
 max_relaxation    = 8
 refinement_rounds = 5
 
-# The measurement of the feedline routing on its own: the repair is off, so
-# that what the sweep leaves is what is counted, and the run stops after the
-# feedlines.
+# The repair is off, so that what the sweep and the refinement leave is what
+# is counted. The run goes to the end of the stage: the fifth phase is where
+# every resonator is made its target length, and the two figures the stage is
+# judged by are `bad = unrouted + open + crossing` and the resonators off
+# their length.
 repair_trials = 0
-stop_after    = "feedlines"
+stop_after    = "refined"

@@ -127,6 +127,38 @@ def test_the_failing_wires_are_marked_over_the_picture() -> None:
     assert "failing (" not in plain
 
 
+def test_the_resonators_off_their_length_are_marked_on_a_layer_of_their_own() -> None:
+    """The two length verdicts are their own layer, drawn under the failing one and counted apart."""
+    config_path = BENCHMARKS / "9q" / "config.toml"
+    model = decode_chip(load_chip(load_config(config_path), config_path))
+    short = [(1000.0, 1000.0), (1400.0, 1000.0)]
+    both = [(2000.0, 900.0), (2000.0, 1800.0)]
+    planning = PlanningGeometry(
+        wires=[short, both],
+        failing=[("1", ["open", "long"], both)],
+        off_length=[("0", ["short"], short), ("1", ["open", "long"], both)],
+    )
+
+    svg = layout_svg(model, planning=planning)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    groups = [group for group in root.iter(f"{SVG}g") if group.get("class") == "l-offlength"]
+    assert len(groups) == 1
+    marks = groups[0].findall(f"{SVG}path")
+    assert [mark.findtext(f"{SVG}title") for mark in marks] == ["wire 0: short", "wire 1: open, long"]
+    # Under the failing layer, so a wire that is both reads as failing.
+    order = [group.get("class") for group in root.iter(f"{SVG}g") if group.get("class") in {"l-offlength", "l-failing"}]
+    assert order == ["l-offlength", "l-failing"]
+    assert any(text.text == "off its length (2)" for text in root.iter(f"{SVG}text"))
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert "g.l-offlength>path" in style.text
+    plain = layout_svg(model, planning=PlanningGeometry(wires=[short]))
+    assert "l-offlength" not in plain
+    assert "off its length (" not in plain
+
+
 def test_an_empty_chip_cannot_be_drawn() -> None:
     """A chip without geometry is a PlotError, not a division by zero."""
     with pytest.raises(PlotError, match="no obstacle vertex and no port"):

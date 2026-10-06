@@ -1060,6 +1060,80 @@ stops being tested.** With `SCPD_CHAIN_KEEP_WAYS` on, 69q draws 81 of 81 and
 seventeen of them cross other edges. The undrawn count went to zero because
 the test went away, not because the geometry improved.
 
+## The coupler box margins (2026-10-06, built, swept and taken out)
+
+Two margins were built on top of the box rule and **removed again at the
+user's instruction**. Nothing of them is in the tree: `SCPD_COUPLER_BOX_MARGIN`
+and `SCPD_LAUNCHER_FENCE_MARGIN` do not exist, and setting either does nothing
+and says nothing. This section is here so the measurement does not go with the
+code.
+
+What they attached to are the two switches that *are* in the tree, both
+**off**: `SCPD_COUPLER_BOX_TURN`, which draws the box at
+`max(launcherStraight, straightStart + BEND_RADIUS) + clearance + 1` — 36 cells
+from a launcher cell against the 32 it has — and holds every piece of a coupler
+inside it with its own forced straight run and the quarter turn after it; and
+`SCPD_LAUNCHER_FENCE_TURN`, which makes the fence `corridorOfEdge` lays on
+every other launcher reserve `straightStart + BEND_RADIUS` rather than
+`straightStart`. Each margin was that many cells further off the box side than
+its rule asks.
+
+**17q to `feedlines`, `bad = unrouted + open + crossing`**, the coupler
+margin swept with both turn switches on:
+
+| margin | 0 | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|---|
+| `bad` | 4 | 5 | 4 | 4 | **2** | **1** |
+| s | 59 | 56 | 59 | 57 | 51 | 52 |
+
+A threshold and not a slope: the two open wires 31 and 32 fall away at 4 and
+two of the three crossings at 5. The baseline with both switches off is `bad` 4
+(14, 31, 33, 56) in 38 s, so a margin of 5 was the best figure ever measured at
+this stage — `bad` 1, crossing 13 alone, no open wire, and **without**
+`SCPD_CROSSING_EXIT_HEADING`. Above 5 is unmeasured, and so is every chip but
+17q. The launcher-fence margin was measured only at 1 and 5 and is worse at
+both.
+
+**Why it is nevertheless out**, and this is the part worth reading before
+building it again. A box refusal in `makeOption` does not discard an option; it
+advances the place. `optionsOf` walks every place of the resonator's way, in
+order of mismatch to the biased target length, and keeps the **first that
+fits** — so the margin's primary effect is to move the cut, and an option is
+lost only where no place of the whole way fits for that tuple. Both happen,
+measured from margin 0 to 5:
+
+- **28 of 611 options lost** (4.6 %), on the six couplers at the box edge:
+  resonator 55 22 → 13, 44 11 → 7, 26 20 → 15, 15 31 → 26, 1 32 → 29,
+  11 36 → 34. Resonators 15 and 44 each lose a whole orientation.
+- **8 of 17 cuts moved, every one of them the same way**: less way left to the
+  qubit, so the resonator gets *shorter* — 1 by 71 units, 11 and 40 by 70, 55
+  by 60, 15 and 39 by 50, 30 by 28, 26 by 10. All eight were already short of
+  the 3000 the rule asks, so the margin moves them further from it: the places
+  the box still allows lie inward, and inward is the qubit's direction.
+
+So the margin buys its `bad` by pushing couplers out of the launcher channel
+and a little toward their qubits, and pays in options and in length. **Every
+measurement here stopped at `feedlines`**, which is the phase *before* the one
+that makes resonators their length, so whether the refinement wins those 71
+units back is not known. That is the open question to settle first.
+
+To build it back: two `envWhole` helpers and a third argument at the five
+`couplerBox_.holds(...)` call sites in `terminalsInBox` and `makeOption` plus
+the fence run in `corridorOfEdge`. `CouplerBox::holds` still carries the
+`margin` parameter, unused. Arms: `runs2-m0` … `runs2-m5` for the sweep.
+
+**Do not believe the arms `stub-m0` and `stub-m5`** (`bad` 2 at margin 0 and 5
+at margin 5, the opposite ranking). They were measured while the box rule used
+`straightStart` as the straight run an edge is forced to make off a *coupler*
+port, which is a launcher's figure. The user caught it: `runsOfEdge` gives a
+coupler port the pad's own run, `cellsOn(couplerLength, orientation)` — 21
+cells axial and 15 diagonal — and `corridorOfEdge` then opens
+`max(terminalSlot(), run + BEND_RADIUS)`, 26 at an axial coupler against 20 at
+a launcher. Ten cells short at every coupler port, and with the figure
+corrected the margin's ranking reverses. `edgeRunOffPort(orientation)` is the
+one place that says it now, shared by `terminalsInBox`, `makeOption` and
+`checkCouplerBodies`.
+
 ## Measured and rejected
 
 Do not re-attempt these without new evidence.

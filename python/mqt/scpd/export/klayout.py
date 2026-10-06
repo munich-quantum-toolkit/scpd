@@ -67,6 +67,9 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "failing": (29, 0, "final.failing"),
     # The feedline edges the coupler insertion found leaving too little room beside them.
     "squeezed": (30, 0, "final.squeezed"),
+    # The resonators the Final stage left off their target length, short or long, which is the
+    # second figure of the fifth phase and a layer of its own rather than a part of `failing`.
+    "offlength": (31, 0, "final.off-length"),
 }
 
 #: How wide a planning line is drawn, in layout units. A path needs a width to be a shape at all;
@@ -239,6 +242,12 @@ def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # noq
     if planning.failing:
         target = layer("failing")
         for _, _, route in planning.failing:
+            if len(route) >= 2:
+                top.shapes(target).insert(path(route))
+                written += 1
+    if planning.off_length:
+        target = layer("offlength")
+        for _, _, route in planning.off_length:
             if len(route) >= 2:
                 top.shapes(target).insert(path(route))
                 written += 1

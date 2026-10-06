@@ -1256,7 +1256,7 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   uint32_t inner_rounds = 4;
   uint32_t max_relaxation = 10;
   uint32_t refinement_rounds = 2;
-  uint32_t feedline_refinement_rounds = 0;
+  uint32_t feedline_refinement_rounds = 2;
   double meander_length = 3000.0;
   double bend_penalty_norm = 2.5;
   double wire_proximity_penalty_norm = 0.00125;
@@ -1341,14 +1341,17 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   /// The same after the feedline routing, over the ring with the edges of
   /// the chains, under the feedline constraints: the fifth phase of the
-  /// stage, the prototype's feedline refinement.
+  /// stage, the prototype's feedline refinement, and the phase in which a
+  /// resonator is finally made its target length.
   ///
-  /// Off by default for now, by the user's decision: the phase is built and
-  /// keeps its verdict, but while the coupler rules are being worked out the
-  /// measurements are to show what the sweep and the repair leave, not what
-  /// a later pass moved. Set it to five to run it again.
+  /// **On since 2026-10-05** (user). Over the eight benchmarks it takes the
+  /// stage from `bad` 8 to 2 and from 102 resonators off their length to 6,
+  /// for about twice the runtime; five of the eight end clean on both
+  /// figures. The prototype runs five rounds; two is what was measured.
+  /// Zero switches the phase off and leaves the stage where the feedline
+  /// routing ends.
   uint32_t feedline_refinement_rounds() const {
-    return GetField<uint32_t>(VT_FEEDLINE_REFINEMENT_ROUNDS, 0);
+    return GetField<uint32_t>(VT_FEEDLINE_REFINEMENT_ROUNDS, 2);
   }
   /// How long a resonator's way is made before the coupler is spliced into
   /// it, in layout units. Zero switches the meander off.
@@ -1465,7 +1468,7 @@ struct FinalParamsBuilder {
     fbb_.AddElement<uint32_t>(FinalParams::VT_REFINEMENT_ROUNDS, refinement_rounds, 2);
   }
   void add_feedline_refinement_rounds(uint32_t feedline_refinement_rounds) {
-    fbb_.AddElement<uint32_t>(FinalParams::VT_FEEDLINE_REFINEMENT_ROUNDS, feedline_refinement_rounds, 0);
+    fbb_.AddElement<uint32_t>(FinalParams::VT_FEEDLINE_REFINEMENT_ROUNDS, feedline_refinement_rounds, 2);
   }
   void add_meander_length(double meander_length) {
     fbb_.AddElement<double>(FinalParams::VT_MEANDER_LENGTH, meander_length, 3000.0);
@@ -1514,7 +1517,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     uint32_t inner_rounds = 4,
     uint32_t max_relaxation = 10,
     uint32_t refinement_rounds = 2,
-    uint32_t feedline_refinement_rounds = 0,
+    uint32_t feedline_refinement_rounds = 2,
     double meander_length = 3000.0,
     double bend_penalty_norm = 2.5,
     double wire_proximity_penalty_norm = 0.00125,
@@ -1559,7 +1562,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     uint32_t inner_rounds = 4,
     uint32_t max_relaxation = 10,
     uint32_t refinement_rounds = 2,
-    uint32_t feedline_refinement_rounds = 0,
+    uint32_t feedline_refinement_rounds = 2,
     double meander_length = 3000.0,
     double bend_penalty_norm = 2.5,
     double wire_proximity_penalty_norm = 0.00125,

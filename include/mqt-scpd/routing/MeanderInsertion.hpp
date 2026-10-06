@@ -16,6 +16,8 @@
 
 #include <cstdint>
 #include <functional>
+#include <utility>
+#include <vector>
 
 namespace mqt::scpd::routing {
 
@@ -85,6 +87,49 @@ struct MeanderResult {
   /// How many placements were tried, and how many of them fitted.
   uint32_t candidates = 0;
   uint32_t fits = 0;
+  /// The budget a pair is drawn from: how many cells of the path lie on a
+  /// straight run, how many of them the start margin puts out of reach, and
+  /// the widest span in cells any pair of the rest spans. A loop needs
+  /// `minStraightLength + 2 · minRadius` of span, so a widest span below
+  /// that figure is an insertion that could not have placed anything.
+  uint32_t straightCells = 0;
+  uint32_t reserved = 0;
+  uint32_t widestSpan = 0;
+
+  /// Why the placements that were tried did not fit. A resonator that stays
+  /// short says what stood in its way rather than only how many placements
+  /// were counted, which is the one thing a count of 21420 does not tell:
+  /// a loop refused for want of room is a different problem from one refused
+  /// because no pair of the way lies far enough apart to carry it.
+  struct Refusals {
+    /// The two turned ends do not face each other.
+    uint32_t headingsApart = 0;
+    /// The pair lies closer than `minStraightLength` plus the two radii, so
+    /// the loop's two legs would be nearer each other than the shape allows.
+    uint32_t tooClose = 0;
+    /// The loop would have to be shallower than nothing: the stretch it
+    /// replaces is already longer than the length wanted.
+    uint32_t noDepth = 0;
+    /// The loop's far edge lies outside the box it may use — the widest free
+    /// strip along the pair, cut down to the grid.
+    uint32_t outsideBox = 0;
+    /// The loop does not come back to the far end of the pair.
+    uint32_t noJoin = 0;
+    /// A cell of the head, the loop or the tail may not be entered: the
+    /// corridor of the search, which is the band less the fence.
+    uint32_t blocked = 0;
+    /// The spliced path meets itself.
+    uint32_t selfCrossing = 0;
+    /// The rendering never landed within the tolerance of the required
+    /// length, however the loop was deepened or flattened.
+    uint32_t offLength = 0;
+
+    /// Every refusal that happened, by name and count, the commonest first.
+    [[nodiscard]] MQT_SCPD_ROUTING_EXPORT
+        std::vector<std::pair<const char*, uint32_t>>
+        said() const;
+  };
+  Refusals refusals;
 };
 
 /// Lengthen a path to a required length by splicing one meander into it.

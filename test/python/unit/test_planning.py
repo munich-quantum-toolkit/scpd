@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,7 @@ from mqt.scpd.flatbuffers.geometry.RCoord import RCoordT
 from mqt.scpd.planning import (
     BAD_VERDICTS,
     FINAL_PHASES,
+    LENGTH_VERDICTS,
     PLANNING_STAGES,
     PlanningError,
     blockade,
@@ -191,7 +193,7 @@ def test_the_detail_routing_carries_a_drawn_wire_per_connection(run: RunDirector
     # A wire names at least where it starts and where it ends, and no bend repeats its neighbour.
     for wire in geometry.wires:
         assert len(wire) >= 2
-        assert all(before != after for before, after in zip(wire, wire[1:], strict=False))
+        assert all(before != after for before, after in itertools.pairwise(wire))
     # The way the corridor planned is what the wire had to follow, so the two ends agree.
     corridor = planning_geometry(
         run.artifact("corridor").read_bytes(), chip, "corridor", run.artifact("capacity").read_bytes()
@@ -290,7 +292,7 @@ def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:
         "wires": [
             wire([(1, 1), (5, 1)], FinalVerdict.Open),
             wire([(1, 3), (5, 3)]),
-            # Off its length alone: carried, named, not marked.
+            # Off its length alone: on the length layer, not on the failing one.
             wire([(1, 5), (5, 5)], FinalVerdict.Short),
             wire([(1, 7), (5, 7)], FinalVerdict.Open | FinalVerdict.Long),
         ],
@@ -325,10 +327,19 @@ def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:
     # The mark is the wire's own polyline; an unrouted wire has none.
     assert geometry.failing[0][2] == [(10.0, 10.0), (50.0, 10.0)]
     assert geometry.failing[3][2] == []
+    # The length verdicts have their own layer: a wire that is only short is on it alone, a wire
+    # that is both is on both, and the failing layer is drawn over it.
+    assert [(name, verdicts) for name, verdicts, _ in geometry.off_length] == [
+        ("2", ["short"]),
+        ("3", ["open", "long"]),
+    ]
+    assert geometry.off_length[0][2] == [(10.0, 50.0), (50.0, 50.0)]
     note = "squeezed at (4,9): 2 wires (3, 5) in 30 cells to the artwork, need 59"
     assert geometry.squeezed == [("f1", note, [(0.0, 90.0), (90.0, 90.0)], [(40.0, 90.0), (40.0, 60.0)])]
     assert not planning_geometry(data, chip, "final", phase="feedlines").failing
+    assert not planning_geometry(data, chip, "final", phase="feedlines").off_length
     assert FinalVerdict.Unrouted | FinalVerdict.Open | FinalVerdict.Crossing == BAD_VERDICTS
+    assert FinalVerdict.Short | FinalVerdict.Long == LENGTH_VERDICTS
     assert verdict_names(FinalVerdict.Short | FinalVerdict.Loop) == ["short", "meeting itself"]
     assert verdict_names(0) == []
 
