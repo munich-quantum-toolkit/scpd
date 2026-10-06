@@ -39,6 +39,22 @@ int& allocationsBeforeFailure() {
   return count;
 }
 
+/// Whether an allocation of @p size bytes takes part in the countdown of
+/// allocationsBeforeFailure(). The debug library of MSVC
+/// (_ITERATOR_DEBUG_LEVEL above 0) gives every container a proxy for its
+/// iterator checks. The default and the move constructors of a container
+/// allocate that proxy, and they cannot throw, so a failure there would call
+/// std::terminate. The proxy is bookkeeping of the library, not memory that
+/// the router asks for, so the tests never fail an allocation of its size on
+/// that library.
+bool mayFail([[maybe_unused]] const std::size_t size) {
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
+  return size != sizeof(std::_Container_proxy);
+#else
+  return true;
+#endif
+}
+
 } // namespace
 
 // A replacement of the global allocation functions has to take raw memory
@@ -46,14 +62,15 @@ int& allocationsBeforeFailure() {
 // NOLINTBEGIN(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
 
 /// Allocates as the standard operator new does, but throws std::bad_alloc
-/// once when allocationsBeforeFailure() reaches zero.
+/// once when allocationsBeforeFailure() reaches zero. Only the allocations
+/// that mayFail() admits count.
 void* operator new(const std::size_t size) {
   int& count = allocationsBeforeFailure();
-  if (count == 0) {
-    count = -1;
-    throw std::bad_alloc();
-  }
-  if (count > 0) {
+  if (count >= 0 && mayFail(size)) {
+    if (count == 0) {
+      count = -1;
+      throw std::bad_alloc();
+    }
     --count;
   }
   void* memory = std::malloc(size == 0 ? 1 : size);
