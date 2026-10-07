@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -31,14 +32,17 @@
 // the costs depend on it. Where a value is a whole number in exact
 // arithmetic, as the end of a move is, the generation computes it from whole
 // numbers. A truncated floating-point value could fall one below it, and
-// whether it does depends on the compiler and the math library.
+// whether it does depends on the compiler and the math library. The test of a
+// candidate move is exact too: whether its turn angles hold an eighth or a
+// quarter turn is decided from whole numbers (see TurnAngles). A candidate
+// can end exactly on the boundary of an eighth turn, and a floating-point
+// angle there would depend on the last bit of the arc tangent.
 
 namespace mqt::scpd::routing {
 
 namespace {
 
 constexpr double PI = std::numbers::pi;
-constexpr double DEGREES = 180.0 / PI;
 
 using IntCells = std::vector<std::array<int32_t, 2>>;
 using Samples = std::vector<std::array<double, 2>>;
@@ -154,15 +158,66 @@ void endSamplesAt(Samples& samples, const std::array<double, 2> end) {
   }
 }
 
-/// The eight-way heading of a canonical angle in degrees: 0 is heading 0,
-/// 45 is heading 1, and so on.
-uint16_t headingOfDegrees(const double degrees) {
-  return static_cast<uint16_t>(std::lround(degrees / 45.0) % 8);
-}
+/// The exit heading of an eighth turn, in eighth turns from the heading the
+/// turn leaves.
+constexpr uint16_t EIGHTH_TURN = 1;
+/// The exit heading of a quarter turn, in eighth turns from the heading the
+/// turn leaves.
+constexpr uint16_t QUARTER_TURN = 2;
+
+/// The turn angles of a candidate move against an eighth and a quarter turn,
+/// decided in exact arithmetic.
+///
+/// A candidate ends at a whole cell: it runs straight along its heading and
+/// then along an arc of the bend radius that turns toward the end. Its turn
+/// angles form a range with two ends. The arc angle is the angle by which the
+/// arc has turned where it reaches the column of the end cell. The end angle
+/// is the angle by which a turn about the center of the arc reaches the end
+/// cell. Each member compares one of the two angles with 45 or 90 degrees.
+/// The comparisons use whole numbers only, so a candidate on the boundary,
+/// such as an end angle of exactly 45 degrees, does not depend on rounding.
+struct TurnAngles {
+  /// The arc angle against 45 degrees.
+  std::strong_ordering arcToEighth;
+  /// The end angle against 45 degrees.
+  std::strong_ordering endToEighth;
+  /// The arc angle against 90 degrees.
+  std::strong_ordering arcToQuarter;
+  /// The end angle against 90 degrees.
+  std::strong_ordering endToQuarter;
+
+  /// Whether the range from the arc angle up to the end angle holds 45
+  /// degrees, both ends included.
+  [[nodiscard]] bool holdEighth() const {
+    return arcToEighth <= 0 && endToEighth >= 0;
+  }
+  /// Whether the range from the arc angle up to the end angle holds 90
+  /// degrees, both ends included.
+  [[nodiscard]] bool holdQuarter() const {
+    return arcToQuarter <= 0 && endToQuarter >= 0;
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Cardinal headings.
 // ---------------------------------------------------------------------------
+
+/// The turn angles of a candidate that leaves the canonical cardinal heading
+/// and ends @p across cells to the side and @p ahead cells ahead.
+///
+/// The center of the arc lies @p radius cells to the side of the start, so
+/// @c a = radius - across columns separate the end cell from the center. The
+/// arc reaches the column of the end cell where the tangent of 90 degrees
+/// less the arc angle is a / sqrt(radius^2 - a^2). The tangent of 90 degrees
+/// less the end angle is a / ahead.
+TurnAngles cardinalTurnAngles(const int64_t radius, const int64_t across,
+                              const int64_t ahead) {
+  const int64_t a = radius - across;
+  return {.arcToEighth = radius * radius <=> 2 * a * a,
+          .endToEighth = ahead <=> a,
+          .arcToQuarter = 0 <=> a,
+          .endToQuarter = 0 <=> a};
+}
 
 /// The swept cells, the cost and the samples of one arc that leaves the
 /// canonical cardinal heading. A straight part along the heading comes
@@ -212,46 +267,50 @@ void generateCardinal(const uint32_t radius,
                       std::array<HeadingTables, 8>& tables) {
   const auto r = static_cast<double>(radius);
   const auto signedRadius = static_cast<int>(radius);
-  std::vector<std::array<double, 2>> ranges;
+  // The candidates in the order of their identifiers. The candidates of one
+  // column run ahead from the arc and stop at the first one whose turn angles
+  // hold an eighth or a quarter turn.
+  std::vector<TurnAngles> candidates;
   std::map<uint32_t, Vector16> vectorOf;
   for (uint32_t i = 1; i <= radius; ++i) {
     const double y =
         std::sqrt((r * r) - (static_cast<double>(radius - i) * (radius - i)));
     const double yUp = std::ceil(y);
     const double yDown = std::floor(y);
-    const double angleMin = std::atan((radius - i) / y) * DEGREES;
     for (int j = static_cast<int>(yUp); j <= signedRadius && j <= yDown + 2;
          ++j) {
-      const double angleMax =
-          std::atan(static_cast<double>(radius - i) / j) * DEGREES;
-      ranges.push_back({angleMin, angleMax});
-      vectorOf[static_cast<uint32_t>(ranges.size() - 1)] = {
+      const TurnAngles angles = cardinalTurnAngles(radius, i, j);
+      candidates.push_back(angles);
+      vectorOf[static_cast<uint32_t>(candidates.size() - 1)] = {
           static_cast<int16_t>(i), static_cast<int16_t>(-j)};
-      if ((angleMax <= 45.0 && angleMin >= 45.0) ||
-          (angleMax <= 0.0 && angleMin >= 0.0)) {
+      if (angles.holdEighth() || angles.holdQuarter()) {
         break;
       }
     }
   }
 
+  // Every candidate whose turn angles hold an eighth or a quarter turn
+  // becomes a move. No candidate holds both: a quarter turn ends in the
+  // column of the center, an eighth turn at least radius / sqrt(2) columns
+  // before it.
   HeadingTables canonical;
   std::set<uint32_t> keys;
-  for (uint32_t i = 0; i < ranges.size(); ++i) {
-    for (int angle = 0; angle <= 90; angle += 45) {
-      if (angle <= ranges[i][0] && angle >= ranges[i][1]) {
-        keys.insert(i);
-        canonical.exit[i] = headingOfDegrees(90.0 - angle);
-        canonical.vector[i] = vectorOf[i];
-        double cost = 0.0;
-        Samples samples;
-        canonical.swept[i] = arcCellsCardinal(r, vectorOf[i], cost, samples);
-        canonical.cost[i] = cost;
-        canonical.samples[i] = samples;
-      }
+  for (uint32_t i = 0; i < candidates.size(); ++i) {
+    const bool quarter = candidates[i].holdQuarter();
+    if (!quarter && !candidates[i].holdEighth()) {
+      continue;
     }
+    keys.insert(i);
+    canonical.exit[i] = quarter ? QUARTER_TURN : EIGHTH_TURN;
+    canonical.vector[i] = vectorOf[i];
+    double cost = 0.0;
+    Samples samples;
+    canonical.swept[i] = arcCellsCardinal(r, vectorOf[i], cost, samples);
+    canonical.cost[i] = cost;
+    canonical.samples[i] = samples;
   }
 
-  const auto n = static_cast<uint32_t>(ranges.size());
+  const auto n = static_cast<uint32_t>(candidates.size());
   for (uint16_t heading = 0; heading < 8; heading += 2) {
     const double degrees = heading * 45.0;
     HeadingTables& t = tables[heading];
@@ -344,6 +403,28 @@ std::array<double, 2> fromDiagonalFrame(const double x, const double y) {
   return {(x + y) * half, (x - y) * half};
 }
 
+/// The turn angles of a candidate that leaves the canonical diagonal heading
+/// and ends @p across half diagonals to the side and @p ahead diagonals ahead,
+/// plus half a diagonal for an odd @p across.
+///
+/// The arc angle is the true angle of the arc. The center of the arc lies
+/// @p radius cells to the side of the start, and the arc reaches the column of
+/// the end cell
+/// @p across / sqrt(2) cells to the side. The arc angle is therefore below 45
+/// degrees while (radius + across)^2 < 2 radius^2, and below 90 degrees
+/// while across^2 < 2 radius^2. The end angle reads the counts of half
+/// diagonals and of diagonals as if they were cells: the tangent of 90
+/// degrees less the end angle is (radius - across) / ahead.
+TurnAngles diagonalTurnAngles(const int64_t radius, const int64_t across,
+                              const int64_t ahead) {
+  const int64_t a = radius - across;
+  return {.arcToEighth =
+              (radius + across) * (radius + across) <=> 2 * radius * radius,
+          .endToEighth = ahead <=> a,
+          .arcToQuarter = across * across <=> 2 * radius * radius,
+          .endToQuarter = 0 <=> a};
+}
+
 /// The end of a canonical diagonal move in grid cells. In exact arithmetic
 /// the end is a whole cell, so whole numbers give it exactly.
 Vector16 diagonalEnd(const uint32_t i, const uint32_t j) {
@@ -355,8 +436,7 @@ Vector16 diagonalEnd(const uint32_t i, const uint32_t j) {
 }
 
 IntCells arcCellsDiagonal(const double radius, const Vector16 vector,
-                          const std::array<double, 2> ranges, double& cost,
-                          Samples& samples) {
+                          double& cost, Samples& samples) {
   IntCells result;
   const double ai = vector[0] * (std::numbers::sqrt2 / 2.0);
   const double height =
@@ -405,18 +485,13 @@ IntCells arcCellsDiagonal(const double radius, const Vector16 vector,
   for (double ys = 0.0; ys <= -offset; ys += MovePrimitives::SAMPLE_SPACING) {
     samples.push_back(fromDiagonalFrame(0.0, ys));
   }
-  if ((ranges[1] <= 45.0 && ranges[0] >= 45.0) ||
-      (ranges[1] <= 0.0 && ranges[0] >= 0.0)) {
-    // The floating-point accumulation is part of the table definition.
-    // NOLINTBEGIN(clang-analyzer-security.FloatLoopCounter,bugprone-float-loop-counter)
-    for (double xs = 0.0; xs <= vector[0];
-         xs += MovePrimitives::SAMPLE_SPACING) {
-      const double ax = xs * (std::numbers::sqrt2 / 2.0);
-      const double circle =
-          std::sqrt((radius * radius) - ((radius - ax) * (radius - ax)));
-      samples.push_back(fromDiagonalFrame(ax, circle - offset));
-    }
-    // NOLINTEND(clang-analyzer-security.FloatLoopCounter,bugprone-float-loop-counter)
+  // The floating-point accumulation is part of the table definition.
+  // NOLINTNEXTLINE(clang-analyzer-security.FloatLoopCounter,bugprone-float-loop-counter)
+  for (double xs = 0.0; xs <= vector[0]; xs += MovePrimitives::SAMPLE_SPACING) {
+    const double ax = xs * (std::numbers::sqrt2 / 2.0);
+    const double circle =
+        std::sqrt((radius * radius) - ((radius - ax) * (radius - ax)));
+    samples.push_back(fromDiagonalFrame(ax, circle - offset));
   }
   const Vector16 end = diagonalEnd(static_cast<uint32_t>(vector[0]),
                                    static_cast<uint32_t>(-vector[1]));
@@ -429,7 +504,10 @@ IntCells arcCellsDiagonal(const double radius, const Vector16 vector,
 void generateDiagonal(const uint32_t radius,
                       std::array<HeadingTables, 8>& tables) {
   const auto r = static_cast<double>(radius);
-  std::vector<std::array<double, 2>> ranges;
+  // The candidates in the order of their identifiers. The candidates of one
+  // column run ahead from the arc and stop at the first one whose end angle
+  // is at most, and whose arc angle at least, an eighth or a quarter turn.
+  std::vector<TurnAngles> candidates;
   std::map<uint32_t, Vector16> angleOf;
   std::map<uint32_t, Vector16> coordinateOf;
   const auto xUpper =
@@ -441,60 +519,53 @@ void generateDiagonal(const uint32_t radius,
     if (i % 2 == 1) {
       yRounded = roundUpSqrt2Offset(y);
     }
-    const double angleMin =
-        std::atan((r - ai) / std::sqrt((r * r) - ((r - ai) * (r - ai)))) *
-        DEGREES;
     const uint32_t yUpper = roundUpSqrt2(r);
     const double offset = (i % 2 == 1) ? 1.0 : 0.0;
     for (uint32_t j = yRounded; (j + offset < yUpper) && (j <= yRounded + 5);
          ++j) {
-      const double angleMax =
-          std::atan((r - static_cast<double>(i)) / j) * DEGREES;
-      ranges.push_back({angleMin, angleMax});
-      const auto idx = static_cast<uint32_t>(ranges.size() - 1);
+      const TurnAngles angles = diagonalTurnAngles(radius, i, j);
+      candidates.push_back(angles);
+      const auto idx = static_cast<uint32_t>(candidates.size() - 1);
       coordinateOf[idx] = diagonalEnd(i, j);
       angleOf[idx] = {static_cast<int16_t>(i), static_cast<int16_t>(j)};
-      if ((angleMin <= 45.0 && angleMax >= 45.0) ||
-          (angleMin <= 0.0 && angleMax >= 0.0)) {
+      if ((angles.arcToEighth >= 0 && angles.endToEighth <= 0) ||
+          (angles.arcToQuarter >= 0 && angles.endToQuarter <= 0)) {
         break;
       }
     }
   }
 
-  const std::array<double, 3> angleValues = {0.0, 45.0, 90.0};
-  std::array<bool, 3> found = {false, false, false};
+  // The first candidate whose turn angles hold a quarter turn, and that does
+  // not end on its start, becomes the quarter turn. The first candidate whose
+  // turn angles hold an eighth turn becomes the eighth turn. No candidate
+  // holds both: a quarter turn ends at least radius half diagonals to the
+  // side, an eighth turn at most radius (sqrt(2) - 1) half diagonals.
+  bool foundQuarter = false;
+  bool foundEighth = false;
   HeadingTables canonical;
   std::set<uint32_t> keys;
-  for (uint32_t i = 0; i < ranges.size(); ++i) {
-    const double upper = ranges[i][0];
-    const double lower = ranges[i][1];
-    for (std::size_t a = 0; a < angleValues.size(); ++a) {
-      if (found[a]) {
-        continue;
-      }
-      const double angle = angleValues[a];
-      if (angle <= upper && angle >= lower) {
-        if (angle == 0.0 && coordinateOf[i][0] == 0 &&
-            coordinateOf[i][1] == 0) {
-          continue;
-        }
-        keys.insert(i);
-        canonical.exit[i] = headingOfDegrees(90.0 - angle);
-        canonical.vector[i] = coordinateOf[i];
-        Vector16 look = angleOf[i];
-        look[1] = static_cast<int16_t>(-look[1]);
-        double cost = 0.0;
-        Samples samples;
-        canonical.swept[i] =
-            arcCellsDiagonal(r, look, ranges[i], cost, samples);
-        canonical.cost[i] = cost;
-        canonical.samples[i] = samples;
-        found[a] = true;
-      }
+  for (uint32_t i = 0; i < candidates.size(); ++i) {
+    const bool quarter = !foundQuarter && candidates[i].holdQuarter() &&
+                         (coordinateOf[i][0] != 0 || coordinateOf[i][1] != 0);
+    const bool eighth = !foundEighth && candidates[i].holdEighth();
+    if (!quarter && !eighth) {
+      continue;
     }
+    keys.insert(i);
+    canonical.exit[i] = quarter ? QUARTER_TURN : EIGHTH_TURN;
+    canonical.vector[i] = coordinateOf[i];
+    Vector16 look = angleOf[i];
+    look[1] = static_cast<int16_t>(-look[1]);
+    double cost = 0.0;
+    Samples samples;
+    canonical.swept[i] = arcCellsDiagonal(r, look, cost, samples);
+    canonical.cost[i] = cost;
+    canonical.samples[i] = samples;
+    foundQuarter = foundQuarter || quarter;
+    foundEighth = foundEighth || eighth;
   }
 
-  const auto n = static_cast<uint32_t>(ranges.size());
+  const auto n = static_cast<uint32_t>(candidates.size());
   for (uint16_t heading = 1; heading < 8; heading += 2) {
     const double degrees = (heading * 45.0) - 315.0;
     HeadingTables& t = tables[heading];
@@ -534,6 +605,100 @@ void generateDiagonal(const uint32_t radius,
   }
 }
 
+/// The unit vector of a heading.
+std::array<double, 2> direction(const Heading heading) {
+  const HeadingVector v = headingVector(heading);
+  constexpr double invSqrt2 = 0.70710678118654752440;
+  if (isDiagonal(heading)) {
+    return {v.dx * invSqrt2, v.dy * invSqrt2};
+  }
+  return {static_cast<double>(v.dx), static_cast<double>(v.dy)};
+}
+
+/// The point at which an arc has turned by @p theta radians. The arc starts at
+/// the origin along the unit vector @p u0 and has the radius @p r. A positive
+/// @p turnSign turns clockwise, in the sense of turned().
+std::array<double, 2> arcPoint(const std::array<double, 2>& u0,
+                               const int turnSign, const double r,
+                               const double theta) {
+  if (turnSign < 0) {
+    return {
+        r * ((u0[1] * (std::cos(theta) - 1.0)) + (u0[0] * std::sin(theta))),
+        r * ((u0[0] * (1.0 - std::cos(theta))) + (u0[1] * std::sin(theta)))};
+  }
+  return {r * ((u0[1] * (1.0 - std::cos(theta))) + (u0[0] * std::sin(theta))),
+          r * ((u0[0] * (std::cos(theta) - 1.0)) + (u0[1] * std::sin(theta)))};
+}
+
+/// An arc of the bend radius that turns by a whole number of eighth turns.
+struct ExactTurn {
+  /// The cells the arc passes, from its start to the cell nearest its end.
+  IntCells cells;
+  /// The cell nearest the end of the arc.
+  Vector16 end{};
+  /// Points at equal angles along the arc, from the origin to its end.
+  Samples samples;
+  /// The length of the arc rounded up to whole cells.
+  double cost = 0.0;
+};
+
+/// Builds an arc of the radius @p radius that leaves @p entry and turns by
+/// @p eighths eighth turns, clockwise for a positive @p turnSign in the sense
+/// of turned().
+///
+/// The cells round 90 points per eighth turn, at equal angles, to the
+/// nearest cell. The samples lie at equal angles, at most
+/// MovePrimitives::SAMPLE_SPACING apart along the arc.
+ExactTurn exactTurn(const Heading entry, const int turnSign,
+                    const double radius, const int eighths) {
+  const auto u0 = direction(entry);
+  const double sweep = eighths * (PI / 4.0);
+  const int arcSamples = 90 * eighths;
+  ExactTurn turn;
+
+  // The cells start with the start of the arc, as those of every other turn
+  // do. Up to a radius of 80 cells, the first point rounds onto that cell; at
+  // a larger radius it rounds onto a neighbor.
+  turn.cells = {{0, 0}};
+  int32_t lastX = 0;
+  int32_t lastY = 0;
+  for (int s = 1; s <= arcSamples; ++s) {
+    const double theta = sweep * (static_cast<double>(s) / arcSamples);
+    const auto [px, py] = arcPoint(u0, turnSign, radius, theta);
+    const auto gx = static_cast<int32_t>(std::lround(px));
+    const auto gy = static_cast<int32_t>(std::lround(py));
+    if (gx == lastX && gy == lastY) {
+      continue;
+    }
+    turn.cells.push_back({gx, gy});
+    lastX = gx;
+    lastY = gy;
+  }
+  turn.end = {static_cast<int16_t>(lastX), static_cast<int16_t>(lastY)};
+
+  const double arcLength = sweep * radius;
+  const int fine = std::max(
+      2,
+      static_cast<int>(std::ceil(arcLength / MovePrimitives::SAMPLE_SPACING)));
+  turn.samples.push_back({0.0, 0.0});
+  for (int s = 1; s <= fine; ++s) {
+    const double theta = sweep * (static_cast<double>(s) / fine);
+    turn.samples.push_back(arcPoint(u0, turnSign, radius, theta));
+  }
+  turn.cost = std::ceil(arcLength);
+  return turn;
+}
+
+/// Adds an exact turn to the tables of a heading under the identifier @p id.
+void addExactTurn(HeadingTables& t, const uint32_t id, const Heading exit,
+                  ExactTurn turn) {
+  t.exit[id] = exit;
+  t.vector[id] = turn.end;
+  t.swept[id] = std::move(turn.cells);
+  t.cost[id] = turn.cost;
+  t.samples[id] = std::move(turn.samples);
+}
+
 /// The quarter turns that leave a diagonal heading as arcs of a full right
 /// angle. The canonical diagonal tables hold no such turn: at some radii they
 /// hold no move to the quarter-turn heading, and at others, such as 10 and 13
@@ -547,77 +712,58 @@ void generateDiagonal(const uint32_t radius,
 void generateDiagonalQuarterTurns(const uint32_t radiusIn,
                                   std::array<HeadingTables, 8>& tables) {
   const auto radius = static_cast<double>(radiusIn);
-  constexpr int arcSamples = 180;
   constexpr uint32_t clockwiseId = 900;
   constexpr uint32_t counterClockwiseId = 901;
 
-  const auto direction = [](const Heading d) -> std::array<double, 2> {
-    const HeadingVector v = headingVector(d);
-    constexpr double invSqrt2 = 0.70710678118654752440;
-    if (isDiagonal(d)) {
-      return {v.dx * invSqrt2, v.dy * invSqrt2};
-    }
-    return {static_cast<double>(v.dx), static_cast<double>(v.dy)};
-  };
-  const auto arcPoint = [](const std::array<double, 2>& u0, const int turnSign,
-                           const double r,
-                           const double theta) -> std::array<double, 2> {
-    if (turnSign < 0) {
-      return {
-          r * ((u0[1] * (std::cos(theta) - 1.0)) + (u0[0] * std::sin(theta))),
-          r * ((u0[0] * (1.0 - std::cos(theta))) + (u0[1] * std::sin(theta)))};
-    }
-    return {
-        r * ((u0[1] * (1.0 - std::cos(theta))) + (u0[0] * std::sin(theta))),
-        r * ((u0[0] * (std::cos(theta) - 1.0)) + (u0[1] * std::sin(theta)))};
-  };
-
   for (Heading entry = 1; entry <= 7; entry = static_cast<Heading>(entry + 2)) {
-    const auto u0 = direction(entry);
     for (const int turnSign : {-1, 1}) {
-      const Heading exit = turned(entry, 2 * turnSign);
       const uint32_t id = (turnSign > 0) ? clockwiseId : counterClockwiseId;
-
-      // The cells start with the start of the arc, as those of every other
-      // turn do. Up to a radius of 80 cells, the first sample rounds onto
-      // that cell; at a larger radius it rounds onto a neighbor.
-      IntCells cells = {{0, 0}};
-      int32_t lastX = 0;
-      int32_t lastY = 0;
-      for (int s = 1; s <= arcSamples; ++s) {
-        const double theta = (PI / 2.0) * (static_cast<double>(s) / arcSamples);
-        const auto [px, py] = arcPoint(u0, turnSign, radius, theta);
-        const auto gx = static_cast<int32_t>(std::lround(px));
-        const auto gy = static_cast<int32_t>(std::lround(py));
-        if (gx == lastX && gy == lastY) {
-          continue;
-        }
-        cells.push_back({gx, gy});
-        lastX = gx;
-        lastY = gy;
-      }
-
-      Samples samples;
-      const double arcLength = (PI / 2.0) * radius;
-      const int fine =
-          std::max(2, static_cast<int>(std::ceil(
-                          arcLength / MovePrimitives::SAMPLE_SPACING)));
-      samples.push_back({0.0, 0.0});
-      for (int s = 1; s <= fine; ++s) {
-        const double theta = (PI / 2.0) * (static_cast<double>(s) / fine);
-        samples.push_back(arcPoint(u0, turnSign, radius, theta));
-      }
-
       HeadingTables& t = tables[entry];
       if (t.vector.contains(id)) {
         throw std::logic_error(
             "a diagonal move has the identifier of an exact quarter turn");
       }
-      t.exit[id] = exit;
-      t.vector[id] = {static_cast<int16_t>(lastX), static_cast<int16_t>(lastY)};
-      t.swept[id] = std::move(cells);
-      t.cost[id] = std::ceil((PI / 2.0) * radius);
-      t.samples[id] = std::move(samples);
+      addExactTurn(t, id, turned(entry, 2 * turnSign),
+                   exactTurn(entry, turnSign, radius, 2));
+    }
+  }
+}
+
+/// The eighth turns, as arcs of 45 degrees, of every heading that holds no
+/// eighth turn to a side. Whether a heading holds one depends on how the arc
+/// of the radius rounds onto the cells (see TurnAngles). The identifiers are
+/// 902 for a clockwise and 903 for a counterclockwise turn, in the sense of
+/// turned(). Up to a radius of 80 cells, they lie above every other
+/// identifier. At the radii of 81 and of 84 to 90 cells, other moves of a
+/// diagonal heading have higher identifiers, but no other move has 902 or
+/// 903.
+///
+/// @throws std::logic_error If another move of the heading already has the
+/// identifier of an exact eighth turn.
+void generateExactEighthTurns(const uint32_t radiusIn,
+                              std::array<HeadingTables, 8>& tables) {
+  const auto radius = static_cast<double>(radiusIn);
+  constexpr uint32_t clockwiseId = 902;
+  constexpr uint32_t counterClockwiseId = 903;
+
+  for (Heading entry = 0; entry < 8; ++entry) {
+    for (const int turnSign : {-1, 1}) {
+      const Heading exit = turned(entry, turnSign);
+      HeadingTables& t = tables[entry];
+      // A move counts when the constructor keeps it as a primitive.
+      if (std::ranges::any_of(t.exit, [&t, exit](const auto& idAndExit) {
+            const auto& [id, moveExit] = idAndExit;
+            return id < MovePrimitives::MAX_PRIMITIVE_ID &&
+                   t.vector.contains(id) && (moveExit & 7U) == exit;
+          })) {
+        continue;
+      }
+      const uint32_t id = (turnSign > 0) ? clockwiseId : counterClockwiseId;
+      if (t.vector.contains(id)) {
+        throw std::logic_error(
+            "a move has the identifier of an exact eighth turn");
+      }
+      addExactTurn(t, id, exit, exactTurn(entry, turnSign, radius, 1));
     }
   }
 }
@@ -637,6 +783,7 @@ MovePrimitives::MovePrimitives(const uint32_t minRadius)
   generateCardinal(minRadius, tables);
   generateDiagonal(minRadius, tables);
   generateDiagonalQuarterTurns(minRadius, tables);
+  generateExactEighthTurns(minRadius, tables);
 
   for (uint32_t heading = 0; heading < NUM_HEADINGS; ++heading) {
     indexOf[heading].fill(-1);

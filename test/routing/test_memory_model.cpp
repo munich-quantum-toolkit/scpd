@@ -163,12 +163,14 @@ TEST(MemoryModel, TheStaticProximityKeepsNoMemoryOfItsGrowth) {
   EXPECT_EQ(router.heldBytes(), held);
 }
 
-TEST(MemoryModel, ARouterAndItsScratchHoldAtMostEightyBytesPerCell) {
+TEST(MemoryModel,
+     ARouterAndItsScratchHoldAtMostEightyBytesPerCellForCorridorSearches) {
   // A router that has used everything it owns: obstacles on a third of the
   // grid, the static proximity grown from them, crossing constraints, an
   // exemption, a single-crossing feedline, and a search of each kind. Each
   // search runs through a corridor across a tenth of the grid, as a wire
-  // runs through its corridor.
+  // runs through its corridor. The bound holds for this scenario only,
+  // because the open list grows with the states a search reaches.
   constexpr uint32_t side = 400;
   constexpr std::size_t cells = static_cast<std::size_t>(side) * side;
   auto primitives = std::make_shared<const MovePrimitives>(5);
@@ -230,10 +232,13 @@ TEST(MemoryModel, ARouterAndItsScratchHoldAtMostEightyBytesPerCell) {
   // Sixty-four bytes of scratch. Per cell, the router owns one byte each of
   // static proximity, packed working grid, crossing constraints and crossing
   // rules, and four of distance field: eight bytes. The crossing rules hold
-  // the exemption and the single-crossing overlay. The open list grows with
-  // the states a search reaches, not with the cells of the grid; here it
-  // adds about four bytes per cell. The bound leaves room for it and for the
-  // small containers.
+  // the exemption and the single-crossing overlay. The open list keeps its
+  // waiting entries, 16 bytes each, in chunks of 256 entries, 4104 bytes
+  // each, and every bucket that holds an entry holds at least one chunk. Its
+  // size therefore follows the waiting entries and the buckets they fill,
+  // not the cells of the grid. Here it adds about four bytes per cell. The
+  // bound leaves room for it and for the small containers. A search that
+  // exhausts the states of an open grid holds far more than the bound.
   EXPECT_LE(perCell, 80.0);
 }
 

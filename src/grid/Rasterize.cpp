@@ -221,9 +221,9 @@ std::pair<int64_t, int64_t> columnsNear(const GridMetrics& grid, const Point a,
 }
 
 /// Blocks every free cell within the keepout of an obstacle edge, then frees
-/// the cells of the keepout that a corridor reaches. A second mask marks the
-/// cells of the keepout, so that a corridor never frees a cell that the
-/// polygons block after the island rule.
+/// the cells of the keepout that a port corridor reaches. A second mask marks
+/// the cells of the keepout, so that a port corridor never frees a cell that
+/// the polygons block after the island rule.
 void blockKeepout(const ChipT& chip, const GridMetrics& grid,
                   const RasterOptions& options, BitGrid& blocked,
                   std::size_t& keepoutCells, std::size_t& exemptedCells) {
@@ -294,8 +294,8 @@ void blockKeepout(const ChipT& chip, const GridMetrics& grid,
       });
     }
   }
-  for (const auto& corridor : options.keepoutExemptions) {
-    forEachCellNear(corridor.from, corridor.to, corridor.halfWidth,
+  for (const auto& portCorridor : options.keepoutExemptions) {
+    forEachCellNear(portCorridor.from, portCorridor.to, portCorridor.halfWidth,
                     [&](const std::size_t index) {
                       if (keepout.test(index)) {
                         keepout.set(index, false);
@@ -314,9 +314,11 @@ namespace {
 ///
 /// IEEE 754 rounds each multiplication, the addition and the square root
 /// correctly, and the build turns floating-point contraction off. The result
-/// is therefore the same on every platform. std::hypot gives no such
-/// promise: its last bit may differ between math libraries, and the keepout
-/// compares the distance with its limit exactly. The sum of squares is a
+/// is therefore the same on every platform. It is not always the correctly
+/// rounded length, because the squares round before they are added.
+/// std::hypot gives no promise of either kind: its last bit may differ
+/// between math libraries, and the keepout compares the distance with its
+/// limit exactly. The sum of squares is a
 /// normal number for every length from about 1.5e-154 to 1.3e154, a range
 /// that holds every distance on a chip. Outside that range the sum overflows
 /// or loses digits, and std::hypot takes over.

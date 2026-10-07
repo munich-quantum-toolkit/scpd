@@ -49,7 +49,7 @@ function(add_mqt_python_binding package_name target_name)
   endif()
 
   # Add project libraries to the link libraries
-  list(APPEND ARG_LINK_LIBS MQT::ProjectOptions)
+  list(APPEND ARG_LINK_LIBS MQT::ProjectOptions mqt-scpd-fp-contract-off)
 
   target_link_libraries(${target_name} PRIVATE ${ARG_LINK_LIBS})
 

@@ -302,8 +302,8 @@ TEST_F(BenchmarkRaster, APortCorridorReleasesTheKeepoutAroundItsPort) {
   options.keepout = 25.0;
   const RasterizedObstacles walled = rasterizeObstacles(chip, grid, options);
   // Every port carries small polygons at its foot, whose keepout would
-  // otherwise wall the port in. The corridor is the strip a wire runs along
-  // out of the port: as long as the shortest straight part plus the bend
+  // otherwise wall the port in. The port corridor is the strip a wire runs
+  // along out of the port: as long as the shortest straight part plus the bend
   // radius, and as wide as the wire spacing.
   constexpr double length = 100.0 + 50.0;
   for (const auto& port : chip.ports) {
@@ -322,7 +322,7 @@ TEST_F(BenchmarkRaster, APortCorridorReleasesTheKeepoutAroundItsPort) {
   EXPECT_GT(guarded.exemptedCells, 0U);
 
   // Walking out of each port along its orientation, the first cell that its
-  // polygons leave free lies in the keepout, and the corridor frees it.
+  // polygons leave free lies in the keepout, and the port corridor frees it.
   const double halfCell = grid.cellWidth / 2.0;
   for (const auto& port : chip.ports) {
     const Point step = stepAlong(port->orientation);
@@ -346,12 +346,12 @@ TEST_F(BenchmarkRaster, APortCorridorReleasesTheKeepoutAroundItsPort) {
     EXPECT_FALSE(guarded.blocked.test(*first)) << port->label;
   }
 
-  // A corridor frees a keepout cell exactly when the cell center lies within
-  // the half width of the corridor.
+  // A port corridor frees a keepout cell exactly when the cell center lies
+  // within the half width of the port corridor.
   std::vector<Segment> strips;
   strips.reserve(options.keepoutExemptions.size());
-  for (const Corridor& corridor : options.keepoutExemptions) {
-    strips.emplace_back(corridor.from, corridor.to);
+  for (const PortCorridor& portCorridor : options.keepoutExemptions) {
+    strips.emplace_back(portCorridor.from, portCorridor.to);
   }
   const double halfWidth = options.keepoutExemptions.front().halfWidth;
   const std::vector<double> nearest = nearestSegment(grid, strips, halfWidth);

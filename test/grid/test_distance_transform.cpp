@@ -18,6 +18,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -25,22 +27,35 @@ namespace {
 using namespace mqt::scpd::grid;
 using mqt::scpd::test::SplitMix;
 
+/// The blocked cells of a mask, as columns and rows.
+std::vector<std::pair<int64_t, int64_t>> blockedCells(const BitGrid& blocked) {
+  std::vector<std::pair<int64_t, int64_t>> cells;
+  for (uint32_t y = 0; y < blocked.height(); ++y) {
+    for (uint32_t x = 0; x < blocked.width(); ++x) {
+      if (blocked.testCell(x, y)) {
+        cells.emplace_back(x, y);
+      }
+    }
+  }
+  return cells;
+}
+
+/// The squared distance from every cell to the nearest blocked cell, as the
+/// minimum over every blocked cell, and DISTANCE_UNBOUNDED for every larger
+/// value.
 std::vector<uint32_t> bruteForce(const BitGrid& blocked) {
+  const std::vector<std::pair<int64_t, int64_t>> cells = blockedCells(blocked);
   std::vector<uint32_t> distance(blocked.size(), DISTANCE_UNBOUNDED);
   for (uint32_t y = 0; y < blocked.height(); ++y) {
     for (uint32_t x = 0; x < blocked.width(); ++x) {
-      uint32_t best = DISTANCE_UNBOUNDED;
-      for (uint32_t by = 0; by < blocked.height(); ++by) {
-        for (uint32_t bx = 0; bx < blocked.width(); ++bx) {
-          if (!blocked.testCell(bx, by)) {
-            continue;
-          }
-          const int64_t dx = static_cast<int64_t>(x) - bx;
-          const int64_t dy = static_cast<int64_t>(y) - by;
-          best = std::min(best, static_cast<uint32_t>((dx * dx) + (dy * dy)));
-        }
+      int64_t best = DISTANCE_UNBOUNDED;
+      for (const auto& [bx, by] : cells) {
+        const int64_t dx = static_cast<int64_t>(x) - bx;
+        const int64_t dy = static_cast<int64_t>(y) - by;
+        best = std::min(best, (dx * dx) + (dy * dy));
       }
-      distance[(static_cast<std::size_t>(y) * blocked.width()) + x] = best;
+      distance[(static_cast<std::size_t>(y) * blocked.width()) + x] =
+          static_cast<uint32_t>(best);
     }
   }
   return distance;
@@ -123,6 +138,70 @@ TEST(DistanceTransform, AFarCellHoldsTheUnboundedValue) {
     ASSERT_EQ(alongRow[i], expected) << i;
     ASSERT_EQ(downColumn[i], expected) << i;
   }
+}
+
+TEST(DistanceTransform, TheColumnPassCombinesSaturatedRowsExactly) {
+  // Grids of more than 1000 cells along both axes with a few blocked cells.
+  // The row pass saturates a cell at DISTANCE_UNBOUNDED when its row holds no
+  // blocked cell, or holds one only 1000 or more cells away. The column pass
+  // then combines the saturated rows with the rows that hold a blocked cell
+  // nearby. Such a cell can still lie less than 1000 cells from a blocked cell
+  // in another row, and the result is its exact squared distance. Every cell
+  // 1000 or more cells from all blocked cells holds DISTANCE_UNBOUNDED. The
+  // first grid is fixed: its row 0 holds a blocked cell at column 0, and the
+  // blocked cell (1200, 600) lies 600 cells above the end of that row.
+  SplitMix random(31);
+  std::size_t emptyRows = 0;
+  std::size_t farRows = 0;
+  std::size_t unbounded = 0;
+  for (int round = 0; round < 3; ++round) {
+    const auto width =
+        static_cast<uint32_t>(round == 0 ? 1201 : random.between(1001, 1300));
+    const auto height =
+        static_cast<uint32_t>(round == 0 ? 1201 : random.between(1001, 1300));
+    BitGrid blocked(width, height);
+    if (round == 0) {
+      blocked.setCell(0, 0);
+      blocked.setCell(1200, 600);
+    } else {
+      const int64_t count = random.between(1, 6);
+      for (int64_t i = 0; i < count; ++i) {
+        blocked.setCell(static_cast<uint32_t>(random.between(0, width - 1)),
+                        static_cast<uint32_t>(random.between(0, height - 1)));
+      }
+    }
+    const std::vector<uint32_t> expected = bruteForce(blocked);
+    ASSERT_EQ(squaredDistanceTransform(blocked), expected)
+        << width << "x" << height << " in round " << round;
+
+    // Count the cells of each kind.
+    const std::vector<std::pair<int64_t, int64_t>> cells =
+        blockedCells(blocked);
+    for (uint32_t y = 0; y < height; ++y) {
+      std::vector<int64_t> columns;
+      for (const auto& [bx, by] : cells) {
+        if (std::cmp_equal(by, y)) {
+          columns.push_back(bx);
+        }
+      }
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint32_t value =
+            expected[(static_cast<std::size_t>(y) * width) + x];
+        if (value == DISTANCE_UNBOUNDED) {
+          ++unbounded;
+        } else if (columns.empty()) {
+          ++emptyRows;
+        } else if (std::ranges::all_of(columns, [&](const int64_t bx) {
+                     return std::abs(bx - static_cast<int64_t>(x)) >= 1000;
+                   })) {
+          ++farRows;
+        }
+      }
+    }
+  }
+  EXPECT_GT(emptyRows, 0U);
+  EXPECT_GT(farRows, 0U);
+  EXPECT_GT(unbounded, 0U);
 }
 
 TEST(DistanceTransform, AGridWithoutObstaclesIsUnbounded) {

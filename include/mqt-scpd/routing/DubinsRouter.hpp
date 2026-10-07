@@ -40,7 +40,9 @@ enum class Heuristic : uint8_t {
   /// the corridor, from one backward Dijkstra search per route. It follows
   /// the corridor, so a search in a winding corridor does not flood the
   /// corridor. The search also drops every move that ends on a cell from
-  /// which the target cannot be reached. The default.
+  /// which no walk through the corridor reaches the target. The cells of
+  /// every move form a chain of neighbors (see Primitive::swept), so no path
+  /// of moves from that cell reaches the target either. The default.
   ///
   /// The backward search runs only as far as route() needs it. The search
   /// looks up the end cell of each move it tries, and the backward search
@@ -73,7 +75,9 @@ enum class Heuristic : uint8_t {
  * cell.
  *
  * The corridor is the region that the search may use. The router takes it as
- * a mask whose set bits mark the cells outside the corridor.
+ * a mask whose set bits mark the cells outside the corridor. A port corridor
+ * (grid::PortCorridor) is something else: the strip that the obstacle keepout
+ * leaves open in front of a port.
  *
  * A router and its scratch form one per-thread context. The scratch belongs
  * to the caller and outlives the router. Nothing else that a router reads is
@@ -82,10 +86,13 @@ enum class Heuristic : uint8_t {
  * copied nor moved. A copy would share the scratch of the original, and a
  * moved-from router would keep the state of tables it no longer holds.
  *
- * A router accepts a bend radius from 1 to 23 cells (MAX_BEND_RADIUS). The
- * moves of a larger radius cover more cells than the search tables hold.
- * MovePrimitives builds larger radii too, for the functions that read the
- * primitives without a router.
+ * A router accepts a bend radius from 2 to 23 cells (MIN_BEND_RADIUS and
+ * MAX_BEND_RADIUS). At a radius of one cell, the arc of an eighth turn is
+ * shorter than a cell and sweeps the cells of the straight step, so the
+ * search tables cannot tell the moves apart. The moves of a radius above 23
+ * cells cover more cells than the search tables hold. MovePrimitives builds
+ * these radii too, for the functions that read the primitives without a
+ * router.
  *
  * The search tests whether the cells that a move sweeps and its end cell lie
  * in the corridor, and it tests the cells it starts from and ends at. It does
@@ -94,10 +101,12 @@ enum class Heuristic : uint8_t {
  * - A wall of cells outside the corridor stops the search only where its
  *   cells share edges. A diagonal step sweeps only its end cell, so it passes
  *   between two cells of the wall that touch at a corner.
- * - The centerline of a turn can leave the cells that the search tests for
- *   the turn. It stays within half a cell of them for every bend radius that
- *   a router accepts: 0.18 cell at a radius of 5, 0.23 at 12, and the full
- *   half cell at 20.
+ * - The centerline of a turn, the polyline through the samples of its move,
+ *   can leave the cells that the search tests for the turn. It stays within
+ *   half a cell of them for every bend radius that a router accepts, and a
+ *   test of the primitives checks this bound. Measured along the polyline,
+ *   it strays 0.18 cell at a radius of 5, 0.23 at 12, and the full half cell
+ *   at 20.
  *
  * The corridor and the keepout must therefore leave at least one cell beyond
  * the half-width of the wire.
@@ -113,6 +122,15 @@ public:
   static constexpr uint32_t MAX_BEND_RADIUS = 23;
 
   /**
+   * @brief The smallest bend radius a router accepts, in cells.
+   *
+   * At a radius of one cell, the arc of an eighth turn is shorter than a cell
+   * and sweeps the cells of the straight step, so the search tables cannot
+   * tell the moves apart.
+   */
+  static constexpr uint32_t MIN_BEND_RADIUS = 2;
+
+  /**
    * @brief Creates a router over the grid of a scratch.
    * @param primitives The move primitives, shared with other routers.
    * @param scratch The search records of this thread. The router takes the
@@ -121,14 +139,11 @@ public:
    * @pre @p scratch outlives the router, and nothing moves from it while the
    * router holds it.
    * @throws std::invalid_argument If @p primitives is null, if their bend
-   * radius is larger than MAX_BEND_RADIUS, if the grid of @p scratch has no
-   * cells or more than 65535 cells along an axis, if the bend radius of
-   * @p params is not the one the primitives were built with, or if the
-   * primitives do not fit the search tables. The primitives do not fit when
-   * a heading has more than 16 moves, when a move covers more than 60 cells
-   * with its start and end cell, when a move reaches more than 127 cells from
-   * its start along an axis, or when two moves of one heading sweep the same
-   * cells in the same order.
+   * radius is smaller than MIN_BEND_RADIUS or larger than MAX_BEND_RADIUS,
+   * if the grid of @p scratch has no cells or more than 65535 cells along an
+   * axis, or if the bend radius of @p params is not the one the primitives
+   * were built with. The primitives of every radius from MIN_BEND_RADIUS to
+   * MAX_BEND_RADIUS fit the search tables.
    */
   DubinsRouter(std::shared_ptr<const MovePrimitives> primitives,
                SearchScratch& scratch, SearchParams params = {});
@@ -227,25 +242,42 @@ public:
    * cheapest eight-connected walk through the corridor from the start of the
    * move to its end, and a turn can be shorter than that walk. The excess of
    * a turn is the difference, in hundredths of a cell like every cost of the
-   * search. Over open cells, the walk is the octile distance between the two
-   * ends, and a cardinal eighth turn has the largest excess: 421 against 441
-   * at a bend radius of 5, 973 against 1023 at 12 and 1850 against 1946 at
-   * 23. A corridor that leaves only the cells a turn sweeps can make the walk
-   * longer. The largest excess at a radius of 5 is then 38, that of a quarter
-   * turn.
+   * search. The excess of a turn follows from the primitive tables. Over open
+   * cells, the walk is the octile distance between the two ends. At the radii
+   * of 5, 12 and 23 cells, a cardinal eighth turn then has the largest
+   * excess: 421 against 441 at a radius of 5, 973 against 1023 at 12 and 1850
+   * against 1946 at 23. A corridor that leaves only the cells a turn sweeps
+   * can make the walk longer. The largest excess at a radius of 5 is then 38,
+   * that of a quarter turn.
    *
    * Without the bend term, the bend penalty a turn pays covers its excess
-   * when the penalty is at least the largest excess per eighth turn: 20 at a
-   * radius of 5, and at most 96 at any radius up to 23. The estimate is then
-   * consistent, and route() returns a cheapest path. With the bend term, the
-   * estimate already holds the penalty, so an excess can make it exceed what
-   * a state still has to pay. The search never reopens a closed state, so
-   * route() can then return a dearer path. A comparison with a brute-force
-   * search on random grids, with the distance field as the estimate, measured
-   * how much dearer. At a radius of 5, fewer than one path in a hundred costs
-   * more, by at most 20, for bend penalties from 20 to 30000. At larger radii,
-   * a path costs up to 29 more at a radius of 8, 48 at 12, 62 at 20 and 118
-   * at 23.
+   * when the penalty is at least the largest excess per eighth turn. That
+   * excess is 20 at a radius of 5. Up to a radius of 23 it is at most 96,
+   * which the exact quarter turns of the diagonal headings reach at 19 and
+   * 21 cells and the cardinal eighth turns at 23 cells. The default bend
+   * penalty of 100 therefore covers every radius that a router accepts, and
+   * a test checks this. The estimate is then consistent, and route() returns
+   * a cheapest path.
+   *
+   * With the bend term, the estimate already holds the penalty, so an excess
+   * can make it exceed what a state still has to pay. Let e be the largest
+   * excess per eighth turn. When the bend penalty is at least e, the estimate
+   * of a state exceeds the cost of its cheapest remaining path by at most e
+   * times the heading distance from the state to the target heading. The
+   * search never reopens a closed state, so no bound on the excess of the
+   * path follows from this, and route() can return a dearer path. A
+   * comparison with a brute-force search measured how much dearer, with the
+   * distance field as the estimate. Its sample is random grids with up to
+   * nine boxes of up to 10 by 10 cells outside the corridor, four random
+   * objectives per grid, no stubs and nine bend penalties from 20 to 30000. At
+   * a radius of 5, on 20,000 grids of 30 to 60 cells per side, fewer than one
+   * path in a hundred cost more, by at most 32. On 10,000 grids of 40 to 80
+   * cells per radius, up to 1.4 paths in a hundred cost more at a radius of
+   * 12, by at most 50. At a radius of 8, where the diagonal headings turn by
+   * exact eighth turns, up to 6.3 paths in a hundred cost more, by at most 37.
+   * On 8,000 grids of 60 to 100 cells per radius, up to 1.2 paths in a
+   * hundred cost more, by at most 118 at a radius of 20 and 96 at 23. These
+   * figures are the largest of that sample, not bounds.
    *
    * @param on Whether route() adds the term.
    */
@@ -521,8 +553,8 @@ public:
    *
    * An exempt cell passes the crossing tests of straight steps and turns:
    * neither the crossing constraints nor the single-crossing rule bind it.
-   * The exemption suits the room around a coupler, where wires pin and run
-   * beside the coupler on purpose.
+   * The exemption suits the room around a coupler, where wires connect to
+   * the coupler and run beside it on purpose.
    *
    * @param cells The row-major indices of the cells to exempt. The function
    * ignores an index outside the grid. An empty list removes the exemption.
@@ -615,8 +647,10 @@ public:
    * target. When the two points are the same cell on the same heading, the
    * result is the two stubs joined, with their shared cell once.
    *
-   * The path is close to the cheapest, but with the bend lower bound it can
-   * cost slightly more; setBendLowerBound() gives the reason and the figures.
+   * Without the bend lower bound, and with a bend penalty of at least the
+   * largest excess per eighth turn, the path is a cheapest path. With the
+   * bend lower bound, it can cost more; setBendLowerBound() gives the reason
+   * and the figures.
    *
    * @param objective The source and the target of the wire.
    * @param usePenalty Whether the search adds the static and wire proximity
@@ -655,6 +689,17 @@ public:
    * feedline on straight steps only, at a right angle in the rendered
    * geometry. The search steers by the octile distance plus the bend lower
    * bound, whatever heuristic() and setBendLowerBound() select.
+   *
+   * The path can therefore cost more than the cheapest one, for the reason
+   * that setBendLowerBound() gives. A comparison with a brute-force search
+   * measured how much more, without crossing rules, on random grids like
+   * those of that comparison and with bend penalties of 100, 500 and 5000.
+   * At a radius of 5, on 10,000 grids of 30 to 60 cells per side, at
+   * most 0.4 paths in a hundred cost more, by at most 20. At a radius of 12,
+   * on 6,000 grids of 40 to 80 cells, at most 1.1 paths in a hundred cost
+   * more, by at most 50. At a radius of 23, on 4,000 grids of 60 to 100
+   * cells, fewer than one path in a hundred costs more, by at most 95. These
+   * figures are the largest of that sample, not bounds.
    *
    * @param objective The source and the target of the wire.
    * @param usePenalty Whether the search adds the static and wire proximity
@@ -698,7 +743,10 @@ public:
    * A source moves forward along its heading by the start straight length. A
    * target moves back along its heading by the end straight length. The
    * result is not clamped to the grid; a point off the grid has a coordinate
-   * at or above the width or the height.
+   * at or above the width or the height. A coordinate that would fall below
+   * zero or above the largest value of a coordinate takes that largest value.
+   * A stub that leaves the grid therefore moves its point off the grid,
+   * however long the stub is.
    *
    * @param point The source or the target.
    * @param isTarget Whether @p point is the target.
@@ -852,7 +900,13 @@ private:
    * tables.
    *
    * @param bendPenalty The cost of one eighth turn, in hundredths of a cell.
-   * @throws std::invalid_argument If the primitives do not fit the tables.
+   * @throws std::invalid_argument If the primitives do not fit the tables:
+   * when a heading has more than MAX_PRIMITIVES_PER_HEADING moves, when a
+   * move covers more than MAX_TRIE_DEPTH cells with its start and end cell,
+   * when a move reaches more than 127 cells from its start along an axis, or
+   * when two moves of one heading sweep the same cells in the same order. No
+   * radius from MIN_BEND_RADIUS to MAX_BEND_RADIUS does this. The checks
+   * guard the layout of the tables if the radius limits change.
    * @throws std::bad_alloc If the memory runs out.
    */
   void buildTables(uint32_t bendPenalty);

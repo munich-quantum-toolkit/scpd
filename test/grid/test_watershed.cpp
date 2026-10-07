@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -26,6 +27,46 @@ namespace {
 
 using namespace mqt::scpd::grid;
 using mqt::scpd::test::SplitMix;
+
+/// Whether every cell with @p label reaches @p seed through four-neighbors
+/// with @p label.
+bool isConnectedToSeed(const BitGrid& blocked,
+                       const std::vector<PartitionLabel>& labels,
+                       const std::size_t seed, const PartitionLabel label) {
+  const uint32_t width = blocked.width();
+  std::vector<bool> seen(blocked.size(), false);
+  std::vector<std::size_t> open = {seed};
+  seen[seed] = true;
+  while (!open.empty()) {
+    const std::size_t cell = open.back();
+    open.pop_back();
+    const uint32_t x = cell % width;
+    const auto visit = [&](const std::size_t n) {
+      if (!seen[n] && labels[n] == label) {
+        seen[n] = true;
+        open.push_back(n);
+      }
+    };
+    if (x > 0) {
+      visit(cell - 1);
+    }
+    if (x + 1 < width) {
+      visit(cell + 1);
+    }
+    if (cell >= width) {
+      visit(cell - width);
+    }
+    if (cell + width < blocked.size()) {
+      visit(cell + width);
+    }
+  }
+  for (std::size_t cell = 0; cell < blocked.size(); ++cell) {
+    if (labels[cell] == label && !seen[cell]) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /// Whether the majority filter turned @p before into a valid labeling
 /// @p after: blocked cells and cells outside the run keep their labels, every
@@ -181,13 +222,13 @@ TEST(Watershed, TheLowerSeedWinsTheDiagonalInEveryLayout) {
 }
 
 TEST(Watershed, TheLowerSeedWinsWhereTheArrivalTimesDifferByRoundingOnly) {
-  // Two square rooms of 3 to 5 cells on a side, joined by a corridor one cell
+  // Two square rooms of 3 to 5 cells on a side, joined by a passage one cell
   // wide along their top rows. All other cells are blocked.
   // The first seed sits left of the bottom row of the left room. Its front
-  // crosses that room and then m + k corridor cells to the meeting cell. The
-  // second seed sits m + 1 cells right of the right room, on a corridor along
-  // its bottom row. Its front crosses m corridor cells, that room and k
-  // corridor cells to the meeting cell. Both fronts take the same steps in
+  // crosses that room and then m + k passage cells to the meeting cell. The
+  // second seed sits m + 1 cells right of the right room, on a passage along
+  // its bottom row. Its front crosses m passage cells, that room and k
+  // passage cells to the meeting cell. Both fronts take the same steps in
   // another order, so their arrival times at the meeting cell differ by
   // rounding only. The first seed wins the meeting cell in both seed orders.
   for (uint32_t room = 3; room <= 5; ++room) {
@@ -225,6 +266,133 @@ TEST(Watershed, TheLowerSeedWinsWhereTheArrivalTimesDifferByRoundingOnly) {
               << ", first seed at " << seeds[0];
         }
       }
+    }
+  }
+}
+
+TEST(Watershed, ALabelSpreadsAlongAnAxisPastCellsThatAnotherSeedReachesSooner) {
+  // Three seeds on a free 7 x 6 grid: A at (0, 3), B at (1, 5) and C at
+  // (2, 1). A cell takes the label of the earlier finalized neighbor along x
+  // or along y. The front of A runs along row 3, so each cell of that row has
+  // A as its neighbor along x, and that neighbor arrives earlier than the
+  // neighbor along y. The row is therefore a strip of A one cell high. The
+  // cell (6, 3) lies 6.0 cells from A and 4.47 cells from C, and it still
+  // joins A. Column 0 below the seed is also a strip of A, one cell wide.
+  //
+  //   y=5 BBBBBBB
+  //   y=4 ABBBBBB
+  //   y=3 AAAAAAA
+  //   y=2 AACCCCC
+  //   y=1 ACCCCCC
+  //   y=0 ACCCCCC
+  constexpr uint32_t width = 7;
+  const BitGrid blocked(width, 6);
+  const auto at = [](const uint32_t x, const uint32_t y) {
+    return (static_cast<std::size_t>(y) * width) + x;
+  };
+  const std::vector<std::size_t> seeds = {at(0, 3), at(1, 5), at(2, 1)};
+  std::vector<PartitionLabel> labels(blocked.size(), LABEL_NONE);
+  ASSERT_EQ(runWatershed(blocked, seeds, labels, FIRST_PARTITION_LABEL),
+            FIRST_PARTITION_LABEL + 3);
+  constexpr PartitionLabel a = FIRST_PARTITION_LABEL;
+  for (uint32_t x = 0; x < width; ++x) {
+    EXPECT_EQ(labels[at(x, 3)], a) << x << ",3";
+  }
+  EXPECT_EQ(labels[at(6, 3)], a);
+  for (uint32_t y = 0; y < 4; ++y) {
+    EXPECT_EQ(labels[at(0, y)], a) << "0," << y;
+  }
+}
+
+TEST(Watershed, EveryPartitionIsFourConnectedToItsSeedOnRandomLayouts) {
+  // Random grids with obstacles, reserved cells, cells of an earlier run and
+  // up to six seeds, some of them skipped. Every free, unlabeled cell that
+  // four-connected free, unlabeled cells link to an accepted seed joins a
+  // partition of the run. Every other cell keeps its label. Every partition
+  // is four-connected and holds its seed.
+  SplitMix random(53);
+  constexpr PartitionLabel earlier = FIRST_PARTITION_LABEL;
+  constexpr PartitionLabel firstLabel = FIRST_PARTITION_LABEL + 1;
+  for (int round = 0; round < 300; ++round) {
+    const auto width = static_cast<uint32_t>(random.between(1, 32));
+    const auto height = static_cast<uint32_t>(random.between(1, 32));
+    BitGrid blocked(width, height);
+    std::vector<PartitionLabel> before(blocked.size(), LABEL_NONE);
+    const double density = round % 2 == 0 ? 0.0 : 0.3 * random.unit();
+    for (std::size_t cell = 0; cell < blocked.size(); ++cell) {
+      const double draw = random.unit();
+      if (draw < density) {
+        blocked.set(cell, true);
+      } else if (round % 2 != 0 && draw < density + 0.02) {
+        before[cell] = LABEL_RESERVED;
+      } else if (round % 2 != 0 && draw < density + 0.05) {
+        before[cell] = earlier;
+      }
+    }
+    // Some seeds fall off the grid, on a blocked cell, on a labeled cell or
+    // on another seed.
+    std::vector<std::size_t> seeds(
+        static_cast<std::size_t>(random.between(1, 6)));
+    for (std::size_t& seed : seeds) {
+      seed = static_cast<std::size_t>(
+          random.between(0, static_cast<int64_t>(blocked.size())));
+    }
+    std::vector<std::size_t> accepted;
+    for (const std::size_t seed : seeds) {
+      if (seed < blocked.size() && !blocked.test(seed) &&
+          before[seed] == LABEL_NONE &&
+          std::ranges::find(accepted, seed) == accepted.end()) {
+        accepted.push_back(seed);
+      }
+    }
+    std::vector<PartitionLabel> labels = before;
+    const PartitionLabel next =
+        runWatershed(blocked, seeds, labels, firstLabel);
+    ASSERT_EQ(next, firstLabel + accepted.size()) << "round " << round;
+
+    // The cells that a path of free, unlabeled cells links to an accepted
+    // seed.
+    std::vector<bool> reachable(blocked.size(), false);
+    std::vector<std::size_t> open = accepted;
+    for (const std::size_t seed : accepted) {
+      reachable[seed] = true;
+    }
+    while (!open.empty()) {
+      const std::size_t cell = open.back();
+      open.pop_back();
+      const std::size_t x = cell % width;
+      const auto visit = [&](const std::size_t n) {
+        if (!reachable[n] && !blocked.test(n) && before[n] == LABEL_NONE) {
+          reachable[n] = true;
+          open.push_back(n);
+        }
+      };
+      if (x > 0) {
+        visit(cell - 1);
+      }
+      if (x + 1 < width) {
+        visit(cell + 1);
+      }
+      if (cell >= width) {
+        visit(cell - width);
+      }
+      if (cell + width < blocked.size()) {
+        visit(cell + width);
+      }
+    }
+    for (std::size_t cell = 0; cell < blocked.size(); ++cell) {
+      if (reachable[cell]) {
+        ASSERT_GE(labels[cell], firstLabel) << "round " << round;
+        ASSERT_LT(labels[cell], next) << "round " << round;
+      } else {
+        ASSERT_EQ(labels[cell], before[cell]) << "round " << round;
+      }
+    }
+    for (std::size_t i = 0; i < accepted.size(); ++i) {
+      const auto label = static_cast<PartitionLabel>(firstLabel + i);
+      ASSERT_EQ(labels[accepted[i]], label) << "round " << round;
+      ASSERT_TRUE(isConnectedToSeed(blocked, labels, accepted[i], label))
+          << "round " << round << ", seed " << i;
     }
   }
 }

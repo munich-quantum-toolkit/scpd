@@ -120,7 +120,8 @@ function(add_mqt_scpd_library module)
   endif()
 
   # Add link libraries for warnings and options
-  target_link_libraries(${name} PRIVATE MQT::ProjectWarnings MQT::ProjectOptions)
+  target_link_libraries(${name} PRIVATE MQT::ProjectWarnings MQT::ProjectOptions
+                                        mqt-scpd-fp-contract-off)
 
   # Always compile with position-independent code to enable usage in shared libraries
   set_target_properties(${name} PROPERTIES POSITION_INDEPENDENT_CODE ON)

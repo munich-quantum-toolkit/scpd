@@ -96,7 +96,7 @@ struct HeadingVector {
 }
 
 /**
- * @brief Turns a heading clockwise by a number of eighth turns.
+ * @brief Turns a heading clockwise, with y up, by a number of eighth turns.
  * @param heading The heading to turn.
  * @param eighths The number of eighth turns. A negative value turns
  * counter-clockwise.

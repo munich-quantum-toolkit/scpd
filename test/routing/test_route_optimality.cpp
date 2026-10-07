@@ -10,7 +10,8 @@
 
 // How close route() comes to the cheapest path. A brute-force Dijkstra search
 // over the same states, primitive tables and move rules finds the optimum on
-// small random grids, and route() is compared with it.
+// small random grids, and route() is compared with it. A check of the move
+// costs shows why route() without the bend lower bound finds the optimum.
 
 #include "../SplitMix.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
@@ -26,6 +27,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -46,6 +48,44 @@ uint32_t moveCost(const Heading heading, const Primitive& move,
   const auto length = static_cast<uint32_t>(
       static_cast<double>(static_cast<float>(move.cost)) * 100.0);
   return length + (headingDistance(heading, move.exitHeading) * bendPenalty);
+}
+
+/// The cost of the cheapest eight-connected walk from the start of a move to
+/// its end over the start, the swept cells and the end of the move, in
+/// hundredths of a cell, or nothing when those cells do not connect the two
+/// ends.
+std::optional<uint32_t> walkThroughTheCells(const Primitive& move) {
+  std::vector<CellOffset> cells{CellOffset{}, {.dx = move.dx, .dy = move.dy}};
+  cells.insert(cells.end(), move.swept.begin(), move.swept.end());
+  std::vector<uint32_t> best(cells.size(),
+                             std::numeric_limits<uint32_t>::max());
+  using Item = std::pair<uint32_t, std::size_t>;
+  std::priority_queue<Item, std::vector<Item>, std::greater<>> open;
+  best[0] = 0;
+  open.emplace(0, 0);
+  while (!open.empty()) {
+    const auto [cost, cell] = open.top();
+    open.pop();
+    if (cost != best[cell]) {
+      continue;
+    }
+    if (cells[cell] == cells[1]) {
+      return cost;
+    }
+    for (std::size_t next = 0; next < cells.size(); ++next) {
+      const int dx = std::abs(cells[next].dx - cells[cell].dx);
+      const int dy = std::abs(cells[next].dy - cells[cell].dy);
+      if (dx > 1 || dy > 1 || (dx == 0 && dy == 0)) {
+        continue;
+      }
+      const uint32_t step = (dx == 1 && dy == 1) ? 141U : 100U;
+      if (cost + step < best[next]) {
+        best[next] = cost + step;
+        open.emplace(cost + step, next);
+      }
+    }
+  }
+  return std::nullopt;
 }
 
 /// Whether a cell lies on the grid and in the corridor.
@@ -123,9 +163,7 @@ std::optional<uint32_t> cheapestPath(const MovePrimitives& primitives,
 /// straight step starts on that point. A turn starts on the first point of
 /// the run of points that carry its tag. The cell alone does not mark the
 /// start, because some turns sweep their start cell twice. Where the search
-/// begins with a turn, the turn starts on the stub cell before that run. At a
-/// radius of one cell, an exact quarter turn that begins the search leaves no
-/// point; its move is then the one from the first point to the second (see
+/// begins with a turn, the turn starts on the stub cell before that run (see
 /// Path).
 std::optional<uint32_t> costOf(const MovePrimitives& primitives,
                                const Path& path, const uint16_t bendPenalty) {
@@ -139,16 +177,6 @@ std::optional<uint32_t> costOf(const MovePrimitives& primitives,
   while (state > 0) {
     const PathPoint& tag = path[state - 1];
     const Primitive* move = primitives.find(tag.heading, tag.primitive);
-    if ((move == nullptr || move->exitHeading != heading) && state == 1) {
-      move = nullptr;
-      for (const Primitive& turn : primitives.of(tag.heading)) {
-        if (turn.exitHeading == heading &&
-            isOn(1, static_cast<int64_t>(path[0].x) + turn.dx,
-                 static_cast<int64_t>(path[0].y) + turn.dy)) {
-          move = &turn;
-        }
-      }
-    }
     if (move == nullptr || move->exitHeading != heading) {
       return std::nullopt;
     }
@@ -189,19 +217,26 @@ struct Comparison {
   int rejectedLoops = 0;
   /// The grids on which route() returned a path dearer than the optimum.
   int worse = 0;
-  /// The largest amount by which a path exceeded the optimum.
-  uint32_t largestExcess = 0;
 };
 
 /// The comparison without the bend lower bound and with it, in this order.
 using Comparisons = std::array<Comparison, 2>;
 
-/// Compares route() with the optimum on random grids of 30 to 60 cells per
-/// side. The comparison without the bend lower bound always runs; the one
-/// with it runs when @p withBendLowerBound is set.
+/// The sides of the random grids of a comparison, in cells.
+struct GridSides {
+  /// The shortest side.
+  uint32_t shortest = 30;
+  /// The longest side.
+  uint32_t longest = 60;
+};
+
+/// Compares route() with the optimum on random grids. The comparison without
+/// the bend lower bound always runs; the one with it runs when
+/// @p withBendLowerBound is set.
 Comparisons compareWithTheOptimum(const uint32_t radius,
                                   const uint16_t bendPenalty, const int grids,
-                                  const bool withBendLowerBound) {
+                                  const bool withBendLowerBound,
+                                  const GridSides sides = {}) {
   auto primitives = std::make_shared<const MovePrimitives>(radius);
   Comparisons result;
   SplitMix random(2026);
@@ -209,8 +244,9 @@ Comparisons compareWithTheOptimum(const uint32_t radius,
     return static_cast<uint32_t>(random.next() % n);
   };
   for (int g = 0; g < grids; ++g) {
-    const uint32_t width = 30 + below(31);
-    const uint32_t height = 30 + below(31);
+    const uint32_t span = sides.longest - sides.shortest + 1;
+    const uint32_t width = sides.shortest + below(span);
+    const uint32_t height = sides.shortest + below(span);
     SearchScratch scratch(width, height);
     grid::BitGrid outsideCorridor(width, height);
     const uint32_t boxes = below(9);
@@ -270,8 +306,6 @@ Comparisons compareWithTheOptimum(const uint32_t radius,
       EXPECT_GE(*cost, *optimum) << radius << ' ' << g;
       if (*cost > *optimum) {
         ++comparison.worse;
-        comparison.largestExcess =
-            std::max(comparison.largestExcess, *cost - *optimum);
       }
     }
   }
@@ -297,31 +331,80 @@ TEST(RouteOptimality, WithoutTheBendLowerBoundEveryPathIsTheCheapest) {
 }
 
 TEST(RouteOptimality,
-     WithoutTheBendLowerBoundEveryPathIsTheCheapestAtAnyRadius) {
-  // At every radius up to 23 cells, the distance term drops along a turn by
-  // at most 96 more than the length of the turn, per eighth turn. The
-  // default bend penalty of 100 covers that, so the estimate is consistent.
-  // On grids of 30 to 60 cells, a turning circle of 24 cells forces many
-  // paths at a radius of 12 to cross themselves, so the test does not bound
-  // the rejections.
+     WithoutTheBendLowerBoundEveryPathIsTheCheapestAtSmallRadii) {
+  // The default bend penalty of 100 covers the excess of every turn at every
+  // radius that a router accepts (see
+  // AtTheDefaultBendPenaltyEveryMoveCostsAtLeastTheWalkThroughItsCells), so
+  // the estimate is consistent. The radii of 2, 3, 8, 14 and 17 cells hold
+  // exact eighth turns. On grids of 30 to 60 cells, a turning circle of 24
+  // cells forces many paths at a radius of 12 to cross themselves, so the
+  // test does not bound the rejections. The radii of 14 and 17 cells run on
+  // grids of 60 to 100 cells, which leave room for their turning circles.
   constexpr int grids = 300;
-  for (const uint32_t radius : {1U, 3U, 8U, 12U}) {
+  for (const uint32_t radius : {2U, 3U, 8U, 12U}) {
     const Comparison c = compareWithTheOptimum(radius, 100, grids, false)[0];
+    EXPECT_GT(c.routed, grids / 10) << radius;
+    EXPECT_EQ(c.worse, 0) << radius;
+  }
+  constexpr int largeGrids = 150;
+  for (const uint32_t radius : {14U, 17U}) {
+    const Comparison c = compareWithTheOptimum(
+        radius, 100, largeGrids, false, {.shortest = 60, .longest = 100})[0];
+    EXPECT_GT(c.routed, largeGrids / 10) << radius;
+    EXPECT_EQ(c.worse, 0) << radius;
+  }
+}
+
+TEST(RouteOptimality,
+     WithoutTheBendLowerBoundEveryPathIsTheCheapestAtTheThinnestMargin) {
+  // At the radii of 19, 21 and 23 cells, some turn has an excess of 96 per
+  // eighth turn, so the default bend penalty of 100 covers it with the
+  // thinnest margin. The grids are large enough for turning circles of up
+  // to 46 cells.
+  constexpr int grids = 150;
+  for (const uint32_t radius : {19U, 21U, 23U}) {
+    const Comparison c = compareWithTheOptimum(
+        radius, 100, grids, false, {.shortest = 60, .longest = 100})[0];
     EXPECT_GT(c.routed, grids / 10) << radius;
     EXPECT_EQ(c.worse, 0) << radius;
   }
 }
 
-TEST(RouteOptimality, WithTheBendLowerBoundFewPathsCostAtMostTwentyMore) {
+TEST(RouteOptimality,
+     WithTheBendLowerBoundFewerThanOnePathInAHundredCostsMore) {
   // With the bend term, the estimate already holds the bend penalty, so the
   // drop of the distance term beyond the length of a turn shows, and route()
-  // may return a dearer path on a few grids. The bounds are what the
-  // comparison measures at a bend radius of 5.
+  // may return a dearer path on a few grids. The excess of such a path has
+  // no known bound (see DubinsRouter::setBendLowerBound()), so the test bounds
+  // only the share of the dearer paths, with room to spare at a bend radius
+  // of 5.
   const Comparison& c = comparisons()[1];
   EXPECT_GT(c.routed, GRIDS / 2);
   EXPECT_LT(c.rejectedLoops, GRIDS / 20);
   EXPECT_LE(c.worse, c.routed / 100);
-  EXPECT_LE(c.largestExcess, 20U);
+}
+
+TEST(RouteOptimality,
+     AtTheDefaultBendPenaltyEveryMoveCostsAtLeastTheWalkThroughItsCells) {
+  // Along a move, the distance term of the estimate drops by at most the
+  // cost of the cheapest eight-connected walk through the corridor from the
+  // start of the move to its end. The corridor holds the cells the move
+  // sweeps, so the walk through the start, the swept cells and the end
+  // bounds the drop. A move that costs at least that walk keeps the estimate
+  // consistent without the bend lower bound, so route() then returns a
+  // cheapest path.
+  const uint16_t bendPenalty = SearchParams{}.bendPenalty;
+  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
+      for (const Primitive& move : table.of(h)) {
+        const std::optional<uint32_t> walk = walkThroughTheCells(move);
+        ASSERT_TRUE(walk.has_value()) << radius << ' ' << move.id;
+        EXPECT_LE(*walk, moveCost(h, move, bendPenalty))
+            << radius << ' ' << static_cast<int>(h) << ' ' << move.id;
+      }
+    }
+  }
 }
 
 } // namespace

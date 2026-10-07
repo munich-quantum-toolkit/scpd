@@ -48,12 +48,31 @@ inline constexpr PartitionLabel FIRST_PARTITION_LABEL = 2;
 /**
  * @brief Grows one partition from every seed over the free, unlabeled cells.
  *
- * The growth is a fast marching over the four-neighborhood. Every cell joins
- * the partition whose front reaches the cell first. The function solves the
- * arrival time of a cell from the eikonal equation on the finalized neighbors
- * of the cell. When two fronts arrive within a tolerance of each other, the
- * lower seed index decides and the rounding error of the arrival times does
- * not. The labels are therefore deterministic on a symmetric layout.
+ * The growth is a fast marching over the four-neighborhood with one front for
+ * all seeds. A seed has the arrival time 0. The arrival time of another cell
+ * solves the eikonal equation on two finalized neighbors of the cell: the
+ * earliest one along x and the earliest one along y. The partitions of these
+ * two neighbors do not matter. If only one axis has a finalized neighbor, the
+ * arrival time is that neighbor's time plus one. The same holds when the two
+ * times differ by sqrt(2) or more, or when the solution lies below the larger
+ * of the two times: the arrival time is then the earlier time plus one. The
+ * cell joins the partition of the earlier of the two neighbors.
+ *
+ * Two arrival times that differ by less than 1e-6 are a tie. The lower seed
+ * index decides a tie, and the rounding error of the arrival times does not.
+ * The two rules differ at the limit. A cell that holds a tentative time takes
+ * a new one that is earlier by more than 1e-6, or that differs by at most 1e-6
+ * and comes from a lower seed index. Between its two neighbors, a cell joins
+ * the one with the lower seed index when their times differ by less than 1e-6.
+ * The labels are therefore deterministic on a symmetric layout.
+ *
+ * A cell therefore does not always join the partition of the seed that it lies
+ * nearest to. A partition can run along an axis as a strip one cell high. On a
+ * free grid of 7 x 6 cells with the seeds A at (0, 3), B at (1, 5) and C at
+ * (2, 1), the cells (0, 3) to (6, 3) all join A. The cell (6, 3) lies 6.0
+ * cells from A and 4.47 cells from C in a straight line.
+ *
+ * Every partition is four-connected and holds its seed.
  *
  * The function skips a seed on a blocked cell, on a cell that carries a label,
  * or off the grid. A skipped seed takes no label, so the accepted seeds get

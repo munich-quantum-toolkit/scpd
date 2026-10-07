@@ -19,28 +19,14 @@ function(enable_project_options target_name)
     endif()
   endif()
 
-  # Never contract a * b + c into one fused multiply-add, which rounds once instead of twice.
-  # Without contraction, +, -, *, / and std::sqrt round the same on every x86-64 and arm64 target,
-  # so exact ties such as those in the obstacle mask do not depend on the compiler or the target.
-  # The flag does not cover the math library: std::hypot, std::atan2, std::sin, std::cos and the
-  # like may differ in the last bit between C runtimes.
   if(MSVC)
     target_compile_options(${target_name} INTERFACE /utf-8 /Zm10 /EHsc)
-    # Since Visual Studio 2022 (MSVC 19.30), MSVC does not contract under its default /fp:precise on
-    # any target, arm64 included, and it has no option that turns contraction off. clang-cl
-    # contracts by default, as clang does, and takes the clang option through /clang:.
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-      target_compile_options(${target_name} INTERFACE /clang:-ffp-contract=off)
-    endif()
   else()
     # always include debug symbols (avoids common problems with LTO)
     target_compile_options(${target_name} INTERFACE -g)
 
     # ensure that exceptions are enabled
     target_compile_options(${target_name} INTERFACE -fexceptions)
-
-    # turn contraction off for GCC, Clang and every other compiler that takes GCC options
-    target_compile_options(${target_name} INTERFACE -ffp-contract=off)
 
     # enable coverage collection options
     option(ENABLE_COVERAGE "Enable coverage reporting for gcc/clang" FALSE)

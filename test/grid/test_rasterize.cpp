@@ -158,14 +158,16 @@ referenceDistanceToEdges(const Point point,
   return nearest;
 }
 
-/// The smallest distance from a point to a corridor, less its half width.
-double referenceDepthInCorridors(const Point point,
-                                 const std::vector<Corridor>& corridors) {
+/// The smallest distance from a point to a port corridor, less its half
+/// width.
+double
+referenceDepthInPortCorridors(const Point point,
+                              const std::vector<PortCorridor>& portCorridors) {
   double nearest = std::numeric_limits<double>::infinity();
-  for (const Corridor& corridor : corridors) {
-    nearest =
-        std::min(nearest, referenceDistance(point, corridor.from, corridor.to) -
-                              corridor.halfWidth);
+  for (const PortCorridor& portCorridor : portCorridors) {
+    nearest = std::min(
+        nearest, referenceDistance(point, portCorridor.from, portCorridor.to) -
+                     portCorridor.halfWidth);
   }
   return nearest;
 }
@@ -420,6 +422,27 @@ TEST(Rasterize, AKeepoutAsLongAsAPythagoreanDistanceReachesTheCell) {
   EXPECT_FALSE(far.testCell(61, 261));
 }
 
+TEST(Rasterize, TheKeepoutComparesTheComputedDistance) {
+  // The cell center (50, 50) lies 12.829492330551147 units right of and
+  // 24.0552981197834 units above the corner v of a triangle. The squares of
+  // these legs sum exactly to the square of the double 27.26267120242119, but
+  // the squares round, so the computed distance need not equal that value.
+  // The keepout compares the computed distance: a keepout equal to it blocks
+  // the cell, and the next double below it leaves the cell free.
+  const Point v(37.17050766944885, 25.9447018802166);
+  const std::vector<Point> triangle = {v, Point(v.x() - 10.0, v.y()),
+                                       Point(v.x(), v.y() - 10.0)};
+  const double computed =
+      distanceToSegment(Point(50.0, 50.0), v, Point(v.x() - 10.0, v.y()));
+  RasterOptions options;
+  options.keepout = computed;
+  EXPECT_TRUE(rasterizeObstacles(chipWith({triangle}), unitGrid(), options)
+                  .blocked.testCell(50, 50));
+  options.keepout = std::nextafter(computed, 0.0);
+  EXPECT_FALSE(rasterizeObstacles(chipWith({triangle}), unitGrid(), options)
+                   .blocked.testCell(50, 50));
+}
+
 TEST(Rasterize, TheDistanceHoldsWhereItsSquareLeavesTheRangeOfADouble) {
   // The square of the first distance overflows, and that of the second
   // falls below the normal numbers.
@@ -431,7 +454,7 @@ TEST(Rasterize, TheDistanceHoldsWhereItsSquareLeavesTheRangeOfADouble) {
                    5e-160);
 }
 
-TEST(Rasterize, ACorridorReleasesKeepoutCellsButNeverPolygonCells) {
+TEST(Rasterize, APortCorridorReleasesKeepoutCellsButNeverPolygonCells) {
   RasterOptions options;
   options.keepout = 5.0;
   options.keepoutExemptions.push_back(
@@ -447,7 +470,7 @@ TEST(Rasterize, ACorridorReleasesKeepoutCellsButNeverPolygonCells) {
   EXPECT_GT(raster.exemptedCells, 0U);
 }
 
-TEST(Rasterize, ACorridorWithANegativeHalfWidthFreesNoCell) {
+TEST(Rasterize, APortCorridorWithANegativeHalfWidthFreesNoCell) {
   // The strip holds no point. Its window along x is empty, and its window
   // along y is not.
   RasterOptions options;
@@ -463,11 +486,11 @@ TEST(Rasterize, ACorridorWithANegativeHalfWidthFreesNoCell) {
 }
 
 TEST(Rasterize, TheKeepoutMatchesACellByCellReferenceOnRandomChips) {
-  // Overlapping random polygons and corridors. The reference measures every
-  // cell center that the polygons leave free against every obstacle edge and
-  // against every corridor, with its own distance. No center lies within
-  // rounding of the keepout or of the half width of a corridor, so that the
-  // rounding of neither distance decides a cell.
+  // Overlapping random polygons and port corridors. The reference measures
+  // every cell center that the polygons leave free against every obstacle
+  // edge and against every port corridor, with its own distance. No center
+  // lies within rounding of the keepout or of the half width of a
+  // port corridor, so that the rounding of neither distance decides a cell.
   SplitMix random(17);
   const GridMetrics& grid = unitGrid();
   const auto anywhere = [&] {
@@ -485,8 +508,8 @@ TEST(Rasterize, TheKeepoutMatchesACellByCellReferenceOnRandomChips) {
     }
     RasterOptions options;
     options.keepout = 0.5 + (random.unit() * 4.0);
-    const int64_t corridors = random.between(0, 6);
-    for (int64_t i = 0; i < corridors; ++i) {
+    const int64_t portCorridors = random.between(0, 6);
+    for (int64_t i = 0; i < portCorridors; ++i) {
       options.keepoutExemptions.push_back({.from = anywhere(),
                                            .to = anywhere(),
                                            .halfWidth = random.unit() * 5.0});
@@ -512,7 +535,7 @@ TEST(Rasterize, TheKeepoutMatchesACellByCellReferenceOnRandomChips) {
         }
         ++keepoutCells;
         const double depth =
-            referenceDepthInCorridors(center, options.keepoutExemptions);
+            referenceDepthInPortCorridors(center, options.keepoutExemptions);
         ASSERT_GT(std::fabs(depth), TIE_MARGIN) << "round " << round;
         if (depth <= 0.0) {
           ++exemptedCells;
@@ -529,9 +552,9 @@ TEST(Rasterize, TheKeepoutMatchesACellByCellReferenceOnRandomChips) {
 
 TEST(Rasterize, TheKeepoutOfLongDiagonalEdgesMatchesAReferenceOnALargeGrid) {
   // Thin triangles whose long edges cross a grid of 3000 by 3000 cells at
-  // several slopes, a keepout of 185 units and two corridors across them.
-  // The reference measures every cell of every 53rd row against every edge
-  // and every corridor. No center lies within rounding of a limit.
+  // several slopes, a keepout of 185 units and two port corridors across
+  // them. The reference measures every cell of every 53rd row against every
+  // edge and every port corridor. No center lies within rounding of a limit.
   const GridMetrics grid = GridMetrics::fit(
       BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 30000.0, .maxY = 30000.0},
       3000, 3000);
@@ -565,7 +588,7 @@ TEST(Rasterize, TheKeepoutOfLongDiagonalEdgesMatchesAReferenceOnALargeGrid) {
         if (beyond <= 0.0) {
           ++keepoutCells;
           const double depth =
-              referenceDepthInCorridors(center, options.keepoutExemptions);
+              referenceDepthInPortCorridors(center, options.keepoutExemptions);
           ASSERT_GT(std::fabs(depth), TIE_MARGIN) << x << ", " << y;
           expected = depth > 0.0;
           exemptedCells += expected ? 0 : 1;
@@ -574,7 +597,8 @@ TEST(Rasterize, TheKeepoutOfLongDiagonalEdgesMatchesAReferenceOnALargeGrid) {
       ASSERT_EQ(raster.blocked.testCell(x, y), expected) << x << ", " << y;
     }
   }
-  // The sampled rows hold keepout cells, and the corridors free some of them.
+  // The sampled rows hold keepout cells, and the port corridors free some of
+  // them.
   EXPECT_GT(keepoutCells, exemptedCells);
   EXPECT_GT(exemptedCells, 0U);
 }
@@ -946,7 +970,7 @@ TEST(Rasterize, ANonFiniteVertexIsRefusedAndKeepsTheMask) {
   EXPECT_THROW(fillPolygon(small, tiny, far), std::invalid_argument);
 }
 
-TEST(Rasterize, ACorridorFreesACellThatTheIslandRuleFreed) {
+TEST(Rasterize, APortCorridorFreesACellThatTheIslandRuleFreed) {
   // A line one cell wide from x = 20 to x = 30 along row 70. The island rule
   // frees its two end cells, so they are no polygon cells any more.
   const std::vector<Point> line = {Point(20.0, 70.0), Point(30.0, 70.0),
@@ -965,8 +989,8 @@ TEST(Rasterize, ACorridorFreesACellThatTheIslandRuleFreed) {
       rasterizeObstacles(chipWith({line}), unitGrid(), options).blocked;
   EXPECT_TRUE(guarded.testCell(20, 70));
 
-  // There they are keepout cells, so a corridor that reaches them frees them.
-  // The polygon cell next to them stays blocked.
+  // There they are keepout cells, so a port corridor that reaches them frees
+  // them. The polygon cell next to them stays blocked.
   options.keepoutExemptions.push_back(
       {.from = Point(14.0, 70.0), .to = Point(20.0, 70.0), .halfWidth = 0.5});
   const RasterizedObstacles exempted =

@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -95,9 +96,10 @@ DubinsRouter::DubinsRouter(std::shared_ptr<const MovePrimitives> primitives,
   if (movePrimitives == nullptr) {
     throw std::invalid_argument("a router needs primitives");
   }
-  if (movePrimitives->minRadius() > MAX_BEND_RADIUS) {
+  if (movePrimitives->minRadius() < MIN_BEND_RADIUS ||
+      movePrimitives->minRadius() > MAX_BEND_RADIUS) {
     throw std::invalid_argument(
-        "a router accepts a bend radius of at most 23 cells");
+        "a router accepts a bend radius from 2 to 23 cells");
   }
   if (gridWidth == 0 || gridHeight == 0 || gridWidth >= 65536U ||
       gridHeight >= 65536U) {
@@ -676,6 +678,9 @@ void DubinsRouter::buildTables(const uint32_t bend) {
     int32_t positiveY = 0;
 
     const auto prims = movePrimitives->of(static_cast<Heading>(heading));
+    // The primitives of every radius from MIN_BEND_RADIUS to MAX_BEND_RADIUS
+    // fit the tables, so the checks of this loop do not fire. They guard the
+    // layout of the tables if the radius limits change.
     if (prims.size() > MAX_PRIMITIVES_PER_HEADING) {
       throw std::invalid_argument(
           "a heading has more primitives than the search tables hold");
@@ -984,10 +989,17 @@ PathPoint DubinsRouter::sanitize(const PathPoint point,
                : -static_cast<int64_t>(searchParams.startStraightLength);
   const HeadingVector v = headingVector(point.heading);
   // The source moves along its heading, the target back along its heading.
-  return {.x = static_cast<uint32_t>(static_cast<int64_t>(point.x) -
-                                     (v.dx * length)),
-          .y = static_cast<uint32_t>(static_cast<int64_t>(point.y) -
-                                     (v.dy * length)),
+  // The moved coordinate is exact in 64 bits. A coordinate outside the range
+  // of a cell coordinate becomes the largest one, so that a stub of up to
+  // 2^32 - 1 cells cannot wrap the point back into the grid.
+  const auto moved = [](const uint32_t coordinate, const int64_t offset) {
+    const int64_t value = static_cast<int64_t>(coordinate) + offset;
+    constexpr auto largest = std::numeric_limits<uint32_t>::max();
+    return std::in_range<uint32_t>(value) ? static_cast<uint32_t>(value)
+                                          : largest;
+  };
+  return {.x = moved(point.x, -(v.dx * length)),
+          .y = moved(point.y, -(v.dy * length)),
           .heading = static_cast<Heading>(point.heading & 7U),
           .primitive = 0};
 }
@@ -1268,7 +1280,9 @@ void DubinsRouter::expandFree(
         hv = growDistanceField(linear);
       }
       if ((hv >> FIELD_DISTANCE_BITS) != fieldStamp) {
-        // Provably unable to reach the target.
+        // No walk through the corridor leads from the end cell to the target.
+        // The cells of every move form a chain of neighbors (see
+        // Primitive::swept), so no path of moves leads there either.
         alive &= static_cast<uint16_t>(~(1U << i));
       } else {
         endField[i] = hv & FIELD_DISTANCE_MASK;

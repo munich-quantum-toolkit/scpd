@@ -40,10 +40,9 @@ struct SegmentedPath {
   /// point counts one straight step, unless it repeats the cell and the tag
   /// of the point before it, or its cell is the start of the arc of the turn
   /// after it (see Path); that turn counts its move. A turn counts its cost
-  /// once, also a turn that no point carries (see reconstructSegments()). In
-  /// a routed path, every move counts once, and the last point adds the
-  /// straight step that leaves the path. The cost of a turn can exceed the
-  /// length of its curve (see Primitive::cost), so this is the length the
+  /// once. In a routed path, every move counts once, and the last point adds
+  /// the straight step that leaves the path. The cost of a turn can exceed
+  /// the length of its curve (see Primitive::cost), so this is the length the
   /// search charges; renderedLength() measures the curve.
   double nominalLength = 0.0;
 };
@@ -77,14 +76,7 @@ straightRun(const MovePrimitives& primitives, PathPoint start, uint32_t steps);
  * that point lies one step beyond the first point of the turn plus the end
  * offset of the primitive; then, and at the end of the path, it is that sum.
  * For a primitive the tables lack, it is the point after the turn, or the
- * last point of the path. A turn can also leave no point of its own: at a
- * radius of one cell, where the search begins with the exact quarter turn of
- * a diagonal heading (see Path). Its start is then a straight point, and the
- * point after it lies on another heading, at the end offset of the turn. The
- * function finds the turn from the two headings and that offset and adds a
- * segment for it, whose cell is the end of its arc. No two turns of one
- * heading share their exit heading and their end offset, so the turn is
- * unique. The lengths of the segments are nominal and count as
+ * last point of the path. The lengths of the segments are nominal and count as
  * SegmentedPath::nominalLength describes. samplePath() replaces them with the
  * rendered lengths.
  *
@@ -128,11 +120,10 @@ samplePath(const MovePrimitives& primitives, Path& path, PathPoint start,
  *
  * The function works on a copy of @p path. A first point that starts a turn
  * is the start of the arc, which the rendering needs to find the turn and the
- * end of its arc, so the copy keeps it. That point carries the turn, or it is
- * the straight start of a turn that leaves no point of its own (see
- * reconstructSegments()). Any other first point is straight and adds no step
- * to the polyline from @p start, which is normally that point, so the
- * function drops it from the copy. Either way the polyline is the one
+ * end of its arc, so the copy keeps it. That point carries the turn. Any
+ * other first point is straight and adds no step to the polyline from
+ * @p start, which is normally that point, so the function drops it from the
+ * copy. Either way the polyline is the one
  * samplePath() draws from the same start. Unlike samplePath(), the function
  * keeps consecutive repeats of a cell. It also reports where each segment
  * begins in the polyline and whether the segment is straight.

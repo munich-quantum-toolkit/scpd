@@ -297,8 +297,13 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   // finds the candidate's own point, also where an earlier point lies on the
   // same cell.
   std::size_t own = 0;
-  for (const PathSegment& segment : segments) {
-    if (!segment.straight()) {
+  for (std::size_t s = 0; s < segments.size(); ++s) {
+    const PathSegment& segment = segments[s];
+    // PathSegment::straight() reads false for a straight run of one cell, so
+    // the tag decides. A run of one cell at the end of the path, such as the
+    // end of a last turn, counts only with a point after it.
+    if (!primitives.isStraight(segment.heading, segment.primitive) ||
+        (!segment.straight() && s + 1 == segments.size())) {
       continue;
     }
     const auto found = optionsByHeading.find(segment.heading);
@@ -491,10 +496,13 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     return std::nullopt;
   }
 
-  const Candidate& winner = *chosen->candidate;
-  path.erase(path.begin(),
-             path.begin() + static_cast<std::ptrdiff_t>(winner.splitIndex));
-  path.insert(path.begin(), chosen->cells.begin(), chosen->cells.end());
+  // The insertion is the only step that can fail, and a failed insertion
+  // leaves the path as it was. The erasure after it cannot fail.
+  const auto split =
+      path.begin() + static_cast<std::ptrdiff_t>(chosen->candidate->splitIndex);
+  const auto spliced =
+      path.insert(split, chosen->cells.begin(), chosen->cells.end());
+  path.erase(path.begin(), spliced);
   return CouplerSplice{.anchor = path.front(),
                        .inAllowedArea = chosen->inAllowedArea};
 }

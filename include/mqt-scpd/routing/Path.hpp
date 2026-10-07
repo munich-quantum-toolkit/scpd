@@ -73,11 +73,6 @@ struct PathPoint {
  * - One exception: where the search of a routed path begins with a turn, the
  *   start of the arc is the last cell of the source stub, which keeps the tag
  *   of the stub. The first point of that turn is the next cell the arc sweeps.
- *   At a radius of one cell, the exact quarter turn of a diagonal heading
- *   sweeps only its start and its end. Where the search begins with that
- *   turn, no point carries its tag, and the point after the last stub cell
- *   is the end of the arc. reconstructSegments() finds the turn from the
- *   change of heading and the end offset.
  * - The arc ends at its start plus the end offset of the primitive,
  *   (Primitive::dx, Primitive::dy). In a routed path, the point after a turn
  *   is that end. A coupler dogleg instead lists the end as a point of the

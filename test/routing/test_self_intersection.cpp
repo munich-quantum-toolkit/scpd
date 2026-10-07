@@ -8,6 +8,7 @@
  * Licensed under the MIT License
  */
 
+#include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
@@ -214,11 +215,11 @@ TEST(SelfIntersection, ALoopOfFourStepsIsFound) {
 
 TEST(SelfIntersection, NoTwoMovesOfTheRouterReadAsALoop) {
   // Two moves cannot close a loop, but the cells they list can repeat a cell
-  // within the spur window: an eighth turn lists the cell past its end, and
-  // at a radius of one cell a U-turn lists the cell between its arcs twice.
+  // within the spur window: an eighth turn lists the cell past its end.
   // Every pair of moves at every radius the router accepts must pass.
   std::size_t spurs = 0;
-  for (uint32_t radius = 1; radius <= 23; ++radius) {
+  for (uint32_t radius = DubinsRouter::MIN_BEND_RADIUS; radius <= 23;
+       ++radius) {
     const MovePrimitives primitives(radius);
     PathLoopScratch scratch;
     for (Heading heading = 0; heading < NUM_HEADINGS; ++heading) {
@@ -243,9 +244,10 @@ TEST(SelfIntersection, NoTwoMovesOfTheRouterReadAsALoop) {
   EXPECT_GT(spurs, 0U);
 }
 
-TEST(SelfIntersection, TheShortestLoopOfARoutedPathIsFound) {
+TEST(SelfIntersection, ALoopOneStepBeyondTheSpurWindowIsFound) {
   // At a radius of one cell, three exact quarter turns of a diagonal heading
-  // and one quarter turn back close a loop after five steps.
+  // and one quarter turn back close a loop after five steps, which is four
+  // steps between the two visits of a cell.
   const MovePrimitives primitives(1);
   std::vector<const Primitive*> moves;
   Heading heading = 1;

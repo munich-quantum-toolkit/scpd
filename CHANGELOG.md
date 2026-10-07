@@ -46,10 +46,13 @@ releases may include breaking changes.
 
 ### Changed
 
-- 🔧 Build with floating-point contraction off (`-ffp-contract=off`, and
-  `/clang:-ffp-contract=off` for clang-cl; MSVC does not contract since Visual
-  Studio 2022), so that a sum of products rounds the same on every compiler and
-  target ([#134]) ([**@FeldmeierMichael**])
+- 🔧 Build the module libraries, the tests and the Python bindings with
+  floating-point contraction off (`-ffp-contract=off`, and
+  `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that
+  defines `MQT::ProjectOptions`, so that a sum of products rounds the same on
+  every compiler and target; MSVC does not contract since Visual Studio 2022,
+  and the configuration warns for an older MSVC ([#134])
+  ([**@FeldmeierMichael**])
 - ♻️ Make `[ports.sequences]` required and drop the `detection` and
   `start_component` keys of the configuration schema; the outer port ring is
   configuration only ([#111]) ([**@FeldmeierMichael**])

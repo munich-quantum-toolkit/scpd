@@ -122,12 +122,12 @@ TEST(GridMetrics, TheRouterGridDividesEveryCapacityCell) {
   EXPECT_LT(oddRouter.cellWidth, 10.0);
 }
 
-TEST(GridMetrics, CellsForReproducesTheClearanceLiterals) {
+TEST(GridMetrics, CellsForReproducesTheSpacingLiterals) {
   const BoundingBox chip{
       .minX = 0.0, .minY = 0.0, .maxX = 29910.0, .maxY = 29910.0};
   const GridMetrics router = routerGrid(GridMetrics::fit(chip, 50, 50), 10.0);
   EXPECT_NEAR(router.cellWidth, 9.97, 0.01);
-  // The wire clearance of 185 units is 19 cells on every benchmark. The cell
+  // The wire spacing of 185 units is 19 cells on every benchmark. The cell
   // step lies below 10 units, so the coupler footprint of 200 by 26 units
   // takes 21 by 3 cells and the bridge of 60 by 60 units takes 7 by 7.
   EXPECT_EQ(cellsFor(185.0, router), 19U);

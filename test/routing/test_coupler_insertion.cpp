@@ -632,6 +632,44 @@ TEST(CouplerInsertion, ASpliceOnTheStubOfAFirstTurnKeepsTheStartOfItsArc) {
   }
 }
 
+TEST(CouplerInsertion, TheCellBetweenTwoTurnsOneStepApartTakesACoupler) {
+  // Two quarter turns one straight step apart leave a straight run of one
+  // cell between them: the end of the first turn. That cell takes a coupler
+  // as every cell of a longer run does. The dogleg of coupler heading 4 ends
+  // on heading 4, the heading of the run, so it needs no connection. A target
+  // of the rendered length from the cell on plus the length of the dogleg is
+  // met exactly there, and at no other candidate.
+  Path path = straightRun(400, 300, 6, 30);
+  appendTurn(path, 6, 4);
+  const std::size_t between = path.size() - 1;
+  const PathPoint end = path.back();
+  path.push_back({.x = end.x,
+                  .y = end.y + 1,
+                  .heading = 4,
+                  .primitive = primitives().straight(4)});
+  appendTurn(path, 4, 2);
+  const Path back = straightRun(path.back().x, path.back().y, 2, 30);
+  path.insert(path.end(), back.begin() + 1, back.end());
+  const Path rest(path.begin() + static_cast<std::ptrdiff_t>(between),
+                  path.end());
+  ASSERT_TRUE(primitives().isStraight(rest[0].heading, rest[0].primitive));
+  ASSERT_FALSE(primitives().isStraight(rest[1].heading, rest[1].primitive));
+
+  const DoglegGeometry dogleg = buildDogleg(primitives(), 6, -1, 14);
+  ASSERT_EQ(dogleg.tip.heading, 4);
+  const double target = renderedLength(primitives(), rest) + dogleg.cost;
+  Path spliced = path;
+  ASSERT_TRUE(
+      spliceCouplerDogleg(primitives(), target, spliced, WIDTH, HEIGHT, 4)
+          .has_value());
+  ASSERT_GT(spliced.size(), rest.size());
+  const auto junction =
+      spliced.end() - static_cast<std::ptrdiff_t>(rest.size());
+  EXPECT_TRUE(std::equal(rest.begin(), rest.end(), junction));
+  EXPECT_FALSE((junction - 1)->samePlace(*junction));
+  EXPECT_NEAR(renderedLength(primitives(), spliced), target, 1e-9);
+}
+
 TEST(CouplerInsertion, AnAllowedAreaMovesTheCouplerAlongItsResonator) {
   Path unrestricted = straightRun(400, 300, 6, 300);
   const std::optional<CouplerSplice> free =
@@ -859,9 +897,7 @@ TEST(CouplerInsertion, ASplicedPathStepsFromCellToNeighboringCell) {
   // a connection do not sweep their end: the eighth turns off a diagonal
   // heading at a radius of five cells, and the arcs of 72 to 77 degrees at 10
   // and 16 cells. A straight step after such a turn starts from its end. The
-  // targets put the splice all along the diagonal resonator. At some radii a
-  // cardinal heading has no eighth turn, and a dogleg that ends on a cardinal
-  // heading then has no connection onto the resonator.
+  // targets put the splice all along the diagonal resonator.
   for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
     const MovePrimitives table(radius);
     const Path resonator =

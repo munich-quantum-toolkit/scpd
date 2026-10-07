@@ -88,7 +88,8 @@ using Point = flatbuffers::geometry::Point;
  * @brief Computes the direction a vector points in.
  * @param vector The vector to measure. The zero vector yields zero.
  * @return The angle in radians in the range (-pi, pi], measured
- * counter-clockwise from the positive x axis, as `std::atan2` defines it.
+ * counter-clockwise, with y up, from the positive x axis, as `std::atan2`
+ * defines it.
  */
 [[nodiscard]] MQT_SCPD_GEOMETRY_EXPORT double angleOf(Point vector);
 

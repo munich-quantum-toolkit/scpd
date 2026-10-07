@@ -12,9 +12,11 @@
 // a test binary of their own.
 
 #include "mqt-scpd/grid/BitGrid.hpp"
+#include "mqt-scpd/routing/CouplerInsertion.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
+#include "mqt-scpd/routing/PathGeometry.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
 #include "mqt-scpd/routing/SearchScratch.hpp"
 #include "mqt-scpd/routing/SelfIntersection.hpp"
@@ -381,6 +383,30 @@ TEST(AllocationFailure, AKeptLoopScratchChecksAPathWithoutAllocating) {
   EXPECT_TRUE(loop);
   EXPECT_EQ(first.secondIndex, expected.secondIndex);
   EXPECT_GT(events, 0U);
+}
+
+TEST(AllocationFailure, AFailedSpliceLeavesThePathUnchanged) {
+  // The dogleg is longer than the prefix of the path that it replaces, and
+  // the path has no spare capacity, so the splice must allocate. A failed
+  // allocation leaves the path as it was.
+  constexpr uint32_t gridSize = 1000;
+  const MovePrimitives primitives(5);
+  Path original =
+      straightRun(primitives, {.x = 300, .y = 300, .heading = 6}, 300);
+  original.shrink_to_fit();
+  ASSERT_EQ(original.capacity(), original.size());
+
+  Path path;
+  const int failures = failEachAllocation(
+      [&](const std::function<void()>& arm) {
+        path = original;
+        path.shrink_to_fit();
+        arm();
+        static_cast<void>(spliceCouplerDogleg(primitives, 290.0, path, gridSize,
+                                              gridSize, 2));
+      },
+      [&](const int allocation) { EXPECT_EQ(path, original) << allocation; });
+  EXPECT_GT(failures, 0);
 }
 
 } // namespace

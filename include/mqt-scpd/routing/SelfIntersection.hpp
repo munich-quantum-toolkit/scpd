@@ -29,19 +29,17 @@ namespace mqt::scpd::routing {
  * bend radius of five cells, every eighth turn from a cardinal heading sweeps
  * one cell past the end of its arc, so the path reads the end, the cell past
  * it, and the end again. At most other radii, some eighth turns list a cell
- * twice in the same way. Straight steps leave no spur. Quarter turns leave
- * none either, except at a radius of one cell: there a U-turn of two quarter
- * turns lists the cell between its two arcs twice, three steps apart, as a
- * ring through three cells that all touch one another.
+ * twice in the same way. Straight steps and quarter turns leave no spur.
  *
  * A spur is not a loop, so a revisit counts only when the two visits are more
  * than this many steps apart. The window therefore passes exactly two shapes:
  * a step to a neighboring cell and back, and a ring through three cells that
  * all touch one another. A ring around a 2 by 2 block closes after four steps
- * and counts, and so does a run of two cells out and back. At every bend
- * radius from 1 to 23 cells, a routed path holds no other revisit within four
- * steps: its moves produce none, and its shortest loop takes five steps, at a
- * radius of one cell.
+ * and counts, and so does a run of two cells out and back. The window is one
+ * step wider than routed paths need: at every bend radius that a DubinsRouter
+ * accepts, the moves revisit a cell only two steps apart, and no sequence of
+ * up to five moves gives a revisit three or four steps apart. The window is
+ * therefore conservative.
  *
  * The detector uses a window and not a stack that collapses spurs, because
  * such a stack pops every A-B-A. It would unwind a long exact retrace one cell
@@ -54,9 +52,16 @@ inline constexpr std::size_t PATH_LOOP_SPUR_WINDOW = 3;
  *
  * The search runs over (cell, heading) states. The same cell at two headings
  * is two states, so a route can return to a cell it already occupies. On the
- * chip, that is a short circuit. No clearance rule sees it, because a
- * clearance rule compares two different wires. Each path therefore needs a
- * check of its own, which finds two shapes.
+ * chip, that is a short circuit. A clearance rule between two wires does not
+ * see it, so each path needs a check of its own. The check reads the
+ * rasterized cells of the path and finds two shapes: a revisited cell and a
+ * crossing of two diagonal steps.
+ *
+ * The check does not measure the distance between two parts of one path. Two
+ * parts in neighboring cells are no event, and their rendered curves can pass
+ * less than a tenth of a cell apart. A caller that needs a clearance between
+ * the parts of one wire must measure it on the rendered geometry (see
+ * samplePath()).
  */
 enum class PathLoopKind : uint8_t {
   /// The same grid cell is occupied twice.
@@ -224,9 +229,12 @@ MQT_SCPD_ROUTING_EXPORT uint32_t findPathSelfIntersections(
     std::vector<PathLoopHit>* hits);
 
 /**
- * @brief Reports whether a path crosses or touches itself.
+ * @brief Reports whether a path revisits a cell or crosses itself between
+ * two diagonal steps.
  *
- * The scan stops at the first event.
+ * The scan stops at the first event. The function finds the shapes of
+ * PathLoopKind only. It does not test the clearance between two parts of the
+ * path (see PathLoopKind).
  *
  * @param path The path to check.
  * @param width The number of cells of the router grid along x.

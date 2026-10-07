@@ -23,14 +23,15 @@
 namespace mqt::scpd::grid {
 
 /**
- * @brief A strip of layout space that the obstacle keepout leaves open.
+ * @brief A port corridor: a strip of layout space that the obstacle keepout
+ * leaves open.
  *
  * The strip holds every point within @c halfWidth of the segment from @c from
- * to @c to. A corridor keeps a port reachable: it runs from the port outward
- * along the port's orientation, through the small polygons every port carries
- * at its foot.
+ * to @c to. A port corridor keeps a port reachable: it runs from the port
+ * outward along the port's orientation, through the small polygons every port
+ * carries at its foot.
  */
-struct Corridor {
+struct PortCorridor {
   /// One end of the center line of the strip, in layout units.
   Point from;
   /// The other end of the center line of the strip, in layout units.
@@ -47,19 +48,27 @@ struct RasterOptions {
   /// The keepout distance, in layout units.
   ///
   /// Cells whose center lies within this distance of an edge of an obstacle
-  /// are blocked as well, and a center at exactly this distance counts as
-  /// within. The keepout puts the
-  /// obstacle clearance into the mask, so every free cell outside a corridor
-  /// keeps the clearance. The distance is exact: it is measured from the cell
-  /// center to the edge, not by a dilation of the mask. A value of zero or less
-  /// disables the keepout.
+  /// are blocked as well. The keepout puts the obstacle spacing into the mask,
+  /// so every free cell outside a port corridor keeps the obstacle spacing.
+  /// The distance is measured from the cell center to the edge, not by a
+  /// dilation of the mask. rasterizeObstacles() compares the distance that
+  /// distanceToSegment() computes with the keepout, and a center whose
+  /// computed distance equals the keepout counts as within. The computed
+  /// distance is the same on every target. It differs from the exact distance
+  /// by about 2 ulp when the nearest point is an end of the edge. Otherwise it
+  /// differs by up to about 1e-16 times the largest coordinate. The error goes
+  /// in both directions, so a center within that error of the keepout can
+  /// count as within or as outside. For an edge whose two ends both lie very
+  /// far off the grid, the error is no longer small against the distance, as
+  /// distanceToSegment() describes. A value of zero or less disables the
+  /// keepout.
   double keepout = 0.0;
-  /// The corridors in which keepout cells stay free. A corridor never frees a
-  /// cell that the polygons block after the island rule of
+  /// The port corridors in which keepout cells stay free. A port corridor
+  /// never frees a cell that the polygons block after the island rule of
   /// rasterizeObstacles(). A cell that the island rule frees is no longer a
   /// polygon cell: when the keepout blocks it again, it is a keepout cell, and
-  /// a corridor can free it.
-  std::vector<Corridor> keepoutExemptions;
+  /// a port corridor can free it.
+  std::vector<PortCorridor> keepoutExemptions;
   /// The number of columns blocked at the left edge and at the right edge.
   ///
   /// The border keeps wires off the edge of the grid. It is a number of cells
@@ -78,9 +87,9 @@ struct RasterizedObstacles {
   /// The mask, with every blocked cell set.
   BitGrid blocked;
   /// The number of cells the keepout blocked beyond the polygons themselves,
-  /// counted before the corridors released any of them.
+  /// counted before the port corridors released any of them.
   std::size_t keepoutCells = 0;
-  /// The number of keepout cells a corridor released again.
+  /// The number of keepout cells a port corridor released again.
   std::size_t exemptedCells = 0;
 };
 
@@ -100,13 +109,13 @@ struct RasterizedObstacles {
  * Then the keepout and the border of @p options apply, in this order. The
  * keepout is measured from the polygon edges, not from the mask, so it can
  * block a cell that the island rule freed. Such a cell is a keepout cell, and
- * a corridor can free it.
+ * a port corridor can free it.
  *
  * @param chip The chip whose obstacles to rasterize.
  * @param grid The grid to rasterize onto.
- * @param options The keepout, its corridors and the border.
+ * @param options The keepout, its port corridors and the border.
  * @return The mask on @p grid, and the numbers of cells the keepout blocked
- * and the corridors released.
+ * and the port corridors released.
  * @throws std::invalid_argument If a vertex of an obstacle is not finite, as
  * fillPolygon() throws.
  */
@@ -198,14 +207,35 @@ MQT_SCPD_GRID_EXPORT void blockBorder(BitGrid& mask, uint32_t alongX,
 
 /**
  * @brief Computes the distance from a point to a segment.
+ *
+ * The function computes the point of the segment nearest to @p point, starting
+ * from the end of the segment that the nearest point lies closer to. It
+ * returns the square root of the sum of the squared coordinate differences
+ * from @p point to the nearest point. Every step is a basic operation or
+ * std::sqrt, and IEEE 754 rounds each of them correctly. For a distance from
+ * about 1.5e-154 to 1.3e154, the result is therefore the same on every
+ * platform. In that range, the result is the exact distance when the computed
+ * nearest point is the exact nearest point, and the coordinate differences,
+ * their squares, the sum of the squares and its square root are all doubles.
+ * Otherwise the result differs from the exact distance by about 2 ulp when the
+ * nearest point is an end of the segment, and by up to about 1e-16 times the
+ * largest coordinate when the nearest point lies inside the segment. The
+ * squares round before they are added, so the result is not always the exact
+ * distance rounded to a double.
+ *
+ * The nearest point comes from the coordinates of the ends in double
+ * precision. When both ends lie very far from @p point, the rounding error of
+ * the nearest point is no longer small against the distance, and the result
+ * is inexact. For the segment from (-1e18, 50) to (1e18, 50), the point
+ * (37, 47) gets the distance 37.1 instead of 3.
+ *
  * @param point The point, in layout units.
  * @param from One end of the segment, in layout units.
  * @param to The other end of the segment, in layout units.
  * @return The Euclidean distance from @p point to the nearest point of the
  * segment, in layout units. A segment of almost no length counts as the
  * point @p from. A segment whose squared length does not fit into a double
- * gives the distance too, as long as its ends are finite. For a distance
- * from about 1.5e-154 to 1.3e154, the result is the same on every platform.
+ * gives the distance too, as long as its ends are finite.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT double
 distanceToSegment(Point point, Point from, Point to);

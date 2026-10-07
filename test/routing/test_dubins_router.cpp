@@ -10,6 +10,7 @@
 
 #include "../SplitMix.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
+#include "mqt-scpd/routing/CouplerInsertion.hpp"
 #include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
@@ -22,10 +23,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <optional>
@@ -133,6 +136,22 @@ bool leavesTheRidge(const Path& path) {
 bool runsDiagonally(const Path& path) {
   return std::ranges::any_of(
       path, [](const PathPoint& point) { return isDiagonal(point.heading); });
+}
+
+/// The cells of a move as the search tables hold them: its start cell, its
+/// swept cells and its end cell. The start cell is not listed twice when the
+/// move sweeps it first, nor the end cell when the move sweeps it last.
+std::vector<CellOffset> cellsOfMove(const Primitive& move) {
+  std::vector<CellOffset> cells;
+  if (move.swept.empty() || move.swept.front() != CellOffset{}) {
+    cells.push_back(CellOffset{});
+  }
+  cells.insert(cells.end(), move.swept.begin(), move.swept.end());
+  const CellOffset end{.dx = move.dx, .dy = move.dy};
+  if (cells.back() != end) {
+    cells.push_back(end);
+  }
+  return cells;
 }
 
 /// The most cells that one move covers, with its start and end cell.
@@ -295,6 +314,31 @@ TEST(DubinsRouter, AStubThatLeavesTheGridIsNotRoutable) {
       .source = {.x = 3, .y = 100, .heading = 2, .primitive = 0},
       .target = {.x = 260, .y = 100, .heading = 6, .primitive = 0}};
   EXPECT_TRUE(f.router.route(offGrid).empty());
+}
+
+TEST(DubinsRouter, AStubLongerThanTheCoordinateRangeIsNotRoutableEither) {
+  // A stub of 2^32 - 1 cells would wrap a 32-bit coordinate around to one
+  // cell next to the end it starts from, inside the grid. Its search end
+  // lies off the grid instead, so both searches refuse the wire before they
+  // run.
+  constexpr uint32_t longest = std::numeric_limits<uint32_t>::max();
+  Fixture f;
+  const RoutingObjective objective{
+      .source = {.x = 5, .y = 100, .heading = 6, .primitive = 0},
+      .target = {.x = 260, .y = 100, .heading = 6, .primitive = 0}};
+  for (const bool longSource : {true, false}) {
+    f.router.setParams({.startStraightLength = longSource ? longest : 10,
+                        .endStraightLength = longSource ? 10 : longest,
+                        .minRadius = 5,
+                        .bendPenalty = 500});
+    const PathPoint end = longSource
+                              ? f.router.sanitize(objective.source, false)
+                              : f.router.sanitize(objective.target, true);
+    ASSERT_GE(end.x, WIDTH) << longSource;
+    EXPECT_EQ(end.y, 100U) << longSource;
+    EXPECT_TRUE(f.router.route(objective).empty()) << longSource;
+    EXPECT_TRUE(f.router.routeOrthogonal(objective).empty()) << longSource;
+  }
 }
 
 TEST(DubinsRouter, AnEndOutsideTheGridGivesAnEmptyPathInBothSearches) {
@@ -488,9 +532,9 @@ TEST(DubinsRouter, TheDistanceFieldGrowsOnlyAsFarAsTheSearchLooks) {
 TEST(DubinsRouter, TheBendLowerBoundKeepsTheCheapestPath) {
   // The turning a state still owes is a lower bound on what it has left to
   // pay. On these objectives, adding it to the estimate changes how many
-  // states the search expands, not the cost of the path it finds. The
-  // comparison with a brute-force search in test_route_optimality.cpp pins
-  // how much dearer the path can get on other grids.
+  // states the search expands, not the cost of the path it finds. On other
+  // grids the path can cost more, by an amount that has no known bound;
+  // test_route_optimality.cpp compares the paths with a brute-force search.
   const std::vector<RoutingObjective> objectives{
       ACROSS,
       {.source = {.x = 30, .y = 100, .heading = 6, .primitive = 0},
@@ -1198,26 +1242,41 @@ TEST(DubinsRouter, ARouterGridHasOneTo65535CellsPerAxis) {
   EXPECT_EQ(router.width(), 65535U);
 }
 
-TEST(DubinsRouter, AMoveThatCoversTooManyCellsDoesNotFitTheTables) {
-  // The search tables hold a move of at most 60 cells with its start and end
-  // cell. The arcs grow with the bend radius, so a wide radius does not fit.
-  SearchScratch scratch(64, 64);
-  bool refused = false;
-  for (uint32_t radius = 1; radius <= 30; ++radius) {
-    auto primitives = std::make_shared<const MovePrimitives>(radius);
-    const SearchParams params{.minRadius = static_cast<uint8_t>(radius)};
-    if (widestMove(*primitives) > 60) {
-      refused = true;
-      EXPECT_THROW(static_cast<void>(DubinsRouter(primitives, scratch, params)),
-                   std::invalid_argument)
-          << radius;
-    } else {
-      EXPECT_NO_THROW(
-          static_cast<void>(DubinsRouter(primitives, scratch, params)))
-          << radius;
+TEST(DubinsRouter, TheRadiusLimitIsTheLargestRadiusWhoseMovesFitTheTables) {
+  // The router refuses a radius above MAX_BEND_RADIUS before it builds its
+  // tables, so the checks of the table layout never fire. This test shows
+  // that the limit is the right one: every radius the router accepts fits
+  // every limit of the tables, and every larger radius that the primitives
+  // hold has a move of more than the 60 cells, with its start and end cell,
+  // that the tables hold.
+  for (uint32_t radius = DubinsRouter::MIN_BEND_RADIUS;
+       radius <= MovePrimitives::MAX_BEND_RADIUS; ++radius) {
+    const MovePrimitives primitives(radius);
+    if (radius > DubinsRouter::MAX_BEND_RADIUS) {
+      EXPECT_GT(widestMove(primitives), 60U) << radius;
+      continue;
+    }
+    EXPECT_LE(widestMove(primitives), 60U) << radius;
+    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
+      const auto moves = primitives.of(h);
+      // One bit per move.
+      EXPECT_LE(moves.size(), 16U) << radius;
+      for (std::size_t i = 0; i < moves.size(); ++i) {
+        // A cell of a move lies within 127 cells of its start.
+        EXPECT_LE(std::max(std::abs(moves[i].dx), std::abs(moves[i].dy)), 127)
+            << radius;
+        for (const CellOffset& c : moves[i].swept) {
+          EXPECT_LE(std::max(std::abs(c.dx), std::abs(c.dy)), 127) << radius;
+        }
+        // No two moves of a heading pass the same cells, from the start
+        // cell to the end cell.
+        for (std::size_t k = 0; k < i; ++k) {
+          EXPECT_NE(cellsOfMove(moves[i]), cellsOfMove(moves[k]))
+              << radius << " " << moves[i].id << " " << moves[k].id;
+        }
+      }
     }
   }
-  EXPECT_TRUE(refused);
 }
 
 TEST(DubinsRouter, ARouterAcceptsBendRadiiUpTo23Cells) {
@@ -1239,6 +1298,160 @@ TEST(DubinsRouter, ARouterAcceptsBendRadiiUpTo23Cells) {
           << radius;
     }
   }
+}
+
+TEST(DubinsRouter, ARouterRefusesABendRadiusOfOneCell) {
+  EXPECT_EQ(DubinsRouter::MIN_BEND_RADIUS, 2U);
+  SearchScratch scratch(64, 64);
+  auto one = std::make_shared<const MovePrimitives>(1);
+  EXPECT_THROW(static_cast<void>(DubinsRouter(one, scratch, {.minRadius = 1})),
+               std::invalid_argument);
+  auto two = std::make_shared<const MovePrimitives>(2);
+  EXPECT_NO_THROW(
+      static_cast<void>(DubinsRouter(two, scratch, {.minRadius = 2})));
+}
+
+/// The number of points of a path that carry an exact eighth turn.
+std::size_t exactEighthsOf(const Path& path) {
+  return static_cast<std::size_t>(
+      std::ranges::count_if(path, [](const PathPoint& point) {
+        return point.primitive == 902 || point.primitive == 903;
+      }));
+}
+
+/// Checks that a routed path that holds exact eighth turns renders as one
+/// curve whose every point lies within 0.6 cell of a cell of the path and
+/// that runs through the cell of every step, with one turn segment per run of
+/// an exact eighth turn and a length equal to the sum of its segments, and that
+/// a coupler spliced into it leaves the length of the rest as it was. Returns
+/// whether the splice succeeded.
+bool checkRendering(const MovePrimitives& table, const Path& path,
+                    const uint32_t side, const Heading couplerHeading) {
+  std::size_t runs = 0;
+  for (std::size_t i = 0; i < path.size(); ++i) {
+    const bool exact = path[i].primitive == 902 || path[i].primitive == 903;
+    const bool startsRun = i == 0 ||
+                           path[i - 1].primitive != path[i].primitive ||
+                           path[i - 1].heading != path[i].heading;
+    runs += static_cast<std::size_t>(exact && startsRun);
+  }
+  const SegmentedPath cut = reconstructSegments(table, path);
+  EXPECT_EQ(static_cast<std::size_t>(std::ranges::count_if(
+                cut.segments,
+                [](const PathSegment& segment) {
+                  return segment.primitive == 902 || segment.primitive == 903;
+                })),
+            runs);
+
+  Path rendered = path;
+  std::vector<PathSegment> segments;
+  const std::vector<Point> polyline =
+      samplePath(table, rendered, path.front(), segments);
+  EXPECT_FALSE(polyline.empty());
+  if (polyline.empty() || segments.empty()) {
+    return false;
+  }
+  // A curve strays at most half a cell from the cells a move sweeps, and the
+  // rendering pulls the end of an exact turn onto its cell, which moves the
+  // curve by at most 0.59 cell more (see Primitive::samples).
+  for (const Point& point : polyline) {
+    const bool near = std::ranges::any_of(rendered, [&](const PathPoint& cell) {
+      return std::abs(point.x() - static_cast<double>(cell.x)) <= 0.6 &&
+             std::abs(point.y() - static_cast<double>(cell.y)) <= 0.6;
+    });
+    EXPECT_TRUE(near) << point.x() << " " << point.y();
+  }
+  // The rendering never drifts from the rasterized path: every step ends on
+  // the center of its cell.
+  for (const PathSegment& segment : segments) {
+    for (const PathPoint& step : segment.cells) {
+      const bool onCell = std::ranges::any_of(polyline, [&](const Point& p) {
+        return std::abs(p.x() - static_cast<double>(step.x)) < 1e-9 &&
+               std::abs(p.y() - static_cast<double>(step.y)) < 1e-9;
+      });
+      EXPECT_TRUE(onCell) << step.x << " " << step.y;
+    }
+  }
+  double polylineLength = 0.0;
+  for (std::size_t i = 1; i < polyline.size(); ++i) {
+    polylineLength += std::hypot(polyline[i].x() - polyline[i - 1].x(),
+                                 polyline[i].y() - polyline[i - 1].y());
+  }
+  const double segmentLength = segments.back().lengthAt.back();
+  EXPECT_NEAR(renderedLength(table, path), segmentLength, 1e-6);
+  EXPECT_NEAR(polylineLength, segmentLength, 1e-6);
+
+  Path spliced = path;
+  if (!spliceCouplerDogleg(table, 0.0, spliced, side, side, couplerHeading)
+           .has_value()) {
+    return false;
+  }
+  std::size_t shared = 0;
+  while (shared < path.size() && shared < spliced.size() &&
+         path[path.size() - 1 - shared] ==
+             spliced[spliced.size() - 1 - shared]) {
+    ++shared;
+  }
+  if (shared >= spliced.size()) {
+    ADD_FAILURE() << "the splice shares no end";
+    return false;
+  }
+  const Path front(spliced.begin(),
+                   spliced.end() - static_cast<std::ptrdiff_t>(shared) + 1);
+  const Path rest(path.end() - static_cast<std::ptrdiff_t>(shared), path.end());
+  EXPECT_NEAR(renderedLength(table, spliced),
+              renderedLength(table, front) + renderedLength(table, rest), 1e-6);
+  return true;
+}
+
+TEST(DubinsRouter, EveryPairOfHeadingsConnectsOnAnOpenGrid) {
+  // A path that turns only by quarter turns keeps the parity of its heading.
+  // Each source heading reaches each target heading only if every heading
+  // holds an eighth turn to either side. At a radius of eight cells, the
+  // diagonal headings hold only exact eighth turns, and some paths take them.
+  std::size_t exactEighths = 0;
+  std::size_t splices = 0;
+  for (uint32_t radius = DubinsRouter::MIN_BEND_RADIUS;
+       radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
+    const uint32_t side = (16 * radius) + 40;
+    auto primitives = std::make_shared<const MovePrimitives>(radius);
+    SearchScratch scratch(side, side);
+    const grid::BitGrid open(side, side);
+    DubinsRouter router(primitives, scratch,
+                        {.startStraightLength = 0,
+                         .endStraightLength = 0,
+                         .minRadius = static_cast<uint8_t>(radius)});
+    router.attachCorridor(&open);
+    for (Heading from = 0; from < NUM_HEADINGS; ++from) {
+      for (Heading to = 0; to < NUM_HEADINGS; ++to) {
+        const RoutingObjective objective{
+            .source = {.x = side / 4, .y = side / 2, .heading = from},
+            .target = {.x = 3 * side / 4, .y = side / 2, .heading = to}};
+        const Path path = router.route(objective);
+        EXPECT_FALSE(path.empty()) << radius << " " << static_cast<int>(from)
+                                   << " " << static_cast<int>(to);
+        if (path.empty()) {
+          continue;
+        }
+        EXPECT_EQ(path.front().x, objective.source.x) << radius;
+        EXPECT_EQ(path.front().y, objective.source.y) << radius;
+        EXPECT_EQ(path.front().heading, from) << radius;
+        EXPECT_EQ(path.back().x, objective.target.x) << radius;
+        EXPECT_EQ(path.back().y, objective.target.y) << radius;
+        EXPECT_EQ(path.back().heading, to) << radius;
+        if (radius == 8) {
+          const std::size_t exact = exactEighthsOf(path);
+          exactEighths += exact;
+          if (exact > 0) {
+            splices += static_cast<std::size_t>(
+                checkRendering(*primitives, path, side, to));
+          }
+        }
+      }
+    }
+  }
+  EXPECT_GT(exactEighths, 0U);
+  EXPECT_GT(splices, 0U);
 }
 
 TEST(DubinsRouter, AStaticProximitySetByHandSteersThePath) {
@@ -1762,7 +1975,7 @@ TEST(DubinsRouter, AFreeStripEndOffTheGridCountsAsTheNearestCell) {
            a.maxY == b.maxY;
   };
   // A source two cells from the edge at x = 0 faces toward negative x, so
-  // its search start lies off the grid, where the coordinate wraps.
+  // its search start lies off the grid, at the largest coordinate.
   const PathPoint wrapped = f.router.sanitize(
       {.x = 2, .y = 100, .heading = 2, .primitive = 0}, false);
   ASSERT_GE(wrapped.x, WIDTH);

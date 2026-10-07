@@ -91,41 +91,6 @@ bool arcStartsBefore(const MovePrimitives& primitives, const PathPoint& before,
              static_cast<int64_t>(before.y) + primitive->dy;
 }
 
-/**
- * @brief Finds the turn that starts on a straight point without its tag.
- *
- * Where the search of a routed path begins with a turn that leaves no point
- * of its own, the last stub cell is the start of the arc and keeps its
- * straight tag, and the point after it is the end of the arc (see Path). The
- * heading changes between the two points, and the second lies at the end
- * offset of the turn from the first. No two turns of one heading share their
- * exit heading and their end offset, so these determine the turn.
- *
- * @param primitives The primitive tables.
- * @param before The straight point.
- * @param next The point after @p before.
- * @return The turn from the heading of @p before to the heading of @p next
- * whose end offset leads from @p before to @p next, or @c nullptr when
- * @p before is not straight, when the two points share their heading, or
- * when no turn fits.
- */
-const Primitive* untaggedTurn(const MovePrimitives& primitives,
-                              const PathPoint& before, const PathPoint& next) {
-  if (before.heading == next.heading ||
-      !primitives.isStraight(before.heading, before.primitive)) {
-    return nullptr;
-  }
-  const int64_t dx =
-      static_cast<int64_t>(next.x) - static_cast<int64_t>(before.x);
-  const int64_t dy =
-      static_cast<int64_t>(next.y) - static_cast<int64_t>(before.y);
-  const std::span<const Primitive> moves = primitives.of(before.heading);
-  const auto turn = std::ranges::find_if(moves, [&](const Primitive& p) {
-    return p.exitHeading == next.heading && p.dx == dx && p.dy == dy;
-  });
-  return turn != moves.end() ? &*turn : nullptr;
-}
-
 } // namespace
 
 Path straightRun(const MovePrimitives& primitives, const PathPoint start,
@@ -172,35 +137,12 @@ SegmentedPath reconstructSegments(const MovePrimitives& primitives,
     segments.back().lengthAt.back() -= step;
     length -= step;
   };
-  const auto addUntaggedTurn = [&](const PathPoint& before,
-                                   const PathPoint& next) {
-    const Primitive* turn = untaggedTurn(primitives, before, next);
-    if (turn == nullptr) {
-      return;
-    }
-    // The point before the turn counted a straight step, but its move is the
-    // turn.
-    const double step = primitives.cost(before.heading, before.primitive);
-    segments.back().lengthAt.back() -= step;
-    length += turn->cost - step;
-    PathSegment segment;
-    segment.heading = before.heading;
-    segment.primitive = turn->id;
-    segment.cells = {{.x = next.x,
-                      .y = next.y,
-                      .heading = before.heading,
-                      .primitive = turn->id}};
-    segment.lengthAt = {length};
-    segments.push_back(std::move(segment));
-  };
   for (std::size_t i = 0; i < path.size(); ++i) {
     const PathPoint& point = path[i];
     if (segments.empty() || heading != point.heading ||
         primitive != point.primitive) {
       if (!segments.empty() && !primitives.isStraight(heading, primitive)) {
         closeTurn(&point, path[i - 1]);
-      } else if (!segments.empty()) {
-        addUntaggedTurn(path[i - 1], point);
       }
       heading = point.heading;
       primitive = point.primitive;
@@ -343,9 +285,7 @@ samplePathFromSecond(const MovePrimitives& primitives, Path path,
                      const PathPoint start, std::vector<PathSegment>& segments,
                      std::vector<std::pair<std::size_t, bool>>* segmentBounds) {
   if (!path.empty() &&
-      primitives.isStraight(path.front().heading, path.front().primitive) &&
-      (path.size() < 2 ||
-       untaggedTurn(primitives, path[0], path[1]) == nullptr)) {
+      primitives.isStraight(path.front().heading, path.front().primitive)) {
     path.erase(path.begin());
   }
   return render(primitives, path, start, segments, segmentBounds);

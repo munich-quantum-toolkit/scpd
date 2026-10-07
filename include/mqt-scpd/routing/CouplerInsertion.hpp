@@ -54,15 +54,16 @@ struct DoglegGeometry {
  * as 10 cells, a diagonal heading holds an arc of 72 to 77 degrees beside the
  * exact quarter turn; the exact quarter turn wins. The path lists the end of
  * the turn also where the turn does not sweep it. At the bend radii the router
- * accepts, 1 to 23 cells (DubinsRouter::MAX_BEND_RADIUS), consecutive points
- * of the path are neighboring cells. At a larger radius, the swept cells of a
+ * accepts, 2 to 23 cells (DubinsRouter::MIN_BEND_RADIUS to
+ * DubinsRouter::MAX_BEND_RADIUS), consecutive points of the path are
+ * neighboring cells. At a larger radius, the swept cells of a
  * quarter turn that leaves a cardinal heading can skip cells (see
  * Primitive::swept), and so can the path.
  *
  * @param primitives The move primitives.
  * @param entry The heading the turn starts on.
  * @param turnSign @c 1 for a clockwise turn and @c -1 for a counterclockwise
- * turn, in the sense of turned().
+ * turn, with y up and in the sense of turned().
  * @param straightLength The number of straight steps after the turn.
  * @return The dogleg. Its tip lies @p straightLength steps past the end of the
  * turn, on the heading two eighth turns from @p entry in the direction of
@@ -77,9 +78,9 @@ buildDogleg(const MovePrimitives& primitives, Heading entry, int turnSign,
 /** @brief The shape of the dogleg that a coupler adds to a resonator. */
 struct CouplerDoglegOptions {
   /// Straight steps from the anchor to the first quarter turn, on the heading
-  /// two eighth turns clockwise from the coupler heading: the run the
-  /// resonator couples along. The first turn starts this many cells from the
-  /// anchor. Zero starts it at the anchor.
+  /// two eighth turns clockwise, with y up, from the coupler heading: the run
+  /// the resonator couples along. The first turn starts this many cells from
+  /// the anchor. Zero starts it at the anchor.
   uint32_t leadStraight = 0;
   /// Straight cells after the first quarter turn.
   uint32_t straightLength = 14;
@@ -109,9 +110,14 @@ struct CouplerSplice {
  * length.
  *
  * A candidate pairs a cell of a straight run of the path with a connection of
- * at most two primitives from the dogleg onto the heading of the run. Every
- * such connection forms a candidate with every cell of every straight run of
- * its heading; a dogleg that ends on the heading of a run needs no primitive.
+ * at most two primitives from the dogleg onto the heading of the run. A
+ * straight run is a segment of the path under the tag of a straight step (see
+ * reconstructSegments()). A run of one cell counts when another point of the
+ * path follows it, such as the cell between two turns one straight step apart.
+ * So a single point, or the end of a turn that ends the path, is no straight
+ * run. Every such connection forms a candidate with every cell of every
+ * straight run of its heading; a dogleg that ends on the heading of a run
+ * needs no primitive.
  * Each primitive starts at the end of the one before it, and the connection
  * ends on the candidate's cell. A primitive ends at the offset Primitive::dx,
  * Primitive::dy from its start, which need not be its last swept cell. The
@@ -152,9 +158,10 @@ struct CouplerSplice {
  * path begins with a turn and the point is the start of its arc (see Path),
  * the turn still renders from that point. The spliced path lists the end of
  * every turn of the dogleg and the connection, also where the turn does not
- * sweep it. At the bend radii the router accepts, 1 to 23 cells
- * (DubinsRouter::MAX_BEND_RADIUS), consecutive points of the spliced path
- * from the anchor to the point of the winner are neighboring cells.
+ * sweep it. At the bend radii the router accepts, 2 to 23 cells
+ * (DubinsRouter::MIN_BEND_RADIUS to DubinsRouter::MAX_BEND_RADIUS),
+ * consecutive points of the spliced path from the anchor to the point of the
+ * winner are neighboring cells.
  *
  * @param primitives The move primitives the path was routed with.
  * @param targetLength The length the path should have after the splice, as
@@ -174,6 +181,7 @@ struct CouplerSplice {
  * @p targetLength is negative or not finite.
  * @throws std::logic_error If the primitives hold no quarter turn that the
  * dogleg needs.
+ * @throws std::bad_alloc If the memory runs out. @p path then stays as it was.
  */
 [[nodiscard]] MQT_SCPD_ROUTING_EXPORT std::optional<CouplerSplice>
 spliceCouplerDogleg(
