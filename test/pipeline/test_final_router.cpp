@@ -31,6 +31,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <memory>
@@ -592,6 +593,127 @@ TEST(FinalRouter, DrawsItsGridAndEverySearchWhenAsked) {
     searches += name.find("-normal.svg") != std::string::npos ? 1 : 0;
   }
   EXPECT_GE(searches, routing.wires.size());
+}
+
+/// An edge between two couplers keeps inside the box the launcher stubs
+/// leave open, the one every coupler stands in; the starting and ending
+/// edges of a chain come from the border and may leave it.
+TEST(FinalRouter, KeepsTheEdgesBetweenCouplersInsideTheCouplerBox) {
+  const auto benchmark = benchmarkOf("9q");
+  const auto planned = plan(benchmark);
+  std::vector<std::string> lines;
+  const auto routing = finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config,
+      [&lines](const std::string_view line) { lines.emplace_back(line); });
+
+  const auto said = std::ranges::find_if(lines, [](const std::string& line) {
+    return line.find("couplers sit inside x ") != std::string::npos;
+  });
+  ASSERT_NE(said, lines.end());
+  long minX = 0;
+  long maxX = 0;
+  long minY = 0;
+  long maxY = 0;
+  ASSERT_EQ(std::sscanf(said->c_str() + said->find("couplers sit inside x "),
+                        "couplers sit inside x %ld..%ld y %ld..%ld", &minX,
+                        &maxX, &minY, &maxY),
+            4);
+
+  ASSERT_EQ(routing.feedlines.size(), routing.feedline_edges.size());
+  std::size_t between = 0;
+  for (std::size_t index = 0; index < routing.feedlines.size(); ++index) {
+    if (routing.feedline_edges[index]->terminal) {
+      continue;
+    }
+    ++between;
+    for (const auto& cell : routing.feedlines[index]->path) {
+      const auto x = static_cast<long>(cell.x());
+      const auto y = static_cast<long>(cell.y());
+      EXPECT_TRUE(x >= minX && x <= maxX && y >= minY && y <= maxY)
+          << "edge " << index << " leaves the box at (" << x << "," << y << ")";
+    }
+  }
+  EXPECT_GT(between, 0U);
+}
+
+/// With a debug sink the stage draws the bottlenecks of the chip the coupler
+/// insertion leaves: once, after the picture of the coupler options, with a
+/// line for each bottleneck whose tooltip names the obstacles at its two
+/// ends.
+TEST(FinalRouter, DrawsTheBottlenecksAfterTheCouplerInsertion) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  std::vector<std::pair<std::string, std::string>> pictures;
+  // The analysis is off unless asked for.
+  setenv("SCPD_BOTTLENECKS", "1", 1);
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, {},
+      [&pictures](const std::string_view name, const std::string_view content) {
+        pictures.emplace_back(name, content);
+        return std::string(name);
+      }));
+  unsetenv("SCPD_BOTTLENECKS");
+
+  const auto named = [&pictures](const std::string_view name) {
+    return std::ranges::find_if(pictures, [name](const auto& picture) {
+      return picture.first == name;
+    });
+  };
+  const auto options = named("final-coupler-options.svg");
+  const auto bottlenecks = named("final-bottlenecks.svg");
+  ASSERT_NE(bottlenecks, pictures.end());
+  ASSERT_NE(options, pictures.end());
+  EXPECT_LT(options - pictures.begin(), bottlenecks - pictures.begin());
+  EXPECT_EQ(std::ranges::count_if(pictures,
+                                  [](const auto& picture) {
+                                    return picture.first ==
+                                           "final-bottlenecks.svg";
+                                  }),
+            1);
+  const auto& content = bottlenecks->second;
+  EXPECT_NE(content.find("<line x1="), std::string::npos);
+  EXPECT_NE(content.find(" · "), std::string::npos);
+}
+
+/// With a debug sink the stage draws the capacity graph of the chambers the
+/// bottlenecks cut, once and after the bottlenecks, with a node per chamber
+/// and the ports of the wires.
+TEST(FinalRouter, DrawsTheCapacityGraphAfterTheBottlenecks) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  std::vector<std::pair<std::string, std::string>> pictures;
+  // The analysis is off unless asked for.
+  setenv("SCPD_BOTTLENECKS", "1", 1);
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, {},
+      [&pictures](const std::string_view name, const std::string_view content) {
+        pictures.emplace_back(name, content);
+        return std::string(name);
+      }));
+  unsetenv("SCPD_BOTTLENECKS");
+
+  const auto named = [&pictures](const std::string_view name) {
+    return std::ranges::find_if(pictures, [name](const auto& picture) {
+      return picture.first == name;
+    });
+  };
+  const auto bottlenecks = named("final-bottlenecks.svg");
+  const auto graph = named("final-capacity-graph.svg");
+  ASSERT_NE(graph, pictures.end());
+  ASSERT_NE(bottlenecks, pictures.end());
+  EXPECT_LT(bottlenecks - pictures.begin(), graph - pictures.begin());
+  EXPECT_EQ(std::ranges::count_if(pictures,
+                                  [](const auto& picture) {
+                                    return picture.first ==
+                                           "final-capacity-graph.svg";
+                                  }),
+            1);
+  const auto& content = graph->second;
+  EXPECT_NE(content.find("class=\"node\""), std::string::npos);
+  EXPECT_NE(content.find("port of "), std::string::npos);
 }
 
 } // namespace

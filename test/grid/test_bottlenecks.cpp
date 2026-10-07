@@ -120,6 +120,76 @@ TEST(Bottlenecks, IsTheSameOnASecondRun) {
   }
 }
 
+/// A corridor of half height 8 whose upper wall steps one cell in at every
+/// sixth column, the unevenness a raster gives a wall, with a pinch of half
+/// height 3 in the middle.
+BitGrid unevenPinchedCorridor() {
+  BitGrid mask(WIDTH, HEIGHT);
+  constexpr std::uint32_t OPEN_HALF = 8;
+  constexpr std::uint32_t PINCH_HALF = 3;
+  constexpr std::uint32_t MIDDLE = HEIGHT / 2;
+  constexpr std::uint32_t PINCH_FROM = 28;
+  constexpr std::uint32_t PINCH_TO = 32;
+
+  for (std::uint32_t x = 0; x < WIDTH; ++x) {
+    const bool pinch = x >= PINCH_FROM && x <= PINCH_TO;
+    const auto half = pinch ? PINCH_HALF : OPEN_HALF;
+    const std::uint32_t bump = (!pinch && x % 6 == 0) ? 1 : 0;
+    for (std::uint32_t y = 0; y < HEIGHT; ++y) {
+      if (y + half < MIDDLE || y + bump > MIDDLE + half) {
+        mask.setCell(x, y);
+      }
+    }
+  }
+  return mask;
+}
+
+/// Whether both ends of a bottleneck lie in the columns around the pinch.
+bool atThePinch(const Bottleneck& bottleneck) {
+  const auto x0 = bottleneck.first % WIDTH;
+  const auto x1 = bottleneck.second % WIDTH;
+  return x0 >= 26 && x0 <= 34 && x1 >= 26 && x1 <= 34;
+}
+
+TEST(Bottlenecks, DropsTheUnevennessOfAWallButKeepsThePinch) {
+  const auto scene = sceneOf(unevenPinchedCorridor());
+  const auto every =
+      findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+  // Without the rule every bump is a narrowing of its own.
+  ASSERT_TRUE(std::ranges::any_of(
+      every, [](const auto& one) { return !atThePinch(one); }));
+
+  const auto kept = findBottlenecks(scene.mask, scene.axis, scene.distance,
+                                    scene.grid, {.minimumRise = 2.0});
+  ASSERT_FALSE(kept.empty());
+  EXPECT_TRUE(std::ranges::all_of(kept, atThePinch));
+}
+
+TEST(Bottlenecks, KeepsAPinchOnlyWhenItIsDeeperThanTheMinimumRise) {
+  // The pinch leaves 4 cells of clearance and the corridor 16 on both sides
+  // of it, a rise of 12.
+  const auto scene = sceneOf(pinchedCorridor(3));
+  const auto shallower = findBottlenecks(scene.mask, scene.axis, scene.distance,
+                                         scene.grid, {.minimumRise = 11.0});
+  EXPECT_TRUE(std::ranges::any_of(shallower, atThePinch));
+
+  const auto deeper = findBottlenecks(scene.mask, scene.axis, scene.distance,
+                                      scene.grid, {.minimumRise = 13.0});
+  EXPECT_TRUE(deeper.empty());
+}
+
+TEST(Bottlenecks, KeepsOneCutOfAPinchOfEvenWidth) {
+  // The pinch is five columns of one clearance: every column is a minimum
+  // of the axis, and they are one narrowing.
+  const auto scene = sceneOf(pinchedCorridor(3));
+  const auto found = findBottlenecks(scene.mask, scene.axis, scene.distance,
+                                     scene.grid, {.minimumRise = 2.0});
+  ASSERT_EQ(std::ranges::count_if(found, atThePinch), 1);
+  // The one cut lies in the middle of the five columns.
+  const auto cut = std::ranges::find_if(found, atThePinch);
+  EXPECT_EQ(cut->saddle % WIDTH, 30U);
+}
+
 TEST(Bottlenecks, DropsOneThatWouldRunOverATarget) {
   const auto scene = sceneOf(pinchedCorridor(3));
   const auto without = findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);

@@ -14,6 +14,7 @@
 #include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/Bottlenecks.hpp"
+#include "mqt-scpd/grid/Chambers.hpp"
 #include "mqt-scpd/grid/DistanceTransform.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/Partitions.hpp"
@@ -47,9 +48,11 @@ namespace fba = flatbuffers::artifacts;
 constexpr int SMOOTHING_RADIUS = 2;
 constexpr int SMOOTHING_ROUNDS = 5;
 
-/// The eight steps around a cell, straight ones first.
+/// The eight steps around a cell, straight ones first. The order is the one
+/// `grid::BlockedMove` numbers its directions in, which the walks rely on.
 constexpr std::array<int, 8> STEP_X = {0, 0, 1, -1, 1, -1, 1, -1};
 constexpr std::array<int, 8> STEP_Y = {1, -1, 0, 0, 1, 1, -1, -1};
+static_assert(STEP_X == grid::STEP_DX && STEP_Y == grid::STEP_DY);
 constexpr std::size_t FIRST_DIAGONAL_STEP = 4;
 
 /// The extent of a grid, as the artifact carries it.
@@ -87,118 +90,6 @@ bottleneckLines(const std::vector<grid::Bottleneck>& bottlenecks,
   return lines;
 }
 
-/// The direction that undoes each of the eight steps.
-constexpr std::array<std::size_t, 8> REVERSE_STEP = {1, 0, 3, 2, 7, 6, 5, 4};
-
-/// One move a gate refuses: leaving a cell in one of the eight directions.
-struct BlockedMove {
-  std::size_t cell = 0;
-  std::size_t direction = 0;
-};
-
-/// Whether two segments cross, strictly.
-bool segmentsCrossStrictly(const double ax, const double ay, const double bx,
-                           const double by, const double cx, const double cy,
-                           const double dx, const double dy) {
-  const auto side = [](const double px, const double py, const double qx,
-                       const double qy, const double rx, const double ry) {
-    return ((qx - px) * (ry - py)) - ((qy - py) * (rx - px));
-  };
-  const auto first = side(ax, ay, bx, by, cx, cy);
-  const auto second = side(ax, ay, bx, by, dx, dy);
-  const auto third = side(cx, cy, dx, dy, ax, ay);
-  const auto fourth = side(cx, cy, dx, dy, bx, by);
-  return ((first > 0 && second < 0) || (first < 0 && second > 0)) &&
-         ((third > 0 && fourth < 0) || (third < 0 && fourth > 0));
-}
-
-/// Whether a point lies on a segment.
-bool pointOnSegment(const double px, const double py, const double x0,
-                    const double y0, const double x1, const double y1) {
-  constexpr double EPSILON = 1.0e-6;
-  if (std::abs(((py - y0) * (x1 - x0)) - ((px - x0) * (y1 - y0))) > EPSILON) {
-    return false;
-  }
-  return px >= std::min(x0, x1) - EPSILON && px <= std::max(x0, x1) + EPSILON &&
-         py >= std::min(y0, y1) - EPSILON && py <= std::max(y0, y1) + EPSILON;
-}
-
-/// The moves a bottleneck refuses.
-///
-/// A gate is a **cut**, not a wall: it stops a wire from crossing the line
-/// between its two obstacle cells, and it consumes no free space of its own.
-/// What it blocks is therefore the move between two cells whose centre-to-
-/// centre segment crosses it, in both directions. A cell whose own centre lies
-/// on the line is enclosed entirely, because a wire there is already on the
-/// wrong side of every crossing.
-///
-/// Blocking the line's *cells* instead would be simpler and is wrong twice
-/// over: it takes free space away from the chambers on both sides, so the
-/// chambers come out smaller and more numerous than they are; and a Bresenham
-/// line is eight-connected, so a walk that also moves diagonally steps
-/// straight through it anyway.
-std::vector<std::vector<BlockedMove>>
-bottleneckMoves(const std::vector<grid::Bottleneck>& bottlenecks,
-                const grid::GridMetrics& grid) {
-  std::vector<std::vector<BlockedMove>> moves(bottlenecks.size());
-  const auto width = static_cast<std::int64_t>(grid.width);
-  const auto height = static_cast<std::int64_t>(grid.height);
-
-  for (std::size_t index = 0; index < bottlenecks.size(); ++index) {
-    const auto& gate = bottlenecks[index];
-    const auto x0 = static_cast<double>(gate.first % grid.width) + 0.5;
-    const auto y0 = static_cast<double>(gate.first / grid.width) + 0.5;
-    const auto x1 = static_cast<double>(gate.second % grid.width) + 0.5;
-    const auto y1 = static_cast<double>(gate.second / grid.width) + 0.5;
-
-    const auto minX = std::max<std::int64_t>(
-        0, static_cast<std::int64_t>(std::floor(std::min(x0, x1))) - 1);
-    const auto maxX = std::min<std::int64_t>(
-        width - 1, static_cast<std::int64_t>(std::ceil(std::max(x0, x1))) + 1);
-    const auto minY = std::max<std::int64_t>(
-        0, static_cast<std::int64_t>(std::floor(std::min(y0, y1))) - 1);
-    const auto maxY = std::min<std::int64_t>(
-        height - 1, static_cast<std::int64_t>(std::ceil(std::max(y0, y1))) + 1);
-
-    auto& blocked = moves[index];
-    for (std::int64_t y = minY; y <= maxY; ++y) {
-      for (std::int64_t x = minX; x <= maxX; ++x) {
-        const auto cell = grid.index(static_cast<std::uint32_t>(x),
-                                     static_cast<std::uint32_t>(y));
-        const auto ax = static_cast<double>(x) + 0.5;
-        const auto ay = static_cast<double>(y) + 0.5;
-        const auto onLine = pointOnSegment(ax, ay, x0, y0, x1, y1) &&
-                            cell != gate.first && cell != gate.second;
-
-        for (std::size_t step = 0; step < STEP_X.size(); ++step) {
-          const auto nx = x + STEP_X[step];
-          const auto ny = y + STEP_Y[step];
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
-            continue;
-          }
-          const auto neighbor = grid.index(static_cast<std::uint32_t>(nx),
-                                           static_cast<std::uint32_t>(ny));
-          if (!onLine) {
-            // Each edge is decided once, from its lower cell.
-            if (cell > neighbor) {
-              continue;
-            }
-            if (!segmentsCrossStrictly(ax, ay, static_cast<double>(nx) + 0.5,
-                                       static_cast<double>(ny) + 0.5, x0, y0,
-                                       x1, y1)) {
-              continue;
-            }
-          }
-          blocked.push_back({.cell = cell, .direction = step});
-          blocked.push_back(
-              {.cell = neighbor, .direction = REVERSE_STEP[step]});
-        }
-      }
-    }
-  }
-  return moves;
-}
-
 /// Whether two segments cross, for the visibility test below.
 bool segmentsCross(const fbg::Point& a0, const fbg::Point& a1,
                    const fbg::Point& b0, const fbg::Point& b1) {
@@ -230,7 +121,7 @@ public:
                NodeList& nodes)
       : scene_(scene), bottlenecks_(bottlenecks),
         lines_(bottleneckLines(bottlenecks, scene.detail)),
-        moves_(bottleneckMoves(bottlenecks, scene.detail)), nodes_(nodes),
+        moves_(grid::bottleneckMoves(bottlenecks, scene.detail)), nodes_(nodes),
         closed_(bottlenecks.size(), false) {
     for (std::size_t index = 0; index < scene.targetCell.size(); ++index) {
       targetAt_.emplace(scene.targetCell[index], scene.targetPort[index]);
@@ -678,7 +569,7 @@ private:
   const CapacityScene& scene_;
   const std::vector<grid::Bottleneck>& bottlenecks_;
   std::vector<std::vector<std::size_t>> lines_;
-  std::vector<std::vector<BlockedMove>> moves_;
+  std::vector<std::vector<grid::BlockedMove>> moves_;
   NodeList& nodes_;
   std::vector<bool> closed_;
   /// The gates that refuse each move, and how many closed ones do.

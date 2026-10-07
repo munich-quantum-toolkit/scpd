@@ -60,6 +60,22 @@ struct BottleneckOptions {
   ///
   /// Zero keeps every candidate the search found.
   double sameNarrowing = 0.0;
+  /// How far the clearance must rise on both sides of a candidate, in
+  /// cells, before it falls below the candidate's own.
+  ///
+  /// A wall that does not run along an axis is a staircase on the raster,
+  /// and every step of it is a local minimum of the clearance a cell deep.
+  /// On a whole chip those steps outnumber the narrowings by far. Walking
+  /// the axis away from a candidate, a side counts once the clearance has
+  /// risen by this much; it fails where it first falls below the
+  /// candidate's, because then a lower minimum stands for the same
+  /// narrowing, and where the axis forks or ends before either. This is
+  /// the persistence of the minimum. Where the clearance holds its minimum
+  /// over a stretch of the axis, as between two parallel walls, the
+  /// stretch is one narrowing and one cut is kept, from its middle.
+  ///
+  /// Zero keeps every local minimum and every cell of such a stretch.
+  double minimumRise = 0.0;
   /// Cells that no bottleneck may cross, because a port is not a wall that
   /// capacity divides around. The targets of the run.
   std::span<const std::size_t> targets;

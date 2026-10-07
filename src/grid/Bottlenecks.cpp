@@ -85,9 +85,71 @@ private:
   std::span<const std::uint32_t> distance_;
 };
 
+/// Whether the clearance along the axis, walked from a candidate through
+/// `next`, rises by `rise` cells before it falls below the candidate's own.
+/// A cell of the same clearance and a lower index counts as below, so that
+/// of a stretch at one clearance a single cell passes. The walk stops where
+/// the axis forks or ends, and comes back to the candidate on an axis that
+/// closes on itself.
+bool risesTowards(const CellSpace& space, const MedialAxis& axis,
+                  const std::size_t candidate, std::size_t next,
+                  const double rise) {
+  const auto own = space.clearance(candidate);
+  const auto enough = std::sqrt(static_cast<double>(own)) + rise;
+  auto previous = candidate;
+  while (next != candidate) {
+    const auto here = space.clearance(next);
+    if (here < own || (here == own && next < candidate)) {
+      return false;
+    }
+    if (std::sqrt(static_cast<double>(here)) >= enough) {
+      return true;
+    }
+    const auto found = axis.neighbors.find(next);
+    if (found == axis.neighbors.end() || found->second.size() != 2) {
+      return false;
+    }
+    const auto& pair = found->second;
+    const auto ahead = pair[0] == previous ? pair[1] : pair[0];
+    previous = next;
+    next = ahead;
+  }
+  return false;
+}
+
+/// The cell in the middle of the stretch of the axis around a candidate
+/// that holds the candidate's clearance, the candidate when none does.
+std::size_t middleOfStretch(const CellSpace& space, const MedialAxis& axis,
+                            const std::size_t candidate) {
+  const auto own = space.clearance(candidate);
+  const auto& sides = axis.neighbors.at(candidate);
+  std::array<std::vector<std::size_t>, 2> stretch;
+  for (std::size_t side = 0; side < 2; ++side) {
+    auto previous = candidate;
+    auto next = sides[side];
+    while (next != candidate && space.clearance(next) == own) {
+      const auto found = axis.neighbors.find(next);
+      if (found == axis.neighbors.end() || found->second.size() != 2) {
+        break;
+      }
+      stretch[side].push_back(next);
+      const auto& pair = found->second;
+      const auto ahead = pair[0] == previous ? pair[1] : pair[0];
+      previous = next;
+      next = ahead;
+    }
+  }
+  std::vector<std::size_t> cells(stretch[0].rbegin(), stretch[0].rend());
+  cells.push_back(candidate);
+  cells.insert(cells.end(), stretch[1].begin(), stretch[1].end());
+  return cells[(cells.size() - 1) / 2];
+}
+
 /// The cells of the axis whose clearance is a local minimum along it.
-std::vector<std::size_t> saddlePoints(const CellSpace& space, const MedialAxis& axis,
-                                      const std::uint32_t limit) {
+std::vector<std::size_t> saddlePoints(const CellSpace& space,
+                                      const MedialAxis& axis,
+                                      const std::uint32_t limit,
+                                      const double rise) {
   std::vector<std::size_t> saddles;
   for (const auto& [cell, neighbors] : axis.neighbors) {
     // A dead end is where the axis stops, not where a corridor narrows.
@@ -103,9 +165,18 @@ std::vector<std::size_t> saddlePoints(const CellSpace& space, const MedialAxis& 
     // A true minimum, or either edge of a plateau of them. The plateau cases
     // matter because a corridor of constant width has no strict minimum at
     // all and would otherwise contribute no bottleneck.
-    if ((here <= before && here <= after) || (here == before && here > after) ||
-        (here == after && here > before)) {
+    if (!((here <= before && here <= after) ||
+          (here == before && here > after) ||
+          (here == after && here > before))) {
+      continue;
+    }
+    if (!(rise > 0.0)) {
       saddles.push_back(cell);
+      continue;
+    }
+    if (risesTowards(space, axis, cell, neighbors[0], rise) &&
+        risesTowards(space, axis, cell, neighbors[1], rise)) {
+      saddles.push_back(middleOfStretch(space, axis, cell));
     }
   }
   // The axis is held in a hash map, so the order it yields is not the order
@@ -382,7 +453,8 @@ std::vector<Bottleneck> findBottlenecks(const BitGrid& blocked, const MedialAxis
     return (low << 32U) ^ high;
   };
 
-  for (const auto saddle : saddlePoints(space, axis, options.maximumSquaredClearance)) {
+  for (const auto saddle : saddlePoints(
+           space, axis, options.maximumSquaredClearance, options.minimumRise)) {
     const auto shores = shoresAround(space, saddle);
     // One shore means the axis runs along a wall rather than between two.
     if (shores.size() < 2) {

@@ -12,6 +12,30 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Find the bottlenecks of the chip the coupler insertion leaves, build the
+  capacity graph they make and check whether it carries every outer wire, report
+  only (`SCPD_BOTTLENECKS`). The medial axis is built over the border, the
+  artwork, the coupler pads, the feedline edges and the port runs of every outer
+  wire, a port run being the straight line from a port to the end of the run off
+  it; feedline edges and port runs are inflated by half the clearance.
+  `findBottlenecks` traces each saddle of the axis to the two obstacles across
+  it, and a bottleneck holds the length between the walls over the wire
+  clearance (`wiresThroughGap`). The bottlenecks cut the free space into
+  chambers (`grid::chambersOf`, with `bottleneckMoves` moved out of the capacity
+  stage), and a plain wire crosses only the edge between two couplers it is
+  prescribed, on the stretches where `CrossingConstraints` lets a wire through
+  at a right angle, as many as fit a wire pitch apart; no wire crosses a
+  terminal edge and no resonator any edge. `checkCapacity` routes every wire at
+  once from the chambers of its source port to those of its target port as an
+  integer multi-commodity flow with the least overflow
+  (`SCPD_CAPACITY_SECONDS`); the log says `CAPACITY GRAPH SAT`, `UNSAT` or
+  `UNKNOWN`, names each wire without a way and each edge the graph is short on
+  with the wires there, and gives every wire's way. `-d` draws
+  `final-bottlenecks.svg` and `final-capacity-graph.svg`
+  (`SCPD_BOTTLENECK_WIRES`, `SCPD_BOTTLENECK_RISE`); `SCPD_SEARCH_PICTURES=0`
+  keeps a debug run to the pictures of the whole chip.
+  `BottleneckOptions::minimumRise` drops the minima that the steps of a raster
+  wall make and keeps one cut of a stretch of even width.
 - ✨ Build the fifth phase of the Final stage, the refinement of the
   feedline routing, and make every resonator its target length in it. The
   phase draws every wire of the ring once more with a price on the room it

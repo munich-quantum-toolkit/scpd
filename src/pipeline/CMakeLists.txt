@@ -16,4 +16,6 @@ add_mqt_scpd_library(
   MQT::ScpdGrid
   MQT::ScpdIO
   MQT::ScpdMilp
-  MQT::ScpdRouting)
+  MQT::ScpdRouting
+  PRIVATE_LINK_LIBRARIES
+  mqt-scpd-json)

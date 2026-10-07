@@ -207,6 +207,18 @@ public:
                         x0, y0, x1, y1, cls);
   }
 
+  /// A straight line between the centres of two cells, with a tooltip a
+  /// viewer shows when the pointer rests on it.
+  void line(const Cell& from, const Cell& to, const std::string_view cls,
+            const std::string_view tooltip) {
+    out_ += std::format("<line x1=\"{:.1f}\" y1=\"{:.1f}\" x2=\"{:.1f}\" "
+                        "y2=\"{:.1f}\" class=\"{}\"><title>",
+                        centreX(from.first), centreY(from.second),
+                        centreX(to.first), centreY(to.second), cls);
+    escape(tooltip);
+    out_ += "</title></line>\n";
+  }
+
   /// A rectangle in SVG coordinates.
   void box(const double x, const double y, const double width,
            const double height, const std::string_view cls) {
