@@ -15,7 +15,8 @@
 // state and belongs to one thread; the obstacle mask and the corridor mask are
 // bit grids attached by pointer and shared by every thread; the wire
 // proximity is a view. The per-cell cost of a router is measured from what it
-// allocates, and a peak figure is projected from it.
+// allocates. Every figure is in decimal units: a megabyte is 10^6 bytes and a
+// gigabyte 10^9 bytes.
 
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
@@ -44,16 +45,16 @@ constexpr uint32_t LARGEST_SIDE = 5400;
 /// The cells of the router grid of the largest benchmark chip.
 constexpr std::size_t LARGEST_CELLS =
     static_cast<std::size_t>(LARGEST_SIDE) * LARGEST_SIDE;
-constexpr double MEGABYTE = 1024.0 * 1024.0;
+constexpr double MEGABYTE = 1e6;
+constexpr double GIGABYTE = 1e9;
 
 TEST(MemoryModel, TheObstacleMaskIsOneBitPerCell) {
   const grid::BitGrid mask(LARGEST_SIDE, LARGEST_SIDE);
   EXPECT_EQ(mask.size(), LARGEST_CELLS);
   const std::size_t bytes = mask.words().size() * sizeof(uint64_t);
   EXPECT_EQ(bytes, ((LARGEST_CELLS + 63) / 64) * sizeof(uint64_t));
-  // About three and a half megabytes, against twenty-eight as one byte per
-  // cell.
-  EXPECT_LT(static_cast<double>(bytes) / MEGABYTE, 3.5);
+  // 3.6 megabytes, against 29 at one byte per cell.
+  EXPECT_LT(static_cast<double>(bytes) / MEGABYTE, 3.7);
 }
 
 TEST(MemoryModel, TheSearchScratchIsEightBytesPerState) {
@@ -64,14 +65,14 @@ TEST(MemoryModel, TheSearchScratchIsEightBytesPerState) {
       static_cast<double>(scratch.size() * sizeof(SearchNode)) /
       (1000.0 * 1000.0);
   EXPECT_DOUBLE_EQ(perCell, 64.0);
-  // The scratch of the largest benchmark, per thread: about 1.8 GB.
+  // The scratch of the largest benchmark, per thread: 1.87 gigabytes.
   const double largest =
-      static_cast<double>(LARGEST_CELLS) * perCell / MEGABYTE;
-  EXPECT_GT(largest, 1750.0);
-  EXPECT_LT(largest, 1800.0);
+      static_cast<double>(LARGEST_CELLS) * perCell / GIGABYTE;
+  EXPECT_GT(largest, 1.86);
+  EXPECT_LT(largest, 1.87);
 }
 
-TEST(MemoryModel, TheScratchNeedsNoClearingWhenItsIterationWrapsAround) {
+TEST(MemoryModel, TheScratchClearsItsRecordsWhenItsIterationWrapsAround) {
   SearchScratch scratch(4, 4);
   scratch.beginSearch();
   const uint16_t first = scratch.iteration();
@@ -162,7 +163,7 @@ TEST(MemoryModel, TheStaticProximityKeepsNoMemoryOfItsGrowth) {
   EXPECT_EQ(router.heldBytes(), held);
 }
 
-TEST(MemoryModel, ARouterAndItsScratchHoldAboutSeventySixBytesPerCell) {
+TEST(MemoryModel, ARouterAndItsScratchHoldAtMostEightyBytesPerCell) {
   // A router that has used everything it owns: obstacles on a third of the
   // grid, the static proximity grown from them, crossing constraints, an
   // exemption, a single-crossing feedline, and a search of each kind. Each
@@ -229,16 +230,11 @@ TEST(MemoryModel, ARouterAndItsScratchHoldAboutSeventySixBytesPerCell) {
   // Sixty-four bytes of scratch. Per cell, the router owns one byte each of
   // static proximity, packed working grid, crossing constraints and crossing
   // rules, and four of distance field: eight bytes. The crossing rules hold
-  // the exemption and the single-crossing overlay. The open list adds three
-  // bytes here, and the rest is small.
-  EXPECT_GT(perCell, 74.0);
-  EXPECT_LT(perCell, 78.0);
-
-  // Projected to the router grid of the largest benchmark, one router takes
-  // about 2.2 GB, so three routers in parallel need about 6.6 GB.
-  const double largest = perCell * static_cast<double>(LARGEST_CELLS);
-  EXPECT_GT(largest, 2.1e9);
-  EXPECT_LT(largest, 2.3e9);
+  // the exemption and the single-crossing overlay. The open list grows with
+  // the states a search reaches, not with the cells of the grid; here it
+  // adds about four bytes per cell. The bound leaves room for it and for the
+  // small containers.
+  EXPECT_LE(perCell, 80.0);
 }
 
 } // namespace

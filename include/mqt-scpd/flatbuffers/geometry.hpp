@@ -20,8 +20,6 @@ namespace geometry {
 
 struct Point;
 
-struct GCoord;
-
 struct DCoord;
 
 struct RCoord;
@@ -48,8 +46,6 @@ struct PathT;
 
 bool operator==(const Point &lhs, const Point &rhs);
 bool operator!=(const Point &lhs, const Point &rhs);
-bool operator==(const GCoord &lhs, const GCoord &rhs);
-bool operator!=(const GCoord &lhs, const GCoord &rhs);
 bool operator==(const DCoord &lhs, const DCoord &rhs);
 bool operator!=(const DCoord &lhs, const DCoord &rhs);
 bool operator==(const RCoord &lhs, const RCoord &rhs);
@@ -66,8 +62,6 @@ bool operator==(const PathT &lhs, const PathT &rhs);
 bool operator!=(const PathT &lhs, const PathT &rhs);
 
 inline const ::flatbuffers::TypeTable *PointTypeTable();
-
-inline const ::flatbuffers::TypeTable *GCoordTypeTable();
 
 inline const ::flatbuffers::TypeTable *DCoordTypeTable();
 
@@ -260,49 +254,6 @@ inline bool operator!=(const Point &lhs, const Point &rhs) {
 
 struct Point::Traits {
   using type = Point;
-};
-
-/// A cell of the coarse capacity grid.
-FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) GCoord FLATBUFFERS_FINAL_CLASS {
- private:
-  uint32_t x_;
-  uint32_t y_;
-
- public:
-  struct Traits;
-  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
-    return GCoordTypeTable();
-  }
-  GCoord()
-      : x_(0),
-        y_(0) {
-  }
-  GCoord(uint32_t _x, uint32_t _y)
-      : x_(::flatbuffers::EndianScalar(_x)),
-        y_(::flatbuffers::EndianScalar(_y)) {
-  }
-  uint32_t x() const {
-    return ::flatbuffers::EndianScalar(x_);
-  }
-  uint32_t y() const {
-    return ::flatbuffers::EndianScalar(y_);
-  }
-};
-FLATBUFFERS_STRUCT_END(GCoord, 8);
-
-inline bool operator==(const GCoord &lhs, const GCoord &rhs) {
-  return
-      (lhs.x() == rhs.x()) &&
-      (lhs.y() == rhs.y());
-}
-
-inline bool operator!=(const GCoord &lhs, const GCoord &rhs) {
-    return !(lhs == rhs);
-}
-
-
-struct GCoord::Traits {
-  using type = GCoord;
 };
 
 /// A cell of a grid: its column and its row. The capacity grid, the detail
@@ -1165,22 +1116,6 @@ inline const ::flatbuffers::TypeTable *PointTypeTable() {
     { ::flatbuffers::ET_DOUBLE, 0, -1 }
   };
   static const int64_t values[] = { 0, 8, 16 };
-  static const char * const names[] = {
-    "x",
-    "y"
-  };
-  static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_STRUCT, 2, type_codes, nullptr, nullptr, values, names
-  };
-  return &tt;
-}
-
-inline const ::flatbuffers::TypeTable *GCoordTypeTable() {
-  static const ::flatbuffers::TypeCode type_codes[] = {
-    { ::flatbuffers::ET_UINT, 0, -1 },
-    { ::flatbuffers::ET_UINT, 0, -1 }
-  };
-  static const int64_t values[] = { 0, 4, 8 };
   static const char * const names[] = {
     "x",
     "y"

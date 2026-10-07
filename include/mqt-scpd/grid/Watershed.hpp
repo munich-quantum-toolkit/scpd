@@ -90,22 +90,40 @@ runWatershed(const BitGrid& blocked, std::span<const std::size_t> seeds,
  * the square window of radius @p radius around it. The vote counts only the
  * free cells of this run, that is cells with a label of at least
  * @p firstLabel. Only a clear majority moves a cell, so the vote keeps real
- * corners. Every pass reads the labels as they were before the pass. On some
- * labels, such passes move cells back and forth on every pass and never settle.
- * The pass therefore repeats at most @p iterations times. It stops early after
- * a pass that changes nothing. When @p labels has fewer entries than
- * @p blocked has cells, the function changes nothing.
+ * corners.
+ *
+ * A seed cell keeps its label, so a partition with a seed keeps at least that
+ * cell. The vote can still move every other cell of the partition, and it can
+ * split a partition into pieces that do not touch. A partition without a seed
+ * can lose all of its cells.
+ *
+ * Every pass reads the labels as they were before the pass. The result
+ * therefore does not depend on the order in which a pass visits the cells, and
+ * the mirror image of the input gives the mirror image of the result. On some
+ * labels, such passes move cells back and forth on every pass and never
+ * settle. The result then depends on whether @p iterations is odd or even. The
+ * pass repeats at most @p iterations times. It stops early after a pass that
+ * changes nothing. When @p labels has fewer entries than @p blocked has cells,
+ * the function changes nothing.
+ *
+ * A pass counts the (2 @p radius + 1)^2 cells of the window for every border
+ * cell. The window ends at the edge of the grid, so a radius larger than the
+ * grid costs no more than a window that just covers the grid.
  *
  * @param blocked The obstacle mask. Blocked cells neither vote nor change.
+ * @param seeds Row-major cell indices whose labels do not change. Pass the
+ * seeds of the run. The function ignores a seed off the grid.
  * @param labels The label of every cell, row-major, smoothed in place.
  * @param firstLabel The first label of the run. Cells with a lower label
  * neither vote nor change.
  * @param radius The radius of the window, in cells. The window is
  * 2 @p radius + 1 cells on a side.
  * @param iterations The largest number of passes.
+ * @throws std::invalid_argument If @p radius or @p iterations is negative.
  */
 MQT_SCPD_GRID_EXPORT void
 smoothPartitionBorders(const BitGrid& blocked,
+                       std::span<const std::size_t> seeds,
                        std::vector<PartitionLabel>& labels,
                        PartitionLabel firstLabel, int radius, int iterations);
 

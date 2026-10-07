@@ -152,6 +152,74 @@ bool clipToBox(Point& a, Point& b, const Point low, const Point high) {
   return true;
 }
 
+/// The share of the largest coordinate that a row interval of
+/// columnsNear() adds to its reach. The rounding errors of the interval and
+/// of distanceToSegment() grow with the coordinates, and this share exceeds
+/// them many times over.
+constexpr double ROUNDING_SHARE = 1e-12;
+
+/// The columns of the cells in a row whose center can lie within a reach of
+/// a segment.
+///
+/// A point within @p reach of the segment lies within @p reach, along each
+/// axis, of a point of the segment. So the columns cover the part of the
+/// segment within @p reach of the row along y, widened by @p reach along x.
+///
+/// @param grid The grid of the row.
+/// @param a One end of the segment, in layout units.
+/// @param b The other end of the segment, in layout units.
+/// @param reach The distance to cover, in layout units.
+/// @param row The row.
+/// @param first The first column of the window to search.
+/// @param last The last column of the window to search. It may lie left of
+/// @p first, and then the window is empty.
+/// @return The first and the last column, clamped onto [@p first, @p last].
+/// The first column exceeds the last when no cell center of the row lies
+/// within @p reach. When the ends of the segment or their difference are not
+/// finite, or @p reach is not a number, the function returns every column
+/// from @p first to @p last.
+std::pair<int64_t, int64_t> columnsNear(const GridMetrics& grid, const Point a,
+                                        const Point b, const double reach,
+                                        const int64_t row, const int64_t first,
+                                        const int64_t last) {
+  const double dx = b.x() - a.x();
+  const double dy = b.y() - a.y();
+  if (first > last || !std::isfinite(dx) || !std::isfinite(dy)) {
+    return {first, last};
+  }
+  const double y = grid.toLayout(0.0, static_cast<double>(row)).y();
+  const double below = y - reach;
+  const double above = y + reach;
+  if (std::max(a.y(), b.y()) < below || std::min(a.y(), b.y()) > above) {
+    return {first, first - 1};
+  }
+  // The parameters along the segment where it enters and leaves the band
+  // within reach of the row. The point at a parameter comes from the nearer
+  // end, so that a coordinate far larger than the grid cannot cancel.
+  double enter = 0.0;
+  double leave = 1.0;
+  if (dy != 0.0) {
+    const double atBelow = (below - a.y()) / dy;
+    const double atAbove = (above - a.y()) / dy;
+    enter = std::clamp(std::min(atBelow, atAbove), 0.0, 1.0);
+    leave = std::clamp(std::max(atBelow, atAbove), 0.0, 1.0);
+  }
+  const auto xAt = [&](const double t) {
+    return t <= 0.5 ? a.x() + (t * dx) : b.x() - ((1.0 - t) * dx);
+  };
+  const double left = std::min(xAt(enter), xAt(leave)) - reach;
+  const double right = std::max(xAt(enter), xAt(leave)) + reach;
+  const double from = std::ceil((left - grid.origin.x()) / grid.cellWidth);
+  const double to = std::floor((right - grid.origin.x()) / grid.cellWidth);
+  if (std::isnan(from) || std::isnan(to)) {
+    return {first, last};
+  }
+  return {static_cast<int64_t>(std::clamp(from, static_cast<double>(first),
+                                          static_cast<double>(last) + 1.0)),
+          static_cast<int64_t>(std::clamp(to, static_cast<double>(first) - 1.0,
+                                          static_cast<double>(last)))};
+}
+
 /// Blocks every free cell within the keepout of an obstacle edge, then frees
 /// the cells of the keepout that a corridor reaches. A second mask marks the
 /// cells of the keepout, so that a corridor never frees a cell that the
@@ -160,11 +228,18 @@ void blockKeepout(const ChipT& chip, const GridMetrics& grid,
                   const RasterOptions& options, BitGrid& blocked,
                   std::size_t& keepoutCells, std::size_t& exemptedCells) {
   BitGrid keepout(grid.width, grid.height);
+  const BoundingBox box = grid.box();
+  const double gridSize = std::max({std::fabs(box.minX), std::fabs(box.minY),
+                                    std::fabs(box.maxX), std::fabs(box.maxY)});
+  const double cellStep = std::max(grid.cellWidth, grid.cellHeight);
 
   // Visit the cells of a window around an edge, given in layout units. The
   // window is clamped onto the grid before the cast to an integer. std::fmax
   // and std::fmin drop a NaN, so a NaN bound widens the window to the grid,
-  // and the distance test decides.
+  // and the distance test decides. In each row, only the columns within
+  // reach of the edge take the distance test. The reach adds a cell step and
+  // a share of the coordinates to the half width, so that no rounding error
+  // drops a cell that the distance test keeps.
   const auto forEachCellNear = [&](const Point a, const Point b,
                                    const double halfWidth, auto&& visit) {
     const Point ca = grid.toCell(a);
@@ -185,8 +260,13 @@ void blockKeepout(const ChipT& chip, const GridMetrics& grid,
         static_cast<int64_t>(std::fmin(std::fmax(lowY, 0.0), height));
     const auto y1 =
         static_cast<int64_t>(std::fmax(std::fmin(highY, height - 1.0), -1.0));
+    const double size =
+        std::max({gridSize, std::fabs(a.x()), std::fabs(a.y()),
+                  std::fabs(b.x()), std::fabs(b.y()), halfWidth});
+    const double reach = halfWidth + cellStep + (ROUNDING_SHARE * size);
     for (int64_t y = y0; y <= y1; ++y) {
-      for (int64_t x = x0; x <= x1; ++x) {
+      const auto [first, last] = columnsNear(grid, a, b, reach, y, x0, x1);
+      for (int64_t x = first; x <= last; ++x) {
         const Point center =
             grid.toLayout(static_cast<double>(x), static_cast<double>(y));
         if (distanceToSegment(center, a, b) <= halfWidth) {
@@ -230,6 +310,24 @@ void blockKeepout(const ChipT& chip, const GridMetrics& grid,
 
 namespace {
 
+/// The length of the vector (@p dx, @p dy).
+///
+/// IEEE 754 rounds each multiplication, the addition and the square root
+/// correctly, and the build turns floating-point contraction off. The result
+/// is therefore the same on every platform. std::hypot gives no such
+/// promise: its last bit may differ between math libraries, and the keepout
+/// compares the distance with its limit exactly. The sum of squares is a
+/// normal number for every length from about 1.5e-154 to 1.3e154, a range
+/// that holds every distance on a chip. Outside that range the sum overflows
+/// or loses digits, and std::hypot takes over.
+double vectorLength(const double dx, const double dy) {
+  const double squared = (dx * dx) + (dy * dy);
+  if (std::isnormal(squared)) {
+    return std::sqrt(squared);
+  }
+  return std::hypot(dx, dy);
+}
+
 /// The distance from a point to a segment whose squared length overflows.
 /// The terms are taken in half units and divided by the longer axis of the
 /// segment, so each stays finite. The nearest point comes from the end it lies
@@ -258,7 +356,7 @@ double distanceToLongSegment(const Point point, const Point from,
   const bool nearStart = fromStart <= fromEnd;
   const double cx = nearStart ? fx + (fromStart * dx) : tx - (fromEnd * dx);
   const double cy = nearStart ? fy + (fromStart * dy) : ty - (fromEnd * dy);
-  return 2.0 * std::hypot(px - cx, py - cy);
+  return 2.0 * vectorLength(px - cx, py - cy);
 }
 
 } // namespace
@@ -271,7 +369,7 @@ double distanceToSegment(const Point point, const Point from, const Point to) {
     return distanceToLongSegment(point, from, to);
   }
   if (length2 <= 1e-18) {
-    return std::hypot(point.x() - from.x(), point.y() - from.y());
+    return vectorLength(point.x() - from.x(), point.y() - from.y());
   }
   // The parameter of the nearest point measured from either end. The nearest
   // point comes from the end it lies nearer to, so that a coordinate far
@@ -287,7 +385,7 @@ double distanceToSegment(const Point point, const Point from, const Point to) {
       nearStart ? from.x() + (fromStart * dx) : to.x() - (fromEnd * dx);
   const double cy =
       nearStart ? from.y() + (fromStart * dy) : to.y() - (fromEnd * dy);
-  return std::hypot(point.x() - cx, point.y() - cy);
+  return vectorLength(point.x() - cx, point.y() - cy);
 }
 
 std::vector<std::size_t> lineCells(const int64_t x0, const int64_t y0,

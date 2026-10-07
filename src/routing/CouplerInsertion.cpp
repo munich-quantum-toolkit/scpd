@@ -180,6 +180,9 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   if (couplerHeading >= NUM_HEADINGS) {
     throw std::invalid_argument("the coupler heading lies outside 0 to 7");
   }
+  if (!std::isfinite(targetLength) || targetLength < 0.0) {
+    throw std::invalid_argument("the target length is negative or not finite");
+  }
   if (path.empty()) {
     return std::nullopt;
   }
@@ -237,17 +240,9 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   optionsByHeading[searchHeading].push_back(
       {.length = prefixLength, .pieces = prefix});
 
-  // Mirrored moves render to the same length up to rounding. The margin
-  // keeps rounding from deciding whether a continuation is shorter than the
-  // first one of its heading.
-  constexpr double roundingMargin = 1e-9;
   const auto addOption = [&](const Heading target, const double length,
                              const std::vector<DoglegPiece>& pieces) {
-    auto it = optionsByHeading.find(target);
-    if (it == optionsByHeading.end() ||
-        length < it->second.front().length - roundingMargin) {
-      optionsByHeading[target].push_back({.length = length, .pieces = pieces});
-    }
+    optionsByHeading[target].push_back({.length = length, .pieces = pieces});
   };
   const auto with = [&](std::initializer_list<DoglegPiece> extra) {
     std::vector<DoglegPiece> v = prefix;
@@ -257,7 +252,9 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     return v;
   };
 
-  // Every one- and two-primitive continuation of the dogleg.
+  // Every one- and two-primitive continuation of the dogleg. The primitives
+  // come in ascending identifier order, so the options of each heading follow
+  // the lexicographic order of their primitive identifiers.
   for (const Primitive& first : primitives.of(searchHeading)) {
     const Heading intermediate = first.exitHeading;
     const DoglegPiece pieceOne = pieceOf(primitives, first, searchHeading);
@@ -276,15 +273,19 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   // The lengths are those of the rendered path, so the length from a cell to
   // the end is the rendered length of the whole path minus the rendered
   // length up to the cell. The mismatches and the charges are whole numbers
-  // of billionths of a cell, so that the rounding of the lengths cannot break
-  // a tie between two equal charges.
+  // of billionths of a cell, so that two lengths that differ only by rounding
+  // give equal charges, unless a half billionth lies between them.
   constexpr double stepsPerCell = 1e9;
   struct Candidate {
     PathPoint cell;
     double mismatch = 0.0;
     double signedDiff = 0.0;
+    double charge = 0.0;
     const PathOption* option = nullptr;
     std::size_t splitIndex = 0;
+    /// The rank of the candidate: by its cell along the path, and on one cell
+    /// by the order of the options.
+    std::size_t order = 0;
   };
   std::vector<Candidate> candidates;
   Path rendered = path;
@@ -318,7 +319,8 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
                               .mismatch = std::abs(diff),
                               .signedDiff = diff,
                               .option = &option,
-                              .splitIndex = own});
+                              .splitIndex = own,
+                              .order = candidates.size()});
       }
     }
   }
@@ -453,16 +455,24 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     }
     return fallback;
   };
+  // Each sort key ends on the rank, which differs between any two
+  // candidates. The order of equal mismatches and of equal charges therefore
+  // follows the path, whatever the sort algorithm of the standard library.
   const auto byMismatch = [](const Candidate& a, const Candidate& b) {
-    return a.mismatch < b.mismatch;
+    if (a.mismatch != b.mismatch) {
+      return a.mismatch < b.mismatch;
+    }
+    return a.order < b.order;
+  };
+  const auto byCharge = [](const Candidate& a, const Candidate& b) {
+    if (a.charge != b.charge) {
+      return a.charge < b.charge;
+    }
+    return a.order < b.order;
   };
 
   // The best achievable mismatch, which scales the undershoot preference.
-  // The sorts are stable and the charges are whole numbers, so of candidates
-  // with equal charges the one earliest along the path wins, and on one cell
-  // the one whose option came first, whatever the standard library and the
-  // rounding of the lengths.
-  std::ranges::stable_sort(candidates, byMismatch);
+  std::ranges::sort(candidates, byMismatch);
   const std::optional<Choice> nearest = choose();
   if (!nearest) {
     return std::nullopt;
@@ -472,10 +482,10 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   // loses to an undershoot within about twice the best mismatch of the
   // target, so a hard, blocked-in resonator is not dragged far away.
   for (Candidate& cand : candidates) {
-    cand.mismatch =
+    cand.charge =
         cand.signedDiff <= 0.0 ? -cand.signedDiff : cand.signedDiff + best;
   }
-  std::ranges::stable_sort(candidates, byMismatch);
+  std::ranges::sort(candidates, byCharge);
   const std::optional<Choice> chosen = choose();
   if (!chosen) {
     return std::nullopt;
@@ -485,10 +495,7 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   path.erase(path.begin(),
              path.begin() + static_cast<std::ptrdiff_t>(winner.splitIndex));
   path.insert(path.begin(), chosen->cells.begin(), chosen->cells.end());
-  return CouplerSplice{.anchor = {.x = path.front().x,
-                                  .y = path.front().y,
-                                  .heading = winner.cell.heading,
-                                  .primitive = winner.cell.primitive},
+  return CouplerSplice{.anchor = path.front(),
                        .inAllowedArea = chosen->inAllowedArea};
 }
 

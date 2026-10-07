@@ -47,7 +47,8 @@ struct RasterOptions {
   /// The keepout distance, in layout units.
   ///
   /// Cells whose center lies within this distance of an edge of an obstacle
-  /// are blocked as well. The keepout puts the
+  /// are blocked as well, and a center at exactly this distance counts as
+  /// within. The keepout puts the
   /// obstacle clearance into the mask, so every free cell outside a corridor
   /// keeps the clearance. The distance is exact: it is measured from the cell
   /// center to the edge, not by a dilation of the mask. A value of zero or less
@@ -116,9 +117,17 @@ rasterizeObstacles(const flatbuffers::design::ChipT& chip,
 /**
  * @brief Blocks the cells of a polygon.
  *
- * The function blocks every cell whose center lies inside the polygon. It also
- * blocks the cells of the Bresenham line between the rounded cells of every
- * two consecutive vertices, the closing edge included. These lines keep the
+ * The function blocks every cell whose center lies inside the polygon by the
+ * even-odd rule along the row of the center. An edge crosses the row when one
+ * of its ends lies above the row and the other does not. The center lies
+ * inside when an odd number of these crossings lie right of it. So a center
+ * on the outline lies inside when the polygon covers the points just right of
+ * the center and a little above its row.
+ *
+ * The function also blocks the cells of the Bresenham line between the
+ * rounded cells of every two consecutive vertices, the closing edge included.
+ * A vertex rounds to the nearest cell, and a vertex halfway between two cells
+ * rounds away from cell zero, as std::llround() does. These lines keep the
  * outline free of gaps where the center test misses a thin polygon. A polygon
  * with fewer than three vertices blocks only the cells of its edges. Cells off
  * the grid are skipped, so a vertex may lie far off the grid. An end of an
@@ -195,7 +204,8 @@ MQT_SCPD_GRID_EXPORT void blockBorder(BitGrid& mask, uint32_t alongX,
  * @return The Euclidean distance from @p point to the nearest point of the
  * segment, in layout units. A segment of almost no length counts as the
  * point @p from. A segment whose squared length does not fit into a double
- * gives the distance too, as long as its ends are finite.
+ * gives the distance too, as long as its ends are finite. For a distance
+ * from about 1.5e-154 to 1.3e154, the result is the same on every platform.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT double
 distanceToSegment(Point point, Point from, Point to);

@@ -43,7 +43,7 @@ namespace mqt::scpd::routing {
  * takes constant time amortized over the entries of a block. When
  * the fine level moves on to a later block, the waiting entries that the
  * coarse level now reaches move into it, in the order they were pushed. So
- * the queue takes any priority, and the pops stay in ascending order. The
+ * the queue takes any priority at or above the scan position (see below). The
  * queue keeps the lowest waiting block, so a push or a move of the fine level
  * that does not touch the store costs one comparison more.
  *
@@ -59,10 +59,18 @@ namespace mqt::scpd::routing {
  * A queue cannot be copied. A move hands the chunks to the new queue and
  * leaves the old queue empty and without chunks, ready for use.
  *
- * Each fine bucket holds exactly one priority, so the pops come out in
- * ascending order of priority. The queue keeps a scan position: the priority
- * the next pop starts from. The scan position never decreases until clear()
- * resets it.
+ * Each fine bucket holds exactly one priority. The queue keeps a scan
+ * position: the priority the next pop starts from. The scan position never
+ * decreases until clear() resets it. A push whose priority lies below the
+ * scan position files the entry in the bucket at the scan position, so that
+ * the entry is not lost behind it. The entry keeps its own priority, so a pop
+ * can return a lower priority than the pop before it. A bucket pops its
+ * entries last in, first out, so among the entries at the scan position, the
+ * entry pushed last comes out first, whether its priority was raised or not.
+ * While no push goes below the scan position, the pops come out in ascending
+ * order of priority. A search whose estimate is consistent never pushes below
+ * the scan position, because no move lowers the priority of a state below
+ * that of the state it leaves. An estimate that is not consistent can.
  *
  * @tparam Entry The entry type. It is default-constructible and carries its
  * own priority in an unsigned member named @c f.
@@ -189,14 +197,15 @@ public:
    *
    * The priority of the entry is its member @c f. A priority below the scan
    * position is raised to the scan position, so that the entry is not lost
-   * behind it.
+   * behind it. The entry keeps its member @c f. Among the entries at the scan
+   * position, it pops before every entry pushed earlier.
    *
    * @param entry The entry to add.
    */
   void push(Entry entry) {
-    // A slightly inconsistent heuristic can produce a priority just below
-    // the current minimum. Clamp it, so that it is not lost behind the scan
-    // position.
+    // An estimate that is not consistent can give an entry a priority below
+    // the scan position. Raise it, so that the entry is not lost behind the
+    // scan position.
     const uint32_t priority = std::max(entry.f, currentMin);
     const uint32_t block = priority / FINE_SIZE;
     const uint32_t currentBlock = currentMin / FINE_SIZE;
@@ -217,6 +226,7 @@ public:
   /**
    * @brief Removes the entry with the lowest priority.
    *
+   * An entry whose priority push() raised counts at the raised priority.
    * Among the entries of the lowest priority, the pop takes the one added
    * last to their bucket.
    *

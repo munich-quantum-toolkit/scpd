@@ -95,6 +95,10 @@ DubinsRouter::DubinsRouter(std::shared_ptr<const MovePrimitives> primitives,
   if (movePrimitives == nullptr) {
     throw std::invalid_argument("a router needs primitives");
   }
+  if (movePrimitives->minRadius() > MAX_BEND_RADIUS) {
+    throw std::invalid_argument(
+        "a router accepts a bend radius of at most 23 cells");
+  }
   if (gridWidth == 0 || gridHeight == 0 || gridWidth >= 65536U ||
       gridHeight >= 65536U) {
     throw std::invalid_argument(
@@ -105,20 +109,19 @@ DubinsRouter::DubinsRouter(std::shared_ptr<const MovePrimitives> primitives,
         "the bend radius must be the one the primitives were built with");
   }
   staticPenalties.assign(cells(), 0);
-  buildTables();
+  buildTables(searchParams.bendPenalty);
 }
 
 std::size_t DubinsRouter::heldBytes() const {
   const auto capacityBytes = [](const auto& container) {
     return container.capacity() * sizeof(container[0]);
   };
-  std::size_t bytes =
-      sizeof(DubinsRouter) + capacityBytes(staticPenalties) +
-      capacityBytes(packedGrid) + capacityBytes(crossingRules) +
-      capacityBytes(exemptCells) + capacityBytes(crossingSideCells) +
-      capacityBytes(distanceField) + capacityBytes(loopScratch.xs) +
-      capacityBytes(loopScratch.ys) + open.heldBytes() +
-      constraints.heldBytes();
+  std::size_t bytes = sizeof(DubinsRouter) + capacityBytes(staticPenalties) +
+                      capacityBytes(packedGrid) + capacityBytes(crossingRules) +
+                      capacityBytes(exemptCells) +
+                      capacityBytes(crossingSideCells) +
+                      capacityBytes(distanceField) + loopScratch.heldBytes() +
+                      open.heldBytes() + constraints.heldBytes();
   for (uint32_t heading = 0; heading < NUM_HEADINGS; ++heading) {
     bytes +=
         capacityBytes(trie[heading]) + capacityBytes(triePrimitives[heading]);
@@ -134,11 +137,12 @@ void DubinsRouter::setParams(const SearchParams& params) {
     throw std::invalid_argument(
         "the bend radius must be the one the primitives were built with");
   }
-  const bool bendChanged = searchParams.bendPenalty != params.bendPenalty;
-  searchParams = params;
-  if (bendChanged) {
-    buildTables();
+  if (searchParams.bendPenalty != params.bendPenalty) {
+    buildTables(params.bendPenalty);
   }
+  // Last, so that a failed rebuild keeps the previous parameters with the
+  // tables they belong to.
+  searchParams = params;
 }
 
 // --- Grids -----------------------------------------------------------------
@@ -642,8 +646,7 @@ uint8_t DubinsRouter::constraintMaskAt(const uint32_t x,
 
 // --- Search tables ---------------------------------------------------------
 
-void DubinsRouter::buildTables() {
-  const uint32_t bend = searchParams.bendPenalty;
+void DubinsRouter::buildTables(const uint32_t bend) {
   const auto w = static_cast<int32_t>(gridWidth);
 
   struct TempNode {
@@ -654,11 +657,17 @@ void DubinsRouter::buildTables() {
     std::vector<uint32_t> children;
   };
 
+  // Every allocation runs before the first change, so a failed call keeps the
+  // previous tables.
+  std::array<std::vector<TrieNode>, NUM_HEADINGS> builtTrie;
+  std::array<std::vector<TriePrimitive>, NUM_HEADINGS> builtPrimitives;
+  std::array<uint32_t, NUM_HEADINGS> builtNegativeX{};
+  std::array<uint32_t, NUM_HEADINGS> builtPositiveX{};
+  std::array<uint32_t, NUM_HEADINGS> builtNegativeY{};
+  std::array<uint32_t, NUM_HEADINGS> builtPositiveY{};
   for (uint32_t heading = 0; heading < NUM_HEADINGS; ++heading) {
-    auto& tprims = triePrimitives[heading];
-    auto& tflat = trie[heading];
-    tprims.clear();
-    tflat.clear();
+    auto& tprims = builtPrimitives[heading];
+    auto& tflat = builtTrie[heading];
     std::vector<TempNode> nodes;
     std::vector<uint32_t> roots;
     int32_t negativeX = 0;
@@ -761,10 +770,10 @@ void DubinsRouter::buildTables() {
       tprims.push_back(tp);
     }
 
-    marginNegativeX[heading] = static_cast<uint32_t>(negativeX);
-    marginPositiveX[heading] = static_cast<uint32_t>(positiveX);
-    marginNegativeY[heading] = static_cast<uint32_t>(negativeY);
-    marginPositiveY[heading] = static_cast<uint32_t>(positiveY);
+    builtNegativeX[heading] = static_cast<uint32_t>(negativeX);
+    builtPositiveX[heading] = static_cast<uint32_t>(positiveX);
+    builtNegativeY[heading] = static_cast<uint32_t>(negativeY);
+    builtPositiveY[heading] = static_cast<uint32_t>(positiveY);
 
     // Emit the trie in preorder with the subtree size as skip.
     const auto emit = [&](const auto& self, const uint32_t n,
@@ -790,11 +799,19 @@ void DubinsRouter::buildTables() {
       emit(emit, root, 0);
     }
   }
+  static_assert(std::is_nothrow_swappable_v<decltype(trie)> &&
+                std::is_nothrow_swappable_v<decltype(triePrimitives)>);
+  trie.swap(builtTrie);
+  triePrimitives.swap(builtPrimitives);
+  marginNegativeX = builtNegativeX;
+  marginPositiveX = builtPositiveX;
+  marginNegativeY = builtNegativeY;
+  marginPositiveY = builtPositiveY;
 }
 
 // --- Distance field --------------------------------------------------------
 
-void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
+void DubinsRouter::beginDistanceField(const uint32_t tx, const uint32_t ty) {
   const std::size_t n = cells();
   if (distanceField.size() != n) {
     distanceField.assign(n, 0);
@@ -806,20 +823,42 @@ void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
     std::ranges::fill(distanceField, 0);
     fieldStamp = 1;
   }
-  const uint32_t stampHigh = fieldStamp << FIELD_DISTANCE_BITS;
   for (auto& bucket : fieldBuckets) {
     bucket.clear();
   }
-  const grid::BitGrid& corridor = *corridorMask;
-  // A local view, so that the stores to the buckets do not make the loop read
-  // the vector of the field again.
-  const std::span<uint32_t> field(distanceField);
-
-  field[(static_cast<std::size_t>(ty) * gridWidth) + tx] = stampHigh;
+  distanceField[(static_cast<std::size_t>(ty) * gridWidth) + tx] =
+      fieldStamp << FIELD_DISTANCE_BITS;
   fieldBuckets[0].push_back((ty << 16U) | tx);
-  std::size_t pending = 1;
-  uint32_t d = 0;
-  while (pending != 0) {
+  fieldPending = 1;
+  fieldScan = 0;
+  fieldSettled = STRAIGHT_COST;
+}
+
+uint32_t DubinsRouter::growDistanceField(const std::size_t cell) {
+  // The growth is Dijkstra's algorithm with steps of STRAIGHT_COST and
+  // DIAGONAL_COST. A bucket holds one distance: the distances that wait in
+  // the buckets run from the scan distance to at most DIAGONAL_COST above
+  // it, fewer than FIELD_BUCKETS. Every bucket below the scan distance d is
+  // drained, so each later step starts from d or more, adds STRAIGHT_COST or
+  // more, and is clamped to FIELD_DISTANCE_MASK at most. It writes at least
+  // min(d + STRAIGHT_COST, FIELD_DISTANCE_MASK), and a stamped distance at or
+  // below that bound is final. With the buckets empty, every stamped
+  // distance is final, and a cell without the stamp cannot reach the target.
+  const uint32_t stamp = fieldStamp;
+  const uint32_t stampHigh = stamp << FIELD_DISTANCE_BITS;
+  const grid::BitGrid& corridor = *corridorMask;
+  // Local copies, so that the stores to the field and to the buckets do not
+  // make the loop read the members again.
+  const std::span<uint32_t> field(distanceField);
+  std::size_t pending = fieldPending;
+  uint32_t d = fieldScan;
+  // An older stamp makes the difference wrap above FIELD_DISTANCE_MASK.
+  while (pending != 0 && field[cell] - stampHigh >
+                             std::min(d + STRAIGHT_COST, FIELD_DISTANCE_MASK)) {
+    // A waiting entry lies at most DIAGONAL_COST above d.
+    while (fieldBuckets[d % FIELD_BUCKETS].empty()) {
+      ++d;
+    }
     auto& bucket = fieldBuckets[d % FIELD_BUCKETS];
     while (!bucket.empty()) {
       const uint32_t packed = bucket.back();
@@ -850,7 +889,7 @@ void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
           const uint32_t nextDistance =
               std::min(d + weight, FIELD_DISTANCE_MASK);
           const uint32_t nv = field[nIndex];
-          if ((nv >> FIELD_DISTANCE_BITS) == fieldStamp &&
+          if ((nv >> FIELD_DISTANCE_BITS) == stamp &&
               (nv & FIELD_DISTANCE_MASK) <= nextDistance) {
             continue;
           }
@@ -863,6 +902,12 @@ void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
     }
     ++d;
   }
+  fieldPending = pending;
+  fieldScan = d;
+  fieldSettled = pending == 0
+                     ? FIELD_DISTANCE_MASK
+                     : std::min(d + STRAIGHT_COST, FIELD_DISTANCE_MASK);
+  return field[cell];
 }
 
 // --- States and paths ------------------------------------------------------
@@ -1023,7 +1068,10 @@ Path DubinsRouter::route(const RoutingObjective& objective,
   RoutingObjective moved;
   moved.source = sanitize(objective.source, false);
   moved.target = sanitize(objective.target, true);
-  if (!inGrid(moved.source) || !inGrid(moved.target)) {
+  // A stub is a straight run, so its cells lie in the grid when its two ends
+  // do.
+  if (!inGrid(objective.source) || !inGrid(objective.target) ||
+      !inGrid(moved.source) || !inGrid(moved.target)) {
     return {};
   }
   searchScratch->beginSearch();
@@ -1085,7 +1133,10 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective,
 
   const bool useField = activeHeuristic == Heuristic::DistanceField;
   if (useField) {
-    buildDistanceField(objective.target.x, objective.target.y);
+    beginDistanceField(objective.target.x, objective.target.y);
+    growDistanceField(
+        (static_cast<std::size_t>(objective.source.y) * gridWidth) +
+        objective.source.x);
   }
 
   const uint32_t startIndex = stateIndex(objective.source.x, objective.source.y,
@@ -1144,6 +1195,7 @@ void DubinsRouter::expandFree(
   const std::size_t currentLinear =
       (static_cast<std::size_t>(cy) * gridWidth) + cx;
   const std::span<const uint32_t> field(distanceField);
+  const uint32_t fieldHigh = fieldStamp << FIELD_DISTANCE_BITS;
   const grid::BitGrid* corridor = corridorMask;
 
   const auto outside = [&](const std::size_t index) {
@@ -1163,6 +1215,9 @@ void DubinsRouter::expandFree(
   // corridor, allowed, not dominated and, with a field, able to reach the
   // target.
   uint16_t alive = 0;
+  // The largest entry of an end cell less the current stamp. An entry with
+  // an older stamp wraps above FIELD_DISTANCE_MASK.
+  uint32_t farthest = 0;
   std::array<uint32_t, MAX_PRIMITIVES_PER_HEADING> endField{};
   std::array<uint32_t, MAX_PRIMITIVES_PER_HEADING> endIndex{};
   std::array<uint16_t, MAX_PRIMITIVES_PER_HEADING> endX{};
@@ -1188,19 +1243,37 @@ void DubinsRouter::expandFree(
         continue;
       }
     }
-    uint32_t hRaw = 0;
     if (useField) {
       const uint32_t hv = field[linear];
-      if ((hv >> FIELD_DISTANCE_BITS) != fieldStamp) {
-        continue; // Provably unable to reach the target.
-      }
-      hRaw = hv & FIELD_DISTANCE_MASK;
+      farthest = std::max(farthest, hv - fieldHigh);
+      endField[i] = hv & FIELD_DISTANCE_MASK;
     }
-    endField[i] = hRaw;
     endIndex[i] = index;
     endX[i] = static_cast<uint16_t>(nx);
     endY[i] = static_cast<uint16_t>(ny);
     alive |= static_cast<uint16_t>(1U << i);
+  }
+  // An end cell without a final distance makes the field grow. The rare
+  // growth runs after the loop above, and the hint lets the compiler keep the
+  // values of the walk below in registers.
+  if (farthest > fieldSettled) [[unlikely]] {
+    for (std::size_t i = 0; i < tprims.size(); ++i) {
+      if ((alive & (1U << i)) == 0) {
+        continue;
+      }
+      const std::size_t linear =
+          (static_cast<std::size_t>(endY[i]) * gridWidth) + endX[i];
+      uint32_t hv = field[linear];
+      if (hv - fieldHigh > fieldSettled) {
+        hv = growDistanceField(linear);
+      }
+      if ((hv >> FIELD_DISTANCE_BITS) != fieldStamp) {
+        // Provably unable to reach the target.
+        alive &= static_cast<uint16_t>(~(1U << i));
+      } else {
+        endField[i] = hv & FIELD_DISTANCE_MASK;
+      }
+    }
   }
   if (alive == 0) {
     return;
@@ -1309,7 +1382,10 @@ Path DubinsRouter::routeOrthogonal(const RoutingObjective& objective,
   RoutingObjective moved;
   moved.source = sanitize(objective.source, false);
   moved.target = sanitize(objective.target, true);
-  if (!inGrid(moved.source) || !inGrid(moved.target)) {
+  // A stub is a straight run, so its cells lie in the grid when its two ends
+  // do.
+  if (!inGrid(objective.source) || !inGrid(objective.target) ||
+      !inGrid(moved.source) || !inGrid(moved.target)) {
     return {};
   }
   searchScratch->beginSearch();

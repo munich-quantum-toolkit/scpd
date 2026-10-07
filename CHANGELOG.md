@@ -21,7 +21,7 @@ releases may include breaking changes.
 - ✨ Add `MQT::ScpdGrid`: grid metrics and the rule-to-cell conversion
   `cellsFor`, bit grids, obstacle rasterization with the keepout, the exact
   distance transform and the watershed, and add the grid coordinate types
-  `GCoord`, `DCoord` and `RCoord` to the geometry schema ([#134])
+  `DCoord` and `RCoord` to the geometry schema ([#134])
   ([**@FeldmeierMichael**])
 - 📝 Document how to run MQT SCPD on the benchmark chips of
   [planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd),
@@ -46,9 +46,10 @@ releases may include breaking changes.
 
 ### Changed
 
-- 🔧 Build with `-ffp-contract=off` on GCC and Clang, so that no result depends
-  on whether the compiler fuses a multiply and an add ([#134])
-  ([**@FeldmeierMichael**])
+- 🔧 Build with floating-point contraction off (`-ffp-contract=off`, and
+  `/clang:-ffp-contract=off` for clang-cl; MSVC does not contract since Visual
+  Studio 2022), so that a sum of products rounds the same on every compiler and
+  target ([#134]) ([**@FeldmeierMichael**])
 - ♻️ Make `[ports.sequences]` required and drop the `detection` and
   `start_component` keys of the configuration schema; the outer port ring is
   configuration only ([#111]) ([**@FeldmeierMichael**])

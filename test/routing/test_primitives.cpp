@@ -8,6 +8,7 @@
  * Licensed under the MIT License
  */
 
+#include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
 
@@ -31,9 +32,6 @@ const MovePrimitives& primitives() {
   static const MovePrimitives PRIMITIVES(5);
   return PRIMITIVES;
 }
-
-/// The largest bend radius the router accepts.
-constexpr uint32_t ROUTER_RADIUS_LIMIT = 23;
 
 /// The direction of travel at the end of the curve of a move, in degrees.
 /// The last two chords of an evenly sampled arc turn by the same angle, so
@@ -133,7 +131,7 @@ TEST(Primitives, EveryHeadingHoldsQuarterTurnsThatEndOnTheirExitHeading) {
   // At some radii a diagonal heading also holds a shorter arc to the
   // quarter-turn heading. Each side still has a quarter turn whose curve
   // ends along its exit heading.
-  for (uint32_t radius = 1; radius <= ROUTER_RADIUS_LIMIT; ++radius) {
+  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
     const MovePrimitives table(radius);
     for (Heading h = 0; h < NUM_HEADINGS; ++h) {
       for (const int side : {-2, 2}) {
@@ -198,8 +196,8 @@ TEST(Primitives, LookupsOfAnUnknownMoveAreSafe) {
             nullptr);
   EXPECT_EQ(primitives().find(0, 999), nullptr);
   EXPECT_DOUBLE_EQ(primitives().cost(0, 999), 0.0);
-  // An unknown move reads as exit heading zero, as in the research
-  // prototype, so only heading zero reports it as straight.
+  // An unknown move reads as exit heading zero, so only heading zero reports
+  // it as straight.
   EXPECT_TRUE(primitives().isStraight(0, 999));
   EXPECT_FALSE(primitives().isStraight(3, 999));
 }
@@ -249,7 +247,7 @@ TEST(Primitives,
 }
 
 TEST(Primitives, TheSamplesOfEveryMoveRunForwardToItsEnd) {
-  for (uint32_t radius = 1; radius <= ROUTER_RADIUS_LIMIT; ++radius) {
+  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
     const MovePrimitives table(radius);
     for (Heading h = 0; h < NUM_HEADINGS; ++h) {
       for (const Primitive& p : table.of(h)) {
@@ -287,7 +285,7 @@ TEST(Primitives, TheSamplesOfEveryMoveRunForwardToItsEnd) {
 }
 
 TEST(Primitives, AMoveThatLeavesACardinalHeadingCostsTheLengthOfItsCurve) {
-  for (uint32_t radius = 1; radius <= ROUTER_RADIUS_LIMIT; ++radius) {
+  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
     const MovePrimitives table(radius);
     for (Heading h = 0; h < NUM_HEADINGS; h = static_cast<Heading>(h + 2)) {
       for (const Primitive& p : table.of(h)) {

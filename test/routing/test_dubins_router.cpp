@@ -8,6 +8,7 @@
  * Licensed under the MIT License
  */
 
+#include "../SplitMix.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
@@ -296,6 +297,32 @@ TEST(DubinsRouter, AStubThatLeavesTheGridIsNotRoutable) {
   EXPECT_TRUE(f.router.route(offGrid).empty());
 }
 
+TEST(DubinsRouter, AnEndOutsideTheGridGivesAnEmptyPathInBothSearches) {
+  // Each wire has one end outside the grid, and its stub runs from there to a
+  // search end inside the grid and the corridor.
+  SearchScratch scratch(200, 100);
+  const grid::BitGrid outsideCorridor(200, 100);
+  DubinsRouter router(std::make_shared<const MovePrimitives>(5), scratch,
+                      {.startStraightLength = 30,
+                       .endStraightLength = 30,
+                       .minRadius = 5,
+                       .bendPenalty = 100});
+  router.attachCorridor(&outsideCorridor);
+  const RoutingObjective sourceOutside{
+      .source = {.x = 205, .y = 50, .heading = 2, .primitive = 0},
+      .target = {.x = 10, .y = 50, .heading = 2, .primitive = 0}};
+  const RoutingObjective targetOutside{
+      .source = {.x = 20, .y = 50, .heading = 6, .primitive = 0},
+      .target = {.x = 210, .y = 50, .heading = 6, .primitive = 0}};
+  for (const RoutingObjective& objective : {sourceOutside, targetOutside}) {
+    ASSERT_LT(router.sanitize(objective.source, false).x, 200U);
+    ASSERT_LT(router.sanitize(objective.target, true).x, 200U);
+    EXPECT_TRUE(router.route(objective).empty()) << objective.source.x;
+    EXPECT_TRUE(router.routeOrthogonal(objective).empty())
+        << objective.source.x;
+  }
+}
+
 TEST(DubinsRouter, EveryTurnOfThePathIsAnArcOfThePrimitives) {
   Fixture f;
   f.block(120, 0, 130, 120);
@@ -364,6 +391,98 @@ TEST(DubinsRouter, BothHeuristicsWeaveThroughAFieldOfPosts) {
   EXPECT_TRUE(weaves(f.router.route(ACROSS)));
   f.router.setHeuristic(Heuristic::Octile);
   EXPECT_TRUE(weaves(f.router.route(ACROSS)));
+}
+
+TEST(DubinsRouter, TheDistanceFieldIsTheOctileDistanceInARectangularCorridor) {
+  // In a rectangle of cells, the shortest eight-connected path between two
+  // cells stays in their bounding box. The distance field then equals the
+  // octile distance, and both heuristics give the same path. The field grows
+  // only as far as each search asks, so the test also covers the distances
+  // that the field gives the search while it still grows.
+  constexpr uint32_t width = 160;
+  constexpr uint32_t height = 120;
+  test::SplitMix rng(23);
+  grid::BitGrid outsideCorridor(width, height);
+  std::size_t routed = 0;
+  for (const uint8_t radius : {5, 8, 12}) {
+    SearchScratch scratch(width, height);
+    std::vector<uint8_t> wire(static_cast<std::size_t>(width) * height, 0);
+    for (uint8_t& penalty : wire) {
+      penalty = rng.between(0, 9) == 0
+                    ? static_cast<uint8_t>(rng.between(1, 20))
+                    : uint8_t{0};
+    }
+    DubinsRouter router(std::make_shared<const MovePrimitives>(radius), scratch,
+                        {.minRadius = radius});
+    router.attachWireProximity(&wire);
+    for (int i = 0; i < 60; ++i) {
+      // Every third corridor is the whole grid.
+      const bool whole = i % 3 == 0;
+      const auto x0 = static_cast<uint32_t>(whole ? 0 : rng.between(0, 60));
+      const auto y0 = static_cast<uint32_t>(whole ? 0 : rng.between(0, 40));
+      const auto x1 = static_cast<uint32_t>(
+          rng.between(whole ? width - 1 : x0 + 60, width - 1));
+      const auto y1 = static_cast<uint32_t>(
+          rng.between(whole ? height - 1 : y0 + 50, height - 1));
+      for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+          outsideCorridor.setCell(x, y, x < x0 || x > x1 || y < y0 || y > y1);
+        }
+      }
+      if (i % 2 == 0) {
+        router.attachCorridor(&outsideCorridor);
+      } else {
+        router.attachCorridorUnpacked(&outsideCorridor);
+      }
+      router.setParams(
+          {.startStraightLength = static_cast<uint32_t>(rng.between(0, 8)),
+           .endStraightLength = static_cast<uint32_t>(rng.between(0, 8)),
+           .minRadius = radius,
+           .bendPenalty = static_cast<uint16_t>(rng.between(0, 500))});
+      router.setBendLowerBound(rng.between(0, 1) == 0);
+      const bool usePenalty = rng.between(0, 1) == 0;
+      const auto end = [&] {
+        return PathPoint{.x = static_cast<uint32_t>(rng.between(x0, x1)),
+                         .y = static_cast<uint32_t>(rng.between(y0, y1)),
+                         .heading = static_cast<Heading>(rng.between(0, 7)),
+                         .primitive = 0};
+      };
+      const RoutingObjective objective{.source = end(), .target = end()};
+      router.setHeuristic(Heuristic::DistanceField);
+      const Path field = router.route(objective, usePenalty);
+      router.setHeuristic(Heuristic::Octile);
+      const Path octile = router.route(objective, usePenalty);
+      ASSERT_EQ(field, octile) << "radius " << int{radius} << ", route " << i;
+      routed += field.empty() ? 0U : 1U;
+    }
+  }
+  EXPECT_GT(routed, 90U);
+}
+
+TEST(DubinsRouter, TheDistanceFieldGrowsOnlyAsFarAsTheSearchLooks) {
+  // A short wire routes in a room. Beside the room, a comb of channels one
+  // cell wide hangs from the first row. A field that reached the comb would
+  // have many cells waiting at each distance, and its buckets would hold more
+  // memory than those of a field over the room alone. The field of the short
+  // route stops in the room, so both routers hold the same bytes.
+  constexpr uint32_t room = 100;
+  Fixture roomOnly;
+  Fixture withComb;
+  for (uint32_t y = 0; y < HEIGHT; ++y) {
+    for (uint32_t x = room; x < WIDTH; ++x) {
+      roomOnly.outsideCorridor.setCell(x, y);
+      withComb.outsideCorridor.setCell(x, y, y > 0 && x % 2 == 0);
+    }
+  }
+  roomOnly.router.attachCorridor(&roomOnly.outsideCorridor);
+  withComb.router.attachCorridor(&withComb.outsideCorridor);
+  const RoutingObjective inTheRoom{
+      .source = {.x = 20, .y = 100, .heading = 6, .primitive = 0},
+      .target = {.x = 70, .y = 110, .heading = 6, .primitive = 0}};
+  const Path path = withComb.router.route(inTheRoom);
+  ASSERT_FALSE(path.empty());
+  EXPECT_EQ(path, roomOnly.router.route(inTheRoom));
+  EXPECT_EQ(withComb.router.heldBytes(), roomOnly.router.heldBytes());
 }
 
 TEST(DubinsRouter, TheBendLowerBoundKeepsTheCheapestPath) {
@@ -1099,6 +1218,27 @@ TEST(DubinsRouter, AMoveThatCoversTooManyCellsDoesNotFitTheTables) {
     }
   }
   EXPECT_TRUE(refused);
+}
+
+TEST(DubinsRouter, ARouterAcceptsBendRadiiUpTo23Cells) {
+  // The primitives hold larger radii, but the moves of a radius of 24 cells
+  // do not fit the search tables.
+  EXPECT_EQ(DubinsRouter::MAX_BEND_RADIUS, 23U);
+  SearchScratch scratch(64, 64);
+  for (const uint32_t radius :
+       {DubinsRouter::MAX_BEND_RADIUS, DubinsRouter::MAX_BEND_RADIUS + 1,
+        MovePrimitives::MAX_BEND_RADIUS}) {
+    auto primitives = std::make_shared<const MovePrimitives>(radius);
+    const SearchParams params{.minRadius = static_cast<uint8_t>(radius)};
+    if (radius <= DubinsRouter::MAX_BEND_RADIUS) {
+      EXPECT_NO_THROW(
+          static_cast<void>(DubinsRouter(primitives, scratch, params)));
+    } else {
+      EXPECT_THROW(static_cast<void>(DubinsRouter(primitives, scratch, params)),
+                   std::invalid_argument)
+          << radius;
+    }
+  }
 }
 
 TEST(DubinsRouter, AStaticProximitySetByHandSteersThePath) {

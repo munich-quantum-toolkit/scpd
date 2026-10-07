@@ -17,6 +17,7 @@
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
 #include "mqt-scpd/routing/SearchScratch.hpp"
+#include "mqt-scpd/routing/SelfIntersection.hpp"
 
 #include <gtest/gtest.h>
 
@@ -109,8 +110,9 @@ struct Fixture {
   grid::BitGrid outsideCorridor{WIDTH, HEIGHT};
   DubinsRouter router;
 
-  explicit Fixture(std::shared_ptr<const MovePrimitives> shared)
-      : primitives(std::move(shared)), router(primitives, scratch, PARAMS) {
+  explicit Fixture(std::shared_ptr<const MovePrimitives> shared,
+                   const SearchParams& params = PARAMS)
+      : primitives(std::move(shared)), router(primitives, scratch, params) {
     router.attachCorridor(&outsideCorridor);
   }
 };
@@ -305,6 +307,80 @@ TEST(AllocationFailure, AFailedConstraintBuildKeepsThePreviousConstraints) {
         });
     EXPECT_GT(failures, 0) << constrained;
   }
+}
+
+TEST(AllocationFailure, AFailedParameterChangeKeepsThePreviousParameters) {
+  const auto primitives = std::make_shared<const MovePrimitives>(5);
+  SearchParams next = PARAMS;
+  next.bendPenalty = 900;
+  // The probe takes four turns at the bend penalty of PARAMS and three at
+  // the higher one, so its path shows which search tables a router holds.
+  const RoutingObjective probe{
+      .source = {.x = 15, .y = 40, .heading = 3, .primitive = 0},
+      .target = {.x = 60, .y = 12, .heading = 6, .primitive = 0}};
+  Fixture before(primitives);
+  const Path expectedPath = before.router.route(probe);
+  Fixture fresh(primitives, next);
+  const Path nextPath = fresh.router.route(probe);
+  ASSERT_FALSE(expectedPath.empty());
+  ASSERT_NE(nextPath, expectedPath);
+
+  // A new bend penalty rebuilds the search tables. After any failed
+  // allocation, the router keeps the previous parameters and routes alike.
+  std::unique_ptr<Fixture> f;
+  const int failures = failEachAllocation(
+      [&](const std::function<void()>& arm) {
+        f = std::make_unique<Fixture>(primitives);
+        arm();
+        f->router.setParams(next);
+      },
+      [&](const int allocation) {
+        EXPECT_EQ(f->router.params().bendPenalty, PARAMS.bendPenalty)
+            << allocation;
+        EXPECT_EQ(f->router.route(probe), expectedPath) << allocation;
+      });
+  EXPECT_GT(failures, 0);
+  // The call that completed routes as a router created with the new
+  // parameters.
+  EXPECT_EQ(f->router.params().bendPenalty, next.bendPenalty);
+  EXPECT_EQ(f->router.route(probe), nextPath);
+}
+
+TEST(AllocationFailure, AKeptLoopScratchChecksAPathWithoutAllocating) {
+  // A serpentine of diagonal steps that comes back along its first row: the
+  // check meets cells, diagonal steps and a revisit. A scratch that checked
+  // the path once holds the room for every check of it.
+  Path path;
+  for (uint32_t row = 0; row < 6; ++row) {
+    for (uint32_t x = 0; x < 30; ++x) {
+      const uint32_t across = row % 2 == 0 ? x : 29 - x;
+      path.push_back({.x = 10 + across,
+                      .y = 10 + (3 * row) + (x % 2),
+                      .heading = 0,
+                      .primitive = 0});
+    }
+  }
+  for (uint32_t x = 10; x < 40; ++x) {
+    path.push_back({.x = x, .y = 10, .heading = 6, .primitive = 0});
+  }
+  PathLoopScratch scratch;
+  PathLoopHit expected;
+  ASSERT_TRUE(pathSelfIntersects(path, WIDTH, HEIGHT, scratch, &expected));
+  ASSERT_GT(findPathSelfIntersections(path, WIDTH, HEIGHT, scratch, nullptr),
+            0U);
+
+  allocationsBeforeFailure() = 0;
+  bool loop = false;
+  PathLoopHit first;
+  uint32_t events = 0;
+  EXPECT_NO_THROW(loop =
+                      pathSelfIntersects(path, WIDTH, HEIGHT, scratch, &first));
+  EXPECT_NO_THROW(events = findPathSelfIntersections(path, WIDTH, HEIGHT,
+                                                     scratch, nullptr));
+  allocationsBeforeFailure() = -1;
+  EXPECT_TRUE(loop);
+  EXPECT_EQ(first.secondIndex, expected.secondIndex);
+  EXPECT_GT(events, 0U);
 }
 
 } // namespace

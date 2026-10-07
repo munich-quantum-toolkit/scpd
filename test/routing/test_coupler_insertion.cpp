@@ -303,11 +303,10 @@ TEST(CouplerInsertion, ADoglegStepsFromCellToNeighboringCell) {
   // The splice tests the cells of a dogleg against the rest of the path. A
   // dogleg that skipped a cell, such as the end of its turn, would let the
   // path cross it there unseen. At every radius the dogleg lists the end of
-  // its turn. At the radii that buildDogleg() names, it skips no cell.
+  // its turn. At the radii the router accepts, it skips no cell.
   for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
        ++radius) {
-    const bool chain = radius <= 24 || (radius >= 26 && radius <= 32) ||
-                       (radius >= 37 && radius <= 40) || radius == 50;
+    const bool chain = radius <= DubinsRouter::MAX_BEND_RADIUS;
     const MovePrimitives table(radius);
     for (Heading entry = 0; entry < NUM_HEADINGS; ++entry) {
       for (const int sign : {-1, 1}) {
@@ -350,8 +349,9 @@ TEST(CouplerInsertion, TheSpliceLandsWhereTheRestOfThePathHitsTheTarget) {
       spliceCouplerDogleg(primitives(), 150.0, path, WIDTH, HEIGHT, 0);
   ASSERT_TRUE(splice.has_value());
   EXPECT_TRUE(splice->inAllowedArea);
-  EXPECT_EQ(path.front().x, splice->anchor.x);
-  EXPECT_EQ(path.front().y, splice->anchor.y);
+  // The anchor is the first point of the path, with its heading and its
+  // primitive, so it renders and classifies as that point.
+  EXPECT_EQ(splice->anchor, path.front());
 
   // The path now runs from the coupler to the unchanged far end, and its
   // length is the target within the step the splice can place it on.
@@ -369,6 +369,22 @@ TEST(CouplerInsertion, TheSplicePrefersAnUndershoot) {
   // that is too long cannot be shortened, so the splice never overshoots by
   // more than half the step it had to choose between.
   EXPECT_LE(renderedLength(primitives(), path), 150.5);
+
+  // An undershoot wins against a nearer overshoot while it misses by less
+  // than twice as much. On this resonator, the nearest candidates for a
+  // target of 150.35 cells miss it by +0.33 and -0.65 cells, so the
+  // undershoot wins. For 150.40 cells they miss by +0.28 and -0.70 cells, so
+  // the overshoot wins.
+  for (const auto& [target, undershoots] :
+       {std::pair{150.35, true}, std::pair{150.40, false}}) {
+    Path resonator = straightRun(400, 300, 6, 300);
+    ASSERT_TRUE(
+        spliceCouplerDogleg(primitives(), target, resonator, WIDTH, HEIGHT, 0)
+            .has_value());
+    const double miss = renderedLength(primitives(), resonator) - target;
+    EXPECT_EQ(miss < 0.0, undershoots) << target << ": " << miss;
+    EXPECT_LT(std::abs(miss), 1.0) << target;
+  }
 }
 
 TEST(CouplerInsertion, OfEqualChargesTheCandidateEarliestAlongThePathWins) {
@@ -401,6 +417,58 @@ TEST(CouplerInsertion, OfEqualChargesTheCandidateEarliestAlongThePathWins) {
   EXPECT_TRUE(other->inAllowedArea);
   EXPECT_NEAR(renderedLength(table, third), renderedLength(table, first), 1e-9);
   EXPECT_EQ(sharedEnd(resonator, first), sharedEnd(resonator, third) + 1);
+}
+
+TEST(CouplerInsertion,
+     OfAnUndershootAndAnOvershootOfEqualChargesTheEarlierWins) {
+  // Two placements of this coupler compete on the straight resonator. The
+  // one anchored at (485, 284) joins the resonator a cell before the one
+  // anchored at (479, 288), but its connection is shorter, so its path is
+  // shorter. A target a third of the way from the longer path to the shorter
+  // one makes the undershoot of the earlier placement twice the overshoot of
+  // the later one. Their charges are then equal, and the earlier placement
+  // wins, although it misses the target by more.
+  constexpr Heading couplerHeading = 5;
+  const Path resonator = straightRun(400, 300, 6, 300);
+  const PathPoint early{.x = 485, .y = 284};
+  const PathPoint late{.x = 479, .y = 288};
+  const auto onto = [&](const PathPoint& anchor, const double target,
+                        Path& path) {
+    return spliceCouplerDogleg(primitives(), target, path, WIDTH, HEIGHT,
+                               couplerHeading, {},
+                               [&](const uint32_t x, const uint32_t y) {
+                                 return anchor.samePlace({.x = x, .y = y});
+                               });
+  };
+  Path shorter = resonator;
+  const std::optional<CouplerSplice> first = onto(early, 0.0, shorter);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->inAllowedArea);
+  Path longer = resonator;
+  const std::optional<CouplerSplice> second = onto(late, 0.0, longer);
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->inAllowedArea);
+  ASSERT_EQ(sharedEnd(resonator, shorter), sharedEnd(resonator, longer) + 1);
+  const double low = renderedLength(primitives(), shorter);
+  const double high = renderedLength(primitives(), longer);
+  ASSERT_LT(low, high);
+  const double target = (low + (2.0 * high)) / 3.0;
+  // The two charges agree in whole billionths of a cell, the unit in which
+  // the splice compares them.
+  ASSERT_EQ(std::round((target - low) * 1e9),
+            2.0 * std::round((high - target) * 1e9));
+
+  Path path = resonator;
+  const std::optional<CouplerSplice> winner = spliceCouplerDogleg(
+      primitives(), target, path, WIDTH, HEIGHT, couplerHeading, {},
+      [&](const uint32_t x, const uint32_t y) {
+        return early.samePlace({.x = x, .y = y}) ||
+               late.samePlace({.x = x, .y = y});
+      });
+  ASSERT_TRUE(winner.has_value());
+  EXPECT_TRUE(winner->inAllowedArea);
+  EXPECT_TRUE(winner->anchor.samePlace(early));
+  EXPECT_EQ(path, shorter);
 }
 
 TEST(CouplerInsertion, TheRenderedSpliceMeetsItsTarget) {
@@ -585,6 +653,29 @@ TEST(CouplerInsertion, AnAllowedAreaMovesTheCouplerAlongItsResonator) {
               moved->anchor.x > forbidden + 20);
 }
 
+TEST(CouplerInsertion, AJogOntoTheHeadingOfTheDoglegMovesTheCouplerSideways) {
+  // This dogleg ends on the heading of the resonator, so it joins the
+  // resonator without a connection, and all its anchors lie on one row.
+  // Every connection of at most two primitives onto that heading competes as
+  // well, longer ones included. A jog of two eighth turns is one of them, and
+  // it moves the anchor to another row. With the row of the free placement
+  // forbidden, the coupler moves to another row instead of leaving the
+  // allowed area.
+  Path unrestricted = straightRun(400, 300, 6, 300);
+  const std::optional<CouplerSplice> free =
+      spliceCouplerDogleg(primitives(), 150.0, unrestricted, WIDTH, HEIGHT, 6);
+  ASSERT_TRUE(free.has_value());
+
+  Path restricted = straightRun(400, 300, 6, 300);
+  const std::optional<CouplerSplice> moved = spliceCouplerDogleg(
+      primitives(), 150.0, restricted, WIDTH, HEIGHT, 6, {},
+      [&](const uint32_t, const uint32_t y) { return y != free->anchor.y; });
+  ASSERT_TRUE(moved.has_value());
+  EXPECT_TRUE(moved->inAllowedArea);
+  EXPECT_NE(moved->anchor.y, free->anchor.y);
+  EXPECT_NEAR(renderedLength(primitives(), restricted), 150.0, 1.0);
+}
+
 TEST(CouplerInsertion, AnUnreachableWindowStillPlacesTheCoupler) {
   Path path = straightRun(400, 300, 6, 300);
   const std::optional<CouplerSplice> splice =
@@ -675,8 +766,7 @@ TEST(CouplerInsertion, TheFirstTurnStartsTheLeadLengthFromTheAnchor) {
     const std::optional<CouplerSplice> splice = spliceCouplerDogleg(
         primitives(), 150.0, path, WIDTH, HEIGHT, 0, {.leadStraight = lead});
     ASSERT_TRUE(splice.has_value()) << lead;
-    EXPECT_EQ(path.front().x, splice->anchor.x) << lead;
-    EXPECT_EQ(path.front().y, splice->anchor.y) << lead;
+    EXPECT_EQ(splice->anchor, path.front()) << lead;
 
     // The first point tagged with a turn is the cell the turn starts from. It
     // lies the lead's number of steps from the anchor, along the lead.
@@ -769,12 +859,15 @@ TEST(CouplerInsertion, ASplicedPathStepsFromCellToNeighboringCell) {
   // a connection do not sweep their end: the eighth turns off a diagonal
   // heading at a radius of five cells, and the arcs of 72 to 77 degrees at 10
   // and 16 cells. A straight step after such a turn starts from its end. The
-  // targets put the splice all along the diagonal resonator.
-  for (const uint32_t radius : {5U, 10U, 16U}) {
+  // targets put the splice all along the diagonal resonator. At some radii a
+  // cardinal heading has no eighth turn, and a dogleg that ends on a cardinal
+  // heading then has no connection onto the resonator.
+  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
     const MovePrimitives table(radius);
     const Path resonator =
         routing::straightRun(table, {.x = 600, .y = 600, .heading = 7}, 200);
     const double length = renderedLength(table, resonator);
+    int splices = 0;
     for (Heading couplerHeading = 0; couplerHeading < NUM_HEADINGS;
          ++couplerHeading) {
       for (const bool mirrored : {false, true}) {
@@ -784,13 +877,16 @@ TEST(CouplerInsertion, ASplicedPathStepsFromCellToNeighboringCell) {
                                    .straightLength = 3,
                                    .secondStraightLength = 2}}) {
           options.mirrored = mirrored;
-          for (int step = 0; step < 12; ++step) {
+          for (int step = 0; step < 4; ++step) {
             const double target =
-                length * (0.1 + (1.1 * static_cast<double>(step) / 12.0));
+                length * (0.1 + (1.1 * static_cast<double>(step) / 4.0));
             Path path = resonator;
-            ASSERT_TRUE(spliceCouplerDogleg(table, target, path, WIDTH, HEIGHT,
-                                            couplerHeading, options)
-                            .has_value());
+            if (!spliceCouplerDogleg(table, target, path, WIDTH, HEIGHT,
+                                     couplerHeading, options)
+                     .has_value()) {
+              continue;
+            }
+            ++splices;
             EXPECT_EQ(largestStep(path, path.size()), 1)
                 << "radius " << radius << ", coupler heading "
                 << static_cast<int>(couplerHeading) << ", mirrored " << mirrored
@@ -799,6 +895,7 @@ TEST(CouplerInsertion, ASplicedPathStepsFromCellToNeighboringCell) {
         }
       }
     }
+    EXPECT_GT(splices, 0) << "radius " << radius;
   }
 }
 
@@ -851,9 +948,12 @@ TEST(CouplerInsertion, ADoglegNeverCrossesADiagonalResonator) {
 }
 
 TEST(CouplerInsertion, ADoglegStaysInsideTheGrid) {
-  // Each resonator ends on an edge of the grid. With this coupler heading the
-  // dogleg runs back across the resonator, so only a dogleg at the end of the
-  // resonator is collision-free, and its lead reaches past the end.
+  // Each resonator runs along an edge of the grid, at a growing distance
+  // from it. Its coupler heading puts every dogleg, whatever its connection,
+  // on the side of the edge, two eighth turns clockwise from the heading of
+  // the resonator. So no dogleg fits on the edge, and the path stays as it
+  // was. At the smallest distance where a dogleg fits, every dogleg that fits
+  // reaches the edge, and the spliced path stays inside the grid.
   struct Edge {
     uint32_t x;
     uint32_t y;
@@ -861,41 +961,37 @@ TEST(CouplerInsertion, ADoglegStaysInsideTheGrid) {
     Heading couplerHeading;
   };
   for (const Edge edge :
-       {Edge{.x = 400, .y = 300, .heading = 0, .couplerHeading = 4},
-        Edge{.x = 799, .y = 899, .heading = 4, .couplerHeading = 0},
-        Edge{.x = 899, .y = 400, .heading = 6, .couplerHeading = 2},
-        Edge{.x = 300, .y = 799, .heading = 2, .couplerHeading = 6}}) {
+       {Edge{.x = 400, .y = 0, .heading = 6, .couplerHeading = 4},
+        Edge{.x = 0, .y = 800, .heading = 0, .couplerHeading = 6},
+        Edge{.x = 800, .y = HEIGHT - 1, .heading = 2, .couplerHeading = 0},
+        Edge{.x = WIDTH - 1, .y = 400, .heading = 4, .couplerHeading = 2}}) {
     const int heading = edge.heading;
-    Path atEdge = straightRun(edge.x, edge.y, edge.heading, 300);
-    const PathPoint end = atEdge.back();
-    ASSERT_TRUE(end.x == 0 || end.y == 0 || end.x == WIDTH - 1 ||
-                end.y == HEIGHT - 1)
-        << heading;
-    const Path before = atEdge;
-    EXPECT_FALSE(spliceCouplerDogleg(primitives(), 150.0, atEdge, WIDTH, HEIGHT,
-                                     edge.couplerHeading, {.leadStraight = 8})
-                     .has_value())
-        << heading;
-    EXPECT_EQ(atEdge, before) << heading;
-
-    // One cell further in, the dogleg fits and reaches the edge.
-    const HeadingVector v = headingVector(edge.heading);
-    Path inside =
-        straightRun(static_cast<uint32_t>(static_cast<int64_t>(edge.x) - v.dx),
-                    static_cast<uint32_t>(static_cast<int64_t>(edge.y) - v.dy),
-                    edge.heading, 300);
-    ASSERT_TRUE(spliceCouplerDogleg(primitives(), 150.0, inside, WIDTH, HEIGHT,
-                                    edge.couplerHeading, {.leadStraight = 8})
-                    .has_value())
-        << heading;
-    bool reachesEdge = false;
-    for (const PathPoint& point : inside) {
-      EXPECT_LT(point.x, WIDTH) << heading;
-      EXPECT_LT(point.y, HEIGHT) << heading;
-      reachesEdge = reachesEdge || (v.dx != 0 && point.x == end.x) ||
-                    (v.dy != 0 && point.y == end.y);
+    const HeadingVector inward = headingVector(turned(edge.heading, -2));
+    bool fits = false;
+    for (int64_t distance = 0; distance < 64 && !fits; ++distance) {
+      Path path =
+          straightRun(static_cast<uint32_t>(edge.x + (inward.dx * distance)),
+                      static_cast<uint32_t>(edge.y + (inward.dy * distance)),
+                      edge.heading, 100);
+      const Path before = path;
+      fits = spliceCouplerDogleg(primitives(), 60.0, path, WIDTH, HEIGHT,
+                                 edge.couplerHeading, {.leadStraight = 8})
+                 .has_value();
+      if (!fits) {
+        EXPECT_EQ(path, before) << heading << " " << distance;
+        continue;
+      }
+      EXPECT_GT(distance, 0) << heading;
+      bool reachesEdge = false;
+      for (const PathPoint& point : path) {
+        EXPECT_LT(point.x, WIDTH) << heading;
+        EXPECT_LT(point.y, HEIGHT) << heading;
+        reachesEdge = reachesEdge || (inward.dx != 0 && point.x == edge.x) ||
+                      (inward.dy != 0 && point.y == edge.y);
+      }
+      EXPECT_TRUE(reachesEdge) << heading << " " << distance;
     }
-    EXPECT_TRUE(reachesEdge) << heading;
+    EXPECT_TRUE(fits) << heading;
   }
 }
 
@@ -905,22 +1001,26 @@ TEST(CouplerInsertion, TheDoglegNeverRunsIntoTheRestOfTheResonator) {
   // the side the plain dogleg takes, closer than the dogleg reaches. Every
   // plain dogleg on the way out would cross the way back, so the splice
   // moves onto the way back and falls short of the target instead.
-  Path plain = hairpin();
-  ASSERT_FALSE(touchesItself(plain));
-  const std::optional<CouplerSplice> blocked =
-      spliceCouplerDogleg(primitives(), 450.0, plain, WIDTH, HEIGHT, 0);
-  ASSERT_TRUE(blocked.has_value());
+  const Path original = hairpin();
+  ASSERT_FALSE(touchesItself(original));
+  Path plain = original;
+  ASSERT_TRUE(spliceCouplerDogleg(primitives(), 450.0, plain, WIDTH, HEIGHT, 0)
+                  .has_value());
   EXPECT_FALSE(touchesItself(plain));
-  EXPECT_EQ(blocked->anchor.heading, 2);
+  const std::size_t back = junctionOf(primitives(), original, plain);
+  ASSERT_LT(back, plain.size());
+  EXPECT_EQ(plain[back].heading, 2);
   EXPECT_LT(renderedLength(primitives(), plain), 447.0);
 
   // The mirrored dogleg takes the free side and lands on the way out.
-  Path mirrored = hairpin();
-  const std::optional<CouplerSplice> free = spliceCouplerDogleg(
-      primitives(), 450.0, mirrored, WIDTH, HEIGHT, 0, {.mirrored = true});
-  ASSERT_TRUE(free.has_value());
+  Path mirrored = original;
+  ASSERT_TRUE(spliceCouplerDogleg(primitives(), 450.0, mirrored, WIDTH, HEIGHT,
+                                  0, {.mirrored = true})
+                  .has_value());
   EXPECT_FALSE(touchesItself(mirrored));
-  EXPECT_EQ(free->anchor.heading, 6);
+  const std::size_t out = junctionOf(primitives(), original, mirrored);
+  ASSERT_LT(out, mirrored.size());
+  EXPECT_EQ(mirrored[out].heading, 6);
   EXPECT_NEAR(renderedLength(primitives(), mirrored), 450.0, 1.0);
 }
 
@@ -1119,6 +1219,25 @@ TEST(CouplerInsertion, ThereIsNothingToSpliceOntoAnEmptyPath) {
   EXPECT_THROW(static_cast<void>(spliceCouplerDogleg(primitives(), 150.0, path,
                                                      WIDTH, HEIGHT, 9)),
                std::invalid_argument);
+}
+
+TEST(CouplerInsertion, ATargetLengthIsFiniteAndNotNegative) {
+  // No placement can meet a target that is negative or not finite, so the
+  // splice refuses it and leaves the path as it was.
+  Path path = straightRun(400, 300, 6, 300);
+  const Path before = path;
+  for (const double target : {std::numeric_limits<double>::quiet_NaN(),
+                              std::numeric_limits<double>::infinity(),
+                              -std::numeric_limits<double>::infinity(), -5.0}) {
+    EXPECT_THROW(static_cast<void>(spliceCouplerDogleg(primitives(), target,
+                                                       path, WIDTH, HEIGHT, 0)),
+                 std::invalid_argument)
+        << target;
+    EXPECT_EQ(path, before) << target;
+  }
+  // A target of zero puts the coupler as close to the end as it fits.
+  EXPECT_TRUE(spliceCouplerDogleg(primitives(), 0.0, path, WIDTH, HEIGHT, 0)
+                  .has_value());
 }
 
 } // namespace

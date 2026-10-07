@@ -71,15 +71,35 @@ TEST(BucketQueue, TwoPrioritiesOneFineBlockApartNeverShareABucket) {
   EXPECT_TRUE(queue.empty());
 }
 
-TEST(BucketQueue, APriorityBelowTheScanPositionIsClamped) {
+TEST(BucketQueue, APriorityBelowTheScanPositionIsRaisedToIt) {
   BucketQueue<Entry> queue;
   queue.push({.f = 100, .payload = 1});
   EXPECT_EQ(queue.pop().payload, 1U);
-  // A slightly inconsistent estimate can produce this; the entry must not
-  // be lost behind the scan position.
+  // An estimate that is not consistent can produce priorities below the scan
+  // position. The entries must not be lost behind it.
   queue.push({.f = 50, .payload = 2});
-  EXPECT_EQ(queue.size(), 1U);
-  EXPECT_EQ(queue.pop().payload, 2U);
+  queue.push({.f = 70, .payload = 3});
+  queue.push({.f = 100, .payload = 4});
+  queue.push({.f = 101, .payload = 5});
+  EXPECT_EQ(queue.size(), 4U);
+  // The three entries at the scan position pop last in, first out. Each
+  // keeps its own priority, so a pop can return a lower priority than the
+  // pop before it.
+  Entry entry = queue.pop();
+  EXPECT_EQ(entry.payload, 4U);
+  EXPECT_EQ(entry.f, 100U);
+  entry = queue.pop();
+  EXPECT_EQ(entry.payload, 3U);
+  EXPECT_EQ(entry.f, 70U);
+  entry = queue.pop();
+  EXPECT_EQ(entry.payload, 2U);
+  EXPECT_EQ(entry.f, 50U);
+  // The scan position stays at 100, so a priority of 60 is raised again and
+  // pops before the entry at 101.
+  queue.push({.f = 60, .payload = 6});
+  EXPECT_EQ(queue.pop().payload, 6U);
+  EXPECT_EQ(queue.pop().payload, 5U);
+  EXPECT_TRUE(queue.empty());
 }
 
 TEST(BucketQueue, PrioritiesPastOneTurnOfTheCoarseLevelStillPopInOrder) {

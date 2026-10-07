@@ -53,11 +53,11 @@ struct DoglegGeometry {
  * equally close ones the one with the lowest identifier. At some radii, such
  * as 10 cells, a diagonal heading holds an arc of 72 to 77 degrees beside the
  * exact quarter turn; the exact quarter turn wins. The path lists the end of
- * the turn also where the turn does not sweep it. At the radii of 1 to 24, 26
- * to 32, 37 to 40 and 50 cells, consecutive points of the path are
- * neighboring cells. At the other radii, the swept cells of a quarter turn
- * that leaves a cardinal heading skip one or more cells (see
- * Primitive::swept), and so does the path.
+ * the turn also where the turn does not sweep it. At the bend radii the router
+ * accepts, 1 to 23 cells (DubinsRouter::MAX_BEND_RADIUS), consecutive points
+ * of the path are neighboring cells. At a larger radius, the swept cells of a
+ * quarter turn that leaves a cardinal heading can skip cells (see
+ * Primitive::swept), and so can the path.
  *
  * @param primitives The move primitives.
  * @param entry The heading the turn starts on.
@@ -94,8 +94,8 @@ struct CouplerDoglegOptions {
 
 /** @brief Where a coupler's dogleg was spliced onto a resonator. */
 struct CouplerSplice {
-  /// The new first point of the path: the coupler's anchor, with the heading
-  /// and primitive of the splice point.
+  /// The coupler's anchor: the new first point of the path, with its heading
+  /// and primitive.
   PathPoint anchor;
   /// Whether the anchor satisfies the allowed-area filter. When no candidate
   /// does, the best collision-free candidate is spliced anyway and this is
@@ -109,9 +109,11 @@ struct CouplerSplice {
  * length.
  *
  * A candidate pairs a cell of a straight run of the path with a connection of
- * at most two primitives from the dogleg onto the heading of the run. Each
- * primitive starts at the end of the one before it, and the connection ends on
- * the candidate's cell. A primitive ends at the offset Primitive::dx,
+ * at most two primitives from the dogleg onto the heading of the run. Every
+ * such connection forms a candidate with every cell of every straight run of
+ * its heading; a dogleg that ends on the heading of a run needs no primitive.
+ * Each primitive starts at the end of the one before it, and the connection
+ * ends on the candidate's cell. A primitive ends at the offset Primitive::dx,
  * Primitive::dy from its start, which need not be its last swept cell. The
  * remaining path of a candidate runs from its point of the straight run to the
  * end. The mismatch of a candidate is the length of the remaining path, plus
@@ -124,15 +126,23 @@ struct CouplerSplice {
  * the candidate's cell where the last primitive sweeps it, and no diagonal
  * step between two consecutive such cells, or onto the candidate's cell,
  * crosses a diagonal step of the remaining path inside a 2 by 2 block. The
- * function does not test the dogleg against itself. A candidate can
- * win when it is collision-free and its anchor passes @p anchorAllowed. When
- * no candidate passes the filter, every collision-free candidate can win. An
- * undershoot is charged the size of its mismatch. An overshoot is charged its
- * mismatch plus the smallest mismatch size among the candidates that can win,
- * which favors an undershoot. Of the candidates that can win, the one with the
- * lowest charge wins. The function compares the charges to a billionth of a
- * cell, so that the rounding of the lengths cannot break a tie. Of candidates
- * with equal charges, the one whose cell comes first along the path wins.
+ * function does not test the dogleg against itself, and it takes no
+ * obstacles: a collision-free candidate is free of the remaining path only. A
+ * cell beside a cell of the remaining path is free, so on a hairpin the
+ * dogleg can run one cell beside the other leg.
+ *
+ * A candidate can win when it is collision-free and its anchor passes
+ * @p anchorAllowed. When no candidate passes the filter, every collision-free
+ * candidate can win. An undershoot is charged the size of its mismatch. An
+ * overshoot is charged its mismatch plus the smallest mismatch size among the
+ * candidates that can win, which favors an undershoot. Of the candidates that
+ * can win, the one with the lowest charge wins. Of candidates with equal
+ * charges, the one whose cell comes first along the path wins, and on one
+ * cell the one whose connection comes first in the lexicographic order of
+ * its primitive identifiers. The function rounds each mismatch to a whole
+ * number of billionths of a cell and compares the charges in these units, so
+ * that two lengths that differ only by rounding give equal charges, unless a
+ * half billionth lies between them.
  *
  * The function cuts the path before the point of the winner and puts the
  * dogleg and the connection in front. That point is the point of the straight
@@ -142,13 +152,14 @@ struct CouplerSplice {
  * path begins with a turn and the point is the start of its arc (see Path),
  * the turn still renders from that point. The spliced path lists the end of
  * every turn of the dogleg and the connection, also where the turn does not
- * sweep it. At the radii where the points of a dogleg are neighboring cells
- * (see buildDogleg()), consecutive points of the spliced path from the anchor
- * to the point of the winner are neighboring cells.
+ * sweep it. At the bend radii the router accepts, 1 to 23 cells
+ * (DubinsRouter::MAX_BEND_RADIUS), consecutive points of the spliced path
+ * from the anchor to the point of the winner are neighboring cells.
  *
  * @param primitives The move primitives the path was routed with.
  * @param targetLength The length the path should have after the splice, as
- * samplePath() renders it from the anchor, in cells.
+ * samplePath() renders it from the anchor, in cells. It is finite and not
+ * negative.
  * @param path The routed resonator. On success, the path starts at the
  * coupler's anchor.
  * @param width The number of cells of the router grid along x.
@@ -159,7 +170,8 @@ struct CouplerSplice {
  * x and y. An empty filter allows every cell.
  * @return The splice, or @c std::nullopt when @p path is empty or no candidate
  * is collision-free. In that case @p path is unchanged.
- * @throws std::invalid_argument If @p couplerHeading is not a heading.
+ * @throws std::invalid_argument If @p couplerHeading is not a heading, or if
+ * @p targetLength is negative or not finite.
  * @throws std::logic_error If the primitives hold no quarter turn that the
  * dogleg needs.
  */

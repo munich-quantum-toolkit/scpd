@@ -68,61 +68,112 @@ std::vector<std::size_t> fullWalk(int64_t x0, int64_t y0, const int64_t x1,
   return cells;
 }
 
-/// The cells fillPolygon() blocks, found cell by cell: every cell of the
-/// polygon's box against every edge, and every edge walked in full.
-BitGrid perCellFill(const GridMetrics& grid, const PolygonT& polygon) {
-  BitGrid mask(grid.width, grid.height);
-  std::vector<Point> nodes;
-  int64_t minX = grid.width;
-  int64_t maxX = 0;
-  int64_t minY = grid.height;
-  int64_t maxY = 0;
-  for (const auto& vertex : polygon.vertices) {
-    const Point node = grid.toCell(vertex);
-    nodes.push_back(node);
-    minX = std::min(minX, static_cast<int64_t>(std::floor(node.x())));
-    maxX = std::max(maxX, static_cast<int64_t>(std::ceil(node.x())));
-    minY = std::min(minY, static_cast<int64_t>(std::floor(node.y())));
-    maxY = std::max(maxY, static_cast<int64_t>(std::ceil(node.y())));
-  }
-  minX = std::max<int64_t>(0, minX);
-  minY = std::max<int64_t>(0, minY);
-  maxX = std::min<int64_t>(static_cast<int64_t>(grid.width) - 1, maxX);
-  maxY = std::min<int64_t>(static_cast<int64_t>(grid.height) - 1, maxY);
+/// The number of lattice steps per cell of the vertices of perCellFill().
+constexpr int64_t LATTICE = 64;
+
+/// A vertex in lattice steps of 1 / LATTICE cell from cell (0, 0).
+struct LatticePoint {
+  int64_t x = 0;
+  int64_t y = 0;
+};
+
+/// The cell nearest to a coordinate in lattice steps. A coordinate halfway
+/// between two cells takes the one farther from cell zero.
+int64_t nearestCell(const int64_t steps) {
+  constexpr int64_t half = LATTICE / 2;
+  return steps >= 0 ? (steps + half) / LATTICE : -((half - steps) / LATTICE);
+}
+
+/// The cells of the fill rule of fillPolygon(), found cell by cell in whole
+/// numbers: every cell center against every edge by the even-odd rule, and
+/// every edge walked in full between the nearest cells of its ends.
+BitGrid perCellFill(const uint32_t width, const uint32_t height,
+                    const std::vector<LatticePoint>& nodes) {
+  BitGrid mask(width, height);
   if (nodes.size() >= 3) {
-    for (int64_t y = minY; y <= maxY; ++y) {
-      const auto py = static_cast<double>(y);
-      for (int64_t x = minX; x <= maxX; ++x) {
-        const auto px = static_cast<double>(x);
+    for (uint32_t y = 0; y < height; ++y) {
+      const int64_t py = static_cast<int64_t>(y) * LATTICE;
+      for (uint32_t x = 0; x < width; ++x) {
+        const int64_t px = static_cast<int64_t>(x) * LATTICE;
         bool inside = false;
         for (std::size_t i = 0, j = nodes.size() - 1; i < nodes.size();
              j = i++) {
-          const double xi = nodes[i].x();
-          const double yi = nodes[i].y();
-          const double xj = nodes[j].x();
-          const double yj = nodes[j].y();
-          if (((yi > py) != (yj > py)) &&
-              (px < ((xj - xi) * (py - yi) / (yj - yi)) + xi)) {
+          const LatticePoint& from = nodes[i];
+          const LatticePoint& to = nodes[j];
+          if ((from.y > py) == (to.y > py)) {
+            continue;
+          }
+          // The edge crosses the row right of the center when the center
+          // lies left of the edge, seen from its lower end.
+          const int64_t side = ((to.x - from.x) * (py - from.y)) -
+                               ((px - from.x) * (to.y - from.y));
+          if (to.y > from.y ? side > 0 : side < 0) {
             inside = !inside;
           }
         }
         if (inside) {
-          mask.setCell(static_cast<uint32_t>(x), static_cast<uint32_t>(y));
+          mask.setCell(x, y);
         }
       }
     }
   }
   for (std::size_t i = 0; i < nodes.size(); ++i) {
-    const Point a = nodes[i];
-    const Point b = nodes[(i + 1) % nodes.size()];
+    const LatticePoint& a = nodes[i];
+    const LatticePoint& b = nodes[(i + 1) % nodes.size()];
     for (const std::size_t index :
-         fullWalk(std::llround(a.x()), std::llround(a.y()), std::llround(b.x()),
-                  std::llround(b.y()), grid.width, grid.height)) {
+         fullWalk(nearestCell(a.x), nearestCell(a.y), nearestCell(b.x),
+                  nearestCell(b.y), width, height)) {
       mask.set(index);
     }
   }
   return mask;
 }
+
+/// The distance from a point to a segment, from the closed formula: the foot
+/// of the perpendicular, clamped onto the segment.
+double referenceDistance(const Point point, const Point from, const Point to) {
+  const double dx = to.x() - from.x();
+  const double dy = to.y() - from.y();
+  const double length2 = (dx * dx) + (dy * dy);
+  const double along =
+      ((point.x() - from.x()) * dx) + ((point.y() - from.y()) * dy);
+  const double t = length2 > 0.0 ? std::clamp(along / length2, 0.0, 1.0) : 0.0;
+  const double ex = point.x() - (from.x() + (t * dx));
+  const double ey = point.y() - (from.y() + (t * dy));
+  return std::sqrt((ex * ex) + (ey * ey));
+}
+
+/// The smallest distance from a point to an edge of the polygons.
+double
+referenceDistanceToEdges(const Point point,
+                         const std::vector<std::vector<Point>>& obstacles) {
+  double nearest = std::numeric_limits<double>::infinity();
+  for (const auto& ring : obstacles) {
+    for (std::size_t i = 0; i < ring.size(); ++i) {
+      nearest =
+          std::min(nearest, referenceDistance(point, ring[i],
+                                              ring[(i + 1) % ring.size()]));
+    }
+  }
+  return nearest;
+}
+
+/// The smallest distance from a point to a corridor, less its half width.
+double referenceDepthInCorridors(const Point point,
+                                 const std::vector<Corridor>& corridors) {
+  double nearest = std::numeric_limits<double>::infinity();
+  for (const Corridor& corridor : corridors) {
+    nearest =
+        std::min(nearest, referenceDistance(point, corridor.from, corridor.to) -
+                              corridor.halfWidth);
+  }
+  return nearest;
+}
+
+/// The gap between a distance and its limit below which rounding could
+/// decide a cell, in layout units. The rounding errors of both distances lie
+/// far below it.
+constexpr double TIE_MARGIN = 1e-9;
 
 /// A chip with the given obstacles and nothing else.
 ChipT chipWith(const std::vector<std::vector<Point>>& obstacles) {
@@ -205,6 +256,23 @@ TEST(Rasterize, IslandsAndBordersAreHandled) {
   EXPECT_FALSE(mask.testCell(5, 7));
 }
 
+TEST(Rasterize, APolygonOfTwoCellsDisappears) {
+  // A strip one unit long and a fifth of a unit high blocks the cells
+  // (50, 50) and (51, 50). Each of them has seven free neighbors.
+  const std::vector<Point> strip = {Point(50.0, 50.0), Point(51.0, 50.0),
+                                    Point(51.0, 50.2), Point(50.0, 50.2)};
+  BitGrid filled(unitGrid().width, unitGrid().height);
+  PolygonT polygon;
+  polygon.vertices = strip;
+  fillPolygon(filled, unitGrid(), polygon);
+  EXPECT_EQ(filled.count(), 2U);
+  EXPECT_TRUE(filled.testCell(50, 50));
+  EXPECT_TRUE(filled.testCell(51, 50));
+
+  EXPECT_EQ(rasterizeObstacles(chipWith({strip}), unitGrid()).blocked.count(),
+            0U);
+}
+
 TEST(Rasterize, ABorderWiderThanTheMaskBlocksAllOfIt) {
   BitGrid columns(5, 4);
   blockBorder(columns, 7, 0);
@@ -260,31 +328,107 @@ TEST(Rasterize, TheKeepoutIsAnExactDistanceAroundTheEdges) {
   EXPECT_FALSE(bordered.testCell(50, 97));
 }
 
-TEST(Rasterize, TheKeepoutOfACenterOneRoundingAwayIsTheSameOnEveryBuild) {
-  // The center of column 100 is the origin plus 100 cell steps. Rounded once
-  // after the product and once after the sum, it lies at -237.23455585195074.
-  // The edge of the obstacle lies 25 units and one rounding error right of
-  // it, so the keepout of 25 units leaves column 100 free. A fused
-  // multiply-add would round once, put the center exactly 25 units from the
-  // edge and block the column. The build turns floating-point contraction off,
-  // so every build rounds twice.
-  const GridMetrics grid = GridMetrics::fit(BoundingBox{.minX = -1234.567,
-                                                        .minY = -1234.567,
-                                                        .maxX = 28675.433,
-                                                        .maxY = 28675.433},
-                                            3000, 3000);
-  EXPECT_EQ(grid.toLayout(100.0, 0.0).x(), -237.23455585195074);
-  const double edge = -212.23455585195072;
+TEST(Rasterize, TheKeepoutBlocksACenterAtExactlyTheKeepoutDistance) {
+  // Cell steps of exactly 10 units from -1234.5, so that every cell center
+  // and every distance below is exact, whatever the order of the operations.
+  // Column c lies at 10 c - 1234.5 and row r at 10 r - 1234.5.
+  const GridMetrics grid = GridMetrics::fit(
+      BoundingBox{
+          .minX = -1234.5, .minY = -1234.5, .maxX = 2755.5, .maxY = 2755.5},
+      400, 400);
+  ASSERT_EQ(grid.cellWidth, 10.0);
+  ASSERT_EQ(grid.cellHeight, 10.0);
+  // Each edge lies an odd multiple of 5 units from the centers along its
+  // normal: 25 units right of column 100, 25 units left of column 155,
+  // 25 units above row 221 and 25 units below row 326. No center lies
+  // exactly 25 units from a corner.
+  const double left = -209.5;
+  const double right = 290.5;
+  const double bottom = 1000.5;
+  const double top = 2000.5;
   RasterOptions options;
   options.keepout = 25.0;
-  const RasterizedObstacles raster = rasterizeObstacles(
-      chipWith({{Point(edge, 1000.0), Point(edge + 500.0, 1000.0),
-                 Point(edge + 500.0, 2000.0), Point(edge, 2000.0)}}),
-      grid, options);
-  // Row 274 lies halfway up the edge.
-  EXPECT_FALSE(raster.blocked.testCell(100, 274));
-  EXPECT_TRUE(raster.blocked.testCell(101, 274));
-  EXPECT_EQ(raster.keepoutCells, 620U);
+  const ChipT chip = chipWith({{Point(left, bottom), Point(right, bottom),
+                                Point(right, top), Point(left, top)}});
+  const RasterizedObstacles raster = rasterizeObstacles(chip, grid, options);
+  const BitGrid& blocked = raster.blocked;
+
+  // A center exactly 25 units from an edge is blocked, a center 35 units
+  // from it is free.
+  EXPECT_TRUE(blocked.testCell(100, 274));
+  EXPECT_FALSE(blocked.testCell(99, 274));
+  EXPECT_TRUE(blocked.testCell(155, 274));
+  EXPECT_FALSE(blocked.testCell(156, 274));
+  EXPECT_TRUE(blocked.testCell(128, 221));
+  EXPECT_FALSE(blocked.testCell(128, 220));
+  EXPECT_TRUE(blocked.testCell(128, 326));
+  EXPECT_FALSE(blocked.testCell(128, 327));
+
+  // The keepout cells are the free cells whose center lies 25 units or less
+  // from the rectangle. Every value here is a multiple of a half, so the
+  // squared distances are exact.
+  const BitGrid polygons = rasterizeObstacles(chip, grid).blocked;
+  std::size_t keepoutCells = 0;
+  for (uint32_t y = 0; y < grid.height; ++y) {
+    for (uint32_t x = 0; x < grid.width; ++x) {
+      const double px = -1234.5 + (10.0 * x);
+      const double py = -1234.5 + (10.0 * y);
+      const double dx = std::max({left - px, 0.0, px - right});
+      const double dy = std::max({bottom - py, 0.0, py - top});
+      if (!polygons.testCell(x, y) && (dx * dx) + (dy * dy) <= 625.0) {
+        ++keepoutCells;
+      }
+    }
+  }
+  EXPECT_EQ(raster.keepoutCells, keepoutCells);
+  EXPECT_EQ(blocked.count(), polygons.count() + keepoutCells);
+}
+
+TEST(Rasterize, AKeepoutAsLongAsAPythagoreanDistanceReachesTheCell) {
+  // Whole legs give an exact sum of squares, so each distance is exactly a
+  // whole number. std::hypot need not round correctly: the formula
+  // 220 * sqrt(1 + (21 / 220)^2) gives the next double above 221.
+  EXPECT_EQ(distanceToSegment(Point(17.0, 16.0), Point(20.0, 20.0),
+                              Point(40.0, 20.0)),
+            5.0);
+  EXPECT_EQ(distanceToSegment(Point(61.0, 260.0), Point(40.0, 20.0),
+                              Point(40.0, 40.0)),
+            221.0);
+  EXPECT_EQ(distanceToSegment(Point(-4059.0, 4060.0), Point(0.0, 0.0),
+                              Point(1.0e6, 0.0)),
+            5741.0);
+
+  // The keepout blocks a cell whose center lies at exactly the keepout from a
+  // corner of the square, and no cell beyond.
+  RasterOptions options;
+  options.keepout = 5.0;
+  const BitGrid near =
+      rasterizeObstacles(chipWith({square()}), unitGrid(), options).blocked;
+  EXPECT_TRUE(near.testCell(17, 16));
+  EXPECT_TRUE(near.testCell(16, 17));
+  EXPECT_FALSE(near.testCell(16, 16));
+
+  options.keepout = 221.0;
+  const GridMetrics wide = GridMetrics::fit(
+      BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 300.0, .maxY = 300.0}, 301,
+      301);
+  const BitGrid far =
+      rasterizeObstacles(chipWith({square()}), wide, options).blocked;
+  EXPECT_TRUE(far.testCell(61, 260));
+  EXPECT_TRUE(far.testCell(260, 61));
+  EXPECT_FALSE(far.testCell(62, 260));
+  EXPECT_FALSE(far.testCell(61, 261));
+}
+
+TEST(Rasterize, TheDistanceHoldsWhereItsSquareLeavesTheRangeOfADouble) {
+  // The square of the first distance overflows, and that of the second
+  // falls below the normal numbers.
+  EXPECT_DOUBLE_EQ(
+      distanceToSegment(Point(1e200, 1e200), Point(0.0, 0.0), Point(0.0, 0.0)),
+      std::numbers::sqrt2 * 1e200);
+  EXPECT_DOUBLE_EQ(distanceToSegment(Point(3e-160, 4e-160), Point(0.0, 0.0),
+                                     Point(0.0, 0.0)),
+                   5e-160);
 }
 
 TEST(Rasterize, ACorridorReleasesKeepoutCellsButNeverPolygonCells) {
@@ -303,10 +447,27 @@ TEST(Rasterize, ACorridorReleasesKeepoutCellsButNeverPolygonCells) {
   EXPECT_GT(raster.exemptedCells, 0U);
 }
 
+TEST(Rasterize, ACorridorWithANegativeHalfWidthFreesNoCell) {
+  // The strip holds no point. Its window along x is empty, and its window
+  // along y is not.
+  RasterOptions options;
+  options.keepout = 5.0;
+  const RasterizedObstacles plain =
+      rasterizeObstacles(chipWith({square()}), unitGrid(), options);
+  options.keepoutExemptions.push_back(
+      {.from = Point(17.5, 10.0), .to = Point(17.5, 50.0), .halfWidth = -3.5});
+  const RasterizedObstacles exempted =
+      rasterizeObstacles(chipWith({square()}), unitGrid(), options);
+  EXPECT_EQ(exempted.blocked, plain.blocked);
+  EXPECT_EQ(exempted.exemptedCells, 0U);
+}
+
 TEST(Rasterize, TheKeepoutMatchesACellByCellReferenceOnRandomChips) {
   // Overlapping random polygons and corridors. The reference measures every
   // cell center that the polygons leave free against every obstacle edge and
-  // against every corridor.
+  // against every corridor, with its own distance. No center lies within
+  // rounding of the keepout or of the half width of a corridor, so that the
+  // rounding of neither distance decides a cell.
   SplitMix random(17);
   const GridMetrics& grid = unitGrid();
   const auto anywhere = [&] {
@@ -343,25 +504,17 @@ TEST(Rasterize, TheKeepoutMatchesACellByCellReferenceOnRandomChips) {
           continue;
         }
         const Point center = grid.toLayout(x, y);
-        const bool near = std::ranges::any_of(obstacles, [&](const auto& ring) {
-          for (std::size_t i = 0; i < ring.size(); ++i) {
-            if (distanceToSegment(center, ring[i],
-                                  ring[(i + 1) % ring.size()]) <=
-                options.keepout) {
-              return true;
-            }
-          }
-          return false;
-        });
-        if (!near) {
+        const double beyond =
+            referenceDistanceToEdges(center, obstacles) - options.keepout;
+        ASSERT_GT(std::fabs(beyond), TIE_MARGIN) << "round " << round;
+        if (beyond > 0.0) {
           continue;
         }
         ++keepoutCells;
-        if (std::ranges::any_of(
-                options.keepoutExemptions, [&](const Corridor& corridor) {
-                  return distanceToSegment(center, corridor.from,
-                                           corridor.to) <= corridor.halfWidth;
-                })) {
+        const double depth =
+            referenceDepthInCorridors(center, options.keepoutExemptions);
+        ASSERT_GT(std::fabs(depth), TIE_MARGIN) << "round " << round;
+        if (depth <= 0.0) {
           ++exemptedCells;
         } else {
           expected.setCell(x, y);
@@ -372,6 +525,58 @@ TEST(Rasterize, TheKeepoutMatchesACellByCellReferenceOnRandomChips) {
     ASSERT_EQ(raster.keepoutCells, keepoutCells) << "round " << round;
     ASSERT_EQ(raster.exemptedCells, exemptedCells) << "round " << round;
   }
+}
+
+TEST(Rasterize, TheKeepoutOfLongDiagonalEdgesMatchesAReferenceOnALargeGrid) {
+  // Thin triangles whose long edges cross a grid of 3000 by 3000 cells at
+  // several slopes, a keepout of 185 units and two corridors across them.
+  // The reference measures every cell of every 53rd row against every edge
+  // and every corridor. No center lies within rounding of a limit.
+  const GridMetrics grid = GridMetrics::fit(
+      BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 30000.0, .maxY = 30000.0},
+      3000, 3000);
+  const std::vector<std::vector<Point>> obstacles = {
+      {Point(100.0, 50.0), Point(29900.0, 29950.0), Point(29870.0, 29950.0)},
+      {Point(200.0, 29900.0), Point(29800.0, 120.0), Point(29760.0, 120.0)},
+      {Point(5000.0, 0.0), Point(9000.0, 30000.0), Point(8950.0, 30000.0)},
+      {Point(0.0, 21000.0), Point(30000.0, 15000.0), Point(30000.0, 15040.0)}};
+  RasterOptions options;
+  options.keepout = 185.0;
+  options.keepoutExemptions = {{.from = Point(3000.0, 27000.0),
+                                .to = Point(27000.0, 3000.0),
+                                .halfWidth = 92.5},
+                               {.from = Point(15000.0, 0.0),
+                                .to = Point(16000.0, 30000.0),
+                                .halfWidth = 92.5}};
+  const ChipT chip = chipWith(obstacles);
+  const RasterizedObstacles raster = rasterizeObstacles(chip, grid, options);
+  const BitGrid polygons = rasterizeObstacles(chip, grid).blocked;
+
+  std::size_t keepoutCells = 0;
+  std::size_t exemptedCells = 0;
+  for (uint32_t y = 7; y < grid.height; y += 53) {
+    for (uint32_t x = 0; x < grid.width; ++x) {
+      bool expected = polygons.testCell(x, y);
+      if (!expected) {
+        const Point center = grid.toLayout(x, y);
+        const double beyond =
+            referenceDistanceToEdges(center, obstacles) - options.keepout;
+        ASSERT_GT(std::fabs(beyond), TIE_MARGIN) << x << ", " << y;
+        if (beyond <= 0.0) {
+          ++keepoutCells;
+          const double depth =
+              referenceDepthInCorridors(center, options.keepoutExemptions);
+          ASSERT_GT(std::fabs(depth), TIE_MARGIN) << x << ", " << y;
+          expected = depth > 0.0;
+          exemptedCells += expected ? 0 : 1;
+        }
+      }
+      ASSERT_EQ(raster.blocked.testCell(x, y), expected) << x << ", " << y;
+    }
+  }
+  // The sampled rows hold keepout cells, and the corridors free some of them.
+  EXPECT_GT(keepoutCells, exemptedCells);
+  EXPECT_GT(exemptedCells, 0U);
 }
 
 TEST(Rasterize, LineCellsAreConnectedAndClipped) {
@@ -479,51 +684,66 @@ TEST(Rasterize, IslandRemovalLeavesTheEdgeOfTheMaskAlone) {
 }
 
 TEST(Rasterize, FillMatchesACellByCellReferenceOnRandomPolygons) {
+  // The vertices lie on a lattice of 1/64 cell, and the cell steps are sums
+  // of powers of two. So every vertex converts into cells exactly, and the
+  // reference decides every tie by the rule: a vertex on a row, a center on
+  // an edge, a vertex halfway between two cells.
   SplitMix random(11);
   for (int round = 0; round < 400; ++round) {
     const auto width = static_cast<uint32_t>(random.between(2, 70));
     const auto height = static_cast<uint32_t>(random.between(2, 70));
     const BoundingBox box{.minX = -3.0,
                           .minY = 7.0,
-                          .maxX = -3.0 + (0.7 * (width - 1)),
-                          .maxY = 7.0 + (1.3 * (height - 1))};
+                          .maxX = -3.0 + (0.75 * (width - 1)),
+                          .maxY = 7.0 + (1.25 * (height - 1))};
     const GridMetrics grid = GridMetrics::fit(box, width, height);
-    PolygonT polygon;
+    ASSERT_EQ(grid.cellWidth, 0.75);
+    ASSERT_EQ(grid.cellHeight, 1.25);
+    const auto columns = static_cast<int64_t>(width);
+    const auto rows = static_cast<int64_t>(height);
+    std::vector<LatticePoint> nodes;
     const int64_t vertices = random.between(1, 14);
     const int kind = round % 4;
     for (int64_t i = 0; i < vertices; ++i) {
-      double x = 0.0;
-      double y = 0.0;
+      LatticePoint node;
       if (kind == 0) {
-        // Anywhere in and around the box.
-        x = box.minX - 5.0 + (random.unit() * (box.width() + 10.0));
-        y = box.minY - 5.0 + (random.unit() * (box.height() + 10.0));
+        // Anywhere in and around the grid.
+        node = {.x = random.between(-5 * LATTICE, (columns + 5) * LATTICE),
+                .y = random.between(-5 * LATTICE, (rows + 5) * LATTICE)};
       } else if (kind == 1) {
         // On cell centers and halfway between them, so that vertices and
         // edges lie exactly on rows and columns.
-        const int64_t halfX =
-            random.between(-4, (2 * static_cast<int64_t>(width)) + 4);
-        const int64_t halfY =
-            random.between(-4, (2 * static_cast<int64_t>(height)) + 4);
-        x = box.minX + (grid.cellWidth * static_cast<double>(halfX) / 2.0);
-        y = box.minY + (grid.cellHeight * static_cast<double>(halfY) / 2.0);
+        constexpr int64_t half = LATTICE / 2;
+        node = {.x = half * random.between(-4, (2 * columns) + 4),
+                .y = half * random.between(-4, (2 * rows) + 4)};
       } else if (kind == 2) {
-        // A star around the center of the box.
+        // A star around the middle of the grid.
         const double angle = 2.0 * std::numbers::pi * static_cast<double>(i) /
                              static_cast<double>(vertices);
-        const double radius = (0.2 + random.unit()) * box.width();
-        x = box.minX + (box.width() / 2.0) + (radius * std::cos(angle));
-        y = box.minY + (box.height() / 2.0) + (radius * std::sin(angle));
+        const double radius =
+            (0.2 + random.unit()) * static_cast<double>(columns * LATTICE);
+        node = {.x = (columns * LATTICE / 2) +
+                     std::llround(radius * std::cos(angle)),
+                .y = (rows * LATTICE / 2) +
+                     std::llround(radius * std::sin(angle))};
       } else {
         // Far off the grid.
-        x = box.minX + ((random.unit() - 0.5) * 2000.0);
-        y = box.minY + ((random.unit() - 0.5) * 2000.0);
+        node = {.x = random.between(-2000 * LATTICE, 2000 * LATTICE),
+                .y = random.between(-2000 * LATTICE, 2000 * LATTICE)};
       }
-      polygon.vertices.emplace_back(x, y);
+      nodes.push_back(node);
+    }
+    PolygonT polygon;
+    for (const LatticePoint& node : nodes) {
+      polygon.vertices.emplace_back(
+          box.minX + (grid.cellWidth * static_cast<double>(node.x) /
+                      static_cast<double>(LATTICE)),
+          box.minY + (grid.cellHeight * static_cast<double>(node.y) /
+                      static_cast<double>(LATTICE)));
     }
     BitGrid mask(width, height);
     fillPolygon(mask, grid, polygon);
-    ASSERT_EQ(mask, perCellFill(grid, polygon))
+    ASSERT_EQ(mask, perCellFill(width, height, nodes))
         << "round " << round << ", " << vertices << " vertices";
   }
 }

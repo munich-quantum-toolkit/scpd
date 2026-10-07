@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <limits>
 #include <numeric>
+#include <span>
 #include <stdexcept>
 #include <vector>
 
@@ -25,6 +26,37 @@ namespace {
 
 using namespace mqt::scpd::grid;
 using mqt::scpd::test::SplitMix;
+
+/// Whether the majority filter turned @p before into a valid labeling
+/// @p after: blocked cells and cells outside the run keep their labels, every
+/// other cell holds a label of the run, and every seed keeps its label.
+testing::AssertionResult isValidSmoothing(
+    const BitGrid& blocked, const std::vector<PartitionLabel>& before,
+    const std::vector<PartitionLabel>& after,
+    const std::span<const std::size_t> seeds, const PartitionLabel firstLabel,
+    const PartitionLabel nextLabel) {
+  for (std::size_t cell = 0; cell < blocked.size(); ++cell) {
+    if (blocked.test(cell) || before[cell] < firstLabel) {
+      if (after[cell] != before[cell]) {
+        return testing::AssertionFailure()
+               << "cell " << cell << " outside the run changed from "
+               << before[cell] << " to " << after[cell];
+      }
+    } else if (after[cell] < firstLabel || after[cell] >= nextLabel) {
+      return testing::AssertionFailure()
+             << "cell " << cell << " holds " << after[cell]
+             << ", which is no label of the run";
+    }
+  }
+  for (const std::size_t seed : seeds) {
+    if (seed < blocked.size() && after[seed] != before[seed]) {
+      return testing::AssertionFailure()
+             << "seed " << seed << " changed from " << before[seed] << " to "
+             << after[seed];
+    }
+  }
+  return testing::AssertionSuccess();
+}
 
 TEST(Watershed, TwoSeedsSplitAFreeGridAtTheMidline) {
   const BitGrid blocked(20, 10);
@@ -235,27 +267,155 @@ TEST(Watershed, TheMajorityFilterSmoothsAJaggedBorder) {
   }
   // One cell of the right partition sticks into the left one.
   labels[(3 * 10) + 4] = 3;
-  smoothPartitionBorders(blocked, labels, 2, 1, 3);
+  smoothPartitionBorders(blocked, {}, labels, 2, 1, 3);
   EXPECT_EQ(labels[(3 * 10) + 4], 2);
   EXPECT_EQ(labels[(3 * 10) + 5], 3);
   EXPECT_EQ(labels[(0 * 10) + 4], 2);
 }
 
 TEST(Watershed, TheIterationCapEndsAMajorityFilterThatNeverSettles) {
-  // Every pass reads the labels from before the pass, so on these labels every
-  // free cell flips on every pass. The cells (3, 0) and (0, 1) are blocked.
+  // Passes that read the labels from before the pass flip every free cell of
+  // these labels on every pass and never settle. The cells (3, 0) and (0, 1)
+  // are blocked. The call returns after any number of passes, and the labels
+  // stay a valid labeling of the run.
   BitGrid blocked(4, 2);
   blocked.setCell(3, 0);
   blocked.setCell(0, 1);
   const std::vector<PartitionLabel> input = {2, 3, 2, 0, 0, 3, 2, 3};
-  const std::vector<PartitionLabel> flipped = {3, 2, 3, 0, 0, 2, 3, 2};
+  for (const int iterations : {0, 1, 2, 3, 10001}) {
+    std::vector<PartitionLabel> labels = input;
+    smoothPartitionBorders(blocked, {}, labels, 2, 1, iterations);
+    EXPECT_TRUE(isValidSmoothing(blocked, input, labels, {}, 2, 4))
+        << iterations << " passes";
+  }
+}
 
-  std::vector<PartitionLabel> once = input;
-  smoothPartitionBorders(blocked, once, 2, 1, 1);
-  EXPECT_EQ(once, flipped);
-  std::vector<PartitionLabel> twice = input;
-  smoothPartitionBorders(blocked, twice, 2, 1, 2);
-  EXPECT_EQ(twice, input);
+TEST(Watershed, TheMajorityFilterKeepsEveryPartitionWithItsSeed) {
+  // The center seed of a free grid grows a partition of 61 cells, and the two
+  // corner seeds grow partitions of 10 cells each. In a window of radius 2 or
+  // 3, the center partition holds the majority at every border cell. Only
+  // their seeds keep the corner partitions from vanishing.
+  const BitGrid blocked(9, 9);
+  const std::vector<std::size_t> seeds = {(9 * 4) + 4, 0, 8};
+  for (const int radius : {2, 3}) {
+    std::vector<PartitionLabel> labels(blocked.size(), LABEL_NONE);
+    const PartitionLabel next =
+        runWatershed(blocked, seeds, labels, FIRST_PARTITION_LABEL);
+    ASSERT_EQ(next, FIRST_PARTITION_LABEL + 3);
+    const std::vector<PartitionLabel> before = labels;
+    smoothPartitionBorders(blocked, seeds, labels, FIRST_PARTITION_LABEL,
+                           radius, 5);
+    EXPECT_TRUE(isValidSmoothing(blocked, before, labels, seeds,
+                                 FIRST_PARTITION_LABEL, next))
+        << "radius " << radius;
+    for (std::size_t i = 0; i < seeds.size(); ++i) {
+      EXPECT_EQ(labels[seeds[i]],
+                static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + i))
+          << "radius " << radius << ", seed " << i;
+    }
+  }
+}
+
+TEST(Watershed, TheMajorityFilterLeavesAValidLabelingOnRandomGrids) {
+  // Random grids with obstacles, reserved cells, cells of an earlier run and
+  // one watershed run. After any number of passes, the labels are a valid
+  // labeling of the run, and the mirror image of the input gives the mirror
+  // image of the result.
+  SplitMix random(43);
+  constexpr PartitionLabel earlier = FIRST_PARTITION_LABEL;
+  constexpr PartitionLabel firstLabel = FIRST_PARTITION_LABEL + 1;
+  for (int round = 0; round < 300; ++round) {
+    const auto width = static_cast<uint32_t>(random.between(1, 24));
+    const auto height = static_cast<uint32_t>(random.between(1, 24));
+    const auto mirror = [&](const std::size_t cell) {
+      return ((cell / width) * width) + (width - 1 - (cell % width));
+    };
+    BitGrid blocked(width, height);
+    std::vector<PartitionLabel> labels(blocked.size(), LABEL_NONE);
+    const double density = 0.3 * random.unit();
+    for (std::size_t cell = 0; cell < blocked.size(); ++cell) {
+      const double draw = random.unit();
+      if (draw < density) {
+        blocked.set(cell, true);
+      } else if (draw < density + 0.02) {
+        labels[cell] = LABEL_RESERVED;
+      } else if (draw < density + 0.06) {
+        labels[cell] = earlier;
+      }
+    }
+    // Some seeds fall off the grid, on a blocked cell or on a labeled cell.
+    std::vector<std::size_t> seeds(
+        static_cast<std::size_t>(random.between(1, 12)));
+    for (std::size_t& seed : seeds) {
+      seed = static_cast<std::size_t>(
+          random.between(0, static_cast<int64_t>(blocked.size()) + 1));
+    }
+    const PartitionLabel next =
+        runWatershed(blocked, seeds, labels, firstLabel);
+    const int radius = static_cast<int>(random.between(0, 4));
+    const int iterations = static_cast<int>(random.between(0, 6));
+
+    std::vector<PartitionLabel> smoothed = labels;
+    smoothPartitionBorders(blocked, seeds, smoothed, firstLabel, radius,
+                           iterations);
+    ASSERT_TRUE(
+        isValidSmoothing(blocked, labels, smoothed, seeds, firstLabel, next))
+        << "round " << round;
+
+    BitGrid mirroredBlocked(width, height);
+    std::vector<PartitionLabel> mirrored(blocked.size(), LABEL_NONE);
+    for (std::size_t cell = 0; cell < blocked.size(); ++cell) {
+      mirroredBlocked.set(mirror(cell), blocked.test(cell));
+      mirrored[mirror(cell)] = labels[cell];
+    }
+    std::vector<std::size_t> mirroredSeeds;
+    for (const std::size_t seed : seeds) {
+      if (seed < blocked.size()) {
+        mirroredSeeds.push_back(mirror(seed));
+      }
+    }
+    smoothPartitionBorders(mirroredBlocked, mirroredSeeds, mirrored, firstLabel,
+                           radius, iterations);
+    for (std::size_t cell = 0; cell < blocked.size(); ++cell) {
+      ASSERT_EQ(mirrored[mirror(cell)], smoothed[cell])
+          << "round " << round << ", cell " << cell;
+    }
+  }
+}
+
+TEST(Watershed, AWindowLargerThanTheGridCountsTheWholeGrid) {
+  // The window ends at the edge of the grid. The largest radius therefore
+  // gives the labels of the radius that just covers the grid from every cell,
+  // at the same cost.
+  const BitGrid blocked(10, 6);
+  std::vector<PartitionLabel> input(blocked.size(), LABEL_NONE);
+  for (uint32_t y = 0; y < 6; ++y) {
+    for (uint32_t x = 0; x < 10; ++x) {
+      input[(y * 10) + x] = x < 5 ? 2 : 3;
+    }
+  }
+  input[(3 * 10) + 4] = 3;
+  std::vector<PartitionLabel> covering = input;
+  smoothPartitionBorders(blocked, {}, covering, 2, 9, 3);
+  std::vector<PartitionLabel> largest = input;
+  smoothPartitionBorders(blocked, {}, largest, 2,
+                         std::numeric_limits<int>::max(), 3);
+  EXPECT_EQ(largest, covering);
+}
+
+TEST(Watershed, ANegativeRadiusOrPassCountIsRefused) {
+  const BitGrid blocked(10, 6);
+  std::vector<PartitionLabel> labels(blocked.size(), 2);
+  labels[(3 * 10) + 4] = 3;
+  const std::vector<PartitionLabel> input = labels;
+  EXPECT_THROW(smoothPartitionBorders(blocked, {}, labels, 2, -1, 3),
+               std::invalid_argument);
+  EXPECT_THROW(smoothPartitionBorders(blocked, {}, labels, 2,
+                                      std::numeric_limits<int>::min(), 3),
+               std::invalid_argument);
+  EXPECT_THROW(smoothPartitionBorders(blocked, {}, labels, 2, 1, -1),
+               std::invalid_argument);
+  EXPECT_EQ(labels, input);
 }
 
 TEST(Watershed, SkippedSeedsTakeNoLabelAndUnreachedCellsStayFree) {
@@ -294,7 +454,7 @@ TEST(Watershed, AGridWithoutCellsAcceptsNoSeed) {
   EXPECT_EQ(runWatershed(blocked, seeds, labels, FIRST_PARTITION_LABEL),
             FIRST_PARTITION_LABEL);
   EXPECT_TRUE(labels.empty());
-  smoothPartitionBorders(blocked, labels, FIRST_PARTITION_LABEL, 1, 3);
+  smoothPartitionBorders(blocked, {}, labels, FIRST_PARTITION_LABEL, 1, 3);
   EXPECT_TRUE(labels.empty());
 }
 
@@ -313,7 +473,7 @@ TEST(Watershed, LabelsShorterThanTheGridAreLeftAlone) {
   }
   labels[(3 * 10) + 4] = 3;
   const std::vector<PartitionLabel> jagged = labels;
-  smoothPartitionBorders(blocked, labels, 2, 1, 3);
+  smoothPartitionBorders(blocked, {}, labels, 2, 1, 3);
   EXPECT_EQ(labels, jagged);
 }
 
@@ -364,7 +524,7 @@ TEST(Watershed, BlockedCellsNeitherVoteNorChangeInTheMajorityFilter) {
   blocked.setCell(0, 2);
   blocked.setCell(2, 2);
   std::vector<PartitionLabel> labels = {2, 2, 2, 3, 3, 3, 3, 2, 3};
-  smoothPartitionBorders(blocked, labels, 2, 1, 3);
+  smoothPartitionBorders(blocked, {}, labels, 2, 1, 3);
   EXPECT_EQ(labels, (std::vector<PartitionLabel>{2, 2, 2, 3, 2, 3, 3, 2, 3}));
 }
 
@@ -375,7 +535,7 @@ TEST(Watershed, EarlierRunsNeitherVoteNorChangeInTheMajorityFilter) {
   // no label a clear majority.
   const BitGrid blocked(3, 3);
   std::vector<PartitionLabel> labels = {3, 3, 3, 2, 4, 2, 2, 3, 2};
-  smoothPartitionBorders(blocked, labels, 3, 1, 3);
+  smoothPartitionBorders(blocked, {}, labels, 3, 1, 3);
   EXPECT_EQ(labels, (std::vector<PartitionLabel>{3, 3, 3, 2, 3, 2, 2, 3, 2}));
 }
 

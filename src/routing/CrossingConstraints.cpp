@@ -174,11 +174,12 @@ bool CrossingConstraints::allowed(const uint32_t x, const uint32_t y,
   if (mask == 0U) {
     return true;
   }
+  const auto step = static_cast<Heading>(heading & 7U);
   for (Heading wireHeading = 0; wireHeading < NUM_HEADINGS; ++wireHeading) {
     if ((mask & static_cast<uint8_t>(1U << wireHeading)) == 0U) {
       continue;
     }
-    if (!isOrthogonal(wireHeading, heading)) {
+    if (!isOrthogonal(wireHeading, step)) {
       return false;
     }
   }

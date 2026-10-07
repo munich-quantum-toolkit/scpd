@@ -45,6 +45,20 @@ uint32_t cellCount(const double count) {
   return static_cast<uint32_t>(count);
 }
 
+/// Checks that every bound of a box is finite.
+/// @throws std::invalid_argument If a bound is infinite or not a number.
+void requireFiniteBounds(const BoundingBox& box) {
+  if (!std::isfinite(box.minX) || !std::isfinite(box.minY) ||
+      !std::isfinite(box.maxX) || !std::isfinite(box.maxY)) {
+    throw std::invalid_argument("a grid needs a box with finite bounds");
+  }
+}
+
+/// Checks whether a length is positive and finite.
+bool isPositiveAndFinite(const double length) {
+  return length > 0.0 && std::isfinite(length);
+}
+
 } // namespace
 
 GridMetrics GridMetrics::fit(const BoundingBox& box, const uint32_t width,
@@ -52,14 +66,17 @@ GridMetrics GridMetrics::fit(const BoundingBox& box, const uint32_t width,
   if (width < 2 || height < 2) {
     throw std::invalid_argument("a grid needs at least two cells per axis");
   }
-  if (!(box.width() > 0.0) || !(box.height() > 0.0)) {
-    throw std::invalid_argument("a grid needs a box with a positive extent");
+  requireFiniteBounds(box);
+  const double cellWidth = box.width() / (width - 1);
+  const double cellHeight = box.height() / (height - 1);
+  if (!isPositiveAndFinite(cellWidth) || !isPositiveAndFinite(cellHeight)) {
+    throw std::invalid_argument("a grid needs a positive, finite cell step");
   }
   return {.width = width,
           .height = height,
           .origin = Point(box.minX, box.minY),
-          .cellWidth = box.width() / (width - 1),
-          .cellHeight = box.height() / (height - 1)};
+          .cellWidth = cellWidth,
+          .cellHeight = cellHeight};
 }
 
 GridMetrics GridMetrics::fitWidth(const BoundingBox& box,
@@ -67,8 +84,10 @@ GridMetrics GridMetrics::fitWidth(const BoundingBox& box,
   if (width < 2) {
     throw std::invalid_argument("a grid needs at least two cells per axis");
   }
-  if (!(box.width() > 0.0) || !(box.height() > 0.0)) {
-    throw std::invalid_argument("a grid needs a box with a positive extent");
+  requireFiniteBounds(box);
+  if (!isPositiveAndFinite(box.width()) || !isPositiveAndFinite(box.height())) {
+    throw std::invalid_argument(
+        "a grid needs a box with a positive, finite extent");
   }
   const uint32_t height =
       cellCount(std::round(width * (box.height() / box.width())));

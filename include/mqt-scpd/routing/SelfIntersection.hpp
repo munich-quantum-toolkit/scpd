@@ -13,10 +13,9 @@
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/mqt_scpd_routing_export.hpp"
 
-#include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 
 namespace mqt::scpd::routing {
@@ -26,22 +25,29 @@ namespace mqt::scpd::routing {
  * the detector ignores as a spur.
  *
  * A routed path lists the cells each move sweeps (see Path). Some eighth
- * turns list one cell twice, two points apart: an A-B-A spur. At the default
+ * turns list one cell twice, two steps apart: an A-B-A spur. At the default
  * bend radius of five cells, every eighth turn from a cardinal heading sweeps
  * one cell past the end of its arc, so the path reads the end, the cell past
  * it, and the end again. At most other radii, some eighth turns list a cell
- * twice in the same way, or sweep one cell twice. Straight steps leave no
- * spur. Quarter turns leave none either, except at a radius of one cell: there
- * a U-turn of two quarter turns lists the cell between its two arcs twice,
- * three steps apart. A spur is not a loop, so a revisit counts only when the
- * two visits are more than this many steps apart. No real loop is that short at
- * the default bend radius.
+ * twice in the same way. Straight steps leave no spur. Quarter turns leave
+ * none either, except at a radius of one cell: there a U-turn of two quarter
+ * turns lists the cell between its two arcs twice, three steps apart, as a
+ * ring through three cells that all touch one another.
+ *
+ * A spur is not a loop, so a revisit counts only when the two visits are more
+ * than this many steps apart. The window therefore passes exactly two shapes:
+ * a step to a neighboring cell and back, and a ring through three cells that
+ * all touch one another. A ring around a 2 by 2 block closes after four steps
+ * and counts, and so does a run of two cells out and back. At every bend
+ * radius from 1 to 23 cells, a routed path holds no other revisit within four
+ * steps: its moves produce none, and its shortest loop takes five steps, at a
+ * radius of one cell.
  *
  * The detector uses a window and not a stack that collapses spurs, because
  * such a stack pops every A-B-A. It would unwind a long exact retrace one cell
  * at a time and so remove the defect the detector must find.
  */
-inline constexpr std::size_t PATH_LOOP_SPUR_WINDOW = 4;
+inline constexpr std::size_t PATH_LOOP_SPUR_WINDOW = 3;
 
 /**
  * @brief The shape of a self-intersection.
@@ -84,10 +90,16 @@ struct PathLoopHit {
 /**
  * @brief The working set of the detector.
  *
- * A caller that keeps one scratch across calls avoids new allocations once the
- * containers have grown.
+ * Every container keeps its capacity from one scan to the next and grows with
+ * the number of rasterized cells only. A caller that keeps one scratch across
+ * calls therefore allocates nothing for a path that rasterizes to no more
+ * cells than one it checked before.
  */
 struct MQT_SCPD_ROUTING_EXPORT PathLoopScratch {
+  /// The value the detector stores for a step that has no earlier visit or
+  /// crossing to name.
+  static constexpr std::size_t NO_STEP = SIZE_MAX;
+
   /// The x coordinates of the rasterized cells of the last path checked.
   std::vector<int32_t> xs;
   /// The y coordinates of the rasterized cells of the last path checked.
@@ -95,27 +107,50 @@ struct MQT_SCPD_ROUTING_EXPORT PathLoopScratch {
   /// The number of revisits the spur window ignored on the last scan.
   uint32_t spurRevisitsIgnored = 0;
   /// The largest distance, in steps, of a revisit the spur window ignored on
-  /// the last scan. A spur of a routed path spans two steps, or three at a
-  /// radius of one cell (see PATH_LOOP_SPUR_WINDOW). While this value stays at
-  /// that span or below, the window ignored nothing close to its limit.
+  /// the last scan. It never exceeds PATH_LOOP_SPUR_WINDOW.
   std::size_t maxSpurDistance = 0;
 
   /**
-   * @brief The diagonal steps seen in one 2 by 2 block.
+   * @brief A step of the path, keyed on a cell or on a 2 by 2 block.
+   *
+   * The key packs the two coordinates into one number: x in the high 32 bits
+   * and y in the low 32 bits.
    */
-  struct DiagonalVisit {
-    /// One bit per slope: bit 0 for a step whose x and y offsets have the
-    /// same sign, bit 1 for a step whose offsets have opposite signs.
-    uint8_t mask = 0;
-    /// The step at which the latest diagonal step of each slope arrived, in
-    /// the order of the bits.
-    std::array<std::size_t, 2> at = {0, 0};
+  struct KeyedStep {
+    /// The cell, or the corner of the block with the smallest coordinates.
+    uint64_t key = 0;
+    /// The step.
+    std::size_t step = 0;
+    /**
+     * @brief Orders two entries by key and then by step.
+     * @return The order of the two entries.
+     */
+    [[nodiscard]] auto operator<=>(const KeyedStep&) const = default;
   };
-  /// The step of the last recorded visit of each cell, keyed on the cell.
-  std::unordered_map<uint64_t, std::size_t> seenCell;
-  /// The diagonal steps of each 2 by 2 block, keyed on the corner of the block
-  /// with the smallest coordinates.
-  std::unordered_map<uint64_t, DiagonalVisit> seenDiagonal;
+  /// Every step of the last scan, keyed on its cell and sorted.
+  std::vector<KeyedStep> cellSteps;
+  /// Every diagonal step of the last scan, keyed on the 2 by 2 block it
+  /// crosses and sorted.
+  std::vector<KeyedStep> diagonalSteps;
+  /// For each step of the last scan, the latest earlier step on the same
+  /// cell, or NO_STEP.
+  std::vector<std::size_t> previousVisit;
+  /// For each step of the last scan, the latest earlier diagonal step that
+  /// crosses the same 2 by 2 block on the other diagonal, or NO_STEP. A step
+  /// that is not diagonal holds NO_STEP.
+  std::vector<std::size_t> previousCrossing;
+
+  /**
+   * @brief Counts the bytes the scratch holds.
+   * @return The capacity of every container, in bytes.
+   */
+  [[nodiscard]] std::size_t heldBytes() const {
+    return ((xs.capacity() + ys.capacity()) * sizeof(int32_t)) +
+           ((cellSteps.capacity() + diagonalSteps.capacity()) *
+            sizeof(KeyedStep)) +
+           ((previousVisit.capacity() + previousCrossing.capacity()) *
+            sizeof(std::size_t));
+  }
 };
 
 /**
@@ -123,9 +158,14 @@ struct MQT_SCPD_ROUTING_EXPORT PathLoopScratch {
  *
  * The walk moves from each point of the path to the next in steps of one cell
  * along the axis of the larger difference, and rounds each position to the
- * nearest cell. On a stretch inside the grid, consecutive cells differ by at
- * most one along each axis. The walk drops a cell outside the grid and a cell
- * that repeats the one before it.
+ * nearest cell. The walk drops a cell outside the grid and a cell that repeats
+ * the one before it. Consecutive cells therefore differ by at most one along
+ * each axis, except where the path leaves the grid and comes back: the first
+ * cell after such a stretch can lie anywhere. The walk skips the steps that
+ * round to a cell outside the grid, so a jump between two distant points costs
+ * no more than the cells it covers inside the grid. The output holds signed
+ * 32-bit coordinates, so a column or row from 2^31 on counts as outside the
+ * grid.
  *
  * @param path The path to rasterize.
  * @param width The number of cells of the router grid along x.
@@ -145,13 +185,16 @@ MQT_SCPD_ROUTING_EXPORT void rasterizePathCells(const Path& path,
  * @brief Scans the rasterized cells of a scratch for self-intersections.
  *
  * The scan keys each diagonal step on its 2 by 2 block and its slope,
- * and ignores a revisit within PATH_LOOP_SPUR_WINDOW steps. After a hit, the
- * scan forgets every earlier visit and restarts from the current cell. A path
- * that runs back along itself for two hundred cells therefore counts as one
- * event, not as two hundred.
+ * and ignores a revisit within PATH_LOOP_SPUR_WINDOW steps. A diagonal step
+ * moves by one cell along each axis. A step between two cells that are not
+ * neighbors, which only a stretch outside the grid leaves, crosses no block.
+ * After a hit, the scan forgets every earlier visit and restarts from the
+ * current cell. A path that runs back along itself for two hundred cells
+ * therefore counts as one event, not as two hundred.
  *
- * @param scratch The scratch whose @c xs and @c ys hold the cells to scan. The
- * scan updates its counters and its maps.
+ * @param scratch The scratch whose @c xs and @c ys hold the cells to scan.
+ * Only the first min(xs.size(), ys.size()) cells count. The scan updates the
+ * rest of the scratch.
  * @param hits Receives one entry per event, after its existing entries. The
  * scan never clears it. May be @c nullptr when only the count is needed.
  * @param stopAtFirst Whether the scan returns at the first event.

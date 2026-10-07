@@ -247,6 +247,47 @@ TEST(GridMetrics, RefusesAGridWithoutACellStep) {
                std::invalid_argument);
 }
 
+TEST(GridMetrics, RefusesABoxWithABoundThatIsNotFinite) {
+  for (const double bad : {std::numeric_limits<double>::infinity(),
+                           -std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::quiet_NaN()}) {
+    for (double BoundingBox::* const bound :
+         {&BoundingBox::minX, &BoundingBox::minY, &BoundingBox::maxX,
+          &BoundingBox::maxY}) {
+      BoundingBox box = BOX;
+      box.*bound = bad;
+      SCOPED_TRACE(testing::Message()
+                   << "box from (" << box.minX << ", " << box.minY << ") to ("
+                   << box.maxX << ", " << box.maxY << ")");
+      EXPECT_THROW(static_cast<void>(GridMetrics::fit(box, 101, 51)),
+                   std::invalid_argument);
+      EXPECT_THROW(static_cast<void>(GridMetrics::fitWidth(box, 101)),
+                   std::invalid_argument);
+    }
+  }
+}
+
+TEST(GridMetrics, RefusesACellStepThatIsNotPositiveAndFinite) {
+  // Finite bounds whose extent exceeds the range of a double.
+  const BoundingBox huge{
+      .minX = -1e308, .minY = 0.0, .maxX = 1e308, .maxY = 10.0};
+  EXPECT_THROW(static_cast<void>(GridMetrics::fit(huge, 10, 10)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(GridMetrics::fitWidth(huge, 10)),
+               std::invalid_argument);
+  const BoundingBox tall{
+      .minX = 0.0, .minY = -1e308, .maxX = 10.0, .maxY = 1e308};
+  EXPECT_THROW(static_cast<void>(GridMetrics::fitWidth(tall, 10)),
+               std::invalid_argument);
+  // The smallest positive extent over three steps rounds to a step of zero.
+  const BoundingBox tiny{.minX = 0.0,
+                         .minY = 0.0,
+                         .maxX = std::numeric_limits<double>::denorm_min(),
+                         .maxY = 10.0};
+  EXPECT_THROW(static_cast<void>(GridMetrics::fit(tiny, 4, 4)),
+               std::invalid_argument);
+}
+
 TEST(GridMetrics, ChipBoundsSpanObstaclesAndPorts) {
   mqt::scpd::flatbuffers::design::ChipT chip;
   auto polygon = std::make_unique<mqt::scpd::flatbuffers::geometry::PolygonT>();

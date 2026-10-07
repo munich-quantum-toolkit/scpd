@@ -225,9 +225,16 @@ PartitionLabel runWatershed(const BitGrid& blocked,
 }
 
 void smoothPartitionBorders(const BitGrid& blocked,
+                            const std::span<const std::size_t> seeds,
                             std::vector<PartitionLabel>& labels,
                             const PartitionLabel firstLabel, const int radius,
                             const int iterations) {
+  if (radius < 0) {
+    throw std::invalid_argument("the smoothing radius is negative");
+  }
+  if (iterations < 0) {
+    throw std::invalid_argument("the number of smoothing passes is negative");
+  }
   const uint32_t width = blocked.width();
   const uint32_t height = blocked.height();
   const std::size_t total = blocked.size();
@@ -237,18 +244,26 @@ void smoothPartitionBorders(const BitGrid& blocked,
   const auto ofThisRun = [&](const std::size_t cell) {
     return labels[cell] >= firstLabel;
   };
+  std::vector<bool> isSeed(total, false);
+  for (const std::size_t seed : seeds) {
+    if (seed < total) {
+      isSeed[seed] = true;
+    }
+  }
+  const auto reach = static_cast<uint32_t>(radius);
   static constexpr std::array<int64_t, 4> DX4 = {1, -1, 0, 0};
   static constexpr std::array<int64_t, 4> DY4 = {0, 0, 1, -1};
 
-  // Every pass reads the labels from before the pass. Such passes can move
-  // cells back and forth without end, so iterations caps their number.
+  // Every pass reads the labels from before the pass, so the order of the
+  // cells does not matter. Such passes can move cells back and forth without
+  // end, so iterations caps their number.
   for (int iteration = 0; iteration < iterations; ++iteration) {
     std::vector<PartitionLabel> next = labels;
     bool changed = false;
     for (uint32_t y = 0; y < height; ++y) {
       for (uint32_t x = 0; x < width; ++x) {
         const std::size_t cell = (static_cast<std::size_t>(y) * width) + x;
-        if (blocked.test(cell) || !ofThisRun(cell)) {
+        if (blocked.test(cell) || !ofThisRun(cell) || isSeed[cell]) {
           continue;
         }
         const PartitionLabel own = labels[cell];
@@ -272,18 +287,18 @@ void smoothPartitionBorders(const BitGrid& blocked,
         if (!border) {
           continue;
         }
-        std::map<PartitionLabel, int> counts;
-        int valid = 0;
-        for (int64_t oy = -radius; oy <= radius; ++oy) {
-          for (int64_t ox = -radius; ox <= radius; ++ox) {
-            const int64_t nx = static_cast<int64_t>(x) + ox;
-            const int64_t ny = static_cast<int64_t>(y) + oy;
-            if (nx < 0 || ny < 0 || std::cmp_greater_equal(nx, width) ||
-                std::cmp_greater_equal(ny, height)) {
-              continue;
-            }
-            const std::size_t n = (static_cast<std::size_t>(ny) * width) +
-                                  static_cast<std::size_t>(nx);
+        // The window ends at the edge of the grid.
+        const uint32_t left = x - std::min(x, reach);
+        const uint32_t top = y - std::min(y, reach);
+        const auto right = static_cast<uint32_t>(
+            std::min<uint64_t>(uint64_t{x} + reach, width - 1));
+        const auto bottom = static_cast<uint32_t>(
+            std::min<uint64_t>(uint64_t{y} + reach, height - 1));
+        std::map<PartitionLabel, std::size_t> counts;
+        std::size_t valid = 0;
+        for (uint32_t ny = top; ny <= bottom; ++ny) {
+          for (uint32_t nx = left; nx <= right; ++nx) {
+            const std::size_t n = (static_cast<std::size_t>(ny) * width) + nx;
             if (blocked.test(n) || !ofThisRun(n)) {
               continue;
             }
@@ -295,7 +310,7 @@ void smoothPartitionBorders(const BitGrid& blocked,
           continue;
         }
         PartitionLabel best = own;
-        int bestCount = 0;
+        std::size_t bestCount = 0;
         for (const auto& [label, count] : counts) {
           if (count > bestCount) {
             bestCount = count;

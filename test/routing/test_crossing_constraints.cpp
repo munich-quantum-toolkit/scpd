@@ -9,11 +9,13 @@
  */
 
 #include "mqt-scpd/routing/CrossingConstraints.hpp"
+#include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -31,6 +33,16 @@ Path verticalWire(const uint32_t x, const uint32_t y0, const uint32_t y1) {
   Path wire;
   for (uint32_t y = y0; y < y1; ++y) {
     wire.push_back({.x = x, .y = y, .heading = 4, .primitive = 0});
+  }
+  return wire;
+}
+
+/// A straight wire from (x, y) on heading 5, toward positive x and positive y,
+/// of @p length cells.
+Path diagonalWire(const uint32_t x, const uint32_t y, const uint32_t length) {
+  Path wire;
+  for (uint32_t k = 0; k < length; ++k) {
+    wire.push_back({.x = x + k, .y = y + k, .heading = 5, .primitive = 0});
   }
   return wire;
 }
@@ -107,6 +119,37 @@ TEST(CrossingConstraints, AStraightRunMayOnlyBeCrossedAtARightAngle) {
   // Beyond the radius nothing is constrained.
   EXPECT_EQ(constraints.maskAt(106, 100), 0U);
   EXPECT_TRUE(constraints.allowed(106, 100, 5));
+}
+
+TEST(CrossingConstraints, ADiagonalRunMayOnlyBeCrossedAtARightAngle) {
+  // A feedline from (30, 30) to (169, 169), through (100, 100).
+  CrossingConstraints constraints;
+  constraints.build(WIDTH, HEIGHT, {diagonalWire(30, 30, 140)}, {false}, 5);
+  EXPECT_EQ(constraints.maskAt(100, 100), 1U << 5U);
+  EXPECT_EQ(constraints.maskAt(104, 100), 1U << 5U);
+  // The other two diagonal headings cross it at a right angle.
+  EXPECT_TRUE(constraints.allowed(100, 100, 3));
+  EXPECT_TRUE(constraints.allowed(104, 100, 7));
+  // The cardinal headings cross it at forty-five degrees, and the headings
+  // along it do not cross it at all.
+  for (const Heading heading : std::array<Heading, 6>{0, 2, 4, 6, 1, 5}) {
+    EXPECT_FALSE(constraints.allowed(100, 100, heading)) << int{heading};
+    EXPECT_FALSE(constraints.allowed(104, 100, heading)) << int{heading};
+  }
+  EXPECT_FALSE(constraints.turnAllowed(100, 100));
+}
+
+TEST(CrossingConstraints, OnlyTheThreeLowBitsOfAHeadingCount) {
+  CrossingConstraints constraints;
+  constraints.build(WIDTH, HEIGHT, {verticalWire(100, 20, 180)}, {false}, 5);
+  for (Heading heading = 0; heading < NUM_HEADINGS; ++heading) {
+    for (const uint32_t turns : {1U, 2U, 31U}) {
+      const auto same = static_cast<Heading>(heading + (NUM_HEADINGS * turns));
+      EXPECT_EQ(constraints.allowed(100, 100, same),
+                constraints.allowed(100, 100, heading))
+          << int{same};
+    }
+  }
 }
 
 TEST(CrossingConstraints, ATurnMayNotTouchAConstrainedCell) {

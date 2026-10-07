@@ -6,8 +6,8 @@
 //
 // Licensed under the MIT License
 
-// The geometry vocabulary: the layout-space point, the three grid coordinate
-// types, polygons, and paths built from analytic segments. Owned by
+// The geometry vocabulary: the layout-space point, the grid cell, the router
+// state, polygons, and paths built from analytic segments. Owned by
 // MQT::ScpdGeometry.
 
 namespace mqt.scpd.flatbuffers.geometry;
@@ -16,12 +16,6 @@ namespace mqt.scpd.flatbuffers.geometry;
 struct Point {
   x: double;
   y: double;
-}
-
-/// A cell of the coarse capacity grid.
-struct GCoord {
-  x: uint32;
-  y: uint32;
 }
 
 /// A cell of a grid: its column and its row. The capacity grid, the detail

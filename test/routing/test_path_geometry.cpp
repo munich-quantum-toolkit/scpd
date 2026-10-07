@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <memory>
 #include <numbers>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -131,10 +132,66 @@ Corners cornersOf(const std::vector<Point>& points) {
 }
 
 /// The rendering of a path from its first point.
-std::vector<Point> rendering(Path path) {
+std::vector<Point> rendering(Path path,
+                             const MovePrimitives& table = primitives()) {
   std::vector<PathSegment> segments;
   const PathPoint start = path.front();
-  return samplePath(primitives(), path, start, segments);
+  return samplePath(table, path, start, segments);
+}
+
+/// The directions of the pieces of a polyline that are at least 0.05 cell
+/// long, as cornersOf() takes them.
+std::vector<std::pair<double, double>>
+piecesOf(const std::span<const Point> points) {
+  constexpr double minPiece = 0.05;
+  std::vector<std::pair<double, double>> pieces;
+  for (std::size_t k = 1; k < points.size(); ++k) {
+    const double dx = points[k].x() - points[k - 1].x();
+    const double dy = points[k].y() - points[k - 1].y();
+    const double length = std::hypot(dx, dy);
+    if (length >= minPiece) {
+      pieces.emplace_back(dx / length, dy / length);
+    }
+  }
+  return pieces;
+}
+
+/// The angle between two directions, in degrees.
+double degreesBetween(const std::pair<double, double>& a,
+                      const std::pair<double, double>& b) {
+  const double cosine = (a.first * b.first) + (a.second * b.second);
+  return std::acos(std::clamp(cosine, -1.0, 1.0)) * 180.0 / std::numbers::pi;
+}
+
+/// The sharpest corner between consecutive pieces of a polyline, in degrees.
+double sharpestCorner(const std::span<const Point> points) {
+  const auto pieces = piecesOf(points);
+  double sharpest = 0.0;
+  for (std::size_t k = 1; k < pieces.size(); ++k) {
+    sharpest = std::max(sharpest, degreesBetween(pieces[k - 1], pieces[k]));
+  }
+  return sharpest;
+}
+
+/// The sharpest corner the moves of a table draw, in degrees: between two
+/// pieces of one move, or where a move ends and a move that leaves its exit
+/// heading begins.
+double sharpestCornerOfTheMoves(const MovePrimitives& table) {
+  double sharpest = 0.0;
+  for (Heading heading = 0; heading < NUM_HEADINGS; ++heading) {
+    for (const Primitive& move : table.of(heading)) {
+      sharpest = std::max(sharpest, sharpestCorner(move.samples));
+      const auto pieces = piecesOf(move.samples);
+      for (const Primitive& next : table.of(move.exitHeading)) {
+        const auto nextPieces = piecesOf(next.samples);
+        if (!pieces.empty() && !nextPieces.empty()) {
+          sharpest = std::max(
+              sharpest, degreesBetween(pieces.back(), nextPieces.front()));
+        }
+      }
+    }
+  }
+  return sharpest;
 }
 
 TEST(PathGeometry, APointKnowsItsSearchState) {
@@ -270,6 +327,91 @@ TEST(PathGeometry, NoTurnSweepsAStepAgainstItsExitHeadingFirst) {
       }
     }
   }
+}
+
+TEST(PathGeometry, NoTwoTurnsOfAHeadingShareTheirExitHeadingAndTheirEnd) {
+  // reconstructSegments() finds a turn that no point carries from the
+  // heading the turn ends on and from its end offset. The turn is unique
+  // only while no two moves of one heading share both.
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading heading = 0; heading < NUM_HEADINGS; ++heading) {
+      const std::span<const Primitive> moves = table.of(heading);
+      for (std::size_t a = 0; a < moves.size(); ++a) {
+        for (std::size_t b = a + 1; b < moves.size(); ++b) {
+          EXPECT_FALSE(moves[a].exitHeading == moves[b].exitHeading &&
+                       moves[a].dx == moves[b].dx && moves[a].dy == moves[b].dy)
+              << "radius " << radius << ", heading "
+              << static_cast<int>(heading) << ", primitives " << moves[a].id
+              << " and " << moves[b].id;
+        }
+      }
+    }
+  }
+}
+
+TEST(PathGeometry, ATurnThatNoPointCarriesIsFoundFromTheHeadingChange) {
+  // At a radius of one cell, the exact quarter turn of a diagonal heading
+  // sweeps only its start and its end. Where the search begins with it, the
+  // last stub cell is the start of the arc and keeps its straight tag, and
+  // the next point is the end of the arc, on the exit heading (see Path).
+  const MovePrimitives table(1);
+  const std::span<const Primitive> moves = table.of(1);
+  const auto quarter = std::ranges::find_if(
+      moves, [](const Primitive& p) { return p.exitHeading == 3; });
+  ASSERT_NE(quarter, moves.end());
+  Path path =
+      routing::straightRun(table, {.x = 100, .y = 100, .heading = 1}, 6);
+  const PathPoint stubEnd = path.back();
+  const Path after =
+      routing::straightRun(table,
+                           {.x = static_cast<uint32_t>(stubEnd.x + quarter->dx),
+                            .y = static_cast<uint32_t>(stubEnd.y + quarter->dy),
+                            .heading = 3},
+                           5);
+  path.insert(path.end(), after.begin(), after.end());
+  // The same path with the tag of the turn on the start of its arc, as a
+  // routed path lists a turn after the start of its search.
+  Path tagged = path;
+  tagged[6].primitive = quarter->id;
+
+  const SegmentedPath segmented = reconstructSegments(table, path);
+  ASSERT_EQ(segmented.segments.size(), 3U);
+  const PathSegment& turn = segmented.segments[1];
+  EXPECT_EQ(turn.heading, 1);
+  EXPECT_EQ(turn.primitive, quarter->id);
+  ASSERT_EQ(turn.steps(), 1U);
+  EXPECT_TRUE(turn.cells[0].samePlace(after.front()));
+  // The move of the last stub cell is the turn, which counts its cost once.
+  const PathSegment& stub = segmented.segments.front();
+  ASSERT_EQ(stub.steps(), 7U);
+  EXPECT_DOUBLE_EQ(stub.lengthAt[6], stub.lengthAt[5]);
+  EXPECT_NEAR(segmented.nominalLength,
+              (12.0 * std::numbers::sqrt2) + quarter->cost, 1e-9);
+  EXPECT_NEAR(segmented.nominalLength,
+              reconstructSegments(table, tagged).nominalLength, 1e-9);
+
+  // The renderings draw the arc of the turn as for the tagged path: the same
+  // length, the same sharpest corner and the same end. This also holds
+  // without a stub, where the turn starts on the first point.
+  const auto expectSameDrawing = [](const std::vector<Point>& got,
+                                    const std::vector<Point>& expected) {
+    ASSERT_FALSE(got.empty());
+    ASSERT_FALSE(expected.empty());
+    EXPECT_NEAR(polylineLength(got), polylineLength(expected), 1e-9);
+    EXPECT_NEAR(sharpestCorner(got), sharpestCorner(expected), 1e-6);
+    EXPECT_NEAR(got.back().x(), expected.back().x(), 1e-9);
+    EXPECT_NEAR(got.back().y(), expected.back().y(), 1e-9);
+  };
+  expectSameDrawing(rendering(path, table), rendering(tagged, table));
+  path.erase(path.begin(), path.begin() + 6);
+  tagged.erase(tagged.begin(), tagged.begin() + 6);
+  const std::vector<Point> expected = rendering(tagged, table);
+  expectSameDrawing(rendering(path, table), expected);
+  std::vector<PathSegment> segments;
+  expectSameDrawing(samplePathFromSecond(table, path, path.front(), segments),
+                    expected);
 }
 
 TEST(PathGeometry, AStraightStepFromTheEndOfAnArcRendersWithoutACorner) {
@@ -434,6 +576,62 @@ TEST(PathGeometry, RoutedTurnsRenderWithoutKinksOrReversals) {
   EXPECT_GT(eighths, 0);
   EXPECT_GT(quarters, 0);
   EXPECT_GT(atTheSearchStart, 0);
+}
+
+TEST(PathGeometry, RoutedPathsOfRadiusOneRenderNoSharperThanTheirMoves) {
+  // At a radius of one cell, a search that begins with the exact quarter
+  // turn of a diagonal heading leaves no point that carries the turn (see
+  // Path). The rendering still draws its arc, so no corner is sharper than
+  // the moves draw. The margin covers the pull of each step onto its grid
+  // cell. The source and the target have diagonal headings and lie close
+  // together, so many searches begin with that turn. The stubs run from zero
+  // to eight cells.
+  auto shared = std::make_shared<const MovePrimitives>(1);
+  constexpr uint32_t size = 200;
+  SearchScratch scratch(size, size);
+  const grid::BitGrid corridor(size, size);
+  DubinsRouter router(shared, scratch, {.minRadius = 1});
+  router.attachCorridor(&corridor);
+  const double sharpest = sharpestCornerOfTheMoves(*shared) + 5.0;
+
+  SplitMix random(18);
+  int routed = 0;
+  int turnsWithoutAPoint = 0;
+  for (int i = 0; i < 100; ++i) {
+    router.setParams(
+        {.startStraightLength = static_cast<uint32_t>(random.between(0, 8)),
+         .endStraightLength = static_cast<uint32_t>(random.between(0, 8)),
+         .minRadius = 1});
+    const RoutingObjective request{
+        .source = {.x = 100,
+                   .y = 100,
+                   .heading =
+                       static_cast<Heading>((2 * random.between(0, 3)) + 1)},
+        .target = {.x = static_cast<uint32_t>(random.between(88, 112)),
+                   .y = static_cast<uint32_t>(random.between(88, 112)),
+                   .heading =
+                       static_cast<Heading>((2 * random.between(0, 3)) + 1)}};
+    const Path path = router.route(request);
+    if (path.empty()) {
+      continue;
+    }
+    ++routed;
+    for (std::size_t k = 1; k < path.size(); ++k) {
+      const PathPoint& before = path[k - 1];
+      if (shared->isStraight(before.heading, before.primitive) &&
+          path[k].heading != before.heading && !path[k].samePlace(before)) {
+        ++turnsWithoutAPoint;
+      }
+    }
+    EXPECT_LE(sharpestCorner(rendering(path, *shared)), sharpest) << i;
+    std::vector<PathSegment> segments;
+    EXPECT_LE(sharpestCorner(
+                  samplePathFromSecond(*shared, path, path.front(), segments)),
+              sharpest)
+        << i;
+  }
+  EXPECT_GT(routed, 20);
+  EXPECT_GT(turnsWithoutAPoint, 10);
 }
 
 TEST(PathGeometry, SamplingRendersTheStraightRunAtItsRealLength) {

@@ -167,8 +167,8 @@ uint16_t headingOfDegrees(const double degrees) {
 /// The swept cells, the cost and the samples of one arc that leaves the
 /// canonical cardinal heading. A straight part along the heading comes
 /// before the arc. The swept cells of the arc start from the end of the
-/// straight part rounded to a whole cell toward the start, as in the research
-/// prototype. The samples start the arc at the exact end of the straight part.
+/// straight part rounded to a whole cell toward the start. The samples start
+/// the arc at the exact end of the straight part.
 IntCells arcCellsCardinal(const double radius, const Vector16 vector,
                           double& cost, Samples& samples) {
   IntCells cells;

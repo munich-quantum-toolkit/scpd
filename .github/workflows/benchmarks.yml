@@ -9,14 +9,19 @@ on:
       - "bindings/**"
       - "cmake/**"
       - "CMakeLists.txt"
+      - "CMakePresets.json"
       - "include/**"
       - "noxfile.py"
       - "pyproject.toml"
       - "python/**"
       - "schemas/**"
       - "src/**"
+      - "test/*/CMakeLists.txt"
+      - "test/CMakeLists.txt"
       - "test/grid/**"
       - "test/python/benchmarks/**"
+      - "test/SplitMix.hpp"
+      - "uv.lock"
   schedule:
     - cron: "0 4 * * 1" # Mondays, so that a change of the data shows up within a week
   workflow_dispatch:
@@ -51,9 +56,15 @@ jobs:
         env:
           MQT_SCPD_BENCHMARKS: ${{ github.workspace }}/planar-superconducting-pd
       - name: Check the grid on the benchmark chips
+        shell: bash
         run: |
           cmake --preset release
           cmake --build --preset release --target mqt-scpd-grid-test
-          ctest --preset release --tests-regex '^BenchmarkRaster\.' --no-tests=error
+          ctest --preset release --tests-regex '^BenchmarkRaster\.' --no-tests=error | tee "$RUNNER_TEMP/benchmark-raster.log"
+          # ctest counts a skipped test as passed, so a test that did not run fails the job here
+          if grep -q 'The following tests did not run:' "$RUNNER_TEMP/benchmark-raster.log"; then
+            echo "::error::A BenchmarkRaster test did not run on the benchmark chips"
+            exit 1
+          fi
         env:
           MQT_SCPD_BENCHMARKS: ${{ github.workspace }}/planar-superconducting-pd

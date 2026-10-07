@@ -116,7 +116,8 @@ public:
    * @brief Tests whether a straight step may enter a cell under a heading.
    * @param x The column of the cell.
    * @param y The row of the cell.
-   * @param heading The heading of the step.
+   * @param heading The heading of the step. Only its three low bits are read,
+   * as build() reads the headings of the feedlines.
    * @return @c true when the constraints are empty, when the cell is free, or
    * when @p heading is at a right angle to the heading of every straight run
    * present in the cell. @c false for a cell outside the grid of non-empty

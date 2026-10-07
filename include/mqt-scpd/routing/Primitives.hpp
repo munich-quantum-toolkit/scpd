@@ -55,25 +55,25 @@ struct Primitive {
   /// The cost the search charges for the move, in cells. For a straight step
   /// and for a turn that leaves a cardinal heading, the cost is the length of
   /// the move's curve. A turn that leaves a diagonal heading costs more than
-  /// its curve, as in the research prototype: its cost takes the angle of the
-  /// turn from its count of half diagonals as if it were a count of cells.
-  /// The exact quarter turns of a diagonal heading (see MovePrimitives) cost
-  /// the length of their arc rounded up to whole cells. The polyline through
-  /// @c samples gives the length of the curve.
+  /// its curve: its cost takes the angle of the turn from its count of half
+  /// diagonals as if it were a count of cells. The exact quarter turns of a
+  /// diagonal heading (see MovePrimitives) cost the length of their arc
+  /// rounded up to whole cells. The polyline through @c samples gives the
+  /// length of the curve.
   double cost = 0.0;
   /// The cells the search tests for obstacles when it takes the move,
   /// relative to its start, in the order the move sweeps them. The first cell
   /// of a turn is its start, (0, 0). The one cell of the straight step is its
-  /// end. The list is the obstacle footprint of the research prototype, not a
-  /// chain of neighboring cells. At most radii some eighth turns list a cell
-  /// twice or list a cell past their end; at a radius of five cells, every
-  /// cardinal eighth turn lists the cell past its end. At some radii some
-  /// turns that leave a diagonal heading do not list their end cell: at a
-  /// radius of five cells the eighth turns, at radii such as 10 and 16 cells
-  /// the arcs of 72 to 77 degrees that end on the quarter-turn heading. Their
-  /// last cell then touches the end cell. At the radii of 25, 33 to 36, 41 to
-  /// 49 and 51 to 90 cells, every turn that leaves a cardinal heading skips
-  /// one or more cells where its straight part meets its arc.
+  /// end. The cells need not form a chain of neighboring cells. At most radii
+  /// some eighth turns list a cell twice or list a cell past their end; at a
+  /// radius of five cells, every cardinal eighth turn lists the cell past its
+  /// end. At some radii some turns that leave a diagonal heading do not list
+  /// their end cell: at a radius of five cells the eighth turns, at radii such
+  /// as 10 and 16 cells the arcs of 72 to 77 degrees that end on the
+  /// quarter-turn heading. Their last cell then touches the end cell. At the
+  /// radii of 25, 33 to 36, 41 to 49 and 51 to 90 cells, every turn that
+  /// leaves a cardinal heading skips one or more cells where its straight
+  /// part meets its arc.
   std::vector<CellOffset> swept;
   /// Points along the exact curve of the move, relative to its start. The
   /// first point is the origin, and the points run forward along the move.
@@ -107,16 +107,12 @@ struct Primitive {
  * hold none.
  *
  * The constructor builds the tables once per radius. The tables are read-only
- * after that, so any number of routers can share one instance. The generation
- * follows the research prototype, including its rounding, with two
- * differences. First, the end of a diagonal move is a whole cell in exact
- * arithmetic, and the generation computes it from whole numbers; the
- * prototype truncates a floating-point value there, so at some radii its ends
- * lie one cell off and depend on the compiler and the math library. Second,
- * the samples of a cardinal eighth turn follow the curve to its end. At a
- * radius of five cells the identifiers, ends, costs and swept cells equal the
- * prototype's. isStraight() answers for an unknown identifier as the
- * prototype does.
+ * after that, so any number of routers can share one instance. Every rounding
+ * step of the generation is part of the definition of the tables: the swept
+ * cells and the costs depend on it. Where a value is a whole number in exact
+ * arithmetic, such as the end of a diagonal move, the generation computes it
+ * from whole numbers, so that value does not depend on the compiler or the
+ * math library.
  */
 class MQT_SCPD_ROUTING_EXPORT MovePrimitives {
 public:
@@ -140,6 +136,11 @@ public:
    * The identifier of the straight step grows with the radius. From a radius
    * of 91 cells on, the straight step of some heading needs an identifier of
    * MAX_PRIMITIVE_ID or more.
+   *
+   * A DubinsRouter accepts only the radii up to DubinsRouter::MAX_BEND_RADIUS,
+   * because the moves of a larger radius do not fit its search tables. The
+   * functions that read the primitives without a router, such as
+   * buildDogleg(), take every radius up to this bound.
    */
   static constexpr uint32_t MAX_BEND_RADIUS = 90;
 

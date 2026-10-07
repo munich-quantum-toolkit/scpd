@@ -41,6 +41,19 @@ enum class Heuristic : uint8_t {
   /// the corridor, so a search in a winding corridor does not flood the
   /// corridor. The search also drops every move that ends on a cell from
   /// which the target cannot be reached. The default.
+  ///
+  /// The backward search runs only as far as route() needs it. The search
+  /// looks up the end cell of each move it tries, and the backward search
+  /// stops when that cell has its final distance. A route therefore pays for
+  /// every cell of the corridor that is nearer the target than the farthest
+  /// end cell its search looks up. When the source or a looked-up end cell
+  /// cannot reach the target, the backward search runs over every cell that
+  /// can reach the target. A move that ends in a separate part of the
+  /// corridor causes this, even behind a wall that the move cannot cross.
+  ///
+  /// The distances are counted in hundredths of a cell and clamped to
+  /// 2^22 - 1. Every cell more than about 41,943 cells from the target has
+  /// that one distance, so the estimate does not steer the search there.
   DistanceField,
   /// The octile distance to the target. It ignores the corridor and needs no
   /// computation before the search.
@@ -69,6 +82,11 @@ enum class Heuristic : uint8_t {
  * copied nor moved. A copy would share the scratch of the original, and a
  * moved-from router would keep the state of tables it no longer holds.
  *
+ * A router accepts a bend radius from 1 to 23 cells (MAX_BEND_RADIUS). The
+ * moves of a larger radius cover more cells than the search tables hold.
+ * MovePrimitives builds larger radii too, for the functions that read the
+ * primitives without a router.
+ *
  * The search tests whether the cells that a move sweeps and its end cell lie
  * in the corridor, and it tests the cells it starts from and ends at. It does
  * not test the cells of the straight stubs; the caller keeps them in the
@@ -76,16 +94,24 @@ enum class Heuristic : uint8_t {
  * - A wall of cells outside the corridor stops the search only where its
  *   cells share edges. A diagonal step sweeps only its end cell, so it passes
  *   between two cells of the wall that touch at a corner.
- * - The centerline of an arc can leave the cells its move sweeps. It stays
- *   within half a cell of them for every bend radius up to 29 cells: 0.16
- *   cell at a radius of 5, 0.21 at 12 and 0.49 at 20. Larger radii stray
- *   further, 0.78 cell at 30 and 0.93 at 40.
+ * - The centerline of a turn can leave the cells that the search tests for
+ *   the turn. It stays within half a cell of them for every bend radius that
+ *   a router accepts: 0.18 cell at a radius of 5, 0.23 at 12, and the full
+ *   half cell at 20.
  *
  * The corridor and the keepout must therefore leave at least one cell beyond
- * the half-width of the wire, for bend radii up to 29 cells.
+ * the half-width of the wire.
  */
 class MQT_SCPD_ROUTING_EXPORT DubinsRouter {
 public:
+  /**
+   * @brief The largest bend radius a router accepts, in cells.
+   *
+   * From a radius of 24 cells on, some move covers more than the 60 cells
+   * that the search tables hold.
+   */
+  static constexpr uint32_t MAX_BEND_RADIUS = 23;
+
   /**
    * @brief Creates a router over the grid of a scratch.
    * @param primitives The move primitives, shared with other routers.
@@ -94,14 +120,15 @@ public:
    * @param params The search parameters.
    * @pre @p scratch outlives the router, and nothing moves from it while the
    * router holds it.
-   * @throws std::invalid_argument If @p primitives is null, if the grid of
-   * @p scratch has no cells or more than 65535 cells along an axis, if the
-   * bend radius of @p params is not the one the primitives were built with,
-   * or if the primitives do not fit the search tables. The primitives do not
-   * fit when a heading has more than 16 moves, when a move covers more than
-   * 60 cells with its start and end cell, when a move reaches more than 127
-   * cells from its start along an axis, or when two moves of one heading
-   * sweep the same cells in the same order.
+   * @throws std::invalid_argument If @p primitives is null, if their bend
+   * radius is larger than MAX_BEND_RADIUS, if the grid of @p scratch has no
+   * cells or more than 65535 cells along an axis, if the bend radius of
+   * @p params is not the one the primitives were built with, or if the
+   * primitives do not fit the search tables. The primitives do not fit when
+   * a heading has more than 16 moves, when a move covers more than 60 cells
+   * with its start and end cell, when a move reaches more than 127 cells from
+   * its start along an axis, or when two moves of one heading sweep the same
+   * cells in the same order.
    */
   DubinsRouter(std::shared_ptr<const MovePrimitives> primitives,
                SearchScratch& scratch, SearchParams params = {});
@@ -136,10 +163,9 @@ public:
    * @brief Counts the bytes the router holds.
    *
    * The count is the size of the router object, plus every container the
-   * router owns by its capacity, plus the bytes the crossing constraints
-   * hold. It leaves out the scratch, which belongs to the caller, and the
-   * hash maps of the self-intersection test, which follow the length of the
-   * last path rather than the grid.
+   * router owns by its capacity, plus the bytes the crossing constraints and
+   * the working set of the self-intersection test hold. It leaves out the
+   * scratch, which belongs to the caller.
    *
    * @return The number of bytes.
    */
@@ -162,11 +188,15 @@ public:
   /**
    * @brief Changes the search parameters.
    *
-   * Only a changed bend penalty rebuilds the search tables.
+   * Only a changed bend penalty rebuilds the search tables. The function
+   * builds the new tables before it releases the previous ones, so it holds
+   * both for the time of the call.
    *
    * @param params The new parameters.
    * @throws std::invalid_argument If the bend radius of @p params is not the
    * one the primitives were built with.
+   * @throws std::bad_alloc If the memory runs out. The previous parameters
+   * and search tables then stay as they were.
    */
   void setParams(const SearchParams& params);
 
@@ -193,18 +223,29 @@ public:
    * The term is on by default. It is consistent on its own: a move pays at
    * least the bend penalty times the heading distance it turns, and the
    * cyclic heading distance obeys the triangle inequality. The distance term
-   * is the part that can overestimate. A cardinal eighth turn costs about
-   * 95 % of the octile distance of its end, 421 against 441 at a bend radius
-   * of 5 and 973 against 1023 at a radius of 12. Without the bend term, the
-   * bend penalty the turn pays covers that excess when the penalty is at
-   * least as large. With the bend term, the estimate already holds the
-   * penalty, so it can exceed what a state still has to pay, and the search
-   * never reopens a closed state. route() is therefore close to optimal but
-   * not exactly optimal. A comparison with a brute-force search on 1500
-   * random grids at a radius of 5 and a bend penalty of 500 pins this: without
-   * the bend term every path is the cheapest; with it, fewer than one path in
-   * a hundred costs more, and none by more than 20, the excess of one cardinal
-   * eighth turn.
+   * is not consistent. Along a move, it drops by at most the cost of the
+   * cheapest eight-connected walk through the corridor from the start of the
+   * move to its end, and a turn can be shorter than that walk. The excess of
+   * a turn is the difference, in hundredths of a cell like every cost of the
+   * search. Over open cells, the walk is the octile distance between the two
+   * ends, and a cardinal eighth turn has the largest excess: 421 against 441
+   * at a bend radius of 5, 973 against 1023 at 12 and 1850 against 1946 at
+   * 23. A corridor that leaves only the cells a turn sweeps can make the walk
+   * longer. The largest excess at a radius of 5 is then 38, that of a quarter
+   * turn.
+   *
+   * Without the bend term, the bend penalty a turn pays covers its excess
+   * when the penalty is at least the largest excess per eighth turn: 20 at a
+   * radius of 5, and at most 96 at any radius up to 23. The estimate is then
+   * consistent, and route() returns a cheapest path. With the bend term, the
+   * estimate already holds the penalty, so an excess can make it exceed what
+   * a state still has to pay. The search never reopens a closed state, so
+   * route() can then return a dearer path. A comparison with a brute-force
+   * search on random grids, with the distance field as the estimate, measured
+   * how much dearer. At a radius of 5, fewer than one path in a hundred costs
+   * more, by at most 20, for bend penalties from 20 to 30000. At larger radii,
+   * a path costs up to 29 more at a radius of 8, 48 at 12, 62 at 20 and 118
+   * at 23.
    *
    * @param on Whether route() adds the term.
    */
@@ -320,8 +361,15 @@ public:
    * An obstacle cell carries the full penalty. Around the obstacles, the
    * penalty decays linearly to one over @p distance cells of four-connected
    * growth. Every other cell carries no penalty. Without attached obstacles,
-   * or with a zero @p distance or @p penalty, no cell carries a penalty. The
-   * growth needs one byte per cell while it runs and frees it afterwards.
+   * or with a zero @p distance or @p penalty, no cell carries a penalty.
+   *
+   * The growth allocates memory while it runs and frees it afterwards: one
+   * byte per cell marks the cells it has reached, and two lists of four bytes
+   * per entry hold the cells of the last layer and of the next layer. The
+   * first layer is every obstacle cell. The two lists together hold at most
+   * one entry per cell, but a list that grows holds its old and its new
+   * memory for a moment. The peak is at most about 13 bytes per cell, which
+   * a grid full of obstacles can reach.
    *
    * @param distance The number of cells of growth around the obstacles.
    * @param penalty The penalty of an obstacle cell, at most @c 127.
@@ -576,12 +624,12 @@ public:
    * @param onlyStraight Whether the search forbids moves that end on a
    * diagonal heading.
    * @pre A corridor is attached. With @p usePenalty, a wire proximity is
-   * attached too. The source and the target lie in the router grid.
-   * @return The path, or an empty path when no path exists, when a search
-   * end lies outside the router grid or outside the corridor, or when the
-   * found path crossed itself. A search end outside the corridor ends the
-   * call before the search runs. A rejected path counts in
-   * loopGuardRejections().
+   * attached too.
+   * @return The path, or an empty path when no path exists, when the source,
+   * the target or a search end lies outside the router grid, when a search
+   * end lies outside the corridor, or when the found path crossed itself. An
+   * end outside the grid or a search end outside the corridor ends the call
+   * before the search runs. A rejected path counts in loopGuardRejections().
    * @throws std::logic_error If no corridor is attached, or if @p usePenalty
    * is set and no wire proximity is attached.
    * @throws std::invalid_argument If the heading of the source or of the
@@ -614,12 +662,14 @@ public:
    * @param onlyStraight Whether the search forbids moves that end on a
    * diagonal heading.
    * @pre A corridor is attached. With @p usePenalty, a wire proximity is
-   * attached too. The source and the target lie in the router grid.
-   * @return The path, or an empty path when no path exists, when a search
-   * end lies outside the router grid or outside the corridor, when the
-   * source or a cell of a stub fails its crossing test, or when the found
-   * path crossed itself. A search end outside the corridor ends the call
-   * before the search runs. A rejected path counts in loopGuardRejections().
+   * attached too.
+   * @return The path, or an empty path when no path exists, when the source,
+   * the target or a search end lies outside the router grid, when a search
+   * end lies outside the corridor, when the source or a cell of a stub fails
+   * its crossing test, or when the found path crossed itself. An end outside
+   * the grid, a failed crossing test or a search end outside the corridor
+   * ends the call before the search runs. A rejected path counts in
+   * loopGuardRejections().
    * When the two search ends are the same cell on the same heading, the path
    * is the two stubs joined, with their shared cell once.
    * @throws std::logic_error If no corridor is attached, or if @p usePenalty
@@ -796,9 +846,16 @@ private:
 
   /**
    * @brief Builds the swept-cell tries and the move costs of every heading.
+   *
+   * The function builds the new tables aside and replaces the previous ones
+   * only after the last allocation, so a failed call keeps the previous
+   * tables.
+   *
+   * @param bendPenalty The cost of one eighth turn, in hundredths of a cell.
    * @throws std::invalid_argument If the primitives do not fit the tables.
+   * @throws std::bad_alloc If the memory runs out.
    */
-  void buildTables();
+  void buildTables(uint32_t bendPenalty);
 
   /**
    * @brief Packs the corridor mask and the static proximity into the
@@ -807,14 +864,31 @@ private:
   void rebuildPacked();
 
   /**
-   * @brief Computes the distance field toward a target cell over the cells
-   * of the corridor.
+   * @brief Starts the distance field toward a target cell over the cells of
+   * the corridor.
+   *
+   * The field holds the target cell alone. growDistanceField() computes the
+   * other cells when a lookup needs them.
+   *
    * @param tx The column of the target cell.
    * @param ty The row of the target cell.
    * @pre A corridor is attached, and the target cell lies in the router
    * grid and in the corridor.
    */
-  void buildDistanceField(uint32_t tx, uint32_t ty);
+  void beginDistanceField(uint32_t tx, uint32_t ty);
+
+  /**
+   * @brief Grows the distance field until the distance of a cell is final.
+   *
+   * The growth stops when the field holds the final distance of the cell,
+   * or when it has reached every cell that can reach the target.
+   *
+   * @param cell The row-major index of the cell.
+   * @pre beginDistanceField() started the field of the current search.
+   * @return The entry of the cell. It carries the current stamp when the
+   * target can be reached from the cell, and an older stamp when not.
+   */
+  uint32_t growDistanceField(std::size_t cell);
 
   /** @brief Allocates the crossing rules of every cell, unless they exist. */
   void holdCrossingRules();
@@ -1082,6 +1156,15 @@ private:
   /// The buckets of the distance-field search, by distance modulo
   /// FIELD_BUCKETS.
   std::array<std::vector<uint32_t>, FIELD_BUCKETS> fieldBuckets;
+  /// The number of entries in the buckets, stale entries included. The
+  /// growth of the field has ended when it is @c 0.
+  std::size_t fieldPending = 0;
+  /// The distance whose bucket the growth of the field drains next.
+  uint32_t fieldScan = 0;
+  /// The bound of the final distances. The growth of the field can no
+  /// longer lower an entry with the current stamp and a distance at or below
+  /// it.
+  uint32_t fieldSettled = 0;
 
   /// The open list of the search.
   BucketQueue<QueueEntry> open;

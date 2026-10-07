@@ -40,6 +40,17 @@ using geometry::Point;
  * does not say which grid the cell belongs to. The caller knows which grid a
  * GridMetrics describes.
  *
+ * The three grids do not nest. Each one puts its outermost cells on the box,
+ * so cell @c k times @c factor of a grid refined by @c factor does not lie on
+ * cell @c k of the coarse grid. The drift grows toward the maximum corner of
+ * the box and reaches almost one coarse cell step. For example, with 50
+ * capacity cells over 30000 units and a factor of 30, capacity cell 49 lies at
+ * 30000, but detail cell 1470 lies at 29419.6 and rounds to capacity cell 48.
+ * The router grid drifts in the same way. So every conversion of a cell from
+ * one grid to another goes through layout units: toLayout() on the one grid,
+ * then roundToCell() or clampToCell() on the other. Do not index a cell of the
+ * detail grid or the router grid as a capacity cell times a factor.
+ *
  * This is a node convention: a cell is a point, and the outermost cells sit
  * exactly on the edges of the box. A raster convention would make a cell an
  * area: cell @c k would cover [k, k + 1) of a grid @c width steps across and
@@ -67,9 +78,11 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
    * @param height The number of cells along y.
    * @return The grid, with cell (0, 0) on the minimum corner of @p box and the
    * last cell on the maximum corner.
-   * @throws std::invalid_argument If @p width or @p height is less than two, or
-   * if @p box has no positive extent along an axis, because such a grid has no
-   * cell step.
+   * @throws std::invalid_argument If @p width or @p height is less than two, if
+   * a bound of @p box is infinite or not a number, or if the cell step along
+   * an axis is not positive and finite. A box without a positive extent along
+   * an axis gives no cell step, and an extent beyond the range of a double
+   * gives an infinite one.
    */
   [[nodiscard]] static GridMetrics fit(const BoundingBox& box, uint32_t width,
                                        uint32_t height);
@@ -86,8 +99,9 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
    * @param width The number of cells along x.
    * @return The grid, as fit() returns it for the derived number of cells
    * along y.
-   * @throws std::invalid_argument If @p width is less than two, or if @p box
-   * has no positive extent along an axis.
+   * @throws std::invalid_argument If @p width is less than two, if a bound of
+   * @p box is infinite or not a number, if the extent of @p box along an axis
+   * is not positive and finite, or if fit() throws it.
    * @throws std::length_error If the number of cells along y exceeds
    * 2^32 - 1.
    */
@@ -98,13 +112,15 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
    * @brief Refines the grid by a whole factor over the same box.
    *
    * The refined grid has @p factor times as many cells along each axis.
-   * Refining a capacity grid gives its detail grid.
+   * Refining a capacity grid gives its detail grid. The refined grid does not
+   * nest in this grid: its cell @c k times @p factor does not lie on cell @c k
+   * of this grid. Convert a cell between the two grids through layout units.
    *
    * @param factor The factor by which the number of cells grows along each
    * axis.
    * @return The refined grid, as fit() returns it for the same box.
    * @throws std::invalid_argument If @p factor is zero, or if this grid has
-   * fewer than two cells or no positive extent along an axis.
+   * fewer than two cells or no positive, finite cell step along an axis.
    * @throws std::length_error If the refined grid has more than 2^32 - 1
    * cells along an axis.
    */
@@ -218,6 +234,12 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
  * the router cell step is the extent of the box divided by one less than the
  * number of router cells. The step can therefore exceed @p unitDivision
  * slightly.
+ *
+ * The size of a capacity cell here is not the cell step of @p capacity, which
+ * divides the extent by one less than the number of cells. So the router
+ * cells per capacity cell are a count, not a block of indices: router cell
+ * @c k times that count does not lie on capacity cell @c k. Convert a cell
+ * between the two grids through layout units.
  *
  * @param capacity The capacity grid to divide.
  * @param unitDivision The router cell size to aim for, in layout units.
