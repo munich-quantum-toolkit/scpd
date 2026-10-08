@@ -15,7 +15,6 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -23,7 +22,6 @@
 #include <numbers>
 #include <set>
 #include <stdexcept>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -160,13 +158,13 @@ TEST(Primitives, AQuarterTurnIsAnArcOfTheBendRadius) {
   ASSERT_FALSE(quarter->samples.empty());
   EXPECT_NEAR(quarter->samples.front().x(), 0.0, 1e-9);
   EXPECT_NEAR(quarter->samples.front().y(), 0.0, 1e-9);
-  EXPECT_NEAR(quarter->samples.back().x(), 5.0, 0.5);
-  EXPECT_NEAR(quarter->samples.back().y(), -5.0, 0.5);
+  EXPECT_NEAR(quarter->samples.back().x(), 5.0, 1e-9);
+  EXPECT_NEAR(quarter->samples.back().y(), -5.0, 1e-9);
 }
 
 TEST(Primitives, ADiagonalHeadingKeepsItsQuarterTurns) {
-  // The rotation of the cardinal tables never lands on a diagonal heading,
-  // so the quarter turns of a diagonal are built on their own.
+  // Diagonal headings have a quarter turn to each side, with tangent leads
+  // that reach a whole grid cell.
   for (Heading h = 1; h < NUM_HEADINGS; h = static_cast<Heading>(h + 2)) {
     int quarters = 0;
     for (const Primitive& p : primitives().of(h)) {
@@ -184,7 +182,8 @@ TEST(Primitives, ADiagonalHeadingKeepsItsQuarterTurns) {
 
 TEST(Primitives, EveryHeadingHoldsQuarterTurnsThatEndOnTheirExitHeading) {
   // Every quarter turn meets its exit tangent, including diagonal entries.
-  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
     const MovePrimitives table(radius);
     for (Heading h = 0; h < NUM_HEADINGS; ++h) {
       for (const int side : {-2, 2}) {
@@ -212,18 +211,14 @@ TEST(Primitives, SweptCellsStayWithinTheReachOfTheirMove) {
         EXPECT_LE(std::abs(c.dx), span + 1) << p.id;
         EXPECT_LE(std::abs(c.dy), span + 1) << p.id;
       }
-      // The end of the move is swept or is the next cell after the sweep.
-      const CellOffset& last = p.swept.back();
-      EXPECT_LE(std::abs(last.dx - p.dx), 1) << p.id;
-      EXPECT_LE(std::abs(last.dy - p.dy), 1) << p.id;
+      // Every move sweeps its end cell.
+      EXPECT_EQ(p.swept.back(), (CellOffset{.dx = p.dx, .dy = p.dy})) << p.id;
     }
   }
 }
 
 TEST(Primitives, EveryTurnSweepsItsStartFirst) {
-  // A path lists the swept cells of a turn from the start of its arc on, and
-  // a dogleg takes the first swept cell as that start. The straight step
-  // sweeps only its end.
+  // Turns include their start cell; a straight step sweeps only its end.
   for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
        ++radius) {
     const MovePrimitives table(radius);
@@ -261,7 +256,8 @@ TEST(Primitives, TheBendRadiusMustBePositive) {
 
 TEST(Primitives,
      EveryRadiusGivesEachHeadingAStraightStepAndAQuarterTurnEachWay) {
-  for (uint32_t radius = 1; radius <= 40; ++radius) {
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
     const MovePrimitives table(radius);
     EXPECT_EQ(table.minRadius(), radius);
     for (Heading h = 0; h < NUM_HEADINGS; ++h) {
@@ -298,7 +294,8 @@ TEST(Primitives,
 }
 
 TEST(Primitives, TheSamplesOfEveryMoveRunForwardToItsEnd) {
-  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
     const MovePrimitives table(radius);
     for (Heading h = 0; h < NUM_HEADINGS; ++h) {
       for (const Primitive& p : table.of(h)) {
@@ -330,7 +327,8 @@ TEST(Primitives, TheSamplesOfEveryMoveRunForwardToItsEnd) {
 }
 
 TEST(Primitives, EveryMoveCostsTheLengthOfItsCurve) {
-  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
     const MovePrimitives table(radius);
     for (Heading h = 0; h < NUM_HEADINGS; ++h) {
       for (const Primitive& p : table.of(h)) {
@@ -365,7 +363,8 @@ TEST(Primitives, TheCellsOfEveryMoveFormAChainOfNeighbors) {
   // and the end of every move form a chain in which each cell shares an edge
   // or a corner with the next: every path of moves through the corridor
   // gives a walk through the corridor.
-  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
     const MovePrimitives table(radius);
     for (Heading h = 0; h < NUM_HEADINGS; ++h) {
       for (const Primitive& p : table.of(h)) {
@@ -383,17 +382,45 @@ TEST(Primitives, TheCellsOfEveryMoveFormAChainOfNeighbors) {
   }
 }
 
+TEST(Primitives, HalfCellTiesHaveStableSweptCells) {
+  const auto roundCell = [](const double value) {
+    const double half = std::floor(value) + 0.5;
+    return static_cast<int16_t>(
+        std::lround(std::abs(value - half) <= 1e-10 ? half : value));
+  };
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
+      for (const Primitive& p : table.of(h)) {
+        if (p.exitHeading == h) {
+          continue;
+        }
+        std::vector<CellOffset> expected;
+        for (const auto& sample : p.samples) {
+          const CellOffset cell{.dx = roundCell(sample.x()),
+                                .dy = roundCell(sample.y())};
+          if (expected.empty() || expected.back() != cell) {
+            expected.push_back(cell);
+          }
+        }
+        EXPECT_EQ(p.swept, expected)
+            << radius << " " << static_cast<int>(h) << " " << p.id;
+      }
+    }
+  }
+}
+
 TEST(Primitives, TheCenterlineOfEveryMoveStaysWithinHalfACellOfItsCells) {
   // The rendered centerline of a move is the polyline through its samples.
   // The search tests the start, the swept cells and the end of the move, so
   // the corridor must leave room for the centerline beyond those cells. The
-  // test walks the polyline in steps of a hundredth of a cell. At a radius
-  // of 20 cells, the polyline crosses the center of a cell between two
-  // tested cells, half a cell from both; the tolerance covers the rounding
-  // of the samples.
+  // test walks the polyline in steps of a hundredth of a cell; the tolerance
+  // covers floating-point roundoff at cell boundaries.
   constexpr double step = 0.01;
   constexpr double tolerance = 1e-9;
-  for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
     const MovePrimitives table(radius);
     for (Heading h = 0; h < NUM_HEADINGS; ++h) {
       for (const Primitive& p : table.of(h)) {
@@ -440,27 +467,6 @@ TEST(Primitives, EveryHeadingHoldsAnEighthTurnToEitherSide) {
                                         }),
                   1)
             << radius << " " << static_cast<int>(h) << " " << side;
-      }
-    }
-  }
-}
-
-TEST(Primitives, AHeadingWithAnEighthTurnOfItsOwnGetsNoExactOne) {
-  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
-       ++radius) {
-    const MovePrimitives table(radius);
-    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
-      for (const auto& [id, side] : {std::pair{902U, 1}, std::pair{903U, -1}}) {
-        if (table.find(h, id) == nullptr) {
-          continue;
-        }
-        const Heading exit = turned(h, side);
-        EXPECT_EQ(std::ranges::count_if(table.of(h),
-                                        [exit](const Primitive& p) {
-                                          return p.exitHeading == exit;
-                                        }),
-                  1)
-            << radius << " " << static_cast<int>(h) << " " << id;
       }
     }
   }

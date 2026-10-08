@@ -38,6 +38,13 @@ double cross(const Vector& a, const Vector& b) {
   return a[0] * b[1] - a[1] * b[0];
 }
 
+/// Resolves half-cell ties independently of trigonometric roundoff.
+int16_t roundCell(const double value) {
+  const double half = std::floor(value) + 0.5;
+  return static_cast<int16_t>(
+      std::lround(std::abs(value - half) <= 1e-10 ? half : value));
+}
+
 /// Builds a clockwise turn with straight leads that meet a grid cell.
 Primitive turn(const Heading entry, const uint32_t radius, const int eighths) {
   const Vector u = direction(entry);
@@ -112,8 +119,8 @@ Primitive turn(const Heading entry, const uint32_t radius, const int eighths) {
   // The analytic endpoint is integral; remove only floating-point roundoff.
   p.samples.back() = flatbuffers::geometry::Point(p.dx, p.dy);
   for (const auto& point : p.samples) {
-    const CellOffset cell{.dx = static_cast<int16_t>(std::lround(point.x())),
-                          .dy = static_cast<int16_t>(std::lround(point.y()))};
+    const CellOffset cell{.dx = roundCell(point.x()),
+                          .dy = roundCell(point.y())};
     if (p.swept.empty() || p.swept.back() != cell) {
       p.swept.push_back(cell);
     }
