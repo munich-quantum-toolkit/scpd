@@ -16,8 +16,11 @@ releases may include breaking changes.
   move primitives, with a distance-field heuristic, a bucket queue whose memory
   is that of its largest search, one shared read-only obstacle mask and
   per-thread scratch, an orthogonal search for feedline crossings, the path
-  geometry, the self-intersection check and the coupler dogleg ([#134])
-  ([**@FeldmeierMichael**])
+  geometry decoder, turns with exact grid endpoints and tangents at the minimum
+  bend radius, the self-intersection check and the coupler dogleg with
+  complete-candidate validation. Crossing-mask rebuilds preserve the previous
+  state on allocation failure ([#134]) ([**@FeldmeierMichael**],
+  [**@marcelwa**])
 - ✨ Add `MQT::ScpdGrid`: grid metrics and the rule-to-cell conversion
   `cellsFor`, bit grids, obstacle rasterization with the keepout, the exact
   distance transform and the watershed, and add the grid coordinate types
@@ -46,10 +49,6 @@ releases may include breaking changes.
 
 ### Changed
 
-- 🐛 Make routing turns meet their grid endpoints and exit tangents at the
-  minimum bend radius. Share path decoding, preserve crossing masks on failed
-  rebuilds, and validate complete coupler candidates ([#134])
-  ([**@FeldmeierMichael**], [**@marcelwa**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that

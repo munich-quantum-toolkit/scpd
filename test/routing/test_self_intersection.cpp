@@ -214,9 +214,7 @@ TEST(SelfIntersection, ALoopOfFourStepsIsFound) {
 }
 
 TEST(SelfIntersection, NoTwoMovesOfTheRouterReadAsALoop) {
-  // Two moves cannot close a loop, but the cells they list can repeat a cell
-  // within the spur window: an eighth turn lists the cell past its end.
-  // Every pair of moves at every radius the router accepts must pass.
+  // Every pair of moves at every supported radius must be loop-free.
   std::size_t spurs = 0;
   for (uint32_t radius = DubinsRouter::MIN_BEND_RADIUS; radius <= 23;
        ++radius) {
@@ -245,16 +243,16 @@ TEST(SelfIntersection, NoTwoMovesOfTheRouterReadAsALoop) {
 }
 
 TEST(SelfIntersection, ALoopOneStepBeyondTheSpurWindowIsFound) {
-  // At a radius of one cell, three exact quarter turns of a diagonal heading
-  // and one quarter turn back close a loop after five steps, which is four
-  // steps between the two visits of a cell.
+  // Three quarter turns and a turn back revisit a cell beyond the spur window.
   const MovePrimitives primitives(1);
   std::vector<const Primitive*> moves;
   Heading heading = 1;
-  for (const uint32_t id : {900U, 900U, 900U, 901U}) {
-    const Primitive* move = primitives.find(heading, id);
-    ASSERT_NE(move, nullptr);
-    moves.push_back(move);
+  for (const int turn : {-2, -2, -2, 2}) {
+    const auto& options = primitives.of(heading);
+    const auto move = std::ranges::find(options, turned(heading, turn),
+                                        &Primitive::exitHeading);
+    ASSERT_NE(move, options.end());
+    moves.push_back(&*move);
     heading = move->exitHeading;
   }
   PathLoopScratch scratch;

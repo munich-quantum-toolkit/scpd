@@ -34,17 +34,17 @@ TEST(RouteGeometry, ATurnOntoADiagonalPreservesTheBendRadiusAtTheJoin) {
   DubinsRouter router(primitives, scratch);
   router.attachObstacles(&obstacles);
   router.attachCorridor(&outsideCorridor);
-  router.setParams({.startStraightLength = 10, .endStraightLength = 10,
-                    .minRadius = 5});
+  router.setParams(
+      {.startStraightLength = 10, .endStraightLength = 10, .minRadius = 5});
   const auto moves = primitives->of(0);
-  const auto turn = std::ranges::find_if(moves, [](const Primitive& move) {
-    return move.exitHeading == 7;
-  });
+  const auto turn = std::ranges::find_if(
+      moves, [](const Primitive& move) { return move.exitHeading == 7; });
   ASSERT_NE(turn, moves.end());
-  Path path = router.route({.source = {.x = 40, .y = 40, .heading = 0},
-                           .target = {.x = static_cast<uint32_t>(50 + turn->dx),
-                                      .y = static_cast<uint32_t>(20 + turn->dy),
-                                      .heading = 7}});
+  Path path =
+      router.route({.source = {.x = 40, .y = 40, .heading = 0},
+                    .target = {.x = static_cast<uint32_t>(50 + turn->dx),
+                               .y = static_cast<uint32_t>(20 + turn->dy),
+                               .heading = 7}});
   ASSERT_FALSE(path.empty());
   std::vector<PathSegment> segments;
   const auto points = samplePath(*primitives, path, path.front(), segments);

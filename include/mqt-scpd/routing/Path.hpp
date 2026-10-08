@@ -63,29 +63,22 @@ struct PathPoint {
 /**
  * @brief A routed path, from its source to its target.
  *
- * The router and the coupler dogleg write paths in one format:
- * - A straight run is a sequence of points one step apart. Each point carries
- *   the straight primitive of its heading.
- * - A turn lists the cells it sweeps under its own tag: the heading it starts
- *   on and its primitive. The first of these points is the start of the arc.
- *   A point where a move starts carries that move, so the straight run before
- *   a turn ends one step before the start of the arc.
- * - Where the search begins with a turn, its tag replaces the straight tag
+ * The router and coupler dogleg share a primitive-tagged format. A straight
+ * run lists cells one step apart under its heading's straight primitive.
+ * A turn lists its swept cells under its entry heading and primitive. Its
+ * first tagged cell is the geometric origin, including at the source-stub
+ * boundary. The straight run before it ends one step before that origin.
  *
- * at the last cell of the source stub, which is the start of the arc.
- * - The
- * arc ends at its start plus the end offset of the primitive, (Primitive::dx,
- * Primitive::dy). In a routed path, the point after a turn is that end. A
- * coupler dogleg instead lists the end as a point of the turn, also where the
- * turn does not sweep it, and goes on with a straight step from the end. A turn
- * that follows directly takes that point over as the start of its arc. The last
- * point of a dogleg never lies on the cell of the point of the routed path that
- * follows it.
- * - The swept cells of a turn are the cells the search tests, not a chain of
- *   neighboring cells (see Primitive::swept). Some eighth turns list a cell
- *   twice or a cell past their end, so a path can step off a cell and back
- *   onto it two points later. Some turns that leave a diagonal heading do not
- *   list their end; in a routed path, the end then follows as the next point.
+ * A turn ends at its origin plus (Primitive::dx, Primitive::dy), on
+ * Primitive::exitHeading. In a routed path, the next run starts at that
+ * endpoint. A dogleg lists the endpoint under the turn's tag and starts its
+ * straight run one step beyond it. A following turn takes over the shared
+ * endpoint as its own origin. Swept cells form a chain of neighbors;
+ * consecutive repeats are removed within each primitive.
+ *
+ * Use decodePath() to read move origins, endpoints, and occupancy spans.
+ * Swept cells describe the collision checks; the exact geometry comes from
+ * the corresponding primitive samples.
  */
 using Path = std::vector<PathPoint>;
 

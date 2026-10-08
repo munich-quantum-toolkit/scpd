@@ -75,9 +75,9 @@ struct Primitive {
  *
  * The constructor selects the shortest leads among grid ends within two
  * cells of the bare arc end. It rotates and reflects two canonical headings
- * to preserve symmetry. Identifiers 900 and 901 denote clockwise and
- * counterclockwise quarter turns; 902 and 903 denote the eighth turns;
- * 904 denotes the straight step. The tables are read-only after construction.
+ * to preserve symmetry. Primitive identifiers are internal table keys;
+ * obtain them through of() and straight() rather than storing numeric values.
+ * The tables are read-only after construction.
  */
 class MQT_SCPD_ROUTING_EXPORT MovePrimitives {
 public:
@@ -97,10 +97,10 @@ public:
   /**
    * @brief The largest bend radius the tables can hold, in cells.
    *
-   * A DubinsRouter accepts only the radii up to DubinsRouter::MAX_BEND_RADIUS,
-   * because the moves of a larger radius do not fit its search tables. The
-   * functions that read the primitives without a router, such as
-   * buildDogleg(), take every radius up to this bound.
+   * DubinsRouter validates the smaller range from
+   * DubinsRouter::MIN_BEND_RADIUS to DubinsRouter::MAX_BEND_RADIUS. Geometry
+   * operations without a router, such as buildDogleg(), take every radius
+   * up to this bound.
    */
   static constexpr uint32_t MAX_BEND_RADIUS = 90;
 

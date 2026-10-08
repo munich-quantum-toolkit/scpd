@@ -320,10 +320,7 @@ const Comparisons& comparisons() {
 }
 
 TEST(RouteOptimality, WithoutTheBendLowerBoundEveryPathIsTheCheapest) {
-  // At a bend radius of 5, the distance term drops along a turn by at most 20
-  // more than the length of the turn, per eighth turn. A turn pays a bend
-  // penalty of 500 per eighth turn on top of its length, so the estimate is
-  // consistent.
+  // Compare the routed cost with an independent uniform-cost search.
   const Comparison& c = comparisons()[0];
   EXPECT_GT(c.routed, GRIDS / 2);
   EXPECT_LT(c.rejectedLoops, GRIDS / 20);
@@ -335,11 +332,8 @@ TEST(RouteOptimality,
   // The default bend penalty of 100 covers the excess of every turn at every
   // radius that a router accepts (see
   // AtTheDefaultBendPenaltyEveryMoveCostsAtLeastTheWalkThroughItsCells), so
-  // the estimate is consistent. The radii of 2, 3, 8, 14 and 17 cells hold
-  // exact eighth turns. On grids of 30 to 60 cells, a turning circle of 24
-  // cells forces many paths at a radius of 12 to cross themselves, so the
-  // test does not bound the rejections. The radii of 14 and 17 cells run on
-  // grids of 60 to 100 cells, which leave room for their turning circles.
+  // the estimate is consistent. Larger radii run on larger grids, which leave
+  // room for their turning circles.
   constexpr int grids = 300;
   for (const uint32_t radius : {2U, 3U, 8U, 12U}) {
     const Comparison c = compareWithTheOptimum(radius, 100, grids, false)[0];
@@ -356,11 +350,9 @@ TEST(RouteOptimality,
 }
 
 TEST(RouteOptimality,
-     WithoutTheBendLowerBoundEveryPathIsTheCheapestAtTheThinnestMargin) {
-  // At the radii of 19, 21 and 23 cells, some turn has an excess of 96 per
-  // eighth turn, so the default bend penalty of 100 covers it with the
-  // thinnest margin. The grids are large enough for turning circles of up
-  // to 46 cells.
+     WithoutTheBendLowerBoundEveryPathIsTheCheapestAtLargeRadii) {
+  // Verify the default bend penalty at the largest supported radii on grids
+  // large enough to leave room for the turning circles.
   constexpr int grids = 150;
   for (const uint32_t radius : {19U, 21U, 23U}) {
     const Comparison c = compareWithTheOptimum(
