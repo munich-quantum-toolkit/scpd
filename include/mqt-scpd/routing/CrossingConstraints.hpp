@@ -21,6 +21,8 @@
 
 namespace mqt::scpd::routing {
 
+class MovePrimitives;
+
 /**
  * @brief Records where a route may cross the feedlines, and on which heading.
  *
@@ -33,35 +35,14 @@ namespace mqt::scpd::routing {
  * along it: only straight steps cross a feedline, so the crossing is at a
  * right angle in the rendered geometry too.
  *
- * The class is separate from the router, so that a check of a routed path can
- * ask the questions the search asks. The path does not record which question
- * the search asked at a cell. A check therefore asks turnAllowed() for every
- * cell of a turn, from the start of its arc to its end, and allowed() with the
- * heading of the step for every cell of a straight step. The router tests the
- * first cell of a path as if a straight step entered it on the heading of
- * that cell, so a check asks allowed() there too. Where the search of a path
- * begins with a turn, the start of the arc is the last cell of the source
- * stub, which keeps the straight tag of the stub (see Path). A check asks
- * turnAllowed() for that cell too: for the last cell of the source stub when
- * the point after it carries a turn tag and the arc ends at that cell plus
- * the end offset of the primitive of the tag. The tags alone do not tell: a
- * search that begins with a straight step of one cell and then turns gives
- * the same tags. The router applies its exemptions and its single-crossing
- * rule on top of these constraints.
+ * The class is separate from the router, so a caller can check the same
+ * crossing rules. With primitive tables, tagged runs identify turns even
+ * where their swept cells start along a straight tangent. Without tables,
+ * a heading change after a tagged run identifies that run as a turn. Cells
+ * that do not step along their heading are closed in either case.
  *
- * A straight run is read from the cells. A cell that steps to the next cell
- * along its own heading is on a straight run. The turns are read from the
- * tags (see Path). A run of points under one tag whose next point has another
- * heading is a turn. The cells of a turn are the points of the run and the
- * point after them, which is the end of the arc. The turn after the first run
- * of a path also takes the point before its run, because that point is the
- * start of the arc where the search began with the turn. Otherwise that point
- * lies one step before the start of the arc. The cells within one cell of a
- * cell of a turn are closed, and so are the cells within one cell of every
- * other cell that is not on a straight run. A turn first sweeps cells
- * straight ahead, and its rendered curve bends from its start. These cells
- * are on a straight run and on a turn at the same time: they constrain the
- * cells around them to their heading, and the cells next to them are closed.
+ * Use the tables that produced the feedlines to include terminal turns.
+ * The router supplies its tables. Untagged straight feedlines are supported.
  */
 class MQT_SCPD_ROUTING_EXPORT CrossingConstraints {
 public:
@@ -86,11 +67,14 @@ public:
    * whose flag is set. A feedline beyond the end of @p skip counts.
    * @param expandRadius The distance in cells, along each axis, up to which a
    * straight run constrains the cells around it.
-   * @post The new constraints replace the previous ones.
+   * @param primitives Optional tables that produced the tagged feedlines.
+   * Untagged runs use their cell directions and heading changes.
+   * @post The new constraints replace the previous ones. Allocation failure
+   * preserves the previous dimensions and masks.
    */
   void build(uint32_t width, uint32_t height,
              const std::vector<Path>& feedlines, const std::vector<bool>& skip,
-             int expandRadius = 10);
+             int expandRadius = 10, const MovePrimitives* primitives = nullptr);
 
   /**
    * @brief Removes every constraint and releases the memory of the masks.

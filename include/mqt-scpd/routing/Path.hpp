@@ -70,16 +70,17 @@ struct PathPoint {
  *   on and its primitive. The first of these points is the start of the arc.
  *   A point where a move starts carries that move, so the straight run before
  *   a turn ends one step before the start of the arc.
- * - One exception: where the search of a routed path begins with a turn, the
- *   start of the arc is the last cell of the source stub, which keeps the tag
- *   of the stub. The first point of that turn is the next cell the arc sweeps.
- * - The arc ends at its start plus the end offset of the primitive,
- *   (Primitive::dx, Primitive::dy). In a routed path, the point after a turn
- *   is that end. A coupler dogleg instead lists the end as a point of the
- *   turn, also where the turn does not sweep it, and goes on with a straight
- *   step from the end. A turn that follows directly takes that point over as
- *   the start of its arc. The last point of a dogleg never lies on the cell
- *   of the point of the routed path that follows it.
+ * - Where the search begins with a turn, its tag replaces the straight tag
+ *
+ * at the last cell of the source stub, which is the start of the arc.
+ * - The
+ * arc ends at its start plus the end offset of the primitive, (Primitive::dx,
+ * Primitive::dy). In a routed path, the point after a turn is that end. A
+ * coupler dogleg instead lists the end as a point of the turn, also where the
+ * turn does not sweep it, and goes on with a straight step from the end. A turn
+ * that follows directly takes that point over as the start of its arc. The last
+ * point of a dogleg never lies on the cell of the point of the routed path that
+ * follows it.
  * - The swept cells of a turn are the cells the search tests, not a chain of
  *   neighboring cells (see Primitive::swept). Some eighth turns list a cell
  *   twice or a cell past their end, so a path can step off a cell and back

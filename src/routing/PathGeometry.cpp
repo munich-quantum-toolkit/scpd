@@ -24,74 +24,43 @@
 
 namespace mqt::scpd::routing {
 
-namespace {
-
-/**
- * @brief Moves the recorded cell of a turn segment onto the end of its arc.
- * @param primitives The primitive tables.
- * @param turn The turn segment. Its cell is the first point of the turn.
- * @param next The first point after the turn, or @c nullptr at the end of the
- * path.
- * @param last The last point of the turn.
- */
-void endTurn(const MovePrimitives& primitives, PathSegment& turn,
-             const PathPoint* next, const PathPoint& last) {
-  PathPoint& cell = turn.cells[0];
-  const Primitive* primitive = primitives.find(turn.heading, turn.primitive);
-  if (primitive == nullptr) {
-    const PathPoint& end = next != nullptr ? *next : last;
-    cell.x = end.x;
-    cell.y = end.y;
-    return;
+std::vector<PathRun> pathRuns(const Path& path) {
+  std::vector<PathRun> runs;
+  for (std::size_t begin = 0; begin < path.size();) {
+    std::size_t end = begin + 1;
+    while (end < path.size() && path[end].heading == path[begin].heading &&
+           path[end].primitive == path[begin].primitive) {
+      ++end;
+    }
+    runs.push_back({begin, end});
+    begin = end;
   }
-  const int64_t endX = static_cast<int64_t>(cell.x) + primitive->dx;
-  const int64_t endY = static_cast<int64_t>(cell.y) + primitive->dy;
-  const HeadingVector exit = headingVector(primitive->exitHeading);
-  const bool stepBeyond = next != nullptr &&
-                          static_cast<int64_t>(next->x) == endX + exit.dx &&
-                          static_cast<int64_t>(next->y) == endY + exit.dy;
-  if (next != nullptr && !stepBeyond) {
-    cell.x = next->x;
-    cell.y = next->y;
-    return;
-  }
-  cell.x = static_cast<uint32_t>(endX);
-  cell.y = static_cast<uint32_t>(endY);
+  return runs;
 }
 
-/**
- * @brief Reports whether the arc of a turn starts on the straight point
- * before the turn.
- *
- * A routed path has this form where its search begins with a turn (see
- * Path). The point after the turn then lies at the end offset of the
- * primitive from the point before the turn. In the regular form, it lies at
- * that offset from the first point of the turn, or one step further along the
- * exit heading. For the primitives of radii 1 to 23, the two forms meet only
- * where the two points share a cell.
- *
- * @param primitives The primitive tables.
- * @param before The point before the first point of the turn.
- * @param turn The first point of the turn.
- * @param next The first point after the turn, or @c nullptr at the end of the
- * path.
- * @return @c true when the arc starts on @p before.
- */
-bool arcStartsBefore(const MovePrimitives& primitives, const PathPoint& before,
-                     const PathPoint& turn, const PathPoint* next) {
-  if (next == nullptr || before.heading != turn.heading ||
-      !primitives.isStraight(before.heading, before.primitive)) {
-    return false;
+std::vector<PathMove> decodePath(const MovePrimitives& primitives,
+                                 const Path& path) {
+  std::vector<PathMove> moves;
+  for (const PathRun& run : pathRuns(path)) {
+    const PathPoint origin = path[run.begin];
+    PathPoint end = path[run.end - 1];
+    const Primitive* primitive =
+        primitives.find(origin.heading, origin.primitive);
+    if (primitive != nullptr &&
+        !primitives.isStraight(origin.heading, origin.primitive)) {
+      end = {.x = static_cast<uint32_t>(static_cast<int64_t>(origin.x) +
+                                        primitive->dx),
+             .y = static_cast<uint32_t>(static_cast<int64_t>(origin.y) +
+                                        primitive->dy),
+             .heading = primitive->exitHeading,
+             .primitive = primitives.straight(primitive->exitHeading)};
+    } else if (primitive == nullptr && run.end < path.size()) {
+      end = path[run.end];
+    }
+    moves.push_back({origin, end, run.begin, run.end});
   }
-  const Primitive* primitive = primitives.find(turn.heading, turn.primitive);
-  return primitive != nullptr &&
-         static_cast<int64_t>(next->x) ==
-             static_cast<int64_t>(before.x) + primitive->dx &&
-         static_cast<int64_t>(next->y) ==
-             static_cast<int64_t>(before.y) + primitive->dy;
+  return moves;
 }
-
-} // namespace
 
 Path straightRun(const MovePrimitives& primitives, const PathPoint start,
                  const uint32_t steps) {
@@ -114,60 +83,31 @@ Path straightRun(const MovePrimitives& primitives, const PathPoint start,
 SegmentedPath reconstructSegments(const MovePrimitives& primitives,
                                   const Path& path) {
   SegmentedPath result;
-  auto& segments = result.segments;
-  Heading heading = 0;
-  uint16_t primitive = 0;
-  uint32_t x = 0;
-  uint32_t y = 0;
   double length = 0.0;
-  // The index of the first point of the last segment.
-  std::size_t segmentStart = 0;
-  const auto closeTurn = [&](const PathPoint* next, const PathPoint& last) {
-    endTurn(primitives, segments.back(), next, last);
-    if (segmentStart == 0 ||
-        !arcStartsBefore(primitives, path[segmentStart - 1], path[segmentStart],
-                         next)) {
-      return;
-    }
-    // The point before the turn counted a straight step, but its move is the
-    // turn, which counts on its own.
-    const PathPoint& before = path[segmentStart - 1];
-    const double step = primitives.cost(before.heading, before.primitive);
-    segments[segments.size() - 2].lengthAt.back() -= step;
-    segments.back().lengthAt.back() -= step;
-    length -= step;
-  };
-  for (std::size_t i = 0; i < path.size(); ++i) {
-    const PathPoint& point = path[i];
-    if (segments.empty() || heading != point.heading ||
-        primitive != point.primitive) {
-      if (!segments.empty() && !primitives.isStraight(heading, primitive)) {
-        closeTurn(&point, path[i - 1]);
+  for (const PathMove& move : decodePath(primitives, path)) {
+    PathSegment segment;
+    segment.heading = move.origin.heading;
+    segment.primitive = move.origin.primitive;
+    const bool straight =
+        primitives.isStraight(segment.heading, segment.primitive);
+    if (straight) {
+      for (std::size_t i = move.begin; i < move.endIndex; ++i) {
+        if (!segment.cells.empty() && segment.cells.back().samePlace(path[i])) {
+          continue;
+        }
+        length += primitives.cost(segment.heading, segment.primitive);
+        segment.cells.push_back(path[i]);
+        segment.lengthAt.push_back(length);
       }
-      heading = point.heading;
-      primitive = point.primitive;
-      x = point.x;
-      y = point.y;
-      segmentStart = i;
-      length += primitives.cost(point.heading, point.primitive);
-      PathSegment segment;
-      segment.heading = heading;
-      segment.primitive = primitive;
-      segment.cells = {point};
-      segment.lengthAt = {length};
-      segments.push_back(std::move(segment));
-    } else if (primitives.isStraight(heading, primitive) &&
-               (x != point.x || y != point.y)) {
-      length += primitives.cost(point.heading, point.primitive);
-      PathSegment& segment = segments.back();
+    } else {
+      length += primitives.cost(segment.heading, segment.primitive);
+      PathPoint endpoint = move.end;
+      endpoint.heading = segment.heading;
+      endpoint.primitive = segment.primitive;
+      segment.cells.push_back(endpoint);
       segment.lengthAt.push_back(length);
-      segment.cells.push_back(point);
-      x = point.x;
-      y = point.y;
     }
-  }
-  if (!segments.empty() && !primitives.isStraight(heading, primitive)) {
-    closeTurn(nullptr, path.back());
+    result.segments.push_back(std::move(segment));
   }
   result.nominalLength = length;
   return result;
@@ -175,93 +115,60 @@ SegmentedPath reconstructSegments(const MovePrimitives& primitives,
 
 namespace {
 
-/// The rendering shared by both samplers.
+/// The rendering shared by both samplers, using the same decoded move contract.
 std::vector<Point> render(const MovePrimitives& primitives, const Path& path,
                           const PathPoint start,
                           std::vector<PathSegment>& segments,
                           std::vector<std::pair<std::size_t, bool>>* bounds) {
   segments = reconstructSegments(primitives, path).segments;
-  std::vector<Point> points;
   if (bounds != nullptr) {
     bounds->clear();
   }
   if (segments.empty()) {
-    return points;
+    return {};
   }
-  double xCurrent = start.x;
-  double yCurrent = start.y;
-  points.emplace_back(xCurrent, yCurrent);
+  std::vector<Point> points{
+      {static_cast<double>(start.x), static_cast<double>(start.y)}};
   double accumulated = 0.0;
-  // A residual larger than this is a broken path, not rounding; then the
-  // rendering jumps to the true cell instead of stretching a huge curve.
-  constexpr double maxTaper = 20.0;
-  constexpr double zeroDisplacement = 1e-6;
-
-  for (PathSegment& segment : segments) {
+  const auto append = [&](const double x, const double y) {
+    const Point& previous = points.back();
+    const double distance = std::hypot(x - previous.x(), y - previous.y());
+    if (distance > 1e-9) {
+      accumulated += distance;
+      points.emplace_back(x, y);
+    }
+  };
+  const auto moves = decodePath(primitives, path);
+  for (std::size_t i = 0; i < moves.size(); ++i) {
+    const PathMove& move = moves[i];
+    PathSegment& segment = segments[i];
+    const bool straight =
+        primitives.isStraight(segment.heading, segment.primitive);
     if (bounds != nullptr) {
-      // The polyline holds the start before the first segment.
-      bounds->emplace_back(points.size() - 1, segment.straight());
+      bounds->emplace_back(points.size() - 1, straight);
     }
-    for (uint32_t i = 0; i < segment.steps(); ++i) {
-      const PathPoint& cell = segment.cells[i];
-      const auto trueX = static_cast<double>(cell.x);
-      const auto trueY = static_cast<double>(cell.y);
-      if (std::abs(trueX - xCurrent) < zeroDisplacement &&
-          std::abs(trueY - yCurrent) < zeroDisplacement) {
-        segment.lengthAt[i] = accumulated;
-        continue;
+    if (straight) {
+      for (std::size_t k = 0; k < segment.cells.size(); ++k) {
+        const PathPoint& cell = segment.cells[k];
+        append(cell.x, cell.y);
+        segment.lengthAt[k] = accumulated;
       }
-      const Primitive* primitive =
-          primitives.find(segment.heading, segment.primitive);
-      const std::size_t stepStart = points.size();
-      if (primitive != nullptr &&
-          primitive->exitHeading != (segment.heading & 7U)) {
-        // The straight run before a turn ends one step before the start of
-        // the arc. That step is drawn first.
-        const HeadingVector v = headingVector(segment.heading);
-        const double fromX = trueX - primitive->dx;
-        const double fromY = trueY - primitive->dy;
-        if (std::abs(fromX - xCurrent - v.dx) < zeroDisplacement &&
-            std::abs(fromY - yCurrent - v.dy) < zeroDisplacement) {
-          points.emplace_back(fromX, fromY);
-          xCurrent = fromX;
-          yCurrent = fromY;
-        }
-      }
-      const std::size_t unitStart = points.size();
-      if (primitive != nullptr) {
-        // The first sample is the origin and is skipped.
-        for (std::size_t k = 1; k < primitive->samples.size(); ++k) {
-          const Point& s = primitive->samples[k];
-          points.emplace_back(xCurrent + s.x(), yCurrent + s.y());
-        }
-      }
-      if (points.size() > unitStart) {
-        const double errX = trueX - points.back().x();
-        const double errY = trueY - points.back().y();
-        if (std::sqrt((errX * errX) + (errY * errY)) > maxTaper) {
-          points.resize(unitStart);
-          points.emplace_back(trueX, trueY);
-        } else {
-          const std::size_t added = points.size() - unitStart;
-          for (std::size_t k = 0; k < added; ++k) {
-            const double t =
-                static_cast<double>(k + 1) / static_cast<double>(added);
-            Point& p = points[unitStart + k];
-            p = Point(p.x() + (t * errX), p.y() + (t * errY));
-          }
-        }
-      } else {
-        points.emplace_back(trueX, trueY);
-      }
-      xCurrent = trueX;
-      yCurrent = trueY;
-      // The polyline holds the start before any step, so the step's first
-      // point has a point before it.
-      accumulated +=
-          polylineLength(std::span<const Point>(points).subspan(stepStart - 1));
-      segment.lengthAt[i] = accumulated;
+      continue;
     }
+    const Primitive* primitive =
+        primitives.find(segment.heading, segment.primitive);
+    if (primitive != nullptr) {
+      // The previous straight run ends one step before a turn's tagged origin.
+      append(move.origin.x, move.origin.y);
+      for (std::size_t k = 1; k < primitive->samples.size(); ++k) {
+        const Point& sample = primitive->samples[k];
+        append(static_cast<double>(move.origin.x) + sample.x(),
+               static_cast<double>(move.origin.y) + sample.y());
+      }
+    } else {
+      append(move.end.x, move.end.y);
+    }
+    segment.lengthAt[0] = accumulated;
   }
   return points;
 }
@@ -271,12 +178,7 @@ std::vector<Point> render(const MovePrimitives& primitives, const Path& path,
 std::vector<Point> samplePath(const MovePrimitives& primitives, Path& path,
                               const PathPoint start,
                               std::vector<PathSegment>& segments) {
-  path.erase(std::ranges::unique(path,
-                                 [](const PathPoint& a, const PathPoint& b) {
-                                   return a.samePlace(b);
-                                 })
-                 .begin(),
-             path.end());
+  path.erase(std::ranges::unique(path).begin(), path.end());
   return render(primitives, path, start, segments, nullptr);
 }
 

@@ -387,7 +387,8 @@ void DubinsRouter::buildOrthogonalConstraints(
   // Every allocation runs before the first change, so a failed call keeps the
   // previous constraints and their rule bits.
   CrossingConstraints built;
-  built.build(gridWidth, gridHeight, feedlines, skip, expandRadius);
+  built.build(gridWidth, gridHeight, feedlines, skip, expandRadius,
+              movePrimitives.get());
   // The search reads from the rule byte of a cell whether the constraints
   // constrain it, so that it calls them only for such a cell.
   holdCrossingRules();
@@ -1037,6 +1038,7 @@ Path DubinsRouter::assemble(const Path& searched, const PathPoint& source,
   // move of no length.
   auto first = searched.begin();
   if (first != searched.end() && first->samePlace(path.back())) {
+    path.back() = *first;
     ++first;
   }
   path.insert(path.end(), first, searched.end());

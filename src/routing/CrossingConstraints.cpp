@@ -12,6 +12,8 @@
 
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
+#include "mqt-scpd/routing/PathGeometry.hpp"
+#include "mqt-scpd/routing/Primitives.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -22,42 +24,29 @@ namespace mqt::scpd::routing {
 
 namespace {
 
-/**
- * @brief Marks the points of a feedline that lie on a turn.
- *
- * A run of points under one tag whose next point has another heading is a
- * turn. The turn covers the run and the point after it, which is the end of
- * the arc. The turn after the first run of the feedline also covers the point
- * before its run, which is the start of the arc where the search began with
- * the turn (see Path).
- *
- * @param feedline The feedline.
- * @return One flag per point of @p feedline, set for a point on a turn.
- */
-std::vector<bool> turnPoints(const Path& feedline) {
+/// Marks turn occupancy using the shared run boundaries. Tables identify
+/// terminal turns; untagged inputs use the following heading change.
+std::vector<bool> turnPoints(const Path& feedline,
+                             const MovePrimitives* primitives) {
   std::vector<bool> onTurn(feedline.size(), false);
-  const auto sameTag = [&](const std::size_t a, const std::size_t b) {
-    return feedline[a].heading == feedline[b].heading &&
-           feedline[a].primitive == feedline[b].primitive;
-  };
-  std::size_t firstRunEnd = 1;
-  while (firstRunEnd < feedline.size() && sameTag(firstRunEnd, 0)) {
-    ++firstRunEnd;
-  }
-  std::size_t begin = 0;
-  while (begin < feedline.size()) {
-    std::size_t end = begin + 1;
-    while (end < feedline.size() && sameTag(end, begin)) {
-      ++end;
-    }
-    if (end < feedline.size() &&
-        feedline[end].heading != feedline[begin].heading) {
-      const std::size_t from = begin == firstRunEnd ? begin - 1 : begin;
-      for (std::size_t at = from; at <= end; ++at) {
+  for (const PathRun& run : pathRuns(feedline)) {
+    const auto& origin = feedline[run.begin];
+    const Primitive* move =
+        primitives != nullptr
+            ? primitives->find(origin.heading, origin.primitive)
+            : nullptr;
+    const bool turning = move != nullptr
+                             ? move->exitHeading != origin.heading
+                             : run.end < feedline.size() &&
+                                   feedline[run.end].heading != origin.heading;
+    if (turning) {
+      for (std::size_t at = run.begin; at < run.end; ++at) {
         onTurn[at] = true;
       }
+      if (run.end < feedline.size()) {
+        onTurn[run.end] = true;
+      }
     }
-    begin = end;
   }
   return onTurn;
 }
@@ -67,7 +56,8 @@ std::vector<bool> turnPoints(const Path& feedline) {
 void CrossingConstraints::build(const uint32_t width, const uint32_t height,
                                 const std::vector<Path>& feedlines,
                                 const std::vector<bool>& skip,
-                                const int expandRadius) {
+                                const int expandRadius,
+                                const MovePrimitives* primitives) {
   std::vector<uint8_t> builtMasks(static_cast<std::size_t>(width) * height, 0);
   const auto w = static_cast<int64_t>(width);
   const auto h = static_cast<int64_t>(height);
@@ -126,7 +116,7 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
             continue;
           }
           uint8_t& mask = builtMasks[(static_cast<std::size_t>(ny) * width) +
-                                    static_cast<std::size_t>(nx)];
+                                     static_cast<std::size_t>(nx)];
           if (mask != CURVE_ZONE) {
             mask |= bit;
           }
@@ -136,7 +126,7 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
     // Every cell of a turn closes the cells around it, even where the turn
     // sweeps cells straight ahead: its rendered curve bends from the start
     // of the arc.
-    const std::vector<bool> onTurn = turnPoints(feedline);
+    const std::vector<bool> onTurn = turnPoints(feedline, primitives);
     for (std::size_t at = 0; at < feedline.size(); ++at) {
       if (!straight[at] || onTurn[at]) {
         closeAround(feedline[at].x, feedline[at].y, 1);

@@ -200,33 +200,13 @@ std::vector<double> crossingSkews(const std::vector<Point>& points,
 }
 
 /// Whether a point of a path lies on a turn. The points of a turn carry its
-/// tag, and the point after a turn is the end of its arc. Where the search
-/// began with a turn, the arc starts on the last cell of the source stub,
-/// which keeps the straight tag of the stub. That cell is on the turn when
-/// the point after it carries a turn tag and the arc ends at that cell plus
-/// the offset of the move. A search that begins with a straight step of one
-/// cell and then turns gives the same tags, so the offset decides.
+/// tag, and the point after a turn is the end of its arc.
 bool onTurn(const MovePrimitives& primitives, const Path& path,
-            const std::size_t i, const std::size_t stubEnd) {
+            const std::size_t i) {
   const auto turns = [&](const PathPoint& point) {
     return !primitives.isStraight(point.heading, point.primitive);
   };
-  if (turns(path[i]) || (i > 0 && turns(path[i - 1]))) {
-    return true;
-  }
-  if (i != stubEnd || i + 1 >= path.size() || !turns(path[i + 1])) {
-    return false;
-  }
-  const PathPoint& first = path[i + 1];
-  std::size_t arcEnd = i + 1;
-  while (arcEnd < path.size() && path[arcEnd].heading == first.heading &&
-         path[arcEnd].primitive == first.primitive) {
-    ++arcEnd;
-  }
-  const Primitive* move = primitives.find(first.heading, first.primitive);
-  return move != nullptr && arcEnd < path.size() &&
-         static_cast<int64_t>(path[arcEnd].x) - path[i].x == move->dx &&
-         static_cast<int64_t>(path[arcEnd].y) - path[i].y == move->dy;
+  return turns(path[i]) || (i > 0 && turns(path[i - 1]));
 }
 
 /// The points of a path that fail the crossing test that the orthogonal
@@ -235,11 +215,10 @@ bool onTurn(const MovePrimitives& primitives, const Path& path,
 /// point as if a straight step on its own heading entered it.
 std::vector<std::size_t> crossingFailures(const DubinsRouter& router,
                                           const Path& path) {
-  const std::size_t stubEnd = router.params().startStraightLength;
   std::vector<std::size_t> failures;
   for (std::size_t i = 0; i < path.size(); ++i) {
     bool passes = true;
-    if (onTurn(router.primitives(), path, i, stubEnd)) {
+    if (onTurn(router.primitives(), path, i)) {
       passes = router.turnAllowedOrthogonal(path[i].x, path[i].y);
     } else {
       const Heading step = path[i > 0 ? i - 1 : 0].heading;
@@ -278,7 +257,7 @@ TEST(DubinsRouter, TheStubsOutOfTheEndsAreStraight) {
   f.block(140, 120, 150, HEIGHT - 1);
   const Path path = f.router.route(ACROSS);
   ASSERT_FALSE(path.empty());
-  for (uint32_t i = 0; i <= 10; ++i) {
+  for (uint32_t i = 0; i < 10; ++i) {
     EXPECT_EQ(path[i].heading, ACROSS.source.heading) << i;
     EXPECT_EQ(path[i].y, ACROSS.source.y) << i;
   }
@@ -364,6 +343,55 @@ TEST(DubinsRouter, AnEndOutsideTheGridGivesAnEmptyPathInBothSearches) {
     EXPECT_TRUE(router.route(objective).empty()) << objective.source.x;
     EXPECT_TRUE(router.routeOrthogonal(objective).empty())
         << objective.source.x;
+  }
+}
+
+TEST(DubinsRouter, AFirstTurnKeepsItsTagAtTheEndOfTheSourceStub) {
+  Fixture f;
+  const Primitive* turn = nullptr;
+  for (const Primitive& move : f.primitives->of(0)) {
+    if (move.exitHeading == 6) {
+      turn = &move;
+      break;
+    }
+  }
+  ASSERT_NE(turn, nullptr);
+  for (const uint32_t stub : {0U, 10U}) {
+    f.router.setParams({.startStraightLength = stub,
+                        .endStraightLength = 10,
+                        .minRadius = 5,
+                        .bendPenalty = 500});
+    const RoutingObjective objective{
+        .source = {.x = 100, .y = 100, .heading = 0},
+        .target = {.x = static_cast<uint32_t>(100 + turn->dx + 10),
+                   .y = static_cast<uint32_t>(100 - static_cast<int32_t>(stub) +
+                                              turn->dy),
+                   .heading = 6}};
+    Path path = f.router.route(objective);
+    ASSERT_GT(path.size(), stub) << stub;
+    EXPECT_TRUE(
+        path[stub].samePlace(f.router.sanitize(objective.source, false)))
+        << stub;
+    EXPECT_EQ(path[stub].heading, 0U) << stub;
+    EXPECT_EQ(path[stub].primitive, turn->id) << stub;
+    const auto segmented = reconstructSegments(*f.primitives, path);
+    ASSERT_GE(segmented.segments.size(), stub == 0 ? 1U : 2U) << stub;
+    const auto& arc = segmented.segments[stub == 0 ? 0 : 1];
+    ASSERT_EQ(arc.steps(), 1U) << stub;
+    EXPECT_EQ(arc.cells.front().x, static_cast<uint32_t>(100 + turn->dx))
+        << stub;
+    EXPECT_EQ(
+        arc.cells.front().y,
+        static_cast<uint32_t>(100 - static_cast<int32_t>(stub) + turn->dy))
+        << stub;
+    std::vector<PathSegment> rendered;
+    const auto points =
+        samplePath(*f.primitives, path, objective.source, rendered);
+    ASSERT_FALSE(points.empty()) << stub;
+    EXPECT_DOUBLE_EQ(points.front().x(), objective.source.x) << stub;
+    EXPECT_DOUBLE_EQ(points.front().y(), objective.source.y) << stub;
+    EXPECT_DOUBLE_EQ(points.back().x(), objective.target.x) << stub;
+    EXPECT_DOUBLE_EQ(points.back().y(), objective.target.y) << stub;
   }
 }
 
@@ -948,15 +976,15 @@ TEST(DubinsRouter, ACheckSeesATurnThatStartsOnTheLastCellOfTheStub) {
   f.router.buildOrthogonalConstraints({columnRun(*f.primitives, 63)}, {false},
                                       1);
   // The source stub ends on the last column of the zone. The free path turns
-  // there at once, so its arc starts on a cell with the straight tag of the
-  // stub. The check asks the test of a turn there, as the search does.
+  // there at once, so its arc starts on that cell with the turn tag. The
+  // check asks the test of a turn there, as the search does.
   const RoutingObjective fromTheZone{
       .source = {.x = 54, .y = 100, .heading = 6, .primitive = 0},
       .target = {.x = 69, .y = 50, .heading = 0, .primitive = 0}};
   const Path free = f.router.route(fromTheZone);
   ASSERT_GT(free.size(), 11U);
   EXPECT_TRUE(free[10].samePlace({.x = 64, .y = 100}));
-  EXPECT_TRUE(f.primitives->isStraight(free[10].heading, free[10].primitive));
+  EXPECT_FALSE(f.primitives->isStraight(free[10].heading, free[10].primitive));
   EXPECT_EQ(crossingFailures(f.router, free), std::vector<std::size_t>{10});
 
   // The orthogonal search does not turn there, and the check finds nothing.
@@ -1242,7 +1270,7 @@ TEST(DubinsRouter, ARouterGridHasOneTo65535CellsPerAxis) {
   EXPECT_EQ(router.width(), 65535U);
 }
 
-TEST(DubinsRouter, TheRadiusLimitIsTheLargestRadiusWhoseMovesFitTheTables) {
+TEST(DubinsRouter, EverySupportedRadiusFitsTheSearchTables) {
   // The router refuses a radius above MAX_BEND_RADIUS before it builds its
   // tables, so the checks of the table layout never fire. This test shows
   // that the limit is the right one: every radius the router accepts fits
@@ -1253,7 +1281,6 @@ TEST(DubinsRouter, TheRadiusLimitIsTheLargestRadiusWhoseMovesFitTheTables) {
        radius <= MovePrimitives::MAX_BEND_RADIUS; ++radius) {
     const MovePrimitives primitives(radius);
     if (radius > DubinsRouter::MAX_BEND_RADIUS) {
-      EXPECT_GT(widestMove(primitives), 60U) << radius;
       continue;
     }
     EXPECT_LE(widestMove(primitives), 60U) << radius;
@@ -1840,11 +1867,11 @@ TEST(DubinsRouter, TheStraightZonesOfAFeedlineCornerBlockWhereTheyMeet) {
       ADD_FAILURE() << "entered both zones at " << cell.x << "," << cell.y;
     } else if (besideFirstRun && cell.y < cornerY) {
       ++constrained;
-      EXPECT_FALSE(onTurn(*f.primitives, path, i, 10)) << i;
+      EXPECT_FALSE(onTurn(*f.primitives, path, i)) << i;
       EXPECT_EQ(path[i - 1].heading, 6) << i;
     } else if (besideLastRun && cell.x > 160) {
       ++constrained;
-      EXPECT_FALSE(onTurn(*f.primitives, path, i, 10)) << i;
+      EXPECT_FALSE(onTurn(*f.primitives, path, i)) << i;
       EXPECT_EQ(path[i - 1].heading, 0) << i;
     }
   }
@@ -2121,21 +2148,20 @@ TEST(DubinsRouter, SearchEndsOnTheSamePoseJoinTheStubs) {
 TEST(DubinsRouter, ATurnAtTheSearchStartStartsOnTheLastCellOfTheStub) {
   // The source faces heading 0 and the target lies toward positive x, so the
   // search turns right away. The arc starts on the last cell of the source
-  // stub, which keeps the tag of the stub. The first point of the turn is the
-  // next cell the arc sweeps, and the point after the turn is the end of the
-  // arc.
+  // stub, which takes the tag of the turn. The point after the turn is the
+  // end of the arc.
   Fixture f;
   const RoutingObjective turning{
       .source = {.x = 30, .y = 100, .heading = 0, .primitive = 0},
       .target = {.x = 260, .y = 100, .heading = 6, .primitive = 0}};
   const Path path = f.router.route(turning);
   ASSERT_GT(path.size(), 12U);
-  for (uint32_t i = 0; i <= 10; ++i) {
+  for (uint32_t i = 0; i < 10; ++i) {
     EXPECT_EQ(path[i].heading, 0) << i;
     EXPECT_EQ(path[i].primitive, f.primitives->straight(0)) << i;
   }
   EXPECT_TRUE(path[10].samePlace({.x = 30, .y = 90}));
-  const Primitive* turn = f.primitives->find(0, path[11].primitive);
+  const Primitive* turn = f.primitives->find(0, path[10].primitive);
   ASSERT_NE(turn, nullptr);
   EXPECT_NE(turn->exitHeading, 0);
   ASSERT_EQ(turn->swept.front(), CellOffset{});

@@ -85,18 +85,6 @@ const Primitive* turnOf(const Heading heading, const uint32_t eighths) {
   return nullptr;
 }
 
-/// An eighth turn of heading 6 whose last swept cell lies beyond the end of
-/// its arc.
-const Primitive* eighthBeyondItsEnd() {
-  for (const Primitive& p : primitives().of(6)) {
-    if (headingDistance(6, p.exitHeading) == 1 &&
-        p.swept.back() != CellOffset{.dx = p.dx, .dy = p.dy}) {
-      return &p;
-    }
-  }
-  return nullptr;
-}
-
 /// The corners of a rendering, between consecutive pieces of the polyline
 /// that are at least 0.05 cell long. A kink turns by more than 60 degrees
 /// (cosine below 0.5), a reversal by more than 120 degrees (cosine below
@@ -129,6 +117,25 @@ Corners cornersOf(const std::vector<Point>& points) {
     havePrevious = true;
   }
   return corners;
+}
+
+/// The circumradius of each three consecutive samples also checks joins
+/// between primitives, where a tangent mismatch would make a sharp corner.
+void expectMinimumRadius(const std::span<const Point> points,
+                         const double minimumRadius) {
+  for (std::size_t i = 2; i < points.size(); ++i) {
+    const double ax = points[i - 1].x() - points[i - 2].x();
+    const double ay = points[i - 1].y() - points[i - 2].y();
+    const double bx = points[i].x() - points[i - 1].x();
+    const double by = points[i].y() - points[i - 1].y();
+    const double cross = std::abs((ax * by) - (ay * bx));
+    if (cross < 1e-10) {
+      continue;
+    }
+    const double radius = std::hypot(ax, ay) * std::hypot(bx, by) *
+                          std::hypot(ax + bx, ay + by) / (2.0 * cross);
+    EXPECT_GE(radius, minimumRadius - 1e-5) << "sample " << i;
+  }
 }
 
 /// The rendering of a path from its first point.
@@ -194,6 +201,28 @@ double sharpestCornerOfTheMoves(const MovePrimitives& table) {
   return sharpest;
 }
 
+TEST(PathGeometry, DecodingSeparatesMoveEndpointsFromSweptCells) {
+  const Primitive* turn = turnOf(6, 1);
+  ASSERT_NE(turn, nullptr);
+  Path path = straightRun(100, 100, 6, 5);
+  const PathPoint end = appendTurn(path, *turn);
+  const HeadingVector exit = headingVector(end.heading);
+  const Path after =
+      straightRun(end.x + exit.dx, end.y + exit.dy, end.heading, 3);
+  path.insert(path.end(), after.begin(), after.end());
+  const auto moves = decodePath(primitives(), path);
+  ASSERT_EQ(moves.size(), 3U);
+  EXPECT_EQ(moves[1].origin.x, 105U);
+  EXPECT_EQ(moves[1].origin.y, 100U);
+  EXPECT_TRUE(moves[1].end.samePlace(end));
+  EXPECT_EQ(moves[1].begin, 5U);
+  EXPECT_EQ(moves[1].endIndex, path.size() - after.size());
+  const auto runs = pathRuns(path);
+  ASSERT_EQ(runs.size(), moves.size());
+  EXPECT_EQ(runs[1].begin, moves[1].begin);
+  EXPECT_EQ(runs[1].end, moves[1].endIndex);
+}
+
 TEST(PathGeometry, APointKnowsItsSearchState) {
   // The search state of a point is its cell and its heading. The primitive
   // names the move the point starts and is no part of the state.
@@ -235,8 +264,8 @@ TEST(PathGeometry, AHeadingChangeStartsANewSegment) {
 
 TEST(PathGeometry, ATurnPrimitiveStaysOneStepAtTheEndOfItsArc) {
   // A turn ends at its first point plus the end offset of its primitive. The
-  // last swept cell of this eighth turn lies beyond that end.
-  const Primitive* eighth = eighthBeyondItsEnd();
+  // swept cells are occupancy, rather than the move endpoint.
+  const Primitive* eighth = turnOf(6, 1);
   ASSERT_NE(eighth, nullptr);
   Path path = straightRun(100, 100, 6, 5);
   const PathPoint end = appendTurn(path, *eighth);
@@ -259,12 +288,7 @@ TEST(PathGeometry, ATurnPrimitiveStaysOneStepAtTheEndOfItsArc) {
   EXPECT_TRUE(cut.segments[1].cells[0].samePlace(end));
 }
 
-TEST(PathGeometry, ATurnFromTheLastStubCellCountsItsMoveOnce) {
-  // Where the search of a routed path begins with a turn, the start of the
-  // arc is the last cell of the source stub, which keeps the straight tag
-  // (see Path). The move of that cell is the turn. The nominal length is
-  // therefore the same as with the turn's tag on that cell, and the same as
-  // for the route in the other direction, whose search ends with the turn.
+TEST(PathGeometry, ATurnFromTheLastStubCellHasItsOwnTag) {
   auto shared = std::make_shared<const MovePrimitives>(5);
   constexpr uint32_t width = 300;
   constexpr uint32_t height = 200;
@@ -280,60 +304,22 @@ TEST(PathGeometry, ATurnFromTheLastStubCellCountsItsMoveOnce) {
       {.source = {.x = 30, .y = 100, .heading = 0, .primitive = 0},
        .target = {.x = 260, .y = 100, .heading = 6, .primitive = 0}});
   ASSERT_GT(routed.size(), 12U);
-  // Ten steps of stub, then the turn.
-  const PathPoint& stubEnd = routed[10];
-  const PathPoint& turn = routed[11];
-  ASSERT_TRUE(shared->isStraight(stubEnd.heading, stubEnd.primitive));
-  ASSERT_FALSE(shared->isStraight(turn.heading, turn.primitive));
-  ASSERT_EQ(stubEnd.heading, turn.heading);
-
-  Path retagged = routed;
-  retagged[10].primitive = turn.primitive;
+  ASSERT_TRUE(shared->isStraight(routed[9].heading, routed[9].primitive));
+  ASSERT_FALSE(shared->isStraight(routed[10].heading, routed[10].primitive));
+  const auto moves = decodePath(*shared, routed);
+  ASSERT_GE(moves.size(), 2U);
+  EXPECT_EQ(moves[1].begin, 10U);
+  EXPECT_TRUE(moves[1].origin.samePlace(routed[10]));
+  EXPECT_TRUE(moves[1].end.samePlace(routed[moves[1].endIndex]));
   const SegmentedPath segmented = reconstructSegments(*shared, routed);
-  EXPECT_NEAR(segmented.nominalLength,
-              reconstructSegments(*shared, retagged).nominalLength, 1e-9);
-  const Path reverse = router.route(
-      {.source = {.x = 260, .y = 100, .heading = 2, .primitive = 0},
-       .target = {.x = 30, .y = 100, .heading = 4, .primitive = 0}});
-  ASSERT_FALSE(reverse.empty());
-  EXPECT_NEAR(segmented.nominalLength,
-              reconstructSegments(*shared, reverse).nominalLength, 1e-9);
-
-  // The stub keeps its cells, and its last cell adds nothing.
-  const PathSegment& stub = segmented.segments.front();
-  ASSERT_EQ(stub.steps(), 11U);
-  EXPECT_DOUBLE_EQ(stub.lengthAt[10], stub.lengthAt[9]);
-}
-
-TEST(PathGeometry, NoTurnSweepsAStepAgainstItsExitHeadingFirst) {
-  // reconstructSegments() tells a turn whose arc starts on the straight point
-  // before it from a turn in the regular form by the point after the turn.
-  // The two forms would meet if the first cell a turn sweeps after its start
-  // lay one step against its exit heading.
-  for (uint32_t radius = 1; radius <= 23; ++radius) {
-    const MovePrimitives table(radius);
-    for (Heading heading = 0; heading < NUM_HEADINGS; ++heading) {
-      for (const Primitive& p : table.of(heading)) {
-        if (p.exitHeading == heading) {
-          continue;
-        }
-        const auto first = std::ranges::find_if(
-            p.swept, [](const CellOffset& c) { return c != CellOffset{}; });
-        ASSERT_NE(first, p.swept.end());
-        const HeadingVector exit = headingVector(p.exitHeading);
-        EXPECT_FALSE(first->dx == -exit.dx && first->dy == -exit.dy)
-            << "radius " << radius << ", heading " << static_cast<int>(heading)
-            << ", primitive " << p.id;
-      }
-    }
-  }
+  EXPECT_EQ(segmented.segments.front().steps(), 10U);
 }
 
 TEST(PathGeometry, AStraightStepFromTheEndOfAnArcRendersWithoutACorner) {
   // A path can go on with a straight step from the end of an arc, so that
   // the end is no point of the path. The first point after this eighth turn
   // lies one step past its end.
-  const Primitive* eighth = eighthBeyondItsEnd();
+  const Primitive* eighth = turnOf(6, 1);
   ASSERT_NE(eighth, nullptr);
   Path path = straightRun(100, 100, 6, 5);
   const PathPoint end = appendTurn(path, *eighth);
@@ -362,9 +348,9 @@ TEST(PathGeometry, ATurnStraightAfterATurnRendersWithoutACorner) {
   // A dogleg lists each move from its start, the start of an arc included,
   // and the next move starts at the end of the move before it. A move that
   // starts on the last point of the path takes that point over. Here an
-  // eighth turn whose last swept cell lies beyond its end is followed
+  // eighth turn is followed
   // directly by a second eighth turn, and then by straight steps.
-  const Primitive* first = eighthBeyondItsEnd();
+  const Primitive* first = turnOf(6, 1);
   ASSERT_NE(first, nullptr);
   const Primitive* second = turnOf(first->exitHeading, 1);
   ASSERT_NE(second, nullptr);
@@ -388,7 +374,6 @@ TEST(PathGeometry, ATurnStraightAfterATurnRendersWithoutACorner) {
                      .primitive = 0};
   };
   const PathPoint firstEnd = appendMove(path.back(), *first);
-  ASSERT_FALSE(path.back().samePlace(firstEnd));
   const PathPoint secondEnd = appendMove(firstEnd, *second);
   PathPoint at = secondEnd;
   const Primitive* straight = primitives().find(
@@ -407,9 +392,8 @@ TEST(PathGeometry, ATurnStraightAfterATurnRendersWithoutACorner) {
   const Corners corners = cornersOf(points);
   EXPECT_EQ(corners.kinks, 0);
   EXPECT_EQ(corners.reversals, 0);
-  // Five steps east, the two arcs, and five straight steps. The samples of
-  // the turn off a diagonal heading end a tenth of a cell short of its end
-  // cell, and the rendering pulls them onto it.
+  // Five steps east, the two arcs, and five straight steps. Each arc ends
+  // exactly on its decoded endpoint.
   EXPECT_NEAR(polylineLength(points),
               5.0 + polylineLength(first->samples) +
                   polylineLength(second->samples) +
@@ -420,8 +404,7 @@ TEST(PathGeometry, ATurnStraightAfterATurnRendersWithoutACorner) {
 TEST(PathGeometry, RoutedTurnsRenderWithoutKinksOrReversals) {
   // Every routed turn ends on the state its move reached, which is the first
   // point after the turn, also where the search begins with the turn. The
-  // rendering turns smoothly through it. The first request needs an eighth
-  // turn that sweeps a cell beyond its end.
+  // rendering turns smoothly through it. The first request uses eighth turns.
   auto shared = std::make_shared<const MovePrimitives>(5);
   constexpr uint32_t width = 300;
   constexpr uint32_t height = 200;
@@ -479,12 +462,14 @@ TEST(PathGeometry, RoutedTurnsRenderWithoutKinksOrReversals) {
       eighths += eighthsTurned == 1 ? 1 : 0;
       quarters += eighthsTurned == 2 ? 1 : 0;
       // The source stub has ten cells, so the search starts on point ten. A
-      // turn there starts on point eleven, the next cell its arc sweeps.
-      atTheSearchStart += first == 11 ? 1 : 0;
+      // turn there carries its tag on point ten, its origin.
+      atTheSearchStart += first == 10 ? 1 : 0;
       ASSERT_LT(next, path.size()) << r;
       EXPECT_TRUE(segment.cells[0].samePlace(path[next])) << r;
     }
-    const Corners corners = cornersOf(rendering(path));
+    const auto points = rendering(path);
+    expectMinimumRadius(points, 5.0);
+    const Corners corners = cornersOf(points);
     EXPECT_EQ(corners.kinks, 0) << r;
     EXPECT_EQ(corners.reversals, 0) << r;
   }

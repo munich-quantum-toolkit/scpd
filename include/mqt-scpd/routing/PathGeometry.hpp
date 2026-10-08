@@ -31,19 +31,58 @@ namespace mqt::scpd::routing {
 using flatbuffers::geometry::Point;
 
 /**
+ * @brief A half-open span of points carrying one primitive tag.
+ */
+struct PathRun {
+  /// The first point of the run.
+  std::size_t begin = 0;
+  /// The first point after the run.
+  std::size_t end = 0;
+};
+
+/**
+ * @brief A decoded move, with geometry separate from swept occupancy.
+ *
+ * A straight run groups several steps. A turn is one primitive whose origin
+ * is its first tagged cell and whose endpoint follows its exact offset.
+ */
+struct PathMove {
+  /// The move's origin, carrying its heading and primitive.
+  PathPoint origin;
+  /// The geometric endpoint; swept cells need not end here.
+  PathPoint end;
+  /// The first swept point in the input path.
+  std::size_t begin = 0;
+  /// The first input point after this move's occupancy span.
+  std::size_t endIndex = 0;
+};
+
+/**
+ * @brief Partitions a path at changes of heading or primitive.
+ * @param path The input path.
+ * @return Half-open runs covering every input point once.
+ */
+[[nodiscard]] MQT_SCPD_ROUTING_EXPORT std::vector<PathRun>
+pathRuns(const Path& path);
+
+/**
+ * @brief Decodes the geometry of each tagged run.
+ * @param primitives The tables referenced by the path.
+ * @param path The input path in the normalized Path format.
+ * @return Moves with origins, endpoints, and input occupancy spans.
+ */
+[[nodiscard]] MQT_SCPD_ROUTING_EXPORT std::vector<PathMove>
+decodePath(const MovePrimitives& primitives, const Path& path);
+
+/**
  * @brief A path cut into its primitive-tagged runs.
  */
 struct SegmentedPath {
   /// The runs, in the order of the path.
   std::vector<PathSegment> segments;
-  /// The sum of the costs of the moves of the path, in cells. A straight
-  /// point counts one straight step, unless it repeats the cell and the tag
-  /// of the point before it, or its cell is the start of the arc of the turn
-  /// after it (see Path); that turn counts its move. A turn counts its cost
-  /// once. In a routed path, every move counts once, and the last point adds
-  /// the straight step that leaves the path. The cost of a turn can exceed
-  /// the length of its curve (see Primitive::cost), so this is the length the
-  /// search charges; renderedLength() measures the curve.
+  /// The sum of the costs of tagged moves. Each distinct straight cell
+  /// counts one step, including the terminal point's outgoing step. A turn
+  /// counts once. renderedLength() measures the curve between path endpoints.
   double nominalLength = 0.0;
 };
 
@@ -67,18 +106,9 @@ straightRun(const MovePrimitives& primitives, PathPoint start, uint32_t steps);
  * @brief Cuts a path into segments wherever its heading or its primitive
  * changes.
  *
- * A straight run gathers one cell per step. Within it, a point on the cell of
- * the point before it adds no step. A turn is one step, and its recorded cell
- * is the end of its arc. In a routed path, the point after a turn is that end,
- * even where the first point of the turn is not the start of its arc (see
- * Path). A path can also go on with a straight step from the end of an arc,
- * as a dogleg does. So the recorded cell is the point after the turn, unless
- * that point lies one step beyond the first point of the turn plus the end
- * offset of the primitive; then, and at the end of the path, it is that sum.
- * For a primitive the tables lack, it is the point after the turn, or the
- * last point of the path. The lengths of the segments are nominal and count as
- * SegmentedPath::nominalLength describes. samplePath() replaces them with the
- * rendered lengths.
+ * Straight runs retain their distinct cells. Each turn records its decoded
+ * endpoint as one step. Nominal lengths charge the primitive costs;
+ * samplePath() replaces them with rendered lengths.
  *
  * @param primitives The primitive tables that @p path refers to.
  * @param path The path to cut.
@@ -91,18 +121,14 @@ reconstructSegments(const MovePrimitives& primitives, const Path& path);
 /**
  * @brief Renders a path as the dense polyline of its exact curves.
  *
- * The function first removes consecutive repeats of a cell from @p path, in
- * place. Each step then renders the samples of its primitive from the current
- * position. A turn whose arc starts one straight step ahead first renders
- * that step, because that is where the straight run before a turn ends (see
- * Path). The rendered end is pulled onto the grid cell of the
- * step, and the residual is spread linearly over the new points, so that the
- * rendering never drifts from the rasterized path. A residual above 20 cells
- * marks a broken path, and the rendering then jumps to the cell of the step.
- * A step whose cell equals the current position renders nothing.
+ * The function removes consecutive repeats under the same tag from @p path.
+ * The shared decoder supplies each turn's origin and endpoint. Rendering
+ * translates its exact samples without stretching them. A straight step
+ * between tagged runs connects the previous endpoint to the next origin.
+ * Unknown primitives are rendered as a line to their recorded endpoint.
  *
  * @param primitives The primitive tables that @p path refers to.
- * @param path The path to render. Consecutive repeats of a cell are removed
+ * @param path The path to render. Consecutive identical points are removed
  * from it.
  * @param start The point the polyline starts at.
  * @param segments Receives the segments of @p path, with the rendered length

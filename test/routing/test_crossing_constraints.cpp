@@ -255,7 +255,7 @@ TEST(CrossingConstraints, AnArcThatStartsOnTheSourceStubStartsTheTurnThere) {
   while (wire[arcStart].x != 100) {
     ++arcStart;
   }
-  wire[arcStart].primitive = primitives.straight(6);
+  ASSERT_EQ(wire[arcStart].primitive, turn->id);
   CrossingConstraints constraints;
   constraints.build(WIDTH, HEIGHT, {wire}, {false}, 1);
   EXPECT_FALSE(constraints.turnAllowed(100, 100));
@@ -316,6 +316,26 @@ TEST(CrossingConstraints, ACellOutsideTheGridIsNotAllowed) {
   constraints.build(WIDTH, HEIGHT, {verticalWire(100, 20, 180)}, {false}, 5);
   EXPECT_FALSE(constraints.allowed(WIDTH, 10, 6));
   EXPECT_EQ(constraints.maskAt(WIDTH, 10), 0U);
+}
+
+TEST(CrossingConstraints, PrimitiveTablesIdentifyATerminalTurn) {
+  const MovePrimitives table(23);
+  const Primitive* turn = table.find(0, 900);
+  ASSERT_NE(turn, nullptr);
+  Path feedline;
+  for (const CellOffset& cell : turn->swept) {
+    feedline.push_back({.x = static_cast<uint32_t>(100 + cell.dx),
+                        .y = static_cast<uint32_t>(100 + cell.dy),
+                        .heading = 0,
+                        .primitive = turn->id});
+  }
+  ASSERT_GT(feedline.size(), 20U);
+  CrossingConstraints constraints;
+  constraints.build(WIDTH, HEIGHT, {feedline}, {}, 0, &table);
+  for (const PathPoint& cell : feedline) {
+    EXPECT_FALSE(constraints.turnAllowed(cell.x, cell.y));
+    EXPECT_FALSE(constraints.allowed(cell.x, cell.y, 2));
+  }
 }
 
 TEST(CrossingConstraints, ClearingForgetsEveryConstraint) {
