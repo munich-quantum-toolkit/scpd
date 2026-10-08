@@ -24,26 +24,10 @@ namespace mqt::scpd::routing {
  * @brief The largest distance, in steps, between two visits of one cell that
  * the detector ignores as a spur.
  *
- * A routed path lists the cells each move sweeps (see Path). Some eighth
- * turns list one cell twice, two steps apart: an A-B-A spur. At the default
- * bend radius of five cells, every eighth turn from a cardinal heading sweeps
- * one cell past the end of its arc, so the path reads the end, the cell past
- * it, and the end again. At most other radii, some eighth turns list a cell
- * twice in the same way. Straight steps and quarter turns leave no spur.
- *
- * A spur is not a loop, so a revisit counts only when the two visits are more
- * than this many steps apart. The window therefore passes exactly two shapes:
- * a step to a neighboring cell and back, and a ring through three cells that
- * all touch one another. A ring around a 2 by 2 block closes after four steps
- * and counts, and so does a run of two cells out and back. The window is one
- * step wider than routed paths need: at every bend radius that a DubinsRouter
- * accepts, the moves revisit a cell only two steps apart, and no sequence of
- * up to five moves gives a revisit three or four steps apart. The window is
- * therefore conservative.
- *
- * The detector uses a window and not a stack that collapses spurs, because
- * such a stack pops every A-B-A. It would unwind a long exact retrace one cell
- * at a time and so remove the defect the detector must find.
+ * The detector accepts arbitrary rasterized paths, including short sampling
+ * spurs. It ignores revisits within three steps, but detects a ring around
+ * a 2 by 2 block and a two-cell retrace. It does not collapse spurs with a
+ * stack: that would also erase a long exact retrace.
  */
 inline constexpr std::size_t PATH_LOOP_SPUR_WINDOW = 3;
 

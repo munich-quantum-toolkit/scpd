@@ -86,13 +86,10 @@ enum class Heuristic : uint8_t {
  * copied nor moved. A copy would share the scratch of the original, and a
  * moved-from router would keep the state of tables it no longer holds.
  *
- * A router accepts a bend radius from 2 to 23 cells (MIN_BEND_RADIUS and
- * MAX_BEND_RADIUS). At a radius of one cell, the arc of an eighth turn is
- * shorter than a cell and sweeps the cells of the straight step, so the
- * search tables cannot tell the moves apart. The moves of a radius above 23
- * cells cover more cells than the search tables hold. MovePrimitives builds
- * these radii too, for the functions that read the primitives without a
- * router.
+ * A router supports bend radii from 2 to 23 cells (MIN_BEND_RADIUS and
+ * MAX_BEND_RADIUS). MovePrimitives also supports larger radii for geometry
+ * operations outside the router. The constructor validates that the moves
+ * fit the search tables.
  *
  * The search tests whether the cells that a move sweeps and its end cell lie
  * in the corridor, and it tests the cells it starts from and ends at. It does
@@ -116,17 +113,15 @@ public:
   /**
    * @brief The largest bend radius a router accepts, in cells.
    *
-   * From a radius of 24 cells on, some move covers more than the 60 cells
-   * that the search tables hold.
+   * The supported radius limit of the router. Larger radii remain available
+   * through MovePrimitives for geometry operations.
    */
   static constexpr uint32_t MAX_BEND_RADIUS = 23;
 
   /**
    * @brief The smallest bend radius a router accepts, in cells.
    *
-   * At a radius of one cell, the arc of an eighth turn is shorter than a cell
-   * and sweeps the cells of the straight step, so the search tables cannot
-   * tell the moves apart.
+   * The supported minimum radius of the router, in cells.
    */
   static constexpr uint32_t MIN_BEND_RADIUS = 2;
 
@@ -241,43 +236,11 @@ public:
    * is not consistent. Along a move, it drops by at most the cost of the
    * cheapest eight-connected walk through the corridor from the start of the
    * move to its end, and a turn can be shorter than that walk. The excess of
-   * a turn is the difference, in hundredths of a cell like every cost of the
-   * search. The excess of a turn follows from the primitive tables. Over open
-   * cells, the walk is the octile distance between the two ends. At the radii
-   * of 5, 12 and 23 cells, a cardinal eighth turn then has the largest
-   * excess: 421 against 441 at a radius of 5, 973 against 1023 at 12 and 1850
-   * against 1946 at 23. A corridor that leaves only the cells a turn sweeps
-   * can make the walk longer. The largest excess at a radius of 5 is then 38,
-   * that of a quarter turn.
-   *
-   * Without the bend term, the bend penalty a turn pays covers its excess
-   * when the penalty is at least the largest excess per eighth turn. That
-   * excess is 20 at a radius of 5. Up to a radius of 23 it is at most 96,
-   * which the exact quarter turns of the diagonal headings reach at 19 and
-   * 21 cells and the cardinal eighth turns at 23 cells. The default bend
-   * penalty of 100 therefore covers every radius that a router accepts, and
-   * a test checks this. The estimate is then consistent, and route() returns
-   * a cheapest path.
-   *
-   * With the bend term, the estimate already holds the penalty, so an excess
-   * can make it exceed what a state still has to pay. Let e be the largest
-   * excess per eighth turn. When the bend penalty is at least e, the estimate
-   * of a state exceeds the cost of its cheapest remaining path by at most e
-   * times the heading distance from the state to the target heading. The
-   * search never reopens a closed state, so no bound on the excess of the
-   * path follows from this, and route() can return a dearer path. A
-   * comparison with a brute-force search measured how much dearer, with the
-   * distance field as the estimate. Its sample is random grids with up to
-   * nine boxes of up to 10 by 10 cells outside the corridor, four random
-   * objectives per grid, no stubs and nine bend penalties from 20 to 30000. At
-   * a radius of 5, on 20,000 grids of 30 to 60 cells per side, fewer than one
-   * path in a hundred cost more, by at most 32. On 10,000 grids of 40 to 80
-   * cells per radius, up to 1.4 paths in a hundred cost more at a radius of
-   * 12, by at most 50. At a radius of 8, where the diagonal headings turn by
-   * exact eighth turns, up to 6.3 paths in a hundred cost more, by at most 37.
-   * On 8,000 grids of 60 to 100 cells per radius, up to 1.2 paths in a
-   * hundred cost more, by at most 118 at a radius of 20 and 96 at 23. These
-   * figures are the largest of that sample, not bounds.
+   * a turn depends on its rasterized walk and charged curve length. The
+   * heading term can make the estimate inconsistent. The search does not
+   * reopen closed states, so a cheapest-path guarantee requires a consistent
+   * estimate. Tests check the default bend penalty without the heading term.
+   * With the heading term enabled, route() can return a more expensive path.
    *
    * @param on Whether route() adds the term.
    */

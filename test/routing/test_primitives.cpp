@@ -58,30 +58,56 @@ double headingDirection(const Heading h) {
          180.0 / std::numbers::pi;
 }
 
-/// The end of a move in the frame of the heading it leaves. On a cardinal
-/// heading, the units are cells. On a diagonal heading, they are half
-/// diagonals.
-struct EndInFrame {
-  /// The distance of the end to the side of the heading.
-  int64_t across = 0;
-  /// The distance of the end ahead along the heading.
-  int64_t ahead = 0;
-};
-
-/// Computes the end of a move in the frame of the heading it leaves.
-EndInFrame endInFrame(const Heading heading, const Primitive& move) {
-  const HeadingVector f = headingVector(heading);
-  const int64_t dx = move.dx;
-  const int64_t dy = move.dy;
-  return {.across = std::abs((dx * f.dy) - (dy * f.dx)),
-          .ahead = (dx * f.dx) + (dy * f.dy)};
-}
-
 /// The distance from a point to the nearest point of a cell, in cells.
 double distanceToCell(const double x, const double y, const CellOffset& cell) {
   const double dx = std::max(0.0, std::abs(x - cell.dx) - 0.5);
   const double dy = std::max(0.0, std::abs(y - cell.dy) - 0.5);
   return std::hypot(dx, dy);
+}
+
+TEST(Primitives, EveryCurveMeetsItsGridPoseWithoutReducingTheBendRadius) {
+  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
+       ++radius) {
+    const MovePrimitives table(radius);
+    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
+      for (const Primitive& p : table.of(h)) {
+        SCOPED_TRACE(::testing::Message()
+                     << radius << " " << static_cast<int>(h) << " " << p.id);
+        const auto& s = p.samples;
+        ASSERT_GE(s.size(), 3U);
+        ASSERT_NEAR(s.back().x(), p.dx, 1e-10);
+        ASSERT_NEAR(s.back().y(), p.dy, 1e-10);
+        const double first =
+            std::atan2(s[1].y() - s[0].y(), s[1].x() - s[0].x());
+        const double last = std::atan2(s.back().y() - s[s.size() - 2].y(),
+                                       s.back().x() - s[s.size() - 2].x());
+        const double chordError =
+            MovePrimitives::SAMPLE_SPACING / (2.0 * radius) + 1e-8;
+        EXPECT_LE(std::abs(std::remainder(first - headingDirection(h) *
+                                                      std::numbers::pi / 180.0,
+                                          2.0 * std::numbers::pi)),
+                  chordError);
+        EXPECT_LE(
+            std::abs(std::remainder(last - headingDirection(p.exitHeading) *
+                                               std::numbers::pi / 180.0,
+                                    2.0 * std::numbers::pi)),
+            chordError);
+        for (std::size_t k = 1; k + 1 < s.size(); ++k) {
+          const double ax = s[k].x() - s[k - 1].x();
+          const double ay = s[k].y() - s[k - 1].y();
+          const double bx = s[k + 1].x() - s[k].x();
+          const double by = s[k + 1].y() - s[k].y();
+          const double cross = std::abs(ax * by - ay * bx);
+          if (cross > 1e-12) {
+            const double measured = std::hypot(ax, ay) * std::hypot(bx, by) *
+                                    std::hypot(ax + bx, ay + by) /
+                                    (2.0 * cross);
+            EXPECT_GE(measured, radius - 1e-5) << k;
+          }
+        }
+      }
+    }
+  }
 }
 
 TEST(Primitives, EveryHeadingHasAStraightAndTurnsToEitherSide) {
@@ -146,7 +172,7 @@ TEST(Primitives, ADiagonalHeadingKeepsItsQuarterTurns) {
     for (const Primitive& p : primitives().of(h)) {
       if (headingDistance(h, p.exitHeading) == 2) {
         ++quarters;
-        EXPECT_NEAR(p.cost, std::ceil(std::numbers::pi / 2.0 * 5.0), 1e-9);
+        EXPECT_GE(p.cost, std::numbers::pi / 2.0 * 5.0);
         const double reach =
             std::hypot(static_cast<double>(p.dx), static_cast<double>(p.dy));
         EXPECT_NEAR(reach, 5.0 * std::numbers::sqrt2, 1.5);
@@ -157,9 +183,7 @@ TEST(Primitives, ADiagonalHeadingKeepsItsQuarterTurns) {
 }
 
 TEST(Primitives, EveryHeadingHoldsQuarterTurnsThatEndOnTheirExitHeading) {
-  // At some radii a diagonal heading also holds a shorter arc to the
-  // quarter-turn heading. Each side still has a quarter turn whose curve
-  // ends along its exit heading.
+  // Every quarter turn meets its exit tangent, including diagonal entries.
   for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
     const MovePrimitives table(radius);
     for (Heading h = 0; h < NUM_HEADINGS; ++h) {
@@ -225,9 +249,7 @@ TEST(Primitives, LookupsOfAnUnknownMoveAreSafe) {
             nullptr);
   EXPECT_EQ(primitives().find(0, 999), nullptr);
   EXPECT_DOUBLE_EQ(primitives().cost(0, 999), 0.0);
-  // An unknown move reads as exit heading zero, so only heading zero reports
-  // it as straight.
-  EXPECT_TRUE(primitives().isStraight(0, 999));
+  EXPECT_FALSE(primitives().isStraight(0, 999));
   EXPECT_FALSE(primitives().isStraight(3, 999));
 }
 
@@ -298,33 +320,20 @@ TEST(Primitives, TheSamplesOfEveryMoveRunForwardToItsEnd) {
                              s[n - 1].y() - s[n - 2].y()),
                   2.0 * MovePrimitives::SAMPLE_SPACING)
             << radius << " " << static_cast<int>(h) << " " << p.id;
-        if ((isDiagonal(h) && (p.id == 900 || p.id == 901)) || p.id == 902 ||
-            p.id == 903) {
-          // The arc of an exact diagonal quarter turn or of an exact eighth
-          // turn ends at no whole cell.
-          EXPECT_EQ(std::lround(s.back().x()), p.dx) << radius << " " << p.id;
-          EXPECT_EQ(std::lround(s.back().y()), p.dy) << radius << " " << p.id;
-        } else {
-          EXPECT_NEAR(s.back().x(), p.dx, 1e-9)
-              << radius << " " << static_cast<int>(h) << " " << p.id;
-          EXPECT_NEAR(s.back().y(), p.dy, 1e-9)
-              << radius << " " << static_cast<int>(h) << " " << p.id;
-        }
+        EXPECT_NEAR(s.back().x(), p.dx, 1e-9)
+            << radius << " " << static_cast<int>(h) << " " << p.id;
+        EXPECT_NEAR(s.back().y(), p.dy, 1e-9)
+            << radius << " " << static_cast<int>(h) << " " << p.id;
       }
     }
   }
 }
 
-TEST(Primitives, AMoveThatLeavesACardinalHeadingCostsTheLengthOfItsCurve) {
+TEST(Primitives, EveryMoveCostsTheLengthOfItsCurve) {
   for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
     const MovePrimitives table(radius);
-    for (Heading h = 0; h < NUM_HEADINGS; h = static_cast<Heading>(h + 2)) {
+    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
       for (const Primitive& p : table.of(h)) {
-        // An exact eighth turn costs the length of its arc rounded up to
-        // whole cells (see AnExactEighthTurnFollowsTheArcOfTheRadius).
-        if (p.id == 902 || p.id == 903) {
-          continue;
-        }
         double length = 0.0;
         for (std::size_t k = 1; k < p.samples.size(); ++k) {
           length += std::hypot(p.samples[k].x() - p.samples[k - 1].x(),
@@ -337,10 +346,8 @@ TEST(Primitives, AMoveThatLeavesACardinalHeadingCostsTheLengthOfItsCurve) {
   }
 }
 
-TEST(Primitives, ARadiusTooLargeForTheIdentifiersIsRefused) {
-  // The search state packs a move into ten bits. The largest radius whose
-  // moves fit builds; a larger one is refused before any table is built,
-  // even the largest radius the type holds.
+TEST(Primitives, AnUnsupportedRadiusIsRefused) {
+  // Reject unsupported radii before building the tables.
   EXPECT_NO_THROW(
       static_cast<void>(MovePrimitives(MovePrimitives::MAX_BEND_RADIUS)));
   EXPECT_THROW(
@@ -350,74 +357,6 @@ TEST(Primitives, ARadiusTooLargeForTheIdentifiersIsRefused) {
   EXPECT_THROW(
       static_cast<void>(MovePrimitives(std::numeric_limits<uint32_t>::max())),
       std::invalid_argument);
-}
-
-TEST(Primitives, EveryTurnEndsAtTheFirstCellWhoseTurnAnglesHoldItsTurn) {
-  // A turn runs straight along its heading and then along an arc of the bend
-  // radius r to a whole cell, across cells to the side and ahead cells
-  // ahead. Its turn angles run from the arc angle to the end angle. The arc
-  // angle is the angle by which the arc has turned where it reaches the
-  // column of the end cell. The end angle is the angle by which a turn about
-  // the center of the arc reaches the end cell. An eighth turn ends at the
-  // first cell of its column whose turn angles hold 45 degrees, a quarter
-  // turn at the first cell whose turn angles hold 90 degrees, both ends of
-  // the range included. A diagonal heading counts in half diagonals and
-  // reads them as cells for the end angle. The exact quarter turns of a
-  // diagonal heading and the exact eighth turns follow another rule (see
-  // AnExactEighthTurnFollowsTheArcOfTheRadius). Every comparison below is
-  // exact, so the test fails if a cell exactly on the boundary falls on the
-  // other side.
-  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
-       ++radius) {
-    const MovePrimitives table(radius);
-    const auto r = static_cast<int64_t>(radius);
-    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
-      for (const Primitive& p : table.of(h)) {
-        const uint32_t turn = headingDistance(h, p.exitHeading);
-        if (turn == 0 || (isDiagonal(h) && (p.id == 900 || p.id == 901)) ||
-            p.id == 902 || p.id == 903) {
-          continue;
-        }
-        const auto [across, ahead] = endInFrame(h, p);
-        // The columns between the end cell and the center of the arc.
-        const int64_t a = r - across;
-        // The cells ahead on a cardinal heading, the whole diagonals ahead
-        // on a diagonal heading.
-        const int64_t j = isDiagonal(h) ? (ahead - (across % 2)) / 2 : ahead;
-        // Whether the cell one step back along the heading lies inside the
-        // circle of the arc, where no straight part and arc end.
-        bool firstInColumn = false;
-        // Whether the arc angle is at most 45 degrees.
-        bool arcWithinEighth = false;
-        if (isDiagonal(h)) {
-          const int64_t back = ahead - 2;
-          const int64_t reach = (across * across) + (back * back);
-          firstInColumn = reach * reach < 8 * r * r * across * across;
-          arcWithinEighth = (r + across) * (r + across) <= 2 * r * r;
-        } else {
-          firstInColumn = ((j - 1) * (j - 1)) + (a * a) < r * r;
-          arcWithinEighth = 2 * a * a >= r * r;
-        }
-        if (turn == 1) {
-          EXPECT_TRUE(arcWithinEighth) << radius << " " << p.id;
-          // The end angle is at least 45 degrees.
-          EXPECT_LE(a, j) << radius << " " << p.id;
-          EXPECT_TRUE(j == a || firstInColumn) << radius << " " << p.id;
-        } else {
-          // The end angle is at least 90 degrees from the column of the
-          // center on, and below 90 degrees in every column before it. A
-          // cardinal quarter turn ends in the column of the center. At some
-          // radii, a diagonal heading has no candidate in that column, and
-          // its quarter turn ends one column further.
-          EXPECT_LE(a, 0) << radius << " " << p.id;
-          if (!isDiagonal(h)) {
-            EXPECT_EQ(a, 0) << radius << " " << p.id;
-          }
-          EXPECT_TRUE(firstInColumn) << radius << " " << p.id;
-        }
-      }
-    }
-  }
 }
 
 TEST(Primitives, TheCellsOfEveryMoveFormAChainOfNeighbors) {
@@ -504,69 +443,6 @@ TEST(Primitives, EveryHeadingHoldsAnEighthTurnToEitherSide) {
       }
     }
   }
-}
-
-TEST(Primitives, AnExactEighthTurnFollowsTheArcOfTheRadius) {
-  // An exact eighth turn is an arc of 45 degrees of the bend radius r. Its
-  // center lies r cells from the start, toward the quarter-turn heading of
-  // its side. So the arc ends r sin(45) along the heading and r (1 - cos(45))
-  // toward the quarter-turn heading. The arc ends at no whole cell.
-  const double sine = std::numbers::sqrt2 / 2.0;
-  const auto unit = [](const Heading h) {
-    const HeadingVector v = headingVector(h);
-    const double length =
-        std::hypot(static_cast<double>(v.dx), static_cast<double>(v.dy));
-    return std::array<double, 2>{v.dx / length, v.dy / length};
-  };
-  int exactTurns = 0;
-  for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
-       ++radius) {
-    const MovePrimitives table(radius);
-    const auto r = static_cast<double>(radius);
-    for (Heading h = 0; h < NUM_HEADINGS; ++h) {
-      for (const Primitive& p : table.of(h)) {
-        if (p.id != 902 && p.id != 903) {
-          continue;
-        }
-        ++exactTurns;
-        const int side = p.id == 902 ? 1 : -1;
-        EXPECT_EQ(p.exitHeading, turned(h, side)) << radius << " " << p.id;
-        const auto along = unit(h);
-        const auto toward = unit(turned(h, 2 * side));
-        const double endX =
-            r * ((sine * along[0]) + ((1.0 - sine) * toward[0]));
-        const double endY =
-            r * ((sine * along[1]) + ((1.0 - sine) * toward[1]));
-
-        ASSERT_FALSE(p.swept.empty()) << radius << " " << p.id;
-        EXPECT_EQ(p.swept.front(), CellOffset{}) << radius << " " << p.id;
-        for (std::size_t k = 1; k < p.swept.size(); ++k) {
-          EXPECT_LE(std::abs(p.swept[k].dx - p.swept[k - 1].dx), 1)
-              << radius << " " << p.id;
-          EXPECT_LE(std::abs(p.swept[k].dy - p.swept[k - 1].dy), 1)
-              << radius << " " << p.id;
-        }
-        EXPECT_EQ(p.dx, std::lround(endX)) << radius << " " << p.id;
-        EXPECT_EQ(p.dy, std::lround(endY)) << radius << " " << p.id;
-        EXPECT_EQ(p.swept.back(), (CellOffset{.dx = p.dx, .dy = p.dy}))
-            << radius << " " << p.id;
-        EXPECT_EQ(p.cost, std::ceil(std::numbers::pi / 4.0 * r))
-            << radius << " " << p.id;
-
-        const auto& s = p.samples;
-        ASSERT_GE(s.size(), 2U) << radius << " " << p.id;
-        EXPECT_NEAR(s.back().x(), endX, 1e-9) << radius << " " << p.id;
-        EXPECT_NEAR(s.back().y(), endY, 1e-9) << radius << " " << p.id;
-        for (std::size_t k = 1; k < s.size(); ++k) {
-          EXPECT_LE(
-              std::hypot(s[k].x() - s[k - 1].x(), s[k].y() - s[k - 1].y()),
-              MovePrimitives::SAMPLE_SPACING)
-              << radius << " " << p.id << " " << k;
-        }
-      }
-    }
-  }
-  EXPECT_GT(exactTurns, 0);
 }
 
 TEST(Primitives, AHeadingWithAnEighthTurnOfItsOwnGetsNoExactOne) {

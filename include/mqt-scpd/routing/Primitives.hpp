@@ -39,8 +39,8 @@ struct CellOffset {
 /**
  * @brief One move of the search.
  *
- * A move is a straight step, or a circular arc of the bend radius that ends on
- * another heading.
+ * A move is a straight step, or a circular arc of the bend radius with tangent
+ * straight leads that ends on another heading.
  */
 struct Primitive {
   /// The identifier the search stores per state, below
@@ -52,86 +52,32 @@ struct Primitive {
   int16_t dx = 0;
   /// The y offset of the end of the move from its start, in cells.
   int16_t dy = 0;
-  /// The cost the search charges for the move, in cells. For a straight step
-  /// and for a turn that leaves a cardinal heading, the cost is the length of
-  /// the move's curve. A turn that leaves a diagonal heading costs more than
-  /// its curve: its cost takes the angle of the turn from its count of half
-  /// diagonals as if it were a count of cells. The exact quarter turns of a
-  /// diagonal heading and the exact eighth turns (see MovePrimitives) cost
-  /// the length of their arc rounded up to whole cells, also where they leave
-  /// a cardinal heading. The polyline through @c samples gives the length of
-  /// the curve.
+  /// The length of the move, in cells, including its straight leads.
   double cost = 0.0;
-  /// The cells the search tests for obstacles when it takes the move,
-  /// relative to its start, in the order the move sweeps them. The first cell
-  /// of a turn is its start, (0, 0). The one cell of the straight step is its
-  /// end. At most radii some eighth turns list a cell twice or list a cell
-  /// past their end; at a radius of five cells, every cardinal eighth turn
-  /// lists the cell past its end. At some radii some turns that leave a
-  /// diagonal heading do not list their end cell: at a radius of five cells
-  /// the eighth turns, at radii such as 10 and 16 cells the arcs of 72 to 77
-  /// degrees that end on the quarter-turn heading. Their last cell then
-  /// touches the end cell. At the radii of 25, 33 to 36, 41 to 49 and 51 to
-  /// 90 cells, every turn that leaves a cardinal heading skips one or more
-  /// cells where its straight part meets its arc. At every other radius, and
-  /// so at every radius that a DubinsRouter accepts, the start, the swept
-  /// cells and the end of every move form a chain in which each cell shares
-  /// an edge or a corner with the next. A router relies on the chain when it
-  /// drops a move because no walk through the corridor leads from the end
-  /// cell of the move to the target.
+  /// The cells nearest the curve samples, in travel order. Consecutive
+  /// duplicates are removed. A turn sweeps its start and end; a straight
+  /// step sweeps only its end. The cells form a chain of neighbors.
   std::vector<CellOffset> swept;
-  /// Points along the exact curve of the move, relative to its start. The
-  /// first point is the origin, and the points run forward along the move.
-  /// The points step by about SAMPLE_SPACING along one axis: a straight
-  /// piece along its heading or along the axes of the grid, an arc along the
-  /// axis across the heading it starts on. So the points of an arc lie far
-  /// apart where the arc runs almost along that heading: at a radius of five
-  /// cells, the first chord of a quarter turn is about one cell long. The
-  /// exact quarter turns of a diagonal heading and the exact eighth turns
-  /// (see MovePrimitives) instead have points at equal angles, at most
-  /// SAMPLE_SPACING apart along the arc. The last point is the end of the
-  /// move, (@c dx, @c dy), except for these exact turns: their arc ends at no
-  /// whole cell, and (@c dx, @c dy) is the cell nearest to it. Up to a radius
-  /// of 23 cells, the arc of an exact eighth turn ends up to 0.59 cell from
-  /// the center of that cell, at a radius of two cells; above 23 cells, up to
-  /// 0.70 cell, at 70 cells. A rendered path is built from these points. The
-  /// rendering pulls the end of each arc onto its cell and spreads the
-  /// difference over the arc.
+  /// Points along the move, from the origin to (@c dx, @c dy). Chords are
+  /// at most SAMPLE_SPACING long. Turns use an exact circular arc with
+  /// tangent straight leads, so the curve meets both grid headings without
+  /// reducing the bend radius. Samples include the joins of each piece.
   std::vector<flatbuffers::geometry::Point> samples;
 };
 
 /**
  * @brief The move primitives of the eight-way router.
  *
- * For every heading, the table holds the straight step and the arcs of one
- * bend radius that leave the heading, each with its swept cells and its exact
- * curve. Every heading holds a quarter turn to either side whose curve ends on
- * its exit heading; on a diagonal heading, these exact quarter turns have the
- * identifiers 900 and 901. At some radii, such as 10 and 13 cells, a diagonal
- * heading also holds a second turn to each quarter-turn heading: an arc of 72
- * to 77 degrees whose curve ends off its exit heading. Up to a radius of 23
- * cells, these radii are 10, 13, 16, 17, 19, 20, 22 and 23 cells.
+ * Every heading has one straight step and one eighth and quarter turn to
+ * each side. A turn joins a circular arc of the bend radius to nonnegative
+ * straight leads along its entry and exit headings. The leads reach a whole
+ * grid cell without changing the radius or either tangent.
  *
- * Every heading also holds exactly one eighth turn to either side, so a path
- * can change the parity of its heading. Whether the turn ends on a whole cell
- * depends on how the arc of the radius rounds onto the cells. Where it rounds
- * onto no cell, the eighth turn is an exact arc of 45 degrees, with the
- * identifier 902 for a clockwise and 903 for a counterclockwise turn, with y
- * up. Up to a radius of 23 cells, every heading holds exact eighth turns at
- * one to three cells, the cardinal headings at 17 cells, and the diagonal
- * headings at 4, 7 to 9 and 14 cells. Above 23 cells, the diagonal headings
- * hold them at 53, 57, 60 to 62 and 64 to 90 cells. At a radius of five cells,
- * no heading holds one.
- *
- * The constructor builds the tables once per radius. The tables are read-only
- * after that, so any number of routers can share one instance. Every rounding
- * step of the generation is part of the definition of the tables: the swept
- * cells and the costs depend on it. Where a value is a whole number in exact
- * arithmetic, such as the end of a diagonal move, the generation computes it
- * from whole numbers, so that value does not depend on the compiler or the
- * math library. The test of a candidate end cell does not depend on them
- * either: whether the cell gives an eighth or a quarter turn is decided from
- * whole numbers, also for a cell exactly on the boundary.
+ * The constructor selects the shortest leads among grid ends within two
+ * cells of the bare arc end. It rotates and reflects two canonical headings
+ * to preserve symmetry. Identifiers 900 and 901 denote clockwise and
+ * counterclockwise quarter turns; 902 and 903 denote the eighth turns;
+ * 904 denotes the straight step. The tables are read-only after construction.
  */
 class MQT_SCPD_ROUTING_EXPORT MovePrimitives {
 public:
@@ -145,16 +91,11 @@ public:
   /**
    * @brief The step of the curve samples, in cells.
    *
-   * The samples of a move step by about this amount along one axis. Along an
-   * arc, two samples can lie much further apart (see Primitive::samples).
+   * Samples include piece joins and are at most this distance apart.
    */
   static constexpr double SAMPLE_SPACING = 0.1;
   /**
    * @brief The largest bend radius the tables can hold, in cells.
-   *
-   * The identifier of the straight step grows with the radius. From a radius
-   * of 91 cells on, the straight step of some heading needs an identifier of
-   * MAX_PRIMITIVE_ID or more.
    *
    * A DubinsRouter accepts only the radii up to DubinsRouter::MAX_BEND_RADIUS,
    * because the moves of a larger radius do not fit its search tables. The
@@ -165,9 +106,6 @@ public:
 
   /**
    * @brief Builds the primitives of one bend radius.
-   *
-   * The constructor leaves out a move whose identifier is MAX_PRIMITIVE_ID or
-   * more.
    *
    * @param minRadius The bend radius, in cells.
    * @throws std::invalid_argument If @p minRadius is zero or larger than
@@ -223,9 +161,7 @@ public:
    * @brief Reports whether a primitive keeps its heading.
    * @param heading The heading the primitive leaves.
    * @param id The identifier of the primitive.
-   * @return @c true when the primitive ends on @p heading. An identifier that
-   * @p heading lacks reads as exit heading 0, so the result is then @c true
-   * for heading 0 only.
+   * @return @c true when the primitive exists and ends on @p heading.
    */
   [[nodiscard]] bool isStraight(Heading heading, uint32_t id) const;
 

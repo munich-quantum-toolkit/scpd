@@ -241,7 +241,7 @@ TEST(SelfIntersection, NoTwoMovesOfTheRouterReadAsALoop) {
       }
     }
   }
-  EXPECT_GT(spurs, 0U);
+  EXPECT_EQ(spurs, 0U);
 }
 
 TEST(SelfIntersection, ALoopOneStepBeyondTheSpurWindowIsFound) {
