@@ -6,9 +6,9 @@
 //
 // Licensed under the MIT License
 
-// The geometry vocabulary: the layout-space point, polygons, and paths built
-// from analytic segments. Owned by MQT::ScpdGeometry. The three grid
-// coordinate types arrive with MQT::ScpdGrid in phase 2.
+// The geometry vocabulary: the layout-space point, the grid cell, the router
+// state, polygons, and paths built from analytic segments. Owned by
+// MQT::ScpdGeometry.
 
 namespace mqt.scpd.flatbuffers.geometry;
 
@@ -16,6 +16,25 @@ namespace mqt.scpd.flatbuffers.geometry;
 struct Point {
   x: double;
   y: double;
+}
+
+/// A cell of a grid: its column and its row. The capacity grid, the detail
+/// grid and the router grid all give their cells as DCoord, so the type does
+/// not say which grid a cell belongs to.
+struct DCoord {
+  x: uint32;
+  y: uint32;
+}
+
+/// A state of the router grid: a cell of the router grid and the eight-way
+/// heading 0..7 of the wire in it. A wire leaves a heading-0 state toward
+/// negative y, and the headings continue clockwise in eighth turns when y
+/// points up: heading 2 travels toward negative x, heading 4 toward positive
+/// y, heading 6 toward positive x.
+struct RCoord {
+  x: uint32;
+  y: uint32;
+  heading: ubyte;
 }
 
 /// A closed polygon in layout space, stored as the input carries it.

@@ -6,4 +6,4 @@
 #
 # Licensed under the MIT License
 
-add_mqt_scpd_library(routing LINK_LIBRARIES MQT::ScpdGrid)
+add_mqt_scpd_library(routing LINK_LIBRARIES MQT::ScpdGrid MQT::ScpdGeometry)
