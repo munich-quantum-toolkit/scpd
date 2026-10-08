@@ -48,17 +48,8 @@ struct DoglegGeometry {
  * @brief Builds the quarter turn of the primitives that leaves a heading in
  * one turn direction, followed by a straight run.
  *
- * Of several quarter turns in the same direction, the function takes the one
- * whose curve ends closest to the direction of the exit heading, and of
- * equally close ones the one with the lowest identifier. At some radii, such
- * as 10 cells, a diagonal heading holds an arc of 72 to 77 degrees beside the
- * exact quarter turn; the exact quarter turn wins. The path lists the end of
- * the turn also where the turn does not sweep it. At the bend radii the router
- * accepts, 2 to 23 cells (DubinsRouter::MIN_BEND_RADIUS to
- * DubinsRouter::MAX_BEND_RADIUS), consecutive points of the path are
- * neighboring cells. At a larger radius, the swept cells of a
- * quarter turn that leaves a cardinal heading can skip cells (see
- * Primitive::swept), and so can the path.
+ * Every turn ends on a grid cell with the tangent of its exit heading.
+ * Consecutive points of the dogleg occupy neighboring cells.
  *
  * @param primitives The move primitives.
  * @param entry The heading the turn starts on.
@@ -109,59 +100,23 @@ struct CouplerSplice {
  * point of the path that leaves the remaining path closest to the target
  * length.
  *
- * A candidate pairs a cell of a straight run of the path with a connection of
- * at most two primitives from the dogleg onto the heading of the run. A
- * straight run is a segment of the path under the tag of a straight step (see
- * reconstructSegments()). A run of one cell counts when another point of the
- * path follows it, such as the cell between two turns one straight step apart.
- * So a single point, or the end of a turn that ends the path, is no straight
- * run. Every such connection forms a candidate with every cell of every
- * straight run of its heading; a dogleg that ends on the heading of a run
- * needs no primitive.
- * Each primitive starts at the end of the one before it, and the connection
- * ends on the candidate's cell. A primitive ends at the offset Primitive::dx,
- * Primitive::dy from its start, which need not be its last swept cell. The
- * remaining path of a candidate runs from its point of the straight run to the
- * end. The mismatch of a candidate is the length of the remaining path, plus
- * the dogleg and the connection, minus the target length. Every length is the
- * length of the curve as samplePath() renders it, so the rendered path meets
- * the target as closely as the candidates allow.
+ * Each candidate joins the dogleg to a straight run through at most two
+ * primitives. Lengths come from the rendered curves. A candidate must lie
+ * inside the grid, avoid cells and diagonal steps of the remaining path,
+ * and pass the self-intersection check for the new prefix.
+ * Use @p candidateAllowed to check obstacles and geometric clearance on the
+ * complete proposed path. This filter is a hard constraint.
  *
- * A candidate is collision-free when every cell of its dogleg and connection
- * lies inside the grid, no such cell is a cell of the remaining path except
- * the candidate's cell where the last primitive sweeps it, and no diagonal
- * step between two consecutive such cells, or onto the candidate's cell,
- * crosses a diagonal step of the remaining path inside a 2 by 2 block. The
- * function does not test the dogleg against itself, and it takes no
- * obstacles: a collision-free candidate is free of the remaining path only. A
- * cell beside a cell of the remaining path is free, so on a hairpin the
- * dogleg can run one cell beside the other leg.
+ * Among feasible candidates, anchors passing @p anchorAllowed are preferred.
+ * If none passes that preference, the best feasible candidate still wins
+ * with CouplerSplice::inAllowedArea set to false. An undershoot is charged
+ * its absolute mismatch. An overshoot also pays the smallest achievable
+ * mismatch. Equal charges prefer the earlier join along the path, then the
+ * lexicographic primitive order. Mismatches are rounded to billionths of a
+ * cell before comparison.
  *
- * A candidate can win when it is collision-free and its anchor passes
- * @p anchorAllowed. When no candidate passes the filter, every collision-free
- * candidate can win. An undershoot is charged the size of its mismatch. An
- * overshoot is charged its mismatch plus the smallest mismatch size among the
- * candidates that can win, which favors an undershoot. Of the candidates that
- * can win, the one with the lowest charge wins. Of candidates with equal
- * charges, the one whose cell comes first along the path wins, and on one
- * cell the one whose connection comes first in the lexicographic order of
- * its primitive identifiers. The function rounds each mismatch to a whole
- * number of billionths of a cell and compares the charges in these units, so
- * that two lengths that differ only by rounding give equal charges, unless a
- * half billionth lies between them.
- *
- * The function cuts the path before the point of the winner and puts the
- * dogleg and the connection in front. That point is the point of the straight
- * run, not an earlier point on the same cell, such as the end of an eighth
- * turn that sweeps a cell past its end. The point keeps its tag, and the last
- * point in front of it lies on another cell. So where the search of a routed
- * path begins with a turn and the point is the start of its arc (see Path),
- * the turn still renders from that point. The spliced path lists the end of
- * every turn of the dogleg and the connection, also where the turn does not
- * sweep it. At the bend radii the router accepts, 2 to 23 cells
- * (DubinsRouter::MIN_BEND_RADIUS to DubinsRouter::MAX_BEND_RADIUS),
- * consecutive points of the spliced path from the anchor to the point of the
- * winner are neighboring cells.
+ * The selected prefix replaces the path before its joining point. Allocation
+ * failure or a throwing filter leaves the input path unchanged.
  *
  * @param primitives The move primitives the path was routed with.
  * @param targetLength The length the path should have after the splice, as
@@ -175,6 +130,11 @@ struct CouplerSplice {
  * @param options The shape of the dogleg.
  * @param anchorAllowed An optional filter on the anchor cell, called with its
  * x and y. An empty filter allows every cell.
+ * @param candidateAllowed An optional hard filter on the complete proposed
+ * path, including the remaining resonator. Use it to check obstacles and
+ * clearance on the rendered geometry. It may run more than once per candidate
+ * and must not modify the input path. Rejected candidates never enter the
+ * anchor fallback. An empty filter allows every candidate.
  * @return The splice, or @c std::nullopt when @p path is empty or no candidate
  * is collision-free. In that case @p path is unchanged.
  * @throws std::invalid_argument If @p couplerHeading is not a heading, or if
@@ -188,6 +148,7 @@ spliceCouplerDogleg(
     const MovePrimitives& primitives, double targetLength, Path& path,
     uint32_t width, uint32_t height, Heading couplerHeading,
     const CouplerDoglegOptions& options = {},
-    const std::function<bool(uint32_t, uint32_t)>& anchorAllowed = {});
+    const std::function<bool(uint32_t, uint32_t)>& anchorAllowed = {},
+    const std::function<bool(const Path&)>& candidateAllowed = {});
 
 } // namespace mqt::scpd::routing

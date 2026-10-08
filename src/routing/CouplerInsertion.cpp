@@ -14,6 +14,7 @@
 #include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/PathGeometry.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
+#include "mqt-scpd/routing/SelfIntersection.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -32,59 +33,20 @@ namespace mqt::scpd::routing {
 
 namespace {
 
-/// The quarter turn of a heading toward an exit heading whose curve ends
-/// closest to the direction of the exit heading. The primitives come in
-/// ascending identifier order, so of equally close turns the one of lowest
-/// identifier wins.
+/// The first quarter turn toward the requested heading.
 const Primitive* quarterTurnTo(const MovePrimitives& primitives,
                                const Heading from, const Heading exit) {
-  const HeadingVector e = headingVector(exit);
-  const Primitive* best = nullptr;
-  double bestError = 0.0;
-  for (const Primitive& p : primitives.of(from)) {
-    if (p.exitHeading != exit) {
-      continue;
-    }
-    // The angle between the last piece of the curve and the exit heading.
-    double error = std::numbers::pi;
-    if (p.samples.size() >= 2) {
-      const Point& a = p.samples[p.samples.size() - 2];
-      const Point& b = p.samples.back();
-      const double tx = b.x() - a.x();
-      const double ty = b.y() - a.y();
-      error = std::abs(
-          std::atan2((tx * e.dy) - (ty * e.dx), (tx * e.dx) + (ty * e.dy)));
-    }
-    if (best == nullptr || error < bestError) {
-      best = &p;
-      bestError = error;
+  for (const Primitive& move : primitives.of(from)) {
+    if (move.exitHeading == exit) {
+      return &move;
     }
   }
-  return best;
+  return nullptr;
 }
 
 /// The length of one straight step of a heading, in cells.
 double stepLength(const Heading heading) {
   return isDiagonal(heading) ? std::numbers::sqrt2 : 1.0;
-}
-
-/// The length of a move as samplePath() renders it: the curve of its samples,
-/// pulled onto the end of the move.
-double renderedMoveLength(const MovePrimitives& primitives,
-                          const Heading heading, const Primitive& move) {
-  // The move starts far enough from the origin that its end has no negative
-  // coordinate.
-  constexpr int32_t origin = 1 << 16;
-  const auto at = [](const int32_t offset) {
-    return static_cast<uint32_t>(origin + offset);
-  };
-  const Path path{
-      {.x = at(0), .y = at(0), .heading = heading, .primitive = move.id},
-      {.x = at(move.dx),
-       .y = at(move.dy),
-       .heading = move.exitHeading,
-       .primitive = primitives.straight(move.exitHeading)}};
-  return renderedLength(primitives, path);
 }
 
 uint64_t cellKey(const uint32_t x, const uint32_t y) {
@@ -120,12 +82,11 @@ struct DoglegPiece {
 /// after its last swept cell, which touches the end. The cells of every turn
 /// of a dogleg therefore include its end (see Path), and the piece after it
 /// starts next to its last cell.
-DoglegPiece pieceOf(const MovePrimitives& primitives,
-                    const Primitive& primitive, const Heading heading) {
+DoglegPiece pieceOf(const Primitive& primitive, const Heading heading) {
   DoglegPiece piece;
   piece.endX = primitive.dx;
   piece.endY = primitive.dy;
-  piece.length = renderedMoveLength(primitives, heading, primitive);
+  piece.length = polylineLength(primitive.samples);
   const auto add = [&](const CellOffset& move) {
     piece.cells.push_back(
         {.x = static_cast<uint32_t>(static_cast<int32_t>(move.dx)),
@@ -157,7 +118,7 @@ DoglegGeometry buildDogleg(const MovePrimitives& primitives,
     throw std::logic_error(
         "the primitives hold no quarter turn for this heading");
   }
-  const DoglegPiece turnPiece = pieceOf(primitives, *turn, entry);
+  const DoglegPiece turnPiece = pieceOf(*turn, entry);
   DoglegGeometry result;
   result.path = turnPiece.cells;
   result.cost = turnPiece.length +
@@ -176,7 +137,8 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     const MovePrimitives& primitives, const double targetLength, Path& path,
     const uint32_t width, const uint32_t height, const Heading couplerHeading,
     const CouplerDoglegOptions& options,
-    const std::function<bool(uint32_t, uint32_t)>& anchorAllowed) {
+    const std::function<bool(uint32_t, uint32_t)>& anchorAllowed,
+    const std::function<bool(const Path&)>& candidateAllowed) {
   if (couplerHeading >= NUM_HEADINGS) {
     throw std::invalid_argument("the coupler heading lies outside 0 to 7");
   }
@@ -257,12 +219,12 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   // the lexicographic order of their primitive identifiers.
   for (const Primitive& first : primitives.of(searchHeading)) {
     const Heading intermediate = first.exitHeading;
-    const DoglegPiece pieceOne = pieceOf(primitives, first, searchHeading);
+    const DoglegPiece pieceOne = pieceOf(first, searchHeading);
     const double lengthOne = prefixLength + pieceOne.length;
     addOption(intermediate, lengthOne, with({pieceOne}));
 
     for (const Primitive& second : primitives.of(intermediate)) {
-      const DoglegPiece pieceTwo = pieceOf(primitives, second, intermediate);
+      const DoglegPiece pieceTwo = pieceOf(second, intermediate);
       addOption(second.exitHeading, lengthOne + pieceTwo.length,
                 with({pieceOne, pieceTwo}));
     }
@@ -350,6 +312,7 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   // signed, so that a dogleg reaching past the edge of the grid is rejected.
   const auto gridWidth = static_cast<int64_t>(width);
   const auto gridHeight = static_cast<int64_t>(height);
+  PathLoopScratch loopScratch;
   const auto tryCandidate = [&](const Candidate& cand, Path& out) {
     int64_t endX = 0;
     int64_t endY = 0;
@@ -427,6 +390,13 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
         }
       }
     }
+    // Include the join when checking the new prefix against itself. The
+    // remaining path was checked above; its clearance belongs to the caller.
+    simulated.push_back(cand.cell);
+    if (pathSelfIntersects(simulated, width, height, loopScratch)) {
+      return false;
+    }
+    simulated.pop_back();
     out = std::move(simulated);
     return true;
   };
@@ -445,6 +415,16 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
       Path simulated;
       if (!tryCandidate(cand, simulated)) {
         continue;
+      }
+      if (candidateAllowed) {
+        Path complete = simulated;
+        complete.insert(complete.end(),
+                        path.begin() +
+                            static_cast<std::ptrdiff_t>(cand.splitIndex),
+                        path.end());
+        if (!candidateAllowed(complete)) {
+          continue;
+        }
       }
       if (!anchorAllowed || simulated.empty() ||
           anchorAllowed(simulated.front().x, simulated.front().y)) {

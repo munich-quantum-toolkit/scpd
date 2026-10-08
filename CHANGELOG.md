@@ -46,6 +46,10 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🐛 Make routing turns meet their grid endpoints and exit tangents at the
+  minimum bend radius. Share path decoding, preserve crossing masks on failed
+  rebuilds, and validate complete coupler candidates ([#134])
+  ([**@FeldmeierMichael**], [**@marcelwa**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that

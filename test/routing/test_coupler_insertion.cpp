@@ -370,20 +370,36 @@ TEST(CouplerInsertion, TheSplicePrefersAnUndershoot) {
   // more than half the step it had to choose between.
   EXPECT_LE(renderedLength(primitives(), path), 150.5);
 
-  // An undershoot wins against a nearer overshoot while it misses by less
-  // than twice as much. On this resonator, the nearest candidates for a
-  // target of 150.35 cells miss it by +0.33 and -0.65 cells, so the
-  // undershoot wins. For 150.40 cells they miss by +0.28 and -0.70 cells, so
-  // the overshoot wins.
-  for (const auto& [target, undershoots] :
-       {std::pair{150.35, true}, std::pair{150.40, false}}) {
-    Path resonator = straightRun(400, 300, 6, 300);
-    ASSERT_TRUE(
-        spliceCouplerDogleg(primitives(), target, resonator, WIDTH, HEIGHT, 0)
-            .has_value());
-    const double miss = renderedLength(primitives(), resonator) - target;
-    EXPECT_EQ(miss < 0.0, undershoots) << target << ": " << miss;
-    EXPECT_LT(std::abs(miss), 1.0) << target;
+  // Restrict the choice to two known anchors and move the target across
+  // the undershoot preference threshold. Lengths come from current geometry.
+  const Path original = straightRun(400, 300, 6, 300);
+  const PathPoint early{.x = 485, .y = 284};
+  const PathPoint late{.x = 479, .y = 288};
+  const auto allows = [](const PathPoint& anchor) {
+    return [anchor](uint32_t x, uint32_t y) {
+      return anchor.samePlace({.x = x, .y = y});
+    };
+  };
+  Path shorter = original;
+  Path longer = original;
+  ASSERT_TRUE(spliceCouplerDogleg(primitives(), 0.0, shorter, WIDTH, HEIGHT, 5,
+                                  {}, allows(early)));
+  ASSERT_TRUE(spliceCouplerDogleg(primitives(), 0.0, longer, WIDTH, HEIGHT, 5,
+                                  {}, allows(late)));
+  const double low = renderedLength(primitives(), shorter);
+  const double high = renderedLength(primitives(), longer);
+  ASSERT_LT(low, high);
+  for (const auto& [fraction, undershoots] :
+       {std::pair{0.6, true}, std::pair{0.8, false}}) {
+    const double target = low + fraction * (high - low);
+    Path candidate = original;
+    ASSERT_TRUE(spliceCouplerDogleg(primitives(), target, candidate, WIDTH,
+                                    HEIGHT, 5, {}, [&](uint32_t x, uint32_t y) {
+                                      return early.samePlace(
+                                                 {.x = x, .y = y}) ||
+                                             late.samePlace({.x = x, .y = y});
+                                    }));
+    EXPECT_EQ(renderedLength(primitives(), candidate) < target, undershoots);
   }
 }
 
@@ -448,7 +464,7 @@ TEST(CouplerInsertion,
   const std::optional<CouplerSplice> second = onto(late, 0.0, longer);
   ASSERT_TRUE(second.has_value());
   ASSERT_TRUE(second->inAllowedArea);
-  ASSERT_EQ(sharedEnd(resonator, shorter), sharedEnd(resonator, longer) + 1);
+  ASSERT_GT(sharedEnd(resonator, shorter), sharedEnd(resonator, longer));
   const double low = renderedLength(primitives(), shorter);
   const double high = renderedLength(primitives(), longer);
   ASSERT_LT(low, high);
@@ -744,9 +760,7 @@ TEST(CouplerInsertion, ASecondDoglegOffersAnotherPlacement) {
   EXPECT_NE(jog->anchor.x, one->anchor.x);
   EXPECT_NEAR(renderedLength(primitives(), jogged), 150.0, 1.0);
 
-  // The hook turns twice the same way, so its second straight run lies
-  // along the resonator: on a straight wire it lands the coupler exactly
-  // where the single dogleg does, only further along the wire.
+  // The hook offers another placement while preserving the target length.
   Path hooked = straightRun(400, 300, 6, 300);
   const std::optional<CouplerSplice> hook =
       spliceCouplerDogleg(primitives(), 150.0, hooked, WIDTH, HEIGHT, 0,
@@ -755,7 +769,8 @@ TEST(CouplerInsertion, ASecondDoglegOffersAnotherPlacement) {
                            .secondTurnReverse = false});
   ASSERT_TRUE(hook.has_value());
   EXPECT_EQ(hook->anchor.x, one->anchor.x);
-  EXPECT_EQ(hook->anchor.y, one->anchor.y);
+  EXPECT_NE(hook->anchor.y, one->anchor.y);
+  EXPECT_NEAR(renderedLength(primitives(), hooked), 150.0, 1.0);
 }
 
 TEST(CouplerInsertion, TheMirroredDoglegTurnsTheOtherWay) {
@@ -1255,6 +1270,37 @@ TEST(CouplerInsertion, ThereIsNothingToSpliceOntoAnEmptyPath) {
   EXPECT_THROW(static_cast<void>(spliceCouplerDogleg(primitives(), 150.0, path,
                                                      WIDTH, HEIGHT, 9)),
                std::invalid_argument);
+}
+
+TEST(CouplerInsertion, CompleteCandidateFilterSkipsBlockedPlacements) {
+  const Path original = straightRun(400, 300, 6, 300);
+  Path unrestricted = original;
+  ASSERT_TRUE(
+      spliceCouplerDogleg(primitives(), 150.0, unrestricted, WIDTH, HEIGHT, 0));
+  // An obstacle on the dogleg excludes the otherwise best placement.
+  const PathPoint obstacle = unrestricted[unrestricted.size() / 4];
+  Path filtered = original;
+  std::size_t checked = 0;
+  PathLoopScratch loopScratch;
+  const auto feasible = [&](const Path& candidate) {
+    ++checked;
+    EXPECT_EQ(candidate.back(), original.back());
+    EXPECT_FALSE(pathSelfIntersects(candidate, WIDTH, HEIGHT, loopScratch));
+    return std::ranges::none_of(candidate, [&](const PathPoint& point) {
+      return point.samePlace(obstacle);
+    });
+  };
+  ASSERT_TRUE(spliceCouplerDogleg(primitives(), 150.0, filtered, WIDTH, HEIGHT,
+                                  0, {}, {}, feasible));
+  EXPECT_GT(checked, 1U);
+  EXPECT_TRUE(feasible(filtered));
+
+  Path rejected = original;
+  EXPECT_FALSE(spliceCouplerDogleg(
+      primitives(), 150.0, rejected, WIDTH, HEIGHT, 0, {},
+      [](uint32_t, uint32_t) { return false; },
+      [](const Path&) { return false; }));
+  EXPECT_EQ(rejected, original);
 }
 
 TEST(CouplerInsertion, ATargetLengthIsFiniteAndNotNegative) {
