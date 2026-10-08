@@ -11,6 +11,7 @@
 #include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
+#include "mqt-scpd/routing/PathGeometry.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
 
 #include <gtest/gtest.h>
@@ -239,9 +240,8 @@ TEST(CrossingConstraints, NoStraightWireCrossesTheBendingPartOfATurn) {
 }
 
 TEST(CrossingConstraints, AnArcThatStartsOnTheSourceStubStartsTheTurnThere) {
-  // Where the search begins with a turn, the start of the arc keeps the
-  // straight tag of the source stub (see Path). It still belongs to the turn,
-  // so the cells beside it are closed.
+  // The turn tag starts at the end of the source stub, so the cells beside
+  // that cell are closed.
   const MovePrimitives primitives(5);
   const Primitive* turn = nullptr;
   for (const Primitive& move : primitives.of(6)) {
@@ -320,22 +320,29 @@ TEST(CrossingConstraints, ACellOutsideTheGridIsNotAllowed) {
 
 TEST(CrossingConstraints, PrimitiveTablesIdentifyATerminalTurn) {
   const MovePrimitives table(23);
-  const Primitive* turn = table.find(0, 900);
+  const Primitive* turn = nullptr;
+  for (const Primitive& move : table.of(0)) {
+    if (move.exitHeading == 2) {
+      turn = &move;
+      break;
+    }
+  }
   ASSERT_NE(turn, nullptr);
-  Path feedline;
-  for (const CellOffset& cell : turn->swept) {
-    feedline.push_back({.x = static_cast<uint32_t>(100 + cell.dx),
-                        .y = static_cast<uint32_t>(100 + cell.dy),
-                        .heading = 0,
-                        .primitive = turn->id});
-  }
-  ASSERT_GT(feedline.size(), 20U);
-  CrossingConstraints constraints;
-  constraints.build(WIDTH, HEIGHT, {feedline}, {}, 0, &table);
-  for (const PathPoint& cell : feedline) {
-    EXPECT_FALSE(constraints.turnAllowed(cell.x, cell.y));
-    EXPECT_FALSE(constraints.allowed(cell.x, cell.y, 2));
-  }
+  Path feedline = straightRun(table, {.x = 100, .y = 140, .heading = 0}, 40);
+  PathPoint state = feedline.back();
+  appendMove(feedline, state, *turn);
+  ASSERT_GT(feedline.size(), 60U);
+  // Both end zones are far from the turn's origin. Its first swept steps
+  // look straight, and no later tag reveals the terminal turn.
+  CrossingConstraints withoutTables;
+  withoutTables.build(WIDTH, HEIGHT, {feedline}, {}, 0);
+  EXPECT_EQ(withoutTables.maskAt(100, 100), 1U << 0U);
+  EXPECT_TRUE(withoutTables.allowed(100, 100, 2));
+  CrossingConstraints withTables;
+  withTables.build(WIDTH, HEIGHT, {feedline}, {}, 0, &table);
+  EXPECT_EQ(withTables.maskAt(100, 100), CrossingConstraints::CURVE_ZONE);
+  EXPECT_FALSE(withTables.allowed(100, 100, 2));
+  EXPECT_FALSE(withTables.turnAllowed(100, 100));
 }
 
 TEST(CrossingConstraints, ClearingForgetsEveryConstraint) {

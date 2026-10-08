@@ -438,4 +438,28 @@ TEST(AllocationFailure, AFailedSpliceLeavesThePathUnchanged) {
   EXPECT_GT(failures, 0);
 }
 
+TEST(AllocationFailure, AFailedFilteredSpliceLeavesThePathUnchanged) {
+  constexpr uint32_t gridSize = 1000;
+  const MovePrimitives primitives(5);
+  const Path original =
+      straightRun(primitives, {.x = 300, .y = 300, .heading = 6}, 300);
+  Path expected = original;
+  const auto filter = [&](const Path& candidate) {
+    return candidate.back() == original.back();
+  };
+  ASSERT_TRUE(spliceCouplerDogleg(primitives, 290.0, expected, gridSize,
+                                  gridSize, 2, {}, {}, filter));
+  Path path;
+  const int failures = failEachAllocation(
+      [&](const std::function<void()>& arm) {
+        path = original;
+        arm();
+        static_cast<void>(spliceCouplerDogleg(primitives, 290.0, path, gridSize,
+                                              gridSize, 2, {}, {}, filter));
+      },
+      [&](const int allocation) { EXPECT_EQ(path, original) << allocation; });
+  EXPECT_GT(failures, 0);
+  EXPECT_EQ(path, expected);
+}
+
 } // namespace

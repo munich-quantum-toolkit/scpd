@@ -121,9 +121,7 @@ double degreesOff(const Point& from, const Point& to, const Heading heading) {
          180.0 / std::numbers::pi;
 }
 
-/// Whether a path occupies a cell twice other than in two consecutive points
-/// or in a spur that steps off a cell and back onto it. A primitive whose last
-/// swept cell lies past its end leaves such a spur, as in a routed path.
+/// Whether a path revisits a cell more than two points after its last visit.
 bool touchesItself(const Path& path) {
   std::map<std::pair<uint32_t, uint32_t>, std::size_t> lastVisit;
   for (std::size_t i = 0; i < path.size(); ++i) {
@@ -248,10 +246,7 @@ TEST(CouplerInsertion, ADoglegCostsTheLengthOfItsRenderedPath) {
 }
 
 TEST(CouplerInsertion, TheTurnOfADoglegEndsAlongItsRun) {
-  // At some radii a diagonal heading holds an arc of 72 to 77 degrees beside
-  // the exact quarter turn. The dogleg takes the exact quarter turn, so its
-  // rendered curve meets the straight run without a kink: over its last
-  // tenth of a cell, the curve runs along the run.
+  // A diagonal quarter turn meets its straight run on the exit heading.
   for (const uint32_t radius : {5U, 10U, 13U, 16U}) {
     const MovePrimitives table(radius);
     for (Heading entry = 1; entry < NUM_HEADINGS; entry += 2) {
@@ -530,11 +525,8 @@ TEST(CouplerInsertion, TheRenderedSpliceMeetsItsTarget) {
 }
 
 TEST(CouplerInsertion, TheSpliceCutsAtTheCandidatesOwnPoint) {
-  // This route turns from east onto a diagonal with an eighth turn that
-  // sweeps a cell past its end. The end of the turn is a point of the turn
-  // and, two points later, the first point of the diagonal run. A splice onto
-  // that run cell keeps the run from the second point on, so the spliced path
-  // neither turns on the spot nor steps back.
+  // Splicing onto a diagonal run keeps the candidate's own point, so the
+  // remaining run renders forward from the end of the connection.
   constexpr uint32_t width = 600;
   constexpr uint32_t height = 400;
   auto shared = std::make_shared<const MovePrimitives>(5);
@@ -581,20 +573,17 @@ TEST(CouplerInsertion, TheSpliceCutsAtTheCandidatesOwnPoint) {
   EXPECT_NEAR(polylineLength(points), 100.0, std::numbers::sqrt2);
 }
 
-TEST(CouplerInsertion, ASpliceOnTheStubOfAFirstTurnKeepsTheStartOfItsArc) {
-  // Where the search of a routed path begins with a turn, the last cell of
-  // the source stub is the start of the arc and keeps the straight tag of the
-  // stub (see Path). Each path here is such a path: twelve diagonal steps of
-  // stub, then an exact quarter turn, which ends the path. The stub is the
-  // only straight run, and a target of zero puts the splice on its last cell.
-  // The point there must stay the point before the arc, so that the turn
-  // renders from it: the spliced path renders as long as its two parts.
+TEST(CouplerInsertion, ASpliceBeforeAFirstTurnKeepsItsTaggedArcOrigin) {
+  // Twelve diagonal steps lead into a terminal quarter turn. Its tagged
+  // origin replaces the last stub cell, so a target of zero joins the last
+  // straight cell before it. The rendered parts must meet at that cell.
   for (Heading stub = 1; stub < NUM_HEADINGS; stub += 2) {
     for (const uint16_t id : {900, 901}) {
       const Primitive* turn = primitives().find(stub, id);
       ASSERT_NE(turn, nullptr);
       Path path = straightRun(300, 300, stub, 12);
       const PathPoint start = path.back();
+      path.back().primitive = id;
       const PathPoint end{
           .x = static_cast<uint32_t>(static_cast<int32_t>(start.x) + turn->dx),
           .y = static_cast<uint32_t>(static_cast<int32_t>(start.y) + turn->dy),
@@ -613,8 +602,8 @@ TEST(CouplerInsertion, ASpliceOnTheStubOfAFirstTurnKeepsTheStartOfItsArc) {
         }
       }
       path.push_back(end);
-      // The path from the last stub cell on.
-      const Path rest(path.begin() + 12, path.end());
+      // The path from the last straight cell on.
+      const Path rest(path.begin() + 11, path.end());
 
       for (Heading couplerHeading = 0; couplerHeading < NUM_HEADINGS;
            ++couplerHeading) {
@@ -854,10 +843,8 @@ TEST(CouplerInsertion, TheFirstTurnStartsTheLeadLengthFromTheAnchor) {
 TEST(CouplerInsertion, AConnectionThroughAnEighthTurnRendersWithoutAKink) {
   // The connection from the dogleg onto a diagonal resonator is an eighth
   // turn from a cardinal heading, and onto a cardinal resonator an eighth turn
-  // from a diagonal heading. An eighth turn ends before its last swept cell,
-  // or on a cell it does not sweep. The next primitive and the resonator
-  // start at the end of the turn, so the rendered path neither jumps nor
-  // turns sharply where they meet.
+  // from a diagonal heading. The next primitive and the resonator start at
+  // the end of the turn, so the rendering joins them without a sharp corner.
   for (const auto& [heading, couplerHeading] :
        {std::pair<Heading, Heading>{7, 0}, std::pair<Heading, Heading>{6, 7}}) {
     Path path = straightRun(600, 600, heading, 300);
@@ -908,11 +895,8 @@ TEST(CouplerInsertion, AConnectionThroughAnEighthTurnRendersWithoutAKink) {
 
 TEST(CouplerInsertion, ASplicedPathStepsFromCellToNeighboringCell) {
   // The splice tests the cells of the dogleg and its connection against the
-  // rest of the path, so the spliced path must not skip a cell. Some turns of
-  // a connection do not sweep their end: the eighth turns off a diagonal
-  // heading at a radius of five cells, and the arcs of 72 to 77 degrees at 10
-  // and 16 cells. A straight step after such a turn starts from its end. The
-  // targets put the splice all along the diagonal resonator.
+  // rest of the path, so the spliced path must not skip a cell. The targets
+  // put the splice all along the diagonal resonator.
   for (uint32_t radius = 1; radius <= DubinsRouter::MAX_BEND_RADIUS; ++radius) {
     const MovePrimitives table(radius);
     const Path resonator =
@@ -1281,19 +1265,25 @@ TEST(CouplerInsertion, CompleteCandidateFilterSkipsBlockedPlacements) {
   const PathPoint obstacle = unrestricted[unrestricted.size() / 4];
   Path filtered = original;
   std::size_t checked = 0;
+  std::vector<Path> accepted;
   PathLoopScratch loopScratch;
   const auto feasible = [&](const Path& candidate) {
     ++checked;
     EXPECT_EQ(candidate.back(), original.back());
     EXPECT_FALSE(pathSelfIntersects(candidate, WIDTH, HEIGHT, loopScratch));
-    return std::ranges::none_of(candidate, [&](const PathPoint& point) {
-      return point.samePlace(obstacle);
-    });
+    const bool allowed =
+        std::ranges::none_of(candidate, [&](const PathPoint& point) {
+          return point.samePlace(obstacle);
+        });
+    if (allowed) {
+      accepted.push_back(candidate);
+    }
+    return allowed;
   };
   ASSERT_TRUE(spliceCouplerDogleg(primitives(), 150.0, filtered, WIDTH, HEIGHT,
                                   0, {}, {}, feasible));
   EXPECT_GT(checked, 1U);
-  EXPECT_TRUE(feasible(filtered));
+  EXPECT_NE(std::ranges::find(accepted, filtered), accepted.end());
 
   Path rejected = original;
   EXPECT_FALSE(spliceCouplerDogleg(
@@ -1301,6 +1291,43 @@ TEST(CouplerInsertion, CompleteCandidateFilterSkipsBlockedPlacements) {
       [](uint32_t, uint32_t) { return false; },
       [](const Path&) { return false; }));
   EXPECT_EQ(rejected, original);
+}
+
+TEST(CouplerInsertion, AHardRejectedAnchorCannotWinTheFallback) {
+  const Path original = straightRun(400, 300, 6, 300);
+  Path best = original;
+  ASSERT_TRUE(spliceCouplerDogleg(primitives(), 150.0, best, WIDTH, HEIGHT, 0));
+  const PathPoint blocked = best.front();
+  Path path = original;
+  const auto result = spliceCouplerDogleg(
+      primitives(), 150.0, path, WIDTH, HEIGHT, 0, {},
+      [&](uint32_t x, uint32_t y) { return x == blocked.x && y == blocked.y; },
+      [&](const Path& candidate) {
+        return !candidate.front().samePlace(blocked);
+      });
+  ASSERT_TRUE(result);
+  EXPECT_FALSE(result->inAllowedArea);
+  EXPECT_FALSE(path.front().samePlace(blocked));
+  EXPECT_EQ(path.back(), original.back());
+}
+
+TEST(CouplerInsertion, AThrowingFilterLeavesThePathUnchanged) {
+  const Path original = straightRun(400, 300, 6, 300);
+  Path path = original;
+  EXPECT_THROW(static_cast<void>(spliceCouplerDogleg(
+                   primitives(), 150.0, path, WIDTH, HEIGHT, 0, {}, {},
+                   [](const Path&) -> bool {
+                     throw std::runtime_error("candidate filter");
+                   })),
+               std::runtime_error);
+  EXPECT_EQ(path, original);
+  EXPECT_THROW(static_cast<void>(spliceCouplerDogleg(
+                   primitives(), 150.0, path, WIDTH, HEIGHT, 0, {},
+                   [](uint32_t, uint32_t) -> bool {
+                     throw std::runtime_error("anchor filter");
+                   })),
+               std::runtime_error);
+  EXPECT_EQ(path, original);
 }
 
 TEST(CouplerInsertion, ATargetLengthIsFiniteAndNotNegative) {

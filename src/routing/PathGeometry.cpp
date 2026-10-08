@@ -80,11 +80,14 @@ Path straightRun(const MovePrimitives& primitives, const PathPoint start,
   return run;
 }
 
-SegmentedPath reconstructSegments(const MovePrimitives& primitives,
-                                  const Path& path) {
+namespace {
+
+SegmentedPath segmentsFromMoves(const MovePrimitives& primitives,
+                                const Path& path,
+                                const std::span<const PathMove> moves) {
   SegmentedPath result;
   double length = 0.0;
-  for (const PathMove& move : decodePath(primitives, path)) {
+  for (const PathMove& move : moves) {
     PathSegment segment;
     segment.heading = move.origin.heading;
     segment.primitive = move.origin.primitive;
@@ -113,14 +116,13 @@ SegmentedPath reconstructSegments(const MovePrimitives& primitives,
   return result;
 }
 
-namespace {
-
 /// The rendering shared by both samplers, using the same decoded move contract.
 std::vector<Point> render(const MovePrimitives& primitives, const Path& path,
                           const PathPoint start,
                           std::vector<PathSegment>& segments,
                           std::vector<std::pair<std::size_t, bool>>* bounds) {
-  segments = reconstructSegments(primitives, path).segments;
+  const auto moves = decodePath(primitives, path);
+  segments = segmentsFromMoves(primitives, path, moves).segments;
   if (bounds != nullptr) {
     bounds->clear();
   }
@@ -138,7 +140,6 @@ std::vector<Point> render(const MovePrimitives& primitives, const Path& path,
       points.emplace_back(x, y);
     }
   };
-  const auto moves = decodePath(primitives, path);
   for (std::size_t i = 0; i < moves.size(); ++i) {
     const PathMove& move = moves[i];
     PathSegment& segment = segments[i];
@@ -174,6 +175,11 @@ std::vector<Point> render(const MovePrimitives& primitives, const Path& path,
 }
 
 } // namespace
+
+SegmentedPath reconstructSegments(const MovePrimitives& primitives,
+                                  const Path& path) {
+  return segmentsFromMoves(primitives, path, decodePath(primitives, path));
+}
 
 std::vector<Point> samplePath(const MovePrimitives& primitives, Path& path,
                               const PathPoint start,

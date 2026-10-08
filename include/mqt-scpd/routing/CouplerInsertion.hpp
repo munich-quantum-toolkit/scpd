@@ -116,7 +116,8 @@ struct CouplerSplice {
  * cell before comparison.
  *
  * The selected prefix replaces the path before its joining point. Allocation
- * failure or a throwing filter leaves the input path unchanged.
+ * failure or a throwing filter leaves the input path unchanged. Exceptions
+ * from either filter propagate to the caller.
  *
  * @param primitives The move primitives the path was routed with.
  * @param targetLength The length the path should have after the splice, as
@@ -132,11 +133,12 @@ struct CouplerSplice {
  * x and y. An empty filter allows every cell.
  * @param candidateAllowed An optional hard filter on the complete proposed
  * path, including the remaining resonator. Use it to check obstacles and
- * clearance on the rendered geometry. It may run more than once per candidate
- * and must not modify the input path. Rejected candidates never enter the
- * anchor fallback. An empty filter allows every candidate.
+ * clearance on the rendered geometry. It must return the same result for the
+ * same candidate and must not modify the input path. Rejected candidates never
+ * enter the anchor fallback. An empty filter allows every candidate.
  * @return The splice, or @c std::nullopt when @p path is empty or no candidate
- * is collision-free. In that case @p path is unchanged.
+ * meets the collision checks and @p candidateAllowed. In that case @p path
+ * is unchanged.
  * @throws std::invalid_argument If @p couplerHeading is not a heading, or if
  * @p targetLength is negative or not finite.
  * @throws std::logic_error If the primitives hold no quarter turn that the

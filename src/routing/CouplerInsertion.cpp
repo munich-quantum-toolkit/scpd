@@ -66,9 +66,7 @@ bool isDiagonalStep(const PathPoint& a, const PathPoint& b) {
 }
 
 /// A part of a coupler's dogleg: its cells, relative to its start, the offset
-/// of its end, where the next part starts, and its length. A primitive ends at
-/// its offset Primitive::dx, Primitive::dy, which need not be its last swept
-/// cell.
+/// of its end, where the next part starts, and its length.
 struct DoglegPiece {
   Path cells;
   int64_t endX = 0;
@@ -77,11 +75,8 @@ struct DoglegPiece {
   double length = 0.0;
 };
 
-/// The swept cells of a primitive that leaves a heading, tagged with the
-/// heading and the primitive. A turn that does not sweep its end lists the end
-/// after its last swept cell, which touches the end. The cells of every turn
-/// of a dogleg therefore include its end (see Path), and the piece after it
-/// starts next to its last cell.
+/// The swept cells of a primitive, including its start and end, tagged with
+/// the entry heading and the primitive.
 DoglegPiece pieceOf(const Primitive& primitive, const Heading heading) {
   DoglegPiece piece;
   piece.endX = primitive.dx;
@@ -96,10 +91,6 @@ DoglegPiece pieceOf(const Primitive& primitive, const Heading heading) {
   };
   for (const CellOffset& move : primitive.swept) {
     add(move);
-  }
-  const CellOffset end{.dx = primitive.dx, .dy = primitive.dy};
-  if (std::ranges::find(primitive.swept, end) == primitive.swept.end()) {
-    add(end);
   }
   return piece;
 }
@@ -248,6 +239,7 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
     /// The rank of the candidate: by its cell along the path, and on one cell
     /// by the order of the options.
     std::size_t order = 0;
+    std::optional<bool> feasible = std::nullopt;
   };
   std::vector<Candidate> candidates;
   Path rendered = path;
@@ -411,21 +403,27 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
   };
   const auto choose = [&]() -> std::optional<Choice> {
     std::optional<Choice> fallback;
-    for (const Candidate& cand : candidates) {
-      Path simulated;
-      if (!tryCandidate(cand, simulated)) {
+    for (Candidate& cand : candidates) {
+      if (cand.feasible == false) {
         continue;
       }
-      if (candidateAllowed) {
+      Path simulated;
+      if (!tryCandidate(cand, simulated)) {
+        cand.feasible = false;
+        continue;
+      }
+      if (!cand.feasible.has_value() && candidateAllowed) {
         Path complete = simulated;
         complete.insert(complete.end(),
                         path.begin() +
                             static_cast<std::ptrdiff_t>(cand.splitIndex),
                         path.end());
-        if (!candidateAllowed(complete)) {
+        cand.feasible = candidateAllowed(complete);
+        if (!*cand.feasible) {
           continue;
         }
       }
+      cand.feasible = true;
       if (!anchorAllowed || simulated.empty() ||
           anchorAllowed(simulated.front().x, simulated.front().y)) {
         return Choice{.candidate = &cand,
