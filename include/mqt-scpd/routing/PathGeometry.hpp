@@ -80,9 +80,10 @@ decodePath(const MovePrimitives& primitives, const Path& path);
 struct SegmentedPath {
   /// The runs, in the order of the path.
   std::vector<PathSegment> segments;
-  /// The sum of the costs of tagged moves. Each distinct straight cell
-  /// counts one step, including the terminal point's outgoing step. A turn
-  /// counts once. renderedLength() measures the curve between path endpoints.
+  /// The sum of tagged costs: one step cost per distinct straight point,
+  /// including each run's origin, and one primitive cost per turn. A straight
+  /// run of N steps has N+1 points and charges N+1 step costs here.
+  /// renderedLength() measures the actual curve between path endpoints.
   double nominalLength = 0.0;
 };
 

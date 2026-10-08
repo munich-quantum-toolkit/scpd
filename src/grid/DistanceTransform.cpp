@@ -33,8 +33,8 @@ std::vector<uint32_t> squaredDistanceTransform(const BitGrid& blocked) {
   }
 
   // Along each row: the distance to the nearest blocked cell of the row,
-  // then squared. The square saturates at DISTANCE_UNBOUNDED, because a row
-  // distance of 65536 or more overflows its square in 32 bits.
+  // then squared in 64 bits and capped at the public DISTANCE_UNBOUNDED
+  // sentinel before conversion to 32 bits.
   for (uint32_t y = 0; y < height; ++y) {
     const std::size_t row = static_cast<std::size_t>(y) * width;
     for (uint32_t x = 1; x < width; ++x) {

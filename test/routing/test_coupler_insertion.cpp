@@ -298,10 +298,9 @@ TEST(CouplerInsertion, ADoglegStepsFromCellToNeighboringCell) {
   // The splice tests the cells of a dogleg against the rest of the path. A
   // dogleg that skipped a cell, such as the end of its turn, would let the
   // path cross it there unseen. At every radius the dogleg lists the end of
-  // its turn. At the radii the router accepts, it skips no cell.
+  // its turn, and it skips no cell at every supported primitive radius.
   for (uint32_t radius = 1; radius <= MovePrimitives::MAX_BEND_RADIUS;
        ++radius) {
-    const bool chain = radius <= DubinsRouter::MAX_BEND_RADIUS;
     const MovePrimitives table(radius);
     for (Heading entry = 0; entry < NUM_HEADINGS; ++entry) {
       for (const int sign : {-1, 1}) {
@@ -317,9 +316,6 @@ TEST(CouplerInsertion, ADoglegStepsFromCellToNeighboringCell) {
         EXPECT_NE(end, dogleg.path.end())
             << "radius " << radius << ", entry " << static_cast<int>(entry)
             << ", turn " << sign;
-        if (!chain) {
-          continue;
-        }
         for (std::size_t i = 1; i < dogleg.path.size(); ++i) {
           const auto dx =
               static_cast<int32_t>(dogleg.path[i].x - dogleg.path[i - 1].x);
@@ -578,9 +574,15 @@ TEST(CouplerInsertion, ASpliceBeforeAFirstTurnKeepsItsTaggedArcOrigin) {
   // origin replaces the last stub cell, so a target of zero joins the last
   // straight cell before it. The rendered parts must meet at that cell.
   for (Heading stub = 1; stub < NUM_HEADINGS; stub += 2) {
-    for (const uint16_t id : {900, 901}) {
-      const Primitive* turn = primitives().find(stub, id);
-      ASSERT_NE(turn, nullptr);
+    for (const int sign : {-1, 1}) {
+      const auto moves = primitives().of(stub);
+      const auto found =
+          std::ranges::find_if(moves, [&](const Primitive& move) {
+            return move.exitHeading == turned(stub, 2 * sign);
+          });
+      ASSERT_NE(found, moves.end());
+      const Primitive* turn = &*found;
+      const uint16_t id = turn->id;
       Path path = straightRun(300, 300, stub, 12);
       const PathPoint start = path.back();
       path.back().primitive = id;
@@ -1265,10 +1267,13 @@ TEST(CouplerInsertion, CompleteCandidateFilterSkipsBlockedPlacements) {
   const PathPoint obstacle = unrestricted[unrestricted.size() / 4];
   Path filtered = original;
   std::size_t checked = 0;
+  std::vector<Path> offered;
   std::vector<Path> accepted;
   PathLoopScratch loopScratch;
   const auto feasible = [&](const Path& candidate) {
     ++checked;
+    EXPECT_EQ(std::ranges::find(offered, candidate), offered.end());
+    offered.push_back(candidate);
     EXPECT_EQ(candidate.back(), original.back());
     EXPECT_FALSE(pathSelfIntersects(candidate, WIDTH, HEIGHT, loopScratch));
     const bool allowed =

@@ -26,6 +26,10 @@ namespace mqt::scpd::routing {
 namespace {
 using Vector = std::array<double, 2>;
 
+/// Coordinates are at most 128 cells. This covers roundoff in grid-end solves
+/// and half-cell ties without moving points that lie away from a boundary.
+constexpr double ROUNDING_TOLERANCE = 1e-10;
+
 /// The unit vector of a heading.
 Vector direction(const Heading heading) {
   const HeadingVector v = headingVector(heading);
@@ -42,7 +46,7 @@ double cross(const Vector& a, const Vector& b) {
 int16_t roundCell(const double value) {
   const double half = std::floor(value) + 0.5;
   return static_cast<int16_t>(
-      std::lround(std::abs(value - half) <= 1e-10 ? half : value));
+      std::lround(std::abs(value - half) <= ROUNDING_TOLERANCE ? half : value));
 }
 
 /// Builds a clockwise turn with straight leads that meet a grid cell.
@@ -71,12 +75,12 @@ Primitive turn(const Heading entry, const uint32_t radius, const int eighths) {
       const Vector difference{x - arcEnd[0], y - arcEnd[1]};
       double a = cross(difference, v) / cross(u, v);
       double b = cross(u, difference) / cross(u, v);
-      if (a < -1e-10 || b < -1e-10) {
+      if (a < -ROUNDING_TOLERANCE || b < -ROUNDING_TOLERANCE) {
         continue;
       }
       a = std::max(0.0, a);
       b = std::max(0.0, b);
-      if (a + b < best - 1e-10) {
+      if (a + b < best - ROUNDING_TOLERANCE) {
         best = a + b;
         leadIn = a;
         leadOut = b;
@@ -92,7 +96,7 @@ Primitive turn(const Heading entry, const uint32_t radius, const int eighths) {
   p.samples.emplace_back(0.0, 0.0);
   const auto addStraight = [&p](const Vector& start, const Vector& unit,
                                 const double length) {
-    if (length <= 1e-10) {
+    if (length <= ROUNDING_TOLERANCE) {
       return;
     }
     const auto count =

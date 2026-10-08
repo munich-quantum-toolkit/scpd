@@ -973,13 +973,31 @@ TEST(DubinsRouter, AnOrthogonalRouteDoesNotTurnFromAConstrainedStart) {
 
 TEST(DubinsRouter, ASingleCrossingFeedlineRequiresKnownMoveTags) {
   Fixture f;
-  Path feedline =
-      straightRun(*f.primitives, {.x = 150, .y = 20, .heading = 4}, 160);
-  for (PathPoint& point : feedline) {
-    point.primitive = 0;
-  }
-  EXPECT_THROW(f.router.setSingleCrossingFeedline(&feedline, 5, 1),
+  const Path feedline =
+      straightRun(*f.primitives, {.x = 150, .y = 0, .heading = 4}, HEIGHT - 1);
+  f.block(0, 68, 152, 72);
+  f.block(147, 128, 279, 132);
+  const RoutingObjective objective{
+      .source = {.x = 30, .y = 40, .heading = 6},
+      .target = {.x = 260, .y = 170, .heading = 6}};
+  const Path unrestricted = f.router.routeOrthogonal(objective);
+  ASSERT_FALSE(unrestricted.empty());
+  f.router.setSingleCrossingFeedline(&feedline, 19, 1);
+  const Path constrained = f.router.routeOrthogonal(objective);
+  ASSERT_FALSE(constrained.empty());
+  ASSERT_NE(constrained, unrestricted);
+
+  // A failed setter preserves the active feedline and its zone radii.
+  Path invalid = feedline;
+  invalid[100].primitive = 0;
+  EXPECT_THROW(f.router.setSingleCrossingFeedline(&invalid, 1, 50),
                std::invalid_argument);
+  EXPECT_EQ(f.router.routeOrthogonal(objective), constrained);
+  invalid = feedline;
+  invalid[100].heading = NUM_HEADINGS;
+  EXPECT_THROW(f.router.setSingleCrossingFeedline(&invalid, 1, 50),
+               std::invalid_argument);
+  EXPECT_EQ(f.router.routeOrthogonal(objective), constrained);
 }
 
 TEST(DubinsRouter, ACheckSeesATurnThatStartsOnTheLastCellOfTheStub) {
@@ -1362,7 +1380,7 @@ std::size_t eighthsOf(const MovePrimitives& table, const Path& path) {
 /// Checks that a routed path with eighth turns renders as one curve whose
 /// every point lies within half a cell along each axis of a swept cell and
 /// that runs through the cell of every step, with one turn segment per run of
-/// an exact eighth turn and a length equal to the sum of its segments, and that
+/// an eighth turn and a length equal to the sum of its segments, and that
 /// a coupler spliced into it leaves the length of the rest as it was. Returns
 /// whether the splice succeeded.
 bool checkRendering(const MovePrimitives& table, const Path& path,

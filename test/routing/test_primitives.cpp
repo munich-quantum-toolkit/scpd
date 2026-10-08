@@ -382,6 +382,27 @@ TEST(Primitives, TheCellsOfEveryMoveFormAChainOfNeighbors) {
   }
 }
 
+TEST(Primitives, ADiagonalQuarterTurnResolvesAnalyticHalfCellTies) {
+  const MovePrimitives table(21);
+  const Primitive* quarter = nullptr;
+  for (const auto& move : table.of(1)) {
+    if (move.exitHeading == turned(1, 2)) {
+      quarter = &move;
+    }
+  }
+  ASSERT_NE(quarter, nullptr);
+  // Equal tangent leads reach (-30, 0). At arc angles 15 and 75 degrees,
+  // sin(theta) - cos(theta) is respectively -1/sqrt(2) and 1/sqrt(2).
+  // Thus x is exactly -4.5 and -25.5; y is 21*sqrt(2)-10.5*sqrt(3)-15,
+  // between -3.5 and -3. These ties round away from zero.
+  EXPECT_NE(std::ranges::find(quarter->swept, CellOffset{.dx = -5, .dy = -3}),
+            quarter->swept.end());
+  EXPECT_NE(std::ranges::find(quarter->swept, CellOffset{.dx = -26, .dy = -3}),
+            quarter->swept.end());
+  EXPECT_EQ(std::ranges::find(quarter->swept, CellOffset{.dx = -25, .dy = -3}),
+            quarter->swept.end());
+}
+
 TEST(Primitives, HalfCellTiesHaveStableSweptCells) {
   const auto roundCell = [](const double value) {
     const double half = std::floor(value) + 0.5;
