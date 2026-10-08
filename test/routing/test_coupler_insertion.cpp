@@ -382,7 +382,7 @@ TEST(CouplerInsertion, TheSplicePrefersAnUndershoot) {
   ASSERT_LT(low, high);
   for (const auto& [fraction, undershoots] :
        {std::pair{0.6, true}, std::pair{0.8, false}}) {
-    const double target = low + fraction * (high - low);
+    const double target = low + (fraction * (high - low));
     Path candidate = original;
     ASSERT_TRUE(spliceCouplerDogleg(primitives(), target, candidate, WIDTH,
                                     HEIGHT, 5, {}, [&](uint32_t x, uint32_t y) {

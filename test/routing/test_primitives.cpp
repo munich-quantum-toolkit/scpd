@@ -80,14 +80,14 @@ TEST(Primitives, EveryCurveMeetsItsGridPoseWithoutReducingTheBendRadius) {
         const double last = std::atan2(s.back().y() - s[s.size() - 2].y(),
                                        s.back().x() - s[s.size() - 2].x());
         const double chordError =
-            MovePrimitives::SAMPLE_SPACING / (2.0 * radius) + 1e-8;
-        EXPECT_LE(std::abs(std::remainder(first - headingDirection(h) *
-                                                      std::numbers::pi / 180.0,
-                                          2.0 * std::numbers::pi)),
+            (MovePrimitives::SAMPLE_SPACING / (2.0 * radius)) + 1e-8;
+        EXPECT_LE(std::abs(std::remainder(
+                      first - (headingDirection(h) * std::numbers::pi / 180.0),
+                      2.0 * std::numbers::pi)),
                   chordError);
         EXPECT_LE(
-            std::abs(std::remainder(last - headingDirection(p.exitHeading) *
-                                               std::numbers::pi / 180.0,
+            std::abs(std::remainder(last - (headingDirection(p.exitHeading) *
+                                            std::numbers::pi / 180.0),
                                     2.0 * std::numbers::pi)),
             chordError);
         for (std::size_t k = 1; k + 1 < s.size(); ++k) {
@@ -95,7 +95,7 @@ TEST(Primitives, EveryCurveMeetsItsGridPoseWithoutReducingTheBendRadius) {
           const double ay = s[k].y() - s[k - 1].y();
           const double bx = s[k + 1].x() - s[k].x();
           const double by = s[k + 1].y() - s[k].y();
-          const double cross = std::abs(ax * by - ay * bx);
+          const double cross = std::abs((ax * by) - (ay * bx));
           if (cross > 1e-12) {
             const double measured = std::hypot(ax, ay) * std::hypot(bx, by) *
                                     std::hypot(ax + bx, ay + by) /

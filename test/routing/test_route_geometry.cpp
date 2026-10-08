@@ -10,6 +10,7 @@
 
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
+#include "mqt-scpd/routing/Path.hpp"
 #include "mqt-scpd/routing/PathGeometry.hpp"
 #include "mqt-scpd/routing/Primitives.hpp"
 #include "mqt-scpd/routing/SearchScratch.hpp"
@@ -19,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -54,7 +56,7 @@ TEST(RouteGeometry, ATurnOntoADiagonalPreservesTheBendRadiusAtTheJoin) {
     const double ay = points[i].y() - points[i - 1].y();
     const double bx = points[i + 1].x() - points[i].x();
     const double by = points[i + 1].y() - points[i].y();
-    const double cross = std::abs(ax * by - ay * bx);
+    const double cross = std::abs((ax * by) - (ay * bx));
     if (cross < 1e-10) {
       continue;
     }

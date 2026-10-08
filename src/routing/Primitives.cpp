@@ -39,7 +39,7 @@ Vector direction(const Heading heading) {
 
 /// The cross product of two planar vectors.
 double cross(const Vector& a, const Vector& b) {
-  return a[0] * b[1] - a[1] * b[0];
+  return (a[0] * b[1]) - (a[1] * b[0]);
 }
 
 /// Resolves half-cell ties independently of trigonometric roundoff.
@@ -57,8 +57,8 @@ Primitive turn(const Heading entry, const uint32_t radius, const int eighths) {
   const double sweep = eighths * std::numbers::pi / 4.0;
   const double sine = eighths == 2 ? 1.0 : std::numbers::sqrt2 / 2.0;
   const double cosine = eighths == 2 ? 0.0 : std::numbers::sqrt2 / 2.0;
-  const Vector arcEnd{radius * (sine * u[0] + (1.0 - cosine) * normal[0]),
-                      radius * (sine * u[1] + (1.0 - cosine) * normal[1])};
+  const Vector arcEnd{radius * ((sine * u[0]) + ((1.0 - cosine) * normal[0])),
+                      radius * ((sine * u[1]) + ((1.0 - cosine) * normal[1]))};
   Primitive p;
   p.id = static_cast<uint16_t>(eighths == 2 ? 900 : 902);
   p.exitHeading = turned(entry, eighths);
@@ -92,7 +92,7 @@ Primitive turn(const Heading entry, const uint32_t radius, const int eighths) {
   if (!std::isfinite(best)) {
     throw std::logic_error("a turn has no grid end with forward tangent leads");
   }
-  p.cost = leadIn + radius * sweep + leadOut;
+  p.cost = leadIn + (radius * sweep) + leadOut;
   p.samples.emplace_back(0.0, 0.0);
   const auto addStraight = [&p](const Vector& start, const Vector& unit,
                                 const double length) {
@@ -103,8 +103,8 @@ Primitive turn(const Heading entry, const uint32_t radius, const int eighths) {
         static_cast<int>(std::ceil(length / MovePrimitives::SAMPLE_SPACING));
     for (int i = 1; i <= count; ++i) {
       const double distance = length * static_cast<double>(i) / count;
-      p.samples.emplace_back(start[0] + distance * unit[0],
-                             start[1] + distance * unit[1]);
+      p.samples.emplace_back(start[0] + (distance * unit[0]),
+                             start[1] + (distance * unit[1]));
     }
   };
   addStraight({0.0, 0.0}, u, leadIn);
@@ -114,10 +114,10 @@ Primitive turn(const Heading entry, const uint32_t radius, const int eighths) {
   for (int i = 1; i <= count; ++i) {
     const double angle = sweep * static_cast<double>(i) / count;
     p.samples.emplace_back(
-        arcStart[0] + radius * (std::sin(angle) * u[0] +
-                                (1.0 - std::cos(angle)) * normal[0]),
-        arcStart[1] + radius * (std::sin(angle) * u[1] +
-                                (1.0 - std::cos(angle)) * normal[1]));
+        arcStart[0] + (radius * ((std::sin(angle) * u[0]) +
+                                 ((1.0 - std::cos(angle)) * normal[0]))),
+        arcStart[1] + (radius * ((std::sin(angle) * u[1]) +
+                                 ((1.0 - std::cos(angle)) * normal[1]))));
   }
   addStraight({arcStart[0] + arcEnd[0], arcStart[1] + arcEnd[1]}, v, leadOut);
   // The analytic endpoint is integral; remove only floating-point roundoff.
@@ -205,7 +205,10 @@ MovePrimitives::MovePrimitives(const uint32_t minRadius)
       Primitive straight;
       straight.id = 904;
       straight.exitHeading = heading;
+      // Signed grid steps must retain -1, 0, and 1.
+      // NOLINTNEXTLINE(bugprone-signed-char-misuse)
       straight.dx = step.dx;
+      // NOLINTNEXTLINE(bugprone-signed-char-misuse)
       straight.dy = step.dy;
       straight.cost = isDiagonal(heading) ? std::numbers::sqrt2 : 1.0;
       straight.swept.push_back({.dx = straight.dx, .dy = straight.dy});

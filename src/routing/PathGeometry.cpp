@@ -32,7 +32,7 @@ std::vector<PathRun> pathRuns(const Path& path) {
            path[end].primitive == path[begin].primitive) {
       ++end;
     }
-    runs.push_back({begin, end});
+    runs.push_back({.begin = begin, .end = end});
     begin = end;
   }
   return runs;
@@ -57,7 +57,10 @@ std::vector<PathMove> decodePath(const MovePrimitives& primitives,
     } else if (primitive == nullptr && run.end < path.size()) {
       end = path[run.end];
     }
-    moves.push_back({origin, end, run.begin, run.end});
+    moves.push_back({.origin = origin,
+                     .end = end,
+                     .begin = run.begin,
+                     .endIndex = run.end});
   }
   return moves;
 }
