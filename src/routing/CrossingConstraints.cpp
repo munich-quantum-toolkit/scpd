@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::routing {
@@ -67,9 +68,7 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
                                 const std::vector<Path>& feedlines,
                                 const std::vector<bool>& skip,
                                 const int expandRadius) {
-  gridWidth = width;
-  gridHeight = height;
-  masks.assign(static_cast<std::size_t>(width) * height, 0);
+  std::vector<uint8_t> builtMasks(static_cast<std::size_t>(width) * height, 0);
   const auto w = static_cast<int64_t>(width);
   const auto h = static_cast<int64_t>(height);
   const auto closeAround = [&](const int64_t cx, const int64_t cy,
@@ -81,8 +80,8 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
           continue;
         }
-        masks[(static_cast<std::size_t>(ny) * width) +
-              static_cast<std::size_t>(nx)] = CURVE_ZONE;
+        builtMasks[(static_cast<std::size_t>(ny) * width) +
+                   static_cast<std::size_t>(nx)] = CURVE_ZONE;
       }
     }
   };
@@ -126,8 +125,8 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
           if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
             continue;
           }
-          uint8_t& mask = masks[(static_cast<std::size_t>(ny) * width) +
-                                static_cast<std::size_t>(nx)];
+          uint8_t& mask = builtMasks[(static_cast<std::size_t>(ny) * width) +
+                                    static_cast<std::size_t>(nx)];
           if (mask != CURVE_ZONE) {
             mask |= bit;
           }
@@ -154,6 +153,9 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
       }
     }
   }
+  masks = std::move(builtMasks);
+  gridWidth = width;
+  gridHeight = height;
 }
 
 void CrossingConstraints::clear() {

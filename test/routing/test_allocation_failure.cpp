@@ -13,6 +13,7 @@
 
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/routing/CouplerInsertion.hpp"
+#include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/DubinsRouter.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
@@ -309,6 +310,34 @@ TEST(AllocationFailure, AFailedConstraintBuildKeepsThePreviousConstraints) {
         });
     EXPECT_GT(failures, 0) << constrained;
   }
+}
+
+TEST(AllocationFailure, AFailedStandaloneConstraintBuildKeepsThePreviousGrid) {
+  const MovePrimitives primitives(5);
+  const std::vector<Path> previous{columnRun(primitives, 90)};
+  const std::vector<Path> next{columnRun(primitives, 30)};
+  CrossingConstraints before;
+  before.build(WIDTH, HEIGHT, previous, {}, 4);
+  const auto masks = before.cellMasks();
+  const std::vector<uint8_t> expected(masks.begin(), masks.end());
+
+  std::unique_ptr<CrossingConstraints> constraints;
+  const int failures = failEachAllocation(
+      [&](const std::function<void()>& arm) {
+        constraints = std::make_unique<CrossingConstraints>();
+        constraints->build(WIDTH, HEIGHT, previous, {}, 4);
+        arm();
+        constraints->build(WIDTH * 2, HEIGHT * 2, next, {}, 4);
+      },
+      [&](const int allocation) {
+        const auto actual = constraints->cellMasks();
+        EXPECT_EQ(std::vector<uint8_t>(actual.begin(), actual.end()), expected)
+            << allocation;
+        EXPECT_FALSE(constraints->allowed(WIDTH, 0, 0)) << allocation;
+        EXPECT_FALSE(constraints->turnAllowed(WIDTH, 0)) << allocation;
+        EXPECT_EQ(constraints->maskAt(WIDTH, 0), 0U) << allocation;
+      });
+  EXPECT_GT(failures, 0);
 }
 
 TEST(AllocationFailure, AFailedParameterChangeKeepsThePreviousParameters) {
