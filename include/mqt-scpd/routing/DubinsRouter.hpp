@@ -94,19 +94,13 @@ enum class Heuristic : uint8_t {
  * The search tests whether the cells that a move sweeps and its end cell lie
  * in the corridor, and it tests the cells it starts from and ends at. It does
  * not test the cells of the straight stubs; the caller keeps them in the
- * corridor. The test is coarser than the wire in two ways:
- * - A wall of cells outside the corridor stops the search only where its
- *   cells share edges. A diagonal step sweeps only its end cell, so it passes
- *   between two cells of the wall that touch at a corner.
- * - The centerline of a turn, the polyline through the samples of its move,
- *   can leave the cells that the search tests for the turn. It stays within
- *   half a cell of them for every bend radius that a router accepts, and a
- *   test of the primitives checks this bound. Measured along the polyline,
- *   it strays 0.18 cell at a radius of 5, 0.23 at 12, and the full half cell
- *   at 20.
+ * corridor. Collision checks use rasterized cells, rather than the continuous
+ * wire outline. A diagonal step sweeps only its end cell, so it can pass
+ * between blocked cells that touch at a corner. Turn cells are sampled from
+ * their exact curves (see Primitive::swept).
  *
- * The corridor and the keepout must therefore leave at least one cell beyond
- * the half-width of the wire.
+ * The caller must leave at least one cell of clearance beyond the half-width
+ * of the wire in the corridor and keepout.
  */
 class MQT_SCPD_ROUTING_EXPORT DubinsRouter {
 public:
@@ -121,7 +115,8 @@ public:
   /**
    * @brief The smallest bend radius a router accepts, in cells.
    *
-   * The supported minimum radius of the router, in cells.
+   * The lower end of the radius range validated for the router's search
+   * tables. MovePrimitives accepts smaller radii for geometry operations.
    */
   static constexpr uint32_t MIN_BEND_RADIUS = 2;
 
@@ -230,17 +225,14 @@ public:
    * cuts the number of states the search expands. routeOrthogonal() always
    * adds the term, whatever this setting.
    *
-   * The term is on by default. It is consistent on its own: a move pays at
-   * least the bend penalty times the heading distance it turns, and the
-   * cyclic heading distance obeys the triangle inequality. The distance term
-   * is not consistent. Along a move, it drops by at most the cost of the
-   * cheapest eight-connected walk through the corridor from the start of the
-   * move to its end, and a turn can be shorter than that walk. The excess of
-   * a turn depends on its rasterized walk and charged curve length. The
-   * heading term can make the estimate inconsistent. The search does not
-   * reopen closed states, so a cheapest-path guarantee requires a consistent
-   * estimate. Tests check the default bend penalty without the heading term.
-   * With the heading term enabled, route() can return a more expensive path.
+   * The term is on by default. It is consistent on its own: each move pays
+   * at least its heading-distance penalty, and cyclic heading distance obeys
+   * the triangle inequality. The distance estimate can be inconsistent:
+   * a continuous turn can be shorter than its rasterized eight-connected
+   * walk. A bend penalty can compensate for this difference when the heading
+   * term is disabled; the heading term consumes that margin. Closed states
+   * are not reopened, so the search does not guarantee a cheapest path with
+   * an inconsistent estimate.
    *
    * @param on Whether route() adds the term.
    */
@@ -506,7 +498,9 @@ public:
    * a straight segment of the feedline constrains the far side.
    * @param curveRadius The distance in cells, along each axis, up to which a
    * curve zone or a head zone blocks the far side.
-   * @pre @p feedline stays alive while it is set.
+   * @pre @p feedline stays alive while it is set and keeps its move tags.
+   * @throws std::invalid_argument If a point has an unknown heading or move
+   * tag. Use paths tagged by this router's move table.
    */
   void setSingleCrossingFeedline(const Path* feedline, int straightRadius,
                                  int curveRadius);
@@ -538,13 +532,8 @@ public:
    * asks the same questions: this test for the first cell of the path with
    * its own heading and for each cell that a straight step enters, and
    * turnAllowedOrthogonal() for each cell of a turn, from the start of its
-   * arc to its end. The tags of the path show the turns, with one exception
-   * (see Path). Where the search began with a turn, the arc starts on the
-   * last cell of the source stub, which keeps the straight tag of the stub.
-   * The tags alone do not show this: a search that begins with a straight
-   * step of one cell and then turns gives the same tags. The arc starts on
-   * the last cell of the stub when the point after it carries a turn tag and
-   * the arc ends at that cell plus the offset of the move of the tag.
+   * arc to its end. decodePath() gives the origin, endpoint, and occupancy
+   * span of each turn, including a turn at the source-stub boundary.
    *
    * The single-crossing rule exists only while routeOrthogonal() runs, so
    * outside a search the test reads the exemption and the crossing
@@ -610,10 +599,9 @@ public:
    * target. When the two points are the same cell on the same heading, the
    * result is the two stubs joined, with their shared cell once.
    *
-   * Without the bend lower bound, and with a bend penalty of at least the
-   * largest excess per eighth turn, the path is a cheapest path. With the
-   * bend lower bound, it can cost more; setBendLowerBound() gives the reason
-   * and the figures.
+   * The heuristic steers the search toward the target. An inconsistent
+   * estimate can produce a path that costs more than the cheapest one,
+   * because closed states are not reopened; see setBendLowerBound().
    *
    * @param objective The source and the target of the wire.
    * @param usePenalty Whether the search adds the static and wire proximity
@@ -653,16 +641,9 @@ public:
    * geometry. The search steers by the octile distance plus the bend lower
    * bound, whatever heuristic() and setBendLowerBound() select.
    *
-   * The path can therefore cost more than the cheapest one, for the reason
-   * that setBendLowerBound() gives. A comparison with a brute-force search
-   * measured how much more, without crossing rules, on random grids like
-   * those of that comparison and with bend penalties of 100, 500 and 5000.
-   * At a radius of 5, on 10,000 grids of 30 to 60 cells per side, at
-   * most 0.4 paths in a hundred cost more, by at most 20. At a radius of 12,
-   * on 6,000 grids of 40 to 80 cells, at most 1.1 paths in a hundred cost
-   * more, by at most 50. At a radius of 23, on 4,000 grids of 60 to 100
-   * cells, fewer than one path in a hundred costs more, by at most 95. These
-   * figures are the largest of that sample, not bounds.
+   * The heading term can make the estimate inconsistent, so this search
+   * can return a path that costs more than the cheapest one; see
+   * setBendLowerBound().
    *
    * @param objective The source and the target of the wire.
    * @param usePenalty Whether the search adds the static and wire proximity
@@ -980,10 +961,9 @@ private:
    * It is empty when the search start is the search goal.
    * @param source The source of the wire.
    * @param target The target of the wire.
-   * @return The whole path. The source stub keeps its last point, so a turn
-   * at the search start starts on a point with the tag of the stub. Without a
-   * searched path, the path is the two stubs joined, with their shared cell
-   * once.
+   * @return The whole path. The first searched move supplies the tag of the
+   * source stub's last cell. Without a searched path, the two stubs are
+   * joined with their shared cell once.
    */
   [[nodiscard]] Path assemble(const Path& searched, const PathPoint& source,
                               const PathPoint& target) const;

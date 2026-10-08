@@ -405,6 +405,14 @@ void DubinsRouter::buildOrthogonalConstraints(
 void DubinsRouter::setSingleCrossingFeedline(const Path* feedline,
                                              const int straightRadius,
                                              const int curveRadius) {
+  if (feedline != nullptr &&
+      std::ranges::any_of(*feedline, [this](const PathPoint& point) {
+        return point.heading >= NUM_HEADINGS ||
+               movePrimitives->find(point.heading, point.primitive) == nullptr;
+      })) {
+    throw std::invalid_argument(
+        "single-crossing feedline requires known move tags");
+  }
   singleCrossing = feedline;
   singleCrossingStraightRadius = straightRadius;
   singleCrossingCurveRadius = curveRadius;
@@ -530,24 +538,18 @@ void DubinsRouter::beginSingleCrossingOverlay(const PathPoint& source,
   // straight run of two or more cells. The zone centers on the last point of
   // the run, which for a turn is the last cell its arc sweeps.
   const Path& feedline = *singleCrossing;
-  std::size_t runBegin = 0;
-  for (std::size_t k = 1; k <= feedline.size(); ++k) {
-    const PathPoint& first = feedline[runBegin];
-    if (k < feedline.size() && feedline[k].heading == first.heading &&
-        feedline[k].primitive == first.primitive) {
-      continue;
-    }
-    const PathPoint& last = feedline[k - 1];
+  for (const PathRun& run : pathRuns(feedline)) {
+    const PathPoint& first = feedline[run.begin];
+    const PathPoint& last = feedline[run.end - 1];
     bool longStraight = false;
     if (movePrimitives->isStraight(first.heading, first.primitive)) {
-      for (std::size_t r = runBegin + 1; r < k && !longStraight; ++r) {
+      for (std::size_t r = run.begin + 1; r < run.end && !longStraight; ++r) {
         longStraight = !feedline[r].samePlace(first);
       }
     }
     if (!longStraight) {
       blockRun(std::span<const PathPoint>(&last, 1));
     }
-    runBegin = k;
   }
   blockRun(std::span<const PathPoint>(feedline).first(
       std::min<std::size_t>(10, feedline.size())));

@@ -971,6 +971,17 @@ TEST(DubinsRouter, AnOrthogonalRouteDoesNotTurnFromAConstrainedStart) {
   EXPECT_FALSE(curvesInTheZone(path));
 }
 
+TEST(DubinsRouter, ASingleCrossingFeedlineRequiresKnownMoveTags) {
+  Fixture f;
+  Path feedline =
+      straightRun(*f.primitives, {.x = 150, .y = 20, .heading = 4}, 160);
+  for (PathPoint& point : feedline) {
+    point.primitive = 0;
+  }
+  EXPECT_THROW(f.router.setSingleCrossingFeedline(&feedline, 5, 1),
+               std::invalid_argument);
+}
+
 TEST(DubinsRouter, ACheckSeesATurnThatStartsOnTheLastCellOfTheStub) {
   Fixture f;
   f.router.buildOrthogonalConstraints({columnRun(*f.primitives, 63)}, {false},
@@ -1338,35 +1349,38 @@ TEST(DubinsRouter, ARouterRefusesABendRadiusOfOneCell) {
       static_cast<void>(DubinsRouter(two, scratch, {.minRadius = 2})));
 }
 
-/// The number of points of a path that carry an exact eighth turn.
-std::size_t exactEighthsOf(const Path& path) {
+/// The number of points tagged with an eighth turn.
+std::size_t eighthsOf(const MovePrimitives& table, const Path& path) {
   return static_cast<std::size_t>(
-      std::ranges::count_if(path, [](const PathPoint& point) {
-        return point.primitive == 902 || point.primitive == 903;
+      std::ranges::count_if(path, [&](const PathPoint& point) {
+        const Primitive* move = table.find(point.heading, point.primitive);
+        return move != nullptr &&
+               headingDistance(point.heading, move->exitHeading) == 1;
       }));
 }
 
-/// Checks that a routed path that holds exact eighth turns renders as one
-/// curve whose every point lies within 0.6 cell of a cell of the path and
+/// Checks that a routed path with eighth turns renders as one curve whose
+/// every point lies within half a cell along each axis of a swept cell and
 /// that runs through the cell of every step, with one turn segment per run of
 /// an exact eighth turn and a length equal to the sum of its segments, and that
 /// a coupler spliced into it leaves the length of the rest as it was. Returns
 /// whether the splice succeeded.
 bool checkRendering(const MovePrimitives& table, const Path& path,
                     const uint32_t side, const Heading couplerHeading) {
+  const auto isEighth = [&](const Heading heading, const uint16_t id) {
+    const Primitive* move = table.find(heading, id);
+    return move != nullptr && headingDistance(heading, move->exitHeading) == 1;
+  };
   std::size_t runs = 0;
-  for (std::size_t i = 0; i < path.size(); ++i) {
-    const bool exact = path[i].primitive == 902 || path[i].primitive == 903;
-    const bool startsRun = i == 0 ||
-                           path[i - 1].primitive != path[i].primitive ||
-                           path[i - 1].heading != path[i].heading;
-    runs += static_cast<std::size_t>(exact && startsRun);
+  for (const PathRun& run : pathRuns(path)) {
+    runs += static_cast<std::size_t>(
+        isEighth(path[run.begin].heading, path[run.begin].primitive));
   }
   const SegmentedPath cut = reconstructSegments(table, path);
   EXPECT_EQ(static_cast<std::size_t>(std::ranges::count_if(
                 cut.segments,
-                [](const PathSegment& segment) {
-                  return segment.primitive == 902 || segment.primitive == 903;
+                [&](const PathSegment& segment) {
+                  return isEighth(segment.heading, segment.primitive);
                 })),
             runs);
 
@@ -1378,13 +1392,11 @@ bool checkRendering(const MovePrimitives& table, const Path& path,
   if (polyline.empty() || segments.empty()) {
     return false;
   }
-  // A curve strays at most half a cell from the cells a move sweeps, and the
-  // rendering pulls the end of an exact turn onto its cell, which moves the
-  // curve by at most 0.59 cell more (see Primitive::samples).
+  // Every curve sample is rasterized to its nearest cell.
   for (const Point& point : polyline) {
     const bool near = std::ranges::any_of(rendered, [&](const PathPoint& cell) {
-      return std::abs(point.x() - static_cast<double>(cell.x)) <= 0.6 &&
-             std::abs(point.y() - static_cast<double>(cell.y)) <= 0.6;
+      return std::abs(point.x() - static_cast<double>(cell.x)) <= 0.5 + 1e-9 &&
+             std::abs(point.y() - static_cast<double>(cell.y)) <= 0.5 + 1e-9;
     });
     EXPECT_TRUE(near) << point.x() << " " << point.y();
   }
@@ -1434,8 +1446,8 @@ bool checkRendering(const MovePrimitives& table, const Path& path,
 TEST(DubinsRouter, EveryPairOfHeadingsConnectsOnAnOpenGrid) {
   // A path that turns only by quarter turns keeps the parity of its heading.
   // Each source heading reaches each target heading only if every heading
-  // holds an eighth turn to either side. At a radius of eight cells, the
-  // diagonal headings hold only exact eighth turns, and some paths take them.
+  // holds an eighth turn to either side. Check rendering and coupler splices
+  // on a representative radius as well as connectivity over all radii.
   std::size_t exactEighths = 0;
   std::size_t splices = 0;
   for (uint32_t radius = DubinsRouter::MIN_BEND_RADIUS;
@@ -1467,7 +1479,7 @@ TEST(DubinsRouter, EveryPairOfHeadingsConnectsOnAnOpenGrid) {
         EXPECT_EQ(path.back().y, objective.target.y) << radius;
         EXPECT_EQ(path.back().heading, to) << radius;
         if (radius == 8) {
-          const std::size_t exact = exactEighthsOf(path);
+          const std::size_t exact = eighthsOf(*primitives, path);
           exactEighths += exact;
           if (exact > 0) {
             splices += static_cast<std::size_t>(
