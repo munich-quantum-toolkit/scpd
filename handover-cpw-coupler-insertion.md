@@ -32,6 +32,24 @@ know that the geometry described here differs from
 
 ## Where it stands
 
+**2026-10-09**: the chain search refuses every step whose edge closes a wire
+in the capacity graph (`SCPD_CAPACITY_RULE`, on), and a resonator's way through
+the graph may be no longer than its target length allows. The squeeze rule is
+gone. The crossing count no longer calls a wire crossing that turns on the
+last cell of the band. On 17q (both margins 5) the graph is SAT and the
+feedline pass leaves nothing unrouted, open or crossing. How it works is
+*How the insertion uses the capacity check* right below; the measurements on
+every chip are at its end.
+
+**2026-10-08**: the coupler box margin and the launcher margin are back, both
+at 5 cells by default (`SCPD_COUPLER_BOX_MARGIN`, `SCPD_EDGE_LAUNCHER_MARGIN`;
+*The coupler box margins* below). On 17q with every other switch at its
+default they take `bad` from 4 to 5 and leave chain 1 unsettled; with both
+turn switches on and the edge margin at 0 the box margin gives `bad` 1. The
+capacity analysis, the check after every chain and the page that moves
+couplers by hand, built the same day, are in
+[handover-capacity-check.md](handover-capacity-check.md).
+
 **2026-10-05**: the insertion refuses, in every edge search, a way that
 leaves the wires beside it too little room — *The squeeze rule* below —
 and closes the coupler-end runs of every settled chain's terminal edges
@@ -137,6 +155,167 @@ coupler cuts it back — and therefore whether a place fits at all. 57q and 69q
 were once run at 0 while the other six were at 5, and it shows: 57q lost seven
 edges at angle 148 instead of six at 128, 69q eight at 184 instead of six at
 176. All eight benchmarks carry 5; check it before believing a number.
+
+## How the insertion uses the capacity check (2026-10-09)
+
+The capacity graph of [handover-capacity-check.md](handover-capacity-check.md)
+used to be a report at the end of the insertion. It is now a rule inside the
+chain search: a run of coupler options that leaves a wire no way through the
+chip is not taken.
+
+### What is checked, and when
+
+Every step of `solveChainAStar` that routes its edge (`problem.step`) is
+followed by a capacity check, as long as `SCPD_CAPACITY_RULE` (on) or
+`SCPD_CAPACITY_STEP` (report only, off) is set:
+
+1. **The chip of the step.** `stateOf(wires, settled, chain, &options, &ways,
+   at + 2)` builds it: the chains settled before this one
+   (`stepSettled_`, set by `optimizeChainsPrefix`) on their chosen options and
+   ways, and this chain's prefix on top — the couplers up to the far end of
+   the edge being priced, their pads and leads as `applyOption` would cut
+   them, and the prefix's edges up to this one (a pair laid the other way
+   round uses its replacement way). Couplers after the prefix do not stand;
+   their resonators are no demand yet. Chains not searched yet are not on the
+   chip at all.
+2. **The analysis.** `capacityVerdictOf` → `capacityPass` → `wallsOf`, the
+   linear distance transform, the medial axis, `findBottlenecks` with
+   `couplerCuts` (only cuts with an end on a feedline edge, a pad or a lead),
+   `grid::chambersOf`, `crossingStretches`, and `capacityProblemOf`. Port runs
+   are two thin walls with a slot between them (see handover-capacity-check.md
+   §1).
+3. **The demands.** One per outer wire whose two terminals lie in chambers:
+   - a plain wire must cross exactly the drawn edges between couplers it
+     bridges (`bridgers_`), each once, and no other feedline edge;
+   - a resonator starts at the end of its lead, crosses nothing, and may run
+     at most `longestWayOf(wire)` = target length − run to the port − lead +
+     tolerance, measured as the least a way can run: start to the line of the
+     first edge, line to line, last line to the end (`shortestWay`).
+4. **The check.** `checkInTurn` routes the demands one after another in wire
+   order: a plain wire on its way with the fewest edges, a resonator on its
+   shortest way, each over the edges that still take a wire; when none is
+   free, over any edge, and the edges it overfills have overflow. A wire is
+   **lost** when it has no way, its way is too long, or its way passes an
+   overfilled edge.
+5. **The verdict of the step.** Lost wires of this step's chip against those
+   of the prefix before it (or of the chip without the chain, for a first
+   edge): the difference is what **this edge closes**.
+
+### What the search does with it
+
+- `SCPD_CAPACITY_RULE` on: a step whose edge closes a wire returns
+  `TRELLIS_UNREACHABLE` before anything of it is remembered (no `laid`, no
+  learned bound), exactly as an edge with no way. The A* takes the next
+  option.
+- A chain that no run joins under the rule (or whose search runs out of time
+  before one does) is searched once more **without** the rule — a chain left
+  on its first options is worse than one that closes a wire. The log says
+  which happened: `chain k: out of time before a run of options joined the
+  chain without closing a wire …` or `no run of options joins the chain
+  without closing a wire …`, then `— searched again without the capacity
+  rule`.
+- **The clock.** The time of every check is added to `problem.budget`, which
+  `routing::solveChainAStar` reads on every round. So a chain prices as many
+  steps as without the checks and `SCPD_CHAIN_ASTAR_SECONDS` stays a routing
+  budget. The run gets longer instead (below).
+- The rule acts in the chain search only. The commit, the targeted repair and
+  the coupler session route edges without it; what they change is reported by
+  the capacity graph at the end of the insertion (`SCPD_BOTTLENECKS=1`).
+
+### Reading the log
+
+At `-v 1`, one line per checked step:
+
+```
+[Capacity Step] chain 1 f7 (1->2) on options launcher 0 4: UNSAT — 1 wire without a way (27), short by 1; this edge closes 27 — refused (SCPD_CAPACITY_RULE); 0.107s
+```
+
+At `-v`, per chain and per feedline edge of the run it settles on:
+
+```
+[Capacity Step] chain 3: 210 steps checked in 25.8s (0.123s each), 47 of them SAT, 163 closed a wire, 163 refused for it; without the chain 0 wires without a way (-)
+[Capacity Step] chain 3 f17: SAT, closes no wire
+```
+
+The capacity graph at the end of the insertion says, per wire,
+`no way within its length: the shortest runs N cells, it may run M` for a
+resonator refused for its length, and the verdict line names those apart.
+
+### Three things changed with it
+
+- **The squeeze rule is removed** (`SCPD_SQUEEZE_REJECT`, `_TOLERANCE`,
+  `_RECOVER`; see below). Its report stays.
+- **The crossing count** judges a cell also on the heading it arrives with
+  (`CrossingConstraints::allowedArriving`), in the Final stage and in the
+  DRC: the search lets a wire turn on the last cell of the band, and the
+  count used to call that crossing (17q: 27, 33, 56).
+- **The distance transform is linear** (`grid::squaredDistanceTransform`,
+  same values): 64 → 17 ms on 17q.
+
+### Why the length rule
+
+Without it, resonator 11 on 17q had a way through the graph round the whole
+chip (34 bottlenecks): its coupler's lead stood on the outer side of f1, and
+the graph sent it out and round through the gaps between the chains. Legal in
+the graph, impossible for a resonator, and the feedline pass left 10, 11 and
+f0 open. With it, the step that turns that coupler is refused and chain 0
+takes another run.
+
+### What it costs
+
+One check is one whole analysis of the chip. Measured per check in the
+chain searches (2026-10-09): 17q 0.11–0.18 s, 21q 0.5 s, 33q 0.8–1.4 s, 45q
+1.7–1.8 s, 69q 1.9–2.1 s. A chain with many refusals checks hundreds of steps
+(69q chain 2: 308 steps, 646 s). The insertion gets that much longer; the
+search itself does not shrink. A check that updates the graph only around the
+new edge is the way to make this cheap (handover-capacity-check.md §2 and the
+fast-cut prototype in `artifacts/logs/cap-fast/`).
+
+### Measured on every chip (2026-10-09)
+
+Both margins 5, `stop_after = "feedlines"`, no repair, 10 s per chain; the
+arm without the rule is `SCPD_CAPACITY_RULE=0` (and no squeeze rule either).
+`bad` = unrouted + open + crossing of the final routing. Logs in
+`artifacts/logs/allchips/` (`<chip>-norule.log`, `<chip>-rule.log` or
+`<chip>-rule-d.log`), run directories `artifacts/dev/all-<chip>-<arm>`.
+
+| Chip | Arm | Chains settled | Fallback | Graph | `bad` | Open / crossing | Insertion | Whole run |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 4q | without | 0/1 | – | SAT | 2 | f2, f4 unrouted | 18 s | 22 s |
+| 4q | rule | 0/1 | 1 | SAT | 2 | f2, f4 unrouted | 36 s | 40 s |
+| 9q | without | 2/2 | – | SAT | 0 | – | 1 s | 25 s |
+| 9q | rule | 2/2 | 0 | SAT | 0 | – | 5 s | 19 s |
+| 17q | without | 4/4 | – | UNSAT | **6** | open 10, 11, 40, f0, f12; crossing 40 | 5 s | 70 s |
+| 17q | rule | 4/4 | 0 | SAT | **0** | – | 65 s | 117 s |
+| 21q | without | 5/5 | – | SAT | 0 | – | 5 s | 72 s |
+| 21q | rule | 5/5 | 0 | SAT | 0 | – | 282 s | 340 s |
+| 33q | without | 7/7 | – | SAT | 0 | – | 15 s | 89 s |
+| 33q | rule | 7/7 | 1 (chain 1, out of time) | SAT | 0 | – | 1458–1486 s | 1541–1571 s |
+| 45q | without | 8/8 | – | UNSAT | 0 | – | 36 s | 239 s |
+| 45q | rule | stopped | – | – | – | – | – | – |
+| 57q | without | 8/9 | – | UNSAT | 1 | one feedline edge unrouted | 54 s | 305 s |
+| 57q | rule | stopped | – | – | – | – | – | – |
+| 69q | without | 12/12 | – | UNSAT | 2 | open 183, 184 | 106 s | 811 s |
+| 69q | rule | stopped | – | – | – | – | – | – |
+
+**45q, 57q and 69q with the rule were stopped (user, 2026-10-09)**: too slow.
+After about 25 minutes of insertion 45q had settled 2 of 8 chains and was in
+chain 2 with 680 steps checked, every option of f16 closing wires 38, 39 and
+40; 57q had settled none, with 420 steps checked in chain 0, every option of
+f4 closing 9, 10, 12 and 13; 69q had settled 5 of 12. A check costs 1.5–3 s
+there, and the clock gives the check time back, so a chain can check for half
+an hour. Making the check cheap is the next agent's task:
+`prompt-capacity-step-runtime.md`.
+
+On the chips that finished, the rule never makes `bad` worse, takes 17q from
+6 to 0, and the graph is SAT on all five. 4q settles its one chain neither way
+(an old problem: its edges f2 and f4 have no way).
+
+The final layouts and capacity pages of the rule arm are in
+`artifacts/<chip>/final-layout.svg` and `artifacts/<chip>/final-capacity-graph.html`
+for 4q, 9q, 17q, 21q and 33q, from runs with `-d` that gave the same results
+(`artifacts/logs/allchips/<chip>-rule-d.log`, 17q from
+`artifacts/dev/17q-len-b5`). 45q, 57q and 69q have none yet.
 
 ## How the option is chosen
 
@@ -784,7 +963,20 @@ is what says a row is clean.
 | `Driver::drawCouplerOptions` | `final-coupler-options.svg` |
 | `DubinsRouter::setBendLowerBound` | the bend term in the free search's heuristic |
 
-## The squeeze rule (2026-10-05)
+## The squeeze rule (2026-10-05; removed 2026-10-09)
+
+**Removed (user, 2026-10-09).** `SCPD_SQUEEZE_REJECT`, `SCPD_SQUEEZE_TOLERANCE`
+and `SCPD_SQUEEZE_RECOVER` are gone with `refuseSqueezed`; no edge search
+refuses a way for the room it leaves. The report (`reportSqueeze`, the
+`Squeezed` verdict) stays. Measured on 17q the day it went (both margins 5,
+60 s per chain, `artifacts/logs/nosqueeze/`): chain 1 settles, but the graph
+is UNSAT short by 4 (11, 30, 40, 56) and the feedline pass ends with open 10,
+11, 40, f0, f12 and crossing 0, 27, 33, 40, 56; with `SCPD_COUPLER_BOX_MARGIN=8`
+open 10, 11, 39, 40, f0, f11 and crossing 27, 33, 56. With the rule and 5
+cells of tolerance and box margin 8 the graph was SAT and only crossing 27,
+33, 56 remained (`artifacts/logs/chain1/tol5b8.log`). What follows describes
+the rule as it was.
+
 
 The one room rule that refuses. `measureSqueeze` reads, from every fifth
 cell of a way past its two coupler runs, a straight line to either side at
@@ -1060,16 +1252,91 @@ stops being tested.** With `SCPD_CHAIN_KEEP_WAYS` on, 69q draws 81 of 81 and
 seventeen of them cross other edges. The undrawn count went to zero because
 the test went away, not because the geometry improved.
 
-## The coupler box margins (2026-10-06, built, swept and taken out)
+## The coupler box margins (2026-10-08: back in, both 5 by default)
 
-Two margins were built on top of the box rule and **removed again at the
-user's instruction**. Nothing of them is in the tree: `SCPD_COUPLER_BOX_MARGIN`
-and `SCPD_LAUNCHER_FENCE_MARGIN` do not exist, and setting either does nothing
-and says nothing. This section is here so the measurement does not go with the
-code.
+Two margins keep the couplers and the feedline edges further off the launcher
+stubs. Both are **in the tree and on by default, at 5 cells each** (user,
+2026-10-08). `=0` restores the rule without them.
 
-What they attached to are the two switches that *are* in the tree, both
-**off**: `SCPD_COUPLER_BOX_TURN`, which draws the box at
+| Variable | Default | Helper | What it does |
+|---|---|---|---|
+| `SCPD_COUPLER_BOX_MARGIN` | 5 | `couplerBoxMargin` | shrinks the coupler box by this many cells on every side, for the couplers alone |
+| `SCPD_EDGE_LAUNCHER_MARGIN` | 5 | `edgeLauncherMargin` | lengthens the run a feedline edge keeps closed in front of every launcher but its own |
+
+**`SCPD_COUPLER_BOX_MARGIN`** goes in as the third argument of
+`CouplerBox::holds` at the four box tests of `makeOption`: the pad's body, the
+feedline's run along the pad beyond its ports (`edgeRunOffPort`), the
+resonator's lead, and the turn after the lead (that one only under
+`SCPD_COUPLER_BOX_TURN`). `terminalsInBox`, which has no caller, takes it too.
+
+- An option that leaves the smaller box is refused, and `couplerPlace` walks
+  on to the next place on the resonator, as for the box itself.
+- An edge between two couplers still has the **whole** box
+  (`SCPD_EDGE_IN_BOX` in `corridorOfEdge`). The capacity analysis and
+  `checkCouplerBodies` also measure against the box without the margin.
+- The stage says `a coupler keeps N cells more off every side of that box
+  (SCPD_COUPLER_BOX_MARGIN): x … y …` after `couplers sit inside …`.
+
+**`SCPD_EDGE_LAUNCHER_MARGIN`** lengthens the run `corridorOfEdge` closes in
+front of every launcher but the edge's own: `straightStart`, plus
+`BEND_RADIUS` under `SCPD_LAUNCHER_FENCE_TURN`, plus the margin, with the
+clearance disc around the whole of it.
+
+- It acts wherever that corridor is built: the searches and the commit of
+  the insertion, the commit's test of a way (`edgeWayStillOpen`,
+  `stateFaults`), the coupler page, and the repair's searches of an edge in
+  phase 4 (the targeted re-search and `turnCoupler`). The coupler box, the
+  wires' own routing and the capacity analysis do not see it.
+- The stage says `a feedline edge keeps N cells closed in front of every
+  launcher but its own: …`.
+- `BEND_RADIUS` is 5, so a margin of 5 with the fence turn off closes
+  exactly what `SCPD_LAUNCHER_FENCE_TURN=1` closes, and gives the same result.
+
+Both are read at every use, not once per process, so a test or a run can set
+them per chip. Tests: `FinalRouter.ACouplerKeepsTheBoxMarginClear` and
+`FinalRouter.AnEdgeKeepsTheLauncherMarginClear` (4q: with 20 and 30 cells no
+pad and no edge comes nearer than the margin asks; without, one does).
+
+### What the defaults give on 17q (2026-10-08)
+
+`--stage final`, `stop_after = "feedlines"`, no repair, every other switch
+at its default unless the row names it. Inputs: the full 17q run of
+2026-10-08 11:29, in `artifacts/dev/17q-chk`. Logs in
+`artifacts/logs/chain-check/`.
+
+| Arm | `bad` (u/o/c) | Fails | Chain 1 | Insertion | Log |
+|---|---|---|---|---|---|
+| both 0 (the rule before) | **4** (0/0/4) | crossing 14, 31, 33, 56 | settled | 5.7 s | `17q-off` |
+| box 5, edge 0 | **5** (0/2/3) | open 31, 32; crossing 0, 27, 56 | out of time | 22.8 s | `17q-boxonly5` |
+| box 0, edge 5 | **5** (1/2/2) | f7; open 31, 32; crossing 42, 56 | out of time | 42.1 s | `17q-edgeonly5` |
+| **both 5 (the default)** | **5** (0/2/3) | open 31, 32; crossing 0, 27, 56 | out of time | 22.7 s | `17q-margins5` |
+| box 5, edge 0, `SCPD_COUPLER_BOX_TURN=1 SCPD_LAUNCHER_FENCE_TURN=1` | **1** (0/0/1) | crossing 13 | out of time | 17.9 s | `17q-turns-box5` |
+
+**With every other switch at its default, the margins are one fail worse
+than the rule without them**, and chain 1 no longer settles within its 10 s:
+it runs out of time before any run of options joins it, where without the
+margins it settles in 25 steps. With the box margin, the edge margin changes
+nothing more.
+
+**With both turn switches on and the edge margin at 0, the box margin of 5
+gives `bad` 1** — crossing 13 alone, no open wire. That is the best figure of
+the 2026-10-06 sweep below, reproduced on the code of 2026-10-08. On top of
+`SCPD_LAUNCHER_FENCE_TURN` the default edge margin would close 5 cells more
+than that arm did; that combination is not measured.
+
+Only 17q was measured, and only at 5. On 4q, with `stop_after = "couplers"`,
+a box margin of 20 drew all 5 edges and settled the chain, where without it
+one edge stayed undrawn. Whether 5/5 stays the default is the user's
+decision, after a sweep and the other chips.
+
+### Measured on 2026-10-06, with both turn switches on
+
+The same two margins were built once before and removed again at the user's
+instruction; this measurement is the only sweep there is. The edge margin was
+then called `SCPD_LAUNCHER_FENCE_MARGIN`.
+
+Both margins attached to the two switches that are **off** by default:
+`SCPD_COUPLER_BOX_TURN`, which draws the box at
 `max(launcherStraight, straightStart + BEND_RADIUS) + clearance + 1` — 36 cells
 from a launcher cell against the 32 it has — and holds every piece of a coupler
 inside it with its own forced straight run and the quarter turn after it; and
@@ -1094,8 +1361,8 @@ this stage — `bad` 1, crossing 13 alone, no open wire, and **without**
 17q. The launcher-fence margin was measured only at 1 and 5 and is worse at
 both.
 
-**Why it is nevertheless out**, and this is the part worth reading before
-building it again. A box refusal in `makeOption` does not discard an option; it
+**What a box margin costs**, and this is the part worth reading before
+raising it. A box refusal in `makeOption` does not discard an option; it
 advances the place. `optionsOf` walks every place of the resonator's way, in
 order of mismatch to the biased target length, and keeps the **first that
 fits** — so the margin's primary effect is to move the cut, and an option is
@@ -1117,10 +1384,9 @@ measurement here stopped at `feedlines`**, which is the phase *before* the one
 that makes resonators their length, so whether the refinement wins those 71
 units back is not known. That is the open question to settle first.
 
-To build it back: two `envWhole` helpers and a third argument at the five
-`couplerBox_.holds(...)` call sites in `terminalsInBox` and `makeOption` plus
-the fence run in `corridorOfEdge`. `CouplerBox::holds` still carries the
-`margin` parameter, unused. Arms: `runs2-m0` … `runs2-m5` for the sweep.
+The arms of that sweep are `runs2-m0` … `runs2-m5`. That build put the margin
+at the same five `couplerBox_.holds(...)` sites and the fence run of
+`corridorOfEdge` as the one now in the tree.
 
 **Do not believe the arms `stub-m0` and `stub-m5`** (`bad` 2 at margin 0 and 5
 at margin 5, the opposite ranking). They were measured while the box rule used

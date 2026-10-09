@@ -120,6 +120,12 @@ bool CrossingConstraints::allowed(const uint32_t x, const uint32_t y,
   return true;
 }
 
+bool CrossingConstraints::allowedArriving(const uint32_t x, const uint32_t y,
+                                          const Heading heading,
+                                          const Heading arrivedWith) const {
+  return allowed(x, y, heading) || allowed(x, y, arrivedWith);
+}
+
 uint8_t CrossingConstraints::maskAt(const uint32_t x, const uint32_t y) const {
   if (masks_.empty() || x >= width_ || y >= height_) {
     return 0;

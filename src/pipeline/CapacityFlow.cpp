@@ -18,9 +18,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <functional>
+#include <limits>
 #include <optional>
 #include <queue>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
@@ -49,19 +52,11 @@ bool opens(const FlowEdge& edge, const std::uint32_t demand) {
          std::ranges::find(*edge.users, demand) != edge.users->end();
 }
 
-} // namespace
-
-std::uint32_t wiresThroughGap(const double cells, const double clearance) {
-  if (!(clearance > 0.0) || cells < clearance) {
-    return 0;
-  }
-  return static_cast<std::uint32_t>(std::floor(cells / clearance));
-}
-
-FlowCheck checkCapacity(const std::uint32_t chambers,
-                        const std::vector<FlowEdge>& edges,
-                        const std::vector<FlowDemand>& demands,
-                        const milp::SolveOptions& options) {
+/// Throws when an edge or a demand names a chamber out of range, or an edge
+/// a demand that does not exist.
+void checkNames(const std::uint32_t chambers,
+                const std::vector<FlowEdge>& edges,
+                const std::vector<FlowDemand>& demands) {
   for (std::size_t index = 0; index < edges.size(); ++index) {
     for (const auto chamber : edges[index].chambers) {
       if (chamber >= chambers) {
@@ -80,6 +75,20 @@ FlowCheck checkCapacity(const std::uint32_t chambers,
     }
   }
   for (std::size_t index = 0; index < demands.size(); ++index) {
+    if (demands[index].crossings.size() > MAX_CROSSINGS) {
+      throw std::invalid_argument(
+          std::format("demand {} has {} groups to cross, more than {}", index,
+                      demands[index].crossings.size(), MAX_CROSSINGS));
+    }
+    for (const auto& group : demands[index].crossings) {
+      for (const auto edge : group) {
+        if (edge >= edges.size()) {
+          throw std::invalid_argument(
+              std::format("demand {} has to cross edge {} of {}", index, edge,
+                          edges.size()));
+        }
+      }
+    }
     for (const auto& side : {demands[index].from, demands[index].to}) {
       for (const auto chamber : side) {
         if (chamber >= chambers) {
@@ -89,13 +98,278 @@ FlowCheck checkCapacity(const std::uint32_t chambers,
       }
     }
   }
+}
 
+/// The edges at every chamber.
+std::vector<std::vector<std::uint32_t>>
+edgesAround(const std::uint32_t chambers, const std::vector<FlowEdge>& edges) {
   std::vector<std::vector<std::uint32_t>> around(chambers);
   for (std::uint32_t index = 0; index < edges.size(); ++index) {
     for (const auto chamber : edges[index].chambers) {
       around[chamber].push_back(index);
     }
   }
+  return around;
+}
+
+/// The group of edges to cross each edge is in for one demand, or
+/// `NO_GROUP`.
+constexpr std::uint32_t NO_GROUP = std::numeric_limits<std::uint32_t>::max();
+
+std::vector<std::uint32_t> groupsOf(const std::size_t edges,
+                                    const FlowDemand& wanted) {
+  std::vector<std::uint32_t> group(edges, NO_GROUP);
+  for (std::uint32_t at = 0; at < wanted.crossings.size(); ++at) {
+    for (const auto edge : wanted.crossings[at]) {
+      group[edge] = at;
+    }
+  }
+  return group;
+}
+
+/// The way of one demand with the fewest edges over the edges open to it
+/// that `usable` lets it take; nothing when there is none.
+///
+/// A state of the search is a chamber and the groups of edges to cross the
+/// way has crossed so far. An edge of a group is taken only while that
+/// group is not crossed, and the way ends in an end chamber with every
+/// group crossed.
+template <typename Usable>
+std::optional<std::vector<std::uint32_t>>
+fewestEdges(const std::uint32_t chambers, const std::vector<FlowEdge>& edges,
+            const std::vector<std::vector<std::uint32_t>>& around,
+            const FlowDemand& wanted, const std::uint32_t demand,
+            const Usable& usable) {
+  const auto group = groupsOf(edges.size(), wanted);
+  const auto masks = std::size_t{1} << wanted.crossings.size();
+  const auto all = masks - 1;
+  const auto stateOf = [masks](const std::uint32_t chamber,
+                               const std::size_t mask) {
+    return (static_cast<std::size_t>(chamber) * masks) + mask;
+  };
+  // The edge each state was first reached over, and the state before.
+  constexpr auto START = std::numeric_limits<std::uint32_t>::max();
+  constexpr auto UNSEEN = START - 1;
+  std::vector<std::uint32_t> over(static_cast<std::size_t>(chambers) * masks,
+                                  UNSEEN);
+  std::vector<std::size_t> before(over.size(), 0);
+  std::queue<std::size_t> pending;
+  for (const auto chamber : wanted.from) {
+    const auto state = stateOf(chamber, 0);
+    if (over[state] == UNSEEN) {
+      over[state] = START;
+      pending.push(state);
+    }
+  }
+  while (!pending.empty()) {
+    const auto state = pending.front();
+    pending.pop();
+    const auto chamber = static_cast<std::uint32_t>(state / masks);
+    const auto mask = state % masks;
+    if (mask == all &&
+        std::ranges::find(wanted.to, chamber) != wanted.to.end()) {
+      std::vector<std::uint32_t> way;
+      for (auto at = state; over[at] != START; at = before[at]) {
+        way.push_back(over[at]);
+      }
+      std::ranges::reverse(way);
+      return way;
+    }
+    for (const auto index : around[chamber]) {
+      if (!opens(edges[index], demand) || !usable(index)) {
+        continue;
+      }
+      auto onward = mask;
+      if (group[index] != NO_GROUP) {
+        const auto bit = std::size_t{1} << group[index];
+        if ((mask & bit) != 0) {
+          continue;
+        }
+        onward |= bit;
+      }
+      // An edge leads into its other chambers: back into the one it was
+      // entered from is no step, and crosses nothing.
+      for (const auto next : edges[index].chambers) {
+        if (next == chamber) {
+          continue;
+        }
+        const auto reached = stateOf(next, onward);
+        if (over[reached] == UNSEEN) {
+          over[reached] = index;
+          before[reached] = state;
+          pending.push(reached);
+        }
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+/// The distance from a point to the line of an edge.
+double toLine(const FlowPoint p, const FlowEdge& edge) {
+  const auto dx = edge.to.x - edge.from.x;
+  const auto dy = edge.to.y - edge.from.y;
+  const auto squared = (dx * dx) + (dy * dy);
+  const auto t = squared > 0.0 ? std::clamp((((p.x - edge.from.x) * dx) +
+                                             ((p.y - edge.from.y) * dy)) /
+                                                squared,
+                                            0.0, 1.0)
+                               : 0.0;
+  return std::hypot(p.x - (edge.from.x + (t * dx)),
+                    p.y - (edge.from.y + (t * dy)));
+}
+
+/// The distance between the lines of two edges: none where they cross.
+double betweenLines(const FlowEdge& a, const FlowEdge& b) {
+  const auto side = [](const FlowPoint p, const FlowPoint q,
+                       const FlowPoint r) {
+    return ((q.x - p.x) * (r.y - p.y)) - ((q.y - p.y) * (r.x - p.x));
+  };
+  const auto d1 = side(a.from, a.to, b.from);
+  const auto d2 = side(a.from, a.to, b.to);
+  const auto d3 = side(b.from, b.to, a.from);
+  const auto d4 = side(b.from, b.to, a.to);
+  if (((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0)) &&
+      ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))) {
+    return 0.0;
+  }
+  return std::min(
+      {toLine(a.from, b), toLine(a.to, b), toLine(b.from, a), toLine(b.to, a)});
+}
+
+/// The way of one demand whose least length is shortest — from its start to
+/// the line of the first edge it passes, from line to line, and from the last
+/// line to its end — over the edges open to it that `usable` lets it take,
+/// and that length; nothing when there is none.
+///
+/// A state of the search is an edge, the chamber the way left it into, and
+/// the groups of edges to cross so far, as in `fewestEdges`: where a way
+/// stands depends on the edge it came through, so a chamber alone is not a
+/// state.
+template <typename Usable>
+std::optional<std::pair<std::vector<std::uint32_t>, double>>
+shortestWay(const std::vector<FlowEdge>& edges,
+            const std::vector<std::vector<std::uint32_t>>& around,
+            const FlowDemand& wanted, const std::uint32_t demand,
+            const Usable& usable) {
+  const auto group = groupsOf(edges.size(), wanted);
+  const auto masks = std::size_t{1} << wanted.crossings.size();
+  const auto all = masks - 1;
+  const auto length = [](const FlowPoint a, const FlowPoint b) {
+    return std::hypot(a.x - b.x, a.y - b.y);
+  };
+  const auto ends = [&](const std::uint32_t chamber) {
+    return std::ranges::find(wanted.to, chamber) != wanted.to.end();
+  };
+  if (wanted.crossings.empty() && std::ranges::any_of(wanted.from, ends)) {
+    return std::pair{std::vector<std::uint32_t>{},
+                     length(wanted.start, wanted.end)};
+  }
+  // Every state an index: the edge, which of its chambers, the mask.
+  std::vector<std::size_t> first(edges.size() + 1, 0);
+  for (std::size_t index = 0; index < edges.size(); ++index) {
+    first[index + 1] = first[index] + edges[index].chambers.size();
+  }
+  const auto states = first.back() * masks;
+  const auto FINISH = states;
+  std::vector<double> best(states + 1, std::numeric_limits<double>::max());
+  std::vector<std::size_t> before(states + 1, FINISH);
+  struct Entry {
+    double cost;
+    std::size_t state;
+    bool operator>(const Entry& other) const { return cost > other.cost; }
+  };
+  std::priority_queue<Entry, std::vector<Entry>, std::greater<>> pending;
+  // Into edge `index` from `chamber`, at `cost` so far and `mask` crossed:
+  // a state for every other chamber of it.
+  const auto enter = [&](const std::uint32_t index, const std::uint32_t chamber,
+                         const std::size_t mask, const double cost,
+                         const std::size_t from) {
+    if (!opens(edges[index], demand) || !usable(index)) {
+      return;
+    }
+    auto onward = mask;
+    if (group[index] != NO_GROUP) {
+      const auto bit = std::size_t{1} << group[index];
+      if ((mask & bit) != 0) {
+        return;
+      }
+      onward |= bit;
+    }
+    const auto& sides = edges[index].chambers;
+    for (std::size_t k = 0; k < sides.size(); ++k) {
+      if (sides[k] == chamber) {
+        continue;
+      }
+      const auto state = ((first[index] + k) * masks) + onward;
+      if (cost < best[state]) {
+        best[state] = cost;
+        before[state] = from;
+        pending.push({cost, state});
+      }
+    }
+  };
+  for (const auto chamber : wanted.from) {
+    for (const auto index : around[chamber]) {
+      enter(index, chamber, 0, toLine(wanted.start, edges[index]), FINISH);
+    }
+  }
+  while (!pending.empty()) {
+    const auto [cost, state] = pending.top();
+    pending.pop();
+    if (cost > best[state]) {
+      continue;
+    }
+    if (state == FINISH) {
+      std::vector<std::uint32_t> way;
+      for (auto at = before[FINISH]; at != FINISH; at = before[at]) {
+        const auto slot = at / masks;
+        const auto index = static_cast<std::uint32_t>(
+            std::ranges::upper_bound(first, slot) - first.begin() - 1);
+        way.push_back(index);
+      }
+      std::ranges::reverse(way);
+      return std::pair{std::move(way), cost};
+    }
+    const auto slot = state / masks;
+    const auto mask = state % masks;
+    const auto index = static_cast<std::uint32_t>(
+        std::ranges::upper_bound(first, slot) - first.begin() - 1);
+    const auto chamber = edges[index].chambers[slot - first[index]];
+    if (mask == all && ends(chamber)) {
+      const auto done = cost + toLine(wanted.end, edges[index]);
+      if (done < best[FINISH]) {
+        best[FINISH] = done;
+        before[FINISH] = state;
+        pending.push({done, FINISH});
+      }
+    }
+    for (const auto next : around[chamber]) {
+      if (next != index) {
+        enter(next, chamber, mask,
+              cost + betweenLines(edges[index], edges[next]), state);
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+} // namespace
+
+std::uint32_t wiresThroughGap(const double cells, const double clearance) {
+  if (!(clearance > 0.0) || cells < clearance) {
+    return 0;
+  }
+  return static_cast<std::uint32_t>(std::floor(cells / clearance));
+}
+
+FlowCheck checkCapacity(const std::uint32_t chambers,
+                        const std::vector<FlowEdge>& edges,
+                        const std::vector<FlowDemand>& demands,
+                        const milp::SolveOptions& options) {
+  checkNames(chambers, edges, demands);
+
+  const auto around = edgesAround(chambers, edges);
 
   FlowCheck check;
   check.ways.assign(demands.size(), std::nullopt);
@@ -313,6 +587,64 @@ FlowCheck checkCapacity(const std::uint32_t chambers,
     check.overflow[index] = static_cast<std::uint32_t>(std::max<std::int64_t>(
         0, static_cast<std::int64_t>(check.load[index]) -
                static_cast<std::int64_t>(edges[index].capacity)));
+    check.shortBy += check.overflow[index];
+  }
+  return check;
+}
+
+FlowCheck checkInTurn(const std::uint32_t chambers,
+                      const std::vector<FlowEdge>& edges,
+                      const std::vector<FlowDemand>& demands) {
+  checkNames(chambers, edges, demands);
+  const auto around = edgesAround(chambers, edges);
+  FlowCheck check;
+  check.status = milp::SolveStatus::Optimal;
+  check.ways.reserve(demands.size());
+  check.load.assign(edges.size(), 0);
+  check.overflow.assign(edges.size(), 0);
+  check.lengths.assign(demands.size(), 0.0);
+  check.tooLong.assign(demands.size(), false);
+  const auto free = [&](const std::uint32_t index) {
+    return check.load[index] < edges[index].capacity;
+  };
+  const auto any = [](const std::uint32_t /*index*/) { return true; };
+  for (std::uint32_t demand = 0; demand < demands.size(); ++demand) {
+    const auto& wanted = demands[demand];
+    std::optional<std::vector<std::uint32_t>> way;
+    if (wanted.longest.has_value()) {
+      // The shortest way within the capacities, else the shortest at all;
+      // either only when it is short enough.
+      for (const bool withinCapacity : {true, false}) {
+        const auto found =
+            withinCapacity ? shortestWay(edges, around, wanted, demand, free)
+                           : shortestWay(edges, around, wanted, demand, any);
+        if (!found.has_value()) {
+          continue;
+        }
+        check.lengths[demand] = found->second;
+        if (found->second <= *wanted.longest) {
+          way = found->first;
+          break;
+        }
+        check.tooLong[demand] = !withinCapacity;
+      }
+    } else {
+      way = fewestEdges(chambers, edges, around, wanted, demand, free);
+      if (!way.has_value()) {
+        way = fewestEdges(chambers, edges, around, wanted, demand, any);
+      }
+    }
+    if (way.has_value()) {
+      for (const auto index : *way) {
+        ++check.load[index];
+      }
+    }
+    check.ways.push_back(std::move(way));
+  }
+  for (std::uint32_t index = 0; index < edges.size(); ++index) {
+    check.overflow[index] = check.load[index] > edges[index].capacity
+                                ? check.load[index] - edges[index].capacity
+                                : 0U;
     check.shortBy += check.overflow[index];
   }
   return check;

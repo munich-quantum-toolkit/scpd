@@ -58,6 +58,20 @@ public:
   /// Whether a route may enter a cell under a heading.
   [[nodiscard]] bool allowed(uint32_t x, uint32_t y, Heading heading) const;
 
+  /// Whether a cell of a way keeps the rule: on its own heading, or on
+  /// `arrivedWith`, the heading of the cell before it.
+  ///
+  /// The search tests every cell a move enters on the heading the move
+  /// starts on, and records the cell a move ends on with the heading the
+  /// next move leaves on. A way that runs straight across a feedline and
+  /// turns on the last cell within `expandRadius` of it is therefore one
+  /// the search allows, and that cell carries the turned heading. Judged on
+  /// its own heading alone it would break the rule the search kept; judged
+  /// on the heading it arrived with as well, a way breaks the rule only
+  /// where it runs off the right angle inside the band (user, 2026-10-09).
+  [[nodiscard]] bool allowedArriving(uint32_t x, uint32_t y, Heading heading,
+                                     Heading arrivedWith) const;
+
   /// The mask of a cell: 0 free, `CURVE_ZONE`, or the bits of the headings
   /// of the straight runs present there.
   [[nodiscard]] uint8_t maskAt(uint32_t x, uint32_t y) const;

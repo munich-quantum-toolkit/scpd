@@ -79,6 +79,24 @@ struct BottleneckOptions {
   /// Cells that no bottleneck may cross, because a port is not a wall that
   /// capacity divides around. The targets of the run.
   std::span<const std::size_t> targets;
+  /// The free cells of the slots terminals lie in: a slot is a notch in the
+  /// wall a terminal stands in front of, open towards the free space, and
+  /// the medial axis runs into it. Walking the axis away from a candidate,
+  /// a fork one of whose arms runs into a slot counts as the rise: the
+  /// narrowing in front of a terminal ends at its slot, so it splits into
+  /// one on either side of the terminal. Every other arm of that fork, up
+  /// to the next fork, is cut at its narrowest cell when no cut of the
+  /// search lies on it — next to the fork where the fork itself is the
+  /// narrowest — so that every side of a terminal is closed. No bottleneck
+  /// crosses a slot.
+  std::span<const std::size_t> slots;
+  /// The wall every blocked cell belongs to, by a label of the caller's, or
+  /// empty. Two cuts are one narrowing (`sameNarrowing`) only when their
+  /// ends lie on the same two walls, so the two flanks of a slot keep a
+  /// cut each; and two cuts between the same two walls whose ends lie
+  /// within `sameNarrowing` of each other on both are one narrowing even
+  /// where they share no cell.
+  std::span<const std::uint32_t> wallOf;
 };
 
 /// The bottlenecks of a rasterized chip.

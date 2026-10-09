@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .artifacts import ArtifactError
+from .capacityview import CouplerServer, serve
 from .chip import ChipError, classify_chip, decode_chip, load_chip
 from .config import ConfigError, load_config, write_config
 from .doctor import run_doctor
@@ -55,7 +56,7 @@ def command_doctor(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
-def _planning_for(args: argparse.Namespace, chip_bytes: bytes, config: ConfigT):  # noqa: ANN202
+def _planning_for(args: argparse.Namespace, chip_bytes: bytes, config: ConfigT):  # ruff: ignore[missing-return-type-private-function]
     """What a planning stage produced, or None for the plain layout view.
 
     Returns:
@@ -163,6 +164,7 @@ def command_plan(args: argparse.Namespace) -> int:
     # the Final stage draws its grid once and then every search it makes, labelled by pass, round,
     # wire and kind of search. It is a callback like the progress, so the core writes no file.
     drawn = 0
+    written: set[str] = set()
 
     def draw(name: str, content: str) -> str:
         nonlocal drawn
@@ -170,10 +172,12 @@ def command_plan(args: argparse.Namespace) -> int:
         target = directory.debug / name
         target.write_text(content, encoding="utf-8")
         drawn += 1
+        written.add(name)
         return str(target)
 
     for stage in list(IMPLEMENTED) if args.stage is None else [args.stage]:
         drawn = 0
+        written.clear()
         result = directory.run_stage(
             stage,
             config,
@@ -185,8 +189,49 @@ def command_plan(args: argparse.Namespace) -> int:
         if drawn:
             print(f"{'':9s}    {drawn} debug pictures in {directory.debug}")
             _dashboards(directory, spoken)
+            _capacity_view(directory, written)
         spoken.clear()
     return 0
+
+
+def command_couplers(args: argparse.Namespace) -> int:
+    """Serve the capacity graph of a run with a tab that moves couplers.
+
+    Returns:
+        The exit code.
+    """
+    register_external_solver()
+    directory = RunDirectory(args.run_dir)
+    config = directory.load()
+    lines: list[str] = []
+
+    def say(line: str) -> None:
+        lines.append(line)
+        if args.verbose is not None or "CAPACITY GRAPH" in line or "[Coupler Session]" in line:
+            print(line, flush=True)
+
+    print(f"running the Final stage of {args.run_dir} to the end of the coupler insertion ...", flush=True)
+    session = directory.coupler_session(config, say, args.verbose or 0)
+    server = CouplerServer(session, lines)
+    print(f"capacity graph with the coupler tab on http://127.0.0.1:{args.port}/ (Ctrl-C ends it)", flush=True)
+    serve(server, args.port)
+    return 0
+
+
+def _capacity_view(directory: RunDirectory, written: set[str]) -> None:
+    """Lay the capacity graph out on a page when the stage wrote one.
+
+    The Final stage writes the graph as data only with ``SCPD_BOTTLENECKS=1``;
+    the page is built from what this stage wrote, never from the data of an
+    earlier run left in the directory.
+    """
+    from . import capacityview  # ruff: ignore[import-outside-top-level]
+
+    if capacityview.DATA_NAME not in written:
+        return
+    page = directory.debug / capacityview.PAGE_NAME
+    capacityview.build(directory.debug / capacityview.DATA_NAME, page)
+    print(f"{'':9s}    {page} (capacity graph)")
 
 
 def _dashboards(directory: RunDirectory, spoken: list[str]) -> None:
@@ -223,8 +268,8 @@ def command_drc(args: argparse.Namespace) -> int:
     Returns:
         The exit code: nonzero when an active rule found something.
     """
-    from . import pyscpd  # noqa: PLC0415
-    from .drc import summarize  # noqa: PLC0415
+    from . import pyscpd  # ruff: ignore[import-outside-top-level]
+    from .drc import summarize  # ruff: ignore[import-outside-top-level]
 
     directory = RunDirectory(args.run_dir)
     config = directory.load()
@@ -249,7 +294,7 @@ def command_list_algorithms(args: argparse.Namespace) -> int:
         The exit code.
     """
     del args
-    from . import pyscpd  # noqa: PLC0415
+    from . import pyscpd  # ruff: ignore[import-outside-top-level]
 
     for stage, names in pyscpd.algorithms():
         print(f"{stage + ':':18s}{', '.join(names)}")
@@ -338,6 +383,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="draw the Final stage's grid and every search it makes as SVG pictures into <run>/debug",
     )
     plan.set_defaults(run=command_plan)
+
+    couplers = commands.add_parser(
+        "couplers",
+        help="serve the capacity graph of a run on a local page that moves couplers to other options",
+    )
+    couplers.add_argument("run_dir", type=Path, help="the run directory, with the stages before final")
+    couplers.add_argument("--port", type=int, default=8765, help="the local port (8765)")
+    couplers.add_argument(
+        "-v",
+        "--verbose",
+        nargs="?",
+        const=0,
+        default=None,
+        type=int,
+        metavar="LEVEL",
+        help="print every line the stage says; with LEVEL 1 also one line per wire and search",
+    )
+    couplers.set_defaults(run=command_couplers)
 
     drc = commands.add_parser("drc", help="check a run against the design rules")
     drc.add_argument("run_dir", type=Path, help="the run directory to check")

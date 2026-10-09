@@ -16,24 +16,75 @@ releases may include breaking changes.
   capacity graph they make and check whether it carries every outer wire, report
   only (`SCPD_BOTTLENECKS`). The medial axis is built over the border, the
   artwork, the coupler pads, the feedline edges and the port runs of every outer
-  wire, a port run being the straight line from a port to the end of the run off
-  it; feedline edges and port runs are inflated by half the clearance.
-  `findBottlenecks` traces each saddle of the axis to the two obstacles across
-  it, and a bottleneck holds the length between the walls over the wire
-  clearance (`wiresThroughGap`). The bottlenecks cut the free space into
-  chambers (`grid::chambersOf`, with `bottleneckMoves` moved out of the capacity
-  stage), and a plain wire crosses only the edge between two couplers it is
-  prescribed, on the stretches where `CrossingConstraints` lets a wire through
-  at a right angle, as many as fit a wire pitch apart; no wire crosses a
-  terminal edge and no resonator any edge. `checkCapacity` routes every wire at
-  once from the chambers of its source port to those of its target port as an
-  integer multi-commodity flow with the least overflow
-  (`SCPD_CAPACITY_SECONDS`); the log says `CAPACITY GRAPH SAT`, `UNSAT` or
-  `UNKNOWN`, names each wire without a way and each edge the graph is short on
-  with the wires there, and gives every wire's way. `-d` draws
+  wire, a port run being the rule's straight length from a feed point or a
+  target port, or a resonator's lead as it stands; feedline edges are inflated
+  by half the clearance. A port run is two walls one cell thick, the edge of the
+  band of half the clearance to either side of it with square ends, open at the
+  terminal's end, and the free cells between them are the slot where its
+  terminal lies: a fork of the medial axis with an arm into a slot ends a
+  narrowing (`BottleneckOptions::slots`), no cut crosses a slot, two cuts are
+  one narrowing only between the same walls (`BottleneckOptions::wallOf`), and
+  the cuts from the ends of the two walls close the terminal's own chamber,
+  which its wire starts or ends in; every other arm of the fork in front of a
+  slot is cut at its narrowest cell up to the next fork unless the search
+  already cuts it, and two cuts between the same two walls with ends near each
+  other are one narrowing. Every cell of a stretch at one clearance now passes
+  the minimum rise and is taken to one middle, so a stretch that ends at a slot
+  keeps its cut whichever way the grid numbers it. `findBottlenecks` traces each
+  saddle of the axis to the two obstacles across it, and a bottleneck holds the
+  length between the walls over the wire clearance (`wiresThroughGap`). The
+  bottlenecks cut the free space into chambers (`grid::chambersOf`, with
+  `bottleneckMoves` moved out of the capacity stage), and a plain wire crosses
+  only the edge between two couplers it is prescribed, on the stretches where
+  `CrossingConstraints` lets a wire through at a right angle, as many as fit a
+  wire pitch apart; no wire crosses a terminal edge and no resonator any edge.
+  Only the bottlenecks with an end on a feedline edge, a coupler pad or a
+  resonator's lead cut the chambers (`SCPD_BOTTLENECK_ALL=1` keeps every one).
+  `checkInTurn` routes the wires one after another in wire order, each from the
+  chambers of its source port to those of its target port over the edges that
+  still take a wire; a plain wire crosses exactly the feedline edges it is
+  prescribed, each once, and a wire with no such way takes its shortest way and
+  overfills the edges on it. The log says `CAPACITY GRAPH SAT` when no edge
+  carries more wires than it takes and `UNSAT` with each overfilled edge and the
+  wires through it. `SCPD_CAPACITY_FLOW=1` routes every wire at once instead
+  (`checkCapacity`), as an integer multi-commodity flow with the least overflow
+  (`SCPD_CAPACITY_SECONDS`), which also says `UNKNOWN` and names each edge the
+  graph is short on with the wires there. `SCPD_CAPACITY_CHAIN=1` checks the
+  graph after every chain the coupler insertion settles, against the chains
+  before it, and searches a chain that closes a wire's way again
+  (`SCPD_CAPACITY_CHAIN_TRIES`), refusing a run of options that closes as many
+  or fails the commit's test on more edges. Every step of the chain search
+  is checked on the chains settled before with the prefix standing on top,
+  and a step whose edge closes a wire is refused (`SCPD_CAPACITY_RULE`, on).
+  A resonator's way through the graph is the one whose least length — from
+  line to line of the edges it passes — is shortest, and it is no way when
+  that is longer than the resonator's target length less its lead allows;
+  a chain no run of options joins under the rule is searched once more
+  without it, and the time of the checks does not count against the chain's
+  clock. `SCPD_CAPACITY_STEP=1` reports the check without the rule: each step
+  says at `-v 1` whether the graph carries every wire and which wires its
+  edge closes, and each feedline edge of a settled chain says it once. `mqt-scpd couplers
+  <run>` holds the Final stage after the coupler insertion (`CouplerSession`)
+  and serves the page on a local port with a Couplers tab: every option of a
+  coupler is drawn
+  on the chip, and a click puts the coupler on one, draws its two feedline
+  edges again and shows the capacity graph of the chip as it then stands. The
+  bindings name the global routing argument `global_`, as the stubs do.
+  `SCPD_EDGE_LAUNCHER_MARGIN` (cells, 5) lengthens the run a feedline edge's
+  search keeps closed in front of every launcher but its own, so that the edges
+  of the coupler insertion and of the repair pass the launcher stubs further
+  off; nothing else sees it. `SCPD_COUPLER_BOX_MARGIN` (cells, 5) holds every
+  coupler's pad, its feedline runs, its lead and the turn after it that much
+  further in from each side of the coupler box; the edges between couplers keep
+  the whole box. `-d` draws
   `final-bottlenecks.svg` and `final-capacity-graph.svg`
-  (`SCPD_BOTTLENECK_WIRES`, `SCPD_BOTTLENECK_RISE`); `SCPD_SEARCH_PICTURES=0`
-  keeps a debug run to the pictures of the whole chip.
+  (`SCPD_BOTTLENECK_WIRES`, `SCPD_BOTTLENECK_RISE`) and writes the graph as
+  `final-capacity-graph.json`, which `plan` lays out on the page
+  `final-capacity-graph.html` (`mqt.scpd.capacityview`): the chip and an
+  abstract view of the graph side by side, every edge with its load and
+  capacity, the target and source ports, the way the flow sends each wire, and
+  tables of the edges, the feedline edges and the wires;
+  `SCPD_SEARCH_PICTURES=0` keeps a debug run to the pictures of the whole chip.
   `BottleneckOptions::minimumRise` drops the minima that the steps of a raster
   wall make and keeps one cut of a stretch of even width.
 - ✨ Build the fifth phase of the Final stage, the refinement of the
@@ -107,13 +158,6 @@ releases may include breaking changes.
   `SCPD_SQUEEZE_REACH`). On the 17- and 69-qubit benchmarks every marked
   edge carries a failing wire of the feedline routing and every open wire
   lies on a marked edge.
-- ✨ Refuse, in every edge search of the coupler insertion, a way that
-  leaves too little room beside it, so that the chain search finds a run
-  of options whose edges all leave their room; an edge the commit cannot
-  draw under the rule is drawn once more without it (`SCPD_SQUEEZE_REJECT`,
-  `SCPD_SQUEEZE_TOLERANCE`, `SCPD_SQUEEZE_RECOVER`). The 17-qubit benchmark
-  ends with 4 failing wires instead of 12 and the 69-qubit one with 1
-  instead of 4, no wire open on either.
 - ⚡️ Tell every edge search of the chain A* how many turns its way may
   still make and leave its prefix able to beat the cheapest complete run
   priced so far, and drop a prefix whose bound already reaches that run
@@ -443,6 +487,16 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🐛 Judge a cell of a wire by the crossing rule on the heading it arrives
+  with as well as its own (`CrossingConstraints::allowedArriving`), in the
+  Final stage's count and in the design-rule check: the search tests every
+  cell of a move on the heading the move starts on, so a wire that crossed a
+  feedline straight and turned on the last cell of the band was counted
+  crossing although it kept the right angle for the whole band.
+- ⚡ Compute `grid::squaredDistanceTransform` in time linear in the cells, as
+  the lower envelope of one parabola per row (Felzenszwalb and Huttenlocher).
+  The values are the same; on the 17-qubit chip the bottleneck analysis spends
+  17 ms on it instead of 64 ms.
 - ♻️ Quote every figure of the Detail stage against the grid rather than in
   cells of it. `[stages.detail] corridor_half_width`, 40 cells, becomes
   `corridor_spacings`, 4 wire spacings; `obstacle_penalty_radius`, 6 cells,

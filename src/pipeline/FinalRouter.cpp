@@ -26,6 +26,7 @@
 #include "mqt-scpd/grid/Voronoi.hpp"
 #include "mqt-scpd/pipeline/CapacityFlow.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
+#include "mqt-scpd/pipeline/CouplerSession.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/routing/AnalyticDubins.hpp"
 #include "mqt-scpd/routing/ChainSearch.hpp"
@@ -51,8 +52,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -752,6 +756,38 @@ constexpr std::uint32_t CEILING = 4000;
   return on;
 }
 
+/// How many cells further in from every side of the coupler box a coupler
+/// has to stay: `SCPD_COUPLER_BOX_MARGIN`, 5 (user, 2026-10-08; `=0` is the
+/// box as it stood). The pad, the feedline's run along it beyond the ports,
+/// the resonator's lead and the turn after it (`makeOption`) are held to the
+/// box shrunk by this margin, so that the couplers stand further off the
+/// launcher stubs.
+///
+/// It acts on the places of the couplers and nowhere else: an edge between
+/// two couplers still has the whole box (`SCPD_EDGE_IN_BOX`), and the
+/// edges' fence in front of the launchers is `SCPD_EDGE_LAUNCHER_MARGIN`.
+/// Read at every test, so that a run can set it for one chip.
+[[nodiscard]] inline std::int64_t couplerBoxMargin() {
+  return static_cast<std::int64_t>(
+      std::clamp(envWhole("SCPD_COUPLER_BOX_MARGIN", 5), 0, 500));
+}
+
+/// How many cells further than the run of `launcherFenceTurn` a feedline
+/// edge keeps closed in front of every launcher: `SCPD_EDGE_LAUNCHER_MARGIN`,
+/// 5 (user, 2026-10-08; `=0` is the fence as it stood). The run off the
+/// launcher is lengthened by this margin, with the clearance disc around the
+/// whole of it, so that an edge passes the launcher stubs further off.
+///
+/// It acts in the corridor of a feedline edge's search (`corridorOfEdge`)
+/// and nowhere else: the searches and the commit of the coupler insertion,
+/// the commit's test of a way, and the repair's searches of an edge. The
+/// coupler box, the wires' own routing and the capacity analysis do not see
+/// it. Read at every corridor, so that a run can set it for one chip.
+[[nodiscard]] inline std::int64_t edgeLauncherMargin() {
+  return static_cast<std::int64_t>(
+      std::clamp(envWhole("SCPD_EDGE_LAUNCHER_MARGIN", 5), 0, 500));
+}
+
 /// Whether an edge between two couplers stays inside the coupler box, the
 /// rectangle the launcher stubs leave open and every coupler stands in:
 /// `SCPD_EDGE_IN_BOX`, **on** (user, 2026-10-07). Everything outside the
@@ -1342,6 +1378,10 @@ struct Tuning {
   double spacing = 0.0;
   /// The straight run a wire leaves its source on, in cells.
   std::uint32_t straightStart = 0;
+  /// The rule `min_straight_length` itself, in cells of the smaller cell
+  /// side and not rounded: the length of a port run in the bottleneck
+  /// analysis, the same along an axis and along a diagonal.
+  double straightLength = 0.0;
   /// The same run, lengthened by `launcherLead`, in cells: what the coupler
   /// box keeps clear of a launcher. Never shorter than `straightStart`.
   std::uint32_t launcherStraight = 0;
@@ -1444,6 +1484,8 @@ struct Tuning {
   tuning.spacing =
       rules.min_wire_spacing / std::min(router.cellWidth, router.cellHeight);
   tuning.straightStart = grid::cellsFor(rules.min_straight_length, router);
+  tuning.straightLength =
+      rules.min_straight_length / std::min(router.cellWidth, router.cellHeight);
   tuning.launcherStraight =
       grid::cellsFor(rules.min_straight_length + launcherLead(), router);
   tuning.reach = std::max(1U, params.corridor_spacings * tuning.clearance);
@@ -2264,7 +2306,7 @@ constexpr std::string_view DEBUG_STYLE =
     ".lgs{fill:#fff;stroke:#9a9a9a;stroke-width:.35}"
     // --- the bottleneck picture: the obstacles by kind, the medial axis,
     // and the lines by how many wires they hold — vermilion solid, orange
-    // dashed, bluish green dotted — faint where no feedline is at either end
+    // dashed, bluish green dotted
     ".wb{fill:#d9d9d9}"
     ".wc{fill:#5D3A9B;fill-opacity:.85}"
     ".wst{fill:none;stroke:#56B4E9;stroke-width:2.4}"
@@ -2275,7 +2317,6 @@ constexpr std::string_view DEBUG_STYLE =
     ".b0{fill:none;stroke:#D55E00;stroke-width:3}"
     ".b1{fill:none;stroke:#E69F00;stroke-width:2.4;stroke-dasharray:6 3}"
     ".b2{fill:none;stroke:#009E73;stroke-width:1.4;stroke-dasharray:2 2}"
-    ".bfaint{stroke-opacity:.4}"
     ".bsd{fill:#111}"
     ".btx{font-family:monospace;fill:#a14400}"
     // --- the capacity graph: eight pale chamber fills, the load of an edge
@@ -2931,13 +2972,18 @@ public:
         wire.couplerAtSource != NO_OWNER
             ? std::optional<PathPoint>(couplers_[wire.couplerAtSource].anchor)
             : std::nullopt;
-    for (const auto& point : wire.way) {
+    for (std::size_t at = 0; at < wire.way.size(); ++at) {
+      const auto& point = wire.way[at];
       if (own.has_value() &&
           std::hypot(static_cast<double>(point.x) - own->x,
                      static_cast<double>(point.y) - own->y) <= couplerReach()) {
         continue;
       }
-      if (!constraints.allowed(point.x, point.y, point.heading)) {
+      // On the heading the way arrives with as well, which is what the
+      // search tested: see `CrossingConstraints::allowedArriving`.
+      const auto arrived = at == 0 ? point.heading : wire.way[at - 1].heading;
+      if (!constraints.allowedArriving(point.x, point.y, point.heading,
+                                       arrived)) {
         return point;
       }
     }
@@ -2954,13 +3000,16 @@ public:
         wire.couplerAtSource != NO_OWNER
             ? std::optional<PathPoint>(couplers_[wire.couplerAtSource].anchor)
             : std::nullopt;
-    for (const auto& point : wire.way) {
+    for (std::size_t at = 0; at < wire.way.size(); ++at) {
+      const auto& point = wire.way[at];
       if (own.has_value() &&
           std::hypot(static_cast<double>(point.x) - own->x,
                      static_cast<double>(point.y) - own->y) <= couplerReach()) {
         continue;
       }
-      if (constraints.allowed(point.x, point.y, point.heading)) {
+      const auto arrived = at == 0 ? point.heading : wire.way[at - 1].heading;
+      if (constraints.allowedArriving(point.x, point.y, point.heading,
+                                      arrived)) {
         continue;
       }
       // Which edge it is crossing: the drawn chain edge with a cell nearest
@@ -3710,9 +3759,6 @@ public:
     learnedAbove_ = 0;
     budgetCutoffs_ = 0;
     stepBudget_ = routing::TRELLIS_UNREACHABLE;
-    squeezeRefusals_ = 0;
-    squeezeRecovered_ = 0;
-    squeezeSuspended_ = false;
     room_ = RoomStats{};
     bodies_ = grid::BitGrid(scene_.router.width, scene_.router.height);
     aimAtTarget(true);
@@ -3732,6 +3778,29 @@ public:
         tuning_.clearance, tuning_.launcherStraight - tuning_.straightStart,
         couplerBoxTurn() ? std::uint32_t{BEND_RADIUS} : 0U,
         edgeInBox() ? "stays inside it as well" : "may leave it"));
+    if (couplerBoxMargin() > 0) {
+      say(std::format(
+          "a coupler keeps {} cells more off every side of that box "
+          "(SCPD_COUPLER_BOX_MARGIN): x {}..{} y {}..{}",
+          couplerBoxMargin(), couplerBox_.minX + couplerBoxMargin(),
+          couplerBox_.maxX - couplerBoxMargin(),
+          couplerBox_.minY + couplerBoxMargin(),
+          couplerBox_.maxY - couplerBoxMargin()));
+    }
+    if (edgeLauncherMargin() > 0) {
+      say(std::format(
+          "a feedline edge keeps {} cells closed in front of every launcher "
+          "but its own: the run of {} cells, {} cells of margin "
+          "(SCPD_EDGE_LAUNCHER_MARGIN), and the clearance around them",
+          static_cast<std::int64_t>(tuning_.straightStart) +
+              (launcherFenceTurn() ? static_cast<std::int64_t>(BEND_RADIUS)
+                                   : 0) +
+              edgeLauncherMargin(),
+          static_cast<std::int64_t>(tuning_.straightStart) +
+              (launcherFenceTurn() ? static_cast<std::int64_t>(BEND_RADIUS)
+                                   : 0),
+          edgeLauncherMargin()));
+    }
 
     // The approaches of every port, inflated by the clearance: no coupler
     // may sit in one and no feedline edge may run through one, because the
@@ -4083,29 +4152,10 @@ public:
       const bool runsRight = !chosen.empty() &&
                              chosen.front().samePlace(wire.objective.source) &&
                              chosen.back().samePlace(wire.objective.target);
-      bool fits =
+      const bool fits =
           runsRight && (chainKeepWays() ||
                         edgeWayStillOpen(wires, wire.objective, edge, chosen));
-      if (fits) {
-        // Held to the room rule like a way the search finds now.
-        const auto [startRun, endRun] = runsOfEdge(edge);
-        fits = !refuseSqueezed(wires, edge, chosen, startRun, endRun);
-      }
       wire.way = fits ? chosen : routeEdge(wires, wire.objective, edge);
-      if (wire.way.empty() && squeezeReject() && squeezeRecover()) {
-        // Once more with the rule suspended: an edge not drawn is worse
-        // than one that is squeezed. See `squeezeRecover`.
-        squeezeSuspended_ = true;
-        wire.way = routeEdge(wires, wire.objective, edge);
-        squeezeSuspended_ = false;
-        if (!wire.way.empty()) {
-          ++squeezeRecovered_;
-          tell(std::format("[Coupler Insertion] edge f{} chain {} ({}->{}): "
-                           "drawn with the squeeze rule suspended "
-                           "(SCPD_SQUEEZE_RECOVER)",
-                           wire.slot, edge.chain, edge.from, edge.to));
-        }
-      }
       wire.drawn = !wire.way.empty();
       // A way the greedy chose and the commit kept was drawn by no search of
       // this loop, so it has no picture of its own. Draw it against the
@@ -4447,8 +4497,8 @@ public:
     // the same figure is used here. See `edgeRunOffPort`.
     const std::int64_t reach = halfRun + edgeRunOffPort(orientation);
     for (const std::int64_t end : {-reach, reach}) {
-      if (!couplerBox_.holds(edgeX + (end * along.dx),
-                             edgeY + (end * along.dy))) {
+      if (!couplerBox_.holds(edgeX + (end * along.dx), edgeY + (end * along.dy),
+                             couplerBoxMargin())) {
         return false;
       }
     }
@@ -5028,7 +5078,7 @@ public:
         // run is on the pad's far edge, so an axial body whose run is inside
         // is inside too — but a diagonal one turns its corners out, and the
         // rule is about the copper and not about the four axial cases.
-        if (!couplerBox_.holds(x, y)) {
+        if (!couplerBox_.holds(x, y, couplerBoxMargin())) {
           return refuse(
               std::format("the body leaves the box at ({},{})", x, y));
         }
@@ -5099,7 +5149,7 @@ public:
       for (const std::int64_t end : {-beyond, beyond}) {
         const auto x = edgeX + (end * along.dx);
         const auto y = edgeY + (end * along.dy);
-        if (!couplerBox_.holds(x, y)) {
+        if (!couplerBox_.holds(x, y, couplerBoxMargin())) {
           return refuse(std::format(
               "the feedline's run along the pad leaves the box at ({},{})", x,
               y));
@@ -5204,7 +5254,7 @@ public:
       if (x < 0 || y < 0 || x >= width || y >= height) {
         return refuse("the resonator's lead leaves the grid");
       }
-      if (!couplerBox_.holds(x, y)) {
+      if (!couplerBox_.holds(x, y, couplerBoxMargin())) {
         return refuse(std::format(
             "the resonator's lead leaves the box at ({},{})", x, y));
       }
@@ -5248,7 +5298,7 @@ public:
       for (std::int64_t k = 1; k <= beyondTip; ++k) {
         const auto x = static_cast<std::int64_t>(tip.x) + (k * onward.dx);
         const auto y = static_cast<std::int64_t>(tip.y) + (k * onward.dy);
-        if (!couplerBox_.holds(x, y)) {
+        if (!couplerBox_.holds(x, y, couplerBoxMargin())) {
           return refuse(std::format(
               "the turn after the resonator's lead leaves the box at ({},{})",
               x, y));
@@ -5703,10 +5753,12 @@ public:
     const auto& stencil = stencilFor(tuning_.clearance);
     // The straight run the wire off a launcher is forced to make, and the
     // quarter turn at the end of it: the run alone leaves the wire able to
-    // cross the edge and nothing else — see `launcherFenceTurn`.
+    // cross the edge and nothing else — see `launcherFenceTurn`. And the
+    // margin of `edgeLauncherMargin` beyond.
     const auto launcherRun =
         static_cast<std::int64_t>(tuning_.straightStart) +
-        (launcherFenceTurn() ? static_cast<std::int64_t>(BEND_RADIUS) : 0);
+        (launcherFenceTurn() ? static_cast<std::int64_t>(BEND_RADIUS) : 0) +
+        edgeLauncherMargin();
     const auto close = [&](const PathPoint& at) {
       // The straight run off the terminal, on the heading the wire leaves it
       // on, and the clearance around it.
@@ -6497,32 +6549,6 @@ public:
     return reach;
   }
 
-  /// Whether an edge search refuses a way that leaves too little room
-  /// beside it, as `measureSqueeze` reads it: `SCPD_SQUEEZE_REJECT`, **on**
-  /// (user, 2026-10-05). The way is cleared as if the search had found
-  /// nothing, in the prefix search and at the commit alike, so the chain
-  /// search looks for a run of options whose edges all leave their room;
-  /// a way the greedy chose is held to it as well. `SCPD_SQUEEZE_TOLERANCE`
-  /// (0) cells of shortfall are let through. Measured against the arm
-  /// without it — see *The squeeze report* in handover-feedline-routing.md.
-  [[nodiscard]] static bool squeezeReject() {
-    static const bool on = envFlag("SCPD_SQUEEZE_REJECT", true);
-    return on;
-  }
-  [[nodiscard]] static std::uint32_t squeezeTolerance() {
-    static const auto cells = static_cast<std::uint32_t>(
-        std::clamp(envWhole("SCPD_SQUEEZE_TOLERANCE", 0), 0, 1000));
-    return cells;
-  }
-  /// Whether an edge the commit could not draw under the rule is drawn
-  /// once more with the rule suspended: `SCPD_SQUEEZE_RECOVER`, **on**. An
-  /// edge not drawn is worse than one that is squeezed, and the report at
-  /// the end says which edges came through that way.
-  [[nodiscard]] static bool squeezeRecover() {
-    static const bool on = envFlag("SCPD_SQUEEZE_RECOVER", true);
-    return on;
-  }
-
   /// Whether a debug run draws a picture of every search:
   /// `SCPD_SEARCH_PICTURES`, on. Off keeps the pictures of the whole chip
   /// alone, which a run of thousands of searches otherwise buries.
@@ -6622,12 +6648,6 @@ public:
   /// with the figures in words — what the artifact carries as `Squeezed`
   /// and `note` on every snapshot from the coupler insertion on.
   std::unordered_map<std::uint32_t, Squeeze> squeezed_;
-  /// How many ways the edge searches refused under `squeezeReject`, how
-  /// many edges the commit drew with the rule suspended, and whether it is
-  /// suspended now (the recovery's one search).
-  std::uint32_t squeezeRefusals_ = 0;
-  std::uint32_t squeezeRecovered_ = 0;
-  bool squeezeSuspended_ = false;
 
   /// The outer ring in ring order — every wire that is not inner, in the
   /// order the assignment feeds them — and the ring place of every slot.
@@ -7255,31 +7275,6 @@ public:
     return {worst, found};
   }
 
-  /// Whether a way an edge search found is refused for the room it leaves:
-  /// `squeezeReject` on, the rule not suspended for a recovery, and the
-  /// shortfall above `squeezeTolerance`. Says so at `-v 1` and counts it.
-  [[nodiscard]] bool refuseSqueezed(const std::vector<Wire>& wires,
-                                    const Edge& edge, const Path& way,
-                                    const std::uint32_t startRun,
-                                    const std::uint32_t endRun) {
-    if (!squeezeReject() || squeezeSuspended_ || way.empty()) {
-      return false;
-    }
-    const auto selfKey = edge.wire < wires.size() ? edge.wire : NO_OWNER;
-    const auto [shortfall, found] =
-        measureSqueeze(wires, way, startRun + BEND_RADIUS, endRun + BEND_RADIUS,
-                       selfKey);
-    if (shortfall <= static_cast<double>(squeezeTolerance())) {
-      return false;
-    }
-    ++squeezeRefusals_;
-    tell(std::format("[Coupler Insertion] chain {} edge {}->{}: a way of {} "
-                     "cells refused, {}, short by {:.0f}",
-                     edge.chain, edge.from, edge.to, way.size(), found.note,
-                     shortfall));
-    return true;
-  }
-
   /// The room every edge leaves beside it, measured at the end of the
   /// insertion (user, 2026-10-05): from every `squeezeStep`-th cell of the
   /// edge, past its two runs at the couplers, a straight line to either
@@ -7298,10 +7293,7 @@ public:
   /// short of what its wires need is `Squeezed`, said at `-v 1` and kept in
   /// `squeezed_` for the artifact. This is the bottleneck the feedline pass
   /// fails in afterwards, read before it has run and without the repair's
-  /// trials. On 17q and 69q every edge marked carried a fail and every open
-  /// wire lay on a marked edge (2026-10-05), which is why `squeezeReject`
-  /// now refuses such a way in every edge search; what this report then
-  /// counts is what the recovery let through.
+  /// trials. Report only: no search refuses a way for it.
   void reportSqueeze(const std::vector<Wire>& wires) {
     squeezed_.clear();
     if (!squeezeReport()) {
@@ -7336,14 +7328,9 @@ public:
     }
     say(std::format("coupler insertion: SQUEEZE — {} of {} edges leave too "
                     "little room beside them for the wires that have to "
-                    "pass (pitch {}, clearance {}, step {}, reach {}); {} "
-                    "way{} refused in the searches for it ({}), {} edge{} "
-                    "drawn with the rule suspended{}{}",
-                    marked.size(), edges_.size(), roomPitch(), tuning_.clearance,
-                    squeezeStep(), squeezeReach(), squeezeRefusals_,
-                    squeezeRefusals_ == 1 ? "" : "s",
-                    squeezeReject() ? "SCPD_SQUEEZE_REJECT on" : "off",
-                    squeezeRecovered_, squeezeRecovered_ == 1 ? "" : "s",
+                    "pass (pitch {}, clearance {}, step {}, reach {}){}{}",
+                    marked.size(), edges_.size(), roomPitch(),
+                    tuning_.clearance, squeezeStep(), squeezeReach(),
                     marked.empty() ? "" : ": ", list));
   }
 
@@ -7379,17 +7366,80 @@ public:
     WallKind kind = WallKind::Artwork;
     std::string name;
     std::uint32_t wire = NO_OWNER;
+    /// A flank of a resonator's lead: the stub at its coupler.
+    bool lead = false;
   };
+
+  /// A port run of the bottleneck analysis: the middle line of the copper
+  /// a wire has no choice about at one end, in fractional cells, from the
+  /// port to the terminal — the end the free routing starts from.
+  using PortRun = std::vector<std::pair<double, double>>;
+
+  /// The run a wire leaves its source on. A plain wire's is the rule's
+  /// straight length from the point the assignment feeds it at. A
+  /// resonator's is the lead it already has — the coupling run and the
+  /// quarter turn off its coupler, to where its search starts — with
+  /// nothing added.
+  [[nodiscard]] PortRun sourceRunOf(const Wire& wire) const {
+    const auto& source = wire.objective.source;
+    if (wire.couplerAtSource != NO_OWNER && !wire.arc.empty()) {
+      PortRun run;
+      for (const auto& point : wire.arc) {
+        run.emplace_back(point.x, point.y);
+      }
+      if (!wire.arc.back().samePlace(source)) {
+        run.emplace_back(source.x, source.y);
+      }
+      if (run.size() == 1) {
+        run.push_back(run.front());
+      }
+      return run;
+    }
+    return straightRun(static_cast<double>(source.x),
+                       static_cast<double>(source.y), source.heading);
+  }
+
+  /// The run a wire arrives at its target port on: the rule's straight
+  /// length from the port itself. The router's target cell already lies
+  /// past the port's band, that length out, so the run is measured from
+  /// the port and not from that cell.
+  [[nodiscard]] PortRun targetRunOf(const Wire& wire) const {
+    const auto& target = wire.objective.target;
+    const auto out = routing::reverse(target.heading);
+    if (wire.targetPort < ports_.size()) {
+      return straightRun(ports_[wire.targetPort].fx, ports_[wire.targetPort].fy,
+                         out);
+    }
+    return straightRun(static_cast<double>(target.x),
+                       static_cast<double>(target.y), out);
+  }
+
+  /// `straightLength` from a point on a heading.
+  [[nodiscard]] PortRun straightRun(const double x, const double y,
+                                    const Heading heading) const {
+    const auto v = routing::headingVector(heading);
+    const auto norm =
+        std::hypot(static_cast<double>(v.dx), static_cast<double>(v.dy));
+    const auto length = tuning_.straightLength;
+    return {{x, y},
+            {x + (static_cast<double>(v.dx) / norm * length),
+             y + (static_cast<double>(v.dy) / norm * length)}};
+  }
 
   /// The obstacles `reportBottlenecks` builds the medial axis over: the
   /// mask, the obstacle every blocked cell belongs to, and the lines of
   /// the stubs, leads and feedlines for the picture, which a mask one cell
-  /// wide shows too thin to read.
+  /// wide shows too thin to read. With them the slots of the port runs —
+  /// the free cells between the two walls of each — and per outer wire the
+  /// cell its terminal lies on at each end, source first: a cell of the
+  /// slot.
   struct Walls {
     grid::BitGrid mask;
     std::vector<std::uint32_t> of;
     std::vector<Wall> list;
     std::vector<std::pair<std::uint32_t, std::vector<debug::Cell>>> strokes;
+    std::vector<std::size_t> slots;
+    std::unordered_map<std::uint32_t, std::array<std::size_t, 2>> terminals;
   };
 
   /// One bottleneck as `reportBottlenecks` measured it: its length in
@@ -7400,26 +7450,38 @@ public:
     double cells = 0.0;
     std::uint32_t holds = 0;
     std::vector<std::uint32_t> crossing;
-    bool atFeedline = false;
   };
 
   /// The obstacles of the chip as the insertion leaves it (user,
   /// 2026-10-07): everything outside the rectangle the launcher cells span
   /// and the outermost ring of cells (the border), the artwork inside that
   /// rectangle, the coupler pads, the port runs every outer wire has no
-  /// choice about, and every feedline edge drawn. A port run is the straight
-  /// line from the port itself to the end of the run off it: from the feed
-  /// point to the tip of a plain wire's straight start, from where a
-  /// resonator's lead leaves its pad to where the lead ends, and from the
-  /// target port to the start of the run a wire arrives on. The port runs
-  /// and the feedline edges are copper that keeps a clearance of its own,
-  /// so each is inflated by half the clearance (user, 2026-10-07); a gap
-  /// between two of them has already given up a whole clearance. The
-  /// inflation of a later obstacle takes only free cells, its own line any
-  /// cell. The ways of the other wires are no obstacle: they are what has to
-  /// pass through.
+  /// choice about, and every feedline edge drawn. A port run
+  /// (`sourceRunOf`, `targetRunOf`) is the rule's straight length from a
+  /// plain wire's feed point or from a target port, and a resonator's lead
+  /// as it stands. The port runs and the feedline edges are copper that
+  /// keeps a clearance of its own, so each keeps half the clearance to
+  /// either side (user, 2026-10-07); a gap between two of them has already
+  /// given up a whole clearance. A port run is the two sides of a band with
+  /// square ends, two walls one cell thick with a slot between them where
+  /// its terminal lies (user, 2026-10-08); a feedline edge is inflated by a
+  /// disc. The room a later obstacle keeps takes only free cells, a
+  /// feedline's own line any cell. The ways of the other wires are
+  /// no obstacle: they are what has to pass through. The feedline edge
+  /// whose wire is `without` is left out.
   [[nodiscard]] Walls
-  wallsAfterInsertion(const std::vector<Wire>& wires) const {
+  wallsAfterInsertion(const std::vector<Wire>& wires,
+                      const std::uint32_t without = NO_OWNER) const {
+    return wallsOf(wires, edges_, nullptr, without);
+  }
+
+  /// The obstacles of `wallsAfterInsertion` for a state of the insertion:
+  /// the feedline edges `edges` (their ways in `wires`), and the pads of
+  /// the couplers `placed` marks, every coupler when it is null.
+  [[nodiscard]] Walls wallsOf(const std::vector<Wire>& wires,
+                              const std::vector<Edge>& edges,
+                              const std::vector<bool>* placed,
+                              const std::uint32_t without) const {
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     const auto height = static_cast<std::int64_t>(scene_.router.height);
     Walls walls{
@@ -7514,9 +7576,11 @@ public:
       }
     }
 
-    for (const auto& coupler : couplers_) {
+    for (std::size_t index = 0; index < couplers_.size(); ++index) {
+      const auto& coupler = couplers_[index];
       if (coupler.chosen >= coupler.options.size() ||
-          coupler.wire >= wires.size()) {
+          coupler.wire >= wires.size() ||
+          (placed != nullptr && !(*placed)[index])) {
         continue;
       }
       const auto pad = add(
@@ -7528,55 +7592,182 @@ public:
       }
     }
 
-    // The port runs, each the straight line from the port to the far end
-    // of the run.
-    const auto along = [](const PathPoint& from, const Heading heading,
-                          const std::int64_t cells) {
-      const auto v = routing::headingVector(heading);
-      return debug::Cell{static_cast<std::int64_t>(from.x) + (cells * v.dx),
-                         static_cast<std::int64_t>(from.y) + (cells * v.dy)};
+    // The port runs (user, 2026-10-08). A run keeps the band of half the
+    // clearance to either side of its middle line, with square ends: a
+    // cell whose nearest point on the line is one of its ends from beyond
+    // is not in it. The run is the edge of that band and nothing more: two
+    // walls one cell thick, left and right of the line, made of the cells
+    // of the band with a neighbour, diagonal ones included, outside it to
+    // the side or beyond the port end. So each wall is 4-connected and lies
+    // where the band's edge lies, and a gap between two runs keeps its
+    // length. The end at the port is closed because the port's own copper
+    // lies there; open, the space between the walls would join the room
+    // behind the run through the cell or two between the band and the port
+    // (on 17q a row of cells between every launcher run and the border).
+    // The end at the terminal is open. The cells between the two walls are
+    // free and are the slot the terminal lies in: the medial axis runs into
+    // it, and no bottleneck crosses it. A wall takes only free cells, and a
+    // run of no length keeps no room.
+    const auto half = wallInflation();
+    const auto markRun = [&](const PortRun& run, const std::string& name,
+                             const std::uint32_t wire, const bool lead) {
+      const auto left = add(WallKind::Stub, name + ", left", wire);
+      const auto right = add(WallKind::Stub, name + ", right", wire);
+      walls.list[left].lead = lead;
+      walls.list[right].lead = lead;
+      double total = 0.0;
+      double x0 = run.front().first;
+      double x1 = x0;
+      double y0 = run.front().second;
+      double y1 = y0;
+      for (std::size_t k = 0; k < run.size(); ++k) {
+        const auto [px, py] = run[k];
+        if (k > 0) {
+          total += std::hypot(px - run[k - 1].first, py - run[k - 1].second);
+        }
+        x0 = std::min(x0, px);
+        x1 = std::max(x1, px);
+        y0 = std::min(y0, py);
+        y1 = std::max(y1, py);
+      }
+      // Where each cell of a box around the band lies. The box reaches a
+      // cell past the band on every side, so every neighbour of a band cell
+      // is in it; it is not clipped to the grid.
+      enum class Place : std::uint8_t {
+        Aside,
+        BeyondPort,
+        BeyondEnd,
+        Left,
+        Right
+      };
+      const auto reach = half + 1.0;
+      const auto fromX = static_cast<std::int64_t>(std::floor(x0 - reach));
+      const auto fromY = static_cast<std::int64_t>(std::floor(y0 - reach));
+      const auto boxWidth =
+          static_cast<std::int64_t>(std::ceil(x1 + reach)) - fromX + 1;
+      const auto boxHeight =
+          static_cast<std::int64_t>(std::ceil(y1 + reach)) - fromY + 1;
+      std::vector<Place> places(static_cast<std::size_t>(boxWidth * boxHeight),
+                                Place::Aside);
+      const auto placeAt = [&](const std::int64_t x, const std::int64_t y) {
+        return places[static_cast<std::size_t>(((y - fromY) * boxWidth) +
+                                               (x - fromX))];
+      };
+      for (std::size_t at = 0; total > 0.0 && at < places.size(); ++at) {
+        const auto cx = static_cast<double>(
+            fromX + (static_cast<std::int64_t>(at) % boxWidth));
+        const auto cy = static_cast<double>(
+            fromY + (static_cast<std::int64_t>(at) / boxWidth));
+        // The nearest point of the line: how far, on which side, and
+        // whether it is an end seen from beyond.
+        double best = std::numeric_limits<double>::max();
+        double side = 0.0;
+        auto beyond = Place::Aside;
+        for (std::size_t k = 0; k + 1 < run.size(); ++k) {
+          const auto ax = run[k].first;
+          const auto ay = run[k].second;
+          const auto dx = run[k + 1].first - ax;
+          const auto dy = run[k + 1].second - ay;
+          const auto squared = (dx * dx) + (dy * dy);
+          const auto raw = squared > 0.0
+                               ? (((cx - ax) * dx) + ((cy - ay) * dy)) / squared
+                               : 0.0;
+          const auto t = std::clamp(raw, 0.0, 1.0);
+          const auto distance =
+              std::hypot(cx - (ax + (t * dx)), cy - (ay + (t * dy)));
+          if (distance < best) {
+            best = distance;
+            side = (dx * (cy - ay)) - (dy * (cx - ax));
+            beyond = k == 0 && raw < 0.0                ? Place::BeyondPort
+                     : k + 2 == run.size() && raw > 1.0 ? Place::BeyondEnd
+                                                        : Place::Aside;
+          }
+        }
+        if (beyond != Place::Aside) {
+          places[at] = beyond;
+        } else if (best <= half) {
+          places[at] = side < 0.0 ? Place::Right : Place::Left;
+        }
+      }
+      for (std::int64_t y = fromY + 1; y + 1 < fromY + boxHeight; ++y) {
+        for (std::int64_t x = fromX + 1; x + 1 < fromX + boxWidth; ++x) {
+          const auto place = placeAt(x, y);
+          if ((place != Place::Left && place != Place::Right) || x < 0 ||
+              y < 0 || x >= width || y >= height) {
+            continue;
+          }
+          const auto cell = static_cast<std::size_t>((y * width) + x);
+          if (walls.of[cell] != NO_OWNER) {
+            continue;
+          }
+          bool edge = false;
+          for (std::int64_t dy = -1; dy <= 1 && !edge; ++dy) {
+            for (std::int64_t dx = -1; dx <= 1 && !edge; ++dx) {
+              const auto next = placeAt(x + dx, y + dy);
+              edge = next == Place::Aside || next == Place::BeyondPort;
+            }
+          }
+          if (edge) {
+            mark(x, y, place == Place::Right ? right : left);
+          } else {
+            walls.slots.push_back(cell);
+          }
+        }
+      }
+      std::vector<debug::Cell> line;
+      for (const auto& [px, py] : run) {
+        line.emplace_back(std::lround(px), std::lround(py));
+      }
+      walls.strokes.emplace_back(left, std::move(line));
+      // The terminal: on the line, a cell short of its end, in the slot
+      // between the two walls.
+      const auto& end = run.back();
+      const auto& before = run[run.size() - 2];
+      const auto length =
+          std::max(1.0e-9, std::hypot(end.first - before.first,
+                                      end.second - before.second));
+      const auto tx = std::clamp<std::int64_t>(
+          std::lround(end.first - ((end.first - before.first) / length)), 0,
+          width - 1);
+      const auto ty = std::clamp<std::int64_t>(
+          std::lround(end.second - ((end.second - before.second) / length)), 0,
+          height - 1);
+      return static_cast<std::size_t>((ty * width) + tx);
     };
     for (const auto& wire : wires) {
       if (!wire.feasible || wire.inner || wire.feedline) {
         continue;
       }
-      if (wire.couplerAtSource != NO_OWNER && !wire.arc.empty()) {
-        markThick({{wire.arc.front().x, wire.arc.front().y},
-                   {wire.arc.back().x, wire.arc.back().y}},
-                  add(WallKind::Stub, std::format("lead of {}", wireId(wire)),
-                      wire.key));
-      } else {
-        const auto& source = wire.objective.source;
-        markThick({{source.x, source.y},
-                   along(source, source.heading,
-                         cellsOn(tuning_.straightStart, source.heading))},
-                  add(WallKind::Stub,
-                      std::format("{} at its source", wireId(wire)), wire.key));
-      }
-      const auto& target = wire.objective.target;
-      const auto runStart =
-          along(target, routing::reverse(target.heading),
-                cellsOn(tuning_.straightStart, target.heading));
-      const debug::Cell port = wire.targetPort < ports_.size()
-                                   ? debug::Cell{ports_[wire.targetPort].x,
-                                                 ports_[wire.targetPort].y}
-                                   : debug::Cell{target.x, target.y};
-      markThick({port, runStart},
-                add(WallKind::Stub,
-                    std::format("{} at its target", wireId(wire)), wire.key));
+      const auto resonator =
+          wire.couplerAtSource != NO_OWNER && !wire.arc.empty();
+      const auto source =
+          markRun(sourceRunOf(wire),
+                  resonator ? std::format("lead of {}", wireId(wire))
+                            : std::format("{} at its source", wireId(wire)),
+                  wire.key, resonator);
+      const auto target =
+          markRun(targetRunOf(wire),
+                  std::format("{} at its target", wireId(wire)), wire.key,
+                  false);
+      walls.terminals.emplace(wire.key, std::array{source, target});
     }
 
-    for (const auto& edge : edges_) {
+    for (const auto& edge : edges) {
       if (edge.wire >= wires.size()) {
         continue;
       }
       const auto& wire = wires[edge.wire];
-      if (!wire.drawn || wire.way.empty()) {
+      if (!wire.drawn || wire.way.empty() || edge.wire == without) {
         continue;
       }
       markThick(cellsOf(wire.way),
                 add(WallKind::Feedline, wireId(wire), edge.wire));
     }
+    // A feedline's own line takes any cell, so a slot keeps only the cells
+    // still free.
+    std::erase_if(walls.slots, [&walls](const std::size_t cell) {
+      return walls.mask.test(cell);
+    });
     return walls;
   }
 
@@ -7610,6 +7801,64 @@ public:
                               : std::format("artwork near {}", nearest->label);
   }
 
+  /// Whether the capacity graph keeps every bottleneck: `SCPD_BOTTLENECK_ALL`,
+  /// off. Off keeps only those `couplerCuts` keeps (user, 2026-10-08).
+  [[nodiscard]] static bool bottleneckAll() {
+    return envFlag("SCPD_BOTTLENECK_ALL", false);
+  }
+  /// Whether the capacity graph is checked by the integer flow of
+  /// `checkCapacity`: `SCPD_CAPACITY_FLOW`, off. Off routes the wires one
+  /// after another with `checkInTurn` (user, 2026-10-08).
+  [[nodiscard]] static bool capacityFlow() {
+    return envFlag("SCPD_CAPACITY_FLOW", false);
+  }
+
+  /// The bottlenecks the coupler insertion has a hand in (user,
+  /// 2026-10-08): those with an end on a feedline edge, on a coupler pad or
+  /// on the lead a resonator leaves its coupler on. A bottleneck between
+  /// other obstacles — the artwork, the border, the port runs of the plain
+  /// wires — is there whatever the insertion does, and is left out, so the
+  /// chambers on either side of it are one. Every bottleneck is kept under
+  /// `bottleneckAll`. No bottleneck joins the two walls of one port run:
+  /// its line would cross the slot between them, and `grid::findBottlenecks`
+  /// refuses every line that crosses a slot.
+  [[nodiscard]] static std::vector<grid::Bottleneck>
+  couplerCuts(const std::vector<Wall>& list,
+              const std::span<const std::uint32_t> wallOf,
+              std::vector<grid::Bottleneck> gates) {
+    if (bottleneckAll()) {
+      return gates;
+    }
+    const auto counts = [&](const std::size_t cell) {
+      const auto& wall = list[wallOf[cell]];
+      return wall.kind == WallKind::Feedline ||
+             wall.kind == WallKind::Coupler || wall.lead;
+    };
+    std::erase_if(gates, [&](const grid::Bottleneck& gate) {
+      return !counts(gate.first) && !counts(gate.second);
+    });
+    return gates;
+  }
+
+  /// The options `reportBottlenecks` searches the bottlenecks with: gaps up
+  /// to `bottleneckWires` wires, one narrowing per wire pitch, the rise of
+  /// `bottleneckRise`, and the slots and walls of `wallsAfterInsertion`.
+  [[nodiscard]] grid::BottleneckOptions
+  bottleneckOptionsOf(const std::span<const std::size_t> slots,
+                      const std::span<const std::uint32_t> wallOf) const {
+    const auto pitch = static_cast<double>(roomPitch());
+    const auto clearance = static_cast<double>(tuning_.clearance);
+    const auto half = static_cast<double>(bottleneckWires()) * clearance / 2.0;
+    const auto step =
+        std::min(scene_.router.cellWidth, scene_.router.cellHeight);
+    return {.maximumSquaredClearance =
+                static_cast<std::uint32_t>(std::floor(half * half)) + 1,
+            .sameNarrowing = pitch * step,
+            .minimumRise = bottleneckRise(),
+            .slots = slots,
+            .wallOf = wallOf};
+  }
+
   /// The bottlenecks of the chip the insertion leaves behind (user,
   /// 2026-10-07), report only. The medial axis is built over the obstacles
   /// of `wallsAfterInsertion` — a Voronoi diagram over their boundary
@@ -7633,6 +7882,14 @@ public:
     if (!bottleneckReport()) {
       return;
     }
+    analyseCapacity(wires);
+    benchCapacityCheck(wires);
+  }
+
+  /// The analysis of `reportBottlenecks`, whatever `SCPD_BOTTLENECKS`
+  /// says: the bottlenecks, the capacity graph and its check, with their
+  /// lines, pictures and data.
+  void analyseCapacity(const std::vector<Wire>& wires) {
     const auto began = std::chrono::steady_clock::now();
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     // The time of every step, for the line that says what the analysis
@@ -7655,24 +7912,17 @@ public:
     const auto axis =
         grid::rasterizeMedialAxis(walls.mask, scene_.router, edges);
     lap("axis");
-    const auto pitch = static_cast<double>(roomPitch());
     const auto clearance = static_cast<double>(tuning_.clearance);
     const auto widest = static_cast<double>(bottleneckWires()) * clearance;
-    const auto half = widest / 2.0;
-    const auto step =
-        std::min(scene_.router.cellWidth, scene_.router.cellHeight);
-    const auto gates = grid::findBottlenecks(
-        walls.mask, axis, distance, scene_.router,
-        {.maximumSquaredClearance =
-             static_cast<std::uint32_t>(std::floor(half * half)) + 1,
-         .sameNarrowing = pitch * step,
-         .minimumRise = bottleneckRise()});
+    const auto found =
+        grid::findBottlenecks(walls.mask, axis, distance, scene_.router,
+                              bottleneckOptionsOf(walls.slots, walls.of));
+    const auto gates = couplerCuts(walls.list, walls.of, found);
     lap("saddles");
 
     std::vector<MeasuredBottleneck> measured;
     measured.reserve(gates.size());
     std::map<std::string, std::uint32_t> pairs;
-    std::uint32_t atFeedline = 0;
     std::uint32_t overfull = 0;
     for (const auto& gate : gates) {
       MeasuredBottleneck one{.gate = gate};
@@ -7685,8 +7935,6 @@ public:
       const auto& a = walls.list[walls.of[gate.first]];
       const auto& b = walls.list[walls.of[gate.second]];
       one.holds = wiresThroughGap(one.cells, clearance);
-      one.atFeedline =
-          a.kind == WallKind::Feedline || b.kind == WallKind::Feedline;
 
       // The wires on the line between the two ends, the ends' own wires
       // aside. A way may pass between two cells of the line that touch at a
@@ -7716,25 +7964,19 @@ public:
       if (one.crossing.size() > one.holds) {
         ++overfull;
       }
-      if (one.atFeedline) {
-        ++atFeedline;
-        auto low = kindName(a.kind);
-        auto high = kindName(b.kind);
-        if (high < low) {
-          std::swap(low, high);
-        }
-        ++pairs[std::format("{}–{}", low, high)];
+      auto low = kindName(a.kind);
+      auto high = kindName(b.kind);
+      if (high < low) {
+        std::swap(low, high);
       }
+      ++pairs[std::format("{}–{}", low, high)];
       measured.push_back(std::move(one));
     }
 
-    // At a feedline, the tightest first: the fewest wires to spare.
-    std::vector<std::size_t> order;
-    for (std::size_t at = 0; at < measured.size(); ++at) {
-      if (measured[at].atFeedline) {
-        order.push_back(at);
-      }
-    }
+    // Every bottleneck alike, the tightest first: the fewest wires to
+    // spare.
+    std::vector<std::size_t> order(measured.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
     const auto spare = [&measured](const std::size_t at) {
       return static_cast<std::int64_t>(measured[at].holds) -
              static_cast<std::int64_t>(measured[at].crossing.size());
@@ -7773,13 +8015,20 @@ public:
       axisCells += cell == grid::AxisCell::None ? 0 : 1;
     }
     say(std::format(
-        "coupler insertion: BOTTLENECKS — {} in all, {} at a feedline ({}); {} "
+        "coupler insertion: BOTTLENECKS — {} in all ({}){}; {} "
         "of them hold fewer wires than cross them now; walls: {} feedline "
         "edges, {} coupler pads, {} stubs and leads, the artwork, the border; "
         "axis {} cells; gaps up to {} wires ({:.0f} cells = {} x {:.0f}), "
-        "a gap holding its length over the clearance, port runs and "
-        "feedlines inflated by {:.1f}; rise {:.1f} cells; {:.2f}s ({})",
-        measured.size(), atFeedline, paired.empty() ? "-" : paired, overfull,
+        "a gap holding its length over the clearance, port runs walled "
+        "and feedlines inflated {:.1f} cells out; rise {:.1f} cells; {:.2f}s "
+        "({})",
+        measured.size(), paired.empty() ? "-" : paired,
+        bottleneckAll()
+            ? std::string()
+            : std::format(", {} more left out with no end on a feedline "
+                          "edge, a coupler pad or a resonator lead",
+                          found.size() - gates.size()),
+        overfull,
         kinds[static_cast<std::size_t>(WallKind::Feedline)],
         kinds[static_cast<std::size_t>(WallKind::Coupler)],
         kinds[static_cast<std::size_t>(WallKind::Stub)], axisCells,
@@ -7788,7 +8037,9 @@ public:
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
             .count(),
         (lap("measure"), laps)));
-    drawBottlenecks(wires, walls, axis, measured);
+    if (!graphOnly_) {
+      drawBottlenecks(wires, walls, axis, measured);
+    }
     reportCapacityGraph(wires, walls, gates, measured);
   }
 
@@ -7825,6 +8076,8 @@ public:
     std::vector<std::uint32_t> from;
     std::vector<std::uint32_t> to;
     std::optional<std::uint32_t> demand;
+    /// The feedline edges it is prescribed to cross, by their wire key.
+    std::vector<std::uint32_t> crosses;
   };
 
   /// The stretches of every drawn feedline edge where a wire may cross it,
@@ -7846,13 +8099,14 @@ public:
   /// wire is prescribed a terminal edge, so a terminal edge has no stretch,
   /// and no resonator crosses a feedline at all.
   [[nodiscard]] std::vector<GraphEdge>
-  crossingStretches(const std::vector<Wire>& wires, const Walls& walls,
+  crossingStretches(const std::vector<Wire>& wires,
+                    const std::vector<Edge>& edges, const Walls& walls,
                     const grid::Chambers& chambers) const {
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     const auto height = static_cast<std::int64_t>(scene_.router.height);
     const auto pitch = static_cast<double>(roomPitch());
     std::vector<Path> crossable;
-    for (const auto& edge : edges_) {
+    for (const auto& edge : edges) {
       const auto& wire = wires[edge.wire];
       if (wire.drawn && !(edge.terminal && feedlineLikePrototype())) {
         crossable.push_back(wire.way);
@@ -7877,7 +8131,7 @@ public:
         static_cast<std::int64_t>(std::ceil(wallInflation())) + 1;
 
     std::vector<GraphEdge> stretches;
-    for (const auto& edge : edges_) {
+    for (const auto& edge : edges) {
       const auto& wire = wires[edge.wire];
       const auto own = wallOfEdge.find(edge.wire);
       if (edge.terminal || !wire.drawn || wire.way.empty() ||
@@ -7980,46 +8234,46 @@ public:
     return stretches;
   }
 
-  /// The cells a wire's ends leave from: the cell past the stub at its
-  /// source — past the lead for a resonator — and the cell before the run
-  /// it arrives at its target on, each with the way on from there.
+  /// The cells a wire's terminals lie on, source first — cells of the slots
+  /// between the walls of its port runs — each with the way on from there.
   [[nodiscard]] std::array<std::pair<PathPoint, routing::HeadingVector>, 2>
-  portsOf(const Wire& wire) const {
-    const auto beyond = [](const PathPoint& from,
-                           const routing::HeadingVector& v,
-                           const std::int64_t cells) {
+  portsOf(const Walls& walls, const Wire& wire) const {
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto found = walls.terminals.find(wire.key);
+    const auto onward = [](const PortRun& run) {
+      const auto& end = run.back();
+      const auto& before = run[run.size() - 2];
+      return routing::HeadingVector{
+          .dx =
+              static_cast<std::int8_t>((end.first > before.first + 0.5)   ? 1
+                                       : (end.first < before.first - 0.5) ? -1
+                                                                          : 0),
+          .dy = static_cast<std::int8_t>((end.second > before.second + 0.5) ? 1
+                                         : (end.second < before.second - 0.5)
+                                             ? -1
+                                             : 0)};
+    };
+    const auto pointOf = [width](const std::size_t cell) {
       return PathPoint{.x = static_cast<std::uint32_t>(
-                           static_cast<std::int64_t>(from.x) + (cells * v.dx)),
+                           static_cast<std::int64_t>(cell) % width),
                        .y = static_cast<std::uint32_t>(
-                           static_cast<std::int64_t>(from.y) + (cells * v.dy)),
-                       .heading = from.heading,
+                           static_cast<std::int64_t>(cell) / width),
+                       .heading = 0,
                        .primitive = 0};
     };
-    const auto& source = wire.objective.source;
-    const auto out = routing::headingVector(source.heading);
-    const auto start =
-        wire.couplerAtSource != NO_OWNER && !wire.arc.empty()
-            ? beyond(source, out, 1)
-            : beyond(source, out,
-                     static_cast<std::int64_t>(
-                         cellsOn(tuning_.straightStart, source.heading)) +
-                         1);
-    const auto& target = wire.objective.target;
-    const auto in = routing::headingVector(target.heading);
-    const routing::HeadingVector back{.dx = static_cast<std::int8_t>(-in.dx),
-                                      .dy = static_cast<std::int8_t>(-in.dy)};
-    const auto end = beyond(target, back,
-                            static_cast<std::int64_t>(cellsOn(
-                                tuning_.straightStart, target.heading)) +
-                                1);
-    return {std::pair{start, out}, std::pair{end, back}};
+    if (found == walls.terminals.end()) {
+      return {std::pair{wire.objective.source, routing::HeadingVector{}},
+              std::pair{wire.objective.target, routing::HeadingVector{}}};
+    }
+    return {std::pair{pointOf(found->second[0]), onward(sourceRunOf(wire))},
+            std::pair{pointOf(found->second[1]), onward(targetRunOf(wire))}};
   }
 
-  /// The chambers a port lies in. A port in a chamber lies in that one. A
-  /// port on the line of a bottleneck stands in the gap itself — the gap
-  /// between the tip of its own stub and a feedline is the usual case — and
-  /// lies in every chamber beside it, so a wire may leave that way without
-  /// passing the gap. A port on an obstacle is taken on along its way, and
+  /// The chambers a terminal lies in. A terminal lies in the slot between
+  /// the two walls of its port run, and the slot in one chamber: the room
+  /// in front of the run's open end, which the bottlenecks from the ends of
+  /// the two walls close off (user, 2026-10-07). A terminal on the line of a bottleneck lies in every
+  /// chamber beside it; one on an obstacle is taken on along its way, and
   /// then to the nearest cell around it, a few cells at most; no chamber
   /// when there is none.
   [[nodiscard]] std::vector<std::uint32_t>
@@ -8081,43 +8335,179 @@ public:
     return {};
   }
 
-  /// The chambers a wire's port lies in, grown by every bottleneck that
-  /// ends on one of the wire's own stubs or its lead: the gap between the
-  /// tip of a wire's own stub and a feedline is not a gap the wire passes,
-  /// the wire runs on from that tip. So the chambers on all sides of such a
-  /// bottleneck are where the wire starts, or ends, as much as the one its
-  /// port lies in; to a fixpoint, since one may lead to the next.
-  [[nodiscard]] static std::vector<std::uint32_t>
-  besideOwnStubs(const Wire& wire, std::vector<std::uint32_t> chambers,
-                 const std::vector<GraphEdge>& graph,
-                 const std::vector<grid::Bottleneck>& gates,
-                 const Walls& walls) {
-    const auto ownStub = [&](const std::size_t cell) {
-      const auto& wall = walls.list[walls.of[cell]];
-      return wall.kind == WallKind::Stub && wall.wire == wire.key;
-    };
-    for (bool grown = true; grown;) {
-      grown = false;
-      for (const auto& edge : graph) {
-        if (edge.crossing ||
-            !(ownStub(gates[edge.id].first) ||
-              ownStub(gates[edge.id].second)) ||
-            std::ranges::none_of(
-                edge.chambers, [&](const std::uint32_t chamber) {
-                  return std::ranges::find(chambers, chamber) != chambers.end();
-                })) {
-          continue;
-        }
-        for (const auto chamber : edge.chambers) {
-          if (std::ranges::find(chambers, chamber) == chambers.end()) {
-            chambers.push_back(chamber);
-            grown = true;
+  /// The flow problem of `reportCapacityGraph`: the graph's edges, the
+  /// demands and what the report and the picture need of both.
+  struct CapacityProblem {
+    /// The bottleneck edges first, then the stretches.
+    std::vector<GraphEdge> graph;
+    std::size_t gateEdges = 0;
+    /// The bottlenecks with one chamber on both sides.
+    std::uint32_t roundabout = 0;
+    std::vector<FlowEdge> flowEdges;
+    std::vector<FlowDemand> demands;
+    /// The wire of every demand.
+    std::vector<std::uint32_t> wireOf;
+    /// The outer wires with a terminal in no chamber.
+    std::vector<std::uint32_t> walled;
+    std::uint32_t outer = 0;
+    std::vector<std::uint32_t> portsIn;
+    std::vector<std::pair<PathPoint, std::uint32_t>> portMarks;
+    std::vector<GraphWire> outerWires;
+  };
+
+  /// How long a resonator's way through the capacity graph may be, in
+  /// cells (user, 2026-10-09): the target length less the run to the port
+  /// and less the lead it already has, with the tolerance. Nothing for a
+  /// plain wire, which may be any length.
+  [[nodiscard]] std::optional<double> longestWayOf(const Wire& wire) const {
+    if (!wire.resonator) {
+      return std::nullopt;
+    }
+    return std::max(0.0, tuning_.targetLength - wire.anchorGap -
+                             (wire.arc.empty() ? 0.0 : lengthOf(wire.arc)) +
+                             tuning_.lengthTolerance);
+  }
+
+  /// The edges and demands of the capacity graph over the chambers the
+  /// bottlenecks cut: see `reportCapacityGraph`.
+  [[nodiscard]] CapacityProblem
+  capacityProblemOf(const std::vector<Wire>& wires,
+                    const std::vector<Edge>& edges, const Walls& walls,
+                    const std::vector<MeasuredBottleneck>& measured,
+                    const grid::Chambers& chambers) const {
+    CapacityProblem problem;
+    auto& graph = problem.graph;
+    for (std::uint32_t gate = 0; gate < measured.size(); ++gate) {
+      if (chambers.beside[gate].size() < 2) {
+        ++problem.roundabout;
+        continue;
+      }
+      graph.push_back({.crossing = false,
+                       .id = gate,
+                       .chambers = chambers.beside[gate],
+                       .capacity = measured[gate].holds,
+                       .users = std::nullopt,
+                       .first = 0,
+                       .last = 0,
+                       .length = measured[gate].cells,
+                       .through = {}});
+    }
+    problem.gateEdges = graph.size();
+    for (auto& stretch : crossingStretches(wires, edges, walls, chambers)) {
+      graph.push_back(std::move(stretch));
+    }
+
+    // The feedline edges each plain wire is prescribed to cross (user,
+    // 2026-10-08): every drawn edge between two couplers that it bridges
+    // (`bridgers_`). Its way takes exactly one stretch of each and no other;
+    // an edge with no stretch leaves it no way.
+    std::unordered_set<std::uint32_t> drawnFeedlines;
+    for (const auto& wall : walls.list) {
+      if (wall.kind == WallKind::Feedline) {
+        drawnFeedlines.insert(wall.wire);
+      }
+    }
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> prescribed;
+    for (const auto& edge : edges) {
+      if (edge.terminal || !drawnFeedlines.contains(edge.wire)) {
+        continue;
+      }
+      for (const auto key : bridgers_[edge.chain][edge.from]) {
+        prescribed[key].push_back(edge.wire);
+      }
+    }
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> stretchesOf;
+    for (std::uint32_t index = 0; index < graph.size(); ++index) {
+      if (graph[index].crossing) {
+        stretchesOf[graph[index].id].push_back(index);
+      }
+    }
+
+    // One demand per outer wire whose two ports lie in chambers.
+    std::unordered_map<std::uint32_t, std::uint32_t> demandOf;
+    problem.portsIn.assign(chambers.count, 0);
+    for (const auto& wire : wires) {
+      if (!wire.feasible || wire.inner || wire.feedline) {
+        continue;
+      }
+      ++problem.outer;
+      const auto ends = portsOf(walls, wire);
+      auto from =
+          chambersOfPort(chambers, walls, ends[0].first, ends[0].second);
+      auto to = chambersOfPort(chambers, walls, ends[1].first, ends[1].second);
+      problem.portMarks.emplace_back(ends[0].first, wire.key);
+      problem.portMarks.emplace_back(ends[1].first, wire.key);
+      const auto mine = prescribed.find(wire.key);
+      problem.outerWires.push_back(
+          {.wire = wire.key,
+           .ends = {ends[0].first, ends[1].first},
+           .from = from,
+           .to = to,
+           .demand = std::nullopt,
+           .crosses = mine != prescribed.end() ? mine->second
+                                               : std::vector<std::uint32_t>{}});
+      if (from.empty() || to.empty()) {
+        problem.walled.push_back(wire.key);
+        continue;
+      }
+      ++problem.portsIn[from.front()];
+      ++problem.portsIn[to.front()];
+      problem.outerWires.back().demand =
+          static_cast<std::uint32_t>(problem.demands.size());
+      demandOf.emplace(wire.key,
+                       static_cast<std::uint32_t>(problem.demands.size()));
+      problem.wireOf.push_back(wire.key);
+      std::vector<std::vector<std::uint32_t>> crossings;
+      for (const auto feedline : problem.outerWires.back().crosses) {
+        const auto found = stretchesOf.find(feedline);
+        crossings.push_back(found != stretchesOf.end()
+                                ? found->second
+                                : std::vector<std::uint32_t>{});
+      }
+      const auto pointOf = [](const PathPoint& point) {
+        return FlowPoint{.x = static_cast<double>(point.x),
+                         .y = static_cast<double>(point.y)};
+      };
+      problem.demands.push_back({.from = std::move(from),
+                                 .to = std::move(to),
+                                 .crossings = std::move(crossings),
+                                 .longest = longestWayOf(wire),
+                                 .start = pointOf(ends[0].first),
+                                 .end = pointOf(ends[1].first)});
+    }
+    problem.flowEdges.reserve(graph.size());
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    for (const auto& edge : graph) {
+      FlowEdge flow{
+          .chambers = edge.chambers, .capacity = edge.capacity, .users = {}};
+      // The line a way passes the edge on: the bottleneck's line, or the
+      // stretch from its first cell to its last.
+      if (edge.crossing) {
+        const auto& way = wires[edge.id].way;
+        flow.from = {.x = static_cast<double>(way[edge.first].x),
+                     .y = static_cast<double>(way[edge.first].y)};
+        flow.to = {.x = static_cast<double>(way[edge.last].x),
+                   .y = static_cast<double>(way[edge.last].y)};
+      } else {
+        const auto& gate = measured[edge.id].gate;
+        const auto a = static_cast<std::int64_t>(gate.first);
+        const auto b = static_cast<std::int64_t>(gate.second);
+        flow.from = {.x = static_cast<double>(a % width),
+                     .y = static_cast<double>(a / width)};
+        flow.to = {.x = static_cast<double>(b % width),
+                   .y = static_cast<double>(b / width)};
+      }
+      if (edge.users.has_value()) {
+        flow.users = std::vector<std::uint32_t>{};
+        for (const auto key : *edge.users) {
+          if (const auto found = demandOf.find(key); found != demandOf.end()) {
+            flow.users->push_back(found->second);
           }
         }
       }
+      problem.flowEdges.push_back(std::move(flow));
     }
-    std::ranges::sort(chambers);
-    return chambers;
+    return problem;
   }
 
   /// The capacity graph of the chip the insertion leaves behind, and whether
@@ -8133,15 +8523,18 @@ public:
   /// `crossingStretches` are the edges across them, each open to the wires
   /// the feedline pass lets cross there.
   ///
-  /// Every outer wire is a demand from the chambers of its source port to
-  /// those of its target port, and `checkCapacity` routes all of them at
-  /// once as an integer multi-commodity flow with the least overflow. An
-  /// overflow of zero says the graph carries every wire; an edge with
-  /// overflow is where it does not, and the wires the flow sends through it
-  /// are the ones that compete there. A wire the graph has no way for at
-  /// all is said apart. The check is necessary and not sufficient: the flow
-  /// knows nothing of the order of wires inside a chamber, of turns or of
-  /// lengths.
+  /// Every outer wire is a demand from the chamber its source terminal
+  /// lies in to the chamber of its target terminal, each in the slot of
+  /// its port run, crossing exactly the feedline edges it is prescribed.
+  /// `checkInTurn` routes them one after another in wire order, each over
+  /// the edges that still take a wire (user, 2026-10-08); under
+  /// `SCPD_CAPACITY_FLOW`, `checkCapacity` routes all of them at once as an
+  /// integer multi-commodity flow with the least overflow. An overflow of
+  /// zero says the graph carries every wire; an edge with overflow is where
+  /// it does not, and the wires sent through it are the ones that compete
+  /// there. A wire the graph has no way for at all is said apart. The check
+  /// is necessary and not sufficient: the graph knows nothing of the order
+  /// of wires inside a chamber, of turns or of lengths.
   void reportCapacityGraph(const std::vector<Wire>& wires, const Walls& walls,
                            const std::vector<grid::Bottleneck>& gates,
                            const std::vector<MeasuredBottleneck>& measured) {
@@ -8158,25 +8551,16 @@ public:
     const auto chambers = grid::chambersOf(walls.mask, gates, scene_.router);
     lap("chambers");
 
-    std::vector<GraphEdge> graph;
-    std::uint32_t roundabout = 0;
-    for (std::uint32_t gate = 0; gate < gates.size(); ++gate) {
-      if (chambers.beside[gate].size() < 2) {
-        ++roundabout;
-        continue;
-      }
-      graph.push_back({.crossing = false,
-                       .id = gate,
-                       .chambers = chambers.beside[gate],
-                       .capacity = measured[gate].holds,
-                       .users = std::nullopt,
-                       .first = 0,
-                       .last = 0,
-                       .length = measured[gate].cells,
-                       .through = {}});
-    }
-    const auto gateEdges = graph.size();
-    for (auto& stretch : crossingStretches(wires, walls, chambers)) {
+    auto problem = capacityProblemOf(wires, edges_, walls, measured, chambers);
+    auto& graph = problem.graph;
+    const auto roundabout = problem.roundabout;
+    const auto gateEdges = problem.gateEdges;
+    const auto& demands = problem.demands;
+    const auto& wireOf = problem.wireOf;
+    const auto& walled = problem.walled;
+    const auto outer = problem.outer;
+    for (std::size_t index = gateEdges; index < graph.size(); ++index) {
+      const auto& stretch = graph[index];
       const auto& way = wires[stretch.id].way;
       tell(std::format(
           "[Capacity] stretch {} cells {}..{} from ({},{}) to ({},{}), "
@@ -8187,69 +8571,19 @@ public:
           stretch.chambers[1], stretch.capacity,
           stretch.users.has_value() ? namesOf(wires, *stretch.users)
                                     : std::string("every wire")));
-      graph.push_back(std::move(stretch));
-    }
-
-    // One demand per outer wire whose two ports lie in chambers.
-    std::vector<FlowDemand> demands;
-    std::vector<std::uint32_t> wireOf;
-    std::unordered_map<std::uint32_t, std::uint32_t> demandOf;
-    std::vector<std::uint32_t> walled;
-    std::uint32_t outer = 0;
-    std::vector<std::uint32_t> portsIn(chambers.count, 0);
-    std::vector<std::pair<PathPoint, std::uint32_t>> portMarks;
-    std::vector<GraphWire> outerWires;
-    for (const auto& wire : wires) {
-      if (!wire.feasible || wire.inner || wire.feedline) {
-        continue;
-      }
-      ++outer;
-      const auto ends = portsOf(wire);
-      auto from = besideOwnStubs(
-          wire, chambersOfPort(chambers, walls, ends[0].first, ends[0].second),
-          graph, gates, walls);
-      auto to = besideOwnStubs(
-          wire, chambersOfPort(chambers, walls, ends[1].first, ends[1].second),
-          graph, gates, walls);
-      portMarks.emplace_back(ends[0].first, wire.key);
-      portMarks.emplace_back(ends[1].first, wire.key);
-      outerWires.push_back({.wire = wire.key,
-                            .ends = {ends[0].first, ends[1].first},
-                            .from = from,
-                            .to = to,
-                            .demand = std::nullopt});
-      if (from.empty() || to.empty()) {
-        walled.push_back(wire.key);
-        continue;
-      }
-      ++portsIn[from.front()];
-      ++portsIn[to.front()];
-      outerWires.back().demand = static_cast<std::uint32_t>(demands.size());
-      demandOf.emplace(wire.key, static_cast<std::uint32_t>(demands.size()));
-      wireOf.push_back(wire.key);
-      demands.push_back({.from = std::move(from), .to = std::move(to)});
-    }
-    std::vector<FlowEdge> flowEdges;
-    flowEdges.reserve(graph.size());
-    for (const auto& edge : graph) {
-      FlowEdge flow{
-          .chambers = edge.chambers, .capacity = edge.capacity, .users = {}};
-      if (edge.users.has_value()) {
-        flow.users = std::vector<std::uint32_t>{};
-        for (const auto key : *edge.users) {
-          if (const auto found = demandOf.find(key); found != demandOf.end()) {
-            flow.users->push_back(found->second);
-          }
-        }
-      }
-      flowEdges.push_back(std::move(flow));
     }
     lap("stretches and ports");
-    milp::SolveOptions options;
-    options.timeLimit = capacitySeconds();
-    const auto check =
-        checkCapacity(chambers.count, flowEdges, demands, options);
-    lap("flow");
+    FlowCheck check;
+    if (capacityFlow()) {
+      milp::SolveOptions options;
+      options.timeLimit = capacitySeconds();
+      check =
+          checkCapacity(chambers.count, problem.flowEdges, demands, options);
+      lap("flow");
+    } else {
+      check = checkInTurn(chambers.count, problem.flowEdges, demands);
+      lap("in turn");
+    }
 
     std::vector<std::uint32_t> noWay;
     for (std::uint32_t demand = 0; demand < demands.size(); ++demand) {
@@ -8271,6 +8605,12 @@ public:
       return std::format("× {} cells {}..{}", wireId(wires[edge.id]),
                          edge.first, edge.last);
     };
+    std::vector<std::vector<std::uint32_t>> crossesOf(demands.size());
+    for (const auto& one : problem.outerWires) {
+      if (one.demand.has_value()) {
+        crossesOf[*one.demand] = one.crosses;
+      }
+    }
     for (std::uint32_t demand = 0; demand < demands.size(); ++demand) {
       const auto& way = check.ways[demand];
       std::string said;
@@ -8281,11 +8621,20 @@ public:
                               nameOf(edge), edge.through.size(), edge.capacity);
         }
       }
+      const auto& feedlines = crossesOf[demand];
       tell(std::format(
-          "[Capacity] {}: {}", wireId(wires[wireOf[demand]]),
+          "[Capacity] {}{}: {}", wireId(wires[wireOf[demand]]),
+          feedlines.empty()
+              ? std::string()
+              : std::format(", crossing {}", namesOf(wires, feedlines)),
           !way.has_value()
-              ? std::string(
-                    "no way from its source chamber to its target chamber")
+              ? (demand < check.tooLong.size() && check.tooLong[demand]
+                     ? std::format("no way within its length: the shortest "
+                                   "runs {:.0f} cells, it may run {:.0f}",
+                                   check.lengths[demand],
+                                   demands[demand].longest.value_or(0.0))
+                     : std::string("no way from its source chamber to its "
+                                   "target chamber"))
           : way->empty() ? std::string("source and target in one chamber")
                          : said));
     }
@@ -8316,11 +8665,12 @@ public:
         chambers.count, gateEdges, roundabout, graph.size() - gateEdges,
         crossed.size(), crossings);
     say(counted);
-    // The verdict. SAT: every outer wire has a way and the flow keeps every
-    // edge within what it takes. UNSAT: a wire has no way at all, a port lies
-    // in no chamber, or the least overflow the solver proved is above zero.
-    // UNKNOWN: the time limit stopped the solver with overflow left and no
-    // proof that it is the least.
+    // The verdict. SAT: every outer wire has a way and the ways keep every
+    // edge within what it takes. UNSAT: a wire has no way at all, a port
+    // lies in no chamber, the wires routed one after another overfill an
+    // edge, or the least overflow the solver proved is above zero. UNKNOWN:
+    // the time limit stopped the solver with overflow left and no proof
+    // that it is the least.
     const auto proven = check.status == milp::SolveStatus::Optimal;
     const auto answered = proven || check.status == milp::SolveStatus::Feasible;
     const bool lost = !noWay.empty() || !walled.empty();
@@ -8336,7 +8686,25 @@ public:
         }));
     std::string why;
     if (!noWay.empty()) {
-      why += std::format("; no way in the graph for {}", namesOf(wires, noWay));
+      // The wires refused only for their length apart from the rest.
+      std::vector<std::uint32_t> tooLong;
+      std::vector<std::uint32_t> nowhere;
+      for (std::uint32_t demand = 0; demand < demands.size(); ++demand) {
+        if (check.ways[demand].has_value()) {
+          continue;
+        }
+        (demand < check.tooLong.size() && check.tooLong[demand] ? tooLong
+                                                                : nowhere)
+            .push_back(wireOf[demand]);
+      }
+      if (!nowhere.empty()) {
+        why += std::format("; no way in the graph for {}",
+                           namesOf(wires, nowhere));
+      }
+      if (!tooLong.empty()) {
+        why += std::format("; no way within its length for {}",
+                           namesOf(wires, tooLong));
+      }
     }
     if (!walled.empty()) {
       why +=
@@ -8348,23 +8716,504 @@ public:
       why += std::format(
           "; short by {} wire{} on {} edge{}{}: {}", check.shortBy,
           check.shortBy == 1 ? "" : "s", overEdges, overEdges == 1 ? "" : "s",
-          proven ? "" : ", not proven least before the time limit", overList);
+          !capacityFlow() ? ", routed one after another in wire order"
+          : proven        ? ""
+                          : ", not proven least before the time limit",
+          overList);
     }
     const auto judged = std::format(
         "coupler insertion: CAPACITY GRAPH {} — {} outer wires, {} plain and "
         "{} "
-        "resonators from their coupler port, each plain wire crossing only "
-        "the feedline edge it is prescribed{}; {:.2f}s ({})",
+        "resonators from their coupler port, each plain wire crossing "
+        "exactly the feedline edges it is prescribed{}; {:.2f}s ({})",
         verdict, outer, outer - resonators, resonators,
-        why.empty() ? std::string("; every one has a way within the capacities")
-                    : why,
+        !why.empty() ? why
+        : capacityFlow()
+            ? std::string("; every one has a way within the capacities")
+            : std::string("; every one has a way within the capacities, "
+                          "routed one after another in wire order"),
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
             .count(),
         (lap("report"), laps));
     say(judged);
-    drawCapacityGraph(wires, walls, gates, chambers, graph, portsIn, portMarks);
+    if (!graphOnly_) {
+      drawCapacityGraph(wires, walls, gates, chambers, graph, problem.portsIn,
+                        problem.portMarks);
+    }
     writeCapacityGraph(wires, walls, gates, measured, chambers, graph,
-                       outerWires, check, verdict, {counted, judged});
+                       problem.outerWires, check, verdict, {counted, judged});
+  }
+
+  /// How many times `benchCapacityCheck` runs the whole capacity analysis
+  /// to time it: `SCPD_CAPACITY_BENCH`, 0. Zero runs no measurement. It
+  /// measures what a capacity check inside the insertion would cost and
+  /// changes nothing the stage does.
+  [[nodiscard]] static std::uint32_t capacityBench() {
+    return static_cast<std::uint32_t>(
+        std::clamp(envWhole("SCPD_CAPACITY_BENCH", 0), 0, 1000));
+  }
+  /// The directory `benchCapacityCheck` writes the flow problems to as
+  /// JSON: `SCPD_CAPACITY_DUMP`, none.
+  [[nodiscard]] static std::string capacityDump() {
+    const char* value = envSet("SCPD_CAPACITY_DUMP");
+    return value == nullptr ? std::string() : std::string(value);
+  }
+
+  /// One quiet run of the whole capacity analysis and the time of each
+  /// step, in the order of `CAPACITY_STEPS`.
+  struct CapacityPass {
+    Walls walls;
+    std::vector<grid::Bottleneck> gates;
+    grid::Chambers chambers;
+    CapacityProblem problem;
+    FlowCheck check;
+    /// The outer wires with no way: a terminal in no chamber, or no way in
+    /// the graph (alone, or at all under the flow).
+    std::uint32_t unrouted = 0;
+    std::array<double, 9> seconds{};
+  };
+  static constexpr std::array<std::string_view, 9> CAPACITY_STEPS{
+      "walls",   "distance", "voronoi",             "axis", "saddles",
+      "measure", "chambers", "stretches and ports", "check"};
+
+  /// The analysis of `reportBottlenecks` and `reportCapacityGraph` without
+  /// a line of log, with the feedline edge of wire `without` left out.
+  [[nodiscard]] CapacityPass capacityPass(const std::vector<Wire>& wires,
+                                          const std::uint32_t without) const {
+    return capacityPass(wires, edges_, nullptr, without);
+  }
+
+  /// `capacityPass` for a state of the insertion, as `wallsOf` takes it.
+  [[nodiscard]] CapacityPass capacityPass(const std::vector<Wire>& wires,
+                                          const std::vector<Edge>& edges,
+                                          const std::vector<bool>* placed,
+                                          const std::uint32_t without) const {
+    CapacityPass pass;
+    auto mark = std::chrono::steady_clock::now();
+    std::size_t step = 0;
+    const auto lap = [&] {
+      const auto now = std::chrono::steady_clock::now();
+      pass.seconds.at(step++) =
+          std::chrono::duration<double>(now - mark).count();
+      mark = now;
+    };
+    pass.walls = wallsOf(wires, edges, placed, without);
+    lap();
+    const auto distance = grid::squaredDistanceTransform(pass.walls.mask);
+    lap();
+    const auto medial = grid::medialAxis(pass.walls.mask);
+    lap();
+    const auto axis =
+        grid::rasterizeMedialAxis(pass.walls.mask, scene_.router, medial);
+    lap();
+    pass.gates = couplerCuts(
+        pass.walls.list, pass.walls.of,
+        grid::findBottlenecks(
+            pass.walls.mask, axis, distance, scene_.router,
+            bottleneckOptionsOf(pass.walls.slots, pass.walls.of)));
+    lap();
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    std::vector<MeasuredBottleneck> measured;
+    measured.reserve(pass.gates.size());
+    for (const auto& gate : pass.gates) {
+      MeasuredBottleneck one{.gate = gate};
+      one.cells = std::hypot(
+          static_cast<double>((static_cast<std::int64_t>(gate.second) % width) -
+                              (static_cast<std::int64_t>(gate.first) % width)),
+          static_cast<double>((static_cast<std::int64_t>(gate.second) / width) -
+                              (static_cast<std::int64_t>(gate.first) / width)));
+      one.holds = wiresThroughGap(one.cells,
+                                  static_cast<double>(tuning_.clearance));
+      measured.push_back(std::move(one));
+    }
+    lap();
+    pass.chambers =
+        grid::chambersOf(pass.walls.mask, pass.gates, scene_.router);
+    lap();
+    pass.problem =
+        capacityProblemOf(wires, edges, pass.walls, measured, pass.chambers);
+    lap();
+    if (capacityFlow()) {
+      milp::SolveOptions options;
+      options.timeLimit = capacitySeconds();
+      pass.check = checkCapacity(pass.chambers.count, pass.problem.flowEdges,
+                                 pass.problem.demands, options);
+    } else {
+      pass.check = checkInTurn(pass.chambers.count, pass.problem.flowEdges,
+                               pass.problem.demands);
+    }
+    lap();
+    pass.unrouted = static_cast<std::uint32_t>(
+        pass.problem.walled.size() +
+        static_cast<std::size_t>(std::ranges::count_if(
+            pass.check.ways, [](const auto& way) { return !way.has_value(); })));
+    return pass;
+  }
+
+  /// A flow problem of `capacityPass` as JSON, for solvers outside the
+  /// stage: the chambers with the lowest cell of each, the edges with a key
+  /// that names the same edge in another pass, the demands, and the answer
+  /// of `checkCapacity`.
+  void dumpCapacityPass(const std::vector<Wire>& wires,
+                        const CapacityPass& pass, const std::string& name,
+                        const double flowSeconds) const {
+    const auto directory = capacityDump();
+    if (directory.empty()) {
+      return;
+    }
+    using nlohmann::json;
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    std::vector<std::int64_t> lowest(pass.chambers.count, -1);
+    for (std::size_t cell = 0; cell < pass.chambers.of.size(); ++cell) {
+      const auto chamber = pass.chambers.of[cell];
+      if (chamber != grid::NO_CHAMBER && lowest[chamber] < 0) {
+        lowest[chamber] = static_cast<std::int64_t>(cell);
+      }
+    }
+    json edges = json::array();
+    for (std::size_t index = 0; index < pass.problem.graph.size(); ++index) {
+      const auto& edge = pass.problem.graph[index];
+      std::string key;
+      if (edge.crossing) {
+        key = std::format("s {} {} {}", wireId(wires[edge.id]), edge.first,
+                          edge.last);
+      } else {
+        const auto& gate = pass.gates[edge.id];
+        const auto low = std::min(gate.first, gate.second);
+        const auto high = std::max(gate.first, gate.second);
+        key = std::format("g {} {} {} {}", static_cast<std::int64_t>(low) % width,
+                          static_cast<std::int64_t>(low) / width,
+                          static_cast<std::int64_t>(high) % width,
+                          static_cast<std::int64_t>(high) / width);
+      }
+      const auto& flow = pass.problem.flowEdges[index];
+      edges.push_back(
+          {{"key", key},
+           {"chambers", flow.chambers},
+           {"capacity", flow.capacity},
+           {"users", flow.users.has_value() ? json(*flow.users) : json(nullptr)},
+           {"overflow", pass.check.overflow[index]}});
+    }
+    json demands = json::array();
+    for (std::size_t demand = 0; demand < pass.problem.demands.size();
+         ++demand) {
+      const auto& wanted = pass.problem.demands[demand];
+      const auto& way = pass.check.ways[demand];
+      demands.push_back(
+          {{"wire", wireId(wires[pass.problem.wireOf[demand]])},
+           {"from", wanted.from},
+           {"to", wanted.to},
+           {"way", way.has_value() ? json(*way) : json(nullptr)}});
+    }
+    json walled = json::array();
+    for (const auto key : pass.problem.walled) {
+      walled.push_back(wireId(wires[key]));
+    }
+    const json data{{"chambers", pass.chambers.count},
+                    {"lowest", lowest},
+                    {"width", width},
+                    {"edges", edges},
+                    {"demands", demands},
+                    {"walled", walled},
+                    {"status", static_cast<int>(pass.check.status)},
+                    {"shortBy", pass.check.shortBy},
+                    {"flowSeconds", flowSeconds}};
+    std::ofstream out(std::filesystem::path(directory) / (name + ".json"));
+    out << data.dump();
+  }
+
+  /// What a capacity check inside the insertion would cost
+  /// (`SCPD_CAPACITY_BENCH`), measurement only. Three parts, one line of
+  /// log each:
+  ///
+  /// - the whole analysis repeated on the chip as it stands, step by step,
+  ///   and the flow alone repeated on the one graph;
+  /// - every drawn feedline edge left out once: what the edge changes in
+  ///   the overflow, how many cuts it adds or removes and how far from its
+  ///   way they lie, and how many cells the chambers near it hold;
+  /// - the medial axis and the cuts recomputed in a window around every
+  ///   edge alone, at two reaches, and how many of the cuts in the middle
+  ///   of the window agree with those of the whole chip.
+  ///
+  /// With `SCPD_CAPACITY_DUMP` every flow problem is also written out.
+  void benchCapacityCheck(const std::vector<Wire>& wires) {
+    const auto repeats = capacityBench();
+    if (repeats == 0) {
+      return;
+    }
+    const auto spread = [](std::vector<double> values) {
+      std::ranges::sort(values);
+      const auto middle = values.size() / 2;
+      const auto median = values.size() % 2 == 1
+                              ? values[middle]
+                              : 0.5 * (values[middle - 1] + values[middle]);
+      return std::format("{:.4f} [{:.4f}..{:.4f}]", median, values.front(),
+                         values.back());
+    };
+    const auto since = [](const std::chrono::steady_clock::time_point began) {
+      return std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                           began)
+          .count();
+    };
+
+    // The whole analysis, again and again on the same chip.
+    std::vector<std::vector<double>> times(CAPACITY_STEPS.size() + 1);
+    std::optional<CapacityPass> full;
+    for (std::uint32_t round = 0; round < repeats; ++round) {
+      auto pass = capacityPass(wires, NO_OWNER);
+      double total = 0.0;
+      for (std::size_t step = 0; step < CAPACITY_STEPS.size(); ++step) {
+        times[step].push_back(pass.seconds.at(step));
+        total += pass.seconds.at(step);
+      }
+      times.back().push_back(total);
+      if (!full.has_value()) {
+        full = std::move(pass);
+      }
+    }
+    std::string steps;
+    for (std::size_t step = 0; step < CAPACITY_STEPS.size(); ++step) {
+      steps += std::format("{}{} {}", steps.empty() ? "" : ", ",
+                           CAPACITY_STEPS.at(step), spread(times[step]));
+    }
+    std::uint32_t demanded = 0;
+    for (const auto& edge : full->problem.flowEdges) {
+      demanded += edge.capacity;
+    }
+    say(std::format(
+        "coupler insertion: CAPACITY BENCH — the whole analysis {} times, "
+        "median [min..max] seconds: {}; in all {}; {} chambers, {} edges, {} "
+        "demands, {} wires with no way, short by {} ({})",
+        repeats, steps, spread(times.back()), full->chambers.count,
+        full->problem.flowEdges.size(), full->problem.demands.size(),
+        full->unrouted, full->check.shortBy,
+        capacityFlow() ? "the flow" : "the wires in turn"));
+    milp::SolveOptions options;
+    options.timeLimit = capacitySeconds();
+    std::vector<double> flows;
+    std::vector<double> turns;
+    for (std::uint32_t round = 0; round < repeats; ++round) {
+      auto began = std::chrono::steady_clock::now();
+      static_cast<void>(checkCapacity(full->chambers.count,
+                                      full->problem.flowEdges,
+                                      full->problem.demands, options));
+      flows.push_back(since(began));
+      began = std::chrono::steady_clock::now();
+      static_cast<void>(checkInTurn(full->chambers.count,
+                                    full->problem.flowEdges,
+                                    full->problem.demands));
+      turns.push_back(since(began));
+    }
+    say(std::format("coupler insertion: CAPACITY BENCH — the check alone on "
+                    "one graph {} times: the flow {} s, the wires in turn {} s",
+                    repeats, spread(flows), spread(turns)));
+    dumpCapacityPass(wires, *full, "full", times[8].front());
+
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    const auto keyOf = [](const grid::Bottleneck& gate) {
+      return std::pair{std::min(gate.first, gate.second),
+                       std::max(gate.first, gate.second)};
+    };
+    std::set<std::pair<std::size_t, std::size_t>> fullKeys;
+    for (const auto& gate : full->gates) {
+      fullKeys.insert(keyOf(gate));
+    }
+    std::vector<std::size_t> chamberCells(full->chambers.count, 0);
+    std::size_t freeCells = 0;
+    for (const auto chamber : full->chambers.of) {
+      if (chamber != grid::NO_CHAMBER) {
+        ++chamberCells[chamber];
+        ++freeCells;
+      }
+    }
+    // The way's box, grown by `reach` and kept on the grid.
+    struct Box {
+      std::int64_t x0, y0, x1, y1;
+    };
+    const auto boxOf = [&](const Path& way, const std::int64_t reach) {
+      Box box{width, height, -1, -1};
+      for (const auto& point : way) {
+        box.x0 = std::min<std::int64_t>(box.x0, point.x);
+        box.y0 = std::min<std::int64_t>(box.y0, point.y);
+        box.x1 = std::max<std::int64_t>(box.x1, point.x);
+        box.y1 = std::max<std::int64_t>(box.y1, point.y);
+      }
+      return Box{std::max<std::int64_t>(0, box.x0 - reach),
+                 std::max<std::int64_t>(0, box.y0 - reach),
+                 std::min<std::int64_t>(width - 1, box.x1 + reach),
+                 std::min<std::int64_t>(height - 1, box.y1 + reach)};
+    };
+    const auto inside = [width](const Box& box, const std::size_t cell) {
+      const auto x = static_cast<std::int64_t>(cell) % width;
+      const auto y = static_cast<std::int64_t>(cell) / width;
+      return x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1;
+    };
+
+    // Every drawn feedline edge left out once.
+    static constexpr std::int64_t NEAR = 120;
+    for (const auto& edge : edges_) {
+      const auto& wire = wires[edge.wire];
+      if (!wire.drawn || wire.way.empty()) {
+        continue;
+      }
+      const auto began = std::chrono::steady_clock::now();
+      const auto without = capacityPass(wires, edge.wire);
+      const auto seconds = since(began);
+      std::set<std::pair<std::size_t, std::size_t>> withoutKeys;
+      for (const auto& gate : without.gates) {
+        withoutKeys.insert(keyOf(gate));
+      }
+      // How far a cut that differs lies from the edge's way, from the
+      // middle of its line.
+      const auto away = [&](const std::pair<std::size_t, std::size_t>& key) {
+        const auto mx = 0.5 * static_cast<double>(
+                                  (static_cast<std::int64_t>(key.first) % width) +
+                                  (static_cast<std::int64_t>(key.second) % width));
+        const auto my = 0.5 * static_cast<double>(
+                                  (static_cast<std::int64_t>(key.first) / width) +
+                                  (static_cast<std::int64_t>(key.second) / width));
+        double best = std::numeric_limits<double>::max();
+        for (const auto& point : wire.way) {
+          best = std::min(best, std::hypot(mx - point.x, my - point.y));
+        }
+        return best;
+      };
+      std::uint32_t added = 0;
+      std::uint32_t removed = 0;
+      double farthest = 0.0;
+      for (const auto& key : fullKeys) {
+        if (!withoutKeys.contains(key)) {
+          ++added;
+          farthest = std::max(farthest, away(key));
+        }
+      }
+      for (const auto& key : withoutKeys) {
+        if (!fullKeys.contains(key)) {
+          ++removed;
+          farthest = std::max(farthest, away(key));
+        }
+      }
+      // The chambers of the whole chip with a cell near the edge: what a
+      // walk that redraws the chambers around the edge has to cover.
+      const auto near = boxOf(wire.way, NEAR);
+      std::set<std::uint32_t> touched;
+      for (auto y = near.y0; y <= near.y1; ++y) {
+        for (auto x = near.x0; x <= near.x1; ++x) {
+          const auto chamber =
+              full->chambers.of[static_cast<std::size_t>((y * width) + x)];
+          if (chamber != grid::NO_CHAMBER) {
+            touched.insert(chamber);
+          }
+        }
+      }
+      std::size_t touchedCells = 0;
+      for (const auto chamber : touched) {
+        touchedCells += chamberCells[chamber];
+      }
+      say(std::format(
+          "coupler insertion: CAPACITY BENCH f{} ({} cells) — without it "
+          "{} wires with no way and short by {}, with it {} and {}; it adds "
+          "{} cuts and removes {}, the "
+          "farthest {:.0f} cells from its way; {} of {} chambers within {} "
+          "cells of it, {} of {} free cells; the analysis without it {:.3f} s "
+          "(check {:.3f} s)",
+          wire.slot, wire.way.size(), without.unrouted, without.check.shortBy,
+          full->unrouted, full->check.shortBy, added, removed, farthest,
+          touched.size(),
+          full->chambers.count, NEAR, touchedCells, freeCells, seconds,
+          without.seconds[8]));
+      dumpCapacityPass(wires, without, std::format("without-f{}", wire.slot),
+                       without.seconds[8]);
+    }
+
+    // The axis and the cuts again in a window around each edge alone.
+    std::unordered_set<std::size_t> slotCells(full->walls.slots.begin(),
+                                              full->walls.slots.end());
+    for (const auto reach : {std::int64_t{120}, std::int64_t{240}}) {
+      std::vector<double> windowTimes;
+      std::uint32_t agree = 0;
+      std::uint32_t wholeOnly = 0;
+      std::uint32_t windowOnly = 0;
+      std::size_t windowCells = 0;
+      for (const auto& edge : edges_) {
+        const auto& wire = wires[edge.wire];
+        if (!wire.drawn || wire.way.empty()) {
+          continue;
+        }
+        const auto box = boxOf(wire.way, reach);
+        const auto core = boxOf(wire.way, reach / 2);
+        const auto cw = static_cast<std::uint32_t>(box.x1 - box.x0 + 1);
+        const auto ch = static_cast<std::uint32_t>(box.y1 - box.y0 + 1);
+        windowCells += static_cast<std::size_t>(cw) * ch;
+        const auto began = std::chrono::steady_clock::now();
+        grid::BitGrid mask(cw, ch);
+        std::vector<std::uint32_t> of(static_cast<std::size_t>(cw) * ch,
+                                      NO_OWNER);
+        std::vector<std::size_t> slots;
+        for (std::int64_t y = 0; y < ch; ++y) {
+          for (std::int64_t x = 0; x < cw; ++x) {
+            const auto cell =
+                static_cast<std::size_t>(((box.y0 + y) * width) + box.x0 + x);
+            const auto local = static_cast<std::size_t>((y * cw) + x);
+            if (full->walls.mask.test(cell)) {
+              mask.set(local);
+              of[local] = full->walls.of[cell];
+            }
+            if (slotCells.contains(cell)) {
+              slots.push_back(local);
+            }
+          }
+        }
+        auto metrics = scene_.router;
+        metrics.width = cw;
+        metrics.height = ch;
+        const auto distance = grid::squaredDistanceTransform(mask);
+        const auto medial = grid::medialAxis(mask);
+        const auto axis = grid::rasterizeMedialAxis(mask, metrics, medial);
+        const auto gates = couplerCuts(
+            full->walls.list, of,
+            grid::findBottlenecks(mask, axis, distance, metrics,
+                                  bottleneckOptionsOf(slots, of)));
+        windowTimes.push_back(since(began));
+        const auto global = [&](const std::size_t local) {
+          return static_cast<std::size_t>(
+              ((box.y0 + (static_cast<std::int64_t>(local) / cw)) * width) +
+              box.x0 + (static_cast<std::int64_t>(local) % cw));
+        };
+        std::set<std::pair<std::size_t, std::size_t>> inWindow;
+        for (const auto& gate : gates) {
+          const grid::Bottleneck mapped{.first = global(gate.first),
+                                        .second = global(gate.second),
+                                        .saddle = 0};
+          if (inside(core, mapped.first) && inside(core, mapped.second)) {
+            inWindow.insert(keyOf(mapped));
+          }
+        }
+        for (const auto& key : fullKeys) {
+          if (inside(core, key.first) && inside(core, key.second)) {
+            if (inWindow.contains(key)) {
+              ++agree;
+            } else {
+              ++wholeOnly;
+            }
+          }
+        }
+        for (const auto& key : inWindow) {
+          windowOnly += fullKeys.contains(key) ? 0 : 1;
+        }
+      }
+      say(std::format(
+          "coupler insertion: CAPACITY BENCH windows of {} cells around each "
+          "edge — distance, axis and cuts {} s per edge, {:.0f} cells per "
+          "window against {} on the chip; in the middle half of the windows "
+          "{} cuts agree with the whole chip's, {} only on the chip, {} only "
+          "in the window",
+          reach, spread(windowTimes),
+          static_cast<double>(windowCells) /
+              static_cast<double>(std::max<std::size_t>(1, windowTimes.size())),
+          full->walls.mask.size(), agree, wholeOnly, windowOnly));
+    }
   }
 
   /// R4, report only: the channels between the terminal edges of two
@@ -8465,6 +9314,32 @@ public:
   /// `solveChainAStar` call and cleared again, so nothing the commit does
   /// ever sees it.
   std::uint32_t soloChain_ = NO_OWNER;
+  /// Whether `analyseCapacity` writes only the data and draws no picture:
+  /// set by `capacityGraphJson`.
+  bool graphOnly_ = false;
+  /// The capacity check of `checkChainCapacity` while a chain is searched
+  /// again: the chain, the chains settled before it, the wires that had no
+  /// way before it, how many more wires a run of options may leave without
+  /// one, and how many of its edges may fail the commit's test
+  /// (`chainFaults`). A run that leaves `limit` or more wires, or fails on
+  /// more edges than `faults`, is refused at its last step.
+  struct ChainCheck {
+    bool active = false;
+    std::uint32_t chain = NO_OWNER;
+    const std::vector<bool>* settled = nullptr;
+    std::set<std::uint32_t> before;
+    std::size_t limit = 0;
+    std::uint32_t faults = 0;
+    std::uint32_t checks = 0;
+    std::uint32_t refused = 0;
+  };
+  ChainCheck chainCheck_;
+  /// The chains settled before the one being searched, while
+  /// `capacityStep` or `capacityRule` checks every step of its search; null
+  /// otherwise. With `stepRefuses_` a step whose edge closes a wire is
+  /// refused.
+  const std::vector<bool>* stepSettled_ = nullptr;
+  bool stepRefuses_ = false;
   /// The room of the resonators outside one chain, and which chain that is.
   /// `foreignRoomStale_` is set wherever a resonator can have moved.
   grid::BitGrid foreignRoom_;
@@ -8551,11 +9426,6 @@ public:
                   found.empty() && router_.lastSearchCutOff();
     budgetCutoffs_ += lastCutOff_ ? 1 : 0;
     router_.setMaxTurns(-1);
-    // A way that leaves its wires too little room is no way: see
-    // `squeezeReject`.
-    if (refuseSqueezed(wires, edge, found, startRun, endRun)) {
-      found.clear();
-    }
     // One picture per search, as the outer routing draws one: what the
     // corridor left open, what the search paid for and the way it took. The
     // ones that found nothing are the point of it, but a way that came out
@@ -9611,6 +10481,32 @@ public:
     // move, so the fence may hold pointers into it.
     std::map<std::vector<std::uint32_t>, Laid> laid;
 
+    // The capacity check of every step (`capacityStep`): the verdict on the
+    // chip each priced step leaves, under the same key as `laid`, with the
+    // wires it closes against the prefix before it; and the verdict on the
+    // chip with none of this chain standing, which a first edge is compared
+    // with. The feedline edges are named as the commit names them.
+    struct StepCheck {
+      CapacityVerdict verdict;
+      std::vector<std::uint32_t> closed;
+    };
+    std::map<std::vector<std::uint32_t>, StepCheck> checked;
+    CapacityVerdict unchained;
+    std::uint32_t stepChecks = 0;
+    std::uint32_t stepsCarrying = 0;
+    std::uint32_t stepsClosing = 0;
+    std::uint32_t stepsRefused = 0;
+    double stepSeconds = 0.0;
+    std::uint32_t firstSlot = 0;
+    for (std::uint32_t before = 0; before < chain; ++before) {
+      firstSlot += chains_[before].empty()
+                       ? 0U
+                       : static_cast<std::uint32_t>(chains_[before].size() - 1);
+    }
+    if (stepSettled_ != nullptr) {
+      unchained = capacityVerdictOf(stateOf(wires, *stepSettled_));
+    }
+
     // Two goes at most: the plain options, then the jogs opened at the wall
     // if the plain ones did not reach.
     const auto feedlines = feedlineCellsBut(chain);
@@ -9620,6 +10516,7 @@ public:
         open.push_back(openOptionsOf(chain, at, &feedlines));
       }
       laid.clear();
+      checked.clear();
 
       // The bounds, built before the search as the trellis builds its price
       // array. The analytic answer depends on the pair of options and
@@ -9819,6 +10716,110 @@ public:
           // — which is the whole of what the trellis cannot do.
           return real;
         }
+        // A run of options complete with this step, while the chain is
+        // searched again under the capacity check: refused when it leaves
+        // as many wires without a way as the run that was searched again
+        // (`checkChainCapacity`).
+        if (chainCheck_.active && chainCheck_.chain == chain &&
+            at + 1 == edges) {
+          std::vector<std::size_t> options(layers, 0);
+          for (std::size_t layer = 0; layer <= at; ++layer) {
+            options[layer] = open[layer][prefix[layer]];
+          }
+          options[at + 1] = open[at + 1][j];
+          std::vector<const Path*> ways(edges, nullptr);
+          for (std::size_t e = 0; e < at; ++e) {
+            ways[e] = wayOfEdge(e);
+          }
+          if (!before.empty()) {
+            ways[at - 1] = &before;
+          }
+          ways[at] = &way;
+          ++chainCheck_.checks;
+          const auto lost = lostWires(
+              stateOf(wires, *chainCheck_.settled, chain, &options, &ways));
+          const auto added = static_cast<std::size_t>(
+              std::ranges::count_if(lost, [&](const std::uint32_t key) {
+                return !chainCheck_.before.contains(key);
+              }));
+          if (added >= chainCheck_.limit ||
+              runFaults(wires, chain, options, ways) > chainCheck_.faults) {
+            ++chainCheck_.refused;
+            return routing::TRELLIS_UNREACHABLE;
+          }
+        }
+        // The capacity check of this step: the chip the chains settled
+        // before this one leave, with this prefix standing on top — its
+        // couplers up to this edge's far end and its edges up to this one.
+        // Under `capacityRule` a step whose edge closes a wire is refused
+        // here, before anything of it is remembered.
+        if (stepSettled_ != nullptr) {
+          const auto began = std::chrono::steady_clock::now();
+          std::vector<std::size_t> options(layers, 0);
+          std::string named;
+          for (std::size_t layer = 0; layer <= at + 1; ++layer) {
+            options[layer] = open[layer][layer <= at ? prefix[layer] : j];
+            named += std::format("{}{}", layer == 0 ? "" : " ",
+                                 points[layer].fixed
+                                     ? std::string("launcher")
+                                     : std::to_string(options[layer]));
+          }
+          std::vector<const Path*> ways(edges, nullptr);
+          for (std::size_t e = 0; e < at; ++e) {
+            ways[e] = wayOfEdge(e);
+          }
+          if (!before.empty()) {
+            ways[at - 1] = &before;
+          }
+          ways[at] = &way;
+          auto verdict = capacityVerdictOf(
+              stateOf(wires, *stepSettled_, chain, &options, &ways, at + 2));
+          const auto parent = checked.find(key);
+          const auto& was = (at == 0 || parent == checked.end())
+                                ? unchained
+                                : parent->second.verdict;
+          std::vector<std::uint32_t> closed;
+          std::ranges::set_difference(verdict.lost, was.lost,
+                                      std::back_inserter(closed));
+          const auto spent = std::chrono::steady_clock::now() - began;
+          const auto seconds = std::chrono::duration<double>(spent).count();
+          // The check's time is given back to the clock: the budget is for
+          // routing, and a chain checked step by step prices as many steps
+          // as one that is not.
+          if (problem.budget.count() > 0) {
+            problem.budget +=
+                std::chrono::duration_cast<std::chrono::nanoseconds>(spent);
+          }
+          ++stepChecks;
+          stepsCarrying += verdict.lost.empty() ? 1U : 0U;
+          stepsClosing += closed.empty() ? 0U : 1U;
+          stepSeconds += seconds;
+          const bool refused = stepRefuses_ && !closed.empty();
+          stepsRefused += refused ? 1U : 0U;
+          const std::vector<std::uint32_t> lost(verdict.lost.begin(),
+                                                verdict.lost.end());
+          tell(std::format(
+              "[Capacity Step] chain {} f{} ({}->{}) on options {}: {}{}; "
+              "{}{}; {:.3f}s",
+              chain, firstSlot + at, at, at + 1, named,
+              lost.empty() ? std::string("SAT") : std::string("UNSAT"),
+              lost.empty()
+                  ? std::string()
+                  : std::format(" — {} wire{} without a way ({}), short by {}",
+                                lost.size(), lost.size() == 1 ? "" : "s",
+                                namesOf(wires, lost), verdict.shortBy),
+              closed.empty()
+                  ? std::string("this edge closes no wire")
+                  : std::format("this edge closes {}", namesOf(wires, closed)),
+              refused ? " — refused (SCPD_CAPACITY_RULE)" : "", seconds));
+          if (refused) {
+            return routing::TRELLIS_UNREACHABLE;
+          }
+          auto mine = key;
+          mine.push_back(j);
+          checked[std::move(mine)] = StepCheck{.verdict = std::move(verdict),
+                                               .closed = std::move(closed)};
+        }
         if (chainLearnedBound()) {
           auto& known = learned[pairKey(at, prefix[at], j)];
           if (known == 0) {
@@ -9872,6 +10873,45 @@ public:
     out.expansions = answer.expansions;
     out.pruned = answer.pruned;
     out.outOfTime = answer.outOfTime;
+    if (stepSettled_ != nullptr) {
+      const std::vector<std::uint32_t> lost(unchained.lost.begin(),
+                                            unchained.lost.end());
+      say(std::format(
+          "[Capacity Step] chain {}: {} steps checked in {:.1f}s ({:.3f}s "
+          "each), {} of them SAT, {} closed a wire, {} refused for it; "
+          "without the chain {} wire{} without a way ({})",
+          chain, stepChecks, stepSeconds,
+          stepChecks == 0 ? 0.0 : stepSeconds / stepChecks, stepsCarrying,
+          stepsClosing, stepsRefused, lost.size(), lost.size() == 1 ? "" : "s",
+          namesOf(wires, lost)));
+      // Every feedline edge of the run the chain settles on, with what the
+      // check said when the search laid it.
+      for (std::size_t e = 0; answer.solved && e + 1 < layers; ++e) {
+        const std::vector<std::uint32_t> run(
+            answer.chosen.begin(),
+            answer.chosen.begin() + static_cast<std::ptrdiff_t>(e + 2));
+        const auto found = checked.find(run);
+        if (found == checked.end()) {
+          say(std::format("[Capacity Step] chain {} f{}: not checked", chain,
+                          firstSlot + e));
+          continue;
+        }
+        const auto& one = found->second;
+        const std::vector<std::uint32_t> edgeLost(one.verdict.lost.begin(),
+                                                  one.verdict.lost.end());
+        say(std::format(
+            "[Capacity Step] chain {} f{}: {}{}", chain, firstSlot + e,
+            edgeLost.empty()
+                ? std::string("SAT")
+                : std::format("UNSAT — {} wire{} without a way ({}), short "
+                              "by {}",
+                              edgeLost.size(), edgeLost.size() == 1 ? "" : "s",
+                              namesOf(wires, edgeLost), one.verdict.shortBy),
+            one.closed.empty()
+                ? std::string(", closes no wire")
+                : std::format(", closes {}", namesOf(wires, one.closed))));
+      }
+    }
     for (std::size_t at = 0; at + 1 < layers; ++at) {
       out.pairs +=
           static_cast<std::uint64_t>(open[at].size()) * open[at + 1].size();
@@ -10010,31 +11050,69 @@ public:
   /// It builds a corridor per edge and searches for nothing, so it costs a
   /// few dozen corridor builds and not one A*.
   [[nodiscard]] std::uint32_t stateFaults(const std::vector<Wire>& wires) {
+    std::uint32_t faults = 0;
+    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      faults += chainFaults(wires, chain);
+    }
+    return faults;
+  }
+
+  /// `chainFaults` of a chain standing on a run of options and ways for a
+  /// moment; the options and ways it stood on before are put back.
+  [[nodiscard]] std::uint32_t runFaults(const std::vector<Wire>& wires,
+                                        const std::uint32_t chain,
+                                        const std::vector<std::size_t>& options,
+                                        const std::vector<const Path*>& ways) {
+    const auto& points = chains_[chain];
+    std::vector<std::size_t> kept(points.size(), 0);
+    for (std::size_t at = 0; at < points.size(); ++at) {
+      if (!points[at].fixed) {
+        auto& coupler = couplers_[points[at].coupler];
+        kept[at] = coupler.chosen;
+        coupler.chosen = options[at];
+      }
+    }
+    auto keptWays = chainEdgePaths_[chain];
+    for (std::size_t at = 0; at < ways.size(); ++at) {
+      chainEdgePaths_[chain][at] = ways[at] != nullptr ? *ways[at] : Path{};
+    }
+    const auto faults = chainFaults(wires, chain);
+    chainEdgePaths_[chain] = std::move(keptWays);
+    for (std::size_t at = 0; at < points.size(); ++at) {
+      if (!points[at].fixed) {
+        couplers_[points[at].coupler].chosen = kept[at];
+      }
+    }
+    return faults;
+  }
+
+  /// The edges of one chain that would not survive the state, as
+  /// `stateFaults` counts them.
+  [[nodiscard]] std::uint32_t chainFaults(const std::vector<Wire>& wires,
+                                          const std::uint32_t chain) {
     // The one place that fences every chain against every other whatever
     // the searches do. This is the commit's test asked of a whole state,
     // and the commit lays all the chains on one chip — so with the fence
     // open it would answer zero by construction and say nothing.
     fenceEverything_ = true;
     std::uint32_t faults = 0;
-    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
-      const auto& points = chains_[chain];
-      for (std::size_t at = 0; at + 1 < points.size(); ++at) {
-        const auto& way = chainEdgePaths_[chain][at];
-        if (way.empty()) {
-          ++faults;
-          continue;
-        }
-        const RoutingObjective objective{.source = sourceOf(points[at]),
-                                         .target = targetOf(points[at + 1])};
-        const Edge edge{.chain = chain,
-                        .from = at,
-                        .to = at + 1,
-                        .terminal = points[at].fixed || points[at + 1].fixed};
-        if (!way.front().samePlace(objective.source) ||
-            !way.back().samePlace(objective.target) ||
-            !edgeWayStillOpen(wires, objective, edge, way)) {
-          ++faults;
-        }
+    const auto& points = chains_[chain];
+    for (std::size_t at = 0; at + 1 < points.size(); ++at) {
+      const auto& way = chainEdgePaths_[chain][at];
+      if (way.empty()) {
+        ++faults;
+        continue;
+      }
+      const RoutingObjective objective{.source = sourceOf(points[at]),
+                                       .target = targetOf(points[at + 1])};
+      const Edge edge{.chain = chain,
+                      .from = at,
+                      .to = at + 1,
+                      .terminal = points[at].fixed || points[at + 1].fixed};
+      if (!way.front().samePlace(objective.source) ||
+          !way.back().samePlace(objective.target) ||
+          !edgeWayStillOpen(wires, objective, edge, way)) {
+        ++faults;
       }
     }
     fenceEverything_ = false;
@@ -10285,9 +11363,30 @@ public:
   /// @returns How many chains it settled.
   [[nodiscard]] std::uint32_t optimizeChainsPrefix(std::vector<Wire>& wires) {
     std::uint32_t settled = 0;
+    // The chains settled so far, for the capacity check.
+    std::vector<bool> standing(chains_.size(), false);
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
       soloChain_ = chainSolo() ? chain : NO_OWNER;
-      const auto answer = solveChainAStar(wires, chain);
+      stepSettled_ =
+          (capacityStep() || capacityRule()) ? &standing : nullptr;
+      stepRefuses_ = capacityRule();
+      auto answer = solveChainAStar(wires, chain);
+      if (!answer.solved && stepRefuses_) {
+        say(std::format("[Coupler Insertion] chain {}: {} ({} steps routed) "
+                        "— searched again without the capacity rule",
+                        chain,
+                        answer.outOfTime
+                            ? "out of time before a run of options joined "
+                              "the chain without closing a wire"
+                            : "no run of options joins the chain without "
+                              "closing a wire",
+                        answer.routed));
+        stepRefuses_ = false;
+        stepSettled_ = capacityStep() ? &standing : nullptr;
+        answer = solveChainAStar(wires, chain);
+      }
+      stepSettled_ = nullptr;
+      stepRefuses_ = false;
       soloChain_ = NO_OWNER;
       auto& points = chains_[chain];
       if (!answer.solved) {
@@ -10325,6 +11424,10 @@ public:
                                       : "best in the time given",
                       answer.cost, points.size(), answer.expansions,
                       answer.routed));
+      if (capacityChain()) {
+        checkChainCapacity(wires, chain, standing);
+      }
+      standing[chain] = true;
     }
     // What the commit is about to find, said once. It decides nothing — with
     // one pass there is no second state to prefer — but it is the number
@@ -10337,6 +11440,461 @@ public:
                     chainSolo() ? " each on its own chip" : "", faults,
                     faults == 1 ? "" : "s"));
     return settled;
+  }
+
+  /// Whether every step of the chain search is followed by the capacity
+  /// check of the chip as that step leaves it: `SCPD_CAPACITY_STEP`, off
+  /// (user, 2026-10-08). On its own it reports and the search takes no
+  /// notice of it; `capacityRule` checks every step as well and refuses. The
+  /// steps say at `-v 1` whether the graph still carries every wire, and
+  /// every feedline edge of a settled chain says it once. The checks spend
+  /// the time of the chain search's clock, so a chain that runs into
+  /// `SCPD_CHAIN_ASTAR_SECONDS` prices fewer steps with them.
+  [[nodiscard]] static bool capacityStep() {
+    return envFlag("SCPD_CAPACITY_STEP", false);
+  }
+
+  /// Whether the chain search refuses a step whose edge closes a wire the
+  /// prefix before it left a way: `SCPD_CAPACITY_RULE`, **on** (user,
+  /// 2026-10-09). "Closes" is what the capacity check of `capacityStep`
+  /// says: a wire with a way through the capacity graph of the chip the
+  /// prefix leaves, routed in turn, and none once this edge stands. The
+  /// search then takes another option, as it does for an edge with no way.
+  /// A chain that no run of options joins under the rule is searched once
+  /// more without it: a chain left on its first options is worse than one
+  /// that closes a wire.
+  [[nodiscard]] static bool capacityRule() {
+    return envFlag("SCPD_CAPACITY_RULE", true);
+  }
+
+  /// Whether the capacity graph is checked after every settled chain
+  /// (`checkChainCapacity`): `SCPD_CAPACITY_CHAIN`, off.
+  [[nodiscard]] static bool capacityChain() {
+    return envFlag("SCPD_CAPACITY_CHAIN", false);
+  }
+  /// How often `checkChainCapacity` searches one chain again:
+  /// `SCPD_CAPACITY_CHAIN_TRIES`, 3.
+  [[nodiscard]] static std::uint32_t capacityChainTries() {
+    return static_cast<std::uint32_t>(
+        std::clamp(envWhole("SCPD_CAPACITY_CHAIN_TRIES", 3), 0, 20));
+  }
+
+  /// A state of the insertion as the capacity analysis reads it: the
+  /// wires, with a feedline wire for every edge drawn; those edges; and the
+  /// couplers that stand.
+  struct InsertionState {
+    std::vector<Wire> wires;
+    std::vector<Edge> edges;
+    std::vector<bool> placed;
+  };
+
+  /// The insertion with the chains `in` standing on the options and ways
+  /// they settled on, and chain `chain`, when `options` is given, on
+  /// `options` (one per waypoint) and `ways` (one per edge; an edge with no
+  /// way is not drawn). Of that chain only the first `standing` waypoints
+  /// stand, as a prefix of the chain search leaves it. A standing
+  /// coupler has its pad and its resonator the lead `applyOption` gives
+  /// it; a resonator whose coupler does not stand yet is left out, since
+  /// its lead is not known. The feedline edges are numbered as the commit
+  /// numbers them, so they carry the names the commit gives them.
+  [[nodiscard]] InsertionState
+  stateOf(const std::vector<Wire>& wires, const std::vector<bool>& in,
+          const std::uint32_t chain = NO_OWNER,
+          const std::vector<std::size_t>* options = nullptr,
+          const std::vector<const Path*>* ways = nullptr,
+          const std::size_t standing =
+              std::numeric_limits<std::size_t>::max()) const {
+    InsertionState state{.wires = wires,
+                         .edges = {},
+                         .placed = std::vector<bool>(couplers_.size(), false)};
+    std::uint32_t slot = 0;
+    for (std::uint32_t at = 0; at < chains_.size(); ++at) {
+      const auto& points = chains_[at];
+      const bool given = at == chain && options != nullptr;
+      if (!in[at] && !given) {
+        slot +=
+            points.empty() ? 0U : static_cast<std::uint32_t>(points.size() - 1);
+        continue;
+      }
+      for (std::size_t point = 0; point < points.size(); ++point) {
+        if (points[point].fixed || (given && point >= standing)) {
+          continue;
+        }
+        const auto index = points[point].coupler;
+        const auto& coupler = couplers_[index];
+        const auto& option =
+            coupler.options[given ? (*options)[point] : coupler.chosen];
+        state.placed[index] = true;
+        // The lead as `applyOption` cuts it.
+        auto& wire = state.wires[coupler.wire];
+        const auto spare =
+            (trimTheLead() && option.arc.size() > couplerLeadMargin() + 1)
+                ? static_cast<std::size_t>(couplerLeadMargin())
+                : std::size_t{0};
+        wire.arc.assign(option.arc.begin(),
+                        option.arc.end() - static_cast<std::ptrdiff_t>(spare));
+        wire.objective.source =
+            spare == 0 || wire.arc.empty()
+                ? option.arcEnd
+                : PathPoint{.x = wire.arc.back().x,
+                            .y = wire.arc.back().y,
+                            .heading = option.arcEnd.heading,
+                            .primitive = wire.arc.back().primitive};
+        wire.couplerAtSource = index;
+      }
+      for (std::size_t from = 0; from + 1 < points.size(); ++from) {
+        const Path* way = given && ways != nullptr ? (*ways)[from]
+                                                   : &chainEdgePaths_[at][from];
+        Wire feed;
+        feed.key = static_cast<std::uint32_t>(state.wires.size());
+        feed.slot = slot++;
+        feed.feedline = true;
+        feed.feasible = true;
+        feed.terminal = points[from].fixed || points[from + 1].fixed;
+        if (way != nullptr) {
+          feed.way = *way;
+        }
+        feed.drawn = !feed.way.empty();
+        state.edges.push_back({.chain = at,
+                               .from = from,
+                               .to = from + 1,
+                               .wire = feed.key,
+                               .terminal = feed.terminal});
+        state.wires.push_back(std::move(feed));
+      }
+    }
+    for (std::size_t index = 0; index < couplers_.size(); ++index) {
+      if (!state.placed[index] && couplers_[index].wire < wires.size()) {
+        state.wires[couplers_[index].wire].feasible = false;
+      }
+    }
+    return state;
+  }
+
+  /// What the capacity graph of a state says: the outer wires it has no
+  /// way for, and by how many wires its edges are short.
+  struct CapacityVerdict {
+    std::set<std::uint32_t> lost;
+    std::uint32_t shortBy = 0;
+  };
+
+  /// The outer wires the capacity graph of a state has no way for: a
+  /// terminal in no chamber, no way at all, or a way over an edge with
+  /// overflow, routed in turn (`checkInTurn`) or, under
+  /// `SCPD_CAPACITY_FLOW`, by the flow.
+  [[nodiscard]] std::set<std::uint32_t>
+  lostWires(const InsertionState& state) const {
+    return capacityVerdictOf(state).lost;
+  }
+
+  /// `lostWires`, and the shortfall of the edges with it.
+  [[nodiscard]] CapacityVerdict
+  capacityVerdictOf(const InsertionState& state) const {
+    const auto pass =
+        capacityPass(state.wires, state.edges, &state.placed, NO_OWNER);
+    CapacityVerdict verdict{.lost = {}, .shortBy = pass.check.shortBy};
+    auto& lost = verdict.lost;
+    lost.insert(pass.problem.walled.begin(), pass.problem.walled.end());
+    for (std::size_t demand = 0; demand < pass.check.ways.size(); ++demand) {
+      const auto& way = pass.check.ways[demand];
+      const bool over =
+          way.has_value() &&
+          std::ranges::any_of(*way, [&](const std::uint32_t index) {
+            return pass.check.overflow[index] > 0;
+          });
+      if (!way.has_value() || over) {
+        lost.insert(pass.problem.wireOf[demand]);
+      }
+    }
+    return verdict;
+  }
+
+  /// The capacity check after a settled chain (user, 2026-10-08). The
+  /// chip as the chains settled so far leave it is compared with the chip
+  /// with this chain standing as well: the wires that have a way through
+  /// the capacity graph before it and none after it are the ones its
+  /// couplers and feedline edges close. When there are any, the chain is
+  /// searched again, and a complete run of options is refused at its last
+  /// step when it closes as many, or when more of its edges fail the
+  /// commit's test than of the run it replaces (`chainFaults`); the
+  /// cheapest run that closes fewer is taken. That is repeated
+  /// `capacityChainTries` times or until the chain closes none. A search that
+  /// finds no such run leaves the chain as it was.
+  void checkChainCapacity(const std::vector<Wire>& wires,
+                          const std::uint32_t chain,
+                          const std::vector<bool>& settled) {
+    const auto began = std::chrono::steady_clock::now();
+    const auto before = lostWires(stateOf(wires, settled));
+    auto with = settled;
+    with[chain] = true;
+    const auto closed = [&] {
+      std::vector<std::uint32_t> keys;
+      for (const auto key : lostWires(stateOf(wires, with))) {
+        if (!before.contains(key)) {
+          keys.push_back(key);
+        }
+      }
+      return keys;
+    };
+    auto lost = closed();
+    say(std::format(
+        "[Capacity Check] chain {}: {} wire{} without a way before "
+        "it, {} more with it{}{} ({:.2f}s)",
+        chain, before.size(), before.size() == 1 ? "" : "s", lost.size(),
+        lost.empty() ? "" : ": ",
+        lost.empty() ? std::string() : namesOf(wires, lost),
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
+            .count()));
+    auto& points = chains_[chain];
+    for (std::uint32_t attempt = 0;
+         attempt < capacityChainTries() && !lost.empty(); ++attempt) {
+      const auto again = std::chrono::steady_clock::now();
+      chainCheck_ = {.active = true,
+                     .chain = chain,
+                     .settled = &settled,
+                     .before = before,
+                     .limit = lost.size(),
+                     .faults = chainFaults(wires, chain),
+                     .checks = 0,
+                     .refused = 0};
+      soloChain_ = chainSolo() ? chain : NO_OWNER;
+      const auto answer = solveChainAStar(wires, chain);
+      soloChain_ = NO_OWNER;
+      chainCheck_.active = false;
+      const auto seconds = std::chrono::duration<double>(
+                               std::chrono::steady_clock::now() - again)
+                               .count();
+      if (!answer.solved) {
+        say(std::format(
+            "[Capacity Check] chain {}: searched again, {} run of options "
+            "closes fewer than {} — the chain stays as it was ({} runs "
+            "checked, {} refused, {} steps routed, {:.2f}s)",
+            chain, answer.outOfTime ? "out of time before any" : "no",
+            lost.size(), chainCheck_.checks, chainCheck_.refused, answer.routed,
+            seconds));
+        break;
+      }
+      for (std::size_t at = 0; at < points.size(); ++at) {
+        if (!points[at].fixed) {
+          couplers_[points[at].coupler].chosen = answer.chosen[at];
+        }
+      }
+      for (std::size_t at = 0; at + 1 < points.size(); ++at) {
+        if (!answer.ways[at].empty()) {
+          chainEdgePaths_[chain][at] = answer.ways[at];
+        }
+      }
+      lost = closed();
+      say(std::format(
+          "[Capacity Check] chain {}: searched again, {} {} — {} more without "
+          "a way{}{} ({} runs checked, {} refused, {} steps routed, {:.2f}s)",
+          chain,
+          answer.optimal  ? "optimum"
+          : answer.relaid ? "best found, an end pair laid the other way round"
+                          : "best in the time given",
+          answer.cost, lost.size(), lost.empty() ? "" : ": ",
+          lost.empty() ? std::string() : namesOf(wires, lost),
+          chainCheck_.checks, chainCheck_.refused, answer.routed, seconds));
+    }
+  }
+
+  /// The pad of an option as the four corners of the rectangle its body
+  /// cells span along its orientation, half a cell out.
+  [[nodiscard]] std::vector<std::array<double, 2>>
+  padCorners(const CouplerOption& option) const {
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto v = routing::headingVector(option.orientation);
+    const auto norm =
+        std::hypot(static_cast<double>(v.dx), static_cast<double>(v.dy));
+    const auto ax = static_cast<double>(v.dx) / norm;
+    const auto ay = static_cast<double>(v.dy) / norm;
+    const auto bx = -ay;
+    const auto by = ax;
+    auto alongLow = std::numeric_limits<double>::max();
+    auto alongHigh = std::numeric_limits<double>::lowest();
+    auto acrossLow = std::numeric_limits<double>::max();
+    auto acrossHigh = std::numeric_limits<double>::lowest();
+    for (const auto cell : option.body) {
+      const auto x =
+          static_cast<double>(static_cast<std::int64_t>(cell) % width);
+      const auto y =
+          static_cast<double>(static_cast<std::int64_t>(cell) / width);
+      alongLow = std::min(alongLow, (x * ax) + (y * ay));
+      alongHigh = std::max(alongHigh, (x * ax) + (y * ay));
+      acrossLow = std::min(acrossLow, (x * bx) + (y * by));
+      acrossHigh = std::max(acrossHigh, (x * bx) + (y * by));
+    }
+    if (option.body.empty()) {
+      return {};
+    }
+    std::vector<std::array<double, 2>> corners;
+    for (const auto& [a, b] : {std::pair{alongLow - 0.5, acrossLow - 0.5},
+                               std::pair{alongHigh + 0.5, acrossLow - 0.5},
+                               std::pair{alongHigh + 0.5, acrossHigh + 0.5},
+                               std::pair{alongLow - 0.5, acrossHigh + 0.5}}) {
+      corners.push_back({(a * ax) + (b * bx), (a * ay) + (b * by)});
+    }
+    return corners;
+  }
+
+  /// The couplers as they stand, with every option of each, as JSON for the
+  /// page that moves couplers (`CouplerSession`). Per coupler: its index,
+  /// its resonator, its chain and waypoint, the option it stands on and its
+  /// two feedline edges. Per option: the pad as four corners, the two
+  /// feedline ports, the lead, the length of resonator left in layout
+  /// units, and whether the chain search offers it (`openOptionsOf`: the
+  /// shortfall rule, the body guard, the jogs).
+  [[nodiscard]] std::string couplersJson(const std::vector<Wire>& wires) const {
+    using nlohmann::json;
+    const auto point = [](const PathPoint& at) {
+      return json::array({at.x, at.y});
+    };
+    const auto edgeName = [&wires](const std::uint32_t key) {
+      return key < wires.size() ? json(wireId(wires[key])) : json(nullptr);
+    };
+    json list = json::array();
+    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      const auto& points = chains_[chain];
+      const auto feedlines = feedlineCellsBut(chain);
+      for (std::size_t at = 0; at < points.size(); ++at) {
+        if (points[at].fixed) {
+          continue;
+        }
+        const auto index = points[at].coupler;
+        const auto& coupler = couplers_[index];
+        const auto open = openOptionsOf(chain, at, &feedlines);
+        json options = json::array();
+        for (std::size_t k = 0; k < coupler.options.size(); ++k) {
+          const auto& option = coupler.options[k];
+          json lead = json::array();
+          for (const auto& cell : option.arc) {
+            lead.push_back(point(cell));
+          }
+          options.push_back(
+              {{"index", k},
+               {"open", std::ranges::find(
+                            open, static_cast<std::uint32_t>(k)) != open.end()},
+               {"orientation", option.orientation},
+               {"offset", option.offset},
+               {"secondPort", option.secondPort},
+               {"jog", option.secondStraight},
+               {"centre", point(option.centre)},
+               {"in", point(option.in)},
+               {"out", point(option.out)},
+               {"pad", padCorners(option)},
+               {"lead", lead},
+               {"resonator", std::lround(lengthInUnits(option.way))}});
+        }
+        list.push_back({{"index", index},
+                        {"resonator", wireId(wires[coupler.wire])},
+                        {"chain", chain},
+                        {"at", at},
+                        {"chosen", coupler.chosen},
+                        {"jogs", coupler.jogsUnlocked},
+                        {"edgeIn", edgeName(coupler.edgeIn)},
+                        {"edgeOut", edgeName(coupler.edgeOut)},
+                        {"options", options}});
+      }
+    }
+    return json{{"couplers", list}}.dump();
+  }
+
+  /// Put a coupler on another option after the insertion and draw its two
+  /// feedline edges again, for the page that moves couplers
+  /// (`CouplerSession`). The option is applied as the commit applies it
+  /// (`applyOption`); both edges stand down first, so that neither is
+  /// routed around the other's way to the old ports, and are then routed
+  /// as the commit routes an edge, against every edge on the chip
+  /// (`fenceEverything_`). Returns
+  /// JSON: per edge whether it was drawn and its length in cells.
+  ///
+  /// @throws std::invalid_argument when the coupler or the option does not
+  /// exist.
+  [[nodiscard]] std::string setCouplerOption(std::vector<Wire>& wires,
+                                             const std::uint32_t index,
+                                             const std::size_t option) {
+    if (index >= couplers_.size() ||
+        option >= couplers_[index].options.size()) {
+      throw std::invalid_argument(
+          std::format("coupler {} has no option {}", index, option));
+    }
+    applyOption(wires, index, option);
+    const auto& coupler = couplers_[index];
+    std::vector<std::uint32_t> keys;
+    for (const auto key : {coupler.edgeIn, coupler.edgeOut}) {
+      if (key < wires.size()) {
+        keys.push_back(key);
+      }
+    }
+    for (const auto key : keys) {
+      auto& wire = wires[key];
+      const auto& edge = edges_[wire.slot];
+      if (wire.drawn) {
+        lift(wire);
+      }
+      wire.drawn = false;
+      wire.way.clear();
+      chainEdgePaths_[edge.chain][edge.from].clear();
+    }
+    using nlohmann::json;
+    json drawn = json::array();
+    for (const auto key : keys) {
+      auto& wire = wires[key];
+      const auto edge = edges_[wire.slot];
+      const auto& points = chains_[edge.chain];
+      wire.objective.source = sourceOf(points[edge.from]);
+      wire.objective.target = targetOf(points[edge.to]);
+      wire.startStub = couplerStubs() ? couplerRunOf(points[edge.from].coupler)
+                                      : tuning_.straightStart;
+      wire.endStub = points[edge.to].fixed
+                         ? tuning_.straightStart
+                         : couplerRunOf(points[edge.to].coupler);
+      fenceEverything_ = true;
+      auto way = routeEdge(wires, wire.objective, edge);
+      fenceEverything_ = false;
+      wire.way = std::move(way);
+      wire.drawn = !wire.way.empty();
+      if (wire.drawn) {
+        place(wire);
+      }
+      chainEdgePaths_[edge.chain][edge.from] = wire.way;
+      drawn.push_back({{"edge", wireId(wire)},
+                       {"drawn", wire.drawn},
+                       {"cells", wire.way.size()}});
+      say(std::format("[Coupler Session] '{}' on option {}: edge {} {}",
+                      wireId(wires[coupler.wire]), option, wireId(wire),
+                      wire.drawn
+                          ? std::format("drawn, {} cells", wire.way.size())
+                          : std::string("NO WAY")));
+    }
+    return json{{"coupler", index}, {"option", option}, {"edges", drawn}}
+        .dump();
+  }
+
+  /// The capacity graph of the chip as it stands, as the JSON
+  /// `writeCapacityGraph` writes, without a picture
+  /// (`CouplerSession`). The lines of the analysis are said as ever.
+  [[nodiscard]] std::string capacityGraphJson(const std::vector<Wire>& wires) {
+    std::string captured;
+    auto kept = std::move(debug_);
+    debug_ = [&captured](const std::string_view name,
+                         const std::string_view content) {
+      if (name == "final-capacity-graph.json") {
+        captured = content;
+      }
+      return std::string(name);
+    };
+    graphOnly_ = true;
+    try {
+      analyseCapacity(wires);
+    } catch (...) {
+      graphOnly_ = false;
+      debug_ = std::move(kept);
+      throw;
+    }
+    graphOnly_ = false;
+    debug_ = std::move(kept);
+    return captured;
   }
 
   /// Put a coupler's option in place: the resonator's way is cut back to
@@ -15227,8 +16785,9 @@ public:
   }
 
   /// The obstacles of `wallsAfterInsertion` in a picture: the border, the
-  /// artwork, the pads and the inflation of the port runs and feedlines as
-  /// areas, and the lines of the port runs and feedlines on top.
+  /// artwork, the pads, the walls of the port runs and the inflation of the
+  /// feedlines as areas, and the lines of the port runs and feedlines on
+  /// top.
   void drawWalls(debug::Svg& svg, const Walls& walls) const {
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     svg.runs(
@@ -15274,6 +16833,8 @@ public:
   ///   it takes, the wires the flow sends through it and its overflow; a
   ///   bottleneck also with its two ends and the wires its line crosses
   ///   now, a stretch with its feedline and the wires it is open to;
+  /// - the cells of the slots between the walls of the port runs, where the
+  ///   terminals lie;
   /// - the bottlenecks with one chamber on both sides (`aside`);
   /// - every outer wire with its source and its target port, the cells its
   ///   ends leave from, the chambers they lie in, its way through the graph
@@ -15284,7 +16845,8 @@ public:
                           const grid::Chambers& chambers,
                           const std::vector<GraphEdge>& graph,
                           const std::vector<GraphWire>& outer,
-                          const FlowCheck& check, const std::string_view verdict,
+                          const FlowCheck& check,
+                          const std::string_view verdict,
                           const std::vector<std::string>& summary) {
     if (!debug_) {
       return;
@@ -15351,9 +16913,9 @@ public:
       }
     }
     auto wallKinds = json::array();
-    for (const auto kind : {WallKind::Border, WallKind::Artwork,
-                            WallKind::Coupler, WallKind::Stub,
-                            WallKind::Feedline}) {
+    for (const auto kind :
+         {WallKind::Border, WallKind::Artwork, WallKind::Coupler,
+          WallKind::Stub, WallKind::Feedline}) {
       wallKinds.push_back(kindName(kind));
     }
     auto strokes = json::array();
@@ -15367,6 +16929,11 @@ public:
                          {"points", std::move(line)}});
     }
 
+    auto slotCells = json::array();
+    for (const auto cell : walls.slots) {
+      slotCells.push_back(cellAt(cell));
+    }
+
     std::vector<std::size_t> size(chambers.count, 0);
     for (const auto chamber : chambers.of) {
       if (chamber != grid::NO_CHAMBER) {
@@ -15376,26 +16943,25 @@ public:
     const auto node = chamberNodes(chambers);
     auto nodes = json::array();
     for (std::uint32_t chamber = 0; chamber < chambers.count; ++chamber) {
-      nodes.push_back({{"chamber", chamber},
-                       {"at", json::array({node[chamber].first,
-                                           node[chamber].second})},
-                       {"cells", size[chamber]}});
+      nodes.push_back(
+          {{"chamber", chamber},
+           {"at", json::array({node[chamber].first, node[chamber].second})},
+           {"cells", size[chamber]}});
     }
 
     auto edges = json::array();
     for (std::size_t index = 0; index < graph.size(); ++index) {
       const auto& edge = graph[index];
-      json one{
-          {"index", index},
-          {"kind", edge.crossing ? "stretch" : "bottleneck"},
-          {"chambers", edge.chambers},
-          {"capacity", edge.capacity},
-          {"load", edge.through.size()},
-          {"overflow",
-           index < check.overflow.size() ? check.overflow[index] : 0U},
-          {"length", edge.length},
-          {"through", names(edge.through)},
-          {"users", edge.users.has_value() ? names(*edge.users) : json()}};
+      json one{{"index", index},
+               {"kind", edge.crossing ? "stretch" : "bottleneck"},
+               {"chambers", edge.chambers},
+               {"capacity", edge.capacity},
+               {"load", edge.through.size()},
+               {"overflow",
+                index < check.overflow.size() ? check.overflow[index] : 0U},
+               {"length", edge.length},
+               {"through", names(edge.through)},
+               {"users", edge.users.has_value() ? names(*edge.users) : json()}};
       if (edge.crossing) {
         one["name"] = std::format("× {} cells {}..{}", wireId(wires[edge.id]),
                                   edge.first, edge.last);
@@ -15427,11 +16993,30 @@ public:
            {"capacity", measured[gate].holds}});
     }
 
+    // The launcher a plain wire starts at, which its wire does not name:
+    // the launcher port nearest the start of its way.
+    const auto launcherAt = [this](const PathPoint& end) -> std::uint32_t {
+      std::uint32_t nearest = NO_OWNER;
+      std::int64_t best = std::numeric_limits<std::int64_t>::max();
+      for (const auto& port : ports_) {
+        if (!scene_.launcherCell.contains(port.index)) {
+          continue;
+        }
+        const auto dx = port.x - static_cast<std::int64_t>(end.x);
+        const auto dy = port.y - static_cast<std::int64_t>(end.y);
+        if ((dx * dx) + (dy * dy) < best) {
+          best = (dx * dx) + (dy * dy);
+          nearest = port.index;
+        }
+      }
+      return nearest;
+    };
     // A port: what the chip calls it, where it is, the way a wire leaves it
     // or arrives at it, and the cell the graph places it by.
     const auto portOf = [&](const std::uint32_t index, const PathPoint& end,
                             const PathPoint& leaves,
-                            const std::vector<std::uint32_t>& in) {
+                            const std::vector<std::uint32_t>& in,
+                            const std::string_view otherwise) {
       const auto v = routing::headingVector(end.heading);
       json port{{"at", json::array({end.x, end.y})},
                 {"heading", json::array({v.dx, v.dy})},
@@ -15441,7 +17026,7 @@ public:
         port["label"] = ports_[index].label;
         port["port"] = json::array({ports_[index].fx, ports_[index].fy});
       } else {
-        port["label"] = "";
+        port["label"] = otherwise;
         port["port"] = json::array({end.x, end.y});
       }
       return port;
@@ -15452,12 +17037,28 @@ public:
       json entry{
           {"name", wireId(wire)},
           {"resonator", wire.resonator},
-          {"source", portOf(wire.sourcePort, wire.objective.source,
-                            one.ends[0], one.from)},
-          {"target", portOf(wire.targetPort, wire.objective.target,
-                            one.ends[1], one.to)},
-          {"path", wire.way.empty() ? json::array()
-                                    : corners(wire.way, 0, wire.way.size() - 1)}};
+          {"source",
+           wire.couplerAtSource != NO_OWNER
+               ? portOf(wire.sourcePort, wire.objective.source, one.ends[0],
+                        one.from, "coupler port")
+               : portOf(wire.sourcePort < ports_.size()
+                            ? wire.sourcePort
+                            : launcherAt(wire.objective.source),
+                        wire.objective.source, one.ends[0], one.from, "")},
+          {"target", portOf(wire.targetPort, wire.objective.target, one.ends[1],
+                            one.to, "")},
+          {"path", wire.way.empty()
+                       ? json::array()
+                       : corners(wire.way, 0, wire.way.size() - 1)}};
+      if (wire.couplerAtSource == NO_OWNER &&
+          wire.sourcePort >= ports_.size()) {
+        // The launcher port names the start; the wire starts at its cell.
+        entry["source"]["port"] = entry["source"]["at"];
+      }
+      entry["crosses"] = json::array();
+      for (const auto feedline : one.crosses) {
+        entry["crosses"].push_back(wireId(wires[feedline]));
+      }
       if (!one.demand.has_value()) {
         entry["status"] = "port in no chamber";
         entry["way"] = json();
@@ -15471,23 +17072,24 @@ public:
       outerWires.push_back(std::move(entry));
     }
 
-    const json data{
-        {"width", scene_.router.width},
-        {"height", scene_.router.height},
-        {"cellSize", scene_.router.cellWidth},
-        {"clearance", tuning_.clearance},
-        {"pitch", roomPitch()},
-        {"crossingReach", CROSSING_REACH + 1},
-        {"inflation", wallInflation()},
-        {"verdict", verdict},
-        {"summary", summary},
-        {"wallKinds", std::move(wallKinds)},
-        {"raster", std::move(raster)},
-        {"strokes", std::move(strokes)},
-        {"nodes", std::move(nodes)},
-        {"edges", std::move(edges)},
-        {"aside", std::move(aside)},
-        {"wires", std::move(outerWires)}};
+    const json data{{"width", scene_.router.width},
+                    {"height", scene_.router.height},
+                    {"cellSize", scene_.router.cellWidth},
+                    {"clearance", tuning_.clearance},
+                    {"straightLength", tuning_.straightLength},
+                    {"pitch", roomPitch()},
+                    {"crossingReach", CROSSING_REACH + 1},
+                    {"inflation", wallInflation()},
+                    {"verdict", verdict},
+                    {"summary", summary},
+                    {"wallKinds", std::move(wallKinds)},
+                    {"raster", std::move(raster)},
+                    {"strokes", std::move(strokes)},
+                    {"slots", std::move(slotCells)},
+                    {"nodes", std::move(nodes)},
+                    {"edges", std::move(edges)},
+                    {"aside", std::move(aside)},
+                    {"wires", std::move(outerWires)}};
     const auto where = debug_("final-capacity-graph.json", data.dump());
     if (!where.empty()) {
       say(std::format("the capacity graph as data: {}", where));
@@ -15682,10 +17284,11 @@ public:
         {{"k0", "a chamber: free space no bottleneck cuts; c<n> · <k>p = its "
                 "number and how many ports lie in it"},
          {"wfl", "feedline edge"},
-         {"wst", "port run: the straight line from a port to the end of "
-                 "the run off it — a resonator's lead, a plain wire's "
-                 "straight start, the run a wire arrives at its target on"},
-         {"wsz", "port run inflated by half the clearance"},
+         {"wst", "port run: the rule's straight length from a port — a "
+                 "plain wire's feed point, the end of a resonator's turn "
+                 "off its coupler, a target port"},
+         {"wsz", "the two walls of a port run, half the clearance to "
+                 "either side"},
          {"wfz", "feedline edge inflated by half the clearance"},
          {"gl gl-over", "edge the flow sends more wires through than it "
                         "takes; sent/takes beside it"},
@@ -15709,9 +17312,9 @@ public:
   /// axis over them, the ways the outer wires have now, and every
   /// bottleneck as the line between its two obstacle cells with a dot on
   /// the saddle it was found from. The line's colour says how many wires
-  /// it holds; a line with no feedline at either end is drawn faint, and
-  /// one at a feedline crossed by more wires than it holds carries
-  /// "holds/crossed" beside it. The tooltip names the two obstacles.
+  /// it holds, and one crossed by more wires than it holds carries
+  /// "holds/crossed" beside it, whatever its ends are. The tooltip names
+  /// the two obstacles.
   void drawBottlenecks(const std::vector<Wire>& wires, const Walls& walls,
                        const grid::MedialAxis& axis,
                        const std::vector<MeasuredBottleneck>& measured) {
@@ -15748,11 +17351,9 @@ public:
                              static_cast<std::int64_t>(one.gate.first) / width};
       const debug::Cell to{static_cast<std::int64_t>(one.gate.second) % width,
                            static_cast<std::int64_t>(one.gate.second) / width};
-      const auto cls = std::format("{}{}",
-                                   one.holds == 0   ? "b0"
-                                   : one.holds == 1 ? "b1"
-                                                    : "b2",
-                                   one.atFeedline ? "" : " bfaint");
+      const auto* const cls = one.holds == 0   ? "b0"
+                              : one.holds == 1 ? "b1"
+                                               : "b2";
       svg.line(from, to, cls,
                std::format("{} · {}: {:.1f} cells, holds {}, crossed now by {} "
                            "({})",
@@ -15763,7 +17364,7 @@ public:
       svg.circle(static_cast<std::int64_t>(one.gate.saddle) % width,
                  static_cast<std::int64_t>(one.gate.saddle) / width,
                  0.45 * scale.marker, "bsd");
-      if (one.atFeedline && one.crossing.size() > one.holds) {
+      if (one.crossing.size() > one.holds) {
         ++labelled;
         svg.text(0.5 * (svg.centreX(from.first) + svg.centreX(to.first)) +
                      scale.marker,
@@ -15773,35 +17374,32 @@ public:
       }
     }
 
-    const auto atFeedline = std::ranges::count_if(
-        measured, [](const MeasuredBottleneck& one) { return one.atFeedline; });
     drawLegend(
         svg, scale,
         {std::format("bottlenecks after the coupler insertion · {} in all, {} "
-                     "at a feedline, {} of those crossed by more wires than "
-                     "they hold",
-                     measured.size(), atFeedline, labelled),
+                     "crossed by more wires than they hold",
+                     measured.size(), labelled),
          std::format("medial axis over the obstacles · gaps up to {} wires · "
                      "rise {:.1f} cells · a gap of L cells between the "
-                     "walls holds L / {} wires, rounded down · port runs and "
-                     "feedlines inflated by {:.1f} cells",
+                     "walls holds L / {} wires, rounded down · port runs "
+                     "walled and feedlines inflated {:.1f} cells out",
                      bottleneckWires(), bottleneckRise(), tuning_.clearance,
                      wallInflation())},
         {{"wb", "border: outside the launcher cells"},
          {"ob", "artwork"},
          {"wc", "coupler pad"},
-         {"wst", "port run: the straight line from a port to the end of "
-                 "the run off it — a resonator's lead, a plain wire's "
-                 "straight start, the run a wire arrives at its target on"},
-         {"wsz", "port run inflated by half the clearance"},
+         {"wst", "port run: the rule's straight length from a port — a "
+                 "plain wire's feed point, the end of a resonator's turn "
+                 "off its coupler, a target port"},
+         {"wsz", "the two walls of a port run, half the clearance to "
+                 "either side"},
          {"wfz", "feedline edge inflated by half the clearance"},
          {"wfl", "feedline edge"},
          {"wax", "medial axis"},
          {"sd", "the ways the outer wires have now"},
          {"b0", "bottleneck that holds no wire"},
          {"b1", "bottleneck that holds one wire"},
-         {"b2", "bottleneck that holds two or more; faint: no feedline at "
-                "either end"},
+         {"b2", "bottleneck that holds two or more"},
          {"bsd", "saddle: the cell of the axis it was found from"},
          {"btx", "holds/crossed now, where more wires cross than it holds"}});
     const auto where = debug_("final-bottlenecks.svg", svg.finish());
@@ -16332,6 +17930,50 @@ snapshotOf(std::string name, const std::vector<Wire>& wires,
 }
 
 /// The final router of the first release.
+/// The pass of phase 1, the inner circuit.
+[[nodiscard]] Pass innerPassOf(const Tuning& tuning) {
+  return {.name = "inner routing",
+          .rounds = tuning.innerRounds,
+          .maxRelaxation = tuning.maxRelaxation,
+          .reach = tuning.innerReach,
+          .straightStart = 0,
+          .keepDrawn = true};
+}
+
+/// The pass of phase 2, the ring.
+[[nodiscard]] Pass outerPassOf(const Tuning& tuning) {
+  return {.name = "outer routing",
+          .rounds = tuning.rounds,
+          .maxRelaxation = tuning.maxRelaxation,
+          .reach = tuning.reach,
+          .straightStart = tuning.straightStart,
+          .keepDrawn = true};
+}
+
+/// The refinement that ends phase 2.
+[[nodiscard]] Pass refinementPassOf(const Tuning& tuning) {
+  return {.name = "refinement",
+          .rounds = tuning.refinementRounds,
+          .maxRelaxation = 0,
+          .reach = tuning.reach,
+          .straightStart = tuning.straightStart,
+          .keepDrawn = false,
+          .refinement = true};
+}
+
+/// Phase 2 of the stage: the ring, against the inner circuit and against
+/// itself, then its refinement.
+void routeTheRing(Driver& driver, std::vector<Wire>& wires,
+                  const std::vector<std::uint32_t>& outer,
+                  const Tuning& tuning) {
+  driver.sayOuterSettings();
+  const auto outerPass = outerPassOf(tuning);
+  driver.sweep(wires, outer, outerPass);
+  driver.recoverWithoutBands(wires, outer, outerPass);
+  driver.refine(wires, outer, refinementPassOf(tuning));
+  driver.sayLengthPoints(wires, outer);
+}
+
 class DubinsFinalRouter final : public IFinalRouter {
 public:
   [[nodiscard]] FinalRoutingT
@@ -16397,36 +18039,13 @@ public:
     // narrow and there is nothing to steer around, so it takes no straight
     // stubs and a band a fraction of the ring's.
     driver.sayTheSetting();
-    driver.sweep(wires, inner,
-                 {.name = "inner routing",
-                  .rounds = tuning.innerRounds,
-                  .maxRelaxation = tuning.maxRelaxation,
-                  .reach = tuning.innerReach,
-                  .straightStart = 0,
-                  .keepDrawn = true});
+    driver.sweep(wires, inner, innerPassOf(tuning));
     routing.phases.push_back(
         snapshotOf("inner", wires, ring, global.connections.size(), measure));
 
     // Phase 2. The ring, against the inner circuit and against itself.
     if (runs(1)) {
-      driver.sayOuterSettings();
-      const Pass outerPass{.name = "outer routing",
-                           .rounds = tuning.rounds,
-                           .maxRelaxation = tuning.maxRelaxation,
-                           .reach = tuning.reach,
-                           .straightStart = tuning.straightStart,
-                           .keepDrawn = true};
-      driver.sweep(wires, outer, outerPass);
-      driver.recoverWithoutBands(wires, outer, outerPass);
-      driver.refine(wires, outer,
-                    {.name = "refinement",
-                     .rounds = tuning.refinementRounds,
-                     .maxRelaxation = 0,
-                     .reach = tuning.reach,
-                     .straightStart = tuning.straightStart,
-                     .keepDrawn = false,
-                     .refinement = true});
-      driver.sayLengthPoints(wires, outer);
+      routeTheRing(driver, wires, outer, tuning);
       routing.phases.push_back(
           snapshotOf("outer", wires, ring, global.connections.size(), measure));
     }
@@ -16550,6 +18169,66 @@ public:
 
 std::unique_ptr<IFinalRouter> makeDubinsFinalRouter() {
   return std::make_unique<DubinsFinalRouter>();
+}
+
+/// What a `CouplerSession` holds: the scene, the tuning and the wires the
+/// driver works on, and the driver, which refers to the first two.
+struct CouplerSession::State {
+  State(Scene scene, Tuning tuning)
+      : field(std::move(scene)), tuning(std::move(tuning)) {}
+  Scene field;
+  Tuning tuning;
+  std::vector<Wire> wires;
+  std::unique_ptr<Driver> driver;
+};
+
+CouplerSession::CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
+                               const AssignmentT& assignment,
+                               const DetailRoutingT& detail,
+                               const ConfigT& config, const Progress& progress,
+                               const std::uint32_t verbosity) {
+  if (config.grid == nullptr || config.rules == nullptr) {
+    throw std::invalid_argument(
+        "the configuration carries no grid section or no design rules");
+  }
+  if (detail.grid == nullptr) {
+    throw std::invalid_argument("the detail routing carries no grid");
+  }
+  const auto scene = buildScene(chip, config);
+  state_ = std::make_unique<State>(
+      sceneOf(chip, config, scene.capacity),
+      tuningOf(config, grid::routerGrid(scene.capacity,
+                                        config.grid->router_cell_size)));
+  auto& wires = state_->wires;
+  wires = wiresOf(chip, global, assignment, detail, state_->field);
+  std::vector<std::uint32_t> outer;
+  std::vector<std::uint32_t> inner;
+  for (const auto& wire : wires) {
+    (wire.inner ? inner : outer).push_back(wire.key);
+  }
+  state_->driver = std::make_unique<Driver>(state_->field, state_->tuning,
+                                            progress, Debug{}, verbosity);
+  auto& driver = *state_->driver;
+  driver.attachPorts(portMarksOf(chip, state_->field));
+  driver.sayTheSetting();
+  driver.sweep(wires, inner, innerPassOf(state_->tuning));
+  routeTheRing(driver, wires, outer, state_->tuning);
+  driver.insertCouplers(wires, assignment, chip);
+}
+
+CouplerSession::~CouplerSession() = default;
+
+std::string CouplerSession::couplers() const {
+  return state_->driver->couplersJson(state_->wires);
+}
+
+std::string CouplerSession::setOption(const std::uint32_t coupler,
+                                      const std::uint32_t option) {
+  return state_->driver->setCouplerOption(state_->wires, coupler, option);
+}
+
+std::string CouplerSession::graph() {
+  return state_->driver->capacityGraphJson(state_->wires);
 }
 
 } // namespace mqt::scpd::pipeline

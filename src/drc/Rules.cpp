@@ -322,7 +322,12 @@ void checkOrthogonality(const CellView& view, fbdrc::DrcReportT& report) {
                      static_cast<double>(cell.y()) - own->y) <= own->reach) {
         continue;
       }
-      if (constraints.allowed(cell.x(), cell.y(), cell.heading())) {
+      // On the heading the wire arrives with as well, as the search tests
+      // it: see `CrossingConstraints::allowedArriving`.
+      const auto arrived =
+          step == 0 ? cell.heading() : wire.cells[step - 1].heading();
+      if (constraints.allowedArriving(cell.x(), cell.y(), cell.heading(),
+                                      arrived)) {
         continue;
       }
       report.findings.push_back(findingOf(

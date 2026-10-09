@@ -1,0 +1,3315 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capacity graph</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --scheme: light;
+        --page: #f9f9f7;
+        --surface: #fcfcfb;
+        --ink: #0b0b0b;
+        --ink-2: #52514e;
+        --muted: #898781;
+        --hairline: #e1e0d9;
+        --ring: rgba(11, 11, 11, 0.1);
+        --wash: rgba(11, 11, 11, 0.05);
+        --over: #d03b3b;
+        --full: #c98500;
+        --used: #2a78d6;
+        --idle: #898781;
+        --closed: #52514e;
+        --target: #4a3aa7;
+        --source: #199e70;
+        --route: #e87ba4;
+        --wall-border: #c3c2b7;
+        --wall-art: #a9a8a1;
+        --wall-pad: #6f6e69;
+        --wall-run: #e4e3dc;
+        --wall-feed: #d9d8d0;
+        --stroke-feed: #2c2c2a;
+        --stroke-run: #898781;
+        --gap: #fcfcfb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          color-scheme: dark;
+          --scheme: dark;
+          --page: #0d0d0d;
+          --surface: #1a1a19;
+          --ink: #ffffff;
+          --ink-2: #c3c2b7;
+          --muted: #898781;
+          --hairline: #2c2c2a;
+          --ring: rgba(255, 255, 255, 0.1);
+          --wash: rgba(255, 255, 255, 0.06);
+          --over: #e66767;
+          --full: #fab219;
+          --used: #3987e5;
+          --idle: #898781;
+          --closed: #c3c2b7;
+          --target: #9085e9;
+          --source: #1baf7a;
+          --route: #d55181;
+          --wall-border: #383835;
+          --wall-art: #4a4a46;
+          --wall-pad: #75746e;
+          --wall-run: #2a2a28;
+          --wall-feed: #31312e;
+          --stroke-feed: #e1e0d9;
+          --stroke-run: #898781;
+          --gap: #1a1a19;
+        }
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --scheme: dark;
+        --page: #0d0d0d;
+        --surface: #1a1a19;
+        --ink: #ffffff;
+        --ink-2: #c3c2b7;
+        --muted: #898781;
+        --hairline: #2c2c2a;
+        --ring: rgba(255, 255, 255, 0.1);
+        --wash: rgba(255, 255, 255, 0.06);
+        --over: #e66767;
+        --full: #fab219;
+        --used: #3987e5;
+        --idle: #898781;
+        --closed: #c3c2b7;
+        --target: #9085e9;
+        --source: #1baf7a;
+        --route: #d55181;
+        --wall-border: #383835;
+        --wall-art: #4a4a46;
+        --wall-pad: #75746e;
+        --wall-run: #2a2a28;
+        --wall-feed: #31312e;
+        --stroke-feed: #e1e0d9;
+        --stroke-run: #898781;
+        --gap: #1a1a19;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--page);
+        color: var(--ink);
+        font:
+          13px/1.4 system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--hairline);
+        background: var(--surface);
+        flex-wrap: wrap;
+      }
+      header h1 {
+        font-size: 15px;
+        margin: 0;
+        font-weight: 600;
+      }
+      .verdict {
+        font-weight: 700;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1.5px solid currentColor;
+      }
+      .verdict.SAT {
+        color: var(--used);
+      }
+      .verdict.UNSAT {
+        color: var(--over);
+      }
+      .verdict.UNKNOWN {
+        color: var(--full);
+      }
+      .counts {
+        color: var(--ink-2);
+      }
+      header .spacer {
+        flex: 1;
+      }
+      button,
+      select,
+      input[type="search"] {
+        font: inherit;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 6px;
+        padding: 3px 8px;
+      }
+      button:hover {
+        background: var(--wash);
+      }
+      main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      #views {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        display: flex;
+      }
+      #views.chip #graph,
+      #views.graph #map {
+        display: none;
+      }
+      #views.both #graph {
+        border-left: 1px solid var(--hairline);
+      }
+      .switch {
+        display: inline-flex;
+        border: 1px solid var(--hairline);
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .switch button {
+        border: none;
+        border-radius: 0;
+      }
+      .switch button.on {
+        background: var(--wash);
+        font-weight: 600;
+      }
+      #map,
+      #graph {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        background: var(--surface);
+        cursor: grab;
+        touch-action: none;
+      }
+      #map.dragging,
+      #graph.dragging {
+        cursor: grabbing;
+      }
+      #raster,
+      #overlay,
+      #gsvg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      #overlay,
+      #gsvg {
+        overflow: visible;
+      }
+      .pane-title {
+        position: absolute;
+        left: 8px;
+        top: 8px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: var(--surface);
+        border: 1px solid var(--ring);
+        color: var(--ink-2);
+        pointer-events: none;
+      }
+      #status {
+        position: absolute;
+        left: 8px;
+        bottom: 8px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: var(--surface);
+        border: 1px solid var(--ring);
+        color: var(--ink-2);
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
+      }
+      .zoom {
+        position: absolute;
+        right: 8px;
+        top: 8px;
+        display: flex;
+        gap: 4px;
+      }
+      #tip {
+        position: absolute;
+        pointer-events: none;
+        max-width: 340px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: var(--surface);
+        border: 1px solid var(--ring);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        display: none;
+        z-index: 3;
+      }
+      #tip b {
+        font-variant-numeric: tabular-nums;
+      }
+      #tip .sub {
+        color: var(--ink-2);
+      }
+      aside {
+        width: 430px;
+        max-width: 45vw;
+        display: flex;
+        flex-direction: column;
+        border-left: 1px solid var(--hairline);
+        background: var(--surface);
+        min-height: 0;
+      }
+      #detail {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--hairline);
+        max-height: 46vh;
+        overflow: auto;
+      }
+      #detail h2 {
+        font-size: 14px;
+        margin: 0 0 6px;
+      }
+      #detail .none {
+        color: var(--muted);
+      }
+      #detail dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 2px 10px;
+        margin: 0;
+      }
+      #detail dt {
+        color: var(--ink-2);
+      }
+      #detail dd {
+        margin: 0;
+        font-variant-numeric: tabular-nums;
+      }
+      .chip {
+        display: inline-block;
+        margin: 1px 2px;
+        padding: 0 6px;
+        border-radius: 999px;
+        border: 1px solid var(--hairline);
+        cursor: pointer;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      .chip:hover {
+        background: var(--wash);
+      }
+      .chip .key {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        margin-right: 4px;
+      }
+      .tabs {
+        display: flex;
+        gap: 2px;
+        padding: 8px 14px 0;
+        border-bottom: 1px solid var(--hairline);
+      }
+      .tabs button {
+        border-bottom: none;
+        border-radius: 6px 6px 0 0;
+      }
+      .tabs button.on {
+        background: var(--page);
+        font-weight: 600;
+      }
+      .pane {
+        display: none;
+        flex: 1;
+        min-height: 0;
+        flex-direction: column;
+      }
+      .pane.on {
+        display: flex;
+      }
+      .filters {
+        display: flex;
+        gap: 6px;
+        padding: 8px 14px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .filters input[type="search"] {
+        flex: 1;
+        min-width: 120px;
+      }
+      .scroll {
+        flex: 1;
+        overflow: auto;
+        min-height: 0;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-variant-numeric: tabular-nums;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 3px 8px;
+        border-bottom: 1px solid var(--hairline);
+        white-space: nowrap;
+      }
+      td.wrap {
+        white-space: normal;
+      }
+      th {
+        position: sticky;
+        top: 0;
+        background: var(--surface);
+        cursor: pointer;
+        color: var(--ink-2);
+        font-weight: 600;
+      }
+      th.num,
+      td.num {
+        text-align: right;
+      }
+      tr.row {
+        cursor: pointer;
+      }
+      tr.row:hover {
+        background: var(--wash);
+      }
+      tr.row.sel {
+        background: var(--wash);
+        outline: 1.5px solid var(--used);
+        outline-offset: -1.5px;
+      }
+      .state {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .state i {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        font-style: normal;
+      }
+      .layers {
+        padding: 8px 14px;
+        overflow: auto;
+      }
+      .layers fieldset {
+        border: 1px solid var(--hairline);
+        border-radius: 8px;
+        margin: 0 0 10px;
+        padding: 6px 10px;
+      }
+      .layers legend {
+        color: var(--ink-2);
+        padding: 0 4px;
+      }
+      .layers label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 1px 0;
+      }
+      .swatch {
+        display: inline-block;
+        width: 22px;
+        height: 10px;
+        border-radius: 2px;
+        flex: none;
+      }
+      .note {
+        color: var(--ink-2);
+        padding: 0 14px 10px;
+      }
+      .summary {
+        color: var(--ink-2);
+        font-size: 12px;
+        padding: 6px 14px 10px;
+      }
+      .summary p {
+        margin: 0 0 4px;
+      }
+
+      /* The overlay. Lines live in world units and keep their width on zoom. */
+      #world * {
+        vector-effect: non-scaling-stroke;
+      }
+      .stroke-feed {
+        fill: none;
+        stroke: var(--stroke-feed);
+        stroke-width: 2;
+      }
+      .stroke-run {
+        fill: none;
+        stroke: var(--stroke-run);
+        stroke-width: 1.5;
+      }
+      /* The coupler tab: the pad every coupler stands on, and every option of
+         the one picked. */
+      .pad {
+        pointer-events: all;
+        cursor: pointer;
+        stroke-width: 1.5;
+      }
+      .pad-chosen {
+        fill: var(--route);
+        fill-opacity: 0.35;
+        stroke: var(--route);
+      }
+      .pad-open {
+        fill: var(--used);
+        fill-opacity: 0.08;
+        stroke: var(--used);
+      }
+      .pad-shut {
+        fill: var(--muted);
+        fill-opacity: 0.05;
+        stroke: var(--muted);
+        stroke-dasharray: 3 3;
+      }
+      .pad:hover {
+        fill-opacity: 0.5;
+      }
+      .lead {
+        fill: none;
+        stroke-width: 1;
+        pointer-events: none;
+      }
+      .lead.pad-chosen {
+        stroke: var(--route);
+      }
+      .lead.pad-open {
+        stroke: var(--used);
+        stroke-opacity: 0.5;
+      }
+      .lead.pad-shut {
+        stroke: var(--muted);
+        stroke-opacity: 0.5;
+      }
+      .session-log {
+        margin: 0 14px 10px;
+        padding: 6px 8px;
+        border: 1px solid var(--hairline);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink-2);
+        font-size: 12px;
+        white-space: pre-wrap;
+        max-height: 30vh;
+        overflow: auto;
+      }
+      .session-log .bad {
+        color: var(--over);
+        font-weight: 600;
+      }
+      .spoke {
+        stroke: var(--ink-2);
+        stroke-width: 1;
+        opacity: 0.55;
+        fill: none;
+      }
+      .spoke.cross {
+        stroke-dasharray: 4 3;
+      }
+      .edge {
+        fill: none;
+        stroke-linecap: round;
+        stroke-width: 3.5;
+      }
+      .edge.stretch {
+        stroke-width: 6;
+        stroke-linecap: butt;
+      }
+      .edge.over {
+        stroke: var(--over);
+      }
+      .edge.full {
+        stroke: var(--full);
+      }
+      .edge.used {
+        stroke: var(--used);
+      }
+      .edge.idle {
+        stroke: var(--idle);
+      }
+      .edge.closed {
+        stroke: var(--closed);
+        stroke-dasharray: 3 3;
+      }
+      .edge.aside {
+        stroke: var(--muted);
+        stroke-width: 1.5;
+        stroke-dasharray: 2 3;
+      }
+      .hit {
+        stroke: transparent;
+        stroke-width: 16;
+        fill: none;
+        cursor: pointer;
+      }
+      .path {
+        fill: none;
+        stroke: var(--ink);
+        stroke-width: 1.5;
+        stroke-dasharray: 5 3;
+        opacity: 0.8;
+      }
+      .route {
+        fill: none;
+        stroke: var(--route);
+        stroke-width: 9;
+        stroke-linejoin: round;
+        stroke-linecap: round;
+        opacity: 0.45;
+      }
+      .portlink {
+        stroke: var(--target);
+        stroke-width: 1;
+        stroke-dasharray: 2 2;
+      }
+      .portlink.src {
+        stroke: var(--source);
+      }
+      .focus-edge {
+        fill: none;
+        stroke: var(--ink);
+        stroke-width: 9;
+        opacity: 0.25;
+        stroke-linecap: round;
+      }
+      .dim {
+        opacity: 0.18;
+      }
+      .badge rect {
+        fill: var(--surface);
+        stroke-width: 1.5;
+      }
+      .badge text {
+        fill: var(--ink);
+        font-size: 10.5px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .badge.over rect {
+        stroke: var(--over);
+      }
+      .badge.full rect {
+        stroke: var(--full);
+      }
+      .badge.used rect {
+        stroke: var(--used);
+      }
+      .badge.idle rect {
+        stroke: var(--idle);
+      }
+      .badge.closed rect {
+        stroke: var(--closed);
+        stroke-dasharray: 2 2;
+      }
+      .badge.over text .glyph {
+        fill: var(--over);
+      }
+      .badge.full text .glyph {
+        fill: var(--full);
+      }
+      .badge,
+      .node,
+      .tport,
+      .sport {
+        cursor: pointer;
+      }
+      .node circle {
+        fill: var(--surface);
+        stroke: var(--ink-2);
+        stroke-width: 1.5;
+      }
+      .node text {
+        fill: var(--ink-2);
+        font-size: 10px;
+      }
+      .node.ported circle {
+        stroke: var(--ink);
+        stroke-width: 2;
+      }
+      .tport path {
+        fill: var(--target);
+        stroke: var(--gap);
+        stroke-width: 1.5;
+      }
+      .tport text,
+      .sport text {
+        font-size: 10.5px;
+        font-weight: 600;
+        fill: var(--ink);
+        paint-order: stroke;
+        stroke: var(--surface);
+        stroke-width: 3px;
+      }
+      .sport circle {
+        fill: var(--surface);
+        stroke: var(--source);
+        stroke-width: 2.5;
+      }
+      .flabel {
+        font-size: 11px;
+        font-weight: 700;
+        fill: var(--ink);
+        paint-order: stroke;
+        stroke: var(--surface);
+        stroke-width: 3px;
+        pointer-events: none;
+      }
+      .cellmark {
+        fill: var(--target);
+      }
+      .cellmark.src {
+        fill: var(--source);
+      }
+      .slot {
+        fill: var(--ink);
+        opacity: 0.55;
+      }
+      .tlink {
+        fill: none;
+        stroke: var(--target);
+        stroke-width: 1.2;
+        stroke-dasharray: 3 2;
+        opacity: 0.85;
+      }
+      .selected-ring {
+        fill: none;
+        stroke: var(--ink);
+        stroke-width: 2;
+      }
+
+      /* The abstract graph. */
+      #gworld * {
+        vector-effect: non-scaling-stroke;
+      }
+      .gedge {
+        fill: none;
+        stroke-width: 2.5;
+        stroke-linecap: round;
+      }
+      .gedge.stretch {
+        stroke-dasharray: 9 3;
+      }
+      .gedge.over {
+        stroke: var(--over);
+        stroke-width: 4;
+      }
+      .gedge.full {
+        stroke: var(--full);
+        stroke-width: 3.5;
+      }
+      .gedge.used {
+        stroke: var(--used);
+      }
+      .gedge.idle {
+        stroke: var(--idle);
+        opacity: 0.7;
+      }
+      .gedge.closed {
+        stroke: var(--closed);
+        stroke-dasharray: 2 4;
+        opacity: 0.6;
+      }
+      .gleaf {
+        stroke-width: 1;
+        stroke-dasharray: 2 2;
+      }
+      .gleaf.tgt {
+        stroke: var(--target);
+      }
+      .gleaf.src {
+        stroke: var(--source);
+      }
+      .gnode circle {
+        fill: var(--surface);
+        stroke: var(--ink-2);
+        stroke-width: 1.5;
+      }
+      .gnode.ported circle {
+        stroke: var(--ink);
+        stroke-width: 2.5;
+      }
+      .gnode text {
+        fill: var(--ink-2);
+        font-size: 10px;
+        paint-order: stroke;
+        stroke: var(--surface);
+        stroke-width: 3px;
+      }
+      .ghub rect {
+        fill: var(--ink-2);
+      }
+      .gnode,
+      .ghub {
+        cursor: pointer;
+      }
+      #gsvg.no-g-closed .closed,
+      #gsvg.no-g-idle .idle,
+      #gsvg.no-g-badges .badge,
+      #gsvg.no-g-targets .tport,
+      #gsvg.no-g-targets .gleaf.tgt,
+      #gsvg.no-g-sources .sport,
+      #gsvg.no-g-sources .gleaf.src,
+      #gsvg.no-g-names .gnode text {
+        display: none;
+      }
+      #gsvg .keep,
+      #gsvg .keep text {
+        display: inline;
+      }
+
+      #overlay.no-spokes .spoke,
+      #overlay.no-nodes .node,
+      #overlay.no-bottlenecks .bottleneck,
+      #overlay.no-stretches .stretch,
+      #overlay.no-aside .aside,
+      #overlay.no-badges .badge,
+      #overlay.no-strokes .strokes,
+      #overlay.no-flabels .flabel,
+      #overlay.no-tports .tport,
+      #overlay.no-tlabels .tport text,
+      #overlay.no-sports .sport,
+      #overlay.no-slabels .sport text,
+      #overlay.no-paths .path.all,
+      #overlay.no-slots .slot,
+      #overlay.no-tlinks .tlink {
+        display: none;
+      }
+      /* The ports of the wires a selection names stay on whatever the layers say. */
+      #overlay .keep,
+      #overlay .keep text {
+        display: inline;
+      }
+      @media (max-width: 760px) {
+        main {
+          flex-direction: column;
+        }
+        aside {
+          width: 100%;
+          max-width: none;
+          height: 48vh;
+          border-left: none;
+          border-top: 1px solid var(--hairline);
+        }
+        #views {
+          min-height: 52vh;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Capacity graph after the coupler insertion</h1>
+      <span id="verdict" class="verdict"></span>
+      <span id="counts" class="counts"></span>
+      <span class="spacer"></span>
+      <span class="switch" role="group" aria-label="View">
+        <button type="button" data-view="chip">Chip</button>
+        <button type="button" data-view="graph">Graph</button>
+        <button type="button" data-view="both">Both</button>
+      </span>
+      <button id="theme" type="button" title="Switch light and dark">
+        Theme
+      </button>
+    </header>
+    <main>
+      <div id="views" class="both">
+        <div id="map">
+          <canvas id="raster"></canvas>
+          <svg id="overlay" xmlns="http://www.w3.org/2000/svg">
+            <g id="world"></g>
+            <g id="screen"></g>
+          </svg>
+          <div class="pane-title">Chip</div>
+          <div class="zoom">
+            <button type="button" id="zoom-in" title="Zoom in">+</button>
+            <button type="button" id="zoom-out" title="Zoom out">−</button>
+            <button type="button" id="zoom-fit" title="Show the whole chip (F)">
+              Fit
+            </button>
+            <button type="button" id="zoom-sel" title="Show the selection (Z)">
+              Selection
+            </button>
+          </div>
+          <div id="status"></div>
+        </div>
+        <div id="graph">
+          <svg id="gsvg" xmlns="http://www.w3.org/2000/svg">
+            <g id="gworld"></g>
+            <g id="gscreen"></g>
+          </svg>
+          <div class="pane-title">
+            Graph: chambers, edges with load/capacity, ports as leaves
+          </div>
+          <div class="zoom">
+            <button type="button" id="gzoom-fit" title="Show the whole graph">
+              Fit
+            </button>
+            <button type="button" id="gzoom-sel" title="Show the selection">
+              Selection
+            </button>
+            <button type="button" id="glayout" title="Lay the graph out again">
+              Relayout
+            </button>
+          </div>
+        </div>
+        <div id="tip"></div>
+      </div>
+      <aside>
+        <div id="detail"></div>
+        <div class="tabs" role="tablist">
+          <button type="button" class="on" data-pane="edges">Edges</button>
+          <button type="button" data-pane="feedlines">Feedline edges</button>
+          <button type="button" data-pane="wires">Wires</button>
+          <button type="button" data-pane="partitions">Partitions</button>
+          <button type="button" data-pane="layers">Layers</button>
+          <button type="button" data-pane="couplers" id="tab-couplers" hidden>
+            Couplers
+          </button>
+        </div>
+        <section class="pane on" id="pane-edges">
+          <div class="filters">
+            <input
+              type="search"
+              id="edge-find"
+              placeholder="Name, end, feedline or wire"
+            />
+            <select id="edge-state">
+              <option value="all">every edge</option>
+              <option value="tight">full or over</option>
+              <option value="over">over</option>
+              <option value="used">carrying a wire</option>
+              <option value="closed">holding no wire</option>
+              <option value="stretch">stretches</option>
+              <option value="bottleneck">bottlenecks</option>
+            </select>
+          </div>
+          <div class="scroll"><table id="edge-table"></table></div>
+        </section>
+        <section class="pane" id="pane-feedlines">
+          <p class="note">
+            Per feedline edge: the stretches a wire may cross it on and the
+            bottlenecks that end at it. Spare is the least of capacity − load
+            over all of them.
+          </p>
+          <div class="scroll"><table id="feed-table"></table></div>
+        </section>
+        <section class="pane" id="pane-wires">
+          <div class="filters">
+            <input type="search" id="wire-find" placeholder="Wire or port" />
+            <select id="wire-kind">
+              <option value="all">every wire</option>
+              <option value="plain">plain wires</option>
+              <option value="resonator">resonators</option>
+              <option value="tight">way over a full edge</option>
+              <option value="lost">no way</option>
+            </select>
+          </div>
+          <div class="scroll"><table id="wire-table"></table></div>
+        </section>
+        <section class="pane" id="pane-partitions">
+          <p class="note">
+            A partition is a chamber of the graph: free space that no bottleneck
+            cuts. Every terminal lies in the slot of its port run, and so in one
+            partition.
+          </p>
+          <div class="filters">
+            <select id="part-kind">
+              <option value="targets">with a target port</option>
+              <option value="ports">with any port</option>
+              <option value="all">every partition</option>
+            </select>
+          </div>
+          <div class="scroll"><table id="part-table"></table></div>
+        </section>
+        <section class="pane" id="pane-couplers">
+          <p class="note">
+            Pick a coupler in the list or click its pad on the chip: every
+            option it has is drawn — blue the ones the chain search offers,
+            dashed the ones it does not. A click on an option, on the chip or in
+            the list below, puts the coupler on it; the server draws its two
+            feedline edges again and analyses the chip anew.
+          </p>
+          <div class="session-log" id="session-log"></div>
+          <div class="scroll"><table id="coupler-table"></table></div>
+          <div class="scroll"><table id="option-table"></table></div>
+        </section>
+        <section class="pane" id="pane-layers">
+          <div class="layers" id="layers"></div>
+          <div class="summary" id="summary"></div>
+        </section>
+      </aside>
+    </main>
+    <script id="graph-data" type="application/json">
+      {}
+    </script>
+    <script id="session-data" type="application/json">
+      null
+    </script>
+    <script>
+      "use strict";
+      const data = JSON.parse(
+        document.getElementById("graph-data").textContent,
+      );
+      const W = data.width;
+      const H = data.height;
+      const SVGNS = "http://www.w3.org/2000/svg";
+      const FIRST_CHAMBER = 6;
+
+      // ---- The raster -----------------------------------------------------------
+      const codes = new Int32Array(W * H);
+      {
+        let at = 0;
+        for (let i = 0; i + 1 < data.raster.length; i += 2) {
+          codes.fill(
+            data.raster[i],
+            at,
+            Math.min(W * H, at + data.raster[i + 1]),
+          );
+          at += data.raster[i + 1];
+        }
+      }
+      const chamberCount = data.nodes.length;
+
+      // ---- Edges, chambers, wires ---------------------------------------------
+      const edges = data.edges;
+      const wires = data.wires;
+      const wireByName = new Map(wires.map((w) => [w.name, w]));
+      const edgesOfChamber = Array.from({ length: chamberCount }, () => []);
+      for (const e of edges) {
+        e.state = stateOf(e);
+        e.spare = e.capacity - e.load;
+        for (const c of e.chambers) edgesOfChamber[c].push(e);
+        e.mid = middleOf(e.line);
+      }
+      function stateOf(e) {
+        if (e.overflow > 0 || e.load > e.capacity) return "over";
+        if (e.capacity === 0) return "closed";
+        if (e.load === e.capacity) return "full";
+        if (e.load > 0) return "used";
+        return "idle";
+      }
+      const STATE_NAME = {
+        over: "carries more wires than it takes",
+        full: "takes exactly the wires it carries",
+        used: "carries wires, room to spare",
+        idle: "carries no wire",
+        closed: "takes no wire at all",
+      };
+      const GLYPH = { over: "▲ ", full: "■ " };
+
+      // The chambers each wire's ports lie in, and its way as chambers.
+      const portsInChamber = Array.from({ length: chamberCount }, () => ({
+        source: [],
+        target: [],
+      }));
+      for (const w of wires) {
+        for (const c of w.source.chambers) portsInChamber[c].source.push(w);
+        for (const c of w.target.chambers) portsInChamber[c].target.push(w);
+        w.edges = w.way ? w.way.map((i) => edges[i]) : [];
+        w.tightest = w.edges.length
+          ? Math.min(...w.edges.map((e) => e.spare))
+          : null;
+        w.crosses = w.edges
+          .filter((e) => e.kind === "stretch")
+          .map((e) => e.feedline);
+        w.chamberWay = chamberWay(w);
+      }
+      // Walk the edges of a wire's way from its source chambers: each edge is
+      // entered from a chamber the walk is in and left into the chamber the next
+      // edge, or the target, can be reached from.
+      function chamberWay(w) {
+        if (!w.way) return [];
+        let here = w.source.chambers.slice();
+        const steps = [];
+        for (let k = 0; k < w.edges.length; k++) {
+          const e = w.edges[k];
+          const enter =
+            e.chambers.find((c) => here.includes(c)) ?? e.chambers[0];
+          const onward =
+            k + 1 < w.edges.length
+              ? w.edges[k + 1].chambers
+              : w.target.chambers;
+          const others = e.chambers.filter((c) => c !== enter);
+          const leave =
+            others.find((c) => onward.includes(c)) ?? others[0] ?? enter;
+          steps.push({ enter, edge: e, leave });
+          here = [leave];
+        }
+        return steps;
+      }
+
+      // Feedline edges: their stretches and the bottlenecks that end at them.
+      const feedlines = new Map();
+      const feedOf = (name) => {
+        if (!feedlines.has(name))
+          feedlines.set(name, { name, stretches: [], gates: [], stroke: null });
+        return feedlines.get(name);
+      };
+      for (const s of data.strokes)
+        if (s.kind === "feedline") feedOf(s.name).stroke = s;
+      for (const e of edges) {
+        if (e.kind === "stretch") feedOf(e.feedline).stretches.push(e);
+        else
+          for (const end of new Set(e.ends))
+            if (feedlines.has(end)) feedOf(end).gates.push(e);
+      }
+      for (const f of feedlines.values()) {
+        const all = f.stretches.concat(f.gates);
+        f.spare = all.length ? Math.min(...all.map((e) => e.spare)) : null;
+        f.users = new Set(f.stretches.flatMap((e) => e.users || []));
+        f.crossLoad = f.stretches.reduce((s, e) => s + e.load, 0);
+        f.crossCapacity = f.stretches.reduce((s, e) => s + e.capacity, 0);
+        f.tight = all.filter(
+          (e) => e.state === "over" || e.state === "full",
+        ).length;
+        f.closed = f.gates.filter((e) => e.state === "closed").length;
+      }
+
+      // ---- Colours --------------------------------------------------------------
+      const CATEGORY = {
+        light: [
+          "#2a78d6",
+          "#eb6834",
+          "#1baf7a",
+          "#eda100",
+          "#e87ba4",
+          "#008300",
+          "#4a3aa7",
+          "#e34948",
+        ],
+        dark: [
+          "#3987e5",
+          "#d95926",
+          "#199e70",
+          "#c98500",
+          "#d55181",
+          "#008300",
+          "#9085e9",
+          "#e66767",
+        ],
+      };
+      // Greedy colours over the chambers, so that no edge joins two of one colour
+      // while eight last; the page's picture and the stage's agree on this.
+      const colourOf = new Int32Array(chamberCount);
+      {
+        const next = Array.from({ length: chamberCount }, () => []);
+        for (const e of edges)
+          for (const a of e.chambers)
+            for (const b of e.chambers) if (a !== b) next[a].push(b);
+        for (let c = 0; c < chamberCount; c++) {
+          const taken = new Array(8).fill(false);
+          for (const o of next[c]) if (o < c) taken[colourOf[o]] = true;
+          const free = taken.indexOf(false);
+          colourOf[c] = free < 0 ? c % 8 : free;
+        }
+      }
+      function token(name) {
+        return getComputedStyle(document.documentElement)
+          .getPropertyValue(name)
+          .trim();
+      }
+      function rgbOf(hex) {
+        const v = parseInt(hex.replace("#", ""), 16);
+        return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+      }
+      function mix(a, b, t) {
+        return [0, 1, 2].map((i) => Math.round(a[i] * (1 - t) + b[i] * t));
+      }
+      function isDark() {
+        return token("--scheme") === "dark";
+      }
+
+      // ---- The view -------------------------------------------------------------
+      const views = document.getElementById("views");
+      const map = document.getElementById("map");
+      const gsvg = document.getElementById("gsvg");
+      const gworld = document.getElementById("gworld");
+      const gscreen = document.getElementById("gscreen");
+      const graphPane = document.getElementById("graph");
+      const gview = { s: 1, tx: 0, ty: 0 };
+      const canvas = document.getElementById("raster");
+      const overlay = document.getElementById("overlay");
+      const world = document.getElementById("world");
+      const screen = document.getElementById("screen");
+      const tip = document.getElementById("tip");
+      const statusLine = document.getElementById("status");
+      const view = { s: 1, tx: 0, ty: 0 };
+      // Grid cell (x, y), y up, to the world: the centre of the cell, y down.
+      const wx = (x) => x + 0.5;
+      const wy = (y) => H - 0.5 - y;
+      const sx = (x) => wx(x) * view.s + view.tx;
+      const sy = (y) => wy(y) * view.s + view.ty;
+      const offscreen = document.createElement("canvas");
+      offscreen.width = W;
+      offscreen.height = H;
+
+      let selection = null;
+      let focus = null;
+
+      function paintRaster() {
+        const dark = isDark();
+        const surface = rgbOf(token("--surface"));
+        const palette = CATEGORY[dark ? "dark" : "light"].map(rgbOf);
+        const walls = [
+          "--wall-border",
+          "--wall-art",
+          "--wall-pad",
+          "--wall-run",
+          "--wall-feed",
+        ].map((n) => rgbOf(token(n)));
+        const cut = rgbOf(token("--muted"));
+        const base = dark ? 0.2 : 0.22;
+        const tints = palette.map((p) => mix(surface, p, base));
+        const strong = palette.map((p) => mix(surface, p, dark ? 0.42 : 0.45));
+        const faint = palette.map((p) => mix(surface, p, 0.07));
+        const image = new ImageData(W, H);
+        const px = image.data;
+        const lit = focus ? focus.chambers : null;
+        for (let y = 0; y < H; y++) {
+          const row = (H - 1 - y) * W;
+          for (let x = 0; x < W; x++) {
+            const code = codes[y * W + x];
+            let rgb;
+            if (code >= FIRST_CHAMBER) {
+              const c = code - FIRST_CHAMBER;
+              const k = colourOf[c];
+              rgb = lit ? (lit.has(c) ? strong[k] : faint[k]) : tints[k];
+            } else if (code === 0) {
+              rgb = cut;
+            } else {
+              rgb = walls[code - 1];
+            }
+            const o = (row + x) * 4;
+            px[o] = rgb[0];
+            px[o + 1] = rgb[1];
+            px[o + 2] = rgb[2];
+            px[o + 3] = 255;
+          }
+        }
+        offscreen.getContext("2d").putImageData(image, 0, 0);
+      }
+
+      function drawRaster() {
+        const ratio = window.devicePixelRatio || 1;
+        const w = map.clientWidth;
+        const h = map.clientHeight;
+        if (
+          canvas.width !== Math.round(w * ratio) ||
+          canvas.height !== Math.round(h * ratio)
+        ) {
+          canvas.width = Math.round(w * ratio);
+          canvas.height = Math.round(h * ratio);
+        }
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = token("--surface");
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = false;
+        ctx.setTransform(
+          view.s * ratio,
+          0,
+          0,
+          view.s * ratio,
+          view.tx * ratio,
+          view.ty * ratio,
+        );
+        ctx.drawImage(offscreen, 0, 0);
+      }
+
+      // Screen marks keep their size; each remembers the grid cell it stands on.
+      let placed = [];
+      function placeMarks() {
+        for (const m of placed)
+          m.el.setAttribute(
+            "transform",
+            `translate(${sx(m.x).toFixed(1)},${sy(m.y).toFixed(1)})`,
+          );
+      }
+      let pending = false;
+      function render() {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => {
+          pending = false;
+          drawRaster();
+          world.setAttribute(
+            "transform",
+            `matrix(${view.s},0,0,${view.s},${view.tx},${view.ty})`,
+          );
+          placeMarks();
+          gworld.setAttribute(
+            "transform",
+            `matrix(${gview.s},0,0,${gview.s},${gview.tx},${gview.ty})`,
+          );
+          placeGraphMarks();
+        });
+      }
+      function fit(box) {
+        const w = map.clientWidth;
+        const h = map.clientHeight;
+        const b = box || { x0: 0, y0: 0, x1: W - 1, y1: H - 1 };
+        const bw = Math.max(40, b.x1 - b.x0 + 1);
+        const bh = Math.max(40, b.y1 - b.y0 + 1);
+        view.s = Math.min(w / bw, h / bh) * 0.9;
+        if (box) view.s = Math.min(view.s, 12);
+        const cx = (wx(b.x0) + wx(b.x1)) / 2;
+        const cy = (wy(b.y0) + wy(b.y1)) / 2;
+        view.tx = w / 2 - cx * view.s;
+        view.ty = h / 2 - cy * view.s;
+        render();
+      }
+      function zoomAt(factor, px, py) {
+        const s = Math.min(60, Math.max(0.05, view.s * factor));
+        const k = s / view.s;
+        view.tx = px - (px - view.tx) * k;
+        view.ty = py - (py - view.ty) * k;
+        view.s = s;
+        render();
+      }
+
+      // ---- Geometry helpers ---------------------------------------------------
+      function middleOf(points) {
+        if (points.length === 1) return points[0];
+        let total = 0;
+        for (let i = 1; i < points.length; i++)
+          total += Math.hypot(
+            points[i][0] - points[i - 1][0],
+            points[i][1] - points[i - 1][1],
+          );
+        let walk = total / 2;
+        for (let i = 1; i < points.length; i++) {
+          const d = Math.hypot(
+            points[i][0] - points[i - 1][0],
+            points[i][1] - points[i - 1][1],
+          );
+          if (walk <= d && d > 0) {
+            const t = walk / d;
+            return [
+              points[i - 1][0] + t * (points[i][0] - points[i - 1][0]),
+              points[i - 1][1] + t * (points[i][1] - points[i - 1][1]),
+            ];
+          }
+          walk -= d;
+        }
+        return points[points.length - 1];
+      }
+      function worldPoints(points) {
+        return points
+          .map((p) => `${wx(p[0]).toFixed(1)},${wy(p[1]).toFixed(1)}`)
+          .join(" ");
+      }
+      function el(name, attrs, parent) {
+        const e = document.createElementNS(SVGNS, name);
+        for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+        if (parent) parent.appendChild(e);
+        return e;
+      }
+      function nodeAt(c) {
+        return data.nodes[c].at;
+      }
+
+      // ---- Selection ------------------------------------------------------------
+      // What a selection lights up: chambers, edges, wires, feedline edges.
+      function focusOf(sel) {
+        if (!sel) return null;
+        const f = {
+          chambers: new Set(),
+          edges: new Set(),
+          wires: new Set(),
+          feedlines: new Set(),
+          routes: [],
+        };
+        const addWire = (w, route) => {
+          f.wires.add(w);
+          for (const c of w.source.chambers) f.chambers.add(c);
+          for (const c of w.target.chambers) f.chambers.add(c);
+          for (const e of w.edges) {
+            f.edges.add(e);
+            for (const c of e.chambers) f.chambers.add(c);
+          }
+          if (route) f.routes.push(w);
+        };
+        if (sel.kind === "edge") {
+          const e = sel.item;
+          f.edges.add(e);
+          for (const c of e.chambers) f.chambers.add(c);
+          if (e.feedline) f.feedlines.add(e.feedline);
+          for (const end of e.ends || [])
+            if (feedlines.has(end)) f.feedlines.add(end);
+          for (const name of e.through)
+            if (wireByName.has(name)) f.wires.add(wireByName.get(name));
+        } else if (sel.kind === "wire") {
+          addWire(sel.item, true);
+          for (const n of sel.item.crosses) f.feedlines.add(n);
+        } else if (sel.kind === "chamber") {
+          const c = sel.item;
+          f.chambers.add(c);
+          for (const e of edgesOfChamber[c]) f.edges.add(e);
+          for (const w of portsInChamber[c].target) f.wires.add(w);
+          for (const w of portsInChamber[c].source) f.wires.add(w);
+        } else if (sel.kind === "feedline") {
+          const fl = sel.item;
+          f.feedlines.add(fl.name);
+          for (const e of fl.stretches.concat(fl.gates)) {
+            f.edges.add(e);
+            for (const c of e.chambers) f.chambers.add(c);
+          }
+          for (const name of fl.users)
+            if (wireByName.has(name)) f.wires.add(wireByName.get(name));
+        }
+        return f;
+      }
+      function select(kind, item, zoom) {
+        selection = kind ? { kind, item } : null;
+        focus = focusOf(selection);
+        paintRaster();
+        build();
+        buildGraph();
+        showDetail();
+        markRows();
+        if (zoom) {
+          zoomToSelection();
+          graphToSelection();
+        } else render();
+      }
+      function boxOfSelection() {
+        if (!focus) return null;
+        const pts = [];
+        for (const e of focus.edges) pts.push(...e.line);
+        for (const c of focus.chambers) pts.push(nodeAt(c));
+        for (const w of focus.wires) pts.push(w.target.at, w.source.at);
+        if (selection.kind === "feedline" && selection.item.stroke)
+          pts.push(...selection.item.stroke.points);
+        if (!pts.length) return null;
+        const xs = pts.map((p) => p[0]);
+        const ys = pts.map((p) => p[1]);
+        return {
+          x0: Math.min(...xs) - 20,
+          x1: Math.max(...xs) + 20,
+          y0: Math.min(...ys) - 20,
+          y1: Math.max(...ys) + 20,
+        };
+      }
+      function zoomToSelection() {
+        const box = boxOfSelection();
+        if (box) fit(box);
+        else render();
+      }
+
+      // ---- Layers -----------------------------------------------------------------
+      const LAYERS = [
+        [
+          "Graph",
+          [
+            ["badges", "load/capacity on every edge", true],
+            ["bottlenecks", "bottlenecks", true],
+            ["stretches", "stretches to cross a feedline", true],
+            ["aside", "bottlenecks with one chamber on both sides", false],
+            ["nodes", "nodes (chambers)", true],
+            ["spokes", "node to edge", true],
+          ],
+        ],
+        [
+          "Ports",
+          [
+            ["tports", "target ports", true],
+            ["tlabels", "target port labels, with their partition", true],
+            ["tlinks", "target port to the node of its partition", true],
+            ["sports", "source ports", false],
+            ["slabels", "source port labels", false],
+          ],
+        ],
+        [
+          "Chip",
+          [
+            ["strokes", "feedline edges and port runs as lines", true],
+            ["flabels", "feedline edge names", true],
+            ["paths", "the way every wire has now", false],
+            ["slots", "the slots the terminals lie in", true],
+          ],
+        ],
+        [
+          "Graph view",
+          [
+            ["g-badges", "load/capacity on every edge", true],
+            ["g-idle", "edges that carry no wire", true],
+            ["g-closed", "edges that take no wire (capacity 0)", true],
+            ["g-targets", "target ports as leaves", true],
+            ["g-sources", "source ports as leaves", false],
+            ["g-names", "chamber names", true],
+          ],
+        ],
+      ];
+      const layerState = {};
+      function readSaved() {
+        try {
+          return JSON.parse(
+            localStorage.getItem("capacity-graph-layers") || "{}",
+          );
+        } catch {
+          return {};
+        }
+      }
+      function save() {
+        try {
+          localStorage.setItem(
+            "capacity-graph-layers",
+            JSON.stringify(layerState),
+          );
+        } catch {
+          // A page opened from disk may have no storage; the layers then reset.
+        }
+      }
+      function applyLayers() {
+        for (const [, items] of LAYERS) {
+          for (const [key] of items) {
+            overlay.classList.toggle(`no-${key}`, !layerState[key]);
+            gsvg.classList.toggle(`no-${key}`, !layerState[key]);
+          }
+        }
+      }
+      {
+        const saved = readSaved();
+        const box = document.getElementById("layers");
+        for (const [group, items] of LAYERS) {
+          const fs = document.createElement("fieldset");
+          const lg = document.createElement("legend");
+          lg.textContent = group;
+          fs.appendChild(lg);
+          for (const [key, label, on] of items) {
+            layerState[key] = key in saved ? !!saved[key] : on;
+            const row = document.createElement("label");
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.checked = layerState[key];
+            cb.addEventListener("change", () => {
+              layerState[key] = cb.checked;
+              applyLayers();
+              save();
+            });
+            row.appendChild(cb);
+            row.appendChild(document.createTextNode(label));
+            fs.appendChild(row);
+          }
+          box.appendChild(fs);
+        }
+        const legend = document.createElement("fieldset");
+        const lg = document.createElement("legend");
+        lg.textContent = "Key";
+        legend.appendChild(lg);
+        const keyRow = (style, text) => {
+          const row = document.createElement("label");
+          const sw = document.createElement("span");
+          sw.className = "swatch";
+          sw.style.cssText = style;
+          row.appendChild(sw);
+          row.appendChild(document.createTextNode(text));
+          legend.appendChild(row);
+        };
+        for (const s of ["over", "full", "used", "idle", "closed"]) {
+          keyRow(
+            `background: var(--${s})`,
+            `${GLYPH[s] || ""}${s}: ${STATE_NAME[s]}`,
+          );
+        }
+        keyRow(
+          "background: var(--target); clip-path: polygon(0 0, 100% 50%, 0 100%)",
+          "target port, pointing the way the wire arrives",
+        );
+        keyRow(
+          "border: 2.5px solid var(--source); border-radius: 50%; width: 10px",
+          "source port",
+        );
+        keyRow(
+          "background: var(--route); opacity: .6",
+          "the way the flow sends the selected wire",
+        );
+        keyRow(
+          "background: var(--wall-feed)",
+          "feedline edge inflated by half the clearance",
+        );
+        keyRow(
+          "background: var(--wall-run)",
+          "port run inflated by half the clearance",
+        );
+        keyRow("background: var(--wall-pad)", "coupler pad");
+        keyRow("background: var(--wall-art)", "artwork");
+        keyRow(
+          "background: var(--muted)",
+          "the line of a bottleneck, between chambers",
+        );
+        box.appendChild(legend);
+        applyLayers();
+      }
+
+      // ---- Drawing --------------------------------------------------------------
+      function badgeText(e) {
+        const extra = e.overflow > 0 ? ` +${e.overflow}` : "";
+        return `${e.load}/${e.capacity}${extra}`;
+      }
+      // The load/capacity of an edge in a pill, the state's glyph in front.
+      function badge(e, label, dim, parent) {
+        const g = el(
+          "g",
+          { class: `badge ${e.state} ${e.kind}${dim}` },
+          parent,
+        );
+        g.dataset.edge = e.index;
+        const text = el("text", { x: 0, y: 3.8, "text-anchor": "middle" }, g);
+        if (GLYPH[e.state]) {
+          const glyph = el("tspan", { class: "glyph" }, text);
+          glyph.textContent = GLYPH[e.state];
+        }
+        text.appendChild(document.createTextNode(label));
+        const width = 10 + 6.3 * (label.length + (GLYPH[e.state] ? 2 : 0));
+        const rect = el(
+          "rect",
+          { x: -width / 2, y: -8, width, height: 16, rx: 8 },
+          null,
+        );
+        g.insertBefore(rect, text);
+        return g;
+      }
+      function build() {
+        world.replaceChildren();
+        screen.replaceChildren();
+        placed = [];
+        const f = focus;
+        const dimEdge = (e) => (f && !f.edges.has(e) ? " dim" : "");
+        const dimWire = (w) => (f && !f.wires.has(w) ? " dim" : "");
+        const dimChamber = (c) => (f && !f.chambers.has(c) ? " dim" : "");
+
+        // Lines of the chip.
+        const strokes = el("g", { class: "strokes" }, world);
+        for (const s of data.strokes) {
+          const feed = s.kind === "feedline";
+          const lit = !f || !feed || f.feedlines.has(s.name);
+          const line = el(
+            "polyline",
+            {
+              points: worldPoints(s.points),
+              class: `${feed ? "stroke-feed" : "stroke-run"}${lit ? "" : " dim"}`,
+            },
+            strokes,
+          );
+          line.dataset.tip = feed ? `feedline edge ${s.name}` : s.name;
+          if (feed) line.dataset.feed = s.name;
+        }
+        // The slots, as one path of unit squares.
+        if (data.slots && data.slots.length) {
+          const d = data.slots
+            .map(([x, y]) => `M${x} ${H - 1 - y}h1v1h-1z`)
+            .join("");
+          el("path", { d, class: "slot" }, world);
+        }
+        // Each target port to the node of the partition its terminal lies in.
+        for (const w of wires) {
+          for (const c of w.target.chambers) {
+            const n = nodeAt(c);
+            const pts = [w.target.port, w.target.cell, n];
+            el(
+              "polyline",
+              {
+                points: worldPoints(pts),
+                class: `tlink${dimWire(w)}${f && f.wires.has(w) ? " keep" : ""}`,
+              },
+              world,
+            );
+          }
+        }
+        // The way every wire has now, and the selected wires' ways.
+        for (const w of wires) {
+          if (!w.path || w.path.length < 2) continue;
+          const mine = f && f.wires.has(w) && selection.kind === "wire";
+          el(
+            "polyline",
+            {
+              points: worldPoints(w.path),
+              class: `path${mine ? "" : " all"}${dimWire(w)}`,
+            },
+            world,
+          );
+        }
+        // Spokes and edges.
+        for (const e of edges) {
+          for (const c of e.chambers) {
+            const n = nodeAt(c);
+            el(
+              "line",
+              {
+                x1: wx(n[0]),
+                y1: wy(n[1]),
+                x2: wx(e.mid[0]),
+                y2: wy(e.mid[1]),
+                class: `spoke ${e.kind === "stretch" ? "cross stretch" : "bottleneck"}${dimEdge(e)}`,
+              },
+              world,
+            );
+          }
+        }
+        for (const a of data.aside) {
+          const g = el("g", { class: "aside" }, world);
+          const line = el(
+            "polyline",
+            {
+              points: worldPoints(a.line),
+              class: `edge aside${f ? " dim" : ""}`,
+            },
+            g,
+          );
+          line.dataset.tip = `${a.name} · ${a.ends.join(" · ")}: ${a.length.toFixed(1)} cells, chamber c${a.chambers.join(", c")} on both sides — no edge`;
+        }
+        if (selection && selection.kind === "edge") {
+          el(
+            "polyline",
+            { points: worldPoints(selection.item.line), class: "focus-edge" },
+            world,
+          );
+        }
+        for (const e of edges) {
+          const g = el("g", { class: e.kind }, world);
+          el(
+            "polyline",
+            {
+              points: worldPoints(e.line),
+              class: `edge ${e.kind} ${e.state}${dimEdge(e)}`,
+            },
+            g,
+          );
+          const hit = el(
+            "polyline",
+            { points: worldPoints(e.line), class: "hit" },
+            g,
+          );
+          hit.dataset.edge = e.index;
+        }
+        // The routes the flow found for the selected wires.
+        if (f) {
+          for (const w of f.routes) {
+            const pts = [w.source.cell];
+            for (const step of w.chamberWay)
+              pts.push(nodeAt(step.enter), step.edge.mid, nodeAt(step.leave));
+            pts.push(w.target.cell);
+            el("polyline", { points: worldPoints(pts), class: "route" }, world);
+            for (const [end, cls] of [
+              [w.source, "portlink src"],
+              [w.target, "portlink"],
+            ]) {
+              for (const c of end.chambers) {
+                const n = nodeAt(c);
+                el(
+                  "line",
+                  {
+                    x1: wx(end.cell[0]),
+                    y1: wy(end.cell[1]),
+                    x2: wx(n[0]),
+                    y2: wy(n[1]),
+                    class: cls,
+                  },
+                  world,
+                );
+              }
+              el(
+                "circle",
+                {
+                  cx: wx(end.cell[0]),
+                  cy: wy(end.cell[1]),
+                  r: 1.5,
+                  class: `cellmark${cls.includes("src") ? " src" : ""}`,
+                },
+                world,
+              );
+            }
+          }
+        }
+
+        // Screen marks: nodes, badges, ports, feedline names.
+        for (const n of data.nodes) {
+          const c = n.chamber;
+          const ports = portsInChamber[c];
+          const g = el(
+            "g",
+            {
+              class: `node${ports.target.length || ports.source.length ? " ported" : ""}${dimChamber(c)}`,
+            },
+            screen,
+          );
+          el("circle", { r: 4.5 }, g);
+          const t = el("text", { x: 7, y: 3.5 }, g);
+          t.textContent = `c${c}`;
+          g.dataset.chamber = c;
+          placed.push({ el: g, x: n.at[0], y: n.at[1] });
+        }
+        for (const fl of feedlines.values()) {
+          if (!fl.stroke) continue;
+          const m = middleOf(fl.stroke.points);
+          const t = el(
+            "text",
+            {
+              class: `flabel${f && !f.feedlines.has(fl.name) ? " dim" : ""}`,
+              x: 6,
+              y: -6,
+            },
+            screen,
+          );
+          t.textContent = fl.name;
+          placed.push({ el: t, x: m[0], y: m[1] });
+        }
+        const showPort = (w, end, target) => {
+          const keep =
+            f && f.wires.has(w) && (target || selection.kind === "wire")
+              ? " keep"
+              : "";
+          const g = el(
+            "g",
+            { class: `${target ? "tport" : "sport"}${dimWire(w)}${keep}` },
+            screen,
+          );
+          g.dataset.wire = w.name;
+          g.dataset.end = target ? "target" : "source";
+          if (target) {
+            // A triangle pointing the way the wire arrives at its port.
+            const [hx, hy] = end.heading;
+            const angle = (Math.atan2(-hy, hx) * 180) / Math.PI;
+            el(
+              "path",
+              {
+                d: "M 6 0 L -6 -5.5 L -6 5.5 Z",
+                transform: `rotate(${angle.toFixed(1)})`,
+              },
+              g,
+            );
+          } else {
+            el("circle", { r: 4.5 }, g);
+          }
+          const t = el("text", { x: 8, y: -7 }, g);
+          t.textContent =
+            target && end.chambers.length
+              ? `${w.name} · c${end.chambers.join("/c")}`
+              : w.name;
+          placed.push({ el: g, x: end.port[0], y: end.port[1] });
+        };
+        for (const w of wires) showPort(w, w.source, false);
+        for (const w of wires) showPort(w, w.target, true);
+        for (const e of edges) {
+          const g = badge(e, badgeText(e), dimEdge(e), screen);
+          placed.push({ el: g, x: e.mid[0], y: e.mid[1] });
+        }
+        if (selection && selection.kind === "chamber") {
+          const n = nodeAt(selection.item);
+          const ring = el("circle", { r: 9, class: "selected-ring" }, screen);
+          placed.push({ el: ring, x: n[0], y: n[1] });
+        }
+        placeMarks();
+      }
+
+      // ---- Detail card ----------------------------------------------------------
+      const detail = document.getElementById("detail");
+      function chip(text, onClick, colour) {
+        const c = document.createElement("span");
+        c.className = "chip";
+        if (colour) {
+          const k = document.createElement("span");
+          k.className = "key";
+          k.style.background = colour;
+          c.appendChild(k);
+        }
+        c.appendChild(document.createTextNode(text));
+        c.addEventListener("click", onClick);
+        return c;
+      }
+      const edgeChip = (e) =>
+        chip(
+          `${e.kind === "stretch" ? "× " + e.feedline : e.name} ${badgeText(e)}`,
+          () => select("edge", e, true),
+          `var(--${e.state})`,
+        );
+      const wireChip = (name) => {
+        const w = wireByName.get(name);
+        return w
+          ? chip(name, () => select("wire", w, true))
+          : chip(name, () => {});
+      };
+      const chamberChip = (c) =>
+        chip(`c${c}`, () => select("chamber", c, true));
+      function row(dl, term, ...values) {
+        const dt = document.createElement("dt");
+        dt.textContent = term;
+        const dd = document.createElement("dd");
+        for (const v of values)
+          dd.appendChild(
+            typeof v === "string" ? document.createTextNode(v) : v,
+          );
+        dl.append(dt, dd);
+      }
+      function showDetail() {
+        detail.replaceChildren();
+        const h = document.createElement("h2");
+        if (!selection) {
+          h.textContent = "Nothing selected";
+          const p = document.createElement("p");
+          p.className = "none";
+          p.textContent =
+            "Click an edge, a badge, a node, a port or a row. Esc clears, F shows the whole chip.";
+          detail.append(h, p);
+          return;
+        }
+        const dl = document.createElement("dl");
+        const { kind, item } = selection;
+        const cells = (n) =>
+          `${n.toFixed(1)} cells (${(n * data.cellSize).toFixed(0)} units)`;
+        if (kind === "edge") {
+          const e = item;
+          h.textContent =
+            e.kind === "stretch"
+              ? `Stretch of ${e.feedline} to cross`
+              : `Bottleneck ${e.name}`;
+          row(
+            dl,
+            "load / capacity",
+            `${e.load} / ${e.capacity}`,
+            e.overflow > 0 ? ` (+${e.overflow} over)` : "",
+          );
+          row(dl, "state", `${GLYPH[e.state] || ""}${STATE_NAME[e.state]}`);
+          row(dl, "spare", `${e.spare}`);
+          if (e.kind === "stretch") {
+            row(
+              dl,
+              "feedline",
+              chip(e.feedline, () =>
+                select("feedline", feedlines.get(e.feedline), true),
+              ),
+            );
+            row(dl, "cells on the edge", e.name.replace(/^.* cells /, ""));
+            row(dl, "length", cells(e.length));
+            row(dl, "capacity rule", `length / pitch ${data.pitch} + 1`);
+            row(
+              dl,
+              "open to",
+              ...(e.users
+                ? e.users.length
+                  ? e.users.map(wireChip)
+                  : ["no wire"]
+                : ["every wire"]),
+            );
+          } else {
+            row(dl, "between", e.ends.join(" · "));
+            row(dl, "gap", cells(e.length));
+            row(
+              dl,
+              "capacity rule",
+              `gap / clearance ${data.clearance}, rounded down`,
+            );
+            row(
+              dl,
+              "crossed now by",
+              ...(e.crossingNow.length
+                ? e.crossingNow.map(wireChip)
+                : ["no wire"]),
+            );
+          }
+          row(dl, "joins", ...e.chambers.map(chamberChip));
+          row(
+            dl,
+            "flow sends",
+            ...(e.through.length ? e.through.map(wireChip) : ["no wire"]),
+          );
+          const targets = e.through
+            .map((n) => wireByName.get(n))
+            .filter(Boolean)
+            .map((w) => `${w.name} → ${w.target.label || "?"}`);
+          if (targets.length) row(dl, "their targets", targets.join(", "));
+        } else if (kind === "wire") {
+          const w = item;
+          h.textContent = `Wire ${w.name}${w.resonator ? " (resonator)" : ""}`;
+          row(dl, "status", w.status);
+          if (w.crosses)
+            row(
+              dl,
+              "has to cross",
+              ...(w.crosses.length
+                ? w.crosses.map((n) =>
+                    feedlines.has(n)
+                      ? chip(n, () =>
+                          select("feedline", feedlines.get(n), true),
+                        )
+                      : n,
+                  )
+                : ["no feedline edge"]),
+            );
+          row(
+            dl,
+            "source port",
+            w.source.label || "—",
+            " in ",
+            ...w.source.chambers.map(chamberChip),
+          );
+          row(
+            dl,
+            "target port",
+            w.target.label || "—",
+            " in ",
+            ...w.target.chambers.map(chamberChip),
+          );
+          row(
+            dl,
+            "target cell",
+            `(${w.target.at[0]}, ${w.target.at[1]}), placed by (${w.target.cell[0]}, ${w.target.cell[1]})`,
+          );
+          row(
+            dl,
+            "crosses",
+            w.crosses.length ? w.crosses.join(", ") : "no feedline edge",
+          );
+          row(
+            dl,
+            "tightest spare",
+            w.tightest === null ? "—" : `${w.tightest}`,
+          );
+          row(
+            dl,
+            "way",
+            ...(w.edges.length
+              ? w.edges.map(edgeChip)
+              : [
+                  w.status === "one chamber"
+                    ? "source and target in one chamber"
+                    : "none",
+                ]),
+          );
+        } else if (kind === "chamber") {
+          const c = item;
+          h.textContent = `Partition c${c}`;
+          row(dl, "cells", `${data.nodes[c].cells}`);
+          row(
+            dl,
+            "edges",
+            ...(edgesOfChamber[c].length
+              ? edgesOfChamber[c].map(edgeChip)
+              : ["none"]),
+          );
+          row(
+            dl,
+            "target ports",
+            ...(portsInChamber[c].target.length
+              ? portsInChamber[c].target.map((w) => wireChip(w.name))
+              : ["none"]),
+          );
+          row(
+            dl,
+            "source ports",
+            ...(portsInChamber[c].source.length
+              ? portsInChamber[c].source.map((w) => wireChip(w.name))
+              : ["none"]),
+          );
+        } else if (kind === "feedline") {
+          const fl = item;
+          h.textContent = `Feedline edge ${fl.name}`;
+          row(
+            dl,
+            "crossings",
+            `${fl.crossLoad} / ${fl.crossCapacity} on ${fl.stretches.length} stretch${fl.stretches.length === 1 ? "" : "es"}`,
+          );
+          row(
+            dl,
+            "stretches",
+            ...(fl.stretches.length ? fl.stretches.map(edgeChip) : ["none"]),
+          );
+          row(
+            dl,
+            "bottlenecks",
+            ...(fl.gates.length ? fl.gates.map(edgeChip) : ["none"]),
+          );
+          row(
+            dl,
+            "open to",
+            ...(fl.users.size ? [...fl.users].map(wireChip) : ["no wire"]),
+          );
+          row(dl, "least spare", fl.spare === null ? "—" : `${fl.spare}`);
+        }
+        detail.append(h, dl);
+      }
+
+      // ---- Tables ---------------------------------------------------------------
+      function stateCell(state) {
+        const s = document.createElement("span");
+        s.className = "state";
+        const i = document.createElement("i");
+        i.style.background = `var(--${state})`;
+        s.append(i, document.createTextNode(state));
+        return s;
+      }
+      function table(id, columns, items, onPick, keyOf, tie) {
+        const t = document.getElementById(id);
+        const sort = t.sort || { by: columns.findIndex((c) => c.sort), dir: 1 };
+        t.sort = sort;
+        t.replaceChildren();
+        const head = document.createElement("tr");
+        columns.forEach((c, i) => {
+          const th = document.createElement("th");
+          th.textContent =
+            c.name + (sort.by === i ? (sort.dir > 0 ? " ↑" : " ↓") : "");
+          if (c.num) th.className = "num";
+          th.addEventListener("click", () => {
+            sort.dir = sort.by === i ? -sort.dir : 1;
+            sort.by = i;
+            table(id, columns, items, onPick, keyOf, tie);
+          });
+          head.appendChild(th);
+        });
+        t.appendChild(head);
+        const col = columns[Math.max(0, sort.by)];
+        const sorted = items.slice().sort((a, b) => {
+          const x = col.value(a);
+          const y = col.value(b);
+          const d =
+            typeof x === "number" && typeof y === "number"
+              ? x - y
+              : String(x).localeCompare(String(y), undefined, {
+                  numeric: true,
+                });
+          return d * sort.dir || (tie ? tie(a, b) : 0);
+        });
+        for (const item of sorted) {
+          const tr = document.createElement("tr");
+          tr.className = "row";
+          tr.dataset.key = keyOf(item);
+          for (const c of columns) {
+            const td = document.createElement("td");
+            if (c.num) td.className = "num";
+            if (c.wrap) td.classList.add("wrap");
+            const v = c.show ? c.show(item) : c.value(item);
+            td.appendChild(
+              typeof v === "object" ? v : document.createTextNode(String(v)),
+            );
+            tr.appendChild(td);
+          }
+          tr.addEventListener("click", () => onPick(item));
+          t.appendChild(tr);
+        }
+      }
+      function markRows() {
+        const key = selection
+          ? `${selection.kind}:${selection.kind === "chamber" ? selection.item : selection.kind === "edge" ? selection.item.index : selection.item.name}`
+          : "";
+        for (const tr of document.querySelectorAll("tr.row"))
+          tr.classList.toggle("sel", tr.dataset.key === key);
+      }
+      const SEVERITY = { over: 0, full: 1, closed: 2, used: 3, idle: 4 };
+      function edgeTable() {
+        const find = document
+          .getElementById("edge-find")
+          .value.trim()
+          .toLowerCase();
+        const which = document.getElementById("edge-state").value;
+        const items = edges.filter((e) => {
+          if (which === "tight" && !(e.state === "over" || e.state === "full"))
+            return false;
+          if (
+            ["over", "used", "closed"].includes(which) &&
+            e.state !== which &&
+            !(which === "used" && e.load > 0)
+          )
+            return false;
+          if (
+            (which === "stretch" || which === "bottleneck") &&
+            e.kind !== which
+          )
+            return false;
+          if (!find) return true;
+          const hay = [
+            e.name,
+            e.feedline || "",
+            ...(e.ends || []),
+            ...e.through,
+            ...(e.users || []),
+            ...e.chambers.map((c) => `c${c}`),
+          ]
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(find);
+        });
+        table(
+          "edge-table",
+          [
+            {
+              name: "Edge",
+              value: (e) => (e.kind === "stretch" ? `× ${e.feedline}` : e.name),
+            },
+            {
+              name: "Between",
+              value: (e) =>
+                e.kind === "stretch"
+                  ? e.name.replace(/^× \S+ /, "")
+                  : e.ends.join(" · "),
+              wrap: true,
+            },
+            { name: "Load", value: (e) => e.load, num: true },
+            { name: "Cap", value: (e) => e.capacity, num: true },
+            { name: "Spare", value: (e) => e.spare, num: true },
+            {
+              name: "State",
+              value: (e) => SEVERITY[e.state],
+              show: (e) => stateCell(e.state),
+              sort: true,
+            },
+            { name: "Cells", value: (e) => Math.round(e.length), num: true },
+          ],
+          items,
+          (e) => select("edge", e, true),
+          (e) => `edge:${e.index}`,
+          (a, b) =>
+            SEVERITY[a.state] - SEVERITY[b.state] ||
+            a.spare - b.spare ||
+            b.load - a.load,
+        );
+        markRows();
+      }
+      function feedTable() {
+        table(
+          "feed-table",
+          [
+            { name: "Edge", value: (f) => f.name },
+            {
+              name: "Cross",
+              value: (f) => `${f.crossLoad}/${f.crossCapacity}`,
+              num: true,
+            },
+            { name: "Stretches", value: (f) => f.stretches.length, num: true },
+            { name: "Bottlenecks", value: (f) => f.gates.length, num: true },
+            { name: "Full/over", value: (f) => f.tight, num: true },
+            { name: "Hold 0", value: (f) => f.closed, num: true },
+            {
+              name: "Spare",
+              value: (f) => (f.spare === null ? 99 : f.spare),
+              show: (f) => (f.spare === null ? "—" : f.spare),
+              num: true,
+              sort: true,
+            },
+            {
+              name: "Open to",
+              value: (f) => [...f.users].join(", "),
+              wrap: true,
+            },
+          ],
+          [...feedlines.values()],
+          (f) => select("feedline", f, true),
+          (f) => `feedline:${f.name}`,
+        );
+        markRows();
+      }
+      function partTable() {
+        const which = document.getElementById("part-kind").value;
+        const items = data.nodes
+          .map((n) => n.chamber)
+          .filter((c) => {
+            const ports = portsInChamber[c];
+            if (which === "targets") return ports.target.length > 0;
+            if (which === "ports")
+              return ports.target.length + ports.source.length > 0;
+            return true;
+          });
+        const spareOf = (c) =>
+          edgesOfChamber[c].length
+            ? Math.min(...edgesOfChamber[c].map((e) => e.spare))
+            : null;
+        table(
+          "part-table",
+          [
+            { name: "Partition", value: (c) => c, show: (c) => `c${c}` },
+            {
+              name: "Target ports",
+              value: (c) => -portsInChamber[c].target.length,
+              show: (c) =>
+                portsInChamber[c].target
+                  .map((w) => `${w.name} ${w.target.label}`)
+                  .join(", ") || "—",
+              wrap: true,
+              sort: true,
+            },
+            {
+              name: "Source ports",
+              value: (c) => portsInChamber[c].source.length,
+              show: (c) =>
+                portsInChamber[c].source.map((w) => w.name).join(", ") || "—",
+              wrap: true,
+            },
+            {
+              name: "Edges",
+              value: (c) => edgesOfChamber[c].length,
+              num: true,
+            },
+            {
+              name: "Least spare",
+              value: (c) => spareOf(c) ?? 99,
+              show: (c) => spareOf(c) ?? "—",
+              num: true,
+            },
+            { name: "Cells", value: (c) => data.nodes[c].cells, num: true },
+          ],
+          items,
+          (c) => select("chamber", c, true),
+          (c) => `chamber:${c}`,
+          (a, b) =>
+            portsInChamber[b].target.length - portsInChamber[a].target.length ||
+            a - b,
+        );
+        markRows();
+      }
+      function wireTable() {
+        const find = document
+          .getElementById("wire-find")
+          .value.trim()
+          .toLowerCase();
+        const which = document.getElementById("wire-kind").value;
+        const items = wires.filter((w) => {
+          if (which === "plain" && w.resonator) return false;
+          if (which === "resonator" && !w.resonator) return false;
+          if (which === "tight" && !(w.tightest !== null && w.tightest <= 0))
+            return false;
+          if (which === "lost" && w.way) return false;
+          if (!find) return true;
+          return [w.name, w.source.label, w.target.label]
+            .join(" ")
+            .toLowerCase()
+            .includes(find);
+        });
+        table(
+          "wire-table",
+          [
+            { name: "Wire", value: (w) => w.name, sort: true },
+            {
+              name: "Kind",
+              value: (w) => (w.resonator ? "resonator" : "plain"),
+            },
+            { name: "Target port", value: (w) => w.target.label || "—" },
+            {
+              name: "Partition",
+              value: (w) =>
+                w.target.chambers.map((c) => `c${c}`).join(", ") || "—",
+            },
+            { name: "Edges", value: (w) => w.edges.length, num: true },
+            {
+              name: "Tightest",
+              value: (w) => (w.tightest === null ? 99 : w.tightest),
+              show: (w) => (w.tightest === null ? "—" : w.tightest),
+              num: true,
+            },
+            { name: "Crosses", value: (w) => w.crosses.join(", ") },
+            { name: "Status", value: (w) => w.status },
+          ],
+          items,
+          (w) => select("wire", w, true),
+          (w) => `wire:${w.name}`,
+        );
+        markRows();
+      }
+
+      // ---- Events ---------------------------------------------------------------
+      for (const b of document.querySelectorAll(".tabs button")) {
+        b.addEventListener("click", () => {
+          for (const o of document.querySelectorAll(".tabs button"))
+            o.classList.toggle("on", o === b);
+          for (const p of document.querySelectorAll(".pane"))
+            p.classList.toggle("on", p.id === `pane-${b.dataset.pane}`);
+        });
+      }
+      document.getElementById("edge-find").addEventListener("input", edgeTable);
+      document
+        .getElementById("edge-state")
+        .addEventListener("change", edgeTable);
+      document.getElementById("wire-find").addEventListener("input", wireTable);
+      document
+        .getElementById("wire-kind")
+        .addEventListener("change", wireTable);
+      document
+        .getElementById("part-kind")
+        .addEventListener("change", partTable);
+      document
+        .getElementById("zoom-in")
+        .addEventListener("click", () =>
+          zoomAt(1.5, map.clientWidth / 2, map.clientHeight / 2),
+        );
+      document
+        .getElementById("zoom-out")
+        .addEventListener("click", () =>
+          zoomAt(1 / 1.5, map.clientWidth / 2, map.clientHeight / 2),
+        );
+      document
+        .getElementById("zoom-fit")
+        .addEventListener("click", () => fit());
+      document
+        .getElementById("zoom-sel")
+        .addEventListener("click", zoomToSelection);
+      document.getElementById("theme").addEventListener("click", () => {
+        document.documentElement.dataset.theme = isDark() ? "light" : "dark";
+        paintRaster();
+        render();
+      });
+      matchMedia("(prefers-color-scheme: dark)").addEventListener(
+        "change",
+        () => {
+          paintRaster();
+          render();
+        },
+      );
+      window.addEventListener("resize", render);
+      window.addEventListener("keydown", (ev) => {
+        if (ev.target instanceof HTMLInputElement) return;
+        if (ev.key === "Escape") select(null);
+        else if (ev.key === "f" || ev.key === "F") {
+          fit();
+          gfit();
+        } else if (ev.key === "z" || ev.key === "Z") {
+          zoomToSelection();
+          graphToSelection();
+        }
+      });
+      map.addEventListener(
+        "wheel",
+        (ev) => {
+          ev.preventDefault();
+          const r = map.getBoundingClientRect();
+          zoomAt(
+            Math.exp(-ev.deltaY * 0.0015),
+            ev.clientX - r.left,
+            ev.clientY - r.top,
+          );
+        },
+        { passive: false },
+      );
+      let drag = null;
+      map.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0 || ev.target.closest(".zoom")) return;
+        drag = {
+          x: ev.clientX,
+          y: ev.clientY,
+          tx: view.tx,
+          ty: view.ty,
+          moved: false,
+        };
+        map.setPointerCapture(ev.pointerId);
+      });
+      map.addEventListener("pointermove", (ev) => {
+        const r = map.getBoundingClientRect();
+        const mx = ev.clientX - r.left;
+        const my = ev.clientY - r.top;
+        if (drag) {
+          const dx = ev.clientX - drag.x;
+          const dy = ev.clientY - drag.y;
+          if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+          if (drag.moved) {
+            map.classList.add("dragging");
+            view.tx = drag.tx + dx;
+            view.ty = drag.ty + dy;
+            render();
+            tip.style.display = "none";
+            return;
+          }
+        }
+        // The cell under the pointer.
+        const x = Math.floor((mx - view.tx) / view.s);
+        const y = H - 1 - Math.floor((my - view.ty) / view.s);
+        if (x >= 0 && y >= 0 && x < W && y < H) {
+          const code = codes[y * W + x];
+          const what =
+            code >= FIRST_CHAMBER
+              ? `chamber c${code - FIRST_CHAMBER}`
+              : code === 0
+                ? "bottleneck line"
+                : data.wallKinds[code - 1];
+          statusLine.textContent = `cell (${x}, ${y}) · ${what} · zoom ${view.s.toFixed(2)}`;
+        }
+        showTip(ev.target, ev);
+      });
+      map.addEventListener("pointerup", (ev) => {
+        const wasDrag = drag && drag.moved;
+        drag = null;
+        map.classList.remove("dragging");
+        if (wasDrag) return;
+        if (ev.target.closest(".zoom")) return;
+        pick(ev);
+      });
+      map.addEventListener("pointerleave", () => {
+        tip.style.display = "none";
+      });
+      function targetOf(node) {
+        const mark = node.closest(
+          "[data-edge],[data-wire],[data-chamber],[data-feed]",
+        );
+        if (!mark) return null;
+        if (mark.dataset.edge !== undefined)
+          return { kind: "edge", item: edges[+mark.dataset.edge] };
+        if (mark.dataset.wire !== undefined)
+          return {
+            kind: "wire",
+            item: wireByName.get(mark.dataset.wire),
+            end: mark.dataset.end,
+          };
+        if (mark.dataset.chamber !== undefined)
+          return { kind: "chamber", item: +mark.dataset.chamber };
+        if (mark.dataset.feed !== undefined && feedlines.has(mark.dataset.feed))
+          return { kind: "feedline", item: feedlines.get(mark.dataset.feed) };
+        return null;
+      }
+      function pick(ev) {
+        const t = targetOf(ev.target);
+        if (t) {
+          select(t.kind, t.item, false);
+          return;
+        }
+        // A click in a chamber selects it.
+        const r = map.getBoundingClientRect();
+        const x = Math.floor((ev.clientX - r.left - view.tx) / view.s);
+        const y = H - 1 - Math.floor((ev.clientY - r.top - view.ty) / view.s);
+        const code = x >= 0 && y >= 0 && x < W && y < H ? codes[y * W + x] : 0;
+        if (code >= FIRST_CHAMBER)
+          select("chamber", code - FIRST_CHAMBER, false);
+        else select(null);
+      }
+      function showTip(node, ev) {
+        const t = targetOf(node);
+        const free = node.dataset && node.dataset.tip;
+        if (!t && !free) {
+          tip.style.display = "none";
+          return;
+        }
+        tip.replaceChildren();
+        const line = (strong, rest) => {
+          const d = document.createElement("div");
+          if (strong) {
+            const b = document.createElement("b");
+            b.textContent = strong;
+            d.appendChild(b);
+          }
+          if (rest) {
+            const s = document.createElement("span");
+            s.className = "sub";
+            s.textContent = (strong ? " " : "") + rest;
+            d.appendChild(s);
+          }
+          tip.appendChild(d);
+        };
+        if (!t) line("", free);
+        else if (t.kind === "edge") {
+          const e = t.item;
+          line(
+            `${badgeText(e)}`,
+            e.kind === "stretch"
+              ? `stretch of ${e.feedline}, ${e.name.replace(/^× \S+ /, "")}`
+              : `${e.name} · ${e.ends.join(" · ")}`,
+          );
+          line(
+            "",
+            `${STATE_NAME[e.state]} · ${e.length.toFixed(1)} cells · c${e.chambers.join(", c")}`,
+          );
+          if (e.through.length) line("", `sent: ${e.through.join(", ")}`);
+          if (e.users)
+            line(
+              "",
+              `open to: ${e.users.length ? e.users.join(", ") : "no wire"}`,
+            );
+        } else if (t.kind === "wire") {
+          const w = t.item;
+          const end = t.end === "source" ? w.source : w.target;
+          line(
+            `${w.name}`,
+            `${t.end} port ${end.label || ""} · chamber c${end.chambers.join(", c") || "–"}`,
+          );
+          line(
+            "",
+            `${w.status}, ${w.edges.length} edge${w.edges.length === 1 ? "" : "s"}${w.tightest === null ? "" : `, tightest spare ${w.tightest}`}`,
+          );
+        } else if (t.kind === "chamber") {
+          const c = t.item;
+          line(
+            `c${c}`,
+            `${data.nodes[c].cells} cells · ${edgesOfChamber[c].length} edges · ${portsInChamber[c].target.length} target, ${portsInChamber[c].source.length} source ports`,
+          );
+        } else if (t.kind === "feedline") {
+          const f = t.item;
+          line(
+            f.name,
+            `crossings ${f.crossLoad}/${f.crossCapacity} · ${f.gates.length} bottlenecks · least spare ${f.spare ?? "—"}`,
+          );
+        }
+        tip.style.display = "block";
+        const r = views.getBoundingClientRect();
+        const mx = ev.clientX - r.left;
+        const my = ev.clientY - r.top;
+        const left =
+          mx + 14 + tip.offsetWidth > r.width
+            ? mx - 14 - tip.offsetWidth
+            : mx + 14;
+        tip.style.left = `${Math.max(4, left)}px`;
+        tip.style.top = `${Math.max(4, Math.min(r.height - tip.offsetHeight - 4, my + 14))}px`;
+      }
+
+      // ---- The abstract graph -----------------------------------------------------
+      // The chambers are nodes and the edges join them; an edge between three
+      // chambers or more meets them at a hub. The ports of every wire hang off the
+      // chambers they lie in as leaves. A chamber with neither an edge nor a port
+      // takes no part in the flow and is left out. The layout starts where each
+      // node lies on the chip and a force model then moves the nodes apart, while a
+      // weak pull back to that place keeps the chip's orientation.
+      let gpos = new Map();
+      let gplaced = [];
+      const gsx = (p) => p[0] * gview.s + gview.tx;
+      const gsy = (p) => p[1] * gview.s + gview.ty;
+      function layoutGraph(rounds, from) {
+        const k = 1000 / Math.max(W, H);
+        const flip = (p) => [p[0] * k, (H - 1 - p[1]) * k];
+        const nodes = [];
+        const at = new Map();
+        const add = (key, place, weight) => {
+          const start = from && from.has(key) ? from.get(key) : place;
+          at.set(key, nodes.length);
+          nodes.push({
+            x: start[0],
+            y: start[1],
+            ax: place[0],
+            ay: place[1],
+            weight,
+            key,
+          });
+        };
+        for (const n of data.nodes) {
+          const c = n.chamber;
+          if (
+            edgesOfChamber[c].length ||
+            portsInChamber[c].target.length ||
+            portsInChamber[c].source.length
+          ) {
+            add(`c${c}`, flip(n.at), 1);
+          }
+        }
+        const springs = [];
+        for (const e of edges) {
+          if (e.chambers.length > 2) {
+            add(`h${e.index}`, flip(e.mid), 0.6);
+            for (const c of e.chambers)
+              springs.push([`h${e.index}`, `c${c}`, 45]);
+          } else if (e.chambers.length === 2) {
+            springs.push([`c${e.chambers[0]}`, `c${e.chambers[1]}`, 110]);
+          }
+        }
+        for (const w of wires) {
+          for (const [end, tag] of [
+            [w.target, "t"],
+            [w.source, "s"],
+          ]) {
+            if (!end.chambers.length) continue;
+            add(`${tag}:${w.name}`, flip(end.port), 0.4);
+            for (const c of end.chambers)
+              springs.push([`${tag}:${w.name}`, `c${c}`, 36]);
+          }
+        }
+        const n = nodes.length;
+        const fx = new Float64Array(n);
+        const fy = new Float64Array(n);
+        const pulls = springs.map(([a, b, length]) => [
+          at.get(a),
+          at.get(b),
+          length,
+        ]);
+        for (let round = 0; round < rounds; round++) {
+          const cool = 1 - round / rounds;
+          fx.fill(0);
+          fy.fill(0);
+          for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+              let dx = nodes[i].x - nodes[j].x;
+              let dy = nodes[i].y - nodes[j].y;
+              let d2 = dx * dx + dy * dy;
+              if (d2 > 62500) continue;
+              if (d2 < 0.01) {
+                // Two nodes on one place part along a direction of their own.
+                dx = Math.cos(i + j);
+                dy = Math.sin(i + j);
+                d2 = 1;
+              }
+              const d = Math.sqrt(d2);
+              const f =
+                (2400 * nodes[i].weight * nodes[j].weight) / Math.max(d2, 4);
+              fx[i] += (f * dx) / d;
+              fy[i] += (f * dy) / d;
+              fx[j] -= (f * dx) / d;
+              fy[j] -= (f * dy) / d;
+            }
+          }
+          for (const [a, b, length] of pulls) {
+            const dx = nodes[b].x - nodes[a].x;
+            const dy = nodes[b].y - nodes[a].y;
+            const d = Math.max(0.01, Math.hypot(dx, dy));
+            const f = 0.06 * (d - length);
+            fx[a] += (f * dx) / d;
+            fy[a] += (f * dy) / d;
+            fx[b] -= (f * dx) / d;
+            fy[b] -= (f * dy) / d;
+          }
+          const most = 0.3 + 12 * cool;
+          for (let i = 0; i < n; i++) {
+            fx[i] += 0.004 * (nodes[i].ax - nodes[i].x);
+            fy[i] += 0.004 * (nodes[i].ay - nodes[i].y);
+            const step = Math.hypot(fx[i], fy[i]);
+            const scale = step > most ? most / step : 1;
+            nodes[i].x += fx[i] * scale;
+            nodes[i].y += fy[i] * scale;
+          }
+        }
+        return new Map(nodes.map((node) => [node.key, [node.x, node.y]]));
+      }
+      function placeGraphMarks() {
+        for (const m of gplaced)
+          m.el.setAttribute(
+            "transform",
+            `translate(${gsx(m.p).toFixed(1)},${gsy(m.p).toFixed(1)})`,
+          );
+      }
+      function gpath(points) {
+        return points
+          .map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`)
+          .join(" ");
+      }
+      function buildGraph() {
+        gworld.replaceChildren();
+        gscreen.replaceChildren();
+        gplaced = [];
+        const f = focus;
+        const dimEdge = (e) => (f && !f.edges.has(e) ? " dim" : "");
+        const dimWire = (w) => (f && !f.wires.has(w) ? " dim" : "");
+        const dimChamber = (c) => (f && !f.chambers.has(c) ? " dim" : "");
+        const node = (c) => gpos.get(`c${c}`);
+
+        // Edges between the same two chambers bow apart.
+        const pairs = new Map();
+        for (const e of edges) {
+          if (e.chambers.length !== 2) continue;
+          const key = e.chambers
+            .slice()
+            .sort((a, b) => a - b)
+            .join("-");
+          if (!pairs.has(key)) pairs.set(key, []);
+          pairs.get(key).push(e);
+        }
+        const edgeLayer = el("g", {}, gworld);
+        for (const e of edges) {
+          const g = el("g", {}, edgeLayer);
+          const cls = `gedge ${e.kind} ${e.state}${dimEdge(e)}`;
+          if (e.chambers.length === 2) {
+            const group = pairs.get(
+              e.chambers
+                .slice()
+                .sort((a, b) => a - b)
+                .join("-"),
+            );
+            const bend = (group.indexOf(e) - (group.length - 1) / 2) * 18;
+            const a = node(e.chambers[0]);
+            const b = node(e.chambers[1]);
+            const length = Math.max(0.01, Math.hypot(b[0] - a[0], b[1] - a[1]));
+            const nx = -(b[1] - a[1]) / length;
+            const ny = (b[0] - a[0]) / length;
+            const mid = [
+              (a[0] + b[0]) / 2 + nx * bend,
+              (a[1] + b[1]) / 2 + ny * bend,
+            ];
+            const control = [
+              (a[0] + b[0]) / 2 + 2 * nx * bend,
+              (a[1] + b[1]) / 2 + 2 * ny * bend,
+            ];
+            const d = `M ${gpath([a])} Q ${gpath([control])} ${gpath([b])}`;
+            el("path", { d, class: cls }, g);
+            el("path", { d, class: "hit" }, g).dataset.edge = e.index;
+            e.gmid = mid;
+          } else {
+            const hub = gpos.get(`h${e.index}`);
+            for (const c of e.chambers) {
+              el("polyline", { points: gpath([hub, node(c)]), class: cls }, g);
+              el(
+                "polyline",
+                { points: gpath([hub, node(c)]), class: "hit" },
+                g,
+              ).dataset.edge = e.index;
+            }
+            e.gmid = hub;
+          }
+        }
+        // The leaves: a port joined to every chamber it lies in.
+        for (const w of wires) {
+          for (const [end, tag, cls] of [
+            [w.target, "t", "tgt"],
+            [w.source, "s", "src"],
+          ]) {
+            const leaf = gpos.get(`${tag}:${w.name}`);
+            if (!leaf) continue;
+            const keep =
+              f && f.wires.has(w) && (tag === "t" || selection.kind === "wire")
+                ? " keep"
+                : "";
+            for (const c of end.chambers)
+              el(
+                "polyline",
+                {
+                  points: gpath([leaf, node(c)]),
+                  class: `gleaf ${cls}${dimWire(w)}${keep}`,
+                },
+                gworld,
+              );
+          }
+        }
+        // The way the flow sends each selected wire.
+        if (f) {
+          for (const w of f.routes) {
+            const pts = [];
+            if (gpos.has(`s:${w.name}`)) pts.push(gpos.get(`s:${w.name}`));
+            if (!w.chamberWay.length && w.source.chambers.length)
+              pts.push(node(w.source.chambers[0]));
+            for (const step of w.chamberWay)
+              pts.push(node(step.enter), step.edge.gmid, node(step.leave));
+            if (gpos.has(`t:${w.name}`)) pts.push(gpos.get(`t:${w.name}`));
+            if (pts.length > 1)
+              el("polyline", { points: gpath(pts), class: "route" }, gworld);
+          }
+        }
+
+        // Marks of a fixed size: hubs, nodes, leaves, badges.
+        for (const e of edges) {
+          if (e.chambers.length <= 2) continue;
+          const g = el("g", { class: `ghub ${e.state}${dimEdge(e)}` }, gscreen);
+          el("rect", { x: -3.5, y: -3.5, width: 7, height: 7 }, g);
+          g.dataset.edge = e.index;
+          gplaced.push({ el: g, p: gpos.get(`h${e.index}`) });
+        }
+        for (const n of data.nodes) {
+          const c = n.chamber;
+          if (!gpos.has(`c${c}`)) continue;
+          const ports = portsInChamber[c];
+          const g = el(
+            "g",
+            {
+              class: `gnode${ports.target.length || ports.source.length ? " ported" : ""}${dimChamber(c)}`,
+            },
+            gscreen,
+          );
+          el("circle", { r: 6 }, g);
+          el("text", { x: 8, y: -6 }, g).textContent = `c${c}`;
+          g.dataset.chamber = c;
+          gplaced.push({ el: g, p: node(c) });
+        }
+        for (const w of wires) {
+          for (const [tag, target] of [
+            ["s", false],
+            ["t", true],
+          ]) {
+            const leaf = gpos.get(`${tag}:${w.name}`);
+            if (!leaf) continue;
+            const keep =
+              f && f.wires.has(w) && (target || selection.kind === "wire")
+                ? " keep"
+                : "";
+            const g = el(
+              "g",
+              { class: `${target ? "tport" : "sport"}${dimWire(w)}${keep}` },
+              gscreen,
+            );
+            g.dataset.wire = w.name;
+            g.dataset.end = target ? "target" : "source";
+            if (target) el("path", { d: "M 6 0 L -5 -5 L -5 5 Z" }, g);
+            else el("circle", { r: 4 }, g);
+            el("text", { x: 7, y: -6 }, g).textContent = w.name;
+            gplaced.push({ el: g, p: leaf });
+          }
+        }
+        for (const e of edges) {
+          const label =
+            e.kind === "stretch"
+              ? `${e.feedline} ${badgeText(e)}`
+              : badgeText(e);
+          gplaced.push({ el: badge(e, label, dimEdge(e), gscreen), p: e.gmid });
+        }
+        placeGraphMarks();
+      }
+      function gfit(keys) {
+        const pts = keys
+          ? keys.filter((key) => gpos.has(key)).map((key) => gpos.get(key))
+          : [...gpos.values()];
+        if (!pts.length) return;
+        const xs = pts.map((p) => p[0]);
+        const ys = pts.map((p) => p[1]);
+        const pad = keys ? 60 : 30;
+        const x0 = Math.min(...xs) - pad;
+        const x1 = Math.max(...xs) + pad;
+        const y0 = Math.min(...ys) - pad;
+        const y1 = Math.max(...ys) + pad;
+        const w = graphPane.clientWidth;
+        const h = graphPane.clientHeight;
+        gview.s = Math.min(w / (x1 - x0), h / (y1 - y0), keys ? 6 : 100);
+        gview.tx = w / 2 - ((x0 + x1) / 2) * gview.s;
+        gview.ty = h / 2 - ((y0 + y1) / 2) * gview.s;
+        render();
+      }
+      function graphToSelection() {
+        if (!focus) return gfit();
+        const keys = [...focus.chambers].map((c) => `c${c}`);
+        for (const e of focus.edges)
+          if (e.chambers.length > 2) keys.push(`h${e.index}`);
+        for (const w of focus.wires) keys.push(`t:${w.name}`, `s:${w.name}`);
+        gfit(keys);
+      }
+      function gzoomAt(factor, px, py) {
+        const s = Math.min(80, Math.max(0.05, gview.s * factor));
+        const k = s / gview.s;
+        gview.tx = px - (px - gview.tx) * k;
+        gview.ty = py - (py - gview.ty) * k;
+        gview.s = s;
+        render();
+      }
+      graphPane.addEventListener(
+        "wheel",
+        (ev) => {
+          ev.preventDefault();
+          const r = graphPane.getBoundingClientRect();
+          gzoomAt(
+            Math.exp(-ev.deltaY * 0.0015),
+            ev.clientX - r.left,
+            ev.clientY - r.top,
+          );
+        },
+        { passive: false },
+      );
+      let gdrag = null;
+      graphPane.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0 || ev.target.closest(".zoom")) return;
+        gdrag = {
+          x: ev.clientX,
+          y: ev.clientY,
+          tx: gview.tx,
+          ty: gview.ty,
+          moved: false,
+        };
+        graphPane.setPointerCapture(ev.pointerId);
+      });
+      graphPane.addEventListener("pointermove", (ev) => {
+        if (gdrag) {
+          const dx = ev.clientX - gdrag.x;
+          const dy = ev.clientY - gdrag.y;
+          if (Math.abs(dx) + Math.abs(dy) > 4) gdrag.moved = true;
+          if (gdrag.moved) {
+            graphPane.classList.add("dragging");
+            gview.tx = gdrag.tx + dx;
+            gview.ty = gdrag.ty + dy;
+            render();
+            tip.style.display = "none";
+            return;
+          }
+        }
+        showTip(ev.target, ev);
+      });
+      graphPane.addEventListener("pointerup", (ev) => {
+        const wasDrag = gdrag && gdrag.moved;
+        gdrag = null;
+        graphPane.classList.remove("dragging");
+        if (wasDrag || ev.target.closest(".zoom")) return;
+        const t = targetOf(ev.target);
+        if (t) select(t.kind, t.item, false);
+        else select(null);
+      });
+      graphPane.addEventListener("pointerleave", () => {
+        tip.style.display = "none";
+      });
+      document
+        .getElementById("gzoom-fit")
+        .addEventListener("click", () => gfit());
+      document
+        .getElementById("gzoom-sel")
+        .addEventListener("click", graphToSelection);
+      document.getElementById("glayout").addEventListener("click", () => {
+        gpos = layoutGraph(300, gpos);
+        buildGraph();
+        render();
+      });
+      gpos = layoutGraph(500);
+
+      // ---- Chip, graph or both ----------------------------------------------------
+      function showView(name) {
+        views.className = name;
+        for (const b of document.querySelectorAll(".switch button"))
+          b.classList.toggle("on", b.dataset.view === name);
+        try {
+          localStorage.setItem("capacity-graph-view", name);
+        } catch {
+          // A page opened from disk may have no storage; the view then resets.
+        }
+        requestAnimationFrame(() => {
+          if (selection) {
+            zoomToSelection();
+            graphToSelection();
+          } else {
+            fit();
+            gfit();
+          }
+        });
+      }
+      for (const b of document.querySelectorAll(".switch button"))
+        b.addEventListener("click", () => showView(b.dataset.view));
+
+      // ---- Start ----------------------------------------------------------------
+      {
+        const v = document.getElementById("verdict");
+        v.textContent = data.verdict || "?";
+        v.className = `verdict ${data.verdict || ""}`;
+        const over = edges.filter((e) => e.state === "over").length;
+        const full = edges.filter((e) => e.state === "full").length;
+        document.getElementById("counts").textContent =
+          `${chamberCount} chambers · ${edges.length} edges (${edges.filter((e) => e.kind === "stretch").length} stretches) · ` +
+          `${over} over · ${full} full · ${wires.length} wires · grid ${W}×${H}, clearance ${data.clearance}, pitch ${data.pitch}`;
+        const s = document.getElementById("summary");
+        for (const text of data.summary || []) {
+          const p = document.createElement("p");
+          p.textContent = text;
+          s.appendChild(p);
+        }
+      }
+      // A selection in the address: #wire=14, #edge=g20 or #edge=<index>,
+      // #chamber=c12, #feedline=f2; &theme=light or dark; &view=chip, graph or
+      // both.
+      function fromHash() {
+        const args = new URLSearchParams(location.hash.slice(1));
+        if (args.get("theme"))
+          document.documentElement.dataset.theme = args.get("theme");
+        const wire = args.get("wire");
+        const edge = args.get("edge");
+        const chamber = args.get("chamber");
+        const feed = args.get("feedline");
+        if (wire && wireByName.has(wire)) return ["wire", wireByName.get(wire)];
+        if (edge) {
+          const found = /^\d+$/.test(edge)
+            ? edges[+edge]
+            : edges.find((e) => e.name === edge);
+          if (found) return ["edge", found];
+        }
+        if (chamber) {
+          const c = +chamber.replace(/^c/, "");
+          if (c >= 0 && c < chamberCount) return ["chamber", c];
+        }
+        if (feed && feedlines.has(feed))
+          return ["feedline", feedlines.get(feed)];
+        return null;
+      }
+      edgeTable();
+      feedTable();
+      wireTable();
+      partTable();
+      {
+        let saved = "both";
+        try {
+          saved = localStorage.getItem("capacity-graph-view") || "both";
+        } catch {
+          // No storage: both views.
+        }
+        const args = new URLSearchParams(location.hash.slice(1));
+        views.className = args.get("view") || saved;
+        for (const b of document.querySelectorAll(".switch button"))
+          b.classList.toggle("on", b.dataset.view === views.className);
+        fit();
+        gfit();
+        const asked = fromHash();
+        if (asked) select(asked[0], asked[1], true);
+        else select(null);
+      }
+    </script>
+    <script>
+      "use strict";
+      // ---- The coupler tab, when a server holds the stage -------------------
+      // `mqt-scpd couplers` serves this page with the couplers and their options
+      // in `session-data`. A change goes to the server, which answers once the
+      // chip is analysed anew; the page then loads again with the new graph, and
+      // keeps the coupler picked and the view.
+      {
+        const session = JSON.parse(
+          document.getElementById("session-data").textContent,
+        );
+        if (session) {
+          const couplers = session.couplers;
+          const byIndex = new Map(couplers.map((c) => [c.index, c]));
+          const STORE = "capacity-graph-session";
+          const recall = () => {
+            try {
+              return JSON.parse(sessionStorage.getItem(STORE) || "null") || {};
+            } catch {
+              return {};
+            }
+          };
+          const remember = (value) => {
+            try {
+              sessionStorage.setItem(STORE, JSON.stringify(value));
+            } catch {
+              // No storage: the page starts from the whole chip again.
+            }
+          };
+          let picked = null;
+          const tab = document.getElementById("tab-couplers");
+          tab.hidden = false;
+
+          function optionText(c, o) {
+            const parts = [`option ${o.index}`];
+            if (o.index === c.chosen) parts.push("stands");
+            parts.push(o.open ? "offered" : "not offered by the search");
+            parts.push(`orientation ${o.orientation}, offset ${o.offset}`);
+            if (o.secondPort) parts.push("second port");
+            if (o.jog) parts.push(`jog ${o.jog}`);
+            parts.push(`resonator ${o.resonator} units`);
+            return `${c.resonator}: ${parts.join(" · ")}`;
+          }
+
+          function drawCouplers() {
+            const layer = el("g", { class: "couplers" }, world);
+            for (const c of couplers) {
+              const all = c.index === picked;
+              for (const o of c.options) {
+                const stands = o.index === c.chosen;
+                if ((!all && !stands) || o.pad.length === 0) continue;
+                const kind = stands
+                  ? "pad-chosen"
+                  : o.open
+                    ? "pad-open"
+                    : "pad-shut";
+                if (all && o.lead.length > 1)
+                  el(
+                    "polyline",
+                    { points: worldPoints(o.lead), class: `lead ${kind}` },
+                    layer,
+                  );
+                const pad = el(
+                  "polygon",
+                  { points: worldPoints(o.pad), class: `pad ${kind}` },
+                  layer,
+                );
+                pad.dataset.coupler = c.index;
+                pad.dataset.option = o.index;
+                el("title", {}, pad).textContent = optionText(c, o);
+              }
+            }
+          }
+          const plainBuild = build;
+          build = function () {
+            plainBuild();
+            drawCouplers();
+          };
+          const plainPick = pick;
+          pick = function (ev) {
+            const hit = ev.target.closest
+              ? ev.target.closest("[data-option]")
+              : null;
+            if (!hit) {
+              plainPick(ev);
+              return;
+            }
+            const c = +hit.dataset.coupler;
+            const o = +hit.dataset.option;
+            if (c !== picked) pickCoupler(c, false);
+            else if (o !== byIndex.get(c).chosen) move(c, o);
+          };
+
+          function boxOfCoupler(c) {
+            const xs = [];
+            const ys = [];
+            for (const o of c.options)
+              for (const [x, y] of o.pad.concat(o.lead)) {
+                xs.push(x);
+                ys.push(y);
+              }
+            return {
+              x0: Math.min(...xs) - 20,
+              y0: Math.min(...ys) - 20,
+              x1: Math.max(...xs) + 20,
+              y1: Math.max(...ys) + 20,
+            };
+          }
+          function pickCoupler(index, zoom) {
+            picked = index;
+            remember({ ...recall(), coupler: index });
+            couplerTable();
+            optionTable();
+            build();
+            if (zoom) fit(boxOfCoupler(byIndex.get(index)));
+            else render();
+          }
+
+          function simpleTable(id, head, rows, onPick, isPicked) {
+            const t = document.getElementById(id);
+            t.replaceChildren();
+            const hr = document.createElement("tr");
+            for (const h of head) {
+              const th = document.createElement("th");
+              th.textContent = h;
+              hr.appendChild(th);
+            }
+            t.appendChild(hr);
+            for (const r of rows) {
+              const tr = document.createElement("tr");
+              tr.className = `row${isPicked(r) ? " sel" : ""}`;
+              for (const cell of r.cells) {
+                const td = document.createElement("td");
+                td.textContent = cell;
+                tr.appendChild(td);
+              }
+              tr.addEventListener("click", () => onPick(r));
+              t.appendChild(tr);
+            }
+          }
+          function couplerTable() {
+            simpleTable(
+              "coupler-table",
+              ["Chain", "Point", "Resonator", "Option", "Offered", "Edges"],
+              couplers.map((c) => ({
+                c,
+                cells: [
+                  c.chain,
+                  c.at,
+                  c.resonator,
+                  `${c.chosen} of ${c.options.length}`,
+                  c.options.filter((o) => o.open).length,
+                  [c.edgeIn, c.edgeOut].filter(Boolean).join(" · "),
+                ],
+              })),
+              (r) => pickCoupler(r.c.index, true),
+              (r) => r.c.index === picked,
+            );
+          }
+          function optionTable() {
+            const c = byIndex.get(picked);
+            simpleTable(
+              "option-table",
+              [
+                "Option",
+                "Stands",
+                "Offered",
+                "Orientation",
+                "Offset",
+                "Port",
+                "Jog",
+                "Resonator",
+              ],
+              c
+                ? c.options.map((o) => ({
+                    o,
+                    cells: [
+                      o.index,
+                      o.index === c.chosen ? "yes" : "",
+                      o.open ? "yes" : "no",
+                      o.orientation,
+                      o.offset,
+                      o.secondPort ? "second" : "first",
+                      o.jog || "",
+                      o.resonator,
+                    ],
+                  }))
+                : [],
+              (r) => {
+                if (r.o.index !== c.chosen) move(c.index, r.o.index);
+              },
+              (r) => c && r.o.index === c.chosen,
+            );
+          }
+
+          const log = document.getElementById("session-log");
+          function sayLast(last) {
+            log.replaceChildren();
+            const head = document.createElement("div");
+            head.textContent = `Last: ${last.action}`;
+            log.appendChild(head);
+            for (const e of last.edges || []) {
+              const line = document.createElement("div");
+              line.textContent = `edge ${e.edge}: ${e.drawn ? `drawn, ${e.cells} cells` : "NO WAY"}`;
+              if (!e.drawn) line.className = "bad";
+              log.appendChild(line);
+            }
+            for (const text of last.lines || []) {
+              const line = document.createElement("div");
+              line.textContent = text.replace(/^\[final\]\s+[\d.]+s\s+/, "");
+              if (/UNSAT|NO WAY/.test(text)) line.className = "bad";
+              log.appendChild(line);
+            }
+          }
+          async function move(coupler, option) {
+            log.textContent = `coupler ${coupler} to option ${option}: drawing its edges and analysing the chip …`;
+            let answer;
+            try {
+              const reply = await fetch("/option", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ coupler, option }),
+              });
+              answer = await reply.json();
+              if (!reply.ok) throw new Error(answer.error || reply.statusText);
+            } catch (error) {
+              log.textContent = `the server refused: ${error.message}`;
+              return;
+            }
+            remember({
+              coupler,
+              tab: true,
+              view: { s: view.s, tx: view.tx, ty: view.ty },
+            });
+            location.reload();
+          }
+
+          sayLast(session.last);
+          couplerTable();
+          optionTable();
+          // `#coupler=8` in the address picks a coupler and shows it.
+          const asked = new URLSearchParams(location.hash.slice(1)).get(
+            "coupler",
+          );
+          const saved = recall();
+          if (asked !== null && byIndex.has(+asked)) {
+            tab.click();
+            pickCoupler(+asked, true);
+          } else {
+            if (saved.tab) tab.click();
+            if (saved.coupler !== undefined && byIndex.has(saved.coupler))
+              pickCoupler(saved.coupler, false);
+            else build();
+            if (saved.view) {
+              Object.assign(view, saved.view);
+              render();
+            }
+          }
+          tab.addEventListener("click", () =>
+            remember({ ...recall(), tab: true }),
+          );
+          for (const b of document.querySelectorAll(".tabs button"))
+            if (b !== tab)
+              b.addEventListener("click", () =>
+                remember({ ...recall(), tab: false }),
+              );
+        }
+      }
+    </script>
+  </body>
+</html>

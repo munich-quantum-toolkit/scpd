@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace mqt::scpd::grid {
@@ -57,30 +58,57 @@ std::vector<uint32_t> squaredDistanceTransform(const BitGrid& blocked) {
   }
 
   // Down each column: the minimum over the rows of the row distance plus the
-  // squared row offset. A better row cannot lie further away than the
-  // square root of the best distance so far.
-  std::vector<uint32_t> column(height);
+  // squared row offset, as the lower envelope of one parabola per row
+  // (Felzenszwalb and Huttenlocher), in time linear in the column. A row
+  // without a blocked cell has no parabola. A cell whose own row has none
+  // keeps at most `DISTANCE_UNBOUNDED`, as the scan this replaces did.
+  std::vector<int64_t> rowCost(height);
+  std::vector<uint32_t> root(height);
+  std::vector<double> from(static_cast<std::size_t>(height) + 1);
   for (uint32_t x = 0; x < width; ++x) {
+    const auto at = [&](const uint32_t y) -> uint32_t& {
+      return distance[(static_cast<std::size_t>(y) * width) + x];
+    };
+    std::size_t parabolas = 0;
     for (uint32_t y = 0; y < height; ++y) {
-      column[y] = distance[(static_cast<std::size_t>(y) * width) + x];
-    }
-    for (uint32_t y = 0; y < height; ++y) {
-      uint32_t best = column[y];
-      if (best == 0) {
+      const auto value = at(y);
+      rowCost[y] = value;
+      if (value >= DISTANCE_UNBOUNDED) {
         continue;
       }
-      const auto range = static_cast<int64_t>(std::sqrt(best)) + 1;
-      const int64_t from = std::max<int64_t>(0, static_cast<int64_t>(y) - range);
-      const int64_t to =
-          std::min<int64_t>(static_cast<int64_t>(height) - 1,
-                            static_cast<int64_t>(y) + range);
-      for (int64_t sy = from; sy <= to; ++sy) {
-        const int64_t dy = static_cast<int64_t>(y) - sy;
-        const uint32_t candidate =
-            column[static_cast<std::size_t>(sy)] + static_cast<uint32_t>(dy * dy);
-        best = std::min(best, candidate);
+      const auto cost = [&](const uint32_t r) {
+        return static_cast<double>(rowCost[r]) +
+               (static_cast<double>(r) * static_cast<double>(r));
+      };
+      // Where the new parabola falls below the last one kept, dropping
+      // every parabola it hides.
+      double meets = 0.0;
+      while (parabolas > 0) {
+        const auto last = root[parabolas - 1];
+        meets = (cost(y) - cost(last)) /
+                (2.0 * (static_cast<double>(y) - static_cast<double>(last)));
+        if (parabolas == 1 || meets > from[parabolas - 1]) {
+          break;
+        }
+        --parabolas;
       }
-      distance[(static_cast<std::size_t>(y) * width) + x] = best;
+      root[parabolas] = y;
+      from[parabolas] =
+          parabolas == 0 ? -std::numeric_limits<double>::infinity() : meets;
+      ++parabolas;
+    }
+    if (parabolas == 0) {
+      continue;
+    }
+    std::size_t k = 0;
+    for (uint32_t y = 0; y < height; ++y) {
+      while (k + 1 < parabolas && from[k + 1] <= static_cast<double>(y)) {
+        ++k;
+      }
+      const auto dy = static_cast<int64_t>(y) - static_cast<int64_t>(root[k]);
+      const auto best = static_cast<uint64_t>(rowCost[root[k]] + (dy * dy));
+      const auto own = static_cast<uint64_t>(rowCost[y]);
+      at(y) = static_cast<uint32_t>(std::min(best, own));
     }
   }
   return distance;

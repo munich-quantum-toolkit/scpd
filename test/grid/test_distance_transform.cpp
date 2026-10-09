@@ -55,6 +55,22 @@ TEST(DistanceTransform, MatchesBruteForceOnARandomGrid) {
   EXPECT_EQ(squaredDistanceTransform(blocked), bruteForce(blocked));
 }
 
+TEST(DistanceTransform, MatchesBruteForceWithFewObstacles) {
+  // Most rows have no blocked cell, and in a column the nearest blocked
+  // cell lies many rows away: the envelope of the rows decides alone.
+  for (const std::uint32_t seed : {1U, 2U, 3U, 4U, 5U}) {
+    std::mt19937 rng(seed);
+    std::bernoulli_distribution coin(0.004);
+    BitGrid blocked(61, 47);
+    for (std::size_t i = 0; i < blocked.size(); ++i) {
+      if (coin(rng)) {
+        blocked.set(i);
+      }
+    }
+    EXPECT_EQ(squaredDistanceTransform(blocked), bruteForce(blocked)) << seed;
+  }
+}
+
 TEST(DistanceTransform, IsExactAlongRowsAndDiagonals) {
   BitGrid blocked(9, 9);
   blocked.setCell(4, 4);

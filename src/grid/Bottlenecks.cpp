@@ -85,24 +85,16 @@ private:
   std::span<const std::uint32_t> distance_;
 };
 
-/// Whether the clearance along the axis, walked from a candidate through
-/// `next`, rises by `rise` cells before it falls below the candidate's own.
-/// A cell of the same clearance and a lower index counts as below, so that
-/// of a stretch at one clearance a single cell passes. The walk stops where
-/// the axis forks or ends, and comes back to the candidate on an axis that
-/// closes on itself.
-bool risesTowards(const CellSpace& space, const MedialAxis& axis,
-                  const std::size_t candidate, std::size_t next,
-                  const double rise) {
-  const auto own = space.clearance(candidate);
-  const auto enough = std::sqrt(static_cast<double>(own)) + rise;
-  auto previous = candidate;
-  while (next != candidate) {
-    const auto here = space.clearance(next);
-    if (here < own || (here == own && next < candidate)) {
-      return false;
-    }
-    if (std::sqrt(static_cast<double>(here)) >= enough) {
+/// Whether an arm of the axis, entered from `fork` through `first`, runs
+/// into a slot within `reach` cells.
+bool armEntersASlot(const MedialAxis& axis,
+                    const std::unordered_set<std::size_t>& slots,
+                    const std::size_t fork, const std::size_t first,
+                    const std::size_t reach) {
+  auto previous = fork;
+  auto next = first;
+  for (std::size_t step = 0; step <= reach; ++step) {
+    if (slots.contains(next)) {
       return true;
     }
     const auto found = axis.neighbors.find(next);
@@ -117,8 +109,54 @@ bool risesTowards(const CellSpace& space, const MedialAxis& axis,
   return false;
 }
 
+/// Whether the clearance along the axis, walked from a candidate through
+/// `next`, rises by `rise` cells before it falls below the candidate's own.
+/// A stretch at one clearance lets every cell of it pass: each is taken to
+/// the middle of the stretch (`middleOfStretch`), and the one cut from there
+/// is kept once. The walk stops where the axis forks or ends, and comes
+/// back to the candidate on an axis that closes on itself. A fork with an
+/// arm into a slot ends the walk as a rise, from either side of the slot.
+bool risesTowards(const CellSpace& space, const MedialAxis& axis,
+                  const std::unordered_set<std::size_t>& slots,
+                  const std::size_t candidate, std::size_t next,
+                  const double rise) {
+  const auto own = space.clearance(candidate);
+  const auto enough = std::sqrt(static_cast<double>(own)) + rise;
+  auto previous = candidate;
+  while (next != candidate) {
+    const auto here = space.clearance(next);
+    if (here < own) {
+      return false;
+    }
+    if (std::sqrt(static_cast<double>(here)) >= enough) {
+      return true;
+    }
+    const auto found = axis.neighbors.find(next);
+    if (found == axis.neighbors.end()) {
+      return false;
+    }
+    if (found->second.size() != 2) {
+      // The slot arm reaches as far as the clearance here, at most.
+      const auto reach = static_cast<std::size_t>(
+                             std::ceil(std::sqrt(static_cast<double>(here)))) +
+                         4;
+      return found->second.size() > 2 &&
+             std::ranges::any_of(found->second, [&](const std::size_t arm) {
+               return arm != previous &&
+                      armEntersASlot(axis, slots, next, arm, reach);
+             });
+    }
+    const auto& pair = found->second;
+    const auto ahead = pair[0] == previous ? pair[1] : pair[0];
+    previous = next;
+    next = ahead;
+  }
+  return false;
+}
+
 /// The cell in the middle of the stretch of the axis around a candidate
-/// that holds the candidate's clearance, the candidate when none does.
+/// that holds the candidate's clearance, the candidate when none does. The
+/// same for every cell of the stretch.
 std::size_t middleOfStretch(const CellSpace& space, const MedialAxis& axis,
                             const std::size_t candidate) {
   const auto own = space.clearance(candidate);
@@ -142,14 +180,19 @@ std::size_t middleOfStretch(const CellSpace& space, const MedialAxis& axis,
   std::vector<std::size_t> cells(stretch[0].rbegin(), stretch[0].rend());
   cells.push_back(candidate);
   cells.insert(cells.end(), stretch[1].begin(), stretch[1].end());
-  return cells[(cells.size() - 1) / 2];
+  // Of an even stretch the two middle cells, the lower index: every cell of
+  // the stretch is taken to the same one, whichever way its neighbours are
+  // listed.
+  const auto low = (cells.size() - 1) / 2;
+  return cells.size() % 2 == 0 ? std::min(cells[low], cells[low + 1])
+                               : cells[low];
 }
 
 /// The cells of the axis whose clearance is a local minimum along it.
-std::vector<std::size_t> saddlePoints(const CellSpace& space,
-                                      const MedialAxis& axis,
-                                      const std::uint32_t limit,
-                                      const double rise) {
+std::vector<std::size_t>
+saddlePoints(const CellSpace& space, const MedialAxis& axis,
+             const std::unordered_set<std::size_t>& slots,
+             const std::uint32_t limit, const double rise) {
   std::vector<std::size_t> saddles;
   for (const auto& [cell, neighbors] : axis.neighbors) {
     // A dead end is where the axis stops, not where a corridor narrows.
@@ -174,8 +217,8 @@ std::vector<std::size_t> saddlePoints(const CellSpace& space,
       saddles.push_back(cell);
       continue;
     }
-    if (risesTowards(space, axis, cell, neighbors[0], rise) &&
-        risesTowards(space, axis, cell, neighbors[1], rise)) {
+    if (risesTowards(space, axis, slots, cell, neighbors[0], rise) &&
+        risesTowards(space, axis, slots, cell, neighbors[1], rise)) {
       saddles.push_back(middleOfStretch(space, axis, cell));
     }
   }
@@ -344,15 +387,20 @@ bool crossesATarget(const CellSpace& space, const std::unordered_set<std::size_t
 /// One line per narrowing, where the search reported several.
 ///
 /// Two candidates are the same place when they end on a common wall cell and
-/// their other ends are closer together than `reach`. Both halves are needed:
+/// their other ends are closer together than `reach` and, where `wallOf`
+/// labels the walls, on the same wall. Where it does, two candidates between
+/// the same two walls whose ends are within `reach` of each other on both
+/// walls are the same place as well. Both halves are needed:
 /// two openings on either side of a pillar end on the pillar together, and
 /// what tells them apart is that their far ends are nowhere near each other.
 /// The relation is closed transitively, so a plateau of any length becomes
 /// one group, and the shortest line of the group is kept because that is the
 /// one that binds. The order of the result is the order the search found them
 /// in.
-[[nodiscard]] std::vector<Bottleneck> narrowestOfEveryPlateau(
-    const std::vector<Bottleneck>& candidates, const GridMetrics& grid, const double reach) {
+[[nodiscard]] std::vector<Bottleneck>
+narrowestOfEveryPlateau(const std::vector<Bottleneck>& candidates,
+                        const GridMetrics& grid, const double reach,
+                        const std::span<const std::uint32_t> wallOf) {
   if (!(reach > 0.0)) {
     return candidates;
   }
@@ -377,21 +425,38 @@ bool crossesATarget(const CellSpace& space, const std::unordered_set<std::size_t
     return std::hypot(other.x() - one.x(), other.y() - one.y());
   };
 
-  /// Whether two cuts share a wall and end within `reach` of each other.
+  /// Whether the other ends of two cuts that share a cell are one place.
+  const auto near = [&](const std::size_t one, const std::size_t other) {
+    return apart(one, other) < reach &&
+           (wallOf.empty() || wallOf[one] == wallOf[other]);
+  };
+  /// Whether two cuts share a wall cell and end near each other.
   const auto sameNarrowing = [&](const Bottleneck& left, const Bottleneck& right) {
     if (left.first == right.first) {
-      return apart(left.second, right.second) < reach;
+      return near(left.second, right.second);
     }
     if (left.first == right.second) {
-      return apart(left.second, right.first) < reach;
+      return near(left.second, right.first);
     }
     if (left.second == right.first) {
-      return apart(left.first, right.second) < reach;
+      return near(left.first, right.second);
     }
     if (left.second == right.second) {
-      return apart(left.first, right.first) < reach;
+      return near(left.first, right.first);
     }
-    return false;
+    // Where the walls are labelled, two cuts between the same two walls
+    // whose ends lie near each other on both are one place too, shared cell
+    // or not.
+    if (wallOf.empty()) {
+      return false;
+    }
+    const auto across = [&](const std::size_t a, const std::size_t b,
+                            const std::size_t c, const std::size_t d) {
+      return wallOf[a] == wallOf[c] && wallOf[b] == wallOf[d] &&
+             apart(a, c) < reach && apart(b, d) < reach;
+    };
+    return across(left.first, left.second, right.first, right.second) ||
+           across(left.first, left.second, right.second, right.first);
   };
 
   for (std::size_t left = 0; left < count; ++left) {
@@ -441,8 +506,18 @@ std::vector<Bottleneck> findBottlenecks(const BitGrid& blocked, const MedialAxis
                     axis.cells.size(), squaredDistance.size(), grid.cells()));
   }
 
+  if (!options.wallOf.empty() && options.wallOf.size() != grid.cells()) {
+    throw std::invalid_argument(
+        std::format("the wall labels have {} cells, the grid {}",
+                    options.wallOf.size(), grid.cells()));
+  }
   const CellSpace space(blocked, axis, squaredDistance);
-  const std::unordered_set<std::size_t> targets(options.targets.begin(), options.targets.end());
+  // A bottleneck may cross neither a target nor a slot.
+  std::unordered_set<std::size_t> targets(options.targets.begin(),
+                                          options.targets.end());
+  targets.insert(options.slots.begin(), options.slots.end());
+  const std::unordered_set<std::size_t> slots(options.slots.begin(),
+                                              options.slots.end());
 
   std::vector<Bottleneck> bottlenecks;
   // A pair of walls is one bottleneck however many saddles look at it.
@@ -453,14 +528,15 @@ std::vector<Bottleneck> findBottlenecks(const BitGrid& blocked, const MedialAxis
     return (low << 32U) ^ high;
   };
 
-  for (const auto saddle : saddlePoints(
-           space, axis, options.maximumSquaredClearance, options.minimumRise)) {
+  // The cut through a cell of the axis: down both shores to the two wall
+  // cells across it, and the line between them crosses no target.
+  const auto cutAt =
+      [&](const std::size_t saddle) -> std::optional<Bottleneck> {
     const auto shores = shoresAround(space, saddle);
     // One shore means the axis runs along a wall rather than between two.
     if (shores.size() < 2) {
-      continue;
+      return std::nullopt;
     }
-
     std::unordered_map<std::size_t, Shore> ownership;
     for (const auto cell : shores[0]) {
       ownership[cell] = 1;
@@ -468,21 +544,119 @@ std::vector<Bottleneck> findBottlenecks(const BitGrid& blocked, const MedialAxis
     for (const auto cell : shores[1]) {
       ownership[cell] = 2;
     }
-
     const auto first = wallBelow(space, ownership, shores[0], 1);
     const auto second = wallBelow(space, ownership, shores[1], 2);
     if (!first.has_value() || !second.has_value() || *first == *second) {
-      continue;
-    }
-    if (!seen.insert(pairKey(*first, *second)).second) {
-      continue;
+      return std::nullopt;
     }
     if (crossesATarget(space, targets, grid, *first, *second)) {
-      continue;
+      return std::nullopt;
     }
-    bottlenecks.push_back({.first = *first, .second = *second, .saddle = saddle});
+    return Bottleneck{.first = *first, .second = *second, .saddle = saddle};
+  };
+  const auto keep = [&](const Bottleneck& cut) {
+    if (seen.insert(pairKey(cut.first, cut.second)).second) {
+      bottlenecks.push_back(cut);
+    }
+  };
+
+  const auto saddles = saddlePoints(
+      space, axis, slots, options.maximumSquaredClearance, options.minimumRise);
+  for (const auto saddle : saddles) {
+    if (const auto cut = cutAt(saddle)) {
+      keep(*cut);
+    }
   }
-  return narrowestOfEveryPlateau(bottlenecks, grid, options.sameNarrowing);
+
+  // Every side of a terminal is closed by a cut (user, 2026-10-08). Each arm
+  // of the axis that leaves a fork in front of a slot, up to the next fork
+  // or end, is cut at its narrowest cell, unless a cut of the search already
+  // lies on it: the minimum of an arm between two forks is not one the
+  // search keeps, since its walk stops at the far fork. Where the arm is
+  // narrowest at the fork itself, the cut is the first next to the fork
+  // that clears the slot.
+  if (!slots.empty()) {
+    const std::unordered_set<std::size_t> cut(saddles.begin(), saddles.end());
+    std::vector<std::size_t> forks;
+    for (const auto& [cell, arms] : axis.neighbors) {
+      if (arms.size() > 2) {
+        forks.push_back(cell);
+      }
+    }
+    std::ranges::sort(forks);
+    for (const auto fork : forks) {
+      const auto& arms = axis.neighbors.at(fork);
+      const auto reach = static_cast<std::size_t>(std::ceil(std::sqrt(
+                             static_cast<double>(space.clearance(fork))))) +
+                         4;
+      std::vector<bool> intoSlot(arms.size());
+      for (std::size_t at = 0; at < arms.size(); ++at) {
+        intoSlot[at] = armEntersASlot(axis, slots, fork, arms[at], reach);
+      }
+      if (std::ranges::none_of(intoSlot,
+                               [](const bool into) { return into; })) {
+        continue;
+      }
+      for (std::size_t at = 0; at < arms.size(); ++at) {
+        if (intoSlot[at]) {
+          continue;
+        }
+        // The cells of the arm, up to the next fork or end.
+        std::vector<std::size_t> cells;
+        bool alreadyCut = false;
+        auto previous = fork;
+        auto next = arms[at];
+        while (next != fork) {
+          const auto found = axis.neighbors.find(next);
+          if (found == axis.neighbors.end() || found->second.size() != 2) {
+            break;
+          }
+          if (cut.contains(next)) {
+            alreadyCut = true;
+            break;
+          }
+          cells.push_back(next);
+          const auto& pair = found->second;
+          const auto ahead = pair[0] == previous ? pair[1] : pair[0];
+          previous = next;
+          next = ahead;
+        }
+        if (alreadyCut || cells.empty()) {
+          continue;
+        }
+        const auto narrowest =
+            std::ranges::min(cells, {}, [&](const std::size_t cell) {
+              return space.clearance(cell);
+            });
+        const auto least = space.clearance(narrowest);
+        if (least >= options.maximumSquaredClearance) {
+          continue;
+        }
+        // Where to try a cut, in order: next to the fork outward when the
+        // fork is the narrowest, else the middle of the narrowest stretch and
+        // then every other cell as narrow.
+        std::vector<std::size_t> tries;
+        if (space.clearance(fork) <= least) {
+          tries = cells;
+        } else {
+          tries.push_back(middleOfStretch(space, axis, narrowest));
+          for (const auto cell : cells) {
+            if (space.clearance(cell) == least) {
+              tries.push_back(cell);
+            }
+          }
+        }
+        for (const auto cell : tries) {
+          if (const auto made = cutAt(cell)) {
+            keep(*made);
+            break;
+          }
+        }
+      }
+    }
+  }
+  return narrowestOfEveryPlateau(bottlenecks, grid, options.sameNarrowing,
+                                 options.wallOf);
 }
 
 std::uint32_t bottleneckCapacity(const Bottleneck& bottleneck, const GridMetrics& grid,

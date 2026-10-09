@@ -30,7 +30,6 @@ from .config import load_config, write_config
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
     from pathlib import Path
 
     from .flatbuffers.config.Config import ConfigT
@@ -265,3 +264,43 @@ class RunDirectory:
         path.write_bytes(data)
         self.invalidate_after(stage)
         return StageResult(stage=stage, path=path, size=len(data))
+
+    def coupler_session(
+        self,
+        config: ConfigT,
+        progress: Callable[[str], None] | None = None,
+        verbosity: int = 0,
+    ) -> pyscpd.CouplerSession:
+        """Run the Final stage up to and with the coupler insertion and keep it.
+
+        The session reads what the Final stage reads, from this directory, and
+        writes nothing: its couplers can then be moved by hand and the capacity
+        graph looked at again.
+
+        Args:
+            config: The run configuration.
+            progress: Called with every line the stage says, now and later.
+            verbosity: 0 for one progress line per round, 1 for one per wire and search as well.
+
+        Returns:
+            The session.
+
+        Raises:
+            RunError: If the chip or an artifact the Final stage reads is missing.
+        """
+        stages_before("final")
+        try:
+            text = self.chip.read_text(encoding="utf-8")
+        except OSError as error:
+            msg = f"{self.chip} is missing; the run directory is incomplete"
+            raise RunError(msg) from error
+        chip = classify_chip(text, config, str(self.chip))
+        return pyscpd.CouplerSession(
+            chip,
+            self._read("global"),
+            self._read("assign"),
+            self._read("detail"),
+            write_config(config),
+            progress,
+            verbosity,
+        )

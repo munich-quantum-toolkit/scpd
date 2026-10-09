@@ -101,4 +101,4 @@ refinement_rounds = 5
 # judged by are `bad = unrouted + open + crossing` and the resonators off
 # their length.
 repair_trials = 0
-stop_after    = "couplers"
+stop_after    = "feedlines"

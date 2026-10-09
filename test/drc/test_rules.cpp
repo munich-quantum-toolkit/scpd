@@ -126,6 +126,48 @@ TEST(FeedlineOrthogonality, ARightAngleCrossingOfAFeedlineIsAllowed) {
   EXPECT_EQ(report.feedlines_skipped, 1U);
 }
 
+/// A wire straight up across a feedline along x at y = 200 that turns onto
+/// a diagonal at `turn`: the cell at `turn` carries the diagonal heading,
+/// as the router records the cell a move ends on.
+std::vector<RCoord> turningAt(const std::uint32_t turn) {
+  auto cells = upward(200, 100, turn - 1);
+  for (std::uint32_t k = 0; k < 20; ++k) {
+    cells.emplace_back(200 + k, turn + k, 1);
+  }
+  return cells;
+}
+
+TEST(FeedlineOrthogonality, ATurnOnTheLastCellOfTheBandIsAllowed) {
+  // The band reaches ten cells either side of the feedline: the wire runs
+  // across it at a right angle and turns on its last cell, y = 210, which
+  // it reached heading up. That is what the router's search lets through.
+  const auto feedline = along(200, 10, 390);
+  const auto wire = turningAt(210);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.wires = {
+      {.connection = 0, .cells = wire, .components = {}, .feedline = false},
+      {.connection = 1, .cells = feedline, .components = {}, .feedline = true}};
+
+  const auto report = checkCells(view, rules());
+  EXPECT_EQ(countOf(report, DrcRule::FeedlineOrthogonality), 0U);
+}
+
+TEST(FeedlineOrthogonality, ATurnInsideTheBandIsAFinding) {
+  // The same wire turning at y = 205: its next cells run diagonally inside
+  // the band.
+  const auto feedline = along(200, 10, 390);
+  const auto wire = turningAt(205);
+  CellView view;
+  view.grid = tenUnitGrid();
+  view.wires = {
+      {.connection = 0, .cells = wire, .components = {}, .feedline = false},
+      {.connection = 1, .cells = feedline, .components = {}, .feedline = true}};
+
+  const auto report = checkCells(view, rules());
+  EXPECT_EQ(countOf(report, DrcRule::FeedlineOrthogonality), 1U);
+}
+
 TEST(FeedlineOrthogonality, ARunBesideAFeedlineIsAFinding) {
   // The same feedline, and a wire that runs along it five cells away:
   // inside the band the crossing rule keeps around a straight run, on a

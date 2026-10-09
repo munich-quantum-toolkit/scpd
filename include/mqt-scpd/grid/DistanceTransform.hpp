@@ -22,10 +22,11 @@ namespace mqt::scpd::grid {
 inline constexpr uint32_t DISTANCE_UNBOUNDED = 1'000'000;
 
 /// The squared Euclidean distance, in cells, of every cell to the nearest
-/// blocked cell. Blocked cells hold zero. The transform is exact: a pass
-/// along the rows finds the nearest blocked cell in each row, and a pass down
-/// the columns combines the rows, scanning no further than the best distance
-/// so far allows.
+/// blocked cell. Blocked cells hold zero. The transform is exact and linear
+/// in the number of cells: a pass along the rows finds the nearest blocked
+/// cell in each row, and a pass down the columns takes the lower envelope of
+/// the rows' parabolas (Felzenszwalb and Huttenlocher). A cell whose row has
+/// no blocked cell holds at most `DISTANCE_UNBOUNDED`.
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<uint32_t>
 squaredDistanceTransform(const BitGrid& blocked);
 

@@ -17,6 +17,7 @@
 #include "mqt-scpd/io/Config.hpp"
 #include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/milp/Model.hpp"
+#include "mqt-scpd/pipeline/CouplerSession.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 
@@ -108,6 +109,17 @@ mqt::scpd::pipeline::Progress sayTo(const nb::object& progress) {
     return {};
   }
   return [&progress](const std::string_view line) {
+    progress(nb::str(line.data(), line.size()));
+  };
+}
+
+/// The same for an object that keeps the callable after the call that made
+/// it returns: it holds its own reference.
+mqt::scpd::pipeline::Progress keepSaying(const nb::object& progress) {
+  if (progress.is_none()) {
+    return {};
+  }
+  return [progress](const std::string_view line) {
     progress(nb::str(line.data(), line.size()));
   };
 }
@@ -214,7 +226,7 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                 design, capacityOf(plan), globalOf(routing), configuration),
             producer);
       },
-      "chip"_a, "capacity"_a, "global"_a, "config"_a, "producer"_a,
+      "chip"_a, "capacity"_a, "global_"_a, "config"_a, "producer"_a,
       "Run the Assignment stage. Returns 03-assign.fb as bytes.");
 
   m.def(
@@ -259,7 +271,7 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                               configuration, sayTo(progress)),
                           producer);
       },
-      "chip"_a, "capacity"_a, "global"_a, "assignment"_a, "corridor"_a,
+      "chip"_a, "capacity"_a, "global_"_a, "assignment"_a, "corridor"_a,
       "config"_a, "producer"_a, "progress"_a = nb::none(),
       "Run the Detail stage. Returns 05-detail.fb as bytes. progress, when "
       "given, is called with one line per pass while the stage runs.");
@@ -286,7 +298,7 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                               verbosity),
                           producer);
       },
-      "chip"_a, "capacity"_a, "global"_a, "assignment"_a, "detail"_a,
+      "chip"_a, "capacity"_a, "global_"_a, "assignment"_a, "detail"_a,
       "config"_a, "producer"_a, "progress"_a = nb::none(),
       "debug"_a = nb::none(), "verbosity"_a = 0,
       "Run the Final stage. Returns 06-final.fb as bytes. progress, when "
@@ -295,6 +307,43 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "when given, is called with the name and the text of one SVG picture "
       "of the grid and then of every search, and returns where it put the "
       "picture so the lines can name it.");
+
+  nb::class_<mqt::scpd::pipeline::CouplerSession>(
+      m, "CouplerSession",
+      "The Final stage held after its coupler insertion, to move couplers "
+      "by hand and look at the capacity graph again: a debugging aid.")
+      .def(
+          "__init__",
+          [](mqt::scpd::pipeline::CouplerSession* self, const nb::bytes& chip,
+             const nb::bytes& global, const nb::bytes& assignment,
+             const nb::bytes& detail, const nb::bytes& config,
+             const nb::object& progress, const std::uint32_t verbosity) {
+            const auto configuration =
+                mqt::scpd::io::readConfig(asSpan(config));
+            const auto design = mqt::scpd::io::readChip(asSpan(chip));
+            const auto circuit = mqt::scpd::io::readArtifact(asSpan(global));
+            const auto assigned =
+                mqt::scpd::io::readArtifact(asSpan(assignment));
+            const auto drawn = mqt::scpd::io::readArtifact(asSpan(detail));
+            new (self) mqt::scpd::pipeline::CouplerSession(
+                design, globalOf(circuit), assignmentOf(assigned),
+                detailOf(drawn), configuration, keepSaying(progress),
+                verbosity);
+          },
+          "chip"_a, "global_"_a, "assignment"_a, "detail"_a, "config"_a,
+          "progress"_a = nb::none(), "verbosity"_a = 0,
+          "Run the Final stage up to and with the coupler insertion and keep "
+          "it. progress, when given, is called with every line the stage "
+          "says, now and on every later call.")
+      .def("couplers", &mqt::scpd::pipeline::CouplerSession::couplers,
+           "The couplers as they stand and every option of each, as JSON.")
+      .def("set_option", &mqt::scpd::pipeline::CouplerSession::setOption,
+           "coupler"_a, "option"_a,
+           "Put a coupler on another option and draw its two feedline edges "
+           "again. Returns JSON with what became of each edge.")
+      .def("graph", &mqt::scpd::pipeline::CouplerSession::graph,
+           "The capacity graph of the chip as it stands, as the JSON of "
+           "final-capacity-graph.json.");
 
   m.def(
       "check_final",
@@ -316,7 +365,7 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                                         *configuration.rules),
             *configuration.rules));
       },
-      "chip"_a, "global"_a, "assignment"_a, "final"_a, "config"_a,
+      "chip"_a, "global_"_a, "assignment"_a, "final"_a, "config"_a,
       "Check a final routing against the design rules. Returns the text of "
       "drc.json.");
 
