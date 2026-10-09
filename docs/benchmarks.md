@@ -91,6 +91,13 @@ mqt-scpd plot --run-dir runs/33q --stage corridor -o 33q-corridor.svg
 mqt-scpd render --run-dir runs/33q --stage capacity -o 33q-capacity.gds
 ```
 
+The pictures of the assign and corridor steps also show every feedline chain. A
+chain runs from its first launcher through the feeds of its resonators to its
+last launcher. In SVG each chain has a color of its own and names its launchers
+and resonators under the pointer; in GDS the chains are on layer 32,
+`plan.feedline`. A chain that ends at a termination ends at the feed of its
+resonator there, with a square mark.
+
 {doc}`terminal_output` describes what a run prints and what `-v`, `-vv` and
 `-vvv` add.
 

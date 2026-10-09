@@ -26,7 +26,7 @@ from mqt.scpd.flatbuffers.design.Port import PortT
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
-from mqt.scpd.planning import PlanningGeometry
+from mqt.scpd.planning import Feedline, PlanningGeometry
 from mqt.scpd.plot import OBSTACLE_FILL, ROLE_COLORS, PlotError, layout_svg, simplify
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
@@ -175,6 +175,36 @@ def test_a_planning_stage_is_drawn_over_the_chip_on_layers_of_its_own() -> None:
     assert style is not None
     assert style.text is not None
     assert "g.l-corridor>path" in style.text
+
+
+def test_every_feedline_chain_is_drawn_in_a_color_of_its_own() -> None:
+    """A chain shows its terminals and its termination and names its ports.
+
+    Its color differs from those of its neighbours along the ring, and the color of the last chain
+    differs from that of the first.
+    """
+    feedlines = [
+        Feedline(
+            points=[(0.0, 10.0 * index), (50.0, 10.0 * index), (100.0, 10.0 * index)],
+            terminals=[(50.0, 10.0 * index)],
+            label=f"feedline {index + 1}",
+        )
+        for index in range(5)
+    ]
+    feedlines[4].terminations = [(50.0, 40.0)]
+
+    svg = layout_svg(_mini(), planning=PlanningGeometry(feedlines=feedlines))
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-feedline")
+    chains = layer.findall(f"{SVG}g")
+    assert [chain.findtext(f"{SVG}title") for chain in chains] == [f"feedline {index}" for index in range(1, 6)]
+    colors = [chain.get("stroke") for chain in chains]
+    assert all(colors)
+    assert all(colors[index] != colors[index + 1] for index in range(4))
+    assert colors[4] != colors[0]
+    assert len(layer.findall(f".//{SVG}circle")) == 5
+    assert len(layer.findall(f".//{SVG}rect")) == 1
 
 
 def test_a_planning_stage_without_shapes_changes_nothing() -> None:

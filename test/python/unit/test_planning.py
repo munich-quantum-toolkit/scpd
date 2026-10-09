@@ -18,11 +18,14 @@ import pytest
 from mqt.scpd.artifacts import write_artifact
 from mqt.scpd.chip import decode_chip
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
+from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
+from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Lattice import LatticeT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
+from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
-from mqt.scpd.planning import PlanningError, planning_geometry
+from mqt.scpd.planning import Feedline, PlanningError, PlanningGeometry, planning_geometry
 from mqt.scpd.run import RunDirectory
 from mqt.scpd.steps import STEPS
 
@@ -95,6 +98,79 @@ def test_the_assignment_picture_draws_a_chord_from_every_ring_port_to_its_feed(r
     assert len(geometry.ring) == 5
     assert len(geometry.assignments) == 5
     assert {chord[0] for chord in geometry.assignments} == set(geometry.ring)
+
+
+def assignment_of(ring: list[int], feeds: list[PointT], chain: FeedlineChainT) -> bytes:
+    """An assignment artifact with one feedline chain.
+
+    Returns:
+        The bytes of the artifact.
+    """
+    return write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.Assignment,
+            output=AssignmentT(
+                connections=[],
+                ring=[PortRefT(index) for index in ring],
+                launchers=[PortRefT(index) for index in ring],
+                feeds=feeds,
+                chains=[chain],
+            ),
+        )
+    )
+
+
+def test_a_feedline_runs_from_its_launcher_through_the_feeds_of_its_resonators(run: RunDirectory) -> None:
+    """A chain runs from its first launcher over the feed of each resonator to its last launcher.
+
+    Where the chain ends at a termination instead, it ends at the feed of its resonator there. A
+    resonator is named by its component where the configuration declares one, else by its label.
+    """
+    chip = chip_of(run)
+    assert chip.ports is not None
+    resonator = chip.ports[8]
+    assert resonator is not None
+    resonator.component = "Q2"
+    feeds = [PointT(250.0, 1600.0), PointT(1000.0, 1600.0)]
+
+    between = planning_geometry(
+        assignment_of([4, 8], feeds, FeedlineChainT(nodes=[0, 1], start=PortRefT(1), end=PortRefT(2))), chip, "assign"
+    )
+    stopped = planning_geometry(
+        assignment_of([4, 8], feeds, FeedlineChainT(nodes=[0, 1], end=PortRefT(3))), chip, "assign"
+    )
+
+    (feedline,) = between.feedlines
+    assert feedline.points == [(300.0, 1600.0), (250.0, 1600.0), (1000.0, 1600.0), (2000.0, 200.0)]
+    assert feedline.terminals == [(250.0, 1600.0), (1000.0, 1600.0)]
+    assert not feedline.terminations
+    assert feedline.label == "feedline 1: Chip.port1 → Q1.port0, Q2 → Chip.port2"
+    (feedline,) = stopped.feedlines
+    assert feedline.points == [(250.0, 1600.0), (1000.0, 1600.0), (700.0, -600.0)]
+    assert feedline.terminations == [(250.0, 1600.0)]
+    assert feedline.label == "feedline 1: termination → Q1.port0, Q2 → Chip.port3"
+
+
+def test_a_feedline_alone_is_something_to_draw() -> None:
+    """A stage that produced only feedlines still has a picture."""
+    assert not PlanningGeometry(feedlines=[Feedline(points=[(0.0, 0.0), (1.0, 0.0)])]).is_empty()
+
+
+def test_the_corridor_picture_draws_the_feedlines_of_its_assignment(run: RunDirectory) -> None:
+    """The wires of the resonators start at the feeds the feedlines pass, so both are drawn together."""
+    chip = chip_of(run)
+    assignment = run.artifact("assign").read_bytes()
+    corridor = run.artifact("corridor").read_bytes()
+
+    assigned = planning_geometry(assignment, chip, "assign")
+    routed = planning_geometry(corridor, chip, "corridor", assignment=assignment)
+
+    assert assigned.feedlines
+    assert routed.feedlines == assigned.feedlines
+    assert not planning_geometry(corridor, chip, "corridor").feedlines
+    with pytest.raises(PlanningError, match="not an assignment"):
+        planning_geometry(corridor, chip, "corridor", assignment=run.artifact("capacity").read_bytes())
 
 
 def test_the_corridor_picture_draws_every_route_over_the_partitions(run: RunDirectory) -> None:

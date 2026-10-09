@@ -68,6 +68,10 @@ PLANNING_COLORS: dict[str, str] = {
     "slot": "#495057",
 }
 
+#: The colors that the feedline chains take in turn. They come from the Okabe-Ito palette and stay
+#: apart from the colors of the layers that the feedlines are drawn with.
+FEEDLINE_COLORS: tuple[str, ...] = ("#0072b2", "#009e73", "#000000")
+
 #: The stroke width of each planning layer, in screen pixels.
 _PLANNING_WIDTHS: dict[str, float] = {
     "partition": 0.6,
@@ -250,7 +254,48 @@ def _planning_layers(
             for x, y in [to_view(px, py)]
         )
         parts.append(f'<g class="l-launcher">{circles}</g>')
+    if planning.feedlines:
+        # Over everything else. Each chain has a color of its own, so two chains that end at one
+        # launcher stay apart, and it names its launchers and resonators under the pointer.
+        side = radius * 0.9
+        chains = []
+        for index, feedline in enumerate(planning.feedlines):
+            color = _feedline_color(index, len(planning.feedlines))
+            terminals = "".join(
+                f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 0.7)}"/>'
+                for px, py in feedline.terminals
+                for x, y in [to_view(px, py)]
+            )
+            terminations = "".join(
+                f'<rect x="{_number(x - side)}" y="{_number(y - side)}" '
+                f'width="{_number(2 * side)}" height="{_number(2 * side)}"/>'
+                for px, py in feedline.terminations
+                for x, y in [to_view(px, py)]
+            )
+            chains.append(
+                f'<g stroke="{color}" fill="{color}"><title>{escape(feedline.label)}</title>'
+                f'<path d="{polyline(feedline.points)}"/>{terminals}{terminations}</g>'
+            )
+        parts.append(f'<g class="l-feedline">{"".join(chains)}</g>')
     return "".join(parts)
+
+
+def _feedline_color(index: int, count: int) -> str:
+    """The color of one feedline chain of a picture.
+
+    The chains take the colors in turn, in ring order, so that two neighbours differ. The ring
+    closes, so the last chain never takes the color of the first.
+
+    Args:
+        index: The position of the chain in ring order.
+        count: How many chains the picture has.
+
+    Returns:
+        The color.
+    """
+    if count > 1 and index == count - 1 and index % len(FEEDLINE_COLORS) == 0:
+        return FEEDLINE_COLORS[1]
+    return FEEDLINE_COLORS[index % len(FEEDLINE_COLORS)]
 
 
 def _planning_style(font: float) -> str:
@@ -280,6 +325,12 @@ def _planning_style(font: float) -> str:
         "vector-effect:non-scaling-stroke}"
     )
     style += f"g.l-slot>circle{{fill:{PLANNING_COLORS['slot']};fill-opacity:0.55;stroke:none}}"
+    # A feedline takes its color from its chain, so the rules leave stroke and fill to the chain.
+    style += (
+        "g.l-feedline path{fill:none;stroke-width:2.6;stroke-linejoin:round;stroke-linecap:round;"
+        "vector-effect:non-scaling-stroke}"
+        "g.l-feedline circle,g.l-feedline rect{stroke:#ffffff;stroke-width:0.8;vector-effect:non-scaling-stroke}"
+    )
     return style
 
 

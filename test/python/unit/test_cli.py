@@ -335,7 +335,10 @@ def test_list_algorithms_names_one_line_per_stage(capsys: pytest.CaptureFixture[
 
 
 def test_plot_draws_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """A planning stage is drawn from the run directory, over the chip the run carries."""
+    """A planning stage is drawn from the run directory, over the chip the run carries.
+
+    The assign and corridor pictures show the feedline chains of the run.
+    """
     run = tmp_path / "run"
     assert plan(run) == 0
     capsys.readouterr()
@@ -346,7 +349,11 @@ def test_plot_draws_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.Cap
     svg = output.read_text(encoding="utf-8")
     assert '<g class="l-corridor">' in svg
     assert '<g class="l-partition">' in svg
+    assert '<g class="l-feedline">' in svg
     assert capsys.readouterr().out.startswith(f"✓ {output}  ")
+
+    assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 0
+    assert '<g class="l-feedline">' in output.read_text(encoding="utf-8")
 
 
 def test_a_planning_stage_needs_a_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -146,10 +146,12 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         msg = f"{artifact} is missing; run `mqt-scpd plan` up to the {args.stage} step first"
         raise RunError(msg)
     # The global picture is drawn over the gates the circuit paid for, and the corridor picture
-    # over the partitions its wires run through.
+    # over the partitions its wires run through, with the feedlines its resonator wires start at.
     plan = directory.artifact("capacity")
     capacity = plan.read_bytes() if args.stage in {"global", "corridor"} and plan.is_file() else None
-    geometry = planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity)
+    chosen = directory.artifact("assign")
+    assignment = chosen.read_bytes() if args.stage == "corridor" and chosen.is_file() else None
+    geometry = planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, assignment)
     return chip_bytes, title, geometry
 
 

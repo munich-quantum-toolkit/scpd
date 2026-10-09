@@ -30,7 +30,7 @@ from .run import STAGE_FILES
 if TYPE_CHECKING:
     from .flatbuffers.design.Chip import ChipT
 
-__all__ = ["PLANNING_STAGES", "PlanningError", "PlanningGeometry", "planning_geometry"]
+__all__ = ["PLANNING_STAGES", "Feedline", "PlanningError", "PlanningGeometry", "planning_geometry"]
 
 #: The planning stages that can be drawn, and the artifact each is read from.
 PLANNING_STAGES: dict[str, str] = dict(STAGE_FILES)
@@ -48,6 +48,22 @@ class _Coordinates(Protocol):
 
 class PlanningError(ValueError):
     """An artifact that does not hold what the stage it is drawn as produces."""
+
+
+@dataclass
+class Feedline:
+    """One feedline chain of an assignment, as the line its feedline follows."""
+
+    #: The line: the launcher the chain starts at, the feed of each resonator of the chain in chain
+    #: order, and the launcher the chain ends at. Where the chain starts or ends at a termination,
+    #: the line starts or ends at the feed of the resonator there.
+    points: list[Point] = field(default_factory=list)
+    #: The feeds of the resonators: the terminals the feedline passes.
+    terminals: list[Point] = field(default_factory=list)
+    #: The ends of the line where the chain stops at a termination instead of a launcher.
+    terminations: list[Point] = field(default_factory=list)
+    #: What the chain runs through, such as "feedline 1: Chip.port62 → Qb7, Qb12 → Chip.port57".
+    label: str = ""
 
 
 @dataclass
@@ -82,6 +98,9 @@ class PlanningGeometry:
     corridors: list[list[Point]] = field(default_factory=list)
     #: Every crossing slot a border offers, taken or not.
     slots: list[Point] = field(default_factory=list)
+    #: Each feedline chain of the assignment, from its first launcher through the feeds of its
+    #: resonators to its last.
+    feedlines: list[Feedline] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         """Whether the stage produced nothing to draw.
@@ -102,6 +121,7 @@ class PlanningGeometry:
             self.ring,
             self.corridors,
             self.slots,
+            self.feedlines,
         ))
 
 
@@ -124,6 +144,27 @@ def _point(value: _Coordinates) -> Point:
         The coordinates.
     """
     return (float(value.x), float(value.y))
+
+
+def _name(chip: ChipT, index: int, *, component: bool) -> str:
+    """The name of a port of the chip, for the label of a feedline.
+
+    Args:
+        chip: The chip.
+        index: The port index.
+        component: Whether to name the component the port belongs to, where the configuration
+            declares one, instead of the port.
+
+    Returns:
+        The name, or the index when the index names no port.
+    """
+    ports: list[Any] = chip.ports or []
+    if index >= len(ports) or ports[index] is None:
+        return str(index)
+    port = ports[index]
+    if component and port.component:
+        return str(port.component)
+    return str(port.label or index)
 
 
 def _center(chip: ChipT, index: int) -> Point | None:
@@ -250,6 +291,36 @@ def _assignment(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry
             center = _center(chip, int(launchers[index].index))
             if center is not None and target != center:
                 geometry.launchers.append(target)
+    _feedlines(assignment, chip, geometry)
+
+
+def _feedlines(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry) -> None:
+    """Fill the feedline chains of an assignment."""
+    ring = _entries(assignment.ring)
+    feeds = _entries(assignment.feeds)
+    for number, chain in enumerate(_entries(assignment.chains), start=1):
+        nodes = [int(node) for node in (chain.nodes or []) if int(node) < min(len(ring), len(feeds))]
+        if not nodes:
+            continue
+        terminals = [_point(feeds[node]) for node in nodes]
+        start = _center(chip, int(chain.start.index)) if chain.start is not None else None
+        end = _center(chip, int(chain.end.index)) if chain.end is not None else None
+        terminations = []
+        if chain.start is None:
+            terminations.append(terminals[0])
+        if chain.end is None:
+            terminations.append(terminals[-1])
+        first = _name(chip, int(chain.start.index), component=False) if chain.start is not None else "termination"
+        last = _name(chip, int(chain.end.index), component=False) if chain.end is not None else "termination"
+        resonators = ", ".join(_name(chip, int(ring[node].index), component=True) for node in nodes)
+        geometry.feedlines.append(
+            Feedline(
+                points=[*([start] if start is not None else []), *terminals, *([end] if end is not None else [])],
+                terminals=terminals,
+                terminations=terminations,
+                label=f"feedline {number}: {first} → {resonators} → {last}",
+            )
+        )
 
 
 def _corridor(routing: CorridorRoutingT, geometry: PlanningGeometry) -> None:
@@ -281,7 +352,29 @@ def _plan_of(capacity: bytes) -> CapacityPlanT:
     return plan
 
 
-def planning_geometry(data: bytes, chip: ChipT, stage: str, capacity: bytes | None = None) -> PlanningGeometry:
+def _assignment_of(assignment: bytes) -> AssignmentT:
+    """The assignment of a run, for a stage that is drawn with its feedlines.
+
+    Returns:
+        The assignment.
+
+    Raises:
+        PlanningError: If the bytes are no assignment.
+    """
+    chosen = read_artifact(assignment).output
+    if not isinstance(chosen, AssignmentT):
+        msg = "the assignment artifact is not an assignment"
+        raise PlanningError(msg)
+    return chosen
+
+
+def planning_geometry(
+    data: bytes,
+    chip: ChipT,
+    stage: str,
+    capacity: bytes | None = None,
+    assignment: bytes | None = None,
+) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
     Args:
@@ -291,6 +384,8 @@ def planning_geometry(data: bytes, chip: ChipT, stage: str, capacity: bytes | No
         capacity: The capacity artifact of the same run, for the stages that are drawn over the
             free space they had to fit into: the global stage over the gates it paid for, and the
             corridor stage over the partitions its wires run through.
+        assignment: The assignment artifact of the same run, for the corridor stage, which is drawn
+            with the feedlines that its resonator wires start at.
 
     Returns:
         The geometry, in layout units.
@@ -334,4 +429,7 @@ def planning_geometry(data: bytes, chip: ChipT, stage: str, capacity: bytes | No
         # A corridor is a way through the partitions, so the partitions make the picture readable.
         if capacity is not None:
             _capacity(_plan_of(capacity), geometry)
+        # The wire of a resonator starts at its feed, which its feedline passes.
+        if assignment is not None:
+            _feedlines(_assignment_of(assignment), chip, geometry)
     return geometry

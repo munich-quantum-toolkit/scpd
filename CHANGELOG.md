@@ -18,8 +18,8 @@ releases may include breaking changes.
   the steps, the items and the solver log. A run prints one block per stage with
   a live progress line on a terminal, in the format of
   `docs/terminal_output.md`. Add `list-algorithms`, and `plot` and `render` with
-  `--stage` and `--run-dir` for the planning stages ([#139])
-  ([**@FeldmeierMichael**])
+  `--stage` and `--run-dir` for the planning stages; the assign and corridor
+  pictures show the feedline chains ([#139]) ([**@FeldmeierMichael**])
 - ✨ Add the planning stages: the Capacity stage partitions the free space at
   its bottlenecks and budgets the wires of every capacity chain, the Global
   stage solves the inner circuit as a mixed-integer program on Hanan lattices,

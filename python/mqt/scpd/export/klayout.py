@@ -55,6 +55,7 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "ring": (29, 0, "plan.ring"),
     "corridors": (30, 0, "plan.corridor"),
     "slots": (31, 0, "plan.slot"),
+    "feedlines": (32, 0, "plan.feedline"),
 }
 
 #: The width of a planning line, in layout units. A path needs a width to be a shape at all; this
@@ -198,4 +199,8 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
     for x, y in planning.slots:
         top.shapes(layer("slots")).insert(square(x, y, PLANNING_MARKER_RADIUS / 3))
         written += 1
+    for feedline in planning.feedlines:
+        if len(feedline.points) >= 2:
+            top.shapes(layer("feedlines")).insert(path(feedline.points))
+            written += 1
     return written
