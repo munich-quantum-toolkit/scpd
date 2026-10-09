@@ -73,3 +73,29 @@ def test_a_default_written_out_is_not_a_problem(tmp_path: Path) -> None:
     )
     report = run_doctor(written_out)
     assert report.ok, report.text()
+
+
+def test_the_report_names_the_solvers_it_can_reach() -> None:
+    """The report says that HiGHS is always there and whether Gurobi can be reached."""
+    text = run_doctor(FIXTURE / "config.toml").text()
+
+    assert "solvers" in text
+    assert "  highs:  linked in, always available" in text
+    assert "  gurobi: " in text
+
+
+def test_the_table_shows_the_bridge_pattern(tmp_path: Path) -> None:
+    """A configuration with a bridge pattern shows it in the table, with the ports it matches."""
+    config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
+    bridged = tmp_path / "bridged.toml"
+    bridged.write_text(
+        config.replace(
+            'input = "routing_config.json"', f'input = "{(FIXTURE / "routing_config.json").as_posix()}"'
+        ).replace("[ports.patterns]\n", "[ports.patterns]\nbridge_pair = '^C\\d+\\.port[12]$'\n"),
+        encoding="utf-8",
+    )
+
+    report = run_doctor(bridged)
+
+    assert report.ok, report.text()
+    assert "bridge_pair       0  ^C\\d+\\.port[12]$" in report.text()

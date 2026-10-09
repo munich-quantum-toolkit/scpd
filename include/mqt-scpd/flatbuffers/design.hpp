@@ -90,35 +90,41 @@ enum class UnassignedRole : uint8_t {
   Conventional = 3,
   /// Created by the Final stage's coupler insertion. No pattern produces it.
   Coupler = 4,
+  /// One end of a bridge: a port where a wire crosses the component, rather
+  /// than one where a wire ends. The bridge rules of the configuration say
+  /// which two of them pair.
+  BridgePair = 5,
   MIN = Unset,
-  MAX = Coupler
+  MAX = BridgePair
 };
 
-inline const UnassignedRole (&EnumValuesUnassignedRole())[5] {
+inline const UnassignedRole (&EnumValuesUnassignedRole())[6] {
   static const UnassignedRole values[] = {
     UnassignedRole::Unset,
     UnassignedRole::Launcher,
     UnassignedRole::Resonator,
     UnassignedRole::Conventional,
-    UnassignedRole::Coupler
+    UnassignedRole::Coupler,
+    UnassignedRole::BridgePair
   };
   return values;
 }
 
 inline const char * const *EnumNamesUnassignedRole() {
-  static const char * const names[6] = {
+  static const char * const names[7] = {
     "Unset",
     "Launcher",
     "Resonator",
     "Conventional",
     "Coupler",
+    "BridgePair",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameUnassignedRole(UnassignedRole e) {
-  if (::flatbuffers::IsOutRange(e, UnassignedRole::Unset, UnassignedRole::Coupler)) return "";
+  if (::flatbuffers::IsOutRange(e, UnassignedRole::Unset, UnassignedRole::BridgePair)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesUnassignedRole()[index];
 }
@@ -302,6 +308,7 @@ struct PortT : public ::flatbuffers::NativeTable {
   mqt::scpd::flatbuffers::geometry::Point center{};
   double orientation = 0.0;
   mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Unset;
+  std::string component{};
 };
 
 /// A port of the chip. The label is the only name the input has; no algorithm
@@ -317,7 +324,8 @@ struct Port FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_LABEL = 4,
     VT_CENTER = 6,
     VT_ORIENTATION = 8,
-    VT_ROLE = 10
+    VT_ROLE = 10,
+    VT_COMPONENT = 12
   };
   const ::flatbuffers::String *label() const {
     return GetPointer<const ::flatbuffers::String *>(VT_LABEL);
@@ -332,6 +340,18 @@ struct Port FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   mqt::scpd::flatbuffers::design::UnassignedRole role() const {
     return static_cast<mqt::scpd::flatbuffers::design::UnassignedRole>(GetField<uint8_t>(VT_ROLE, 0));
   }
+  /// The component the port belongs to, as the configured component pattern
+  /// captures it. Empty for a port created during a run, and for every port
+  /// when the configuration declares no component pattern.
+  ///
+  /// The grouping is declared, never inferred: the pattern says which part of
+  /// a label names the component, and no algorithm reads a label itself. The
+  /// planning stages need it because the opposite ports of a coupler let an
+  /// inner wire cross its artwork, and because the inner circuit has to reach
+  /// the ports of a qubit.
+  const ::flatbuffers::String *component() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_COMPONENT);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -340,6 +360,8 @@ struct Port FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTER, 8) &&
            VerifyField<double>(verifier, VT_ORIENTATION, 8) &&
            VerifyField<uint8_t>(verifier, VT_ROLE, 1) &&
+           VerifyOffset(verifier, VT_COMPONENT) &&
+           verifier.VerifyString(component()) &&
            verifier.EndTable();
   }
   PortT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -363,6 +385,9 @@ struct PortBuilder {
   void add_role(mqt::scpd::flatbuffers::design::UnassignedRole role) {
     fbb_.AddElement<uint8_t>(Port::VT_ROLE, static_cast<uint8_t>(role), 0);
   }
+  void add_component(::flatbuffers::Offset<::flatbuffers::String> component) {
+    fbb_.AddOffset(Port::VT_COMPONENT, component);
+  }
   explicit PortBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -381,9 +406,11 @@ inline ::flatbuffers::Offset<Port> CreatePort(
     ::flatbuffers::Offset<::flatbuffers::String> label = 0,
     const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
     double orientation = 0.0,
-    mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Unset) {
+    mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Unset,
+    ::flatbuffers::Offset<::flatbuffers::String> component = 0) {
   PortBuilder builder_(_fbb);
   builder_.add_orientation(orientation);
+  builder_.add_component(component);
   builder_.add_center(center);
   builder_.add_label(label);
   builder_.add_role(role);
@@ -400,14 +427,17 @@ inline ::flatbuffers::Offset<Port> CreatePortDirect(
     const char *label = nullptr,
     const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
     double orientation = 0.0,
-    mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Unset) {
+    mqt::scpd::flatbuffers::design::UnassignedRole role = mqt::scpd::flatbuffers::design::UnassignedRole::Unset,
+    const char *component = nullptr) {
   auto label__ = label ? _fbb.CreateString(label) : 0;
+  auto component__ = component ? _fbb.CreateString(component) : 0;
   return mqt::scpd::flatbuffers::design::CreatePort(
       _fbb,
       label__,
       center,
       orientation,
-      role);
+      role,
+      component__);
 }
 
 ::flatbuffers::Offset<Port> CreatePort(::flatbuffers::FlatBufferBuilder &_fbb, const PortT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -988,7 +1018,8 @@ inline bool operator==(const PortT &lhs, const PortT &rhs) {
       (lhs.label == rhs.label) &&
       (lhs.center == rhs.center) &&
       (lhs.orientation == rhs.orientation) &&
-      (lhs.role == rhs.role);
+      (lhs.role == rhs.role) &&
+      (lhs.component == rhs.component);
 }
 
 inline bool operator!=(const PortT &lhs, const PortT &rhs) {
@@ -1009,6 +1040,7 @@ inline void Port::UnPackTo(PortT *_o, const ::flatbuffers::resolver_function_t *
   { auto _e = center(); if (_e) _o->center = *_e; }
   { auto _e = orientation(); _o->orientation = _e; }
   { auto _e = role(); _o->role = _e; }
+  { auto _e = component(); if (_e) _o->component = _e->str(); }
 }
 
 inline ::flatbuffers::Offset<Port> CreatePort(::flatbuffers::FlatBufferBuilder &_fbb, const PortT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1023,12 +1055,14 @@ inline ::flatbuffers::Offset<Port> Port::Pack(::flatbuffers::FlatBufferBuilder &
   auto _center = &_o->center;
   auto _orientation = _o->orientation;
   auto _role = _o->role;
+  auto _component = _o->component.empty() ? 0 : _fbb.CreateString(_o->component);
   return mqt::scpd::flatbuffers::design::CreatePort(
       _fbb,
       _label,
       _center,
       _orientation,
-      _role);
+      _role,
+      _component);
 }
 
 
@@ -1345,6 +1379,7 @@ inline const ::flatbuffers::TypeTable *UnassignedRoleTypeTable() {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
@@ -1355,10 +1390,11 @@ inline const ::flatbuffers::TypeTable *UnassignedRoleTypeTable() {
     "Launcher",
     "Resonator",
     "Conventional",
-    "Coupler"
+    "Coupler",
+    "BridgePair"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 5, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_ENUM, 6, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
@@ -1456,7 +1492,8 @@ inline const ::flatbuffers::TypeTable *PortTypeTable() {
     { ::flatbuffers::ET_STRING, 0, -1 },
     { ::flatbuffers::ET_SEQUENCE, 0, 0 },
     { ::flatbuffers::ET_DOUBLE, 0, -1 },
-    { ::flatbuffers::ET_UCHAR, 0, 1 }
+    { ::flatbuffers::ET_UCHAR, 0, 1 },
+    { ::flatbuffers::ET_STRING, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     mqt::scpd::flatbuffers::geometry::PointTypeTable,
@@ -1466,10 +1503,11 @@ inline const ::flatbuffers::TypeTable *PortTypeTable() {
     "label",
     "center",
     "orientation",
-    "role"
+    "role",
+    "component"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }

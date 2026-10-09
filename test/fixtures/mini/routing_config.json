@@ -293,16 +293,16 @@
       "orientation": 0.0
     },
     "Chip.port1": {
+      "center": [300.0, 1600.0],
+      "orientation": 270.0
+    },
+    "Chip.port2": {
       "center": [2000.0, 200.0],
       "orientation": 180.0
     },
-    "Chip.port2": {
+    "Chip.port3": {
       "center": [700.0, -600.0],
       "orientation": 90.0
-    },
-    "Chip.port3": {
-      "center": [300.0, 1600.0],
-      "orientation": 270.0
     },
     "Q1.port0": {
       "center": [200.0, 420.0],

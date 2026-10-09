@@ -89,18 +89,36 @@ validate(const flatbuffers::design::BridgeT& bridge);
 
 /**
  * @brief Validates the role patterns of a configuration.
+ *
+ * The @c bridge_pair and @c component patterns are optional and are checked
+ * only when they are set. The component pattern must also capture the name
+ * of the component in exactly one group.
+ *
  * @param patterns The patterns to check.
  * @return A problem for every expression that is empty or does not compile,
- * named by its configuration key, empty when the patterns are valid.
+ * named by its configuration key, and for a component pattern without
+ * exactly one capture group, empty when the patterns are valid.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::PortPatternsT& patterns);
 
 /**
+ * @brief Validates one bridge rule.
+ * @param rule The rule to check.
+ * @return A problem for every side that is empty, does not compile, or does
+ * not capture exactly the component name the two sides pair on, named
+ * @c first or @c second, empty when the rule is valid.
+ */
+[[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
+validate(const flatbuffers::config::BridgeRuleT& rule);
+
+/**
  * @brief Validates the port section of a configuration.
  * @param ports The section to check.
  * @return A problem for missing patterns, for every problem of the patterns,
- * and for missing sequences, empty when the section is valid.
+ * for missing sequences, for every problem of a bridge rule, and for bridge
+ * rules declared without a @c bridge_pair pattern to select the ports they
+ * pair, empty when the section is valid.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::PortConfigT& ports);
@@ -109,8 +127,11 @@ validate(const flatbuffers::config::PortConfigT& ports);
  * @brief Validates what a configuration can be checked for without its chip.
  * @param config The configuration to check.
  * @return A problem for an empty chip input, for a missing port section or
- * missing design rules, for every problem of both, and for a capacity grid
- * without columns, empty when the configuration is valid on its own.
+ * missing design rules, for every problem of both, for a capacity grid
+ * without columns or a detail grid of no cells, for a capacity stage whose
+ * bottleneck clearance or crossing pitch is not positive, and for a solver
+ * section with an unknown backend or a negative limit, empty when the
+ * configuration is valid on its own.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::ConfigT& config);
@@ -121,8 +142,11 @@ validate(const flatbuffers::config::ConfigT& config);
  * section has nothing to check here and yields no problem.
  * @param chip The chip the configuration names, with its ports classified.
  * @return A problem for every sequence label that is not a port of @p chip,
- * that is not routable, or that appears twice, and for every fixed port that
- * is not in @c all_outer, empty when the configuration fits the chip.
+ * that is not routable, or that appears twice, for every fixed port that is
+ * not in @c all_outer, and for every port on which the @c bridge_pair pattern
+ * and the bridge rules disagree: a bridge port no rule pairs, a port a rule
+ * pairs whose role is not @c BridgePair, and a port several rule sides
+ * claim, empty when the configuration fits the chip.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::ConfigT& config,

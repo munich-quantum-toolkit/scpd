@@ -10,7 +10,7 @@
 
 The doctor loads the configuration, loads and classifies the chip, prints the classification table
 so that a wrong pattern is visible in a second, and prints the outer port ring the run would use,
-checked label by label against the chip.
+checked label by label against the chip. It ends with the solvers the installation can reach.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from . import pyscpd
 from .chip import ChipError, chip_input_path, decode_chip, load_chip, obstacles_of, ports_of, role_name
 from .config import ConfigError, load_config, write_config
+from .solvers import available
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -72,6 +73,7 @@ def classification_table(chip: ChipT, config: ConfigT) -> list[str]:
         "launcher": patterns.launcher if patterns else "",
         "resonator": patterns.resonator if patterns else "",
         "conventional": patterns.conventional if patterns else "",
+        "bridge_pair": patterns.bridgePair if patterns else "",
     }
     counts: Counter[str] = Counter()
     examples: dict[str, list[str]] = {}
@@ -82,14 +84,28 @@ def classification_table(chip: ChipT, config: ConfigT) -> list[str]:
         if len(examples[name]) < 3:
             examples[name].append(port.label or "")
     lines = [f"{'role':<13}{'ports':>6}  pattern / first labels"]
-    for name in ("launcher", "resonator", "conventional"):
-        if name not in counts and not pattern_of[name]:
+    for name, pattern in pattern_of.items():
+        if name not in counts and not pattern:
             continue
-        lines.append(f"{name:<13}{counts.get(name, 0):>6}  {pattern_of[name]}")
+        lines.append(f"{name:<13}{counts.get(name, 0):>6}  {pattern}")
         if examples.get(name):
             lines.append(f"{'':<19}  {', '.join(examples[name])}")
     lines.extend(f"{name:<13}{counts[name]:>6}" for name in counts if name not in pattern_of)
     return lines
+
+
+def solver_summary() -> list[str]:
+    """The solvers the installation can reach, and why not where it cannot.
+
+    Returns:
+        The lines.
+    """
+    usable, why = available()
+    return [
+        "solvers",
+        "  highs:  linked in, always available",
+        "  gurobi: " + ("available through gurobipy" if usable else why),
+    ]
 
 
 def ring_summary(config: ConfigT) -> list[str]:
@@ -112,12 +128,13 @@ def ring_summary(config: ConfigT) -> list[str]:
     ]
 
 
-def run_doctor(config_path: Path, *, list_ports: bool = False) -> DoctorReport:
+def run_doctor(config_path: Path, *, list_ports: bool = False, chip_path: Path | None = None) -> DoctorReport:
     """Check a configuration and the chip it names.
 
     Args:
         config_path: The ``config.toml`` to check.
         list_ports: Also list every port with its role.
+        chip_path: A chip input that replaces the configured one, as ``--chip`` gives it.
 
     Returns:
         The report.
@@ -129,7 +146,7 @@ def run_doctor(config_path: Path, *, list_ports: bool = False) -> DoctorReport:
     except ConfigError as error:
         report.fail(str(error))
         return report
-    report.say(f"chip input: {chip_input_path(config, config_path)}")
+    report.say(f"chip input: {chip_input_path(config, config_path, chip_path)}")
 
     config_bytes = write_config(config)
     for problem in pyscpd.validate_config(config_bytes):
@@ -138,7 +155,7 @@ def run_doctor(config_path: Path, *, list_ports: bool = False) -> DoctorReport:
         return report
 
     try:
-        chip_bytes = load_chip(config, config_path)
+        chip_bytes = load_chip(config, config_path, chip_path)
     except ChipError as error:
         report.fail(str(error))
         return report
@@ -148,4 +165,5 @@ def run_doctor(config_path: Path, *, list_ports: bool = False) -> DoctorReport:
     if list_ports:
         report.say("", *(f"  {port.label or '':<24} {role_name(port.role)}" for port in ports_of(chip)))
     report.say("", *ring_summary(config))
+    report.say("", *solver_summary())
     return report

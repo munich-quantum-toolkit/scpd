@@ -26,6 +26,10 @@ enum UnassignedRole : ubyte {
   Conventional,
   /// Created by the Final stage's coupler insertion. No pattern produces it.
   Coupler,
+  /// One end of a bridge: a port where a wire crosses the component, rather
+  /// than one where a wire ends. The bridge rules of the configuration say
+  /// which two of them pair.
+  BridgePair,
 }
 
 /// What a port does in the solved design. Set by the Assignment stage, except
@@ -73,6 +77,16 @@ table Port {
   /// Degrees, as the chip input carries it.
   orientation: double;
   role: UnassignedRole;
+  /// The component the port belongs to, as the configured component pattern
+  /// captures it. Empty for a port created during a run, and for every port
+  /// when the configuration declares no component pattern.
+  ///
+  /// The grouping is declared, never inferred: the pattern says which part of
+  /// a label names the component, and no algorithm reads a label itself. The
+  /// planning stages need it because the opposite ports of a coupler let an
+  /// inner wire cross its artwork, and because the inner circuit has to reach
+  /// the ports of a qubit.
+  component: string;
 }
 
 /// The chip: obstacle geometry and ports, exactly as the input carries them.

@@ -22,9 +22,12 @@ import pytest
 from mqt.scpd.chip import decode_chip, load_chip, obstacles_of, ports_of, vertices_of
 from mqt.scpd.config import load_config
 from mqt.scpd.flatbuffers.design.Chip import ChipT
+from mqt.scpd.flatbuffers.design.Port import PortT
+from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
-from mqt.scpd.plot import OBSTACLE_FILL, PlotError, layout_svg, simplify
+from mqt.scpd.planning import PlanningGeometry
+from mqt.scpd.plot import OBSTACLE_FILL, ROLE_COLORS, PlotError, layout_svg, simplify
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 SVG = "{http://www.w3.org/2000/svg}"
@@ -146,3 +149,49 @@ def test_relative_steps_do_not_accumulate_rounding() -> None:
     # The first and the last input vertex share their x, so they must share it in the picture.
     assert rebuilt[-1][0] == pytest.approx(rebuilt[0][0], abs=1e-6)
     assert max(x for x, _ in rebuilt) - rebuilt[0][0] == pytest.approx(round(999 * 1.0004, 3), abs=1e-6)
+
+
+def _mini() -> ChipT:
+    config_path = FIXTURE / "config.toml"
+    return decode_chip(load_chip(load_config(config_path), config_path))
+
+
+def test_a_planning_stage_is_drawn_over_the_chip_on_layers_of_its_own() -> None:
+    """Every kind of planning shape is one group with its own stroke, and a gate shows its budget."""
+    geometry = PlanningGeometry(
+        partitions=[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]],
+        bottlenecks=[((0.0, 0.0), (10.0, 0.0), 3)],
+        corridors=[[(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)]],
+        slots=[(50.0, 50.0)],
+    )
+
+    svg = layout_svg(_mini(), planning=geometry)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    groups = {group.get("class") for group in root.iter(f"{SVG}g")}
+    assert {"l-partition", "l-bottleneck", "l-corridor", "l-slot"} <= groups
+    assert any(text.text == "3" for text in root.iter(f"{SVG}text"))
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert "g.l-corridor>path" in style.text
+
+
+def test_a_planning_stage_without_shapes_changes_nothing() -> None:
+    """An empty overlay draws the same picture as none."""
+    model = _mini()
+    assert layout_svg(model, planning=PlanningGeometry()) == layout_svg(model)
+
+
+def test_a_bridge_port_has_a_colour_of_its_own() -> None:
+    """A port that a wire crosses its component through is drawn and counted under its own role."""
+    chip = ChipT(
+        ports=[PortT(label="Coupler1_2.port1", center=PointT(0.0, 0.0), role=UnassignedRole.BridgePair)],
+        obstacles=[PolygonT(vertices=[PointT(-5.0, -5.0), PointT(5.0, -5.0), PointT(5.0, 5.0)])],
+    )
+
+    root = ET.fromstring(layout_svg(chip))  # ruff: ignore[suspicious-xml-element-tree-usage]
+
+    assert {circle.get("class") for circle in root.iter(f"{SVG}circle")} == {"bridge_pair"}
+    assert any(text.text == "bridge_pair (1)" for text in root.iter(f"{SVG}text"))
+    assert "bridge_pair" in ROLE_COLORS

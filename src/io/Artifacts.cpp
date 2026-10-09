@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <iterator>
 #include <memory>
 #include <span>
@@ -106,10 +107,24 @@ Problems validate(const ArtifactT& artifact) {
   case StageOutput::NONE:
     problems.emplace_back("output is missing");
     break;
-  case StageOutput::Assignment:
-    validateEach(artifact.output.AsAssignment()->connections, "connection",
-                 problems);
+  case StageOutput::Assignment: {
+    const auto& assignment = *artifact.output.AsAssignment();
+    validateEach(assignment.connections, "connection", problems);
+    // A chain names ring nodes, and each of them has to be a node of the ring.
+    for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
+      if (assignment.chains[index] == nullptr) {
+        problems.push_back(std::format("chain {}: missing", index));
+        continue;
+      }
+      for (const auto node : assignment.chains[index]->nodes) {
+        if (node >= assignment.ring.size()) {
+          problems.push_back(std::format("chain {} names ring node {} of {}",
+                                         index, node, assignment.ring.size()));
+        }
+      }
+    }
     break;
+  }
   case StageOutput::FinalRouting: {
     const auto& routing = *artifact.output.AsFinalRouting();
     validateEach(routing.couplers, "coupler", problems);
@@ -121,6 +136,26 @@ Problems validate(const ArtifactT& artifact) {
     validateWires(geometry.wires, problems);
     validateEach(geometry.couplers, "coupler", problems);
     validateEach(geometry.bridges, "bridge", problems);
+    break;
+  }
+  case StageOutput::CorridorRouting: {
+    // A crossing carries the wire from one partition into the next, so a
+    // corridor names one more partition than it has crossings. A corridor
+    // without partitions is a connection the stage could not route.
+    const auto& routing = *artifact.output.AsCorridorRouting();
+    for (std::size_t index = 0; index < routing.corridors.size(); ++index) {
+      if (routing.corridors[index] == nullptr) {
+        problems.push_back(std::format("corridor {}: missing", index));
+        continue;
+      }
+      const auto& corridor = *routing.corridors[index];
+      if (!corridor.partitions.empty() &&
+          corridor.crossings.size() + 1 != corridor.partitions.size()) {
+        problems.push_back(std::format(
+            "corridor {} names {} partitions and {} crossings", index,
+            corridor.partitions.size(), corridor.crossings.size()));
+      }
+    }
     break;
   }
   case StageOutput::CapacityPlan:

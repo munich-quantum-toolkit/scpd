@@ -19,13 +19,14 @@ from mqt.scpd.config import load_config
 from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.design.Chip import ChipT
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
+from mqt.scpd.planning import PlanningGeometry
 
 pytestmark = pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")
 
 if HAS_KLAYOUT:
     import klayout.db as kdb
 
-    from mqt.scpd.export import OBSTACLE_LAYER, PORT_LAYER, ExportError, write_layout
+    from mqt.scpd.export import OBSTACLE_LAYER, PLANNING_LAYERS, PORT_LAYER, ExportError, write_layout
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 
@@ -56,3 +57,26 @@ def test_the_suffix_selects_the_format(tmp_path: Path) -> None:
     """A suffix KLayout would not write is refused before anything is built."""
     with pytest.raises(ExportError, match="suffix must be one of"):
         write_layout(ChipT(), tmp_path / "chip.svg")
+
+
+def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> None:
+    """Every kind of planning shape goes on its own named layer, from layer 20 on, beside the artwork."""
+    config_path = FIXTURE / "config.toml"
+    chip = decode_chip(load_chip(load_config(config_path), config_path))
+    geometry = PlanningGeometry(
+        partitions=[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]],
+        corridors=[[(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)]],
+        slots=[(50.0, 50.0)],
+    )
+
+    summary = write_layout(chip, tmp_path / "plan.gds", planning=geometry)
+
+    assert summary.planning == 3
+    assert min(number for number, _, _ in PLANNING_LAYERS.values()) >= 20
+    layout = kdb.Layout()
+    layout.read(str(summary.path))
+    top = layout.top_cell()
+    for name in ("partitions", "corridors", "slots"):
+        number, datatype, _ = PLANNING_LAYERS[name]
+        assert top.shapes(layout.layer(number, datatype)).size() == 1, name
+    assert top.shapes(layout.layer(*OBSTACLE_LAYER)).size() == 4

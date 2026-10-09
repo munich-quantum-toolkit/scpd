@@ -9,6 +9,11 @@
 # A two-qubit chip for the unit tests, small enough to read. Its two qubit pads
 # wind in opposite directions and the coupler between them overlaps both; the
 # round pad has 256 vertices; fixed_outer is an open sub-chain of all_outer.
+# The launchers are numbered clockwise and the ring runs counter-clockwise: as
+# on the benchmark chips, the launcher numbering runs against the ring, which
+# is the order the assignment expects. The three conventional ports take three
+# of the four launchers, so the feedline of the two resonators runs from the
+# fourth to a termination.
 # The benchmark chips live in https://github.com/cda-tum/planar-superconducting-pd.
 
 [chip]
@@ -31,7 +36,14 @@ min_straight_length = 100.0
 target_resonator_length = 2500.0
 resonator_length_tolerance = 100.0
 max_feedline_utilization = 4
-feedline_terminations = 0
+feedline_terminations = 1
 
 [grid]
 capacity_cells_x = 12
+# The launchers sit on the edge of the chip, so the blocked border of the
+# capacity grid must not cover them.
+launcher_offset_x = 0
+launcher_offset_y = 0
+
+[stages.assignment]
+launcher_target = 1
