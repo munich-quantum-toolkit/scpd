@@ -33,8 +33,9 @@ know that the geometry described here differs from
 ## Where it stands
 
 **2026-10-09**: the chain search refuses every step whose edge closes a wire
-in the capacity graph (`SCPD_CAPACITY_RULE`, on), and a resonator's way through
-the graph may be no longer than its target length allows. The squeeze rule is
+in the capacity graph (`SCPD_CAPACITY_RULE`; on until 2026-10-10, off
+since), and a resonator's way through the graph may be no longer than its
+target length allows. The squeeze rule is
 gone. The crossing count no longer calls a wire crossing that turns on the
 last cell of the band. On 17q (both margins 5) the graph is SAT and the
 feedline pass leaves nothing unrouted, open or crossing. How it works is
@@ -166,7 +167,7 @@ chip is not taken.
 ### What is checked, and when
 
 Every step of `solveChainAStar` that routes its edge (`problem.step`) is
-followed by a capacity check, as long as `SCPD_CAPACITY_RULE` (on) or
+followed by a capacity check, as long as `SCPD_CAPACITY_RULE` (off) or
 `SCPD_CAPACITY_STEP` (report only, off) is set:
 
 1. **The chip of the step.** `stateOf(wires, settled, chain, &options, &ways,
@@ -203,7 +204,7 @@ followed by a capacity check, as long as `SCPD_CAPACITY_RULE` (on) or
 
 ### What the search does with it
 
-- `SCPD_CAPACITY_RULE` on: a step whose edge closes a wire returns
+- `SCPD_CAPACITY_RULE=1`: a step whose edge closes a wire returns
   `TRELLIS_UNREACHABLE` before anything of it is remembered (no `laid`, no
   learned bound), exactly as an edge with no way. The A* takes the next
   option.

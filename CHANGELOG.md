@@ -12,6 +12,16 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Move a coupler option that leaves the coupler box into it, by at most
+  `SCPD_COUPLER_SHIFT` cells along each axis (20 by default; `=0` places every
+  option on its place). The option is moved by what its cell outside the box
+  lacks and built again until it fits. The resonator runs from the moved tip
+  of the lead in a straight line to the first cell of its way that lies at
+  least a bend radius in front of the tip; that line must stay off the
+  artwork, the ports' approaches and the coupler's own feedline run. On 4q all
+  four couplers now stand on offset 0 near their target length, and the chain
+  makes four quarter turns (angle cost 8 against 18); the other benchmarks
+  keep their angle cost.
 - ✨ Find the bottlenecks of the chip the coupler insertion leaves, build the
   capacity graph they make and check whether it carries every outer wire, report
   only (`SCPD_BOTTLENECKS`). The medial axis is built over the border, the
@@ -53,9 +63,10 @@ releases may include breaking changes.
   graph after every chain the coupler insertion settles, against the chains
   before it, and searches a chain that closes a wire's way again
   (`SCPD_CAPACITY_CHAIN_TRIES`), refusing a run of options that closes as many
-  or fails the commit's test on more edges. Every step of the chain search
-  is checked on the chains settled before with the prefix standing on top,
-  and a step whose edge closes a wire is refused (`SCPD_CAPACITY_RULE`, on).
+  or fails the commit's test on more edges. With `SCPD_CAPACITY_RULE=1`
+  (off by default) every step of the chain search is checked on the chains
+  settled before with the prefix standing on top, and a step whose edge
+  closes a wire is refused.
   A resonator's way through the graph is the one whose least length — from
   line to line of the edges it passes — is shortest, and it is no way when
   that is longer than the resonator's target length less its lead allows;
@@ -472,6 +483,26 @@ releases may include breaking changes.
 
 ### Fixed
 
+- 🐛 Keep the edges of one chain from crossing in the coupler insertion. The
+  first and last edge of a chain fence every edge of it again
+  (`SCPD_TERMINAL_EDGES_FENCE_ALL`, on by default); on 69q chain 2's f15
+  had run over f13. The slots at an edge's two ends no longer open the
+  copper of an earlier edge of its chain, and `CHECK chain crossings` says
+  after the insertion and after the feedline pass how many pairs of one
+  chain cross.
+- 🐛 Test a remembered edge of the prefix search against the prefix that
+  stands and route it again when the prefix runs into it; the memo key
+  holds the pair of options but not the prefix, so a way found under one
+  prefix was priced under another. A step that may lay its end pair the
+  other way round gets no step budget, so a budget cut-off no longer starts
+  the reorder and marks the answer as not optimal.
+- 🐛 Refuse a coupler place whose way left over, with the lead, is longer
+  than the target length; the overshoot test left the lead out. Refuse an
+  option whose feedline run, as long as the edge search forces it, meets the
+  artwork or a port's approach. Break ties of the nearest launcher by port
+  number and of the places by their index, keep the greedy on the first of
+  equal options, put the fence flag back where it was after the commit's
+  test, and keep the bend penalty of an edge inside 16 bits.
 - 🐛 Let the meander reach the near end of a resonator's way again. The
   cells it leaves alone at the start were `coupler_length` plus the
   straight start plus four, where the straight start is the second run

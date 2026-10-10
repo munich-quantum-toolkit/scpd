@@ -581,12 +581,11 @@ TEST(FinalRouter, OnlyUnsettledRedrawsOneWire) {
 /// ends without the check.
 /// `SCPD_CAPACITY_STEP` checks the capacity graph after every step of the
 /// chain search and says, for every feedline edge a settled chain lays,
-/// whether the graph still carries every wire. Without `SCPD_CAPACITY_RULE`
-/// it reports and changes nothing.
+/// whether the graph still carries every wire. `SCPD_CAPACITY_RULE` is off
+/// by default, so the check reports and changes nothing.
 TEST(FinalRouter, TheStepCheckSaysForEveryFeedlineEdgeWhetherTheGraphCarries) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
-  setenv("SCPD_CAPACITY_RULE", "0", 1);
   const auto plain = routeFinal(benchmark, planned);
   setenv("SCPD_CAPACITY_STEP", "1", 1);
   std::vector<std::string> lines;
@@ -595,7 +594,6 @@ TEST(FinalRouter, TheStepCheckSaysForEveryFeedlineEdgeWhetherTheGraphCarries) {
       planned.detail, benchmark.config,
       [&lines](const std::string_view line) { lines.emplace_back(line); });
   unsetenv("SCPD_CAPACITY_STEP");
-  unsetenv("SCPD_CAPACITY_RULE");
 
   // The edges of the settled chains, from their layers.
   std::size_t edges = 0;
@@ -641,17 +639,19 @@ TEST(FinalRouter, TheStepCheckSaysForEveryFeedlineEdgeWhetherTheGraphCarries) {
   }
 }
 
-/// `SCPD_CAPACITY_RULE` (on) refuses every step of the chain search whose
+/// `SCPD_CAPACITY_RULE=1` refuses every step of the chain search whose
 /// edge closes a wire: every feedline edge of a chain settled under it
 /// closes none. A chain searched again without the rule says so first.
 TEST(FinalRouter, TheCapacityRuleLetsNoSettledEdgeCloseAWire) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
+  setenv("SCPD_CAPACITY_RULE", "1", 1);
   std::vector<std::string> lines;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
       planned.detail, benchmark.config,
       [&lines](const std::string_view line) { lines.emplace_back(line); }));
+  unsetenv("SCPD_CAPACITY_RULE");
 
   std::set<std::string> withoutTheRule;
   const std::regex againLine(
@@ -757,8 +757,8 @@ TEST(CouplerSession, MovesACouplerAndDrawsItsEdgesAgain) {
     redrawn.insert(edge.at("edge").get<std::string>());
   }
   EXPECT_EQ(redrawn, expected);
-  for (const auto& coupler :
-       nlohmann::json::parse(session.couplers()).at("couplers")) {
+  const auto after = nlohmann::json::parse(session.couplers());
+  for (const auto& coupler : after.at("couplers")) {
     if (coupler.at("index").get<std::uint32_t>() == index) {
       EXPECT_EQ(coupler.at("chosen").get<std::uint32_t>(), option);
     }
@@ -771,6 +771,81 @@ TEST(CouplerSession, MovesACouplerAndDrawsItsEdgesAgain) {
       static_cast<void>(session.setOption(
           index, static_cast<std::uint32_t>(picked->at("options").size()))),
       std::invalid_argument);
+}
+
+/// `SCPD_COUPLER_SHIFT` (20) moves an option that leaves the coupler box
+/// into it, by at most that many cells along each axis. On 4q some options
+/// are moved, and none further than the limit.
+TEST(CouplerSession, MovesAnOptionIntoTheBoxByAtMostTheLimit) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  std::vector<std::pair<long, long>> moved;
+  const auto listed = nlohmann::json::parse(session.couplers());
+  for (const auto& coupler : listed.at("couplers")) {
+    for (const auto& option : coupler.at("options")) {
+      const auto& move = option.at("moved");
+      moved.emplace_back(move.at(0).get<long>(), move.at(1).get<long>());
+    }
+  }
+
+  ASSERT_FALSE(moved.empty());
+  EXPECT_TRUE(std::ranges::any_of(moved, [](const auto& move) {
+    return move.first != 0 || move.second != 0;
+  }));
+  for (const auto& [x, y] : moved) {
+    EXPECT_LE(std::abs(x), 20);
+    EXPECT_LE(std::abs(y), 20);
+  }
+}
+
+/// On 4q the ways of Q1 and Q4 run along the box edge near their target
+/// length, and their couplers reach offset 0 only when moved into the box.
+/// With the move every feedline edge is drawn and the chain makes four
+/// quarter turns, an angle cost of 8.
+TEST(FinalRouter, TheFourQubitChainMakesFourQuarterTurns) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  long cost = -1;
+  long undrawn = -1;
+  const std::regex said(
+      R"(==> coupler insertion: (\d+) feedline edges NOT drawn, feedline angle cost (\d+))");
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, [&](const std::string_view line) {
+        std::match_results<std::string_view::const_iterator> match;
+        if (std::regex_search(line.begin(), line.end(), match, said)) {
+          undrawn = std::stol(match[1].str());
+          cost = std::stol(match[2].str());
+        }
+      }));
+
+  EXPECT_EQ(undrawn, 0);
+  EXPECT_EQ(cost, 8);
+}
+
+/// No two edges of one chain cross. The stage says so after the coupler
+/// insertion and after the feedline pass (`CHECK chain crossings`), and on
+/// 4q both checks are green.
+TEST(FinalRouter, NoEdgeCrossesAnEdgeOfItsOwnChain) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  std::vector<std::string> checks;
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, [&](const std::string_view line) {
+        if (line.find("CHECK chain crossings") != std::string_view::npos) {
+          checks.emplace_back(line);
+        }
+      }));
+
+  ASSERT_GE(checks.size(), 2U);
+  for (const auto& line : checks) {
+    EXPECT_NE(line.find("0 pairs of edges of one chain cross"),
+              std::string::npos)
+        << line;
+  }
 }
 
 /// With a debug sink the stage hands out a picture of its grid and then one

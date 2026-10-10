@@ -442,7 +442,8 @@ a wire, for example f7 on options 4 or 8 closes 27 or 26.
 The squeeze rule is gone (see *The squeeze rule* in
 handover-cpw-coupler-insertion.md). In its place the check of section 7 refuses:
 
-- `SCPD_CAPACITY_RULE`, **on**: a step whose edge closes a wire (a wire with a
+- `SCPD_CAPACITY_RULE`, off since 2026-10-10 (user; on before): a step whose
+  edge closes a wire (a wire with a
   way through the graph the prefix leaves, and none with this edge) is refused
   as an edge with no way; the A* takes another option. The step line ends
   `— refused (SCPD_CAPACITY_RULE)`, and the chain line counts the refusals.
@@ -515,7 +516,7 @@ Pictures: `artifacts/sat/17q-length-box5-final.svg` and
 | `SCPD_CAPACITY_FLOW`        | off     | on: the integer flow instead of the wires routed one after another                               |
 | `SCPD_CAPACITY_CHAIN`       | off     | on: the check after every settled chain, and the search again                                    |
 | `SCPD_CAPACITY_STEP`        | off     | on: the analysis after every step of the chain search, report only (section 7)                   |
-| `SCPD_CAPACITY_RULE`        | on      | the chain search refuses a step whose edge closes a wire (section 8)                             |
+| `SCPD_CAPACITY_RULE`        | off     | the chain search refuses a step whose edge closes a wire (section 8)                             |
 | `SCPD_CAPACITY_CHAIN_TRIES` | 3       | how often one chain is searched again                                                            |
 | `SCPD_COUPLER_BOX_MARGIN`   | 5       | cells the couplers keep further in from every side of the coupler box (section 6)                |
 | `SCPD_EDGE_LAUNCHER_MARGIN` | 5       | cells added to the run a feedline edge keeps closed in front of every other launcher (section 5) |
