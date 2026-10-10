@@ -6,5 +6,11 @@
 #
 # Licensed under the MIT License
 
-add_mqt_scpd_library(pipeline LINK_LIBRARIES MQT::ScpdRouting MQT::ScpdMilp MQT::ScpdDrc
-                     MQT::ScpdIO)
+add_mqt_scpd_library(
+  pipeline
+  LINK_LIBRARIES
+  MQT::ScpdDesign
+  MQT::ScpdGeometry
+  MQT::ScpdGrid
+  MQT::ScpdIO
+  MQT::ScpdMilp)

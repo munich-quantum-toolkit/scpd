@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import os
+import tomllib
 from pathlib import Path
 from xml.etree import ElementTree as ET  # ruff: ignore[suspicious-xml-etree-import]
 
@@ -34,9 +35,43 @@ CHIPS = sorted(path.parent.name for path in DATA.glob("inputs/*/config.toml")) i
 pytestmark = pytest.mark.skipif(DATA is None, reason="MQT_SCPD_BENCHMARKS names no clone of the benchmark data")
 
 
+#: The configurations this repository plans the chips with. They are the configurations of the data
+#: repository with the keys of the planning stages added; the chip input stays in the data repository
+#: and is given with ``--chip``.
+REPOSITORY = Path(__file__).resolve().parents[3] / "benchmarks"
+
+#: The keys in which a configuration of this repository may differ from the one of the data
+#: repository: the port grouping the planning stages need, the launcher border of the capacity grid
+#: and the launcher count of the assignment.
+PLANNING_KEYS = {
+    "ports.patterns.conventional",
+    "ports.patterns.bridge_pair",
+    "ports.patterns.component",
+    "ports.bridge_pairs",
+    "grid.launcher_offset_x",
+    "grid.launcher_offset_y",
+    "stages.assignment.launcher_target",
+}
+
+
 def _config(chip: str) -> Path:
     assert DATA is not None
     return DATA / "inputs" / chip / "config.toml"
+
+
+def _chip_input(chip: str) -> Path:
+    assert DATA is not None
+    return DATA / "inputs" / chip / "routing_config.json"
+
+
+def _flat(table: dict[str, object], prefix: str = "") -> dict[str, object]:
+    flat: dict[str, object] = {}
+    for key, value in table.items():
+        if isinstance(value, dict):
+            flat.update(_flat(value, f"{prefix}{key}."))
+        else:
+            flat[f"{prefix}{key}"] = value
+    return flat
 
 
 def test_every_benchmark_is_present() -> None:
@@ -55,6 +90,46 @@ def test_the_configuration_follows_table_one(chip: str) -> None:
     assert config.rules is not None
     assert config.rules.targetResonatorLength == pytest.approx(float(row["resonator_length_d_fix_um"]))
     assert config.rules.maxFeedlineUtilization == int(row["feedline_max_capacity_r_util"])
+
+
+def test_the_repository_plans_every_chip() -> None:
+    """This repository carries one planning configuration per chip of the data repository."""
+    assert sorted(path.parent.name for path in REPOSITORY.glob("*/config.toml")) == CHIPS
+
+
+@pytest.mark.parametrize("chip", CHIPS)
+def test_a_planning_configuration_adds_only_the_planning_keys(chip: str) -> None:
+    """A configuration of this repository is the one of the data repository plus the planning keys."""
+    with _config(chip).open("rb") as file:
+        published = _flat(tomllib.load(file))
+    with (REPOSITORY / chip / "config.toml").open("rb") as file:
+        planning = _flat(tomllib.load(file))
+
+    differing = {key for key in published.keys() | planning.keys() if published.get(key) != planning.get(key)}
+    assert differing <= PLANNING_KEYS
+
+
+@pytest.mark.parametrize("chip", CHIPS)
+def test_a_planning_configuration_follows_table_one(chip: str) -> None:
+    """A configuration of this repository obeys the rules for a shipped file and carries Table I."""
+    assert DATA is not None
+    config = load_config(REPOSITORY / chip / "config.toml", strict=True)
+    with (DATA / "qor" / "qor.csv").open(encoding="utf-8") as file:
+        row = next(row for row in csv.DictReader(file) if row["benchmark"] == chip.upper())
+
+    assert config.rules is not None
+    assert config.rules.targetResonatorLength == pytest.approx(float(row["resonator_length_d_fix_um"]))
+    assert config.rules.maxFeedlineUtilization == int(row["feedline_max_capacity_r_util"])
+    assert config.stages is not None
+    assert config.stages.assignment is not None
+    assert config.stages.assignment.launcherTarget > 0
+
+
+@pytest.mark.parametrize("chip", CHIPS)
+def test_the_doctor_passes_on_a_planning_configuration(chip: str) -> None:
+    """The planning configuration fits the chip of the data repository, given with --chip."""
+    report = run_doctor(REPOSITORY / chip / "config.toml", chip_path=_chip_input(chip))
+    assert report.ok, report.text()
 
 
 @pytest.mark.parametrize("chip", CHIPS)

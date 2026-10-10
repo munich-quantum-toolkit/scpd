@@ -5,7 +5,10 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
+from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChain
 from mqt.scpd.flatbuffers.design.Connection import Connection
+from mqt.scpd.flatbuffers.design.PortRef import PortRef
+from mqt.scpd.flatbuffers.geometry.Point import Point
 from typing import Optional
 np = import_numpy()
 
@@ -32,6 +35,11 @@ class Assignment(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
+    # One connection per node of `ring`, in the order of `ring`. A
+    # conventional port runs from the launcher it was given, as
+    # FeedlineSource to FeedlineTarget. A resonator carries ResonatorSource
+    # to ResonatorTarget and no source port, because the port that feeds it is
+    # the coupler that the Final stage inserts.
     # Assignment
     def Connections(self, j: int) -> Optional[Connection]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -63,8 +71,115 @@ class Assignment(object):
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.0
 
+    # The ring the model consumed, in the order it consumed it.
+    # Assignment
+    def Ring(self, j: int) -> Optional[PortRef]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            obj = PortRef()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # Assignment
+    def RingLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # Assignment
+    def RingIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        return o == 0
+
+    # The launcher each ring node was given, parallel to `ring`.
+    # Assignment
+    def Launchers(self, j: int) -> Optional[PortRef]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            obj = PortRef()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # Assignment
+    def LaunchersLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # Assignment
+    def LaunchersIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        return o == 0
+
+    # Where each ring node is fed from, parallel to `ring`.
+    #
+    # A conventional port is fed at the launcher slot that `launchers` names,
+    # and no two of them share one. A resonator is fed at no launcher: the
+    # wire that reaches it comes past the slot, so its feed sits on the
+    # segment from its own launcher to the next launcher along. Where a
+    # launcher was given n resonators, they divide that segment evenly, in
+    # ring order.
+    # Assignment
+    def Feeds(self, j: int) -> Optional[Point]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 16
+            obj = Point()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # Assignment
+    def FeedsLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # Assignment
+    def FeedsIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        return o == 0
+
+    # The feedline chains the model chose: which resonators one feedline
+    # drives, from one launcher to the next. The Final stage routes each of
+    # them from its first launcher through the couplers of its resonators to
+    # its last.
+    # Assignment
+    def Chains(self, j: int) -> Optional[FeedlineChain]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = FeedlineChain()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # Assignment
+    def ChainsLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # Assignment
+    def ChainsIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+        return o == 0
+
 def AssignmentStart(builder: flatbuffers.Builder):
-    builder.StartObject(2)
+    builder.StartObject(6)
 
 def Start(builder: flatbuffers.Builder):
     AssignmentStart(builder)
@@ -87,13 +202,64 @@ def AssignmentAddObjective(builder: flatbuffers.Builder, objective: float):
 def AddObjective(builder: flatbuffers.Builder, objective: float):
     AssignmentAddObjective(builder, objective)
 
+def AssignmentAddRing(builder: flatbuffers.Builder, ring: int):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(ring), 0)
+
+def AddRing(builder: flatbuffers.Builder, ring: int):
+    AssignmentAddRing(builder, ring)
+
+def AssignmentStartRingVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartRingVector(builder, numElems: int) -> int:
+    return AssignmentStartRingVector(builder, numElems)
+
+def AssignmentAddLaunchers(builder: flatbuffers.Builder, launchers: int):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(launchers), 0)
+
+def AddLaunchers(builder: flatbuffers.Builder, launchers: int):
+    AssignmentAddLaunchers(builder, launchers)
+
+def AssignmentStartLaunchersVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartLaunchersVector(builder, numElems: int) -> int:
+    return AssignmentStartLaunchersVector(builder, numElems)
+
+def AssignmentAddFeeds(builder: flatbuffers.Builder, feeds: int):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(feeds), 0)
+
+def AddFeeds(builder: flatbuffers.Builder, feeds: int):
+    AssignmentAddFeeds(builder, feeds)
+
+def AssignmentStartFeedsVector(builder, numElems: int) -> int:
+    return builder.StartVector(16, numElems, 8)
+
+def StartFeedsVector(builder, numElems: int) -> int:
+    return AssignmentStartFeedsVector(builder, numElems)
+
+def AssignmentAddChains(builder: flatbuffers.Builder, chains: int):
+    builder.PrependUOffsetTRelativeSlot(5, flatbuffers.number_types.UOffsetTFlags.py_type(chains), 0)
+
+def AddChains(builder: flatbuffers.Builder, chains: int):
+    AssignmentAddChains(builder, chains)
+
+def AssignmentStartChainsVector(builder, numElems: int) -> int:
+    return builder.StartVector(4, numElems, 4)
+
+def StartChainsVector(builder, numElems: int) -> int:
+    return AssignmentStartChainsVector(builder, numElems)
+
 def AssignmentEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
 def End(builder: flatbuffers.Builder) -> int:
     return AssignmentEnd(builder)
 
+import mqt.scpd.flatbuffers.artifacts.FeedlineChain
 import mqt.scpd.flatbuffers.design.Connection
+import mqt.scpd.flatbuffers.design.PortRef
+import mqt.scpd.flatbuffers.geometry.Point
 try:
     from typing import List
 except:
@@ -106,9 +272,17 @@ class AssignmentT(object):
         self,
         connections = None,
         objective = 0.0,
+        ring = None,
+        launchers = None,
+        feeds = None,
+        chains = None,
     ):
         self.connections = connections  # type: Optional[List[mqt.scpd.flatbuffers.design.Connection.ConnectionT]]
         self.objective = objective  # type: float
+        self.ring = ring  # type: Optional[List[mqt.scpd.flatbuffers.design.PortRef.PortRefT]]
+        self.launchers = launchers  # type: Optional[List[mqt.scpd.flatbuffers.design.PortRef.PortRefT]]
+        self.feeds = feeds  # type: Optional[List[mqt.scpd.flatbuffers.geometry.Point.PointT]]
+        self.chains = chains  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.FeedlineChain.FeedlineChainT]]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -140,6 +314,38 @@ class AssignmentT(object):
                     connection_ = mqt.scpd.flatbuffers.design.Connection.ConnectionT.InitFromObj(assignment.Connections(i))
                     self.connections.append(connection_)
         self.objective = assignment.Objective()
+        if not assignment.RingIsNone():
+            self.ring = []
+            for i in range(assignment.RingLength()):
+                if assignment.Ring(i) is None:
+                    self.ring.append(None)
+                else:
+                    portRef_ = mqt.scpd.flatbuffers.design.PortRef.PortRefT.InitFromObj(assignment.Ring(i))
+                    self.ring.append(portRef_)
+        if not assignment.LaunchersIsNone():
+            self.launchers = []
+            for i in range(assignment.LaunchersLength()):
+                if assignment.Launchers(i) is None:
+                    self.launchers.append(None)
+                else:
+                    portRef_ = mqt.scpd.flatbuffers.design.PortRef.PortRefT.InitFromObj(assignment.Launchers(i))
+                    self.launchers.append(portRef_)
+        if not assignment.FeedsIsNone():
+            self.feeds = []
+            for i in range(assignment.FeedsLength()):
+                if assignment.Feeds(i) is None:
+                    self.feeds.append(None)
+                else:
+                    point_ = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(assignment.Feeds(i))
+                    self.feeds.append(point_)
+        if not assignment.ChainsIsNone():
+            self.chains = []
+            for i in range(assignment.ChainsLength()):
+                if assignment.Chains(i) is None:
+                    self.chains.append(None)
+                else:
+                    feedlineChain_ = mqt.scpd.flatbuffers.artifacts.FeedlineChain.FeedlineChainT.InitFromObj(assignment.Chains(i))
+                    self.chains.append(feedlineChain_)
 
     # AssignmentT
     def Pack(self, builder):
@@ -151,9 +357,40 @@ class AssignmentT(object):
             for i in reversed(range(len(self.connections))):
                 builder.PrependUOffsetTRelative(connectionslist[i])
             connections = builder.EndVector()
+        if self.ring is not None:
+            AssignmentStartRingVector(builder, len(self.ring))
+            for i in reversed(range(len(self.ring))):
+                self.ring[i].Pack(builder)
+            ring = builder.EndVector()
+        if self.launchers is not None:
+            AssignmentStartLaunchersVector(builder, len(self.launchers))
+            for i in reversed(range(len(self.launchers))):
+                self.launchers[i].Pack(builder)
+            launchers = builder.EndVector()
+        if self.feeds is not None:
+            AssignmentStartFeedsVector(builder, len(self.feeds))
+            for i in reversed(range(len(self.feeds))):
+                self.feeds[i].Pack(builder)
+            feeds = builder.EndVector()
+        if self.chains is not None:
+            chainslist = []
+            for i in range(len(self.chains)):
+                chainslist.append(self.chains[i].Pack(builder))
+            AssignmentStartChainsVector(builder, len(self.chains))
+            for i in reversed(range(len(self.chains))):
+                builder.PrependUOffsetTRelative(chainslist[i])
+            chains = builder.EndVector()
         AssignmentStart(builder)
         if self.connections is not None:
             AssignmentAddConnections(builder, connections)
         AssignmentAddObjective(builder, self.objective)
+        if self.ring is not None:
+            AssignmentAddRing(builder, ring)
+        if self.launchers is not None:
+            AssignmentAddLaunchers(builder, launchers)
+        if self.feeds is not None:
+            AssignmentAddFeeds(builder, feeds)
+        if self.chains is not None:
+            AssignmentAddChains(builder, chains)
         assignment = AssignmentEnd(builder)
         return assignment

@@ -22,9 +22,17 @@ from mqt.scpd.flatbuffers.artifacts.Artifact import (
     ArtifactT,
 )
 from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
+from mqt.scpd.flatbuffers.artifacts.BorderSlots import BorderSlotsT
+from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
+from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
+from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingEnd, GlobalRoutingStart, GlobalRoutingT
+from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
+from mqt.scpd.flatbuffers.artifacts.Lattice import LatticeT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.artifacts.Wire import WireT
 from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
@@ -76,7 +84,7 @@ def make_coupler(connection: int) -> CpwCouplerT:
 
 def test_round_trip_keeps_the_producer_and_the_identifier() -> None:
     """A written artifact starts with the identifier and reads back complete."""
-    data = write_artifact(wrap(StageOutput.GlobalRouting, GlobalRoutingT()))
+    data = write_artifact(wrap(StageOutput.GlobalRouting, _global_routing()))
 
     assert data[4:8] == IDENTIFIER
     back = read_artifact(data)
@@ -168,7 +176,7 @@ def test_read_rejects_a_buffer_without_its_producer() -> None:
 
 def test_read_rejects_foreign_bytes() -> None:
     """Bytes without the identifier, or too short to decode, are not an artifact."""
-    data = bytearray(write_artifact(wrap(StageOutput.GlobalRouting, GlobalRoutingT())))
+    data = bytearray(write_artifact(wrap(StageOutput.GlobalRouting, _global_routing())))
     data[4:8] = b"XXXX"
     with pytest.raises(ArtifactError, match="identifier"):
         read_artifact(bytes(data))
@@ -187,6 +195,10 @@ def test_assignment_round_trips() -> None:
             )
         ],
         objective=132.68,
+        ring=[PortRefT(index=3)],
+        launchers=[PortRefT(index=0)],
+        feeds=[PointT(0.0, 0.0)],
+        chains=[FeedlineChainT(nodes=[0])],
     )
 
     back = read_artifact(write_artifact(wrap(StageOutput.Assignment, assignment)))
@@ -223,6 +235,51 @@ def _without_port_center() -> CpwCouplerT:
     return coupler
 
 
+def _capacity_plan(**changes: object) -> CapacityPlanT:
+    """A complete, empty capacity plan, with some fields changed.
+
+    Returns:
+        The plan.
+    """
+    plan = CapacityPlanT(
+        capacityGrid=GridExtentT(origin=PointT(0.0, 0.0)),
+        detailGrid=GridExtentT(origin=PointT(0.0, 0.0)),
+        partitions=[],
+        borders=[],
+        bottlenecks=[],
+        launchers=[],
+        nodes=[],
+        chains=[],
+    )
+    for name, value in changes.items():
+        setattr(plan, name, value)
+    return plan
+
+
+def _global_routing(**changes: object) -> GlobalRoutingT:
+    """A complete, empty global routing, with some fields changed.
+
+    Returns:
+        The routing.
+    """
+    routing = GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[])
+    for name, value in changes.items():
+        setattr(routing, name, value)
+    return routing
+
+
+def _assignment(**changes: object) -> AssignmentT:
+    """A complete, empty assignment, with some fields changed.
+
+    Returns:
+        The assignment.
+    """
+    assignment = AssignmentT(connections=[], ring=[], launchers=[], feeds=[], chains=[])
+    for name, value in changes.items():
+        setattr(assignment, name, value)
+    return assignment
+
+
 INCOMPLETE_ARTIFACTS = [
     pytest.param(
         ArtifactT(producer="p", outputType=StageOutput.Assignment, output=GlobalRoutingT()),
@@ -230,9 +287,57 @@ INCOMPLETE_ARTIFACTS = [
         id="type-tag",
     ),
     pytest.param(
-        wrap(StageOutput.Assignment, AssignmentT(connections=[ConnectionT()])),
+        wrap(StageOutput.Assignment, _assignment(connections=[ConnectionT()])),
         r"connections\[0\]: target is missing",
         id="connection-target",
+    ),
+    pytest.param(
+        wrap(StageOutput.Assignment, _assignment(feeds=None)),
+        "feeds is missing",
+        id="assignment-feeds",
+    ),
+    pytest.param(
+        wrap(StageOutput.Assignment, _assignment(chains=[FeedlineChainT()])),
+        r"chains\[0\]: nodes is missing",
+        id="chain-nodes",
+    ),
+    pytest.param(
+        wrap(StageOutput.CapacityPlan, _capacity_plan(detailGrid=None)),
+        "detail_grid is missing",
+        id="capacity-grid",
+    ),
+    pytest.param(
+        wrap(StageOutput.CapacityPlan, _capacity_plan(nodes=[CapacityNodeT()])),
+        r"nodes\[0\]: next is missing",
+        id="capacity-node",
+    ),
+    pytest.param(
+        wrap(StageOutput.GlobalRouting, _global_routing(outerRing=None)),
+        "outer_ring is missing",
+        id="global-ring",
+    ),
+    pytest.param(
+        wrap(StageOutput.GlobalRouting, _global_routing(lattices=[LatticeT(edges=[], selected=[])])),
+        r"lattices\[0\]: points is missing",
+        id="lattice-points",
+    ),
+    pytest.param(
+        wrap(StageOutput.CorridorRouting, CorridorRoutingT(corridors=[CorridorT(partitions=[])], slots=[])),
+        r"corridors\[0\]: crossings is missing",
+        id="corridor-crossings",
+    ),
+    pytest.param(
+        wrap(
+            StageOutput.CorridorRouting,
+            CorridorRoutingT(corridors=[CorridorT(partitions=[2, 3], crossings=[])], slots=[]),
+        ),
+        r"corridors\[0\]: names 2 partitions and 0 crossings",
+        id="corridor-count",
+    ),
+    pytest.param(
+        wrap(StageOutput.CorridorRouting, CorridorRoutingT(corridors=[], slots=[BorderSlotsT()])),
+        r"slots\[0\]: positions is missing",
+        id="slot-positions",
     ),
     pytest.param(
         wrap(StageOutput.FinalRouting, FinalRoutingT(couplers=None, bridges=[], unresolved=[])),

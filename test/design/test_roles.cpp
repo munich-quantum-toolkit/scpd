@@ -65,10 +65,14 @@ TEST(Roles, NamesFollowTheConfigurationKeys) {
   EXPECT_EQ(roleName(UnassignedRole::Resonator), "resonator");
   EXPECT_EQ(roleName(UnassignedRole::Conventional), "conventional");
   EXPECT_EQ(roleName(UnassignedRole::Coupler), "coupler");
+  EXPECT_EQ(roleName(UnassignedRole::BridgePair), "bridge_pair");
   EXPECT_EQ(roleName(UnassignedRole::Unset), "unset");
 
   EXPECT_TRUE(isRoutable(UnassignedRole::Resonator));
   EXPECT_TRUE(isRoutable(UnassignedRole::Conventional));
+  // A wire runs to a bridge port, crosses the component and leaves through
+  // the paired port, so the grid, the ring and the lattices carry it.
+  EXPECT_TRUE(isRoutable(UnassignedRole::BridgePair));
   EXPECT_FALSE(isRoutable(UnassignedRole::Launcher));
   EXPECT_FALSE(isRoutable(UnassignedRole::Coupler));
   EXPECT_FALSE(isRoutable(UnassignedRole::Unset));
@@ -105,6 +109,70 @@ TEST(Roles, APortMatchingSeveralPatternsIsAProblemNamingThem) {
             (Problems{"port 'Qb1.port0' matches more than one role pattern: "
                       "resonator, conventional"}));
   EXPECT_EQ(chip.ports[0]->role, UnassignedRole::Unset);
+}
+
+TEST(Roles, TheBridgePatternIsOptionalAndClassifiesWhenItIsThere) {
+  // Without it the crossing ports of a coupler are conventional, which is
+  // what a chip whose components carry no crossing declares.
+  auto patterns = benchmarkPatterns();
+  ChipT chip = chipWith({"Coupler1_2.port0", "Coupler1_2.port1"});
+  EXPECT_TRUE(classifyPorts(chip, patterns).empty());
+  EXPECT_EQ(rolesOf(chip), (std::vector{UnassignedRole::Conventional,
+                                        UnassignedRole::Conventional}));
+
+  patterns.conventional = R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$)";
+  patterns.bridge_pair = R"(^Coupler\d+_\d+\.port[1-4]$)";
+  ChipT declared = chipWith({"Coupler1_2.port0", "Coupler1_2.port1"});
+  EXPECT_TRUE(classifyPorts(declared, patterns).empty());
+  EXPECT_EQ(rolesOf(declared), (std::vector{UnassignedRole::Conventional,
+                                            UnassignedRole::BridgePair}));
+}
+
+TEST(Roles, APortTheBridgeAndConventionalPatternsBothClaimIsAProblem) {
+  auto patterns = benchmarkPatterns();
+  patterns.bridge_pair = R"(^Coupler\d+_\d+\.port[1-4]$)";
+  ChipT chip = chipWith({"Coupler1_2.port1"});
+
+  EXPECT_EQ(classifyPorts(chip, patterns),
+            (Problems{"port 'Coupler1_2.port1' matches more than one role "
+                      "pattern: conventional, bridge_pair"}));
+  EXPECT_EQ(chip.ports[0]->role, UnassignedRole::Unset);
+}
+
+TEST(Roles, TheComponentPatternNamesTheComponentOfEveryPortItMatches) {
+  auto patterns = benchmarkPatterns();
+  patterns.component = R"(^([^.]+)\.port\d+$)";
+  ChipT chip = chipWith({"Qb1.port0", "Coupler1_2.port3", "Chip.port0"});
+  chip.ports.push_back(std::make_unique<PortT>());
+  chip.ports.back()->label = "Qb2.port1";
+  chip.ports.back()->component = "stale";
+
+  EXPECT_TRUE(classifyPorts(chip, patterns).empty());
+
+  EXPECT_EQ(chip.ports[0]->component, "Qb1");
+  EXPECT_EQ(chip.ports[1]->component, "Coupler1_2");
+  EXPECT_EQ(chip.ports[2]->component, "Chip");
+  EXPECT_EQ(chip.ports[3]->component, "Qb2");
+}
+
+TEST(Roles, APortTheComponentPatternMissesHasNoComponent) {
+  auto patterns = benchmarkPatterns();
+  patterns.component = R"(^(Qb\d+)\.port\d+$)";
+  ChipT chip = chipWith({"Qb1.port0", "Chip.port0"});
+  chip.ports[1]->component = "stale";
+
+  EXPECT_TRUE(classifyPorts(chip, patterns).empty());
+
+  EXPECT_EQ(chip.ports[0]->component, "Qb1");
+  EXPECT_TRUE(chip.ports[1]->component.empty());
+}
+
+TEST(Roles, WithoutAComponentPatternNoPortHasAComponent) {
+  ChipT chip = chipWith({"Qb1.port0"});
+
+  EXPECT_TRUE(classifyPorts(chip, benchmarkPatterns()).empty());
+
+  EXPECT_TRUE(chip.ports[0]->component.empty());
 }
 
 TEST(Roles, BrokenPatternsAreReportedBeforeAnythingIsClassified) {

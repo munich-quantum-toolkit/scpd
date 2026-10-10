@@ -41,6 +41,7 @@ UPGRADING
 contributing
 ai_usage
 tooling
+terminal_output
 support
 ```
 

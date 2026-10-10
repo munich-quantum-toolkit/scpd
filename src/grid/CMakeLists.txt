@@ -6,4 +6,5 @@
 #
 # Licensed under the MIT License
 
-add_mqt_scpd_library(grid LINK_LIBRARIES MQT::ScpdGeometry MQT::ScpdDesign)
+add_mqt_scpd_library(grid LINK_LIBRARIES MQT::ScpdGeometry MQT::ScpdDesign PRIVATE_LINK_LIBRARIES
+                     mqt-scpd-polygon)

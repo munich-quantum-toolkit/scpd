@@ -20,6 +20,30 @@ namespace scpd {
 namespace flatbuffers {
 namespace artifacts {
 
+struct GridExtent;
+struct GridExtentBuilder;
+struct GridExtentT;
+
+struct Partition;
+struct PartitionBuilder;
+struct PartitionT;
+
+struct PartitionBorder;
+struct PartitionBorderBuilder;
+struct PartitionBorderT;
+
+struct Bottleneck;
+struct BottleneckBuilder;
+struct BottleneckT;
+
+struct LauncherSlot;
+struct LauncherSlotBuilder;
+struct LauncherSlotT;
+
+struct CapacityNode;
+struct CapacityNodeBuilder;
+struct CapacityNodeT;
+
 struct CapacityPlan;
 struct CapacityPlanBuilder;
 struct CapacityPlanT;
@@ -28,9 +52,29 @@ struct Assignment;
 struct AssignmentBuilder;
 struct AssignmentT;
 
+struct FeedlineChain;
+struct FeedlineChainBuilder;
+struct FeedlineChainT;
+
+struct Lattice;
+struct LatticeBuilder;
+struct LatticeT;
+
 struct GlobalRouting;
 struct GlobalRoutingBuilder;
 struct GlobalRoutingT;
+
+struct BorderSlots;
+struct BorderSlotsBuilder;
+struct BorderSlotsT;
+
+struct Corridor;
+struct CorridorBuilder;
+struct CorridorT;
+
+struct CorridorRouting;
+struct CorridorRoutingBuilder;
+struct CorridorRoutingT;
 
 struct DetailRouting;
 struct DetailRoutingBuilder;
@@ -52,12 +96,34 @@ struct Artifact;
 struct ArtifactBuilder;
 struct ArtifactT;
 
+bool operator==(const GridExtentT &lhs, const GridExtentT &rhs);
+bool operator!=(const GridExtentT &lhs, const GridExtentT &rhs);
+bool operator==(const PartitionT &lhs, const PartitionT &rhs);
+bool operator!=(const PartitionT &lhs, const PartitionT &rhs);
+bool operator==(const PartitionBorderT &lhs, const PartitionBorderT &rhs);
+bool operator!=(const PartitionBorderT &lhs, const PartitionBorderT &rhs);
+bool operator==(const BottleneckT &lhs, const BottleneckT &rhs);
+bool operator!=(const BottleneckT &lhs, const BottleneckT &rhs);
+bool operator==(const LauncherSlotT &lhs, const LauncherSlotT &rhs);
+bool operator!=(const LauncherSlotT &lhs, const LauncherSlotT &rhs);
+bool operator==(const CapacityNodeT &lhs, const CapacityNodeT &rhs);
+bool operator!=(const CapacityNodeT &lhs, const CapacityNodeT &rhs);
 bool operator==(const CapacityPlanT &lhs, const CapacityPlanT &rhs);
 bool operator!=(const CapacityPlanT &lhs, const CapacityPlanT &rhs);
 bool operator==(const AssignmentT &lhs, const AssignmentT &rhs);
 bool operator!=(const AssignmentT &lhs, const AssignmentT &rhs);
+bool operator==(const FeedlineChainT &lhs, const FeedlineChainT &rhs);
+bool operator!=(const FeedlineChainT &lhs, const FeedlineChainT &rhs);
+bool operator==(const LatticeT &lhs, const LatticeT &rhs);
+bool operator!=(const LatticeT &lhs, const LatticeT &rhs);
 bool operator==(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
 bool operator!=(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
+bool operator==(const BorderSlotsT &lhs, const BorderSlotsT &rhs);
+bool operator!=(const BorderSlotsT &lhs, const BorderSlotsT &rhs);
+bool operator==(const CorridorT &lhs, const CorridorT &rhs);
+bool operator!=(const CorridorT &lhs, const CorridorT &rhs);
+bool operator==(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs);
+bool operator!=(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs);
 bool operator==(const DetailRoutingT &lhs, const DetailRoutingT &rhs);
 bool operator!=(const DetailRoutingT &lhs, const DetailRoutingT &rhs);
 bool operator==(const FinalRoutingT &lhs, const FinalRoutingT &rhs);
@@ -69,11 +135,33 @@ bool operator!=(const GeometryT &lhs, const GeometryT &rhs);
 bool operator==(const ArtifactT &lhs, const ArtifactT &rhs);
 bool operator!=(const ArtifactT &lhs, const ArtifactT &rhs);
 
+inline const ::flatbuffers::TypeTable *GridExtentTypeTable();
+
+inline const ::flatbuffers::TypeTable *PartitionTypeTable();
+
+inline const ::flatbuffers::TypeTable *PartitionBorderTypeTable();
+
+inline const ::flatbuffers::TypeTable *BottleneckTypeTable();
+
+inline const ::flatbuffers::TypeTable *LauncherSlotTypeTable();
+
+inline const ::flatbuffers::TypeTable *CapacityNodeTypeTable();
+
 inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable();
 
 inline const ::flatbuffers::TypeTable *AssignmentTypeTable();
 
+inline const ::flatbuffers::TypeTable *FeedlineChainTypeTable();
+
+inline const ::flatbuffers::TypeTable *LatticeTypeTable();
+
 inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable();
+
+inline const ::flatbuffers::TypeTable *BorderSlotsTypeTable();
+
+inline const ::flatbuffers::TypeTable *CorridorTypeTable();
+
+inline const ::flatbuffers::TypeTable *CorridorRoutingTypeTable();
 
 inline const ::flatbuffers::TypeTable *DetailRoutingTypeTable();
 
@@ -85,6 +173,46 @@ inline const ::flatbuffers::TypeTable *GeometryTypeTable();
 
 inline const ::flatbuffers::TypeTable *ArtifactTypeTable();
 
+/// What one link of a capacity chain stands for.
+enum class CapacityElement : uint8_t {
+  Unset = 0,
+  /// A port the chain has to serve.
+  Target = 1,
+  /// A gate the wires beyond it have to pass.
+  Bottleneck = 2,
+  /// The launcher the chain starts at.
+  Launcher = 3,
+  MIN = Unset,
+  MAX = Launcher
+};
+
+inline const CapacityElement (&EnumValuesCapacityElement())[4] {
+  static const CapacityElement values[] = {
+    CapacityElement::Unset,
+    CapacityElement::Target,
+    CapacityElement::Bottleneck,
+    CapacityElement::Launcher
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesCapacityElement() {
+  static const char * const names[5] = {
+    "Unset",
+    "Target",
+    "Bottleneck",
+    "Launcher",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameCapacityElement(CapacityElement e) {
+  if (::flatbuffers::IsOutRange(e, CapacityElement::Unset, CapacityElement::Launcher)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesCapacityElement()[index];
+}
+
 /// What a stage produces.
 enum class StageOutput : uint8_t {
   NONE = 0,
@@ -94,11 +222,12 @@ enum class StageOutput : uint8_t {
   DetailRouting = 4,
   FinalRouting = 5,
   Geometry = 6,
+  CorridorRouting = 7,
   MIN = NONE,
-  MAX = Geometry
+  MAX = CorridorRouting
 };
 
-inline const StageOutput (&EnumValuesStageOutput())[7] {
+inline const StageOutput (&EnumValuesStageOutput())[8] {
   static const StageOutput values[] = {
     StageOutput::NONE,
     StageOutput::CapacityPlan,
@@ -106,13 +235,14 @@ inline const StageOutput (&EnumValuesStageOutput())[7] {
     StageOutput::GlobalRouting,
     StageOutput::DetailRouting,
     StageOutput::FinalRouting,
-    StageOutput::Geometry
+    StageOutput::Geometry,
+    StageOutput::CorridorRouting
   };
   return values;
 }
 
 inline const char * const *EnumNamesStageOutput() {
-  static const char * const names[8] = {
+  static const char * const names[9] = {
     "NONE",
     "CapacityPlan",
     "Assignment",
@@ -120,13 +250,14 @@ inline const char * const *EnumNamesStageOutput() {
     "DetailRouting",
     "FinalRouting",
     "Geometry",
+    "CorridorRouting",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameStageOutput(StageOutput e) {
-  if (::flatbuffers::IsOutRange(e, StageOutput::NONE, StageOutput::Geometry)) return "";
+  if (::flatbuffers::IsOutRange(e, StageOutput::NONE, StageOutput::CorridorRouting)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesStageOutput()[index];
 }
@@ -159,6 +290,10 @@ template<> struct StageOutputTraits<mqt::scpd::flatbuffers::artifacts::Geometry>
   static const StageOutput enum_value = StageOutput::Geometry;
 };
 
+template<> struct StageOutputTraits<mqt::scpd::flatbuffers::artifacts::CorridorRouting> {
+  static const StageOutput enum_value = StageOutput::CorridorRouting;
+};
+
 template<typename T> struct StageOutputUnionTraits {
   static const StageOutput enum_value = StageOutput::NONE;
 };
@@ -185,6 +320,10 @@ template<> struct StageOutputUnionTraits<mqt::scpd::flatbuffers::artifacts::Fina
 
 template<> struct StageOutputUnionTraits<mqt::scpd::flatbuffers::artifacts::GeometryT> {
   static const StageOutput enum_value = StageOutput::Geometry;
+};
+
+template<> struct StageOutputUnionTraits<mqt::scpd::flatbuffers::artifacts::CorridorRoutingT> {
+  static const StageOutput enum_value = StageOutput::CorridorRouting;
 };
 
 struct StageOutputUnion {
@@ -265,6 +404,14 @@ struct StageOutputUnion {
     return type == StageOutput::Geometry ?
       reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::GeometryT *>(value) : nullptr;
   }
+  mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *AsCorridorRouting() {
+    return type == StageOutput::CorridorRouting ?
+      reinterpret_cast<mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(value) : nullptr;
+  }
+  const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *AsCorridorRouting() const {
+    return type == StageOutput::CorridorRouting ?
+      reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(value) : nullptr;
+  }
 };
 
 
@@ -298,6 +445,10 @@ inline bool operator==(const StageOutputUnion &lhs, const StageOutputUnion &rhs)
       return *(reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::GeometryT *>(lhs.value)) ==
              *(reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::GeometryT *>(rhs.value));
     }
+    case StageOutput::CorridorRouting: {
+      return *(reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(lhs.value)) ==
+             *(reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(rhs.value));
+    }
     default: {
       return false;
     }
@@ -313,8 +464,638 @@ bool VerifyStageOutput(::flatbuffers::VerifierTemplate<B> &verifier, const void 
 template <bool B = false>
 bool VerifyStageOutputVector(::flatbuffers::VerifierTemplate<B> &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<StageOutput> *types);
 
+struct GridExtentT : public ::flatbuffers::NativeTable {
+  typedef GridExtent TableType;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  mqt::scpd::flatbuffers::geometry::Point origin{};
+  double cell_width = 0.0;
+  double cell_height = 0.0;
+};
+
+/// A grid of a run, as the numbers that convert between its cells and layout
+/// units. The grid itself is derived state and is rebuilt; these numbers are
+/// what a reader needs to place what the artifact carries.
+struct GridExtent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef GridExtentT NativeTableType;
+  typedef GridExtentBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return GridExtentTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_WIDTH = 4,
+    VT_HEIGHT = 6,
+    VT_ORIGIN = 8,
+    VT_CELL_WIDTH = 10,
+    VT_CELL_HEIGHT = 12
+  };
+  uint32_t width() const {
+    return GetField<uint32_t>(VT_WIDTH, 0);
+  }
+  uint32_t height() const {
+    return GetField<uint32_t>(VT_HEIGHT, 0);
+  }
+  const mqt::scpd::flatbuffers::geometry::Point *origin() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_ORIGIN);
+  }
+  double cell_width() const {
+    return GetField<double>(VT_CELL_WIDTH, 0.0);
+  }
+  double cell_height() const {
+    return GetField<double>(VT_CELL_HEIGHT, 0.0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_WIDTH, 4) &&
+           VerifyField<uint32_t>(verifier, VT_HEIGHT, 4) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_ORIGIN, 8) &&
+           VerifyField<double>(verifier, VT_CELL_WIDTH, 8) &&
+           VerifyField<double>(verifier, VT_CELL_HEIGHT, 8) &&
+           verifier.EndTable();
+  }
+  GridExtentT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(GridExtentT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<GridExtent> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GridExtentT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct GridExtentBuilder {
+  typedef GridExtent Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_width(uint32_t width) {
+    fbb_.AddElement<uint32_t>(GridExtent::VT_WIDTH, width, 0);
+  }
+  void add_height(uint32_t height) {
+    fbb_.AddElement<uint32_t>(GridExtent::VT_HEIGHT, height, 0);
+  }
+  void add_origin(const mqt::scpd::flatbuffers::geometry::Point *origin) {
+    fbb_.AddStruct(GridExtent::VT_ORIGIN, origin);
+  }
+  void add_cell_width(double cell_width) {
+    fbb_.AddElement<double>(GridExtent::VT_CELL_WIDTH, cell_width, 0.0);
+  }
+  void add_cell_height(double cell_height) {
+    fbb_.AddElement<double>(GridExtent::VT_CELL_HEIGHT, cell_height, 0.0);
+  }
+  explicit GridExtentBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<GridExtent> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<GridExtent>(end);
+    fbb_.Required(o, GridExtent::VT_ORIGIN);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<GridExtent> CreateGridExtent(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t width = 0,
+    uint32_t height = 0,
+    const mqt::scpd::flatbuffers::geometry::Point *origin = nullptr,
+    double cell_width = 0.0,
+    double cell_height = 0.0) {
+  GridExtentBuilder builder_(_fbb);
+  builder_.add_cell_height(cell_height);
+  builder_.add_cell_width(cell_width);
+  builder_.add_origin(origin);
+  builder_.add_height(height);
+  builder_.add_width(width);
+  return builder_.Finish();
+}
+
+struct GridExtent::Traits {
+  using type = GridExtent;
+  static auto constexpr Create = CreateGridExtent;
+};
+
+::flatbuffers::Offset<GridExtent> CreateGridExtent(::flatbuffers::FlatBufferBuilder &_fbb, const GridExtentT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct PartitionT : public ::flatbuffers::NativeTable {
+  typedef Partition TableType;
+  uint32_t label = 0;
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT>> outlines{};
+  PartitionT() = default;
+  PartitionT(const PartitionT &o);
+  PartitionT(PartitionT&&) FLATBUFFERS_NOEXCEPT = default;
+  PartitionT &operator=(PartitionT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// One partition of the free space.
+struct Partition FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef PartitionT NativeTableType;
+  typedef PartitionBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PartitionTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_LABEL = 4,
+    VT_OUTLINES = 6
+  };
+  uint32_t label() const {
+    return GetField<uint32_t>(VT_LABEL, 0);
+  }
+  /// Closed rings in layout units. More than one where the partition has a
+  /// hole or falls apart into pieces.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *outlines() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *>(VT_OUTLINES);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_LABEL, 4) &&
+           VerifyOffsetRequired(verifier, VT_OUTLINES) &&
+           verifier.VerifyVector(outlines()) &&
+           verifier.VerifyVectorOfTables(outlines()) &&
+           verifier.EndTable();
+  }
+  PartitionT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(PartitionT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<Partition> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const PartitionT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct PartitionBuilder {
+  typedef Partition Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_label(uint32_t label) {
+    fbb_.AddElement<uint32_t>(Partition::VT_LABEL, label, 0);
+  }
+  void add_outlines(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>> outlines) {
+    fbb_.AddOffset(Partition::VT_OUTLINES, outlines);
+  }
+  explicit PartitionBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<Partition> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<Partition>(end);
+    fbb_.Required(o, Partition::VT_OUTLINES);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<Partition> CreatePartition(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t label = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>> outlines = 0) {
+  PartitionBuilder builder_(_fbb);
+  builder_.add_outlines(outlines);
+  builder_.add_label(label);
+  return builder_.Finish();
+}
+
+struct Partition::Traits {
+  using type = Partition;
+  static auto constexpr Create = CreatePartition;
+};
+
+inline ::flatbuffers::Offset<Partition> CreatePartitionDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t label = 0,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *outlines = nullptr) {
+  auto outlines__ = outlines ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>(*outlines) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreatePartition(
+      _fbb,
+      label,
+      outlines__);
+}
+
+::flatbuffers::Offset<Partition> CreatePartition(::flatbuffers::FlatBufferBuilder &_fbb, const PartitionT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct PartitionBorderT : public ::flatbuffers::NativeTable {
+  typedef PartitionBorder TableType;
+  uint32_t first = 0;
+  uint32_t second = 0;
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> samples{};
+  mqt::scpd::flatbuffers::geometry::Point center{};
+  uint32_t budget = 0;
+};
+
+/// Where two partitions meet, and how many wires may cross there.
+struct PartitionBorder FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef PartitionBorderT NativeTableType;
+  typedef PartitionBorderBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PartitionBorderTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_FIRST = 4,
+    VT_SECOND = 6,
+    VT_SAMPLES = 8,
+    VT_CENTER = 10,
+    VT_BUDGET = 12
+  };
+  uint32_t first() const {
+    return GetField<uint32_t>(VT_FIRST, 0);
+  }
+  uint32_t second() const {
+    return GetField<uint32_t>(VT_SECOND, 0);
+  }
+  /// The cell edges the border runs along, in layout units.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *samples() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_SAMPLES);
+  }
+  const mqt::scpd::flatbuffers::geometry::Point *center() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_CENTER);
+  }
+  uint32_t budget() const {
+    return GetField<uint32_t>(VT_BUDGET, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_FIRST, 4) &&
+           VerifyField<uint32_t>(verifier, VT_SECOND, 4) &&
+           VerifyOffsetRequired(verifier, VT_SAMPLES) &&
+           verifier.VerifyVector(samples()) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_CENTER, 8) &&
+           VerifyField<uint32_t>(verifier, VT_BUDGET, 4) &&
+           verifier.EndTable();
+  }
+  PartitionBorderT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(PartitionBorderT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<PartitionBorder> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const PartitionBorderT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct PartitionBorderBuilder {
+  typedef PartitionBorder Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_first(uint32_t first) {
+    fbb_.AddElement<uint32_t>(PartitionBorder::VT_FIRST, first, 0);
+  }
+  void add_second(uint32_t second) {
+    fbb_.AddElement<uint32_t>(PartitionBorder::VT_SECOND, second, 0);
+  }
+  void add_samples(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> samples) {
+    fbb_.AddOffset(PartitionBorder::VT_SAMPLES, samples);
+  }
+  void add_center(const mqt::scpd::flatbuffers::geometry::Point *center) {
+    fbb_.AddStruct(PartitionBorder::VT_CENTER, center);
+  }
+  void add_budget(uint32_t budget) {
+    fbb_.AddElement<uint32_t>(PartitionBorder::VT_BUDGET, budget, 0);
+  }
+  explicit PartitionBorderBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<PartitionBorder> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<PartitionBorder>(end);
+    fbb_.Required(o, PartitionBorder::VT_SAMPLES);
+    fbb_.Required(o, PartitionBorder::VT_CENTER);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<PartitionBorder> CreatePartitionBorder(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t first = 0,
+    uint32_t second = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> samples = 0,
+    const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
+    uint32_t budget = 0) {
+  PartitionBorderBuilder builder_(_fbb);
+  builder_.add_budget(budget);
+  builder_.add_center(center);
+  builder_.add_samples(samples);
+  builder_.add_second(second);
+  builder_.add_first(first);
+  return builder_.Finish();
+}
+
+struct PartitionBorder::Traits {
+  using type = PartitionBorder;
+  static auto constexpr Create = CreatePartitionBorder;
+};
+
+inline ::flatbuffers::Offset<PartitionBorder> CreatePartitionBorderDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t first = 0,
+    uint32_t second = 0,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *samples = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *center = nullptr,
+    uint32_t budget = 0) {
+  auto samples__ = samples ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*samples) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreatePartitionBorder(
+      _fbb,
+      first,
+      second,
+      samples__,
+      center,
+      budget);
+}
+
+::flatbuffers::Offset<PartitionBorder> CreatePartitionBorder(::flatbuffers::FlatBufferBuilder &_fbb, const PartitionBorderT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct BottleneckT : public ::flatbuffers::NativeTable {
+  typedef Bottleneck TableType;
+  mqt::scpd::flatbuffers::geometry::Point from{};
+  mqt::scpd::flatbuffers::geometry::Point to{};
+  uint32_t capacity = 0;
+};
+
+/// The narrowest place of a corridor: the two obstacle points that face each
+/// other across it, and how many wires fit between them.
+struct Bottleneck FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef BottleneckT NativeTableType;
+  typedef BottleneckBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return BottleneckTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_FROM = 4,
+    VT_TO = 6,
+    VT_CAPACITY = 8
+  };
+  const mqt::scpd::flatbuffers::geometry::Point *from() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_FROM);
+  }
+  const mqt::scpd::flatbuffers::geometry::Point *to() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_TO);
+  }
+  uint32_t capacity() const {
+    return GetField<uint32_t>(VT_CAPACITY, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_FROM, 8) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_TO, 8) &&
+           VerifyField<uint32_t>(verifier, VT_CAPACITY, 4) &&
+           verifier.EndTable();
+  }
+  BottleneckT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(BottleneckT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<Bottleneck> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const BottleneckT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct BottleneckBuilder {
+  typedef Bottleneck Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_from(const mqt::scpd::flatbuffers::geometry::Point *from) {
+    fbb_.AddStruct(Bottleneck::VT_FROM, from);
+  }
+  void add_to(const mqt::scpd::flatbuffers::geometry::Point *to) {
+    fbb_.AddStruct(Bottleneck::VT_TO, to);
+  }
+  void add_capacity(uint32_t capacity) {
+    fbb_.AddElement<uint32_t>(Bottleneck::VT_CAPACITY, capacity, 0);
+  }
+  explicit BottleneckBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<Bottleneck> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<Bottleneck>(end);
+    fbb_.Required(o, Bottleneck::VT_FROM);
+    fbb_.Required(o, Bottleneck::VT_TO);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<Bottleneck> CreateBottleneck(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const mqt::scpd::flatbuffers::geometry::Point *from = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *to = nullptr,
+    uint32_t capacity = 0) {
+  BottleneckBuilder builder_(_fbb);
+  builder_.add_capacity(capacity);
+  builder_.add_to(to);
+  builder_.add_from(from);
+  return builder_.Finish();
+}
+
+struct Bottleneck::Traits {
+  using type = Bottleneck;
+  static auto constexpr Create = CreateBottleneck;
+};
+
+::flatbuffers::Offset<Bottleneck> CreateBottleneck(::flatbuffers::FlatBufferBuilder &_fbb, const BottleneckT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct LauncherSlotT : public ::flatbuffers::NativeTable {
+  typedef LauncherSlot TableType;
+  mqt::scpd::flatbuffers::design::PortRef port{};
+  mqt::scpd::flatbuffers::geometry::Point position{};
+};
+
+/// A launcher and the point at which its wires enter the chip.
+struct LauncherSlot FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef LauncherSlotT NativeTableType;
+  typedef LauncherSlotBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return LauncherSlotTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_PORT = 4,
+    VT_POSITION = 6
+  };
+  const mqt::scpd::flatbuffers::design::PortRef *port() const {
+    return GetStruct<const mqt::scpd::flatbuffers::design::PortRef *>(VT_PORT);
+  }
+  const mqt::scpd::flatbuffers::geometry::Point *position() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_POSITION);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_PORT, 4) &&
+           VerifyFieldRequired<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_POSITION, 8) &&
+           verifier.EndTable();
+  }
+  LauncherSlotT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(LauncherSlotT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<LauncherSlot> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LauncherSlotT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct LauncherSlotBuilder {
+  typedef LauncherSlot Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_port(const mqt::scpd::flatbuffers::design::PortRef *port) {
+    fbb_.AddStruct(LauncherSlot::VT_PORT, port);
+  }
+  void add_position(const mqt::scpd::flatbuffers::geometry::Point *position) {
+    fbb_.AddStruct(LauncherSlot::VT_POSITION, position);
+  }
+  explicit LauncherSlotBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<LauncherSlot> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<LauncherSlot>(end);
+    fbb_.Required(o, LauncherSlot::VT_PORT);
+    fbb_.Required(o, LauncherSlot::VT_POSITION);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<LauncherSlot> CreateLauncherSlot(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const mqt::scpd::flatbuffers::design::PortRef *port = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *position = nullptr) {
+  LauncherSlotBuilder builder_(_fbb);
+  builder_.add_position(position);
+  builder_.add_port(port);
+  return builder_.Finish();
+}
+
+struct LauncherSlot::Traits {
+  using type = LauncherSlot;
+  static auto constexpr Create = CreateLauncherSlot;
+};
+
+::flatbuffers::Offset<LauncherSlot> CreateLauncherSlot(::flatbuffers::FlatBufferBuilder &_fbb, const LauncherSlotT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct CapacityNodeT : public ::flatbuffers::NativeTable {
+  typedef CapacityNode TableType;
+  mqt::scpd::flatbuffers::artifacts::CapacityElement kind = mqt::scpd::flatbuffers::artifacts::CapacityElement::Unset;
+  uint32_t id = 0;
+  uint32_t capacity = 0;
+  std::vector<uint32_t> next{};
+};
+
+/// One link of a capacity chain.
+///
+/// A chain is a tree and FlatBuffers has no recursive table, so the nodes are
+/// stored flat and a link names its branches by index. Two chains can then
+/// share a subtree without storing it twice.
+struct CapacityNode FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CapacityNodeT NativeTableType;
+  typedef CapacityNodeBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CapacityNodeTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_KIND = 4,
+    VT_ID = 6,
+    VT_CAPACITY = 8,
+    VT_NEXT = 10
+  };
+  mqt::scpd::flatbuffers::artifacts::CapacityElement kind() const {
+    return static_cast<mqt::scpd::flatbuffers::artifacts::CapacityElement>(GetField<uint8_t>(VT_KIND, 0));
+  }
+  /// The port of a Target and the index into `bottlenecks` of a Bottleneck.
+  /// Unused for a Launcher.
+  uint32_t id() const {
+    return GetField<uint32_t>(VT_ID, 0);
+  }
+  /// How many wires this link lets through. Only a Bottleneck limits.
+  uint32_t capacity() const {
+    return GetField<uint32_t>(VT_CAPACITY, 0);
+  }
+  /// Indices into CapacityPlan.nodes.
+  const ::flatbuffers::Vector<uint32_t> *next() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_NEXT);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_KIND, 1) &&
+           VerifyField<uint32_t>(verifier, VT_ID, 4) &&
+           VerifyField<uint32_t>(verifier, VT_CAPACITY, 4) &&
+           VerifyOffsetRequired(verifier, VT_NEXT) &&
+           verifier.VerifyVector(next()) &&
+           verifier.EndTable();
+  }
+  CapacityNodeT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CapacityNodeT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<CapacityNode> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityNodeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CapacityNodeBuilder {
+  typedef CapacityNode Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_kind(mqt::scpd::flatbuffers::artifacts::CapacityElement kind) {
+    fbb_.AddElement<uint8_t>(CapacityNode::VT_KIND, static_cast<uint8_t>(kind), 0);
+  }
+  void add_id(uint32_t id) {
+    fbb_.AddElement<uint32_t>(CapacityNode::VT_ID, id, 0);
+  }
+  void add_capacity(uint32_t capacity) {
+    fbb_.AddElement<uint32_t>(CapacityNode::VT_CAPACITY, capacity, 0);
+  }
+  void add_next(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> next) {
+    fbb_.AddOffset(CapacityNode::VT_NEXT, next);
+  }
+  explicit CapacityNodeBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<CapacityNode> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<CapacityNode>(end);
+    fbb_.Required(o, CapacityNode::VT_NEXT);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<CapacityNode> CreateCapacityNode(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    mqt::scpd::flatbuffers::artifacts::CapacityElement kind = mqt::scpd::flatbuffers::artifacts::CapacityElement::Unset,
+    uint32_t id = 0,
+    uint32_t capacity = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> next = 0) {
+  CapacityNodeBuilder builder_(_fbb);
+  builder_.add_next(next);
+  builder_.add_capacity(capacity);
+  builder_.add_id(id);
+  builder_.add_kind(kind);
+  return builder_.Finish();
+}
+
+struct CapacityNode::Traits {
+  using type = CapacityNode;
+  static auto constexpr Create = CreateCapacityNode;
+};
+
+inline ::flatbuffers::Offset<CapacityNode> CreateCapacityNodeDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    mqt::scpd::flatbuffers::artifacts::CapacityElement kind = mqt::scpd::flatbuffers::artifacts::CapacityElement::Unset,
+    uint32_t id = 0,
+    uint32_t capacity = 0,
+    const std::vector<uint32_t> *next = nullptr) {
+  auto next__ = next ? _fbb.CreateVector<uint32_t>(*next) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateCapacityNode(
+      _fbb,
+      kind,
+      id,
+      capacity,
+      next__);
+}
+
+::flatbuffers::Offset<CapacityNode> CreateCapacityNode(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityNodeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct CapacityPlanT : public ::flatbuffers::NativeTable {
   typedef CapacityPlan TableType;
+  std::unique_ptr<mqt::scpd::flatbuffers::artifacts::GridExtentT> capacity_grid{};
+  std::unique_ptr<mqt::scpd::flatbuffers::artifacts::GridExtentT> detail_grid{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::PartitionT>> partitions{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::PartitionBorderT>> borders{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BottleneckT>> bottlenecks{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LauncherSlotT>> launchers{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CapacityNodeT>> nodes{};
+  std::vector<uint32_t> chains{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT>> port_keepout{};
+  CapacityPlanT() = default;
+  CapacityPlanT(const CapacityPlanT &o);
+  CapacityPlanT(CapacityPlanT&&) FLATBUFFERS_NOEXCEPT = default;
+  CapacityPlanT &operator=(CapacityPlanT o) FLATBUFFERS_NOEXCEPT;
 };
 
 /// Output of the Capacity stage.
@@ -325,9 +1106,82 @@ struct CapacityPlan FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
     return CapacityPlanTypeTable();
   }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_CAPACITY_GRID = 4,
+    VT_DETAIL_GRID = 6,
+    VT_PARTITIONS = 8,
+    VT_BORDERS = 10,
+    VT_BOTTLENECKS = 12,
+    VT_LAUNCHERS = 14,
+    VT_NODES = 16,
+    VT_CHAINS = 18,
+    VT_PORT_KEEPOUT = 20
+  };
+  const mqt::scpd::flatbuffers::artifacts::GridExtent *capacity_grid() const {
+    return GetPointer<const mqt::scpd::flatbuffers::artifacts::GridExtent *>(VT_CAPACITY_GRID);
+  }
+  const mqt::scpd::flatbuffers::artifacts::GridExtent *detail_grid() const {
+    return GetPointer<const mqt::scpd::flatbuffers::artifacts::GridExtent *>(VT_DETAIL_GRID);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Partition>> *partitions() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Partition>> *>(VT_PARTITIONS);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::PartitionBorder>> *borders() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::PartitionBorder>> *>(VT_BORDERS);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Bottleneck>> *bottlenecks() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Bottleneck>> *>(VT_BOTTLENECKS);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::LauncherSlot>> *launchers() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::LauncherSlot>> *>(VT_LAUNCHERS);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>> *nodes() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>> *>(VT_NODES);
+  }
+  /// The index in `nodes` of the root of each chain.
+  const ::flatbuffers::Vector<uint32_t> *chains() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_CHAINS);
+  }
+  /// What the approaches of the ports keep clear, as closed rings in layout
+  /// units: the strip a wire leaves each routable port along, extended
+  /// forward and backward.
+  ///
+  /// These are obstacles to everything the stages route, and they are not
+  /// chip artwork, so they are a layer of their own rather than more
+  /// polygons of the chip. Only the cells that were free before a band took
+  /// them are here; where a band covers artwork, the artwork is already
+  /// drawn. The rings follow the cells, so a band along a diagonal is the
+  /// staircase the grid blocks.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *port_keepout() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *>(VT_PORT_KEEPOUT);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_CAPACITY_GRID) &&
+           verifier.VerifyTable(capacity_grid()) &&
+           VerifyOffsetRequired(verifier, VT_DETAIL_GRID) &&
+           verifier.VerifyTable(detail_grid()) &&
+           VerifyOffsetRequired(verifier, VT_PARTITIONS) &&
+           verifier.VerifyVector(partitions()) &&
+           verifier.VerifyVectorOfTables(partitions()) &&
+           VerifyOffsetRequired(verifier, VT_BORDERS) &&
+           verifier.VerifyVector(borders()) &&
+           verifier.VerifyVectorOfTables(borders()) &&
+           VerifyOffsetRequired(verifier, VT_BOTTLENECKS) &&
+           verifier.VerifyVector(bottlenecks()) &&
+           verifier.VerifyVectorOfTables(bottlenecks()) &&
+           VerifyOffsetRequired(verifier, VT_LAUNCHERS) &&
+           verifier.VerifyVector(launchers()) &&
+           verifier.VerifyVectorOfTables(launchers()) &&
+           VerifyOffsetRequired(verifier, VT_NODES) &&
+           verifier.VerifyVector(nodes()) &&
+           verifier.VerifyVectorOfTables(nodes()) &&
+           VerifyOffsetRequired(verifier, VT_CHAINS) &&
+           verifier.VerifyVector(chains()) &&
+           VerifyOffset(verifier, VT_PORT_KEEPOUT) &&
+           verifier.VerifyVector(port_keepout()) &&
+           verifier.VerifyVectorOfTables(port_keepout()) &&
            verifier.EndTable();
   }
   CapacityPlanT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -339,6 +1193,33 @@ struct CapacityPlanBuilder {
   typedef CapacityPlan Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
+  void add_capacity_grid(::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> capacity_grid) {
+    fbb_.AddOffset(CapacityPlan::VT_CAPACITY_GRID, capacity_grid);
+  }
+  void add_detail_grid(::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> detail_grid) {
+    fbb_.AddOffset(CapacityPlan::VT_DETAIL_GRID, detail_grid);
+  }
+  void add_partitions(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Partition>>> partitions) {
+    fbb_.AddOffset(CapacityPlan::VT_PARTITIONS, partitions);
+  }
+  void add_borders(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::PartitionBorder>>> borders) {
+    fbb_.AddOffset(CapacityPlan::VT_BORDERS, borders);
+  }
+  void add_bottlenecks(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Bottleneck>>> bottlenecks) {
+    fbb_.AddOffset(CapacityPlan::VT_BOTTLENECKS, bottlenecks);
+  }
+  void add_launchers(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::LauncherSlot>>> launchers) {
+    fbb_.AddOffset(CapacityPlan::VT_LAUNCHERS, launchers);
+  }
+  void add_nodes(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>>> nodes) {
+    fbb_.AddOffset(CapacityPlan::VT_NODES, nodes);
+  }
+  void add_chains(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> chains) {
+    fbb_.AddOffset(CapacityPlan::VT_CHAINS, chains);
+  }
+  void add_port_keepout(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>> port_keepout) {
+    fbb_.AddOffset(CapacityPlan::VT_PORT_KEEPOUT, port_keepout);
+  }
   explicit CapacityPlanBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -346,13 +1227,39 @@ struct CapacityPlanBuilder {
   ::flatbuffers::Offset<CapacityPlan> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<CapacityPlan>(end);
+    fbb_.Required(o, CapacityPlan::VT_CAPACITY_GRID);
+    fbb_.Required(o, CapacityPlan::VT_DETAIL_GRID);
+    fbb_.Required(o, CapacityPlan::VT_PARTITIONS);
+    fbb_.Required(o, CapacityPlan::VT_BORDERS);
+    fbb_.Required(o, CapacityPlan::VT_BOTTLENECKS);
+    fbb_.Required(o, CapacityPlan::VT_LAUNCHERS);
+    fbb_.Required(o, CapacityPlan::VT_NODES);
+    fbb_.Required(o, CapacityPlan::VT_CHAINS);
     return o;
   }
 };
 
 inline ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlan(
-    ::flatbuffers::FlatBufferBuilder &_fbb) {
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> capacity_grid = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> detail_grid = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Partition>>> partitions = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::PartitionBorder>>> borders = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Bottleneck>>> bottlenecks = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::LauncherSlot>>> launchers = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>>> nodes = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> chains = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>> port_keepout = 0) {
   CapacityPlanBuilder builder_(_fbb);
+  builder_.add_port_keepout(port_keepout);
+  builder_.add_chains(chains);
+  builder_.add_nodes(nodes);
+  builder_.add_launchers(launchers);
+  builder_.add_bottlenecks(bottlenecks);
+  builder_.add_borders(borders);
+  builder_.add_partitions(partitions);
+  builder_.add_detail_grid(detail_grid);
+  builder_.add_capacity_grid(capacity_grid);
   return builder_.Finish();
 }
 
@@ -361,12 +1268,47 @@ struct CapacityPlan::Traits {
   static auto constexpr Create = CreateCapacityPlan;
 };
 
+inline ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlanDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> capacity_grid = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::GridExtent> detail_grid = 0,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Partition>> *partitions = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::PartitionBorder>> *borders = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Bottleneck>> *bottlenecks = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::LauncherSlot>> *launchers = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>> *nodes = nullptr,
+    const std::vector<uint32_t> *chains = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *port_keepout = nullptr) {
+  auto partitions__ = partitions ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Partition>>(*partitions) : 0;
+  auto borders__ = borders ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::PartitionBorder>>(*borders) : 0;
+  auto bottlenecks__ = bottlenecks ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Bottleneck>>(*bottlenecks) : 0;
+  auto launchers__ = launchers ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::LauncherSlot>>(*launchers) : 0;
+  auto nodes__ = nodes ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>>(*nodes) : 0;
+  auto chains__ = chains ? _fbb.CreateVector<uint32_t>(*chains) : 0;
+  auto port_keepout__ = port_keepout ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>(*port_keepout) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateCapacityPlan(
+      _fbb,
+      capacity_grid,
+      detail_grid,
+      partitions__,
+      borders__,
+      bottlenecks__,
+      launchers__,
+      nodes__,
+      chains__,
+      port_keepout__);
+}
+
 ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlan(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityPlanT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 struct AssignmentT : public ::flatbuffers::NativeTable {
   typedef Assignment TableType;
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>> connections{};
   double objective = 0.0;
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> ring{};
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> launchers{};
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> feeds{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FeedlineChainT>> chains{};
   AssignmentT() = default;
   AssignmentT(const AssignmentT &o);
   AssignmentT(AssignmentT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -383,13 +1325,48 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CONNECTIONS = 4,
-    VT_OBJECTIVE = 6
+    VT_OBJECTIVE = 6,
+    VT_RING = 8,
+    VT_LAUNCHERS = 10,
+    VT_FEEDS = 12,
+    VT_CHAINS = 14
   };
+  /// One connection per node of `ring`, in the order of `ring`. A
+  /// conventional port runs from the launcher it was given, as
+  /// FeedlineSource to FeedlineTarget. A resonator carries ResonatorSource
+  /// to ResonatorTarget and no source port, because the port that feeds it is
+  /// the coupler that the Final stage inserts.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
   }
   double objective() const {
     return GetField<double>(VT_OBJECTIVE, 0.0);
+  }
+  /// The ring the model consumed, in the order it consumed it.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *ring() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_RING);
+  }
+  /// The launcher each ring node was given, parallel to `ring`.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *launchers() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_LAUNCHERS);
+  }
+  /// Where each ring node is fed from, parallel to `ring`.
+  ///
+  /// A conventional port is fed at the launcher slot that `launchers` names,
+  /// and no two of them share one. A resonator is fed at no launcher: the
+  /// wire that reaches it comes past the slot, so its feed sits on the
+  /// segment from its own launcher to the next launcher along. Where a
+  /// launcher was given n resonators, they divide that segment evenly, in
+  /// ring order.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *feeds() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_FEEDS);
+  }
+  /// The feedline chains the model chose: which resonators one feedline
+  /// drives, from one launcher to the next. The Final stage routes each of
+  /// them from its first launcher through the couplers of its resonators to
+  /// its last.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>> *chains() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>> *>(VT_CHAINS);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -398,6 +1375,15 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(connections()) &&
            verifier.VerifyVectorOfTables(connections()) &&
            VerifyField<double>(verifier, VT_OBJECTIVE, 8) &&
+           VerifyOffsetRequired(verifier, VT_RING) &&
+           verifier.VerifyVector(ring()) &&
+           VerifyOffsetRequired(verifier, VT_LAUNCHERS) &&
+           verifier.VerifyVector(launchers()) &&
+           VerifyOffsetRequired(verifier, VT_FEEDS) &&
+           verifier.VerifyVector(feeds()) &&
+           VerifyOffsetRequired(verifier, VT_CHAINS) &&
+           verifier.VerifyVector(chains()) &&
+           verifier.VerifyVectorOfTables(chains()) &&
            verifier.EndTable();
   }
   AssignmentT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -415,6 +1401,18 @@ struct AssignmentBuilder {
   void add_objective(double objective) {
     fbb_.AddElement<double>(Assignment::VT_OBJECTIVE, objective, 0.0);
   }
+  void add_ring(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> ring) {
+    fbb_.AddOffset(Assignment::VT_RING, ring);
+  }
+  void add_launchers(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> launchers) {
+    fbb_.AddOffset(Assignment::VT_LAUNCHERS, launchers);
+  }
+  void add_feeds(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> feeds) {
+    fbb_.AddOffset(Assignment::VT_FEEDS, feeds);
+  }
+  void add_chains(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>>> chains) {
+    fbb_.AddOffset(Assignment::VT_CHAINS, chains);
+  }
   explicit AssignmentBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -423,6 +1421,10 @@ struct AssignmentBuilder {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Assignment>(end);
     fbb_.Required(o, Assignment::VT_CONNECTIONS);
+    fbb_.Required(o, Assignment::VT_RING);
+    fbb_.Required(o, Assignment::VT_LAUNCHERS);
+    fbb_.Required(o, Assignment::VT_FEEDS);
+    fbb_.Required(o, Assignment::VT_CHAINS);
     return o;
   }
 };
@@ -430,9 +1432,17 @@ struct AssignmentBuilder {
 inline ::flatbuffers::Offset<Assignment> CreateAssignment(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections = 0,
-    double objective = 0.0) {
+    double objective = 0.0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> ring = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> launchers = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> feeds = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>>> chains = 0) {
   AssignmentBuilder builder_(_fbb);
   builder_.add_objective(objective);
+  builder_.add_chains(chains);
+  builder_.add_feeds(feeds);
+  builder_.add_launchers(launchers);
+  builder_.add_ring(ring);
   builder_.add_connections(connections);
   return builder_.Finish();
 }
@@ -445,21 +1455,268 @@ struct Assignment::Traits {
 inline ::flatbuffers::Offset<Assignment> CreateAssignmentDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections = nullptr,
-    double objective = 0.0) {
+    double objective = 0.0,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *ring = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *launchers = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *feeds = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>> *chains = nullptr) {
   auto connections__ = connections ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>(*connections) : 0;
+  auto ring__ = ring ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*ring) : 0;
+  auto launchers__ = launchers ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*launchers) : 0;
+  auto feeds__ = feeds ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*feeds) : 0;
+  auto chains__ = chains ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>>(*chains) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateAssignment(
       _fbb,
       connections__,
-      objective);
+      objective,
+      ring__,
+      launchers__,
+      feeds__,
+      chains__);
 }
 
 ::flatbuffers::Offset<Assignment> CreateAssignment(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
-struct GlobalRoutingT : public ::flatbuffers::NativeTable {
-  typedef GlobalRouting TableType;
+struct FeedlineChainT : public ::flatbuffers::NativeTable {
+  typedef FeedlineChain TableType;
+  std::vector<uint32_t> nodes{};
+  std::unique_ptr<mqt::scpd::flatbuffers::design::PortRef> start{};
+  std::unique_ptr<mqt::scpd::flatbuffers::design::PortRef> end{};
+  FeedlineChainT() = default;
+  FeedlineChainT(const FeedlineChainT &o);
+  FeedlineChainT(FeedlineChainT&&) FLATBUFFERS_NOEXCEPT = default;
+  FeedlineChainT &operator=(FeedlineChainT o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// Output of the Global stage. Empty when the chip has no inner circuit.
+/// One feedline chain of the assignment.
+///
+/// The model gives every resonator degree two on the ring: a chord to the
+/// resonator before it, a chord to the one after it, or an end. An end is a
+/// launcher, or one of the permitted terminations where the feedline stops.
+/// A chain is a run of resonators joined by chords, and the Final stage
+/// drives it with one feedline: launcher, coupler, coupler, …, launcher.
+struct FeedlineChain FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef FeedlineChainT NativeTableType;
+  typedef FeedlineChainBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return FeedlineChainTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_NODES = 4,
+    VT_START = 6,
+    VT_END = 8
+  };
+  /// The ring nodes the chain runs through, as indices into `ring` and
+  /// `connections`, in ring order. Every one of them is a resonator.
+  const ::flatbuffers::Vector<uint32_t> *nodes() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_NODES);
+  }
+  /// The launcher the chain starts at: the launcher slot its first resonator
+  /// was given. Absent where the chain starts at a termination.
+  const mqt::scpd::flatbuffers::design::PortRef *start() const {
+    return GetStruct<const mqt::scpd::flatbuffers::design::PortRef *>(VT_START);
+  }
+  /// The launcher the chain ends at: the launcher slot its last resonator
+  /// was given. Absent where the chain ends at a termination.
+  const mqt::scpd::flatbuffers::design::PortRef *end() const {
+    return GetStruct<const mqt::scpd::flatbuffers::design::PortRef *>(VT_END);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_NODES) &&
+           verifier.VerifyVector(nodes()) &&
+           VerifyField<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_START, 4) &&
+           VerifyField<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_END, 4) &&
+           verifier.EndTable();
+  }
+  FeedlineChainT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(FeedlineChainT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<FeedlineChain> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FeedlineChainT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct FeedlineChainBuilder {
+  typedef FeedlineChain Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_nodes(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> nodes) {
+    fbb_.AddOffset(FeedlineChain::VT_NODES, nodes);
+  }
+  void add_start(const mqt::scpd::flatbuffers::design::PortRef *start) {
+    fbb_.AddStruct(FeedlineChain::VT_START, start);
+  }
+  void add_end(const mqt::scpd::flatbuffers::design::PortRef *end) {
+    fbb_.AddStruct(FeedlineChain::VT_END, end);
+  }
+  explicit FeedlineChainBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<FeedlineChain> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<FeedlineChain>(end);
+    fbb_.Required(o, FeedlineChain::VT_NODES);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<FeedlineChain> CreateFeedlineChain(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> nodes = 0,
+    const mqt::scpd::flatbuffers::design::PortRef *start = nullptr,
+    const mqt::scpd::flatbuffers::design::PortRef *end = nullptr) {
+  FeedlineChainBuilder builder_(_fbb);
+  builder_.add_end(end);
+  builder_.add_start(start);
+  builder_.add_nodes(nodes);
+  return builder_.Finish();
+}
+
+struct FeedlineChain::Traits {
+  using type = FeedlineChain;
+  static auto constexpr Create = CreateFeedlineChain;
+};
+
+inline ::flatbuffers::Offset<FeedlineChain> CreateFeedlineChainDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<uint32_t> *nodes = nullptr,
+    const mqt::scpd::flatbuffers::design::PortRef *start = nullptr,
+    const mqt::scpd::flatbuffers::design::PortRef *end = nullptr) {
+  auto nodes__ = nodes ? _fbb.CreateVector<uint32_t>(*nodes) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateFeedlineChain(
+      _fbb,
+      nodes__,
+      start,
+      end);
+}
+
+::flatbuffers::Offset<FeedlineChain> CreateFeedlineChain(::flatbuffers::FlatBufferBuilder &_fbb, const FeedlineChainT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct LatticeT : public ::flatbuffers::NativeTable {
+  typedef Lattice TableType;
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> points{};
+  std::vector<uint32_t> edges{};
+  std::vector<uint32_t> selected{};
+};
+
+/// One lattice the inner circuit is solved on: the Hanan grid that the ports
+/// of one capacity chain induce.
+struct Lattice FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef LatticeT NativeTableType;
+  typedef LatticeBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return LatticeTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_POINTS = 4,
+    VT_EDGES = 6,
+    VT_SELECTED = 8
+  };
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *points() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_POINTS);
+  }
+  /// Two point indices per edge, flat.
+  const ::flatbuffers::Vector<uint32_t> *edges() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_EDGES);
+  }
+  /// The edges the solution selected, as indices into `edges` divided by two.
+  const ::flatbuffers::Vector<uint32_t> *selected() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_SELECTED);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_POINTS) &&
+           verifier.VerifyVector(points()) &&
+           VerifyOffsetRequired(verifier, VT_EDGES) &&
+           verifier.VerifyVector(edges()) &&
+           VerifyOffsetRequired(verifier, VT_SELECTED) &&
+           verifier.VerifyVector(selected()) &&
+           verifier.EndTable();
+  }
+  LatticeT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(LatticeT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<Lattice> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct LatticeBuilder {
+  typedef Lattice Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_points(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> points) {
+    fbb_.AddOffset(Lattice::VT_POINTS, points);
+  }
+  void add_edges(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> edges) {
+    fbb_.AddOffset(Lattice::VT_EDGES, edges);
+  }
+  void add_selected(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> selected) {
+    fbb_.AddOffset(Lattice::VT_SELECTED, selected);
+  }
+  explicit LatticeBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<Lattice> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<Lattice>(end);
+    fbb_.Required(o, Lattice::VT_POINTS);
+    fbb_.Required(o, Lattice::VT_EDGES);
+    fbb_.Required(o, Lattice::VT_SELECTED);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<Lattice> CreateLattice(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> points = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> edges = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> selected = 0) {
+  LatticeBuilder builder_(_fbb);
+  builder_.add_selected(selected);
+  builder_.add_edges(edges);
+  builder_.add_points(points);
+  return builder_.Finish();
+}
+
+struct Lattice::Traits {
+  using type = Lattice;
+  static auto constexpr Create = CreateLattice;
+};
+
+inline ::flatbuffers::Offset<Lattice> CreateLatticeDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *points = nullptr,
+    const std::vector<uint32_t> *edges = nullptr,
+    const std::vector<uint32_t> *selected = nullptr) {
+  auto points__ = points ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*points) : 0;
+  auto edges__ = edges ? _fbb.CreateVector<uint32_t>(*edges) : 0;
+  auto selected__ = selected ? _fbb.CreateVector<uint32_t>(*selected) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateLattice(
+      _fbb,
+      points__,
+      edges__,
+      selected__);
+}
+
+::flatbuffers::Offset<Lattice> CreateLattice(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct GlobalRoutingT : public ::flatbuffers::NativeTable {
+  typedef GlobalRouting TableType;
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT>> lattices{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>> connections{};
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> outer_ring{};
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> resonators{};
+  double objective = 0.0;
+  GlobalRoutingT() = default;
+  GlobalRoutingT(const GlobalRoutingT &o);
+  GlobalRoutingT(GlobalRoutingT&&) FLATBUFFERS_NOEXCEPT = default;
+  GlobalRoutingT &operator=(GlobalRoutingT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// Output of the Global stage. The lattices are empty when the chip has no
+/// inner circuit, which is a valid state rather than a skipped stage.
 struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef GlobalRoutingT NativeTableType;
   typedef GlobalRoutingBuilder Builder;
@@ -467,9 +1724,47 @@ struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
     return GlobalRoutingTypeTable();
   }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_LATTICES = 4,
+    VT_CONNECTIONS = 6,
+    VT_OUTER_RING = 8,
+    VT_RESONATORS = 10,
+    VT_OBJECTIVE = 12
+  };
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *lattices() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *>(VT_LATTICES);
+  }
+  /// The connections of the inner circuit that the solved flow implies.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
+  }
+  /// The outer port ring that the Assignment stage consumes. The inner
+  /// circuit extends the configured ring with the coupler ports it surfaces
+  /// at, so the assignment reads this ring and not the configuration.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *outer_ring() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_OUTER_RING);
+  }
+  /// The resonator ports the assignment has to give a launcher.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *resonators() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_RESONATORS);
+  }
+  double objective() const {
+    return GetField<double>(VT_OBJECTIVE, 0.0);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_LATTICES) &&
+           verifier.VerifyVector(lattices()) &&
+           verifier.VerifyVectorOfTables(lattices()) &&
+           VerifyOffsetRequired(verifier, VT_CONNECTIONS) &&
+           verifier.VerifyVector(connections()) &&
+           verifier.VerifyVectorOfTables(connections()) &&
+           VerifyOffsetRequired(verifier, VT_OUTER_RING) &&
+           verifier.VerifyVector(outer_ring()) &&
+           VerifyOffsetRequired(verifier, VT_RESONATORS) &&
+           verifier.VerifyVector(resonators()) &&
+           VerifyField<double>(verifier, VT_OBJECTIVE, 8) &&
            verifier.EndTable();
   }
   GlobalRoutingT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -481,6 +1776,21 @@ struct GlobalRoutingBuilder {
   typedef GlobalRouting Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
+  void add_lattices(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>> lattices) {
+    fbb_.AddOffset(GlobalRouting::VT_LATTICES, lattices);
+  }
+  void add_connections(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections) {
+    fbb_.AddOffset(GlobalRouting::VT_CONNECTIONS, connections);
+  }
+  void add_outer_ring(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> outer_ring) {
+    fbb_.AddOffset(GlobalRouting::VT_OUTER_RING, outer_ring);
+  }
+  void add_resonators(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> resonators) {
+    fbb_.AddOffset(GlobalRouting::VT_RESONATORS, resonators);
+  }
+  void add_objective(double objective) {
+    fbb_.AddElement<double>(GlobalRouting::VT_OBJECTIVE, objective, 0.0);
+  }
   explicit GlobalRoutingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -488,13 +1798,27 @@ struct GlobalRoutingBuilder {
   ::flatbuffers::Offset<GlobalRouting> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<GlobalRouting>(end);
+    fbb_.Required(o, GlobalRouting::VT_LATTICES);
+    fbb_.Required(o, GlobalRouting::VT_CONNECTIONS);
+    fbb_.Required(o, GlobalRouting::VT_OUTER_RING);
+    fbb_.Required(o, GlobalRouting::VT_RESONATORS);
     return o;
   }
 };
 
 inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(
-    ::flatbuffers::FlatBufferBuilder &_fbb) {
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>> lattices = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> outer_ring = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> resonators = 0,
+    double objective = 0.0) {
   GlobalRoutingBuilder builder_(_fbb);
+  builder_.add_objective(objective);
+  builder_.add_resonators(resonators);
+  builder_.add_outer_ring(outer_ring);
+  builder_.add_connections(connections);
+  builder_.add_lattices(lattices);
   return builder_.Finish();
 }
 
@@ -503,7 +1827,377 @@ struct GlobalRouting::Traits {
   static auto constexpr Create = CreateGlobalRouting;
 };
 
+inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRoutingDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *lattices = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *outer_ring = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *resonators = nullptr,
+    double objective = 0.0) {
+  auto lattices__ = lattices ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>(*lattices) : 0;
+  auto connections__ = connections ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>(*connections) : 0;
+  auto outer_ring__ = outer_ring ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*outer_ring) : 0;
+  auto resonators__ = resonators ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*resonators) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateGlobalRouting(
+      _fbb,
+      lattices__,
+      connections__,
+      outer_ring__,
+      resonators__,
+      objective);
+}
+
 ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct BorderSlotsT : public ::flatbuffers::NativeTable {
+  typedef BorderSlots TableType;
+  uint32_t border = 0;
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> positions{};
+  bool pocket = false;
+};
+
+/// The crossing slots of one partition border.
+///
+/// A wire leaves one partition for another at one of these, and no two wires
+/// take the same one. The slots sit one crossing pitch apart along the
+/// border, so their count is what the border can carry, which is what
+/// PartitionBorder.budget reports.
+struct BorderSlots FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef BorderSlotsT NativeTableType;
+  typedef BorderSlotsBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return BorderSlotsTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_BORDER = 4,
+    VT_POSITIONS = 6,
+    VT_POCKET = 8
+  };
+  /// The border they belong to, as an index into CapacityPlan.borders, or
+  /// zero when `pocket` is set and they are on no border.
+  uint32_t border() const {
+    return GetField<uint32_t>(VT_BORDER, 0);
+  }
+  /// The slots in layout units, in the order the border runs.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *positions() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_POSITIONS);
+  }
+  /// Whether these are ways out of the pocket of a port rather than slots of
+  /// a border.
+  ///
+  /// The capacity grid places a target on the first cell beyond the band of
+  /// its port that was free before the bands, and does not open the band.
+  /// Where the band and the artwork close around a port, the free space left
+  /// is a pocket that no border reaches. The band is the approach of that
+  /// port, so it is a way out, and it carries the one wire.
+  bool pocket() const {
+    return GetField<uint8_t>(VT_POCKET, 0) != 0;
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_BORDER, 4) &&
+           VerifyOffsetRequired(verifier, VT_POSITIONS) &&
+           verifier.VerifyVector(positions()) &&
+           VerifyField<uint8_t>(verifier, VT_POCKET, 1) &&
+           verifier.EndTable();
+  }
+  BorderSlotsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(BorderSlotsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<BorderSlots> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct BorderSlotsBuilder {
+  typedef BorderSlots Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_border(uint32_t border) {
+    fbb_.AddElement<uint32_t>(BorderSlots::VT_BORDER, border, 0);
+  }
+  void add_positions(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions) {
+    fbb_.AddOffset(BorderSlots::VT_POSITIONS, positions);
+  }
+  void add_pocket(bool pocket) {
+    fbb_.AddElement<uint8_t>(BorderSlots::VT_POCKET, static_cast<uint8_t>(pocket), 0);
+  }
+  explicit BorderSlotsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<BorderSlots> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<BorderSlots>(end);
+    fbb_.Required(o, BorderSlots::VT_POSITIONS);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t border = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions = 0,
+    bool pocket = false) {
+  BorderSlotsBuilder builder_(_fbb);
+  builder_.add_positions(positions);
+  builder_.add_border(border);
+  builder_.add_pocket(pocket);
+  return builder_.Finish();
+}
+
+struct BorderSlots::Traits {
+  using type = BorderSlots;
+  static auto constexpr Create = CreateBorderSlots;
+};
+
+inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlotsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t border = 0,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *positions = nullptr,
+    bool pocket = false) {
+  auto positions__ = positions ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*positions) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateBorderSlots(
+      _fbb,
+      border,
+      positions__,
+      pocket);
+}
+
+::flatbuffers::Offset<BorderSlots> CreateBorderSlots(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct CorridorT : public ::flatbuffers::NativeTable {
+  typedef Corridor TableType;
+  std::vector<uint32_t> partitions{};
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> crossings{};
+  std::unique_ptr<mqt::scpd::flatbuffers::geometry::Point> source{};
+  std::unique_ptr<mqt::scpd::flatbuffers::geometry::Point> target{};
+  CorridorT() = default;
+  CorridorT(const CorridorT &o);
+  CorridorT(CorridorT&&) FLATBUFFERS_NOEXCEPT = default;
+  CorridorT &operator=(CorridorT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// The coarse route of one connection: which partitions it passes through,
+/// and where it crosses from each into the next.
+struct Corridor FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CorridorT NativeTableType;
+  typedef CorridorBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CorridorTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_PARTITIONS = 4,
+    VT_CROSSINGS = 6,
+    VT_SOURCE = 8,
+    VT_TARGET = 10
+  };
+  /// The labels of the partitions, from the one the wire is fed in to the
+  /// one its target sits in. These are Partition.label values, not indices
+  /// into CapacityPlan.partitions.
+  const ::flatbuffers::Vector<uint32_t> *partitions() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_PARTITIONS);
+  }
+  /// The crossing slots between them, in layout units. One shorter than
+  /// `partitions`.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *crossings() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_CROSSINGS);
+  }
+  /// Where the wire starts: the cell the feed of the assignment was placed
+  /// at. Absent when the connection has no feed that the grid can reach.
+  const mqt::scpd::flatbuffers::geometry::Point *source() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_SOURCE);
+  }
+  /// Where it ends: the cell its target port is reached at. Absent when the
+  /// chip has no such cell.
+  const mqt::scpd::flatbuffers::geometry::Point *target() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_TARGET);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_PARTITIONS) &&
+           verifier.VerifyVector(partitions()) &&
+           VerifyOffsetRequired(verifier, VT_CROSSINGS) &&
+           verifier.VerifyVector(crossings()) &&
+           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_SOURCE, 8) &&
+           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_TARGET, 8) &&
+           verifier.EndTable();
+  }
+  CorridorT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CorridorT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<Corridor> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CorridorBuilder {
+  typedef Corridor Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_partitions(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> partitions) {
+    fbb_.AddOffset(Corridor::VT_PARTITIONS, partitions);
+  }
+  void add_crossings(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> crossings) {
+    fbb_.AddOffset(Corridor::VT_CROSSINGS, crossings);
+  }
+  void add_source(const mqt::scpd::flatbuffers::geometry::Point *source) {
+    fbb_.AddStruct(Corridor::VT_SOURCE, source);
+  }
+  void add_target(const mqt::scpd::flatbuffers::geometry::Point *target) {
+    fbb_.AddStruct(Corridor::VT_TARGET, target);
+  }
+  explicit CorridorBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<Corridor> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<Corridor>(end);
+    fbb_.Required(o, Corridor::VT_PARTITIONS);
+    fbb_.Required(o, Corridor::VT_CROSSINGS);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<Corridor> CreateCorridor(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> partitions = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> crossings = 0,
+    const mqt::scpd::flatbuffers::geometry::Point *source = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *target = nullptr) {
+  CorridorBuilder builder_(_fbb);
+  builder_.add_target(target);
+  builder_.add_source(source);
+  builder_.add_crossings(crossings);
+  builder_.add_partitions(partitions);
+  return builder_.Finish();
+}
+
+struct Corridor::Traits {
+  using type = Corridor;
+  static auto constexpr Create = CreateCorridor;
+};
+
+inline ::flatbuffers::Offset<Corridor> CreateCorridorDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<uint32_t> *partitions = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *crossings = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *source = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *target = nullptr) {
+  auto partitions__ = partitions ? _fbb.CreateVector<uint32_t>(*partitions) : 0;
+  auto crossings__ = crossings ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*crossings) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateCorridor(
+      _fbb,
+      partitions__,
+      crossings__,
+      source,
+      target);
+}
+
+::flatbuffers::Offset<Corridor> CreateCorridor(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct CorridorRoutingT : public ::flatbuffers::NativeTable {
+  typedef CorridorRouting TableType;
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CorridorT>> corridors{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BorderSlotsT>> slots{};
+  CorridorRoutingT() = default;
+  CorridorRoutingT(const CorridorRoutingT &o);
+  CorridorRoutingT(CorridorRoutingT&&) FLATBUFFERS_NOEXCEPT = default;
+  CorridorRoutingT &operator=(CorridorRoutingT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// Output of the Corridor stage.
+///
+/// One entry per connection of the Assignment, in its order. A connection
+/// that the stage could not route carries no partitions, so a reader counts
+/// the failures instead of reading a separate list that can disagree with
+/// the routes.
+struct CorridorRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CorridorRoutingT NativeTableType;
+  typedef CorridorRoutingBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CorridorRoutingTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_CORRIDORS = 4,
+    VT_SLOTS = 6
+  };
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> *corridors() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> *>(VT_CORRIDORS);
+  }
+  /// The slots of every border a wire could cross, so that a picture can
+  /// show which of them are taken. A border with no free space on either
+  /// side has no entry.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *slots() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *>(VT_SLOTS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_CORRIDORS) &&
+           verifier.VerifyVector(corridors()) &&
+           verifier.VerifyVectorOfTables(corridors()) &&
+           VerifyOffsetRequired(verifier, VT_SLOTS) &&
+           verifier.VerifyVector(slots()) &&
+           verifier.VerifyVectorOfTables(slots()) &&
+           verifier.EndTable();
+  }
+  CorridorRoutingT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CorridorRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<CorridorRouting> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorRoutingT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CorridorRoutingBuilder {
+  typedef CorridorRouting Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_corridors(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>>> corridors) {
+    fbb_.AddOffset(CorridorRouting::VT_CORRIDORS, corridors);
+  }
+  void add_slots(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>>> slots) {
+    fbb_.AddOffset(CorridorRouting::VT_SLOTS, slots);
+  }
+  explicit CorridorRoutingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<CorridorRouting> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<CorridorRouting>(end);
+    fbb_.Required(o, CorridorRouting::VT_CORRIDORS);
+    fbb_.Required(o, CorridorRouting::VT_SLOTS);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<CorridorRouting> CreateCorridorRouting(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>>> corridors = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>>> slots = 0) {
+  CorridorRoutingBuilder builder_(_fbb);
+  builder_.add_slots(slots);
+  builder_.add_corridors(corridors);
+  return builder_.Finish();
+}
+
+struct CorridorRouting::Traits {
+  using type = CorridorRouting;
+  static auto constexpr Create = CreateCorridorRouting;
+};
+
+inline ::flatbuffers::Offset<CorridorRouting> CreateCorridorRoutingDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> *corridors = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *slots = nullptr) {
+  auto corridors__ = corridors ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>>(*corridors) : 0;
+  auto slots__ = slots ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>>(*slots) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateCorridorRouting(
+      _fbb,
+      corridors__,
+      slots__);
+}
+
+::flatbuffers::Offset<CorridorRouting> CreateCorridorRouting(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 struct DetailRoutingT : public ::flatbuffers::NativeTable {
   typedef DetailRouting TableType;
@@ -912,6 +2606,9 @@ struct Artifact FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const mqt::scpd::flatbuffers::artifacts::Geometry *output_as_Geometry() const {
     return output_type() == mqt::scpd::flatbuffers::artifacts::StageOutput::Geometry ? static_cast<const mqt::scpd::flatbuffers::artifacts::Geometry *>(output()) : nullptr;
   }
+  const mqt::scpd::flatbuffers::artifacts::CorridorRouting *output_as_CorridorRouting() const {
+    return output_type() == mqt::scpd::flatbuffers::artifacts::StageOutput::CorridorRouting ? static_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRouting *>(output()) : nullptr;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -949,6 +2646,10 @@ template<> inline const mqt::scpd::flatbuffers::artifacts::FinalRouting *Artifac
 
 template<> inline const mqt::scpd::flatbuffers::artifacts::Geometry *Artifact::output_as<mqt::scpd::flatbuffers::artifacts::Geometry>() const {
   return output_as_Geometry();
+}
+
+template<> inline const mqt::scpd::flatbuffers::artifacts::CorridorRouting *Artifact::output_as<mqt::scpd::flatbuffers::artifacts::CorridorRouting>() const {
+  return output_as_CorridorRouting();
 }
 
 struct ArtifactBuilder {
@@ -1010,14 +2711,348 @@ inline ::flatbuffers::Offset<Artifact> CreateArtifactDirect(
 ::flatbuffers::Offset<Artifact> CreateArtifact(::flatbuffers::FlatBufferBuilder &_fbb, const ArtifactT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 
-inline bool operator==(const CapacityPlanT &, const CapacityPlanT &) {
-  return true;
+inline bool operator==(const GridExtentT &lhs, const GridExtentT &rhs) {
+  return
+      (lhs.width == rhs.width) &&
+      (lhs.height == rhs.height) &&
+      (lhs.origin == rhs.origin) &&
+      (lhs.cell_width == rhs.cell_width) &&
+      (lhs.cell_height == rhs.cell_height);
+}
+
+inline bool operator!=(const GridExtentT &lhs, const GridExtentT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline GridExtentT *GridExtent::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<GridExtentT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void GridExtent::UnPackTo(GridExtentT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = width(); _o->width = _e; }
+  { auto _e = height(); _o->height = _e; }
+  { auto _e = origin(); if (_e) _o->origin = *_e; }
+  { auto _e = cell_width(); _o->cell_width = _e; }
+  { auto _e = cell_height(); _o->cell_height = _e; }
+}
+
+inline ::flatbuffers::Offset<GridExtent> CreateGridExtent(::flatbuffers::FlatBufferBuilder &_fbb, const GridExtentT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return GridExtent::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<GridExtent> GridExtent::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GridExtentT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GridExtentT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _width = _o->width;
+  auto _height = _o->height;
+  auto _origin = &_o->origin;
+  auto _cell_width = _o->cell_width;
+  auto _cell_height = _o->cell_height;
+  return mqt::scpd::flatbuffers::artifacts::CreateGridExtent(
+      _fbb,
+      _width,
+      _height,
+      _origin,
+      _cell_width,
+      _cell_height);
+}
+
+
+inline bool operator==(const PartitionT &lhs, const PartitionT &rhs) {
+  return
+      (lhs.label == rhs.label) &&
+      (lhs.outlines.size() == rhs.outlines.size() && std::equal(lhs.outlines.cbegin(), lhs.outlines.cend(), rhs.outlines.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT> const &b) { return (a == b) || (a && b && *a == *b); }));
+}
+
+inline bool operator!=(const PartitionT &lhs, const PartitionT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline PartitionT::PartitionT(const PartitionT &o)
+      : label(o.label) {
+  outlines.reserve(o.outlines.size());
+  for (const auto &outlines_ : o.outlines) { outlines.emplace_back((outlines_) ? new mqt::scpd::flatbuffers::geometry::PolygonT(*outlines_) : nullptr); }
+}
+
+inline PartitionT &PartitionT::operator=(PartitionT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(label, o.label);
+  std::swap(outlines, o.outlines);
+  return *this;
+}
+
+inline PartitionT *Partition::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<PartitionT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void Partition::UnPackTo(PartitionT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = label(); _o->label = _e; }
+  { auto _e = outlines(); if (_e) { _o->outlines.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->outlines[_i]) { _e->Get(_i)->UnPackTo(_o->outlines[_i].get(), _resolver); } else { _o->outlines[_i] = std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->outlines.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<Partition> CreatePartition(::flatbuffers::FlatBufferBuilder &_fbb, const PartitionT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return Partition::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<Partition> Partition::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const PartitionT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const PartitionT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _label = _o->label;
+  auto _outlines = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> (_o->outlines.size(), [](size_t i, _VectorArgs *__va) { return CreatePolygon(*__va->__fbb, __va->__o->outlines[i].get(), __va->__rehasher); }, &_va );
+  return mqt::scpd::flatbuffers::artifacts::CreatePartition(
+      _fbb,
+      _label,
+      _outlines);
+}
+
+
+inline bool operator==(const PartitionBorderT &lhs, const PartitionBorderT &rhs) {
+  return
+      (lhs.first == rhs.first) &&
+      (lhs.second == rhs.second) &&
+      (lhs.samples == rhs.samples) &&
+      (lhs.center == rhs.center) &&
+      (lhs.budget == rhs.budget);
+}
+
+inline bool operator!=(const PartitionBorderT &lhs, const PartitionBorderT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline PartitionBorderT *PartitionBorder::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<PartitionBorderT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void PartitionBorder::UnPackTo(PartitionBorderT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = first(); _o->first = _e; }
+  { auto _e = second(); _o->second = _e; }
+  { auto _e = samples(); if (_e) { _o->samples.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->samples[_i] = *_e->Get(_i); } } else { _o->samples.resize(0); } }
+  { auto _e = center(); if (_e) _o->center = *_e; }
+  { auto _e = budget(); _o->budget = _e; }
+}
+
+inline ::flatbuffers::Offset<PartitionBorder> CreatePartitionBorder(::flatbuffers::FlatBufferBuilder &_fbb, const PartitionBorderT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return PartitionBorder::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<PartitionBorder> PartitionBorder::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const PartitionBorderT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const PartitionBorderT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _first = _o->first;
+  auto _second = _o->second;
+  auto _samples = _fbb.CreateVectorOfStructs(_o->samples);
+  auto _center = &_o->center;
+  auto _budget = _o->budget;
+  return mqt::scpd::flatbuffers::artifacts::CreatePartitionBorder(
+      _fbb,
+      _first,
+      _second,
+      _samples,
+      _center,
+      _budget);
+}
+
+
+inline bool operator==(const BottleneckT &lhs, const BottleneckT &rhs) {
+  return
+      (lhs.from == rhs.from) &&
+      (lhs.to == rhs.to) &&
+      (lhs.capacity == rhs.capacity);
+}
+
+inline bool operator!=(const BottleneckT &lhs, const BottleneckT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline BottleneckT *Bottleneck::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<BottleneckT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void Bottleneck::UnPackTo(BottleneckT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = from(); if (_e) _o->from = *_e; }
+  { auto _e = to(); if (_e) _o->to = *_e; }
+  { auto _e = capacity(); _o->capacity = _e; }
+}
+
+inline ::flatbuffers::Offset<Bottleneck> CreateBottleneck(::flatbuffers::FlatBufferBuilder &_fbb, const BottleneckT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return Bottleneck::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<Bottleneck> Bottleneck::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const BottleneckT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const BottleneckT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _from = &_o->from;
+  auto _to = &_o->to;
+  auto _capacity = _o->capacity;
+  return mqt::scpd::flatbuffers::artifacts::CreateBottleneck(
+      _fbb,
+      _from,
+      _to,
+      _capacity);
+}
+
+
+inline bool operator==(const LauncherSlotT &lhs, const LauncherSlotT &rhs) {
+  return
+      (lhs.port == rhs.port) &&
+      (lhs.position == rhs.position);
+}
+
+inline bool operator!=(const LauncherSlotT &lhs, const LauncherSlotT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline LauncherSlotT *LauncherSlot::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<LauncherSlotT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void LauncherSlot::UnPackTo(LauncherSlotT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = port(); if (_e) _o->port = *_e; }
+  { auto _e = position(); if (_e) _o->position = *_e; }
+}
+
+inline ::flatbuffers::Offset<LauncherSlot> CreateLauncherSlot(::flatbuffers::FlatBufferBuilder &_fbb, const LauncherSlotT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return LauncherSlot::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<LauncherSlot> LauncherSlot::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LauncherSlotT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const LauncherSlotT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _port = &_o->port;
+  auto _position = &_o->position;
+  return mqt::scpd::flatbuffers::artifacts::CreateLauncherSlot(
+      _fbb,
+      _port,
+      _position);
+}
+
+
+inline bool operator==(const CapacityNodeT &lhs, const CapacityNodeT &rhs) {
+  return
+      (lhs.kind == rhs.kind) &&
+      (lhs.id == rhs.id) &&
+      (lhs.capacity == rhs.capacity) &&
+      (lhs.next == rhs.next);
+}
+
+inline bool operator!=(const CapacityNodeT &lhs, const CapacityNodeT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline CapacityNodeT *CapacityNode::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<CapacityNodeT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void CapacityNode::UnPackTo(CapacityNodeT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = kind(); _o->kind = _e; }
+  { auto _e = id(); _o->id = _e; }
+  { auto _e = capacity(); _o->capacity = _e; }
+  { auto _e = next(); if (_e) { _o->next.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->next[_i] = _e->Get(_i); } } else { _o->next.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<CapacityNode> CreateCapacityNode(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityNodeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CapacityNode::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<CapacityNode> CapacityNode::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityNodeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CapacityNodeT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _kind = _o->kind;
+  auto _id = _o->id;
+  auto _capacity = _o->capacity;
+  auto _next = _fbb.CreateVector(_o->next);
+  return mqt::scpd::flatbuffers::artifacts::CreateCapacityNode(
+      _fbb,
+      _kind,
+      _id,
+      _capacity,
+      _next);
+}
+
+
+inline bool operator==(const CapacityPlanT &lhs, const CapacityPlanT &rhs) {
+  return
+      ((lhs.capacity_grid == rhs.capacity_grid) || (lhs.capacity_grid && rhs.capacity_grid && *lhs.capacity_grid == *rhs.capacity_grid)) &&
+      ((lhs.detail_grid == rhs.detail_grid) || (lhs.detail_grid && rhs.detail_grid && *lhs.detail_grid == *rhs.detail_grid)) &&
+      (lhs.partitions.size() == rhs.partitions.size() && std::equal(lhs.partitions.cbegin(), lhs.partitions.cend(), rhs.partitions.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::PartitionT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::PartitionT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.borders.size() == rhs.borders.size() && std::equal(lhs.borders.cbegin(), lhs.borders.cend(), rhs.borders.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::PartitionBorderT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::PartitionBorderT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.bottlenecks.size() == rhs.bottlenecks.size() && std::equal(lhs.bottlenecks.cbegin(), lhs.bottlenecks.cend(), rhs.bottlenecks.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BottleneckT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BottleneckT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.launchers.size() == rhs.launchers.size() && std::equal(lhs.launchers.cbegin(), lhs.launchers.cend(), rhs.launchers.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LauncherSlotT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LauncherSlotT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.nodes.size() == rhs.nodes.size() && std::equal(lhs.nodes.cbegin(), lhs.nodes.cend(), rhs.nodes.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CapacityNodeT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CapacityNodeT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.chains == rhs.chains) &&
+      (lhs.port_keepout.size() == rhs.port_keepout.size() && std::equal(lhs.port_keepout.cbegin(), lhs.port_keepout.cend(), rhs.port_keepout.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT> const &b) { return (a == b) || (a && b && *a == *b); }));
 }
 
 inline bool operator!=(const CapacityPlanT &lhs, const CapacityPlanT &rhs) {
     return !(lhs == rhs);
 }
 
+
+inline CapacityPlanT::CapacityPlanT(const CapacityPlanT &o)
+      : capacity_grid((o.capacity_grid) ? new mqt::scpd::flatbuffers::artifacts::GridExtentT(*o.capacity_grid) : nullptr),
+        detail_grid((o.detail_grid) ? new mqt::scpd::flatbuffers::artifacts::GridExtentT(*o.detail_grid) : nullptr),
+        chains(o.chains) {
+  partitions.reserve(o.partitions.size());
+  for (const auto &partitions_ : o.partitions) { partitions.emplace_back((partitions_) ? new mqt::scpd::flatbuffers::artifacts::PartitionT(*partitions_) : nullptr); }
+  borders.reserve(o.borders.size());
+  for (const auto &borders_ : o.borders) { borders.emplace_back((borders_) ? new mqt::scpd::flatbuffers::artifacts::PartitionBorderT(*borders_) : nullptr); }
+  bottlenecks.reserve(o.bottlenecks.size());
+  for (const auto &bottlenecks_ : o.bottlenecks) { bottlenecks.emplace_back((bottlenecks_) ? new mqt::scpd::flatbuffers::artifacts::BottleneckT(*bottlenecks_) : nullptr); }
+  launchers.reserve(o.launchers.size());
+  for (const auto &launchers_ : o.launchers) { launchers.emplace_back((launchers_) ? new mqt::scpd::flatbuffers::artifacts::LauncherSlotT(*launchers_) : nullptr); }
+  nodes.reserve(o.nodes.size());
+  for (const auto &nodes_ : o.nodes) { nodes.emplace_back((nodes_) ? new mqt::scpd::flatbuffers::artifacts::CapacityNodeT(*nodes_) : nullptr); }
+  port_keepout.reserve(o.port_keepout.size());
+  for (const auto &port_keepout_ : o.port_keepout) { port_keepout.emplace_back((port_keepout_) ? new mqt::scpd::flatbuffers::geometry::PolygonT(*port_keepout_) : nullptr); }
+}
+
+inline CapacityPlanT &CapacityPlanT::operator=(CapacityPlanT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(capacity_grid, o.capacity_grid);
+  std::swap(detail_grid, o.detail_grid);
+  std::swap(partitions, o.partitions);
+  std::swap(borders, o.borders);
+  std::swap(bottlenecks, o.bottlenecks);
+  std::swap(launchers, o.launchers);
+  std::swap(nodes, o.nodes);
+  std::swap(chains, o.chains);
+  std::swap(port_keepout, o.port_keepout);
+  return *this;
+}
 
 inline CapacityPlanT *CapacityPlan::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::make_unique<CapacityPlanT>();
@@ -1028,6 +3063,15 @@ inline CapacityPlanT *CapacityPlan::UnPack(const ::flatbuffers::resolver_functio
 inline void CapacityPlan::UnPackTo(CapacityPlanT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
+  { auto _e = capacity_grid(); if (_e) { if(_o->capacity_grid) { _e->UnPackTo(_o->capacity_grid.get(), _resolver); } else { _o->capacity_grid = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::GridExtentT>(_e->UnPack(_resolver)); } } else if (_o->capacity_grid) { _o->capacity_grid.reset(); } }
+  { auto _e = detail_grid(); if (_e) { if(_o->detail_grid) { _e->UnPackTo(_o->detail_grid.get(), _resolver); } else { _o->detail_grid = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::GridExtentT>(_e->UnPack(_resolver)); } } else if (_o->detail_grid) { _o->detail_grid.reset(); } }
+  { auto _e = partitions(); if (_e) { _o->partitions.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->partitions[_i]) { _e->Get(_i)->UnPackTo(_o->partitions[_i].get(), _resolver); } else { _o->partitions[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::PartitionT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->partitions.resize(0); } }
+  { auto _e = borders(); if (_e) { _o->borders.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->borders[_i]) { _e->Get(_i)->UnPackTo(_o->borders[_i].get(), _resolver); } else { _o->borders[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::PartitionBorderT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->borders.resize(0); } }
+  { auto _e = bottlenecks(); if (_e) { _o->bottlenecks.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->bottlenecks[_i]) { _e->Get(_i)->UnPackTo(_o->bottlenecks[_i].get(), _resolver); } else { _o->bottlenecks[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BottleneckT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->bottlenecks.resize(0); } }
+  { auto _e = launchers(); if (_e) { _o->launchers.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->launchers[_i]) { _e->Get(_i)->UnPackTo(_o->launchers[_i].get(), _resolver); } else { _o->launchers[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LauncherSlotT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->launchers.resize(0); } }
+  { auto _e = nodes(); if (_e) { _o->nodes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->nodes[_i]) { _e->Get(_i)->UnPackTo(_o->nodes[_i].get(), _resolver); } else { _o->nodes[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CapacityNodeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->nodes.resize(0); } }
+  { auto _e = chains(); if (_e) { _o->chains.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->chains[_i] = _e->Get(_i); } } else { _o->chains.resize(0); } }
+  { auto _e = port_keepout(); if (_e) { _o->port_keepout.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->port_keepout[_i]) { _e->Get(_i)->UnPackTo(_o->port_keepout[_i].get(), _resolver); } else { _o->port_keepout[_i] = std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->port_keepout.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlan(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityPlanT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1038,15 +3082,37 @@ inline ::flatbuffers::Offset<CapacityPlan> CapacityPlan::Pack(::flatbuffers::Fla
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CapacityPlanT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _capacity_grid = _o->capacity_grid ? CreateGridExtent(_fbb, _o->capacity_grid.get(), _rehasher) : 0;
+  auto _detail_grid = _o->detail_grid ? CreateGridExtent(_fbb, _o->detail_grid.get(), _rehasher) : 0;
+  auto _partitions = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Partition>> (_o->partitions.size(), [](size_t i, _VectorArgs *__va) { return CreatePartition(*__va->__fbb, __va->__o->partitions[i].get(), __va->__rehasher); }, &_va );
+  auto _borders = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::PartitionBorder>> (_o->borders.size(), [](size_t i, _VectorArgs *__va) { return CreatePartitionBorder(*__va->__fbb, __va->__o->borders[i].get(), __va->__rehasher); }, &_va );
+  auto _bottlenecks = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Bottleneck>> (_o->bottlenecks.size(), [](size_t i, _VectorArgs *__va) { return CreateBottleneck(*__va->__fbb, __va->__o->bottlenecks[i].get(), __va->__rehasher); }, &_va );
+  auto _launchers = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::LauncherSlot>> (_o->launchers.size(), [](size_t i, _VectorArgs *__va) { return CreateLauncherSlot(*__va->__fbb, __va->__o->launchers[i].get(), __va->__rehasher); }, &_va );
+  auto _nodes = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>> (_o->nodes.size(), [](size_t i, _VectorArgs *__va) { return CreateCapacityNode(*__va->__fbb, __va->__o->nodes[i].get(), __va->__rehasher); }, &_va );
+  auto _chains = _fbb.CreateVector(_o->chains);
+  auto _port_keepout = _o->port_keepout.size() ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> (_o->port_keepout.size(), [](size_t i, _VectorArgs *__va) { return CreatePolygon(*__va->__fbb, __va->__o->port_keepout[i].get(), __va->__rehasher); }, &_va ) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateCapacityPlan(
-      _fbb);
+      _fbb,
+      _capacity_grid,
+      _detail_grid,
+      _partitions,
+      _borders,
+      _bottlenecks,
+      _launchers,
+      _nodes,
+      _chains,
+      _port_keepout);
 }
 
 
 inline bool operator==(const AssignmentT &lhs, const AssignmentT &rhs) {
   return
       (lhs.connections.size() == rhs.connections.size() && std::equal(lhs.connections.cbegin(), lhs.connections.cend(), rhs.connections.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
-      (lhs.objective == rhs.objective);
+      (lhs.objective == rhs.objective) &&
+      (lhs.ring == rhs.ring) &&
+      (lhs.launchers == rhs.launchers) &&
+      (lhs.feeds == rhs.feeds) &&
+      (lhs.chains.size() == rhs.chains.size() && std::equal(lhs.chains.cbegin(), lhs.chains.cend(), rhs.chains.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FeedlineChainT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FeedlineChainT> const &b) { return (a == b) || (a && b && *a == *b); }));
 }
 
 inline bool operator!=(const AssignmentT &lhs, const AssignmentT &rhs) {
@@ -1055,14 +3121,23 @@ inline bool operator!=(const AssignmentT &lhs, const AssignmentT &rhs) {
 
 
 inline AssignmentT::AssignmentT(const AssignmentT &o)
-      : objective(o.objective) {
+      : objective(o.objective),
+        ring(o.ring),
+        launchers(o.launchers),
+        feeds(o.feeds) {
   connections.reserve(o.connections.size());
   for (const auto &connections_ : o.connections) { connections.emplace_back((connections_) ? new mqt::scpd::flatbuffers::design::ConnectionT(*connections_) : nullptr); }
+  chains.reserve(o.chains.size());
+  for (const auto &chains_ : o.chains) { chains.emplace_back((chains_) ? new mqt::scpd::flatbuffers::artifacts::FeedlineChainT(*chains_) : nullptr); }
 }
 
 inline AssignmentT &AssignmentT::operator=(AssignmentT o) FLATBUFFERS_NOEXCEPT {
   std::swap(connections, o.connections);
   std::swap(objective, o.objective);
+  std::swap(ring, o.ring);
+  std::swap(launchers, o.launchers);
+  std::swap(feeds, o.feeds);
+  std::swap(chains, o.chains);
   return *this;
 }
 
@@ -1077,6 +3152,10 @@ inline void Assignment::UnPackTo(AssignmentT *_o, const ::flatbuffers::resolver_
   (void)_resolver;
   { auto _e = connections(); if (_e) { _o->connections.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->connections[_i]) { _e->Get(_i)->UnPackTo(_o->connections[_i].get(), _resolver); } else { _o->connections[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->connections.resize(0); } }
   { auto _e = objective(); _o->objective = _e; }
+  { auto _e = ring(); if (_e) { _o->ring.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->ring[_i] = *_e->Get(_i); } } else { _o->ring.resize(0); } }
+  { auto _e = launchers(); if (_e) { _o->launchers.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->launchers[_i] = *_e->Get(_i); } } else { _o->launchers.resize(0); } }
+  { auto _e = feeds(); if (_e) { _o->feeds.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->feeds[_i] = *_e->Get(_i); } } else { _o->feeds.resize(0); } }
+  { auto _e = chains(); if (_e) { _o->chains.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->chains[_i]) { _e->Get(_i)->UnPackTo(_o->chains[_i].get(), _resolver); } else { _o->chains[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FeedlineChainT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->chains.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<Assignment> CreateAssignment(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1089,21 +3168,156 @@ inline ::flatbuffers::Offset<Assignment> Assignment::Pack(::flatbuffers::FlatBuf
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const AssignmentT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _connections = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> (_o->connections.size(), [](size_t i, _VectorArgs *__va) { return CreateConnection(*__va->__fbb, __va->__o->connections[i].get(), __va->__rehasher); }, &_va );
   auto _objective = _o->objective;
+  auto _ring = _fbb.CreateVectorOfStructs(_o->ring);
+  auto _launchers = _fbb.CreateVectorOfStructs(_o->launchers);
+  auto _feeds = _fbb.CreateVectorOfStructs(_o->feeds);
+  auto _chains = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>> (_o->chains.size(), [](size_t i, _VectorArgs *__va) { return CreateFeedlineChain(*__va->__fbb, __va->__o->chains[i].get(), __va->__rehasher); }, &_va );
   return mqt::scpd::flatbuffers::artifacts::CreateAssignment(
       _fbb,
       _connections,
-      _objective);
+      _objective,
+      _ring,
+      _launchers,
+      _feeds,
+      _chains);
 }
 
 
-inline bool operator==(const GlobalRoutingT &, const GlobalRoutingT &) {
-  return true;
+inline bool operator==(const FeedlineChainT &lhs, const FeedlineChainT &rhs) {
+  return
+      (lhs.nodes == rhs.nodes) &&
+      ((lhs.start == rhs.start) || (lhs.start && rhs.start && *lhs.start == *rhs.start)) &&
+      ((lhs.end == rhs.end) || (lhs.end && rhs.end && *lhs.end == *rhs.end));
+}
+
+inline bool operator!=(const FeedlineChainT &lhs, const FeedlineChainT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline FeedlineChainT::FeedlineChainT(const FeedlineChainT &o)
+      : nodes(o.nodes),
+        start((o.start) ? new mqt::scpd::flatbuffers::design::PortRef(*o.start) : nullptr),
+        end((o.end) ? new mqt::scpd::flatbuffers::design::PortRef(*o.end) : nullptr) {
+}
+
+inline FeedlineChainT &FeedlineChainT::operator=(FeedlineChainT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(nodes, o.nodes);
+  std::swap(start, o.start);
+  std::swap(end, o.end);
+  return *this;
+}
+
+inline FeedlineChainT *FeedlineChain::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<FeedlineChainT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void FeedlineChain::UnPackTo(FeedlineChainT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = nodes(); if (_e) { _o->nodes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->nodes[_i] = _e->Get(_i); } } else { _o->nodes.resize(0); } }
+  { auto _e = start(); if (_e) _o->start = std::unique_ptr<mqt::scpd::flatbuffers::design::PortRef>(new mqt::scpd::flatbuffers::design::PortRef(*_e)); }
+  { auto _e = end(); if (_e) _o->end = std::unique_ptr<mqt::scpd::flatbuffers::design::PortRef>(new mqt::scpd::flatbuffers::design::PortRef(*_e)); }
+}
+
+inline ::flatbuffers::Offset<FeedlineChain> CreateFeedlineChain(::flatbuffers::FlatBufferBuilder &_fbb, const FeedlineChainT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return FeedlineChain::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<FeedlineChain> FeedlineChain::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FeedlineChainT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const FeedlineChainT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _nodes = _fbb.CreateVector(_o->nodes);
+  auto _start = _o->start ? _o->start.get() : nullptr;
+  auto _end = _o->end ? _o->end.get() : nullptr;
+  return mqt::scpd::flatbuffers::artifacts::CreateFeedlineChain(
+      _fbb,
+      _nodes,
+      _start,
+      _end);
+}
+
+
+inline bool operator==(const LatticeT &lhs, const LatticeT &rhs) {
+  return
+      (lhs.points == rhs.points) &&
+      (lhs.edges == rhs.edges) &&
+      (lhs.selected == rhs.selected);
+}
+
+inline bool operator!=(const LatticeT &lhs, const LatticeT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline LatticeT *Lattice::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<LatticeT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void Lattice::UnPackTo(LatticeT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = points(); if (_e) { _o->points.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->points[_i] = *_e->Get(_i); } } else { _o->points.resize(0); } }
+  { auto _e = edges(); if (_e) { _o->edges.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->edges[_i] = _e->Get(_i); } } else { _o->edges.resize(0); } }
+  { auto _e = selected(); if (_e) { _o->selected.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->selected[_i] = _e->Get(_i); } } else { _o->selected.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<Lattice> CreateLattice(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return Lattice::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<Lattice> Lattice::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const LatticeT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _points = _fbb.CreateVectorOfStructs(_o->points);
+  auto _edges = _fbb.CreateVector(_o->edges);
+  auto _selected = _fbb.CreateVector(_o->selected);
+  return mqt::scpd::flatbuffers::artifacts::CreateLattice(
+      _fbb,
+      _points,
+      _edges,
+      _selected);
+}
+
+
+inline bool operator==(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs) {
+  return
+      (lhs.lattices.size() == rhs.lattices.size() && std::equal(lhs.lattices.cbegin(), lhs.lattices.cend(), rhs.lattices.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.connections.size() == rhs.connections.size() && std::equal(lhs.connections.cbegin(), lhs.connections.cend(), rhs.connections.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.outer_ring == rhs.outer_ring) &&
+      (lhs.resonators == rhs.resonators) &&
+      (lhs.objective == rhs.objective);
 }
 
 inline bool operator!=(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs) {
     return !(lhs == rhs);
 }
 
+
+inline GlobalRoutingT::GlobalRoutingT(const GlobalRoutingT &o)
+      : outer_ring(o.outer_ring),
+        resonators(o.resonators),
+        objective(o.objective) {
+  lattices.reserve(o.lattices.size());
+  for (const auto &lattices_ : o.lattices) { lattices.emplace_back((lattices_) ? new mqt::scpd::flatbuffers::artifacts::LatticeT(*lattices_) : nullptr); }
+  connections.reserve(o.connections.size());
+  for (const auto &connections_ : o.connections) { connections.emplace_back((connections_) ? new mqt::scpd::flatbuffers::design::ConnectionT(*connections_) : nullptr); }
+}
+
+inline GlobalRoutingT &GlobalRoutingT::operator=(GlobalRoutingT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(lattices, o.lattices);
+  std::swap(connections, o.connections);
+  std::swap(outer_ring, o.outer_ring);
+  std::swap(resonators, o.resonators);
+  std::swap(objective, o.objective);
+  return *this;
+}
 
 inline GlobalRoutingT *GlobalRouting::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::make_unique<GlobalRoutingT>();
@@ -1114,6 +3328,11 @@ inline GlobalRoutingT *GlobalRouting::UnPack(const ::flatbuffers::resolver_funct
 inline void GlobalRouting::UnPackTo(GlobalRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
+  { auto _e = lattices(); if (_e) { _o->lattices.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->lattices[_i]) { _e->Get(_i)->UnPackTo(_o->lattices[_i].get(), _resolver); } else { _o->lattices[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->lattices.resize(0); } }
+  { auto _e = connections(); if (_e) { _o->connections.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->connections[_i]) { _e->Get(_i)->UnPackTo(_o->connections[_i].get(), _resolver); } else { _o->connections[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->connections.resize(0); } }
+  { auto _e = outer_ring(); if (_e) { _o->outer_ring.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->outer_ring[_i] = *_e->Get(_i); } } else { _o->outer_ring.resize(0); } }
+  { auto _e = resonators(); if (_e) { _o->resonators.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->resonators[_i] = *_e->Get(_i); } } else { _o->resonators.resize(0); } }
+  { auto _e = objective(); _o->objective = _e; }
 }
 
 inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1124,8 +3343,181 @@ inline ::flatbuffers::Offset<GlobalRouting> GlobalRouting::Pack(::flatbuffers::F
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GlobalRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _lattices = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> (_o->lattices.size(), [](size_t i, _VectorArgs *__va) { return CreateLattice(*__va->__fbb, __va->__o->lattices[i].get(), __va->__rehasher); }, &_va );
+  auto _connections = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> (_o->connections.size(), [](size_t i, _VectorArgs *__va) { return CreateConnection(*__va->__fbb, __va->__o->connections[i].get(), __va->__rehasher); }, &_va );
+  auto _outer_ring = _fbb.CreateVectorOfStructs(_o->outer_ring);
+  auto _resonators = _fbb.CreateVectorOfStructs(_o->resonators);
+  auto _objective = _o->objective;
   return mqt::scpd::flatbuffers::artifacts::CreateGlobalRouting(
-      _fbb);
+      _fbb,
+      _lattices,
+      _connections,
+      _outer_ring,
+      _resonators,
+      _objective);
+}
+
+
+inline bool operator==(const BorderSlotsT &lhs, const BorderSlotsT &rhs) {
+  return
+      (lhs.border == rhs.border) &&
+      (lhs.positions == rhs.positions) &&
+      (lhs.pocket == rhs.pocket);
+}
+
+inline bool operator!=(const BorderSlotsT &lhs, const BorderSlotsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline BorderSlotsT *BorderSlots::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<BorderSlotsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void BorderSlots::UnPackTo(BorderSlotsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = border(); _o->border = _e; }
+  { auto _e = positions(); if (_e) { _o->positions.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->positions[_i] = *_e->Get(_i); } } else { _o->positions.resize(0); } }
+  { auto _e = pocket(); _o->pocket = _e; }
+}
+
+inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return BorderSlots::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<BorderSlots> BorderSlots::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const BorderSlotsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _border = _o->border;
+  auto _positions = _fbb.CreateVectorOfStructs(_o->positions);
+  auto _pocket = _o->pocket;
+  return mqt::scpd::flatbuffers::artifacts::CreateBorderSlots(
+      _fbb,
+      _border,
+      _positions,
+      _pocket);
+}
+
+
+inline bool operator==(const CorridorT &lhs, const CorridorT &rhs) {
+  return
+      (lhs.partitions == rhs.partitions) &&
+      (lhs.crossings == rhs.crossings) &&
+      ((lhs.source == rhs.source) || (lhs.source && rhs.source && *lhs.source == *rhs.source)) &&
+      ((lhs.target == rhs.target) || (lhs.target && rhs.target && *lhs.target == *rhs.target));
+}
+
+inline bool operator!=(const CorridorT &lhs, const CorridorT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline CorridorT::CorridorT(const CorridorT &o)
+      : partitions(o.partitions),
+        crossings(o.crossings),
+        source((o.source) ? new mqt::scpd::flatbuffers::geometry::Point(*o.source) : nullptr),
+        target((o.target) ? new mqt::scpd::flatbuffers::geometry::Point(*o.target) : nullptr) {
+}
+
+inline CorridorT &CorridorT::operator=(CorridorT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(partitions, o.partitions);
+  std::swap(crossings, o.crossings);
+  std::swap(source, o.source);
+  std::swap(target, o.target);
+  return *this;
+}
+
+inline CorridorT *Corridor::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<CorridorT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void Corridor::UnPackTo(CorridorT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = partitions(); if (_e) { _o->partitions.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->partitions[_i] = _e->Get(_i); } } else { _o->partitions.resize(0); } }
+  { auto _e = crossings(); if (_e) { _o->crossings.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->crossings[_i] = *_e->Get(_i); } } else { _o->crossings.resize(0); } }
+  { auto _e = source(); if (_e) _o->source = std::unique_ptr<mqt::scpd::flatbuffers::geometry::Point>(new mqt::scpd::flatbuffers::geometry::Point(*_e)); }
+  { auto _e = target(); if (_e) _o->target = std::unique_ptr<mqt::scpd::flatbuffers::geometry::Point>(new mqt::scpd::flatbuffers::geometry::Point(*_e)); }
+}
+
+inline ::flatbuffers::Offset<Corridor> CreateCorridor(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return Corridor::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<Corridor> Corridor::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CorridorT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _partitions = _fbb.CreateVector(_o->partitions);
+  auto _crossings = _fbb.CreateVectorOfStructs(_o->crossings);
+  auto _source = _o->source ? _o->source.get() : nullptr;
+  auto _target = _o->target ? _o->target.get() : nullptr;
+  return mqt::scpd::flatbuffers::artifacts::CreateCorridor(
+      _fbb,
+      _partitions,
+      _crossings,
+      _source,
+      _target);
+}
+
+
+inline bool operator==(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs) {
+  return
+      (lhs.corridors.size() == rhs.corridors.size() && std::equal(lhs.corridors.cbegin(), lhs.corridors.cend(), rhs.corridors.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CorridorT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CorridorT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.slots.size() == rhs.slots.size() && std::equal(lhs.slots.cbegin(), lhs.slots.cend(), rhs.slots.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BorderSlotsT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BorderSlotsT> const &b) { return (a == b) || (a && b && *a == *b); }));
+}
+
+inline bool operator!=(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline CorridorRoutingT::CorridorRoutingT(const CorridorRoutingT &o) {
+  corridors.reserve(o.corridors.size());
+  for (const auto &corridors_ : o.corridors) { corridors.emplace_back((corridors_) ? new mqt::scpd::flatbuffers::artifacts::CorridorT(*corridors_) : nullptr); }
+  slots.reserve(o.slots.size());
+  for (const auto &slots_ : o.slots) { slots.emplace_back((slots_) ? new mqt::scpd::flatbuffers::artifacts::BorderSlotsT(*slots_) : nullptr); }
+}
+
+inline CorridorRoutingT &CorridorRoutingT::operator=(CorridorRoutingT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(corridors, o.corridors);
+  std::swap(slots, o.slots);
+  return *this;
+}
+
+inline CorridorRoutingT *CorridorRouting::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<CorridorRoutingT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void CorridorRouting::UnPackTo(CorridorRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = corridors(); if (_e) { _o->corridors.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->corridors[_i]) { _e->Get(_i)->UnPackTo(_o->corridors[_i].get(), _resolver); } else { _o->corridors[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CorridorT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->corridors.resize(0); } }
+  { auto _e = slots(); if (_e) { _o->slots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->slots[_i]) { _e->Get(_i)->UnPackTo(_o->slots[_i].get(), _resolver); } else { _o->slots[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BorderSlotsT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->slots.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<CorridorRouting> CreateCorridorRouting(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CorridorRouting::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<CorridorRouting> CorridorRouting::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorRoutingT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CorridorRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _corridors = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> (_o->corridors.size(), [](size_t i, _VectorArgs *__va) { return CreateCorridor(*__va->__fbb, __va->__o->corridors[i].get(), __va->__rehasher); }, &_va );
+  auto _slots = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> (_o->slots.size(), [](size_t i, _VectorArgs *__va) { return CreateBorderSlots(*__va->__fbb, __va->__o->slots[i].get(), __va->__rehasher); }, &_va );
+  return mqt::scpd::flatbuffers::artifacts::CreateCorridorRouting(
+      _fbb,
+      _corridors,
+      _slots);
 }
 
 
@@ -1408,6 +3800,10 @@ inline bool VerifyStageOutput(::flatbuffers::VerifierTemplate<B> &verifier, cons
       auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::Geometry *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case StageOutput::CorridorRouting: {
+      auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRouting *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -1452,6 +3848,10 @@ inline void *StageOutputUnion::UnPack(const void *obj, StageOutput type, const :
       auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::Geometry *>(obj);
       return ptr->UnPack(resolver);
     }
+    case StageOutput::CorridorRouting: {
+      auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRouting *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -1483,6 +3883,10 @@ inline ::flatbuffers::Offset<void> StageOutputUnion::Pack(::flatbuffers::FlatBuf
       auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::GeometryT *>(value);
       return CreateGeometry(_fbb, ptr, _rehasher).Union();
     }
+    case StageOutput::CorridorRouting: {
+      auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(value);
+      return CreateCorridorRouting(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -1511,6 +3915,10 @@ inline StageOutputUnion::StageOutputUnion(const StageOutputUnion &u) : type(u.ty
     }
     case StageOutput::Geometry: {
       value = new mqt::scpd::flatbuffers::artifacts::GeometryT(*reinterpret_cast<mqt::scpd::flatbuffers::artifacts::GeometryT *>(u.value));
+      break;
+    }
+    case StageOutput::CorridorRouting: {
+      value = new mqt::scpd::flatbuffers::artifacts::CorridorRoutingT(*reinterpret_cast<mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(u.value));
       break;
     }
     default:
@@ -1550,10 +3958,37 @@ inline void StageOutputUnion::Reset() {
       delete ptr;
       break;
     }
+    case StageOutput::CorridorRouting: {
+      auto ptr = reinterpret_cast<mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(value);
+      delete ptr;
+      break;
+    }
     default: break;
   }
   value = nullptr;
   type = StageOutput::NONE;
+}
+
+inline const ::flatbuffers::TypeTable *CapacityElementTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::CapacityElementTypeTable
+  };
+  static const char * const names[] = {
+    "Unset",
+    "Target",
+    "Bottleneck",
+    "Launcher"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
 }
 
 inline const ::flatbuffers::TypeTable *StageOutputTypeTable() {
@@ -1564,7 +3999,8 @@ inline const ::flatbuffers::TypeTable *StageOutputTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 0, 2 },
     { ::flatbuffers::ET_SEQUENCE, 0, 3 },
     { ::flatbuffers::ET_SEQUENCE, 0, 4 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 5 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 5 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 6 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     mqt::scpd::flatbuffers::artifacts::CapacityPlanTypeTable,
@@ -1572,7 +4008,8 @@ inline const ::flatbuffers::TypeTable *StageOutputTypeTable() {
     mqt::scpd::flatbuffers::artifacts::GlobalRoutingTypeTable,
     mqt::scpd::flatbuffers::artifacts::DetailRoutingTypeTable,
     mqt::scpd::flatbuffers::artifacts::FinalRoutingTypeTable,
-    mqt::scpd::flatbuffers::artifacts::GeometryTypeTable
+    mqt::scpd::flatbuffers::artifacts::GeometryTypeTable,
+    mqt::scpd::flatbuffers::artifacts::CorridorRoutingTypeTable
   };
   static const char * const names[] = {
     "NONE",
@@ -1581,32 +4018,50 @@ inline const ::flatbuffers::TypeTable *StageOutputTypeTable() {
     "GlobalRouting",
     "DetailRouting",
     "FinalRouting",
-    "Geometry"
+    "Geometry",
+    "CorridorRouting"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_UNION, 7, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_UNION, 8, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
 
-inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable() {
-  static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 0, nullptr, nullptr, nullptr, nullptr, nullptr
-  };
-  return &tt;
-}
-
-inline const ::flatbuffers::TypeTable *AssignmentTypeTable() {
+inline const ::flatbuffers::TypeTable *GridExtentTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
-    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
     { ::flatbuffers::ET_DOUBLE, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
-    mqt::scpd::flatbuffers::design::ConnectionTypeTable
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
   };
   static const char * const names[] = {
-    "connections",
-    "objective"
+    "width",
+    "height",
+    "origin",
+    "cell_width",
+    "cell_height"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PartitionTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PolygonTypeTable
+  };
+  static const char * const names[] = {
+    "label",
+    "outlines"
   };
   static const ::flatbuffers::TypeTable tt = {
     ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
@@ -1614,9 +4069,281 @@ inline const ::flatbuffers::TypeTable *AssignmentTypeTable() {
   return &tt;
 }
 
-inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable() {
+inline const ::flatbuffers::TypeTable *PartitionBorderTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "first",
+    "second",
+    "samples",
+    "center",
+    "budget"
+  };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 0, nullptr, nullptr, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *BottleneckTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "from",
+    "to",
+    "capacity"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *LauncherSlotTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::PortRefTypeTable,
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "port",
+    "position"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CapacityNodeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 1, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::CapacityElementTypeTable
+  };
+  static const char * const names[] = {
+    "kind",
+    "id",
+    "capacity",
+    "next"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 3 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 4 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 5 },
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 6 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::GridExtentTypeTable,
+    mqt::scpd::flatbuffers::artifacts::PartitionTypeTable,
+    mqt::scpd::flatbuffers::artifacts::PartitionBorderTypeTable,
+    mqt::scpd::flatbuffers::artifacts::BottleneckTypeTable,
+    mqt::scpd::flatbuffers::artifacts::LauncherSlotTypeTable,
+    mqt::scpd::flatbuffers::artifacts::CapacityNodeTypeTable,
+    mqt::scpd::flatbuffers::geometry::PolygonTypeTable
+  };
+  static const char * const names[] = {
+    "capacity_grid",
+    "detail_grid",
+    "partitions",
+    "borders",
+    "bottlenecks",
+    "launchers",
+    "nodes",
+    "chains",
+    "port_keepout"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 9, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *AssignmentTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 3 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::ConnectionTypeTable,
+    mqt::scpd::flatbuffers::design::PortRefTypeTable,
+    mqt::scpd::flatbuffers::geometry::PointTypeTable,
+    mqt::scpd::flatbuffers::artifacts::FeedlineChainTypeTable
+  };
+  static const char * const names[] = {
+    "connections",
+    "objective",
+    "ring",
+    "launchers",
+    "feeds",
+    "chains"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 6, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *FeedlineChainTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::PortRefTypeTable
+  };
+  static const char * const names[] = {
+    "nodes",
+    "start",
+    "end"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *LatticeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_UINT, 1, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "points",
+    "edges",
+    "selected"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::LatticeTypeTable,
+    mqt::scpd::flatbuffers::design::ConnectionTypeTable,
+    mqt::scpd::flatbuffers::design::PortRefTypeTable
+  };
+  static const char * const names[] = {
+    "lattices",
+    "connections",
+    "outer_ring",
+    "resonators",
+    "objective"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *BorderSlotsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_BOOL, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "border",
+    "positions",
+    "pocket"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CorridorTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "partitions",
+    "crossings",
+    "source",
+    "target"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CorridorRoutingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::CorridorTypeTable,
+    mqt::scpd::flatbuffers::artifacts::BorderSlotsTypeTable
+  };
+  static const char * const names[] = {
+    "corridors",
+    "slots"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }

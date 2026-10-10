@@ -11,8 +11,8 @@
 // a shipped configuration carries only what differs from them, except
 // [design_rules], which is always written out in full.
 //
-// The stage, component and DRC parameters of that section arrive with the
-// stages that read them, appended to Config.
+// The parameters of a stage arrive with the stage that reads them, appended to
+// StageParams; the design-rule check appends its own later.
 
 include "design.fbs";
 
@@ -23,6 +23,25 @@ table PortPatterns {
   launcher: string (required);
   resonator: string (required);
   conventional: string (required);
+  /// The ports where a wire crosses a component, rather than ends at it.
+  /// Optional: a chip whose components carry no crossing declares none.
+  /// PortConfig.bridge_pairs says which two of these ports pair.
+  bridge_pair: string;
+  /// The component a port belongs to, as one capture group over the label.
+  /// A port whose label the pattern does not match carries no component.
+  component: string;
+}
+
+/// One rule that pairs the two ports a wire crosses a component between.
+/// Each side is a regular expression with exactly one capture group. Two
+/// ports pair when they belong to one component and their captures are equal.
+///
+/// The pairing is declared rather than measured. Opposite orientation and
+/// shortest distance pick the right two ports on the benchmark chips, but
+/// they are a property of the artwork and not a statement of intent.
+table BridgeRule {
+  first: string (required);
+  second: string (required);
 }
 
 /// The two ordered outer port sequences of the chip. all_outer is the ring
@@ -36,14 +55,118 @@ table PortSequences {
 table PortConfig {
   patterns: PortPatterns (required);
   sequences: PortSequences (required);
+  /// How the ports of the bridge_pair pattern pair off, in the order the rules
+  /// apply. Empty when the chip declares no bridge ports.
+  bridge_pairs: [BridgeRule];
 }
 
 table GridParams {
   capacity_cells_x: uint32 = 50;
   /// Zero derives the value from the chip aspect ratio.
   capacity_cells_y: uint32 = 0;
+  /// A border of detail cells along each axis that stays blocked in the
+  /// capacity stage, so that the free space near the edge of the grid does not
+  /// look wider than it is.
   launcher_offset_x: uint32 = 15;
   launcher_offset_y: uint32 = 15;
+  /// Cells of the detail grid per cell of the capacity grid, along each axis.
+  detail_factor: uint32 = 30;
+}
+
+/// What the Capacity stage may do.
+table CapacityParams {
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
+  planner: string;
+  /// A place on the medial axis is a bottleneck only where the free radius
+  /// around it is below this many wire pitches. A pitch is one wire spacing
+  /// plus one obstacle spacing.
+  ///
+  /// The prototype used a fixed count of grid cells here, which is not a
+  /// length: the same count admitted a radius of 235 layout units on the
+  /// 4-qubit grid and 484 on the 9-qubit one. The default is the middle of
+  /// that range as a length, and gives the prototype's bottleneck count on
+  /// both chips.
+  bottleneck_clearance: double = 1.5;
+  /// How far apart the places sit where a wire may cross a partition border,
+  /// in layout units.
+  ///
+  /// This is a planning pitch and not a clearance rule. It decides how finely
+  /// a border is divided for the Corridor stage, and so how many wires
+  /// PartitionBorder.budget lets through. Where a wire runs, and how far it
+  /// keeps from its neighbour, the later routing stages decide.
+  ///
+  /// The default is the prototype's own figure: its wire spacing less twenty
+  /// units, with no reason given for the twenty.
+  crossing_pitch: double = 165.0;
+}
+
+/// What the Global stage may do.
+table GlobalParams {
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
+  router: string;
+  /// Whether an inner wire may cross a component that the outer ring does not
+  /// reach, through one of that component's own bridges.
+  ///
+  /// Off by default. Such a wire enters a coupler that the assignment never
+  /// sees and leaves on the far side, so nothing a later stage reads says
+  /// where it runs.
+  internal_bridges: bool = false;
+}
+
+/// What the Assignment stage may do.
+table AssignmentParams {
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
+  assigner: string;
+  /// How many launchers the assignment activates. A figure per chip with no
+  /// default: zero means the configuration does not set it.
+  launcher_target: uint32 = 0;
+}
+
+/// How the mixed-integer programs of the planning stages are solved.
+table SolverParams {
+  /// "auto", "highs" or "gurobi". Empty means "auto". The environment
+  /// variable SCPD_SOLVER overrides it for one run.
+  backend: string;
+  /// Seconds one solve may take, or zero for no limit.
+  time_limit: double = 0.0;
+  /// The relative gap a solve may stop at, or zero for the backend's own.
+  relative_gap: double = 0.0;
+}
+
+/// What the Corridor stage may do.
+table CorridorParams {
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
+  router: string;
+  /// Sweeps over the connections, alternating forward and backward.
+  ///
+  /// A connection that has a way keeps it. The sweeps exist so that a
+  /// connection without a way can take room that a later one has not claimed
+  /// yet, and so that the order of the connections does not decide the
+  /// result on its own.
+  rounds: uint32 = 12;
+  /// How many neighbouring connections a failed one may rip up, counted along
+  /// the sweep direction.
+  max_relaxation: uint32 = 30;
+}
+
+/// The parameters of the stages that are implemented.
+table StageParams {
+  capacity: CapacityParams;
+  global: GlobalParams;
+  assignment: AssignmentParams;
+  solver: SolverParams;
+  corridor: CorridorParams;
+}
+
+/// How far a run goes.
+table RunParams {
+  /// The last step to run: a stage, or a phase of a stage. Empty runs every
+  /// step this release implements. The command line can override it.
+  stop_after: string;
 }
 
 /// The whole run configuration.
@@ -53,4 +176,6 @@ table Config {
   ports: PortConfig (required);
   rules: design.DesignRules (required);
   grid: GridParams;
+  stages: StageParams;
+  run: RunParams;
 }
