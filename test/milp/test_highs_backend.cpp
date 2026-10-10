@@ -196,6 +196,37 @@ TEST(HighsBackend, ReportsTheProgressOfASearch) {
   }
 }
 
+TEST(HighsBackend, SolvesToTheSameOptimumUnderALimitAndAGap) {
+  const auto model = hardKnapsack();
+  const auto free = makeHighsBackend()->solve(model, {});
+  SolveOptions options;
+  options.timeLimit = 600.0;
+  options.relativeGap = 1.0e-9;
+
+  const auto limited = makeHighsBackend()->solve(model, options);
+
+  ASSERT_EQ(free.status, SolveStatus::Optimal);
+  ASSERT_EQ(limited.status, SolveStatus::Optimal);
+  EXPECT_DOUBLE_EQ(limited.objective, free.objective);
+}
+
+TEST(HighsBackend, GivesValuesToEverySolveThatALimitStops) {
+  // A limit that is over before the search starts may leave no solution.
+  // Such a solve is an error, and a solve that a limit stops is feasible only
+  // with values.
+  const auto model = hardKnapsack();
+  SolveOptions options;
+  options.timeLimit = 1.0e-9;
+
+  const auto solution = makeHighsBackend()->solve(model, options);
+
+  if (solution.status == SolveStatus::Feasible) {
+    EXPECT_TRUE(solution.hasValues());
+  } else if (solution.status == SolveStatus::Error) {
+    EXPECT_FALSE(solution.message.empty());
+  }
+}
+
 TEST(HighsBackend, EndsTheSolveWhenTheObserverThrowsAndRethrows) {
   // A Python KeyboardInterrupt reaches the core as an exception from a
   // callback. The solve stops at the next chance and the exception leaves the

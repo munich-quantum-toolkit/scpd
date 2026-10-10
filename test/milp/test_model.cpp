@@ -123,6 +123,46 @@ TEST(MilpModel, KnowsWhetherItIsMixedInteger) {
   EXPECT_TRUE(mixed.isMixedInteger());
 }
 
+TEST(MilpModel, ScalesAndNegatesAnExpressionFromEitherSide) {
+  Model model("algebra");
+  const auto x = model.addBinary("x");
+  const auto y = model.addBinary("y");
+
+  LinearExpr shifted;
+  shifted.add(x, 1.0).add(2.0);
+  const auto left = 3.0 * shifted;
+  const auto right = shifted * 3.0;
+  const auto negated = -((x * 2.0) - (1.0 * y));
+
+  for (const auto& scaled : {left, right}) {
+    ASSERT_EQ(scaled.combined().size(), 1U);
+    EXPECT_DOUBLE_EQ(scaled.combined().front().second, 3.0);
+    EXPECT_DOUBLE_EQ(scaled.constant(), 6.0);
+  }
+  const auto terms = negated.combined();
+  ASSERT_EQ(terms.size(), 2U);
+  EXPECT_EQ(terms[0].first, x.index);
+  EXPECT_DOUBLE_EQ(terms[0].second, -2.0);
+  EXPECT_EQ(terms[1].first, y.index);
+  EXPECT_DOUBLE_EQ(terms[1].second, 1.0);
+}
+
+TEST(MilpModel, NamesItsVariablesAndRefusesAnUnknownOne) {
+  Model model("named");
+  const auto x = model.addBinary("x");
+
+  EXPECT_EQ(model.nameOf(x), "x");
+  EXPECT_THROW(static_cast<void>(model.nameOf(Var{1})), std::out_of_range);
+}
+
+TEST(MilpSolution, NamesEveryStatus) {
+  EXPECT_EQ(statusName(SolveStatus::Optimal), "optimal");
+  EXPECT_EQ(statusName(SolveStatus::Feasible), "feasible");
+  EXPECT_EQ(statusName(SolveStatus::Infeasible), "infeasible");
+  EXPECT_EQ(statusName(SolveStatus::Unbounded), "unbounded");
+  EXPECT_EQ(statusName(SolveStatus::Error), "error");
+}
+
 TEST(MilpSolution, ReadsABinaryThroughATolerance) {
   const Solution solution{.status = SolveStatus::Optimal,
                           .objective = 1.0,

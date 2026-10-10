@@ -243,7 +243,7 @@ ConfigT bridgedConfig() {
   return config;
 }
 
-ChipT bridgedChip() {
+ChipT bridgedChip(const ConfigT& config = bridgedConfig()) {
   auto text = test::miniChipText();
   const std::string anchor = R"("ports": {)";
   const auto at = text.find(anchor);
@@ -251,7 +251,17 @@ ChipT bridgedChip() {
   text.insert(at + anchor.size(), R"(
     "C12.port1": {"center": [900.0, 270.0], "orientation": 90.0},
     "C12.port2": {"center": [900.0, 130.0], "orientation": 270.0},)");
-  return io::loadChip(text, bridgedConfig());
+  return io::loadChip(text, config);
+}
+
+/// The bridged fixture with both ends of the bridge off the ring, so that the
+/// bridge is an internal crossing.
+ConfigT internalBridgeConfig(const bool allowed) {
+  auto config = bridgedConfig();
+  config.ports->sequences->all_outer = {"Q1.port0", "Q1.port1", "C12.port0",
+                                        "Q2.port1"};
+  config.stages->global->internal_bridges = allowed;
+  return config;
 }
 
 /// The chains of the bridged fixture: one through the inner port, the top of
@@ -419,6 +429,35 @@ TEST(GlobalRouter, DropsTheRingPortOfABridgeThatCannotCarryTheWire) {
   EXPECT_EQ(ringOf(routing),
             indicesOf(chip, {"Q1.port0", "Q1.port1", "C12.port0", "Q2.port1"}));
   EXPECT_EQ(resonatorsOf(routing), indicesOf(chip, {"Q1.port0", "Q2.port0"}));
+}
+
+TEST(GlobalRouter, ReachesAnInnerPortPastAnInternalBridge) {
+  // The bridge would not shorten the wire. Shut, its two ports carry no flow;
+  // open, they could. Either way the wire runs from Q2.port1 around the pad.
+  for (const bool allowed : {false, true}) {
+    SCOPED_TRACE(allowed ? "internal bridges allowed"
+                         : "internal bridges shut");
+    const auto config = internalBridgeConfig(allowed);
+    const auto chip = bridgedChip(config);
+    const auto plan = planOf(
+        {{.targets = indicesOf(chip, {"Q2.port0", "C12.port1", "Q2.port1"}),
+          .gate = std::nullopt},
+         {.targets = indicesOf(chip, {"C12.port2", "Q2.port1"}),
+          .gate = std::nullopt}});
+    Recorder recorder;
+
+    const auto routing = makeHananMilpRouter()->run(
+        chip, plan, config, recorder.report(Detail::Summary));
+
+    ASSERT_EQ(routing.connections.size(), 1U);
+    EXPECT_EQ(routing.connections[0]->source->index(),
+              indexOf(chip, "Q2.port1"));
+    EXPECT_EQ(routing.connections[0]->target.index(),
+              indexOf(chip, "Q2.port0"));
+    EXPECT_NEAR(routing.objective, 640.0, 1.0e-9);
+    ASSERT_EQ(recorder.fails.size(), 1U);
+    EXPECT_EQ(recorder.fails[0], 0U);
+  }
 }
 
 TEST(GlobalRouter, GivesTheSameAnswerTwice) {

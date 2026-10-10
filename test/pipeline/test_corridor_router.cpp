@@ -66,10 +66,75 @@ Planned planMini() {
   return planned;
 }
 
-CorridorRoutingT routeMini(const Planned& planned, const Report& report = {}) {
+CorridorRoutingT routeMini(const Planned& planned, const Report& report = {},
+                           const ConfigT& config = test::miniConfig()) {
   return makePartitionAStarRouter()->run(planned.chip, planned.capacity,
-                                         planned.assignment, test::miniConfig(),
-                                         report);
+                                         planned.assignment, config, report);
+}
+
+/// The fixture with every connection and its feed point repeated, so that
+/// the copies compete for the same slots.
+Planned crowded(const std::size_t copies) {
+  auto planned = planMini();
+  const auto connections = planned.assignment.connections.size();
+  for (std::size_t copy = 1; copy < copies; ++copy) {
+    for (std::size_t index = 0; index < connections; ++index) {
+      planned.assignment.connections.push_back(
+          std::make_unique<flatbuffers::design::ConnectionT>(
+              *planned.assignment.connections[index]));
+      planned.assignment.feeds.push_back(planned.assignment.feeds[index]);
+    }
+  }
+  return planned;
+}
+
+/// The fixture configuration with a number of sweeps and of wires that a
+/// failed one may rip up.
+ConfigT sweepConfig(const std::uint32_t rounds,
+                    const std::uint32_t maxRelaxation) {
+  auto config = test::miniConfig();
+  config.stages->corridor->rounds = rounds;
+  config.stages->corridor->max_relaxation = maxRelaxation;
+  return config;
+}
+
+/// What a report receives: the lines and entries of each level, and the
+/// fails of the result.
+struct Received {
+  std::vector<std::string> steps;
+  std::vector<std::pair<std::string, std::vector<Figure>>> summary;
+  std::vector<std::pair<std::string, std::vector<Figure>>> items;
+  std::optional<std::uint64_t> fails;
+};
+
+Report receiving(Received& received, const Detail level) {
+  return {level,
+          {.line =
+               [&received](const Detail detail, const std::string_view text) {
+                 if (detail == Detail::Steps) {
+                   received.steps.emplace_back(text);
+                 }
+               },
+           .entry =
+               [&received](const Detail detail, const std::string_view label,
+                           const std::vector<Figure>& figures) {
+                 auto& entries = detail == Detail::Summary ? received.summary
+                                                           : received.items;
+                 entries.emplace_back(label, figures);
+               },
+           .result =
+               [&received](const std::vector<Figure>& /*figures*/,
+                           const std::optional<std::uint64_t> count) {
+                 received.fails = count;
+               }}};
+}
+
+/// How many wires the routing leaves without a way.
+std::size_t unroutedOf(const CorridorRoutingT& routing) {
+  return static_cast<std::size_t>(
+      std::ranges::count_if(routing.corridors, [](const auto& corridor) {
+        return corridor->partitions.empty();
+      }));
 }
 
 /// Which side of the line through @p p and @p q the point @p r lies on. The
@@ -119,6 +184,33 @@ std::vector<Chord> chordsOf(const CorridorT& corridor) {
   return chords;
 }
 
+/// Checks that no two wires take one slot.
+void expectOneWirePerSlot(const CorridorRoutingT& routing) {
+  std::set<std::pair<double, double>> taken;
+  for (const auto& corridor : routing.corridors) {
+    for (const auto& crossing : corridor->crossings) {
+      EXPECT_TRUE(taken.emplace(crossing.x(), crossing.y()).second)
+          << "two wires cross at (" << crossing.x() << ", " << crossing.y()
+          << ")";
+    }
+  }
+}
+
+/// Checks that no two wires cross inside a partition.
+void expectNoCrossingInsideAPartition(const CorridorRoutingT& routing) {
+  std::map<std::uint32_t, std::vector<std::pair<std::size_t, Chord>>> drawn;
+  for (std::size_t wire = 0; wire < routing.corridors.size(); ++wire) {
+    for (const auto& chord : chordsOf(*routing.corridors[wire])) {
+      for (const auto& [other, theirs] : drawn[chord.partition]) {
+        EXPECT_FALSE(crosses(chord.from, chord.to, theirs.from, theirs.to))
+            << "wires " << wire << " and " << other
+            << " cross inside partition " << chord.partition;
+      }
+      drawn[chord.partition].emplace_back(wire, chord);
+    }
+  }
+}
+
 TEST(CorridorRouter, RoutesEveryConnectionOfTheFixture) {
   const auto planned = planMini();
   const auto routing = routeMini(planned);
@@ -134,16 +226,7 @@ TEST(CorridorRouter, RoutesEveryConnectionOfTheFixture) {
 }
 
 TEST(CorridorRouter, GivesEachSlotToOneWire) {
-  const auto routing = routeMini(planMini());
-
-  std::set<std::pair<double, double>> taken;
-  for (const auto& corridor : routing.corridors) {
-    for (const auto& crossing : corridor->crossings) {
-      EXPECT_TRUE(taken.emplace(crossing.x(), crossing.y()).second)
-          << "two wires cross at (" << crossing.x() << ", " << crossing.y()
-          << ")";
-    }
-  }
+  expectOneWirePerSlot(routeMini(planMini()));
 }
 
 TEST(CorridorRouter, LeavesAPartitionOnlyIntoANeighbour) {
@@ -178,19 +261,7 @@ TEST(CorridorRouter, LeavesAPartitionOnlyIntoANeighbour) {
 }
 
 TEST(CorridorRouter, KeepsWiresFromCrossingInsideAPartition) {
-  const auto routing = routeMini(planMini());
-
-  std::map<std::uint32_t, std::vector<std::pair<std::size_t, Chord>>> drawn;
-  for (std::size_t wire = 0; wire < routing.corridors.size(); ++wire) {
-    for (const auto& chord : chordsOf(*routing.corridors[wire])) {
-      for (const auto& [other, theirs] : drawn[chord.partition]) {
-        EXPECT_FALSE(crosses(chord.from, chord.to, theirs.from, theirs.to))
-            << "wires " << wire << " and " << other
-            << " cross inside partition " << chord.partition;
-      }
-      drawn[chord.partition].emplace_back(wire, chord);
-    }
-  }
+  expectNoCrossingInsideAPartition(routeMini(planMini()));
 }
 
 TEST(CorridorRouter, CountsAConnectionWithoutAWayAsAFail) {
@@ -270,6 +341,161 @@ TEST(CorridorRouter, ReportsEveryRoundAndTheResult) {
   EXPECT_TRUE(std::ranges::any_of(steps, [&](const std::string& line) {
     return line.starts_with(counted(connections, "connection"));
   }));
+}
+
+TEST(CorridorRouter, KeepsItsRulesWhenWiresCompete) {
+  // Four copies of every wire are more than the slots of the fixture carry,
+  // so wires are ripped up, displaced and left without a way.
+  const auto planned = crowded(4);
+  for (const std::uint32_t maxRelaxation : {1U, 30U}) {
+    SCOPED_TRACE(std::format("max relaxation {}", maxRelaxation));
+    Received received;
+    const auto routing =
+        routeMini(planned, receiving(received, Detail::Summary),
+                  sweepConfig(2, maxRelaxation));
+
+    ASSERT_EQ(routing.corridors.size(), planned.assignment.connections.size());
+    expectOneWirePerSlot(routing);
+    expectNoCrossingInsideAPartition(routing);
+    EXPECT_GT(unroutedOf(routing), 0U);
+    EXPECT_LT(unroutedOf(routing), routing.corridors.size());
+    EXPECT_EQ(received.fails, unroutedOf(routing));
+  }
+}
+
+TEST(CorridorRouter, PlacesTheWiresThatNoRoundPlaced) {
+  // Without a sweep, every wire is placed in the room the others leave.
+  const auto planned = crowded(2);
+  Received received;
+  const auto routing = routeMini(planned, receiving(received, Detail::Summary),
+                                 sweepConfig(0, 30));
+
+  const auto routed = routing.corridors.size() - unroutedOf(routing);
+  ASSERT_EQ(received.summary.size(), 1U);
+  EXPECT_EQ(received.summary[0].first, "rescue");
+  EXPECT_EQ(received.summary[0].second[0].text,
+            std::format("placed {}", routed));
+  EXPECT_GT(routed, 0U);
+  expectOneWirePerSlot(routing);
+  expectNoCrossingInsideAPartition(routing);
+}
+
+TEST(CorridorRouter, RoutesNoWireWithoutAFeedPoint) {
+  auto planned = planMini();
+  planned.assignment.feeds.clear();
+  Received received;
+
+  const auto routing = routeMini(planned, receiving(received, Detail::Summary));
+
+  for (const auto& corridor : routing.corridors) {
+    EXPECT_EQ(corridor->source, nullptr);
+    EXPECT_NE(corridor->target, nullptr);
+    EXPECT_TRUE(corridor->partitions.empty());
+  }
+  EXPECT_EQ(received.fails, planned.assignment.connections.size());
+}
+
+/// The fixture with the feed point of every connection moved to the centre of
+/// its target port, shifted by @p offset along x.
+Planned fedAtTheTarget(const double offset) {
+  auto planned = planMini();
+  for (std::size_t index = 0; index < planned.assignment.connections.size();
+       ++index) {
+    const auto& centre =
+        planned.chip
+            .ports[planned.assignment.connections[index]->target.index()]
+            ->center;
+    planned.assignment.feeds[index] = Point(centre.x() + offset, centre.y());
+  }
+  return planned;
+}
+
+TEST(CorridorRouter, NeedsNoCrossingForAWireFedInItsTargetPartition) {
+  const auto routing = routeMini(fedAtTheTarget(100.0));
+
+  EXPECT_LT(unroutedOf(routing), routing.corridors.size());
+  for (const auto& corridor : routing.corridors) {
+    if (!corridor->partitions.empty()) {
+      EXPECT_EQ(corridor->partitions.size(), 1U);
+      EXPECT_TRUE(corridor->crossings.empty());
+    }
+  }
+}
+
+TEST(CorridorRouter, LeavesAWireFedDeepInsideTheArtworkUnrouted) {
+  // The centre of a port lies on its pad, further from free space than a
+  // feed point looks for a partition.
+  const auto routing = routeMini(fedAtTheTarget(0.0));
+
+  for (const auto& corridor : routing.corridors) {
+    EXPECT_EQ(corridor->source, nullptr);
+    EXPECT_TRUE(corridor->partitions.empty());
+  }
+}
+
+TEST(CorridorRouter, OpensAWayOutOfAPocketThatNoBorderReaches) {
+  // Without borders, the only ways between partitions are the approaches of
+  // the target ports.
+  auto planned = planMini();
+  planned.capacity.borders.clear();
+
+  const auto routing = routeMini(planned);
+
+  ASSERT_EQ(routing.slots.size(), 1U);
+  EXPECT_TRUE(routing.slots[0]->pocket);
+  std::set<std::pair<double, double>> pockets;
+  for (const auto& position : routing.slots[0]->positions) {
+    pockets.emplace(position.x(), position.y());
+  }
+  EXPECT_LT(unroutedOf(routing), routing.corridors.size());
+  for (const auto& corridor : routing.corridors) {
+    for (const auto& crossing : corridor->crossings) {
+      EXPECT_TRUE(pockets.contains({crossing.x(), crossing.y()}));
+    }
+  }
+}
+
+TEST(CorridorRouter, SweepsTwelveRoundsWithoutACorridorSection) {
+  auto config = test::miniConfig();
+  config.stages->corridor.reset();
+  Received received;
+
+  const auto routing =
+      routeMini(planMini(), receiving(received, Detail::Steps), config);
+
+  EXPECT_NE(std::ranges::find(
+                received.steps,
+                std::format("rounds 12{}max relaxation 30", FIGURE_SEPARATOR)),
+            received.steps.end());
+  EXPECT_EQ(unroutedOf(routing), 0U);
+}
+
+TEST(CorridorRouter, ReportsEveryConnectionAtTheItemsLevel) {
+  const auto planned = crowded(2);
+  Received received;
+
+  const auto routing = routeMini(planned, receiving(received, Detail::Items),
+                                 sweepConfig(1, 30));
+
+  ASSERT_EQ(received.items.size(), routing.corridors.size());
+  for (std::size_t index = 0; index < routing.corridors.size(); ++index) {
+    const auto& [label, figures] = received.items[index];
+    const auto& corridor = *routing.corridors[index];
+    EXPECT_EQ(label,
+              planned.chip
+                  .ports[planned.assignment.connections[index]->target.index()]
+                  ->label);
+    if (corridor.partitions.empty()) {
+      ASSERT_EQ(figures.size(), 1U);
+      EXPECT_EQ(figures[0].text, "unrouted");
+      EXPECT_EQ(figures[0].tone, Tone::Bad);
+      continue;
+    }
+    ASSERT_EQ(figures.size(), 2U);
+    EXPECT_EQ(figures[0].text,
+              counted(corridor.partitions.size(), "partition"));
+    EXPECT_EQ(figures[1].text, counted(corridor.crossings.size(), "crossing"));
+  }
 }
 
 } // namespace

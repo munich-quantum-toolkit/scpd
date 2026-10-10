@@ -232,5 +232,37 @@ TEST(FreeCellSeeds, RefusesADetailGridThatIsNoWholeRefinement) {
                std::invalid_argument);
 }
 
+TEST(Partitions, FindsNothingOnAnEmptyGrid) {
+  const GridMetrics empty;
+  const BitGrid mask(0, 0);
+
+  const auto partitions = extractPartitions(mask, {}, empty);
+
+  EXPECT_TRUE(partitions.outlines.empty());
+  EXPECT_TRUE(partitions.borders.empty());
+  EXPECT_TRUE(rasterizePartitions({}, empty).empty());
+}
+
+TEST(Partitions, PutsTheCentreOfABorderWithoutSamplesAtTheOrigin) {
+  const PartitionBorder border;
+  EXPECT_EQ(border.center(), Point());
+}
+
+TEST(BorderSlots, GivesABorderWithoutSamplesNoSlot) {
+  const PartitionBorder border{
+      .first = FIRST_PARTITION_LABEL,
+      .second = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 1),
+      .samples = {}};
+  EXPECT_TRUE(borderSlots(border, unitGrid(4, 4), 1.0).empty());
+}
+
+TEST(FreeCellSeeds, RefusesAMaskOfTheWrongSize) {
+  const auto coarse = unitGrid(4, 4);
+  const auto detail = coarse.refined(5);
+  const BitGrid mask(detail.width + 1, detail.height);
+  EXPECT_THROW(static_cast<void>(freeCellSeeds(mask, detail, coarse)),
+               std::invalid_argument);
+}
+
 } // namespace
 } // namespace mqt::scpd::grid

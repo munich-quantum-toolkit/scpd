@@ -207,6 +207,20 @@ TEST(Assigner, RefusesAConfigurationWithoutALauncherTarget) {
   }
 }
 
+TEST(Assigner, SaysWhyAnAssignmentHasNoSolution) {
+  // Without a termination, the three conventional ports and both ends of the
+  // feedline chain need five of the four launchers.
+  auto config = test::miniConfig();
+  config.rules->feedline_terminations = 0;
+  try {
+    static_cast<void>(assignMini(config));
+    FAIL() << "an assignment without a solution has to be refused";
+  } catch (const std::runtime_error& error) {
+    EXPECT_NE(std::string(error.what()).find("infeasible"), std::string::npos)
+        << error.what();
+  }
+}
+
 TEST(Assigner, GivesTheSameAnswerTwice) {
   const auto bytes = [] {
     ArtifactT artifact;

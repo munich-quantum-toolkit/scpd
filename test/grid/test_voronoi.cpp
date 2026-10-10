@@ -154,5 +154,13 @@ TEST(MedialAxis, RefusesAMaskOfTheWrongSize) {
       std::invalid_argument);
 }
 
+TEST(MedialAxis, MarksNoCellWithoutAnEdge) {
+  const auto mask = corridor(20, 9, 2);
+  const auto axis = rasterizeMedialAxis(mask, squareGrid(20, 9), {});
+  EXPECT_TRUE(std::ranges::all_of(axis.cells, [](const AxisCell state) {
+    return state == AxisCell::None;
+  }));
+}
+
 } // namespace
 } // namespace mqt::scpd::grid

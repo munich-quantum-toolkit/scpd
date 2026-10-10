@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <format>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -41,14 +42,14 @@ GridMetrics unitGrid(const std::uint32_t width = WIDTH,
                           width, height);
 }
 
-/// A corridor with a pinch: two walls that step towards each other over a few
-/// columns in the middle and back out again.
-BitGrid pinchedCorridor(const std::uint32_t pinchHalfHeight) {
+/// A corridor with a pinch: two walls that step towards each other over the
+/// columns from @p pinchFrom to @p pinchTo and back out again.
+BitGrid pinchedCorridor(const std::uint32_t pinchHalfHeight,
+                        const std::uint32_t pinchFrom = 28,
+                        const std::uint32_t pinchTo = 32) {
   BitGrid mask(WIDTH, HEIGHT);
   constexpr std::uint32_t openHalf = 15;
   constexpr std::uint32_t middle = HEIGHT / 2;
-  constexpr std::uint32_t pinchFrom = 28;
-  constexpr std::uint32_t pinchTo = 32;
 
   for (std::uint32_t x = 0; x < WIDTH; ++x) {
     const auto half =
@@ -103,6 +104,29 @@ TEST(Bottlenecks, FindsThePinchOfACorridorAndSpansIt) {
     }
   }
   EXPECT_TRUE(spansThePinch);
+}
+
+TEST(Bottlenecks, FindsAPinchAtTheEdgeOfTheGrid) {
+  for (const auto& [from, to] : {std::pair{0U, 3U}, std::pair{57U, 60U}}) {
+    SCOPED_TRACE(std::format("pinch from x = {} to x = {}", from, to));
+    const auto scene = sceneOf(pinchedCorridor(3, from, to));
+    const auto found =
+        findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+    ASSERT_FALSE(found.empty());
+
+    bool spansThePinch = false;
+    for (const auto& bottleneck : found) {
+      EXPECT_TRUE(scene.mask.test(bottleneck.first));
+      EXPECT_TRUE(scene.mask.test(bottleneck.second));
+      const auto x0 = bottleneck.first % WIDTH;
+      const auto y0 = bottleneck.first / WIDTH;
+      const auto y1 = bottleneck.second / WIDTH;
+      if (y0 != y1 && x0 + 2 >= from && x0 <= to + 2) {
+        spansThePinch = true;
+      }
+    }
+    EXPECT_TRUE(spansThePinch);
+  }
 }
 
 TEST(Bottlenecks, FindsNothingWhereEveryPlaceIsWide) {

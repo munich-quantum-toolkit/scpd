@@ -14,6 +14,7 @@
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/grid/Watershed.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/io/Chip.hpp"
@@ -28,6 +29,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -145,6 +147,50 @@ TEST(CapacityScene, TakesTheDefaultGridWhenTheConfigurationLeavesItOut) {
   EXPECT_EQ(withoutGrid.detail.height, withDefaults.detail.height);
   EXPECT_EQ(withoutGrid.blocked, withDefaults.blocked);
   EXPECT_EQ(withoutGrid.targetCell, withDefaults.targetCell);
+}
+
+TEST(CapacityScene, TakesTheCellsAlongYFromTheConfigurationWhenGiven) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_y = 7;
+
+  const auto scene = buildScene(test::miniChip(), config);
+
+  EXPECT_EQ(scene.capacity.width, 12U);
+  EXPECT_EQ(scene.capacity.height, 7U);
+}
+
+TEST(CapacityScene, TakesTheDefaultCrossingPitchWithoutACapacitySection) {
+  auto config = test::miniConfig();
+  config.stages->capacity.reset();
+  EXPECT_DOUBLE_EQ(crossingPitch(config),
+                   flatbuffers::config::CapacityParamsT{}.crossing_pitch);
+  config.stages.reset();
+  EXPECT_DOUBLE_EQ(crossingPitch(config),
+                   flatbuffers::config::CapacityParamsT{}.crossing_pitch);
+}
+
+TEST(CapacityScene, RefusesAConfigurationItCannotBuildAGridFrom) {
+  const auto chip = test::miniChip();
+  auto noRules = test::miniConfig();
+  noRules.rules.reset();
+  EXPECT_THROW(static_cast<void>(buildScene(chip, noRules)),
+               std::invalid_argument);
+
+  auto noDetail = test::miniConfig();
+  noDetail.grid->detail_factor = 0;
+  EXPECT_THROW(static_cast<void>(buildScene(chip, noDetail)),
+               std::invalid_argument);
+}
+
+TEST(CapacityScene, RefusesAChipWithoutALauncher) {
+  auto chip = test::miniChip();
+  for (auto& port : chip.ports) {
+    if (port->role == flatbuffers::design::UnassignedRole::Launcher) {
+      port->role = flatbuffers::design::UnassignedRole::Unset;
+    }
+  }
+  EXPECT_THROW(static_cast<void>(buildScene(chip, test::miniConfig())),
+               std::invalid_argument);
 }
 
 /// The fixture with a block of artwork in front of Q2.port1, inside the reach

@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 
 namespace {
 
@@ -111,6 +112,93 @@ TEST(PortBands, PlacingKeepsObstaclesThatWereThereBefore) {
   EXPECT_FALSE(mask.test(*target));
   EXPECT_FALSE(mask.testCell(27, 25));
   EXPECT_TRUE(mask.testCell(30, 25));
+}
+
+TEST(PortBands, ADiagonalBandHasNoGapsBehindThePortEither) {
+  BitGrid mask(60, 60);
+  const PortBand band{.center = DCoord(30, 30),
+                      .step = {.x = -1, .y = 1},
+                      .forward = 0,
+                      .backward = 4,
+                      .halfWidth = 0};
+  static_cast<void>(stampBand(mask, band));
+  for (uint32_t d = 1; d <= 4; ++d) {
+    EXPECT_TRUE(mask.testCell(30 + d, 30 - d));
+    EXPECT_TRUE(mask.testCell(30 + d, 30 - d + 1));
+  }
+}
+
+TEST(PortBands, ABandAtTheEdgeStopsAtTheGrid) {
+  BitGrid mask(20, 20);
+  const PortBand band{.center = DCoord(1, 10),
+                      .step = {.x = 0, .y = 1},
+                      .forward = 2,
+                      .backward = 0,
+                      .halfWidth = 3};
+  const StampedBand stamped = stampBand(mask, band);
+  // Of each strip of seven cells, the two left of x = 0 are not on the grid.
+  EXPECT_EQ(stamped.cells.size(), 5U * 3U);
+  EXPECT_TRUE(mask.testCell(0, 12));
+  EXPECT_TRUE(mask.testCell(4, 10));
+}
+
+TEST(PortBands, PlacingWithoutAStepTakesTheNearestFreeCell) {
+  BitGrid before(50, 50);
+  before.setCell(30, 25);
+  BitGrid mask = before;
+  const PortBand band{.center = DCoord(25, 25),
+                      .step = {.x = 1, .y = 0},
+                      .forward = 5,
+                      .backward = 0,
+                      .halfWidth = 0};
+  const StampedBand stamped = stampBand(mask, band);
+  const auto target =
+      placeTargetBeyondBand(mask, before, stamped, Step{.x = 0, .y = 0});
+  ASSERT_TRUE(target.has_value());
+  EXPECT_FALSE(before.test(*target));
+  // The obstacle is one cell, so a free cell touches it.
+  EXPECT_LE(std::abs(static_cast<int>(*target % 50) - 30), 1);
+  EXPECT_LE(std::abs(static_cast<int>(*target / 50) - 25), 1);
+}
+
+TEST(PortBands, PlacingFallsBackWhenTheWalkLeavesTheGrid) {
+  // Everything from x = 28 to the edge was blocked before the band, so the
+  // walk past the obstacle reaches the edge and the nearest free cell lies
+  // behind the port.
+  BitGrid before(50, 50);
+  for (uint32_t y = 0; y < 50; ++y) {
+    for (uint32_t x = 28; x < 50; ++x) {
+      before.setCell(x, y);
+    }
+  }
+  BitGrid mask = before;
+  const PortBand band{.center = DCoord(25, 25),
+                      .step = {.x = 1, .y = 0},
+                      .forward = 4,
+                      .backward = 0,
+                      .halfWidth = 1};
+  const StampedBand stamped = stampBand(mask, band);
+  const auto target = placeTargetBeyondBand(mask, before, stamped, band.step);
+  ASSERT_TRUE(target.has_value());
+  EXPECT_FALSE(before.test(*target));
+  EXPECT_EQ(*target % 50, 27U);
+  EXPECT_FALSE(mask.test(*target));
+}
+
+TEST(PortBands, PlacingFindsNoTargetOnAFullGrid) {
+  BitGrid before(10, 10);
+  for (std::size_t cell = 0; cell < 100; ++cell) {
+    before.set(cell, true);
+  }
+  BitGrid mask = before;
+  const PortBand band{.center = DCoord(5, 5),
+                      .step = {.x = 1, .y = 0},
+                      .forward = 2,
+                      .backward = 0,
+                      .halfWidth = 0};
+  const StampedBand stamped = stampBand(mask, band);
+  EXPECT_FALSE(
+      placeTargetBeyondBand(mask, before, stamped, band.step).has_value());
 }
 
 } // namespace
