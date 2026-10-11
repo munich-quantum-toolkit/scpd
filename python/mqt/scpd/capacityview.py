@@ -8,7 +8,7 @@
 
 """Lay the capacity graph of the coupler insertion out on a page of its own.
 
-With ``SCPD_BOTTLENECKS=1`` and ``--debug`` the Final stage writes
+With ``--debug`` (and ``SCPD_BOTTLENECKS`` on, the default) the Final stage writes
 ``final-capacity-graph.json`` next to its pictures: the chambers and walls as a
 raster, every edge of the graph with what it takes and what the flow sends
 through it, and every outer wire with its two ports. This turns that file into

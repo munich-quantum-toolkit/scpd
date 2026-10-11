@@ -97,6 +97,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "max_relaxation": 10,
         "refinement_rounds": 2,
         "feedline_refinement_rounds": 2,
+        "refinement_corridor_spacings": 6,
         "meander_length": 3000.0,
         "bend_penalty_norm": 2.5,
         "wire_proximity_penalty_norm": 0.00125,
@@ -345,6 +346,7 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("max_relaxation", "maxRelaxation"),
         ("refinement_rounds", "refinementRounds"),
         ("feedline_refinement_rounds", "feedlineRefinementRounds"),
+        ("refinement_corridor_spacings", "refinementCorridorSpacings"),
         ("repair_trials", "repairTrials"),
     ):
         setattr(stages.final, field, final.take(key, int, default=defaults["final"][key]))

@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace mqt::scpd::routing {
@@ -124,7 +125,9 @@ public:
 
   /// The corridor of the wire about to be routed: the search enters the
   /// clear cells only. Packs the corridor with the static proximity into the
-  /// working grid, which costs one pass over the grid.
+  /// working grid. Only the words of 64 cells that differ from the corridor
+  /// packed last are packed again, so a corridor that changes in one box
+  /// costs that box and one comparison per word of the grid.
   ///
   /// The packed grid is a copy of what the corridor says now, so a corridor
   /// is changed before it is attached, never after. A caller that rebuilds
@@ -265,6 +268,21 @@ public:
   /// edge hits an obstacle. Needs attached obstacles.
   [[nodiscard]] CellBox freeStripAlong(PathPoint from, PathPoint to) const;
 
+  /// What `freeStripAlong` learnt of the free cells beside the cells of an
+  /// axis-parallel segment: per cell and side, how many cells in a row are
+  /// free. It holds while the obstacles do not change, so a caller keeps one
+  /// for the calls of one meander insertion.
+  struct FreeStripMemo {
+    std::unordered_map<uint64_t, uint32_t> depths;
+  };
+
+  /// `freeStripAlong` with a memo. On an axis-parallel segment the strip
+  /// grows on a side until a cell beside the segment is blocked, so its width
+  /// is the least free depth of the segment's cells on that side; the depths
+  /// are taken from the memo. Every other segment is measured as without it.
+  [[nodiscard]] CellBox freeStripAlong(PathPoint from, PathPoint to,
+                                       FreeStripMemo& memo) const;
+
 private:
   struct QueueEntry {
     uint16_t x = 0;
@@ -314,6 +332,9 @@ private:
 
   void buildTables();
   void rebuildPacked();
+  /// `freeStripAlong`, with a memo or without one.
+  [[nodiscard]] CellBox freeStrip(PathPoint from, PathPoint to,
+                                  FreeStripMemo* memo) const;
   void buildDistanceField(uint32_t tx, uint32_t ty);
   bool beginSingleCrossingOverlay(const PathPoint& source,
                                   const PathPoint& target);
@@ -371,6 +392,11 @@ private:
   const std::vector<uint16_t>* wire_ = nullptr;
   std::vector<uint8_t> packed_;
   bool packedValid_ = false;
+  /// The corridor words `packed_` was last packed from.
+  std::vector<uint64_t> packedWords_;
+  /// Whether `static_` changed since the last packing, so that every cell
+  /// has to be packed again.
+  bool packedStale_ = true;
 
   CrossingConstraints constraints_;
   std::vector<uint8_t> exempt_;

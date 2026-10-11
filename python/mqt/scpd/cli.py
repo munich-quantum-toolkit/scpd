@@ -221,7 +221,7 @@ def command_couplers(args: argparse.Namespace) -> int:
 def _capacity_view(directory: RunDirectory, written: set[str]) -> None:
     """Lay the capacity graph out on a page when the stage wrote one.
 
-    The Final stage writes the graph as data only with ``SCPD_BOTTLENECKS=1``;
+    The Final stage writes the graph as data only with ``SCPD_BOTTLENECKS`` on;
     the page is built from what this stage wrote, never from the data of an
     earlier run left in the directory.
     """

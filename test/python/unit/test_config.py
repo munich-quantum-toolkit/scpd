@@ -175,6 +175,19 @@ def test_every_problem_is_reported_at_once() -> None:
     assert "[design_rules] lacks the required key 'min_bend_radius'" in str(info.value)
 
 
+def test_the_refinement_band_is_six_spacings_unless_the_file_sets_it() -> None:
+    """`refinement_corridor_spacings` defaults to 6; zero hands the refinements the sweep's band."""
+    config = parse_config(MANUAL)
+    assert config.stages is not None
+    assert config.stages.final is not None
+    assert config.stages.final.refinementCorridorSpacings == 6
+
+    config = parse_config(MANUAL + "\n[stages.final]\nrefinement_corridor_spacings = 0\n")
+    assert config.stages is not None
+    assert config.stages.final is not None
+    assert config.stages.final.refinementCorridorSpacings == 0
+
+
 def test_shipped_configurations_carry_only_what_differs_from_the_defaults() -> None:
     """Strict loading rejects defaults written out, except the design rules."""
     assert shipped_config_problems({"ports": {}}) == []

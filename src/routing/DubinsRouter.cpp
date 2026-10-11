@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -133,12 +134,29 @@ void DubinsRouter::rebuildPacked() {
   if (corridor_ == nullptr) {
     return;
   }
-  packed_.resize(cells());
   const std::size_t n = cells();
-  for (std::size_t i = 0; i < n; ++i) {
-    packed_[i] =
-        static_cast<uint8_t>((corridor_->test(i) ? 0x80U : 0x00U) | static_[i]);
+  const auto& words = corridor_->words();
+  const bool whole = packedStale_ || packed_.size() != n ||
+                     packedWords_.size() != words.size();
+  packed_.resize(n);
+  packedWords_.resize(words.size());
+  // One word of the corridor at a time, and only the words that differ from
+  // the corridor packed last: every other cell holds what it would be
+  // packed to.
+  for (std::size_t at = 0; at < words.size(); ++at) {
+    const uint64_t word = words[at];
+    if (!whole && word == packedWords_[at]) {
+      continue;
+    }
+    packedWords_[at] = word;
+    const std::size_t first = at * 64;
+    const std::size_t last = std::min(n, first + 64);
+    for (std::size_t i = first; i < last; ++i) {
+      packed_[i] = static_cast<uint8_t>((((word >> (i - first)) & 1U) << 7U) |
+                                        static_[i]);
+    }
   }
+  packedStale_ = false;
   packedValid_ = true;
 }
 
@@ -153,6 +171,7 @@ void DubinsRouter::setStaticProximity(std::vector<uint8_t> penalty) {
     }
   }
   static_ = std::move(penalty);
+  packedStale_ = true;
   rebuildPacked();
 }
 
@@ -160,6 +179,7 @@ void DubinsRouter::computeStaticProximity(const uint32_t distance,
                                           const uint8_t penalty) {
   std::fill(static_.begin(), static_.end(), 0);
   packedValid_ = false;
+  packedStale_ = true;
   if (obstacles_ == nullptr || distance == 0 || penalty == 0) {
     rebuildPacked();
     return;
@@ -174,6 +194,7 @@ void DubinsRouter::computeStaticProximityWindow(const uint32_t distance,
                                                 const uint8_t penalty,
                                                 CellBox window) {
   packedValid_ = false;
+  packedStale_ = true;
   if (obstacles_ == nullptr || window.minX > window.maxX ||
       window.minY > window.maxY) {
     return;
@@ -1369,6 +1390,16 @@ void DubinsRouter::expandOrthogonal(const QueueEntry& current,
 
 CellBox DubinsRouter::freeStripAlong(const PathPoint from,
                                      const PathPoint to) const {
+  return freeStrip(from, to, nullptr);
+}
+
+CellBox DubinsRouter::freeStripAlong(const PathPoint from, const PathPoint to,
+                                     FreeStripMemo& memo) const {
+  return freeStrip(from, to, &memo);
+}
+
+CellBox DubinsRouter::freeStrip(const PathPoint from, const PathPoint to,
+                                FreeStripMemo* const memo) const {
   if (obstacles_ == nullptr) {
     return {.minX = 0, .maxX = width_ - 1, .minY = 0, .maxY = height_ - 1};
   }
@@ -1440,6 +1471,48 @@ CellBox DubinsRouter::freeStripAlong(const PathPoint from,
   int64_t negative = 0;
   bool growPositive = true;
   bool growNegative = true;
+  if (memo != nullptr && (from.x == to.x || from.y == to.y)) {
+    // On an axis-parallel segment the normal is a whole cell, so the edge at
+    // an offset is the segment moved by that many cells, and it is free
+    // until a cell of it is blocked or leaves the grid.
+    const int64_t stepX = nx / one;
+    const int64_t stepY = ny / one;
+    const int64_t alongX = (to.x > from.x) - (to.x < from.x);
+    const int64_t alongY = (to.y > from.y) - (to.y < from.y);
+    const auto depthAt = [&](const int64_t x, const int64_t y, const int64_t sx,
+                             const int64_t sy) {
+      const auto side = static_cast<uint64_t>((sx + 1) * 3 + (sy + 1));
+      const auto key =
+          (((static_cast<uint64_t>(y) * width_) + static_cast<uint64_t>(x))
+           << 4U) |
+          side;
+      const auto known = memo->depths.find(key);
+      if (known != memo->depths.end()) {
+        return static_cast<int64_t>(known->second);
+      }
+      int64_t depth = 0;
+      for (int64_t px = x + sx, py = y + sy;
+           px >= 0 && px < w && py >= 0 && py < h &&
+           !obstacles.testCell(static_cast<uint32_t>(px),
+                               static_cast<uint32_t>(py));
+           px += sx, py += sy) {
+        ++depth;
+      }
+      memo->depths.emplace(key, static_cast<uint32_t>(depth));
+      return depth;
+    };
+    positive = std::numeric_limits<int64_t>::max();
+    negative = std::numeric_limits<int64_t>::max();
+    for (int64_t x = from.x, y = from.y;; x += alongX, y += alongY) {
+      positive = std::min(positive, depthAt(x, y, stepX, stepY));
+      negative = std::min(negative, depthAt(x, y, -stepX, -stepY));
+      if (x == to.x && y == to.y) {
+        break;
+      }
+    }
+    growPositive = false;
+    growNegative = false;
+  }
   int64_t x0 = 0;
   int64_t y0 = 0;
   int64_t x1 = 0;

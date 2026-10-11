@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <vector>
 
@@ -130,6 +131,34 @@ TEST(DubinsRouter, AnUnreachableTargetGivesAnEmptyPath) {
   }
   f.router.attachCorridor(&f.corridor);
   EXPECT_TRUE(f.router.route(ACROSS).empty());
+}
+
+/// A router that packs one corridor after another finds, for the last of
+/// them, the way a search that reads the corridor unpacked finds, whether
+/// or not the static proximity changed between the two.
+TEST(DubinsRouter, ACorridorPackedAgainRoutesAsAnUnpackedOne) {
+  for (const bool newProximity : {false, true}) {
+    Fixture reused;
+    reused.block(100, 60, 110, HEIGHT - 1);
+    ASSERT_FALSE(reused.router.route(ACROSS, true).empty());
+    for (uint32_t y = 60; y < HEIGHT; ++y) {
+      for (uint32_t x = 100; x <= 110; ++x) {
+        reused.corridor.setCell(x, y, false);
+        reused.obstacles.setCell(x, y, false);
+      }
+    }
+    reused.block(180, 0, 190, 140);
+    Fixture fresh;
+    fresh.block(180, 0, 190, 140);
+    if (newProximity) {
+      reused.router.computeStaticProximity(4, 20);
+      fresh.router.computeStaticProximity(4, 20);
+    }
+    fresh.router.attachCorridorUnpacked(&fresh.corridor);
+    const Path again = reused.router.route(ACROSS, true);
+    ASSERT_FALSE(again.empty()) << newProximity;
+    EXPECT_EQ(again, fresh.router.route(ACROSS, true)) << newProximity;
+  }
 }
 
 TEST(DubinsRouter, AStubThatLeavesTheGridIsNotRoutable) {
@@ -442,6 +471,56 @@ TEST(DubinsRouter, TheFreeStripGrowsToTheNearestObstacle) {
   EXPECT_LT(box.maxY, 140U);
   EXPECT_LE(box.minX, 100U);
   EXPECT_GE(box.maxX, 200U);
+}
+
+/// A memo shared by many strips gives every strip the box the search
+/// without it gives, on segments along either axis, in either direction,
+/// and on the diagonal.
+TEST(DubinsRouter, TheFreeStripWithAMemoIsTheFreeStripWithoutOne) {
+  Fixture f;
+  std::mt19937 random(7);
+  std::uniform_int_distribution<uint32_t> anyX(0, WIDTH - 1);
+  std::uniform_int_distribution<uint32_t> anyY(0, HEIGHT - 1);
+  for (int obstacle = 0; obstacle < 400; ++obstacle) {
+    f.obstacles.setCell(anyX(random), anyY(random));
+  }
+  f.router.attachObstacles(&f.obstacles);
+  DubinsRouter::FreeStripMemo memo;
+  std::uniform_int_distribution<uint32_t> length(0, 80);
+  std::uniform_int_distribution<int> direction(0, 5);
+  for (int segment = 0; segment < 600; ++segment) {
+    const uint32_t x = anyX(random);
+    const uint32_t y = anyY(random);
+    const uint32_t run = length(random);
+    uint32_t toX = x;
+    uint32_t toY = y;
+    switch (direction(random)) {
+    case 0:
+      toX = std::min(WIDTH - 1, x + run);
+      break;
+    case 1:
+      toX = x > run ? x - run : 0;
+      break;
+    case 2:
+      toY = std::min(HEIGHT - 1, y + run);
+      break;
+    case 3:
+      toY = y > run ? y - run : 0;
+      break;
+    default:
+      toX = std::min(WIDTH - 1, x + run);
+      toY = std::min(HEIGHT - 1, y + run);
+      break;
+    }
+    const PathPoint from{.x = x, .y = y, .heading = 0, .primitive = 0};
+    const PathPoint to{.x = toX, .y = toY, .heading = 0, .primitive = 0};
+    const CellBox plain = f.router.freeStripAlong(from, to);
+    const CellBox remembered = f.router.freeStripAlong(from, to, memo);
+    EXPECT_EQ(remembered.minX, plain.minX) << segment;
+    EXPECT_EQ(remembered.maxX, plain.maxX) << segment;
+    EXPECT_EQ(remembered.minY, plain.minY) << segment;
+    EXPECT_EQ(remembered.maxY, plain.maxY) << segment;
+  }
 }
 
 TEST(DubinsRouter, ABendPenaltyChangeRebuildsTheTables) {

@@ -216,8 +216,20 @@ class FinalParams(object):
             return self._tab.String(o + self._tab.Pos)
         return None
 
+    # The band both refinements may redraw a wire in, in wire spacings, as
+    # `corridor_spacings` is for the sweep. A refinement moves a way that
+    # already stands, so it needs less room than a search that finds one, and
+    # its search, its corridor and its room price all grow with the band.
+    # Zero takes `corridor_spacings`.
+    # FinalParams
+    def RefinementCorridorSpacings(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(38))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 6
+
 def FinalParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(17)
+    builder.StartObject(18)
 
 def Start(builder: flatbuffers.Builder):
     FinalParamsStart(builder)
@@ -324,6 +336,12 @@ def FinalParamsAddStopAfter(builder: flatbuffers.Builder, stopAfter: int):
 def AddStopAfter(builder: flatbuffers.Builder, stopAfter: int):
     FinalParamsAddStopAfter(builder, stopAfter)
 
+def FinalParamsAddRefinementCorridorSpacings(builder: flatbuffers.Builder, refinementCorridorSpacings: int):
+    builder.PrependUint32Slot(17, refinementCorridorSpacings, 6)
+
+def AddRefinementCorridorSpacings(builder: flatbuffers.Builder, refinementCorridorSpacings: int):
+    FinalParamsAddRefinementCorridorSpacings(builder, refinementCorridorSpacings)
+
 def FinalParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -353,6 +371,7 @@ class FinalParamsT(object):
         couplerHeight = 26.0,
         repairTrials = 100,
         stopAfter = None,
+        refinementCorridorSpacings = 6,
     ):
         self.router = router  # type: Optional[str]
         self.corridorSpacings = corridorSpacings  # type: int
@@ -371,6 +390,7 @@ class FinalParamsT(object):
         self.couplerHeight = couplerHeight  # type: float
         self.repairTrials = repairTrials  # type: int
         self.stopAfter = stopAfter  # type: Optional[str]
+        self.refinementCorridorSpacings = refinementCorridorSpacings  # type: int
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -414,6 +434,7 @@ class FinalParamsT(object):
         self.stopAfter = finalParams.StopAfter()
         if self.stopAfter is not None:
             self.stopAfter = self.stopAfter.decode('utf-8')
+        self.refinementCorridorSpacings = finalParams.RefinementCorridorSpacings()
 
     # FinalParamsT
     def Pack(self, builder):
@@ -441,5 +462,6 @@ class FinalParamsT(object):
         FinalParamsAddRepairTrials(builder, self.repairTrials)
         if self.stopAfter is not None:
             FinalParamsAddStopAfter(builder, stopAfter)
+        FinalParamsAddRefinementCorridorSpacings(builder, self.refinementCorridorSpacings)
         finalParams = FinalParamsEnd(builder)
         return finalParams

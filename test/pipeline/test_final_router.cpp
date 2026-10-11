@@ -582,11 +582,12 @@ TEST(FinalRouter, OnlyUnsettledRedrawsOneWire) {
 /// ends without the check.
 /// `SCPD_CAPACITY_STEP` checks the capacity graph after every step of the
 /// chain search and says, for every feedline edge a settled chain lays,
-/// whether the graph still carries every wire. `SCPD_CAPACITY_RULE` is off
-/// by default, so the check reports and changes nothing.
+/// whether the graph still carries every wire. With `SCPD_CAPACITY_RULE=0`
+/// the check reports and changes nothing.
 TEST(FinalRouter, TheStepCheckSaysForEveryFeedlineEdgeWhetherTheGraphCarries) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
+  setenv("SCPD_CAPACITY_RULE", "0", 1);
   const auto plain = routeFinal(benchmark, planned);
   setenv("SCPD_CAPACITY_STEP", "1", 1);
   std::vector<std::string> lines;
@@ -595,6 +596,7 @@ TEST(FinalRouter, TheStepCheckSaysForEveryFeedlineEdgeWhetherTheGraphCarries) {
       planned.detail, benchmark.config,
       [&lines](const std::string_view line) { lines.emplace_back(line); });
   unsetenv("SCPD_CAPACITY_STEP");
+  unsetenv("SCPD_CAPACITY_RULE");
 
   // The edges of the settled chains, from their layers.
   std::size_t edges = 0;
@@ -676,6 +678,32 @@ TEST(FinalRouter, TheCapacityRuleLetsNoSettledEdgeCloseAWire) {
     }
   }
   EXPECT_GT(verdicts, 0U);
+}
+
+/// With no switch set, the chain search applies the capacity rule and the
+/// insertion reports the capacity graph it leaves behind.
+TEST(FinalRouter, TheCapacityRuleAndTheBottleneckReportAreOnByDefault) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  unsetenv("SCPD_CAPACITY_RULE");
+  unsetenv("SCPD_CAPACITY_STEP");
+  unsetenv("SCPD_BOTTLENECKS");
+  std::vector<std::string> lines;
+  bool graphWritten = false;
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config,
+      [&lines](const std::string_view line) { lines.emplace_back(line); },
+      [&graphWritten](const std::string_view name, const std::string_view) {
+        graphWritten = graphWritten || name == "final-capacity-graph.json";
+        return std::string(name);
+      }));
+
+  const std::regex edgeLine(R"(\[Capacity Step\] chain \d+ f\d+: )");
+  EXPECT_TRUE(std::ranges::any_of(lines, [&](const std::string& line) {
+    return std::regex_search(line, edgeLine);
+  }));
+  EXPECT_TRUE(graphWritten);
 }
 
 /// The step check sees a chain the search has laid only in part. Its end is
@@ -977,6 +1005,10 @@ TEST(FinalRouter, DrawsItsGridAndEverySearchWhenAsked) {
   EXPECT_EQ(pictures.front().first, "final-grid.svg");
   std::size_t searches = 0;
   for (const auto& [name, content] : pictures) {
+    // The capacity graph of the bottleneck report is data, not a picture.
+    if (!name.ends_with(".svg")) {
+      continue;
+    }
     EXPECT_TRUE(content.starts_with("<svg")) << name;
     EXPECT_TRUE(content.ends_with("</svg>\n")) << name;
     searches += name.find("-normal.svg") != std::string::npos ? 1 : 0;

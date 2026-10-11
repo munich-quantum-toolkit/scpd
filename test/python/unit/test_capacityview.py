@@ -136,8 +136,8 @@ def test_plan_lays_the_capacity_graph_out_with_bottlenecks_and_debug(
 
 
 def test_plan_leaves_the_data_of_an_earlier_run_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without `SCPD_BOTTLENECKS` no page is built, whatever data an earlier run left."""
-    monkeypatch.delenv("SCPD_BOTTLENECKS", raising=False)
+    """With `SCPD_BOTTLENECKS=0` no page is built, whatever data an earlier run left."""
+    monkeypatch.setenv("SCPD_BOTTLENECKS", "0")
     monkeypatch.setenv("SCPD_SEARCH_PICTURES", "0")
     run = tmp_path / "run"
     (run / "debug").mkdir(parents=True)

@@ -1399,6 +1399,8 @@ struct Tuning {
   std::uint32_t launcherStraight = 0;
   /// How far to either side of its own way a wire may be moved, in cells.
   std::uint32_t reach = 0;
+  /// The same for both refinements: `refinement_corridor_spacings`.
+  std::uint32_t refinementReach = 0;
   std::uint32_t innerReach = 0;
   std::uint32_t rounds = 0;
   std::uint32_t innerRounds = 0;
@@ -1501,6 +1503,11 @@ struct Tuning {
   tuning.launcherStraight =
       grid::cellsFor(rules.min_straight_length + launcherLead(), router);
   tuning.reach = std::max(1U, params.corridor_spacings * tuning.clearance);
+  tuning.refinementReach =
+      params.refinement_corridor_spacings == 0
+          ? tuning.reach
+          : std::max(1U,
+                     params.refinement_corridor_spacings * tuning.clearance);
   tuning.innerReach =
       std::max(1U, params.inner_corridor_spacings * tuning.clearance);
   tuning.rounds = std::max(1U, params.rounds);
@@ -2579,6 +2586,9 @@ public:
                                     const bool priced,
                                     const double band = 1.0) {
     const auto required = requiredLength(wire);
+    // The obstacles stand still for the whole insertion, so what one strip
+    // learns of the cells beside a straight serves every other strip.
+    routing::DubinsRouter::FreeStripMemo strips;
     routing::MeanderOptions options{.width = scene_.router.width,
                                     .height = scene_.router.height,
                                     .box = {.minX = 0,
@@ -2594,8 +2604,8 @@ public:
       options.startMargin =
           meanderStartMargin(tuning_.couplerLength, tuning_.straightStart);
       options.minStraightLength = meanderLegSpacing();
-      options.boxFor = [this](const PathPoint& a, const PathPoint& b) {
-        return router_.freeStripAlong(a, b);
+      options.boxFor = [this, &strips](const PathPoint& a, const PathPoint& b) {
+        return router_.freeStripAlong(a, b, strips);
       };
     }
     const auto enterable = [this](const std::uint32_t x,
@@ -5846,6 +5856,7 @@ public:
                 static_cast<std::int64_t>(scene_.router.width) - 1, highX + margin),
             .maxY = std::min<std::int64_t>(
                 static_cast<std::int64_t>(scene_.router.height) - 1, highY + margin)};
+    openBox_ = box_;
     {
       const auto w = static_cast<std::int64_t>(scene_.router.width);
       const auto h = static_cast<std::int64_t>(scene_.router.height);
@@ -6811,12 +6822,12 @@ public:
 
   /// Whether the insertion looks for the bottlenecks of the chip it leaves
   /// behind and checks the capacity graph they make: `SCPD_BOTTLENECKS`,
-  /// **off** (user, 2026-10-07). Report only. See `reportBottlenecks`.
+  /// on (user, 2026-10-11). Report only. See `reportBottlenecks`.
   ///
   /// Read at every insertion rather than once, so that a run can switch it
   /// on for one chip without the process remembering it.
   [[nodiscard]] static bool bottleneckReport() {
-    return envFlag("SCPD_BOTTLENECKS", false);
+    return envFlag("SCPD_BOTTLENECKS", true);
   }
   /// How many wires the widest gap `reportBottlenecks` still reports would
   /// hold: `SCPD_BOTTLENECK_WIRES`, 10 (user, 2026-10-07).
@@ -9176,15 +9187,15 @@ public:
       "measure", "chambers", "stretches and ports", "check"};
 
   /// How the capacity check of the coupler insertion finds its
-  /// bottlenecks: `SCPD_CAPACITY_FAST`, 0. At 0 the medial axis of the whole
-  /// chip at every check (`grid::findBottlenecks`). At 1 the profiles along
-  /// the walls the insertion moves (`grid::profileCuts`), against fields of
-  /// the walls it does not move, built once per insertion. At 2 both: the
-  /// medial axis decides, and every step of the chain search says where the
-  /// two disagree.
+  /// bottlenecks: `SCPD_CAPACITY_FAST`, 1 (user, 2026-10-11). At 0 the
+  /// medial axis of the whole chip at every check (`grid::findBottlenecks`).
+  /// At 1 the profiles along the walls the insertion moves
+  /// (`grid::profileCuts`), against fields of the walls it does not move,
+  /// built once per insertion. At 2 both: the medial axis decides, and every
+  /// step of the chain search says where the two disagree.
   [[nodiscard]] static int capacityFast() {
     static const auto mode =
-        std::clamp(envWhole("SCPD_CAPACITY_FAST", 0), 0, 2);
+        std::clamp(envWhole("SCPD_CAPACITY_FAST", 1), 0, 2);
     return mode;
   }
 
@@ -12338,8 +12349,8 @@ public:
   static constexpr std::uint32_t STEP_GRAPHS_CLOSING = 3;
 
   /// Whether the chain search refuses a step whose edge closes a wire the
-  /// prefix before it left a way: `SCPD_CAPACITY_RULE`, off (user,
-  /// 2026-10-10). "Closes" is what the capacity check of `capacityStep`
+  /// prefix before it left a way: `SCPD_CAPACITY_RULE`, on (user,
+  /// 2026-10-11). "Closes" is what the capacity check of `capacityStep`
   /// says: a wire with a way through the capacity graph of the chip the
   /// prefix leaves, routed in turn, and none once this edge stands. The
   /// search then takes another option, as it does for an edge with no way.
@@ -12347,7 +12358,7 @@ public:
   /// more without it: a chain left on its first options is worse than one
   /// that closes a wire.
   [[nodiscard]] static bool capacityRule() {
-    return envFlag("SCPD_CAPACITY_RULE", false);
+    return envFlag("SCPD_CAPACITY_RULE", true);
   }
 
   /// Whether the capacity graph is checked after every settled chain
@@ -16307,6 +16318,7 @@ private:
     blockOnBodies_ = !wire.feedline;
     corridor_.fill(true);
     box_ = {};
+    openBox_ = {};
     if (wire.way.empty()) {
       return;
     }
@@ -16341,6 +16353,7 @@ private:
       queue_.push_back(cell);
       depth_.push_back(depth);
       corridor_.set(cell, false);
+      stretchOpenBox(x, y);
     };
 
     for (const auto& point : wire.way) {
@@ -16563,8 +16576,21 @@ private:
     for (const auto& point : wire.fixed) {
       if (point.x < scene_.router.width && point.y < scene_.router.height) {
         corridor_.setCell(point.x, point.y, false);
+        stretchOpenBox(point.x, point.y);
       }
     }
+  }
+
+  /// Grow `openBox_` to hold a cell the corridor opens.
+  void stretchOpenBox(const std::int64_t x, const std::int64_t y) {
+    if (openBox_.empty()) {
+      openBox_ = {.minX = x, .minY = y, .maxX = x, .maxY = y};
+      return;
+    }
+    openBox_.minX = std::min(openBox_.minX, x);
+    openBox_.minY = std::min(openBox_.minY, y);
+    openBox_.maxX = std::max(openBox_.maxX, x);
+    openBox_.maxY = std::max(openBox_.maxY, y);
   }
 
   /// Whether two wires meet anywhere: a terminal of one within the rule of a
@@ -17199,23 +17225,30 @@ private:
     if (price == 0) {
       return;
     }
-    if (box_.empty()) {
+    if (box_.empty() || openBox_.empty()) {
       return;
     }
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     constexpr std::int32_t FAR = 1000000;
-    wall_.assign(scene_.router.cells(), 0);
-    middle_.assign(scene_.router.cells(), FAR);
+    // Every pass below reads and writes this box alone, and every cell
+    // outside it keeps the full price of the fill above, so the two fields
+    // are sized once and set inside the box only.
+    wall_.resize(scene_.router.cells());
+    middle_.resize(scene_.router.cells());
 
-    const auto lowX = box_.minX;
-    const auto lowY = box_.minY;
-    const auto highX = box_.maxX;
-    const auto highY = box_.maxY;
+    // The open cells grown by one, within the band's box. A cell of the box
+    // outside it is a wall, and the passes carry no distance through a wall,
+    // so the field inside is the field the whole box would give.
+    const auto lowX = std::max(box_.minX, openBox_.minX - 1);
+    const auto lowY = std::max(box_.minY, openBox_.minY - 1);
+    const auto highX = std::min(box_.maxX, openBox_.maxX + 1);
+    const auto highY = std::min(box_.maxY, openBox_.maxY + 1);
     for (std::int64_t y = lowY; y <= highY; ++y) {
       for (std::int64_t x = lowX; x <= highX; ++x) {
         const auto cell = static_cast<std::size_t>((y * width) + x);
         const bool border = y == lowY || x == lowX || y == highY || x == highX;
         wall_[cell] = (corridor_.test(cell) || border) ? 0 : FAR;
+        middle_[cell] = FAR;
       }
     }
     const auto step = static_cast<std::size_t>(width);
@@ -17288,15 +17321,17 @@ private:
       }
     }
 
-    for (std::size_t cell = 0; cell < proximity_.size(); ++cell) {
-      const auto dw = wall_[cell];
-      const auto dc = middle_[cell];
-      if (dw == 0 || dc >= FAR) {
-        proximity_[cell] = price;
-        continue;
+    for (std::int64_t y = lowY + 1; y < highY; ++y) {
+      for (std::int64_t x = lowX + 1; x < highX; ++x) {
+        const auto cell = static_cast<std::size_t>((y * width) + x);
+        const auto dw = wall_[cell];
+        const auto dc = middle_[cell];
+        if (dw == 0 || dc >= FAR) {
+          continue;
+        }
+        proximity_[cell] = static_cast<std::uint8_t>(
+            ((dc * price) + ((dc + dw) / 2)) / (dc + dw));
       }
-      proximity_[cell] = static_cast<std::uint8_t>(
-          ((dc * price) + ((dc + dw) / 2)) / (dc + dw));
     }
   }
 
@@ -18594,6 +18629,9 @@ private:
   std::vector<std::int32_t> middle_;
   std::unordered_map<std::uint32_t, Stencil> stencils_;
   Box box_;
+  /// The cells of the corridor opened since `buildCorridor` began it, as a
+  /// box: every open cell of the corridor lies inside it. See `priceRoom`.
+  Box openBox_;
   std::uint32_t pass_ = 0;
   mutable routing::PathLoopScratch loopScratch_;
   /// Whether a resonator is made the target length exactly, once its
@@ -19046,7 +19084,7 @@ snapshotOf(std::string name, const std::vector<Wire>& wires,
   return {.name = "refinement",
           .rounds = tuning.refinementRounds,
           .maxRelaxation = 0,
-          .reach = tuning.reach,
+          .reach = tuning.refinementReach,
           .straightStart = tuning.straightStart,
           .keepDrawn = false,
           .refinement = true};
@@ -19203,7 +19241,7 @@ public:
                       {.name = "feedline refinement",
                        .rounds = tuning.feedlineRefinementRounds,
                        .maxRelaxation = 0,
-                       .reach = tuning.reach,
+                       .reach = tuning.refinementReach,
                        .straightStart = tuning.straightStart,
                        .keepDrawn = false,
                        .feedlines = true,

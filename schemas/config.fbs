@@ -289,6 +289,12 @@ table FinalParams {
   /// the one named are simply not run, which is what makes a stop worth
   /// more than a picture of a finished run.
   stop_after: string;
+  /// The band both refinements may redraw a wire in, in wire spacings, as
+  /// `corridor_spacings` is for the sweep. A refinement moves a way that
+  /// already stands, so it needs less room than a search that finds one, and
+  /// its search, its corridor and its room price all grow with the band.
+  /// Zero takes `corridor_spacings`.
+  refinement_corridor_spacings: uint32 = 6;
 }
 
 /// How the mixed-integer programs of the planning stages are solved.

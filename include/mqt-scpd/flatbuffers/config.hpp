@@ -1266,6 +1266,7 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   double coupler_height = 26.0;
   uint32_t repair_trials = 100;
   std::string stop_after{};
+  uint32_t refinement_corridor_spacings = 6;
 };
 
 /// What the Final stage is allowed to do.
@@ -1297,7 +1298,8 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_COUPLER_LENGTH = 30,
     VT_COUPLER_HEIGHT = 32,
     VT_REPAIR_TRIALS = 34,
-    VT_STOP_AFTER = 36
+    VT_STOP_AFTER = 36,
+    VT_REFINEMENT_CORRIDOR_SPACINGS = 38
   };
   /// The implementation, by the name it is registered under.
   const ::flatbuffers::String *router() const {
@@ -1413,6 +1415,14 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *stop_after() const {
     return GetPointer<const ::flatbuffers::String *>(VT_STOP_AFTER);
   }
+  /// The band both refinements may redraw a wire in, in wire spacings, as
+  /// `corridor_spacings` is for the sweep. A refinement moves a way that
+  /// already stands, so it needs less room than a search that finds one, and
+  /// its search, its corridor and its room price all grow with the band.
+  /// Zero takes `corridor_spacings`.
+  uint32_t refinement_corridor_spacings() const {
+    return GetField<uint32_t>(VT_REFINEMENT_CORRIDOR_SPACINGS, 6);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1435,6 +1445,7 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_REPAIR_TRIALS, 4) &&
            VerifyOffset(verifier, VT_STOP_AFTER) &&
            verifier.VerifyString(stop_after()) &&
+           VerifyField<uint32_t>(verifier, VT_REFINEMENT_CORRIDOR_SPACINGS, 4) &&
            verifier.EndTable();
   }
   FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1497,6 +1508,9 @@ struct FinalParamsBuilder {
   void add_stop_after(::flatbuffers::Offset<::flatbuffers::String> stop_after) {
     fbb_.AddOffset(FinalParams::VT_STOP_AFTER, stop_after);
   }
+  void add_refinement_corridor_spacings(uint32_t refinement_corridor_spacings) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_REFINEMENT_CORRIDOR_SPACINGS, refinement_corridor_spacings, 6);
+  }
   explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1526,7 +1540,8 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     double coupler_length = 200.0,
     double coupler_height = 26.0,
     uint32_t repair_trials = 100,
-    ::flatbuffers::Offset<::flatbuffers::String> stop_after = 0) {
+    ::flatbuffers::Offset<::flatbuffers::String> stop_after = 0,
+    uint32_t refinement_corridor_spacings = 6) {
   FinalParamsBuilder builder_(_fbb);
   builder_.add_coupler_height(coupler_height);
   builder_.add_coupler_length(coupler_length);
@@ -1535,6 +1550,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
   builder_.add_bend_penalty_norm(bend_penalty_norm);
   builder_.add_meander_length(meander_length);
+  builder_.add_refinement_corridor_spacings(refinement_corridor_spacings);
   builder_.add_stop_after(stop_after);
   builder_.add_repair_trials(repair_trials);
   builder_.add_feedline_refinement_rounds(feedline_refinement_rounds);
@@ -1571,7 +1587,8 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     double coupler_length = 200.0,
     double coupler_height = 26.0,
     uint32_t repair_trials = 100,
-    const char *stop_after = nullptr) {
+    const char *stop_after = nullptr,
+    uint32_t refinement_corridor_spacings = 6) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
   auto stop_after__ = stop_after ? _fbb.CreateString(stop_after) : 0;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
@@ -1592,7 +1609,8 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       coupler_length,
       coupler_height,
       repair_trials,
-      stop_after__);
+      stop_after__,
+      refinement_corridor_spacings);
 }
 
 ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -2471,7 +2489,8 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.coupler_length == rhs.coupler_length) &&
       (lhs.coupler_height == rhs.coupler_height) &&
       (lhs.repair_trials == rhs.repair_trials) &&
-      (lhs.stop_after == rhs.stop_after);
+      (lhs.stop_after == rhs.stop_after) &&
+      (lhs.refinement_corridor_spacings == rhs.refinement_corridor_spacings);
 }
 
 inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
@@ -2505,6 +2524,7 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = coupler_height(); _o->coupler_height = _e; }
   { auto _e = repair_trials(); _o->repair_trials = _e; }
   { auto _e = stop_after(); if (_e) _o->stop_after = _e->str(); }
+  { auto _e = refinement_corridor_spacings(); _o->refinement_corridor_spacings = _e; }
 }
 
 inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -2532,6 +2552,7 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _coupler_height = _o->coupler_height;
   auto _repair_trials = _o->repair_trials;
   auto _stop_after = _o->stop_after.empty() ? 0 : _fbb.CreateString(_o->stop_after);
+  auto _refinement_corridor_spacings = _o->refinement_corridor_spacings;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       _router,
@@ -2550,7 +2571,8 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _coupler_length,
       _coupler_height,
       _repair_trials,
-      _stop_after);
+      _stop_after,
+      _refinement_corridor_spacings);
 }
 
 

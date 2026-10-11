@@ -13,7 +13,7 @@ releases may include breaking changes.
 ### Added
 
 - ✨ Find the bottlenecks of the capacity check in the coupler insertion without
-  a medial axis (`SCPD_CAPACITY_FAST=1`; off by default). `grid::profileCuts`
+  a medial axis (`SCPD_CAPACITY_FAST=1`, the default). `grid::profileCuts`
   walks along the walls the insertion moves (feedline edges, coupler pads,
   leads) and takes every persistent minimum of the gap to another wall as a
   bottleneck: the gap to the border, the artwork and the port runs of the plain
@@ -45,14 +45,14 @@ releases may include breaking changes.
   keep their angle cost.
 - ✨ Find the bottlenecks of the chip the coupler insertion leaves, build the
   capacity graph they make and check whether it carries every outer wire, report
-  only (`SCPD_BOTTLENECKS`). The medial axis is built over the border, the
-  artwork, the coupler pads, the feedline edges and the port runs of every outer
-  wire, a port run being the rule's straight length from a feed point or a
-  target port, or a resonator's lead as it stands; feedline edges are inflated
-  by half the clearance. A port run is two walls one cell thick, the edge of the
-  band of half the clearance to either side of it with square ends, open at the
-  terminal's end, and the free cells between them are the slot where its
-  terminal lies: a fork of the medial axis with an arm into a slot ends a
+  only (`SCPD_BOTTLENECKS`, on by default). The medial axis is built over the
+  border, the artwork, the coupler pads, the feedline edges and the port runs of
+  every outer wire, a port run being the rule's straight length from a feed
+  point or a target port, or a resonator's lead as it stands; feedline edges are
+  inflated by half the clearance. A port run is two walls one cell thick, the
+  edge of the band of half the clearance to either side of it with square ends,
+  open at the terminal's end, and the free cells between them are the slot where
+  its terminal lies: a fork of the medial axis with an arm into a slot ends a
   narrowing (`BottleneckOptions::slots`), no cut crosses a slot, two cuts are
   one narrowing only between the same walls (`BottleneckOptions::wallOf`), and
   the cuts from the ends of the two walls close the terminal's own chamber,
@@ -84,38 +84,35 @@ releases may include breaking changes.
   graph after every chain the coupler insertion settles, against the chains
   before it, and searches a chain that closes a wire's way again
   (`SCPD_CAPACITY_CHAIN_TRIES`), refusing a run of options that closes as many
-  or fails the commit's test on more edges. With `SCPD_CAPACITY_RULE=1`
-  (off by default) every step of the chain search is checked on the chains
-  settled before with the prefix standing on top, and a step whose edge
-  closes a wire is refused. The prefix's chain is open at its end and
-  separates nothing yet, so the check prescribes no crossing of its edges
-  until the chain stands whole. A feedline edge from or to a launcher is no
-  limit, since the feedline routing lays those edges again: a bottleneck
-  with an end on one takes every wire, and every wire may cross one.
-  A resonator's way through the graph is the one whose least length — from
-  line to line of the edges it passes — is shortest, and it is no way when
-  that is longer than the resonator's target length less its lead allows;
-  a chain no run of options joins under the rule is searched once more
-  without it, and the time of the checks does not count against the chain's
-  clock. `SCPD_CAPACITY_STEP=1` reports the check without the rule: each step
-  says at `-v 1` whether the graph carries every wire and which wires its
-  edge closes, and each feedline edge of a settled chain says it once.
-  `SCPD_CAPACITY_STEP_GRAPHS=1` writes the graph the check saw at each of
+  or fails the commit's test on more edges. With `SCPD_CAPACITY_RULE` (on by
+  default; `=0` turns it off) every step of the chain search is checked on the
+  chains settled before with the prefix standing on top, and a step whose edge
+  closes a wire is refused. The prefix's chain is open at its end and separates
+  nothing yet, so the check prescribes no crossing of its edges until the chain
+  stands whole. A feedline edge from or to a launcher is no limit, since the
+  feedline routing lays those edges again: a bottleneck with an end on one takes
+  every wire, and every wire may cross one. A resonator's way through the graph
+  is the one whose least length — from line to line of the edges it passes — is
+  shortest, and it is no way when that is longer than the resonator's target
+  length less its lead allows; a chain no run of options joins under the rule is
+  searched once more without it, and the time of the checks does not count
+  against the chain's clock. `SCPD_CAPACITY_STEP=1` reports the check without
+  the rule: each step says at `-v 1` whether the graph carries every wire and
+  which wires its edge closes, and each feedline edge of a settled chain says it
+  once. `SCPD_CAPACITY_STEP_GRAPHS=1` writes the graph the check saw at each of
   those edges, as `step-c<chain>-f<edge>-capacity-graph.json` for
-  `capacityview`. `mqt-scpd couplers
-  <run>` holds the Final stage after the coupler insertion (`CouplerSession`)
-  and serves the page on a local port with a Couplers tab: every option of a
-  coupler is drawn
-  on the chip, and a click puts the coupler on one, draws its two feedline
-  edges again and shows the capacity graph of the chip as it then stands. The
-  bindings name the global routing argument `global_`, as the stubs do.
-  `SCPD_EDGE_LAUNCHER_MARGIN` (cells, 5) lengthens the run a feedline edge's
-  search keeps closed in front of every launcher but its own, so that the edges
-  of the coupler insertion and of the repair pass the launcher stubs further
-  off; nothing else sees it. `SCPD_COUPLER_BOX_MARGIN` (cells, 5) holds every
-  coupler's pad, its feedline runs, its lead and the turn after it that much
-  further in from each side of the coupler box; the edges between couplers keep
-  the whole box. `-d` draws
+  `capacityview`. `mqt-scpd couplers <run>` holds the Final stage after the
+  coupler insertion (`CouplerSession`) and serves the page on a local port with
+  a Couplers tab: every option of a coupler is drawn on the chip, and a click
+  puts the coupler on one, draws its two feedline edges again and shows the
+  capacity graph of the chip as it then stands. The bindings name the global
+  routing argument `global_`, as the stubs do. `SCPD_EDGE_LAUNCHER_MARGIN`
+  (cells, 5) lengthens the run a feedline edge's search keeps closed in front of
+  every launcher but its own, so that the edges of the coupler insertion and of
+  the repair pass the launcher stubs further off; nothing else sees it.
+  `SCPD_COUPLER_BOX_MARGIN` (cells, 5) holds every coupler's pad, its feedline
+  runs, its lead and the turn after it that much further in from each side of
+  the coupler box; the edges between couplers keep the whole box. `-d` draws
   `final-bottlenecks.svg` and `final-capacity-graph.svg`
   (`SCPD_BOTTLENECK_WIRES`, `SCPD_BOTTLENECK_RISE`) and writes the graph as
   `final-capacity-graph.json`, which `plan` lays out on the page
@@ -559,6 +556,24 @@ releases may include breaking changes.
 
 ### Changed
 
+- ⚡ Give both refinements of the Final stage a band of their own,
+  `refinement_corridor_spacings` (6 wire spacings by default; `0` takes
+  `corridor_spacings`). A refinement moves a way that already stands, and its
+  search, its corridor and its room price grow with the band: with 6 instead of
+  the 42 most benchmarks set for the sweep, every benchmark ends with no bad
+  and no long wire, and the two refinements on 45q take 60 instead of 103 s.
+- ⚡ Make the searches of the Final stage cheaper with the same result.
+  `DubinsRouter::attachCorridor` packs again only the words of the corridor
+  that changed since the last packing; the room price of the refinement is
+  computed inside the box of the corridor's open cells; the free strip of a
+  meander along an axis reads the free depth of each cell once per insertion
+  (`DubinsRouter::FreeStripMemo`). The artifacts of all eight benchmarks are
+  the same byte for byte, and 69q runs to the end of the feedline refinement
+  in 623 instead of 774 s.
+- 🔧 Turn the capacity rule of the coupler insertion (`SCPD_CAPACITY_RULE`),
+  the profile cuts (`SCPD_CAPACITY_FAST=1`) and the bottleneck report
+  (`SCPD_BOTTLENECKS`) on by default. With them every benchmark ends the
+  feedline routing with no bad wire.
 - 🐛 Judge a cell of a wire by the crossing rule on the heading it arrives
   with as well as its own (`CrossingConstraints::allowedArriving`), in the
   Final stage's count and in the design-rule check: the search tests every
