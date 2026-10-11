@@ -186,6 +186,41 @@ TEST(InTurn, AWireCrossesItsFeedlineEvenWhereItStartsAtItsEnd) {
   EXPECT_EQ(check.shortBy, 0U);
 }
 
+TEST(InTurn, AWireCrossesAFeedlineWithOneChamberOnBothSides) {
+  // A feedline open at one end has the same chamber on both sides. A wire
+  // prescribed to cross it does so from that chamber back into it, and
+  // takes a place on it.
+  const std::vector<FlowEdge> edges = {{.chambers = {0, 1}, .capacity = 5},
+                                       {.chambers = {0, 0}, .capacity = 1}};
+  const auto check =
+      checkInTurn(2, edges,
+                  {{.from = {0}, .to = {0}, .crossings = {{1}}},
+                   {.from = {0}, .to = {1}, .crossings = {{1}}},
+                   {.from = {0}, .to = {1}, .crossings = {{1}}}});
+
+  ASSERT_TRUE(check.ways[0].has_value());
+  EXPECT_EQ(*check.ways[0], std::vector<std::uint32_t>{1});
+  ASSERT_TRUE(check.ways[1].has_value());
+  EXPECT_EQ(std::ranges::count(*check.ways[1], 1U), 1);
+  EXPECT_EQ(check.load[1], 3U);
+  EXPECT_EQ(check.shortBy, 2U);
+}
+
+TEST(InTurn, AWireOfFixedLengthCrossesAFeedlineWithOneChamberOnBothSides) {
+  const std::vector<FlowEdge> edges = {
+      {.chambers = {0, 0}, .capacity = 1, .from = {5, 0}, .to = {5, 10}}};
+  const auto check = checkInTurn(1, edges,
+                                 {{.from = {0},
+                                   .to = {0},
+                                   .crossings = {{0}},
+                                   .longest = 100.0,
+                                   .start = {0, 5},
+                                   .end = {10, 5}}});
+
+  ASSERT_TRUE(check.ways[0].has_value());
+  EXPECT_EQ(*check.ways[0], std::vector<std::uint32_t>{0});
+}
+
 TEST(InTurn, AWireCrossesEveryFeedlineItIsPrescribedOnce) {
   // Two feedlines between 0 and 1, and between 1 and 2.
   const std::vector<FlowEdge> edges = {{.chambers = {0, 1}, .capacity = 1},

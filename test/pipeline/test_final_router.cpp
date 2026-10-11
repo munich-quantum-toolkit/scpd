@@ -36,6 +36,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <format>
 #include <limits>
 #include <map>
 #include <memory>
@@ -677,6 +678,115 @@ TEST(FinalRouter, TheCapacityRuleLetsNoSettledEdgeCloseAWire) {
   EXPECT_GT(verdicts, 0U);
 }
 
+/// The step check sees a chain the search has laid only in part. Its end is
+/// open, so its edges separate nothing yet: no wire is prescribed to cross
+/// them until the chain stands whole. `SCPD_CAPACITY_STEP_GRAPHS` writes
+/// the graph the check saw at every edge of a settled chain.
+TEST(FinalRouter, TheStepCheckPrescribesNoCrossingOfAnOpenChain) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  setenv("SCPD_CAPACITY_STEP", "1", 1);
+  setenv("SCPD_CAPACITY_STEP_GRAPHS", "1", 1);
+  std::map<std::pair<int, int>, nlohmann::json> graphs;
+  const std::regex stepName(R"(step-c(\d+)-f(\d+)-capacity-graph\.json)");
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, {},
+      [&](const std::string_view name, const std::string_view content) {
+        const std::string named(name);
+        std::smatch match;
+        if (std::regex_match(named, match, stepName)) {
+          graphs[{std::stoi(match[1].str()), std::stoi(match[2].str())}] =
+              nlohmann::json::parse(content);
+        }
+        return named;
+      }));
+  unsetenv("SCPD_CAPACITY_STEP_GRAPHS");
+  unsetenv("SCPD_CAPACITY_STEP");
+  ASSERT_FALSE(graphs.empty());
+
+  // The feedline edges of each chain, by name.
+  std::map<int, std::set<std::string>> edgesOf;
+  std::map<int, int> lastOf;
+  for (const auto& [step, graph] : graphs) {
+    edgesOf[step.first].insert(std::format("f{}", step.second));
+    lastOf[step.first] = std::max(lastOf[step.first], step.second);
+  }
+  std::size_t prescribedWhole = 0;
+  for (const auto& [step, graph] : graphs) {
+    const auto [chain, slot] = step;
+    // The edge the step lays stands in the graph.
+    const auto& strokes = graph.at("strokes");
+    EXPECT_TRUE(std::ranges::any_of(
+        strokes,
+        [&](const auto& stroke) {
+          return stroke.at("name").template get<std::string>() ==
+                 std::format("f{}", slot);
+        }))
+        << "chain " << chain << " f" << slot;
+    for (const auto& wire : graph.at("wires")) {
+      for (const auto& crossed : wire.at("crosses")) {
+        const auto name = crossed.get<std::string>();
+        if (!edgesOf[chain].contains(name)) {
+          continue;
+        }
+        EXPECT_EQ(slot, lastOf[chain])
+            << "chain " << chain << " f" << slot << ": wire "
+            << wire.at("name").get<std::string>() << " has to cross " << name
+            << " of the open chain";
+        ++prescribedWhole;
+      }
+    }
+  }
+  // Once a chain stands whole, its edges are prescribed again.
+  EXPECT_GT(prescribedWhole, 0U);
+}
+
+/// The feedline routing lays the edges from and to the launchers again, so
+/// such an edge is no limit in the capacity graph: a bottleneck with an end
+/// on one, and every stretch of one, takes every wire and is never over, and
+/// every wire may cross it.
+TEST(FinalRouter, ATerminalEdgeTakesEveryWire) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  setenv("SCPD_BOTTLENECKS", "1", 1);
+  std::string written;
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, {},
+      [&written](const std::string_view name, const std::string_view content) {
+        if (name == "final-capacity-graph.json") {
+          written = content;
+        }
+        return std::string(name);
+      }));
+  unsetenv("SCPD_BOTTLENECKS");
+  ASSERT_FALSE(written.empty());
+
+  const auto data = nlohmann::json::parse(written);
+  const auto wires = data.at("wires").size();
+  std::size_t bottlenecks = 0;
+  std::size_t stretches = 0;
+  for (const auto& edge : data.at("edges")) {
+    if (!edge.at("terminal").get<bool>()) {
+      continue;
+    }
+    if (edge.at("kind") == "stretch") {
+      ++stretches;
+      EXPECT_TRUE(edge.at("users").is_null())
+          << edge.at("name").get<std::string>();
+    } else {
+      ++bottlenecks;
+    }
+    EXPECT_GE(edge.at("capacity").get<std::size_t>(), wires)
+        << edge.at("name").get<std::string>();
+    EXPECT_EQ(edge.at("overflow").get<std::size_t>(), 0U)
+        << edge.at("name").get<std::string>();
+  }
+  EXPECT_GT(bottlenecks, 0U);
+  EXPECT_GT(stretches, 0U);
+}
+
 TEST(FinalRouter, TheCapacityCheckLeavesAChainThatClosesNoWayAsItIs) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
@@ -1197,7 +1307,7 @@ TEST(FinalRouter, DrawsTheCapacityGraphAfterTheBottlenecks) {
     EXPECT_EQ(edges[index].at("through").size(), taken[index]);
   }
   // A way crosses exactly the feedline edges its wire is prescribed, each
-  // once, and no other.
+  // once, and no other but the terminal edges, which every wire may cross.
   for (const auto& wire : wires) {
     if (wire.at("way").is_null()) {
       continue;
@@ -1205,7 +1315,7 @@ TEST(FinalRouter, DrawsTheCapacityGraphAfterTheBottlenecks) {
     std::vector<std::string> crossed;
     for (const auto& index : wire.at("way")) {
       const auto& edge = edges.at(index.get<std::size_t>());
-      if (edge.at("kind") == "stretch") {
+      if (edge.at("kind") == "stretch" && !edge.at("terminal").get<bool>()) {
         crossed.push_back(edge.at("feedline").get<std::string>());
       }
     }

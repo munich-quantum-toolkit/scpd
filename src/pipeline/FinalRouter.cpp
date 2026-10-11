@@ -22,6 +22,7 @@
 #include "mqt-scpd/grid/DistanceTransform.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/PortBands.hpp"
+#include "mqt-scpd/grid/ProfileCuts.hpp"
 #include "mqt-scpd/grid/Rasterize.hpp"
 #include "mqt-scpd/grid/Voronoi.hpp"
 #include "mqt-scpd/pipeline/CapacityFlow.hpp"
@@ -2280,7 +2281,7 @@ constexpr std::string_view DEBUG_STYLE =
     // --- the fence: closed room, so a neutral fine dotted wash
     ".fz{fill:none;stroke:#333a40;stroke-opacity:.34;stroke-linecap:round;"
     "stroke-dasharray:1 3}"
-    // --- the feedlines: vermillion, solid when drawn, short-dashed when not
+    // --- the feedlines: vermilion, solid when drawn, short-dashed when not
     ".fw{fill:none;stroke:#D55E00;stroke-width:2}"
     ".fwg{fill:none;stroke:#D55E00;stroke-width:1.4;stroke-opacity:.5;"
     "stroke-dasharray:4 3}"
@@ -2292,7 +2293,7 @@ constexpr std::string_view DEBUG_STYLE =
     ".fd{fill:none;stroke:#0072B2;stroke-width:3}"
     ".sd{fill:none;stroke:#8a8a8a;stroke-width:.9;stroke-opacity:.8;"
     "stroke-dasharray:3 3}"
-    // --- the two ends: circle against square, blue against vermillion
+    // --- the two ends: circle against square, blue against vermilion
     ".src{fill:#0072B2;stroke:#fff;stroke-width:.4}"
     ".tgt{fill:#D55E00;stroke:#fff;stroke-width:.4}"
     // --- the ports: green, as the neighbours, which they belong to
@@ -3684,6 +3685,10 @@ public:
     std::size_t to = 0;
     std::uint32_t wire = NO_OWNER;
     bool terminal = false;
+    /// An edge of a chain the chain search has laid only up to some
+    /// waypoint (`stateOf`). Such a chain is open at its end and separates
+    /// nothing yet, so the capacity graph prescribes no crossing of it.
+    bool open = false;
   };
 
   [[nodiscard]] const std::vector<Coupler>& couplers() const {
@@ -3769,6 +3774,7 @@ public:
     couplers_.clear();
     chains_.clear();
     edges_.clear();
+    fastCapacity_.reset();
     familyStats_ = {};
     familyViolations_ = 0;
     learnedRaised_ = 0;
@@ -3960,6 +3966,16 @@ public:
         }
       }
       if (points.size() >= 2) {
+        // A feedline with a reflector has one launcher; the edge at its
+        // reflector end runs between two couplers and is no terminal edge
+        // (`atLauncher`).
+        if (points.front().fixed != points.back().fixed) {
+          say(std::format(
+              "[Coupler Insertion] chain {}: one launcher, a reflector at its "
+              "{} end — its {} edge runs between couplers",
+              chains_.size(), points.front().fixed ? "last" : "first",
+              points.front().fixed ? "last" : "first"));
+        }
         chains_.push_back(std::move(points));
       }
     }
@@ -4143,6 +4159,57 @@ public:
                         edgeWayStillOpen(wires, wire.objective, edge, chosen));
       wire.way = fits ? chosen : routeEdge(wires, wire.objective, edge);
       wire.drawn = !wire.way.empty();
+      // **The other order, for the pair at either end of the chain**, as
+      // the chain search tries it (user, 2026-10-11): a chain the search
+      // left as it stood is committed front to back, and an end edge that
+      // finds no way after its predecessor may find one laid first, with
+      // the predecessor routed again against it.
+      const auto lastEdge = chainEdgePaths_[edge.chain].size() - 1;
+      if (!wire.drawn && edge.from >= 1 &&
+          ((edge.from == 1 && atLauncher(edge.chain, 0)) ||
+           (edge.from == lastEdge && edge.terminal))) {
+        const auto before = std::ranges::find_if(edges_, [&](const Edge& one) {
+          return one.chain == edge.chain && one.from + 1 == edge.from;
+        });
+        auto& prior = wires[before->wire];
+        if (prior.drawn) {
+          const auto priorWay = prior.way;
+          const auto priorPath = chainEdgePaths_[edge.chain][before->from];
+          lift(prior);
+          prior.way.clear();
+          prior.drawn = false;
+          chainEdgePaths_[edge.chain][before->from].clear();
+          auto mine = routeEdge(wires, wire.objective, edge);
+          Path again;
+          if (!mine.empty()) {
+            wire.way = std::move(mine);
+            wire.drawn = true;
+            place(wire);
+            again = routeEdge(wires, prior.objective, *before);
+          }
+          if (!again.empty()) {
+            angle -= angleCostOf(priorWay, prior.objective.target.heading);
+            angle += angleCostOf(again, prior.objective.target.heading);
+            prior.way = std::move(again);
+            chainEdgePaths_[edge.chain][before->from] = prior.way;
+            say(std::format(
+                "[Coupler Insertion] edge f{} chain {} ({}->{}): no way after "
+                "f{}, but both fit with f{} laid first — f{} routed again",
+                wire.slot, edge.chain, edge.from, edge.to, prior.slot,
+                wire.slot, prior.slot));
+          } else {
+            if (wire.drawn) {
+              lift(wire);
+            }
+            wire.way.clear();
+            wire.drawn = false;
+            prior.way = priorWay;
+            chainEdgePaths_[edge.chain][before->from] = priorPath;
+          }
+          prior.drawn = true;
+          place(prior);
+        }
+      }
       // A way the greedy chose and the commit kept was drawn by no search of
       // this loop, so it has no picture of its own. Draw it against the
       // ground it stands on, or every line of the log would link the last
@@ -5494,6 +5561,16 @@ public:
   /// inflated by the clearance — the edges that share a coupler with it
   /// included, right up to the port they share.
   ///
+  /// Whether edge `at` of chain `chain` runs from or to a launcher. A
+  /// feedline with a reflector has one launcher only (user, 2026-10-11):
+  /// the edge at its reflector end runs between two couplers and is no
+  /// terminal edge, though it is the first or the last of its chain.
+  [[nodiscard]] bool atLauncher(const std::uint32_t chain,
+                                const std::size_t at) const {
+    const auto& points = chains_[chain];
+    return at + 1 < points.size() && (points[at].fixed || points[at + 1].fixed);
+  }
+
   /// Nothing is exempt. The direct neighbours of a path were once the one
   /// pair of feedlines nothing closed, and an edge weighed against them ran
   /// through them.
@@ -5530,7 +5607,6 @@ public:
           continue;
         }
       }
-      const auto lastEdge = chainEdgePaths_[chain].size() - 1;
       for (std::size_t at = 0; at < chainEdgePaths_[chain].size(); ++at) {
         if (chain == edge.chain && (at == edge.from || skipOwn)) {
           continue;
@@ -5549,11 +5625,10 @@ public:
         // is let off for the edges far from it. The edge itself gets no
         // such licence: when a terminal edge is the one being drawn, every
         // edge of its chain is in its way. See `terminalEdgesFenceAll`.
-        const bool drawingATerminal =
-            edge.from == 0 || edge.from == lastEdge;
+        const bool drawingATerminal = atLauncher(edge.chain, edge.from);
         if (chain == edge.chain && !fenceEverything_ &&
             !terminalEdgesFenceAll() && !drawingATerminal &&
-            (at == 0 || at == lastEdge) && at + 1 != edge.from &&
+            atLauncher(chain, at) && at + 1 != edge.from &&
             at != edge.from + 1) {
           continue;
         }
@@ -7545,6 +7620,11 @@ public:
     std::uint32_t wire = NO_OWNER;
     /// A flank of a resonator's lead: the stub at its coupler.
     bool lead = false;
+    /// A flank of the port run at a wire's target, not its source.
+    bool target = false;
+    /// The port run a flank belongs to, by the index of its left flank;
+    /// `NO_OWNER` for a wall that is no port run.
+    std::uint32_t run = NO_OWNER;
   };
 
   /// A port run of the bottleneck analysis: the middle line of the copper
@@ -7652,20 +7732,231 @@ public:
     return wallsOf(wires, edges_, nullptr, without);
   }
 
+  /// What a port run takes of the grid, from its geometry alone: the
+  /// cells of its left and right walls and of its slot, in the order
+  /// `wallsOf` takes them, and its terminal. A cell another wall already
+  /// holds is skipped when the stamp is laid, as the walls are built.
+  enum class RunCell : std::uint8_t { Left, Right, Slot };
+  struct RunStamp {
+    PortRun run;
+    std::vector<std::pair<std::size_t, RunCell>> cells;
+    std::vector<debug::Cell> line;
+    std::size_t terminal = 0;
+  };
+  /// The stamps of the port runs, by wire and end, kept while the run's
+  /// line stays the same: the capacity check builds the walls thousands of
+  /// times, and only the leads change.
+  mutable std::unordered_map<std::uint64_t, RunStamp> runStamps_;
+
+  [[nodiscard]] const RunStamp& runStampOf(const PortRun& run,
+                                           const std::uint64_t key) const {
+    if (const auto found = runStamps_.find(key);
+        found != runStamps_.end() && found->second.run == run) {
+      return found->second;
+    }
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    const auto half = wallInflation();
+    RunStamp stamp{.run = run, .cells = {}, .line = {}, .terminal = 0};
+    double total = 0.0;
+    double x0 = run.front().first;
+    double x1 = x0;
+    double y0 = run.front().second;
+    double y1 = y0;
+    for (std::size_t k = 0; k < run.size(); ++k) {
+      const auto [px, py] = run[k];
+      if (k > 0) {
+        total += std::hypot(px - run[k - 1].first, py - run[k - 1].second);
+      }
+      x0 = std::min(x0, px);
+      x1 = std::max(x1, px);
+      y0 = std::min(y0, py);
+      y1 = std::max(y1, py);
+    }
+    // Where each cell of a box around the band lies. The box reaches a
+    // cell past the band on every side, so every neighbour of a band cell
+    // is in it; it is not clipped to the grid.
+    enum class Place : std::uint8_t {
+      Aside,
+      BeyondPort,
+      BeyondEnd,
+      Left,
+      Right
+    };
+    const auto reach = half + 1.0;
+    const auto fromX = static_cast<std::int64_t>(std::floor(x0 - reach));
+    const auto fromY = static_cast<std::int64_t>(std::floor(y0 - reach));
+    const auto boxWidth =
+        static_cast<std::int64_t>(std::ceil(x1 + reach)) - fromX + 1;
+    const auto boxHeight =
+        static_cast<std::int64_t>(std::ceil(y1 + reach)) - fromY + 1;
+    std::vector<Place> places(static_cast<std::size_t>(boxWidth * boxHeight),
+                              Place::Aside);
+    const auto placeAt = [&](const std::int64_t x, const std::int64_t y) {
+      return places[static_cast<std::size_t>(((y - fromY) * boxWidth) +
+                                             (x - fromX))];
+    };
+    for (std::size_t at = 0; total > 0.0 && at < places.size(); ++at) {
+      const auto cx = static_cast<double>(
+          fromX + (static_cast<std::int64_t>(at) % boxWidth));
+      const auto cy = static_cast<double>(
+          fromY + (static_cast<std::int64_t>(at) / boxWidth));
+      // The nearest point of the line: how far, on which side, and
+      // whether it is an end seen from beyond.
+      double best = std::numeric_limits<double>::max();
+      double side = 0.0;
+      auto beyond = Place::Aside;
+      for (std::size_t k = 0; k + 1 < run.size(); ++k) {
+        const auto ax = run[k].first;
+        const auto ay = run[k].second;
+        const auto dx = run[k + 1].first - ax;
+        const auto dy = run[k + 1].second - ay;
+        const auto squared = (dx * dx) + (dy * dy);
+        const auto raw = squared > 0.0
+                             ? (((cx - ax) * dx) + ((cy - ay) * dy)) / squared
+                             : 0.0;
+        const auto t = std::clamp(raw, 0.0, 1.0);
+        const auto distance =
+            std::hypot(cx - (ax + (t * dx)), cy - (ay + (t * dy)));
+        if (distance < best) {
+          best = distance;
+          side = (dx * (cy - ay)) - (dy * (cx - ax));
+          beyond = k == 0 && raw < 0.0                ? Place::BeyondPort
+                   : k + 2 == run.size() && raw > 1.0 ? Place::BeyondEnd
+                                                      : Place::Aside;
+        }
+      }
+      if (beyond != Place::Aside) {
+        places[at] = beyond;
+      } else if (best <= half) {
+        places[at] = side < 0.0 ? Place::Right : Place::Left;
+      }
+    }
+    for (std::int64_t y = fromY + 1; y + 1 < fromY + boxHeight; ++y) {
+      for (std::int64_t x = fromX + 1; x + 1 < fromX + boxWidth; ++x) {
+        const auto place = placeAt(x, y);
+        if ((place != Place::Left && place != Place::Right) || x < 0 || y < 0 ||
+            x >= width || y >= height) {
+          continue;
+        }
+        const auto cell = static_cast<std::size_t>((y * width) + x);
+        bool edge = false;
+        for (std::int64_t dy = -1; dy <= 1 && !edge; ++dy) {
+          for (std::int64_t dx = -1; dx <= 1 && !edge; ++dx) {
+            const auto next = placeAt(x + dx, y + dy);
+            edge = next == Place::Aside || next == Place::BeyondPort;
+          }
+        }
+        stamp.cells.emplace_back(cell, !edge                   ? RunCell::Slot
+                                       : place == Place::Right ? RunCell::Right
+                                                               : RunCell::Left);
+      }
+    }
+    for (const auto& [px, py] : run) {
+      stamp.line.emplace_back(std::lround(px), std::lround(py));
+    }
+    // The terminal: on the line, a cell short of its end, in the slot
+    // between the two walls.
+    const auto& end = run.back();
+    const auto& before = run[run.size() - 2];
+    const auto length =
+        std::max(1.0e-9, std::hypot(end.first - before.first,
+                                    end.second - before.second));
+    const auto tx = std::clamp<std::int64_t>(
+        std::lround(end.first - ((end.first - before.first) / length)), 0,
+        width - 1);
+    const auto ty = std::clamp<std::int64_t>(
+        std::lround(end.second - ((end.second - before.second) / length)), 0,
+        height - 1);
+    stamp.terminal = static_cast<std::size_t>((ty * width) + tx);
+    return runStamps_.insert_or_assign(key, std::move(stamp)).first->second;
+  }
+
+  /// The border (everything outside the rectangle the launcher cells span,
+  /// and the outermost ring of cells) and the artwork inside it, labelled
+  /// as the walls 0 and 1 of `wallsOf`. They depend on the chip alone and
+  /// are built once.
+  struct BaseWalls {
+    std::vector<std::uint32_t> of;
+    grid::BitGrid mask;
+  };
+  mutable std::optional<BaseWalls> baseWalls_;
+
+  [[nodiscard]] const BaseWalls& baseWalls() const {
+    if (baseWalls_) {
+      return *baseWalls_;
+    }
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    BaseWalls walls{
+        .of = std::vector<std::uint32_t>(scene_.router.cells(), NO_OWNER),
+        .mask = grid::BitGrid(scene_.router.width, scene_.router.height)};
+    const auto mark = [&](const std::int64_t x, const std::int64_t y,
+                          const std::uint32_t wall) {
+      const auto cell = static_cast<std::size_t>((y * width) + x);
+      walls.mask.set(cell);
+      walls.of[cell] = wall;
+    };
+    std::int64_t inMinX = 0;
+    std::int64_t inMinY = 0;
+    std::int64_t inMaxX = width - 1;
+    std::int64_t inMaxY = height - 1;
+    if (!scene_.launcherCell.empty()) {
+      inMinX = width;
+      inMinY = height;
+      inMaxX = -1;
+      inMaxY = -1;
+      for (const auto& [port, slot] : scene_.launcherCell) {
+        const auto place = scene_.router.cell(slot);
+        inMinX = std::min<std::int64_t>(inMinX, place.x());
+        inMaxX = std::max<std::int64_t>(inMaxX, place.x());
+        inMinY = std::min<std::int64_t>(inMinY, place.y());
+        inMaxY = std::max<std::int64_t>(inMaxY, place.y());
+      }
+    }
+    constexpr std::uint32_t border = 0;
+    for (std::int64_t y = 0; y < height; ++y) {
+      for (std::int64_t x = 0; x < width; ++x) {
+        if (x <= 0 || y <= 0 || x >= width - 1 || y >= height - 1 ||
+            x < inMinX || x > inMaxX || y < inMinY || y > inMaxY) {
+          mark(x, y, border);
+        }
+      }
+    }
+
+    // The artwork inside the launcher cells is one obstacle: the qubits and
+    // the couplers between them touch. `endName` names a cell of it by the
+    // nearest port.
+    constexpr std::uint32_t artwork = 1;
+    for (std::size_t cell = 0; cell < walls.of.size(); ++cell) {
+      if (scene_.components.test(cell) && walls.of[cell] == NO_OWNER) {
+        walls.mask.set(cell);
+        walls.of[cell] = artwork;
+      }
+    }
+    baseWalls_ = std::move(walls);
+    return *baseWalls_;
+  }
+
   /// The obstacles of `wallsAfterInsertion` for a state of the insertion:
   /// the feedline edges `edges` (their ways in `wires`), and the pads of
   /// the couplers `placed` marks, every coupler when it is null.
+  ///
+  /// With `staticOnly` the walls are those that stay through an insertion:
+  /// the border, the artwork and every port run but a resonator's lead,
+  /// with no pad and no feedline edge.
   [[nodiscard]] Walls wallsOf(const std::vector<Wire>& wires,
                               const std::vector<Edge>& edges,
                               const std::vector<bool>* placed,
-                              const std::uint32_t without) const {
+                              const std::uint32_t without,
+                              const bool staticOnly = false) const {
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     const auto height = static_cast<std::int64_t>(scene_.router.height);
-    Walls walls{
-        .mask = grid::BitGrid(scene_.router.width, scene_.router.height),
-        .of = std::vector<std::uint32_t>(scene_.router.cells(), NO_OWNER),
-        .list = {},
-        .strokes = {}};
+    Walls walls{.mask =
+                    grid::BitGrid(scene_.router.width, scene_.router.height),
+                .of = std::move(spareWallOf_),
+                .list = {},
+                .strokes = {}};
     const auto add = [&walls](const WallKind kind, std::string name,
                               const std::uint32_t wire) {
       walls.list.push_back(
@@ -7715,47 +8006,19 @@ public:
       walls.strokes.emplace_back(wall, points);
     };
 
-    std::int64_t inMinX = 0;
-    std::int64_t inMinY = 0;
-    std::int64_t inMaxX = width - 1;
-    std::int64_t inMaxY = height - 1;
-    if (!scene_.launcherCell.empty()) {
-      inMinX = width;
-      inMinY = height;
-      inMaxX = -1;
-      inMaxY = -1;
-      for (const auto& [port, slot] : scene_.launcherCell) {
-        const auto place = scene_.router.cell(slot);
-        inMinX = std::min<std::int64_t>(inMinX, place.x());
-        inMaxX = std::max<std::int64_t>(inMaxX, place.x());
-        inMinY = std::min<std::int64_t>(inMinY, place.y());
-        inMaxY = std::max<std::int64_t>(inMaxY, place.y());
-      }
-    }
-    const auto border = add(WallKind::Border, "border", NO_OWNER);
-    for (std::int64_t y = 0; y < height; ++y) {
-      for (std::int64_t x = 0; x < width; ++x) {
-        if (x <= 0 || y <= 0 || x >= width - 1 || y >= height - 1 ||
-            x < inMinX || x > inMaxX || y < inMinY || y > inMaxY) {
-          mark(x, y, border);
-        }
-      }
-    }
-
-    // The artwork inside the launcher cells is one obstacle: the qubits and
-    // the couplers between them touch. `endName` names a cell of it by the
-    // nearest port.
-    const auto artwork = add(WallKind::Artwork, "artwork", NO_OWNER);
-    for (std::size_t cell = 0; cell < walls.of.size(); ++cell) {
-      if (scene_.components.test(cell) && walls.of[cell] == NO_OWNER) {
-        walls.mask.set(cell);
-        walls.of[cell] = artwork;
-      }
+    // The border and the artwork inside the launcher cells, as
+    // `baseWalls` keeps them: the walls 0 and 1.
+    add(WallKind::Border, "border", NO_OWNER);
+    add(WallKind::Artwork, "artwork", NO_OWNER);
+    {
+      const auto& base = baseWalls();
+      walls.of.assign(base.of.begin(), base.of.end());
+      walls.mask = base.mask;
     }
 
     for (std::size_t index = 0; index < couplers_.size(); ++index) {
       const auto& coupler = couplers_[index];
-      if (coupler.chosen >= coupler.options.size() ||
+      if (staticOnly || coupler.chosen >= coupler.options.size() ||
           coupler.wire >= wires.size() ||
           (placed != nullptr && !(*placed)[index])) {
         continue;
@@ -7787,129 +8050,30 @@ public:
     // run of no length keeps no room.
     const auto half = wallInflation();
     const auto markRun = [&](const PortRun& run, const std::string& name,
-                             const std::uint32_t wire, const bool lead) {
+                             const std::uint32_t wire, const bool lead,
+                             const bool target) {
       const auto left = add(WallKind::Stub, name + ", left", wire);
       const auto right = add(WallKind::Stub, name + ", right", wire);
-      walls.list[left].lead = lead;
-      walls.list[right].lead = lead;
-      double total = 0.0;
-      double x0 = run.front().first;
-      double x1 = x0;
-      double y0 = run.front().second;
-      double y1 = y0;
-      for (std::size_t k = 0; k < run.size(); ++k) {
-        const auto [px, py] = run[k];
-        if (k > 0) {
-          total += std::hypot(px - run[k - 1].first, py - run[k - 1].second);
-        }
-        x0 = std::min(x0, px);
-        x1 = std::max(x1, px);
-        y0 = std::min(y0, py);
-        y1 = std::max(y1, py);
+      for (const auto flank : {left, right}) {
+        walls.list[flank].lead = lead;
+        walls.list[flank].target = target;
+        walls.list[flank].run = left;
       }
-      // Where each cell of a box around the band lies. The box reaches a
-      // cell past the band on every side, so every neighbour of a band cell
-      // is in it; it is not clipped to the grid.
-      enum class Place : std::uint8_t {
-        Aside,
-        BeyondPort,
-        BeyondEnd,
-        Left,
-        Right
-      };
-      const auto reach = half + 1.0;
-      const auto fromX = static_cast<std::int64_t>(std::floor(x0 - reach));
-      const auto fromY = static_cast<std::int64_t>(std::floor(y0 - reach));
-      const auto boxWidth =
-          static_cast<std::int64_t>(std::ceil(x1 + reach)) - fromX + 1;
-      const auto boxHeight =
-          static_cast<std::int64_t>(std::ceil(y1 + reach)) - fromY + 1;
-      std::vector<Place> places(static_cast<std::size_t>(boxWidth * boxHeight),
-                                Place::Aside);
-      const auto placeAt = [&](const std::int64_t x, const std::int64_t y) {
-        return places[static_cast<std::size_t>(((y - fromY) * boxWidth) +
-                                               (x - fromX))];
-      };
-      for (std::size_t at = 0; total > 0.0 && at < places.size(); ++at) {
-        const auto cx = static_cast<double>(
-            fromX + (static_cast<std::int64_t>(at) % boxWidth));
-        const auto cy = static_cast<double>(
-            fromY + (static_cast<std::int64_t>(at) / boxWidth));
-        // The nearest point of the line: how far, on which side, and
-        // whether it is an end seen from beyond.
-        double best = std::numeric_limits<double>::max();
-        double side = 0.0;
-        auto beyond = Place::Aside;
-        for (std::size_t k = 0; k + 1 < run.size(); ++k) {
-          const auto ax = run[k].first;
-          const auto ay = run[k].second;
-          const auto dx = run[k + 1].first - ax;
-          const auto dy = run[k + 1].second - ay;
-          const auto squared = (dx * dx) + (dy * dy);
-          const auto raw = squared > 0.0
-                               ? (((cx - ax) * dx) + ((cy - ay) * dy)) / squared
-                               : 0.0;
-          const auto t = std::clamp(raw, 0.0, 1.0);
-          const auto distance =
-              std::hypot(cx - (ax + (t * dx)), cy - (ay + (t * dy)));
-          if (distance < best) {
-            best = distance;
-            side = (dx * (cy - ay)) - (dy * (cx - ax));
-            beyond = k == 0 && raw < 0.0                ? Place::BeyondPort
-                     : k + 2 == run.size() && raw > 1.0 ? Place::BeyondEnd
-                                                        : Place::Aside;
-          }
+      const auto& stamp = runStampOf(
+          run, (static_cast<std::uint64_t>(wire) << 1U) | (target ? 1U : 0U));
+      for (const auto& [cell, place] : stamp.cells) {
+        if (walls.of[cell] != NO_OWNER) {
+          continue;
         }
-        if (beyond != Place::Aside) {
-          places[at] = beyond;
-        } else if (best <= half) {
-          places[at] = side < 0.0 ? Place::Right : Place::Left;
+        if (place == RunCell::Slot) {
+          walls.slots.push_back(cell);
+        } else {
+          walls.mask.set(cell);
+          walls.of[cell] = place == RunCell::Right ? right : left;
         }
       }
-      for (std::int64_t y = fromY + 1; y + 1 < fromY + boxHeight; ++y) {
-        for (std::int64_t x = fromX + 1; x + 1 < fromX + boxWidth; ++x) {
-          const auto place = placeAt(x, y);
-          if ((place != Place::Left && place != Place::Right) || x < 0 ||
-              y < 0 || x >= width || y >= height) {
-            continue;
-          }
-          const auto cell = static_cast<std::size_t>((y * width) + x);
-          if (walls.of[cell] != NO_OWNER) {
-            continue;
-          }
-          bool edge = false;
-          for (std::int64_t dy = -1; dy <= 1 && !edge; ++dy) {
-            for (std::int64_t dx = -1; dx <= 1 && !edge; ++dx) {
-              const auto next = placeAt(x + dx, y + dy);
-              edge = next == Place::Aside || next == Place::BeyondPort;
-            }
-          }
-          if (edge) {
-            mark(x, y, place == Place::Right ? right : left);
-          } else {
-            walls.slots.push_back(cell);
-          }
-        }
-      }
-      std::vector<debug::Cell> line;
-      for (const auto& [px, py] : run) {
-        line.emplace_back(std::lround(px), std::lround(py));
-      }
-      walls.strokes.emplace_back(left, std::move(line));
-      // The terminal: on the line, a cell short of its end, in the slot
-      // between the two walls.
-      const auto& end = run.back();
-      const auto& before = run[run.size() - 2];
-      const auto length =
-          std::max(1.0e-9, std::hypot(end.first - before.first,
-                                      end.second - before.second));
-      const auto tx = std::clamp<std::int64_t>(
-          std::lround(end.first - ((end.first - before.first) / length)), 0,
-          width - 1);
-      const auto ty = std::clamp<std::int64_t>(
-          std::lround(end.second - ((end.second - before.second) / length)), 0,
-          height - 1);
-      return static_cast<std::size_t>((ty * width) + tx);
+      walls.strokes.emplace_back(left, stamp.line);
+      return stamp.terminal;
     };
     for (const auto& wire : wires) {
       if (!wire.feasible || wire.inner || wire.feedline) {
@@ -7917,15 +8081,21 @@ public:
       }
       const auto resonator =
           wire.couplerAtSource != NO_OWNER && !wire.arc.empty();
+      if (staticOnly && wire.resonator) {
+        const auto target = markRun(
+            targetRunOf(wire), std::format("{} at its target", wireId(wire)),
+            wire.key, false, true);
+        walls.terminals.emplace(wire.key, std::array{target, target});
+        continue;
+      }
       const auto source =
           markRun(sourceRunOf(wire),
                   resonator ? std::format("lead of {}", wireId(wire))
                             : std::format("{} at its source", wireId(wire)),
-                  wire.key, resonator);
-      const auto target =
-          markRun(targetRunOf(wire),
-                  std::format("{} at its target", wireId(wire)), wire.key,
-                  false);
+                  wire.key, resonator, false);
+      const auto target = markRun(targetRunOf(wire),
+                                  std::format("{} at its target", wireId(wire)),
+                                  wire.key, false, true);
       walls.terminals.emplace(wire.key, std::array{source, target});
     }
 
@@ -7934,7 +8104,8 @@ public:
         continue;
       }
       const auto& wire = wires[edge.wire];
-      if (!wire.drawn || wire.way.empty() || edge.wire == without) {
+      if (staticOnly || !wire.drawn || wire.way.empty() ||
+          edge.wire == without) {
         continue;
       }
       markThick(cellsOf(wire.way),
@@ -8082,20 +8253,27 @@ public:
     };
     const auto walls = wallsAfterInsertion(wires);
     lap("walls");
-    const auto distance = grid::squaredDistanceTransform(walls.mask);
-    lap("distance");
-    const auto edges = grid::medialAxis(walls.mask);
-    lap("voronoi");
-    const auto axis =
-        grid::rasterizeMedialAxis(walls.mask, scene_.router, edges);
-    lap("axis");
+    // Under `capacityFast` 1 the report shows the bottlenecks the check of
+    // the chain search finds, by profiles, with no medial axis to draw.
+    grid::MedialAxis axis;
+    std::vector<grid::Bottleneck> found;
+    if (capacityFast() == 1) {
+      axis.cells.assign(scene_.router.cells(), grid::AxisCell::None);
+      found = fastGates(wires, walls);
+    } else {
+      const auto distance = grid::squaredDistanceTransform(walls.mask);
+      lap("distance");
+      const auto edges = grid::medialAxis(walls.mask);
+      lap("voronoi");
+      axis = grid::rasterizeMedialAxis(walls.mask, scene_.router, edges);
+      lap("axis");
+      found = grid::findBottlenecks(walls.mask, axis, distance, scene_.router,
+                                    bottleneckOptionsOf(walls.slots, walls.of));
+    }
     const auto clearance = static_cast<double>(tuning_.clearance);
     const auto widest = static_cast<double>(bottleneckWires()) * clearance;
-    const auto found =
-        grid::findBottlenecks(walls.mask, axis, distance, scene_.router,
-                              bottleneckOptionsOf(walls.slots, walls.of));
     const auto gates = couplerCuts(walls.list, walls.of, found);
-    lap("saddles");
+    lap(capacityFast() == 1 ? "profiles" : "saddles");
 
     std::vector<MeasuredBottleneck> measured;
     measured.reserve(gates.size());
@@ -8242,6 +8420,9 @@ public:
     double length = 0.0;
     /// The wires whose way through the graph takes it.
     std::vector<std::uint32_t> through;
+    /// A bottleneck with an end on a terminal feedline edge, or a stretch of
+    /// one: it takes every wire (`capacityProblemOf`, `crossingStretches`).
+    bool terminal = false;
   };
 
   /// One outer wire of the capacity graph: the cells its two ends leave
@@ -8272,9 +8453,13 @@ public:
   /// wires crossing side by side keep the wire spacing. A plain wire crosses
   /// the one edge it is prescribed and no other (user, 2026-10-07): an edge
   /// between couplers is open only to the plain wires that bridge it
-  /// (`bridgers_`, which `checkBridgers` holds equal to `assignBridges`). No
-  /// wire is prescribed a terminal edge, so a terminal edge has no stretch,
-  /// and no resonator crosses a feedline at all.
+  /// (`bridgers_`, which `checkBridgers` holds equal to `assignBridges`).
+  /// A terminal edge — the edge from or to a launcher — is open to every
+  /// wire and takes every wire (user, 2026-10-11): the feedline routing lays
+  /// it again, so a wire it walls in now may cross it. No wire is prescribed
+  /// a terminal edge, and no resonator crosses an edge between couplers.
+  /// An edge of a chain with a reflector end keeps its stretches where both
+  /// sides are one chamber, as stretches from that chamber back into it.
   [[nodiscard]] std::vector<GraphEdge>
   crossingStretches(const std::vector<Wire>& wires,
                     const std::vector<Edge>& edges, const Walls& walls,
@@ -8311,12 +8496,20 @@ public:
     for (const auto& edge : edges) {
       const auto& wire = wires[edge.wire];
       const auto own = wallOfEdge.find(edge.wire);
-      if (edge.terminal || !wire.drawn || wire.way.empty() ||
-          own == wallOfEdge.end()) {
+      if (!wire.drawn || wire.way.empty() || own == wallOfEdge.end()) {
         continue;
       }
       const std::optional<std::vector<std::uint32_t>> users =
-          bridgers_[edge.chain][edge.from];
+          edge.terminal ? std::nullopt
+                        : std::optional<std::vector<std::uint32_t>>(
+                              bridgers_[edge.chain][edge.from]);
+      // A chain with a reflector stays open at that end when it stands
+      // whole, so an edge of it may have one chamber on both sides. A wire
+      // prescribed to cross it still has to find room on it: such a place
+      // is a stretch from the chamber back into it.
+      const auto& ends = chains_[edge.chain];
+      const bool reflected =
+          !edge.open && (!ends.front().fixed || !ends.back().fixed);
       const auto straight = routing::straightCells(wire.way);
 
       // The two chambers a crossing at a cell joins, or nothing where no
@@ -8366,7 +8559,7 @@ public:
         const auto left = chamberAt(1);
         const auto right = chamberAt(-1);
         if (left == grid::NO_CHAMBER || right == grid::NO_CHAMBER ||
-            left == right) {
+            (left == right && !reflected)) {
           return std::nullopt;
         }
         return std::pair{std::min(left, right), std::max(left, right)};
@@ -8386,12 +8579,16 @@ public:
              .id = edge.wire,
              .chambers = {open->first, open->second},
              .capacity =
-                 static_cast<std::uint32_t>(std::floor(length / pitch)) + 1,
+                 edge.terminal
+                     ? static_cast<std::uint32_t>(wires.size())
+                     : static_cast<std::uint32_t>(std::floor(length / pitch)) +
+                           1,
              .users = users,
              .first = first,
              .last = last,
              .length = length,
-             .through = {}});
+             .through = {},
+             .terminal = edge.terminal});
       };
       for (std::size_t at = 0; at < wire.way.size(); ++at) {
         const auto sides = sidesAt(at);
@@ -8554,20 +8751,40 @@ public:
                     const grid::Chambers& chambers) const {
     CapacityProblem problem;
     auto& graph = problem.graph;
+    // A bottleneck with an end on a terminal feedline edge — the edge from
+    // or to a launcher — takes every wire (user, 2026-10-11). The feedline
+    // routing lays the terminal edges again later, so a gap at one is no
+    // limit yet. The edge stays a wall that no wire crosses.
+    std::unordered_set<std::uint32_t> terminalEdges;
+    for (const auto& edge : edges) {
+      if (edge.terminal) {
+        terminalEdges.insert(edge.wire);
+      }
+    }
+    const auto onTerminal = [&](const std::size_t cell) {
+      const auto wall = walls.of[cell];
+      return wall < walls.list.size() &&
+             walls.list[wall].kind == WallKind::Feedline &&
+             terminalEdges.contains(walls.list[wall].wire);
+    };
+    const auto everyWire = static_cast<std::uint32_t>(wires.size());
     for (std::uint32_t gate = 0; gate < measured.size(); ++gate) {
       if (chambers.beside[gate].size() < 2) {
         ++problem.roundabout;
         continue;
       }
+      const bool terminal = onTerminal(measured[gate].gate.first) ||
+                            onTerminal(measured[gate].gate.second);
       graph.push_back({.crossing = false,
                        .id = gate,
                        .chambers = chambers.beside[gate],
-                       .capacity = measured[gate].holds,
+                       .capacity = terminal ? everyWire : measured[gate].holds,
                        .users = std::nullopt,
                        .first = 0,
                        .last = 0,
                        .length = measured[gate].cells,
-                       .through = {}});
+                       .through = {},
+                       .terminal = terminal});
     }
     problem.gateEdges = graph.size();
     for (auto& stretch : crossingStretches(wires, edges, walls, chambers)) {
@@ -8577,7 +8794,12 @@ public:
     // The feedline edges each plain wire is prescribed to cross (user,
     // 2026-10-08): every drawn edge between two couplers that it bridges
     // (`bridgers_`). Its way takes exactly one stretch of each and no other;
-    // an edge with no stretch leaves it no way.
+    // an edge with no stretch leaves it no way. An edge of an open chain is
+    // prescribed to no wire (user, 2026-10-10): with its end open, both
+    // sides of the edge are one chamber, so the edge has no stretch, and a
+    // wire that will cross it once the chain is whole may now pass round
+    // the open end. Its stretches, where it has any, stay open to the wires
+    // that bridge it.
     std::unordered_set<std::uint32_t> drawnFeedlines;
     for (const auto& wall : walls.list) {
       if (wall.kind == WallKind::Feedline) {
@@ -8586,7 +8808,7 @@ public:
     }
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> prescribed;
     for (const auto& edge : edges) {
-      if (edge.terminal || !drawnFeedlines.contains(edge.wire)) {
+      if (edge.terminal || edge.open || !drawnFeedlines.contains(edge.wire)) {
         continue;
       }
       for (const auto key : bridgers_[edge.chain][edge.from]) {
@@ -8953,6 +9175,317 @@ public:
       "walls",   "distance", "voronoi",             "axis", "saddles",
       "measure", "chambers", "stretches and ports", "check"};
 
+  /// How the capacity check of the coupler insertion finds its
+  /// bottlenecks: `SCPD_CAPACITY_FAST`, 0. At 0 the medial axis of the whole
+  /// chip at every check (`grid::findBottlenecks`). At 1 the profiles along
+  /// the walls the insertion moves (`grid::profileCuts`), against fields of
+  /// the walls it does not move, built once per insertion. At 2 both: the
+  /// medial axis decides, and every step of the chain search says where the
+  /// two disagree.
+  [[nodiscard]] static int capacityFast() {
+    static const auto mode =
+        std::clamp(envWhole("SCPD_CAPACITY_FAST", 0), 0, 2);
+    return mode;
+  }
+
+  /// The open end of a port run's flank, for `grid::profileCuts`.
+  struct FastMouth {
+    std::size_t tip = 0;
+    double towardX = 0.0;
+    double towardY = 0.0;
+    double staticClearance = 0.0;
+  };
+
+  /// What `fastGates` keeps through an insertion: the nearest cell of the
+  /// walls inside the feedline ring (the artwork and the port runs at the
+  /// targets) and of those outside it (the border and the port runs at the
+  /// sources), and the mouth of every such run's flank, by wire, end and
+  /// side.
+  struct FastCapacity {
+    grid::NearestBlocked inside;
+    grid::NearestBlocked outside;
+    std::map<std::tuple<std::uint32_t, bool, bool>, FastMouth> mouths;
+  };
+  /// Built by `fastCapacityOf` at the first check of an insertion.
+  mutable std::shared_ptr<const FastCapacity> fastCapacity_;
+  /// The time of every step of the passes with `fastGates` since the last
+  /// chain said it, and how many passes.
+  mutable std::array<double, 9> fastLaps_{};
+  mutable std::uint32_t fastPasses_ = 0;
+
+  /// The widest gap a bottleneck spans, in cells: `bottleneckWires` wires.
+  [[nodiscard]] double widestGap() const {
+    return static_cast<double>(bottleneckWires()) *
+           static_cast<double>(tuning_.clearance);
+  }
+
+  /// The mouth of the slot a terminal lies in, at one flank of its run:
+  /// the slot cells beside a free cell outside it are the mouth, the flank
+  /// cell nearest their middle is the tip, and the way from the middle of
+  /// the slot to the middle of the mouth points out.
+  [[nodiscard]] std::optional<FastMouth>
+  mouthOf(const Walls& walls, const grid::BitGrid& slots,
+          const std::uint32_t flank, const std::size_t terminal) const {
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    const auto inside = [&](const std::int64_t x, const std::int64_t y) {
+      return x >= 0 && y >= 0 && x < width && y < height;
+    };
+    // The slot cell the terminal stands on, or one beside it.
+    std::optional<std::size_t> start;
+    const auto tx = static_cast<std::int64_t>(terminal) % width;
+    const auto ty = static_cast<std::int64_t>(terminal) / width;
+    for (std::int64_t ring = 0; ring <= 2 && !start; ++ring) {
+      for (std::int64_t dy = -ring; dy <= ring && !start; ++dy) {
+        for (std::int64_t dx = -ring; dx <= ring && !start; ++dx) {
+          const auto x = tx + dx;
+          const auto y = ty + dy;
+          if (inside(x, y) &&
+              slots.test(static_cast<std::size_t>((y * width) + x))) {
+            start = static_cast<std::size_t>((y * width) + x);
+          }
+        }
+      }
+    }
+    if (!start) {
+      return std::nullopt;
+    }
+    constexpr std::size_t LARGEST_SLOT = 20000;
+    std::vector<std::size_t> pending{*start};
+    std::set<std::size_t> seen{*start};
+    double slotX = 0.0;
+    double slotY = 0.0;
+    double mouthX = 0.0;
+    double mouthY = 0.0;
+    std::size_t inSlot = 0;
+    std::size_t inMouth = 0;
+    while (!pending.empty() && seen.size() < LARGEST_SLOT) {
+      const auto cell = pending.back();
+      pending.pop_back();
+      const auto x = static_cast<std::int64_t>(cell) % width;
+      const auto y = static_cast<std::int64_t>(cell) / width;
+      slotX += static_cast<double>(x);
+      slotY += static_cast<double>(y);
+      ++inSlot;
+      bool mouth = false;
+      for (std::size_t step = 0; step < 4; ++step) {
+        const auto nx = x + grid::STEP_DX[step];
+        const auto ny = y + grid::STEP_DY[step];
+        if (!inside(nx, ny)) {
+          continue;
+        }
+        const auto next = static_cast<std::size_t>((ny * width) + nx);
+        if (slots.test(next)) {
+          if (seen.insert(next).second) {
+            pending.push_back(next);
+          }
+        } else if (!walls.mask.test(next)) {
+          mouth = true;
+        }
+      }
+      if (mouth) {
+        mouthX += static_cast<double>(x);
+        mouthY += static_cast<double>(y);
+        ++inMouth;
+      }
+    }
+    if (inMouth == 0) {
+      return std::nullopt;
+    }
+    slotX /= static_cast<double>(inSlot);
+    slotY /= static_cast<double>(inSlot);
+    mouthX /= static_cast<double>(inMouth);
+    mouthY /= static_cast<double>(inMouth);
+    // The tip: the flank's cell nearest the middle of the mouth.
+    const auto reach =
+        static_cast<std::int64_t>(std::ceil(wallInflation())) + 8;
+    const auto mx = std::llround(mouthX);
+    const auto my = std::llround(mouthY);
+    std::optional<std::size_t> tip;
+    double nearest = std::numeric_limits<double>::max();
+    for (auto y = my - reach; y <= my + reach; ++y) {
+      for (auto x = mx - reach; x <= mx + reach; ++x) {
+        if (!inside(x, y) ||
+            walls.of[static_cast<std::size_t>((y * width) + x)] != flank) {
+          continue;
+        }
+        const auto d = std::hypot(static_cast<double>(x) - mouthX,
+                                  static_cast<double>(y) - mouthY);
+        if (d < nearest) {
+          nearest = d;
+          tip = static_cast<std::size_t>((y * width) + x);
+        }
+      }
+    }
+    const auto length = std::hypot(mouthX - slotX, mouthY - slotY);
+    if (!tip || length <= 0.0) {
+      return std::nullopt;
+    }
+    return FastMouth{.tip = *tip,
+                     .towardX = (mouthX - slotX) / length,
+                     .towardY = (mouthY - slotY) / length,
+                     .staticClearance = widestGap()};
+  }
+
+  /// The walls that stay through an insertion, read once: see
+  /// `FastCapacity`. Every resonator's target run is a wall, standing or
+  /// not, so that the fields need not change when a coupler is placed.
+  [[nodiscard]] const FastCapacity&
+  fastCapacityOf(const std::vector<Wire>& wires) const {
+    if (fastCapacity_ != nullptr) {
+      return *fastCapacity_;
+    }
+    auto all = wires;
+    for (auto& wire : all) {
+      if (wire.resonator && !wire.inner && !wire.feedline) {
+        wire.feasible = true;
+      }
+    }
+    const std::vector<bool> nonePlaced(couplers_.size(), false);
+    const auto walls = wallsOf(all, {}, &nonePlaced, NO_OWNER, true);
+    auto fast = std::make_shared<FastCapacity>();
+    grid::BitGrid inside(scene_.router.width, scene_.router.height);
+    grid::BitGrid outside(scene_.router.width, scene_.router.height);
+    for (std::size_t cell = 0; cell < walls.of.size(); ++cell) {
+      if (walls.of[cell] == NO_OWNER) {
+        continue;
+      }
+      const auto& wall = walls.list[walls.of[cell]];
+      const bool in = wall.kind == WallKind::Artwork ||
+                      (wall.kind == WallKind::Stub && wall.target);
+      (in ? inside : outside).set(cell);
+    }
+    fast->inside = grid::nearestBlocked(inside);
+    fast->outside = grid::nearestBlocked(outside);
+    grid::BitGrid slots(scene_.router.width, scene_.router.height);
+    for (const auto cell : walls.slots) {
+      slots.set(cell);
+    }
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    const auto widest = widestGap();
+    for (std::uint32_t index = 0; index < walls.list.size(); ++index) {
+      const auto& wall = walls.list[index];
+      const auto ends = walls.terminals.find(wall.wire);
+      if (wall.kind != WallKind::Stub || ends == walls.terminals.end()) {
+        continue;
+      }
+      auto mouth =
+          mouthOf(walls, slots, index, ends->second[wall.target ? 1 : 0]);
+      if (!mouth) {
+        continue;
+      }
+      // How far ahead the nearest static wall of another run lies.
+      const auto tx = static_cast<std::int64_t>(mouth->tip) % width;
+      const auto ty = static_cast<std::int64_t>(mouth->tip) / width;
+      const auto reach = static_cast<std::int64_t>(std::ceil(widest));
+      for (auto y = std::max<std::int64_t>(0, ty - reach);
+           y <= std::min(height - 1, ty + reach); ++y) {
+        for (auto x = std::max<std::int64_t>(0, tx - reach);
+             x <= std::min(width - 1, tx + reach); ++x) {
+          const auto other =
+              walls.of[static_cast<std::size_t>((y * width) + x)];
+          if (other == NO_OWNER || walls.list[other].run == wall.run) {
+            continue;
+          }
+          const auto dx = static_cast<double>(x - tx);
+          const auto dy = static_cast<double>(y - ty);
+          if ((dx * mouth->towardX) + (dy * mouth->towardY) <= 0.0) {
+            continue;
+          }
+          mouth->staticClearance =
+              std::min(mouth->staticClearance, std::hypot(dx, dy));
+        }
+      }
+      fast->mouths[{wall.wire, wall.target, index != wall.run}] = *mouth;
+    }
+    fastCapacity_ = std::move(fast);
+    return *fastCapacity_;
+  }
+
+  /// The bottlenecks of a state of the insertion by `grid::profileCuts`:
+  /// the walls the insertion moves (feedline edges, coupler pads, leads)
+  /// are walked along; the others are read off `fastCapacityOf`. A
+  /// feedline edge is its line inflated by `wallInflation`. Every port
+  /// run's slot is closed at its mouth.
+  [[nodiscard]] std::vector<grid::Bottleneck>
+  fastGates(const std::vector<Wire>& wires, const Walls& walls) const {
+    const auto& fast = fastCapacityOf(wires);
+    std::vector<grid::ProfileRole> roles;
+    std::vector<std::uint32_t> runs;
+    roles.reserve(walls.list.size());
+    runs.reserve(walls.list.size());
+    for (const auto& wall : walls.list) {
+      const bool moves = wall.kind == WallKind::Feedline ||
+                         wall.kind == WallKind::Coupler || wall.lead;
+      roles.push_back(moves ? grid::ProfileRole::Dynamic
+                            : grid::ProfileRole::Static);
+      runs.push_back(wall.run);
+    }
+    grid::BitGrid slots(scene_.router.width, scene_.router.height);
+    for (const auto cell : walls.slots) {
+      slots.set(cell);
+    }
+    std::vector<grid::ProfileLine> lines;
+    for (const auto& [wall, points] : walls.strokes) {
+      if (walls.list[wall].kind != WallKind::Feedline) {
+        continue;
+      }
+      grid::ProfileLine line{
+          .wall = wall, .points = {}, .radius = wallInflation()};
+      line.points.reserve(points.size());
+      for (const auto& [x, y] : points) {
+        line.points.emplace_back(static_cast<double>(x),
+                                 static_cast<double>(y));
+      }
+      lines.push_back(std::move(line));
+    }
+    std::vector<grid::ProfileMouth> mouths;
+    for (std::uint32_t index = 0; index < walls.list.size(); ++index) {
+      const auto& wall = walls.list[index];
+      if (wall.kind != WallKind::Stub) {
+        continue;
+      }
+      std::optional<FastMouth> mouth;
+      if (wall.lead) {
+        const auto ends = walls.terminals.find(wall.wire);
+        if (ends != walls.terminals.end()) {
+          mouth = mouthOf(walls, slots, index, ends->second[0]);
+        }
+      } else if (const auto found = fast.mouths.find(
+                     {wall.wire, wall.target, index != wall.run});
+                 found != fast.mouths.end() &&
+                 walls.of[found->second.tip] == index) {
+        mouth = found->second;
+      }
+      if (mouth) {
+        mouths.push_back({.flank = index,
+                          .tip = mouth->tip,
+                          .towardX = mouth->towardX,
+                          .towardY = mouth->towardY,
+                          .staticClearance = mouth->staticClearance});
+      }
+    }
+    const std::array<const grid::NearestBlocked*, 2> fields{&fast.inside,
+                                                            &fast.outside};
+    return grid::profileCuts({.width = scene_.router.width,
+                              .height = scene_.router.height,
+                              .wallOf = walls.of,
+                              .roles = roles,
+                              .runs = runs,
+                              .fields = fields,
+                              .slots = &slots,
+                              .lines = lines,
+                              .mouths = mouths},
+                             {.widest = widestGap(),
+                              .minimumRise = 2.0 * bottleneckRise(),
+                              .sameNarrowing = static_cast<double>(roomPitch()),
+                              .narrowest = FAST_NARROWEST});
+  }
+  /// A gap narrower than this many cells is a contact between two walls,
+  /// not a bottleneck, for `fastGates`.
+  static constexpr double FAST_NARROWEST = 3.0;
+
   /// The analysis of `reportBottlenecks` and `reportCapacityGraph` without
   /// a line of log, with the feedline edge of wire `without` left out.
   [[nodiscard]] CapacityPass capacityPass(const std::vector<Wire>& wires,
@@ -8961,10 +9494,15 @@ public:
   }
 
   /// `capacityPass` for a state of the insertion, as `wallsOf` takes it.
+  ///
+  /// With `fast` the bottlenecks are `fastGates`: the profiles along the
+  /// walls the insertion moves, against fields of the walls it does not,
+  /// with no distance transform and no medial axis of the chip.
   [[nodiscard]] CapacityPass capacityPass(const std::vector<Wire>& wires,
                                           const std::vector<Edge>& edges,
                                           const std::vector<bool>* placed,
-                                          const std::uint32_t without) const {
+                                          const std::uint32_t without,
+                                          const bool fast = false) const {
     CapacityPass pass;
     auto mark = std::chrono::steady_clock::now();
     std::size_t step = 0;
@@ -8976,18 +9514,28 @@ public:
     };
     pass.walls = wallsOf(wires, edges, placed, without);
     lap();
-    const auto distance = grid::squaredDistanceTransform(pass.walls.mask);
-    lap();
-    const auto medial = grid::medialAxis(pass.walls.mask);
-    lap();
-    const auto axis =
-        grid::rasterizeMedialAxis(pass.walls.mask, scene_.router, medial);
-    lap();
-    pass.gates = couplerCuts(
-        pass.walls.list, pass.walls.of,
-        grid::findBottlenecks(
-            pass.walls.mask, axis, distance, scene_.router,
-            bottleneckOptionsOf(pass.walls.slots, pass.walls.of)));
+    if (fast) {
+      // No distance transform, Voronoi diagram or axis: their laps stay
+      // empty, and the profiles count as the saddles.
+      lap();
+      lap();
+      lap();
+      pass.gates = couplerCuts(pass.walls.list, pass.walls.of,
+                               fastGates(wires, pass.walls));
+    } else {
+      const auto distance = grid::squaredDistanceTransform(pass.walls.mask);
+      lap();
+      const auto medial = grid::medialAxis(pass.walls.mask);
+      lap();
+      const auto axis =
+          grid::rasterizeMedialAxis(pass.walls.mask, scene_.router, medial);
+      lap();
+      pass.gates = couplerCuts(
+          pass.walls.list, pass.walls.of,
+          grid::findBottlenecks(
+              pass.walls.mask, axis, distance, scene_.router,
+              bottleneckOptionsOf(pass.walls.slots, pass.walls.of)));
+    }
     lap();
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     std::vector<MeasuredBottleneck> measured;
@@ -9004,8 +9552,8 @@ public:
       measured.push_back(std::move(one));
     }
     lap();
-    pass.chambers =
-        grid::chambersOf(pass.walls.mask, pass.gates, scene_.router);
+    pass.chambers.of = std::move(spareChambers_);
+    grid::chambersOf(pass.walls.mask, pass.gates, scene_.router, pass.chambers);
     lap();
     pass.problem =
         capacityProblemOf(wires, edges, pass.walls, measured, pass.chambers);
@@ -9020,6 +9568,12 @@ public:
                                pass.problem.demands);
     }
     lap();
+    if (fast) {
+      for (std::size_t step = 0; step < fastLaps_.size(); ++step) {
+        fastLaps_.at(step) += pass.seconds.at(step);
+      }
+      ++fastPasses_;
+    }
     pass.unrouted = static_cast<std::uint32_t>(
         pass.problem.walled.size() +
         static_cast<std::size_t>(std::ranges::count_if(
@@ -9577,7 +10131,7 @@ public:
     if (zeroProximity_.size() != proximity_.size()) {
       zeroProximity_.assign(proximity_.size(), 0);
     }
-    
+
     // The approaches of every port used to cost the most a cell can, because
     // a feedline beside a port leaves the wire into it no way to cross at a
     // right angle. That is the crossing rule of the feedline phase, and the
@@ -10690,6 +11244,13 @@ public:
     std::uint32_t stepsClosing = 0;
     std::uint32_t stepsRefused = 0;
     double stepSeconds = 0.0;
+    // Under `capacityFast` 2: how often the profile cuts give the medial
+    // axis's verdict, and what each costs.
+    std::uint32_t fastCompared = 0;
+    std::uint32_t fastSame = 0;
+    std::uint32_t fastSameRefusal = 0;
+    double axisSeconds = 0.0;
+    double fastSeconds = 0.0;
     std::uint32_t firstSlot = 0;
     for (std::uint32_t before = 0; before < chain; ++before) {
       firstSlot += chains_[before].empty()
@@ -10814,8 +11375,8 @@ public:
           // beside it and to a terminal edge. The last edge cannot appear
           // here at all: this fence holds the edges *before* the one being
           // priced.
-          const bool drawingATerminal = at == 0 || at + 1 == edges;
-          if (e == 0 && at != 1 && !drawingATerminal &&
+          const bool drawingATerminal = atLauncher(chain, at);
+          if (e == 0 && atLauncher(chain, 0) && at != 1 && !drawingATerminal &&
               !terminalEdgesFenceAll()) {
             continue;
           }
@@ -10836,13 +11397,16 @@ public:
         // under this prefix; that is the price of the memo. Without it, 45q
         // ran chain 3 out of its time.
         const bool fresh =
-            at < CHAIN_FRESH_EDGES || at + CHAIN_FRESH_EDGES >= edges;
+            (at < CHAIN_FRESH_EDGES && points.front().fixed) ||
+            (at + CHAIN_FRESH_EDGES >= edges && points.back().fixed);
         //
         // A step that may lay its end pair the other way round (below) gets
         // no step budget: a budget cut-off is no proof that the edge has no
         // way, and taking it for one reordered pairs that had a way and
         // marked the answer as not optimal.
-        const bool pairAtAnEnd = at == 1 || (at + 1 == edges && at >= 1);
+        const bool pairAtAnEnd =
+            (at == 1 && atLauncher(chain, 0)) ||
+            (at + 1 == edges && at >= 1 && atLauncher(chain, at));
         const bool mayReorder = pairAtAnEnd && !fence.empty();
         Path way;
         stepBudget_ = (chainStepBudget() && !mayReorder)
@@ -10967,8 +11531,9 @@ public:
             ways[at - 1] = &before;
           }
           ways[at] = &way;
-          auto verdict = capacityVerdictOf(
-              stateOf(wires, *stepSettled_, chain, &options, &ways, at + 2));
+          const auto state =
+              stateOf(wires, *stepSettled_, chain, &options, &ways, at + 2);
+          auto verdict = capacityVerdictOf(state);
           const auto parent = checked.find(key);
           const auto& was = (at == 0 || parent == checked.end())
                                 ? unchained
@@ -10976,6 +11541,30 @@ public:
           std::vector<std::uint32_t> closed;
           std::ranges::set_difference(verdict.lost, was.lost,
                                       std::back_inserter(closed));
+          if (verdict.fastLost) {
+            std::vector<std::uint32_t> fastClosed;
+            std::ranges::set_difference(
+                *verdict.fastLost,
+                was.fastLost ? *was.fastLost : std::set<std::uint32_t>{},
+                std::back_inserter(fastClosed));
+            ++fastCompared;
+            fastSame += fastClosed == closed ? 1U : 0U;
+            fastSameRefusal += fastClosed.empty() == closed.empty() ? 1U : 0U;
+            axisSeconds += verdict.seconds;
+            fastSeconds += verdict.fastSeconds;
+            if (fastClosed != closed) {
+              tell(std::format(
+                  "[Capacity Fast] chain {} f{} on options {}: the medial "
+                  "axis closes {}, the profiles close {}{}",
+                  chain, firstSlot + at, named,
+                  closed.empty() ? std::string("none") : namesOf(wires, closed),
+                  fastClosed.empty() ? std::string("none")
+                                     : namesOf(wires, fastClosed),
+                  fastClosed.empty() == closed.empty()
+                      ? ""
+                      : " — the refusal differs"));
+            }
+          }
           const auto spent = std::chrono::steady_clock::now() - began;
           const auto seconds = std::chrono::duration<double>(spent).count();
           // The check's time is given back to the clock: the budget is for
@@ -10991,11 +11580,45 @@ public:
           stepSeconds += seconds;
           const bool refused = stepRefuses_ && !closed.empty();
           stepsRefused += refused ? 1U : 0U;
+          // A step that closes a wire names the feedline edges its edge
+          // meets, and under `capacityStepGraphs` the first few such steps
+          // of a chain write the graph the check saw.
+          std::string meets;
+          if (!closed.empty()) {
+            const auto met = feedlinesMet(state, chain, at);
+            if (!met.empty()) {
+              meets =
+                  std::format("; its edge meets {}", namesOf(state.wires, met));
+            }
+            if (capacityStepGraphs() && debug_ &&
+                stepsClosing <= STEP_GRAPHS_CLOSING) {
+              const auto drawing = std::chrono::steady_clock::now();
+              const auto where = debug_(
+                  std::format("step-c{}-closing{}-capacity-graph.json", chain,
+                              stepsClosing),
+                  capacityGraphJsonOf(
+                      state,
+                      std::format("chain {} f{} ({}->{}) on options {}: "
+                                  "this edge closes {}{}",
+                                  chain, firstSlot + at, at, at + 1, named,
+                                  namesOf(wires, closed), meets)));
+              if (!where.empty()) {
+                tell(std::format("[Capacity Step] chain {} f{}: its "
+                                 "capacity graph as data: {}",
+                                 chain, firstSlot + at, where));
+              }
+              if (problem.budget.count() > 0) {
+                problem.budget +=
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - drawing);
+              }
+            }
+          }
           const std::vector<std::uint32_t> lost(verdict.lost.begin(),
                                                 verdict.lost.end());
           tell(std::format(
               "[Capacity Step] chain {} f{} ({}->{}) on options {}: {}{}; "
-              "{}{}; {:.3f}s",
+              "{}{}{}; {:.3f}s",
               chain, firstSlot + at, at, at + 1, named,
               lost.empty() ? std::string("SAT") : std::string("UNSAT"),
               lost.empty()
@@ -11006,7 +11629,8 @@ public:
               closed.empty()
                   ? std::string("this edge closes no wire")
                   : std::format("this edge closes {}", namesOf(wires, closed)),
-              refused ? " — refused (SCPD_CAPACITY_RULE)" : "", seconds));
+              meets, refused ? " — refused (SCPD_CAPACITY_RULE)" : "",
+              seconds));
           if (refused) {
             return routing::TRELLIS_UNREACHABLE;
           }
@@ -11079,6 +11703,30 @@ public:
           stepChecks == 0 ? 0.0 : stepSeconds / stepChecks, stepsCarrying,
           stepsClosing, stepsRefused, lost.size(), lost.size() == 1 ? "" : "s",
           namesOf(wires, lost)));
+      if (fastCompared > 0) {
+        say(std::format(
+            "[Capacity Fast] chain {}: {} steps compared, the profiles close "
+            "the same wires on {} and refuse alike on {}; medial axis "
+            "{:.3f}s, profiles {:.3f}s per check",
+            chain, fastCompared, fastSame, fastSameRefusal,
+            axisSeconds / fastCompared, fastSeconds / fastCompared));
+      }
+      if (fastPasses_ > 0) {
+        std::string laps;
+        for (std::size_t step = 0; step < fastLaps_.size(); ++step) {
+          if (step == 1 || step == 2 || step == 3) {
+            continue;
+          }
+          laps += std::format("{}{} {:.4f}", laps.empty() ? "" : ", ",
+                              CAPACITY_STEPS.at(step),
+                              fastLaps_.at(step) / fastPasses_);
+        }
+        say(std::format("[Capacity Fast] chain {}: {} passes, seconds per "
+                        "pass: {}",
+                        chain, fastPasses_, laps));
+        fastLaps_ = {};
+        fastPasses_ = 0;
+      }
       // Every feedline edge of the run the chain settles on, with what the
       // check said when the search laid it.
       for (std::size_t e = 0; answer.solved && e + 1 < layers; ++e) {
@@ -11105,6 +11753,33 @@ public:
             one.closed.empty()
                 ? std::string(", closes no wire")
                 : std::format(", closes {}", namesOf(wires, one.closed))));
+        if (capacityStepGraphs() && debug_) {
+          // The chip as the check saw it: this run up to the edge, on the
+          // ways the search laid under it.
+          std::vector<std::size_t> options(layers, 0);
+          for (std::size_t layer = 0; layer < run.size(); ++layer) {
+            options[layer] = open[layer][run[layer]];
+          }
+          const auto laidWays = waysOfRun(laid, run);
+          std::vector<const Path*> ways(layers - 1, nullptr);
+          for (std::size_t at = 0; at < laidWays.size(); ++at) {
+            ways[at] = &laidWays[at];
+          }
+          const auto where = debug_(
+              std::format("step-c{}-f{}-capacity-graph.json", chain,
+                          firstSlot + e),
+              capacityGraphJsonOf(
+                  stateOf(wires, *stepSettled_, chain, &options, &ways, e + 2),
+                  std::format("chain {} f{}: edges f{}..f{} of the chain "
+                              "stand{}",
+                              chain, firstSlot + e, firstSlot, firstSlot + e,
+                              e + 2 < layers ? ", its end is open" : "")));
+          if (!where.empty()) {
+            say(std::format("[Capacity Step] chain {} f{}: its capacity "
+                            "graph as data: {}",
+                            chain, firstSlot + e, where));
+          }
+        }
       }
     }
     for (std::size_t at = 0; at + 1 < layers; ++at) {
@@ -11650,6 +12325,18 @@ public:
     return envFlag("SCPD_CAPACITY_STEP", false);
   }
 
+  /// Whether a settled chain writes the capacity graph the step check saw
+  /// at each of its feedline edges, as `writeCapacityGraph` writes the
+  /// final one: `SCPD_CAPACITY_STEP_GRAPHS`, off. The files are
+  /// `step-c<chain>-f<edge>-capacity-graph.json` in the debug directory.
+  /// Needs `capacityStep` or `capacityRule`.
+  [[nodiscard]] static bool capacityStepGraphs() {
+    return envFlag("SCPD_CAPACITY_STEP_GRAPHS", false);
+  }
+  /// How many steps of a chain that close a wire write their graph under
+  /// `capacityStepGraphs`, as `step-c<chain>-closing<k>-capacity-graph.json`.
+  static constexpr std::uint32_t STEP_GRAPHS_CLOSING = 3;
+
   /// Whether the chain search refuses a step whose edge closes a wire the
   /// prefix before it left a way: `SCPD_CAPACITY_RULE`, off (user,
   /// 2026-10-10). "Closes" is what the capacity check of `capacityStep`
@@ -11683,6 +12370,54 @@ public:
     std::vector<Edge> edges;
     std::vector<bool> placed;
   };
+
+  /// The feedline edges of a state that edge `from` of chain `chain`
+  /// meets: it takes a cell of one, or steps diagonally between two cells
+  /// of one. The edges beside it in its own chain are left out, since they
+  /// meet it at their coupler.
+  [[nodiscard]] std::vector<std::uint32_t>
+  feedlinesMet(const InsertionState& state, const std::uint32_t chain,
+               const std::size_t from) const {
+    const auto width = static_cast<std::size_t>(scene_.router.width);
+    const auto own = std::ranges::find_if(state.edges, [&](const Edge& edge) {
+      return edge.chain == chain && edge.from == from;
+    });
+    if (own == state.edges.end()) {
+      return {};
+    }
+    std::unordered_map<std::size_t, std::uint32_t> ownerOf;
+    for (const auto& edge : state.edges) {
+      const bool beside = edge.chain == chain &&
+                          (edge.from + 1 >= from && edge.from <= from + 1);
+      if (beside || !state.wires[edge.wire].drawn) {
+        continue;
+      }
+      for (const auto& point : state.wires[edge.wire].way) {
+        ownerOf.emplace((static_cast<std::size_t>(point.y) * width) + point.x,
+                        edge.wire);
+      }
+    }
+    std::set<std::uint32_t> met;
+    const auto& way = state.wires[own->wire].way;
+    const auto at = [&](const std::uint32_t x, const std::uint32_t y) {
+      const auto found =
+          ownerOf.find((static_cast<std::size_t>(y) * width) + x);
+      return found == ownerOf.end() ? NO_OWNER : found->second;
+    };
+    for (std::size_t k = 0; k < way.size(); ++k) {
+      if (const auto owner = at(way[k].x, way[k].y); owner != NO_OWNER) {
+        met.insert(owner);
+      }
+      if (k + 1 < way.size() && way[k].x != way[k + 1].x &&
+          way[k].y != way[k + 1].y) {
+        const auto a = at(way[k + 1].x, way[k].y);
+        if (a != NO_OWNER && a == at(way[k].x, way[k + 1].y)) {
+          met.insert(a);
+        }
+      }
+    }
+    return {met.begin(), met.end()};
+  }
 
   /// The insertion with the chains `in` standing on the options and ways
   /// they settled on, and chain `chain`, when `options` is given, on
@@ -11755,7 +12490,8 @@ public:
                                .from = from,
                                .to = from + 1,
                                .wire = feed.key,
-                               .terminal = feed.terminal});
+                               .terminal = feed.terminal,
+                               .open = given && standing < points.size()});
         state.wires.push_back(std::move(feed));
       }
     }
@@ -11772,6 +12508,11 @@ public:
   struct CapacityVerdict {
     std::set<std::uint32_t> lost;
     std::uint32_t shortBy = 0;
+    /// Under `capacityFast` 2: the wires the profile cuts lose, beside the
+    /// medial axis's, and the time of each.
+    std::optional<std::set<std::uint32_t>> fastLost;
+    double seconds = 0.0;
+    double fastSeconds = 0.0;
   };
 
   /// The outer wires the capacity graph of a state has no way for: a
@@ -11786,11 +12527,115 @@ public:
   /// `lostWires`, and the shortfall of the edges with it.
   [[nodiscard]] CapacityVerdict
   capacityVerdictOf(const InsertionState& state) const {
-    const auto pass =
-        capacityPass(state.wires, state.edges, &state.placed, NO_OWNER);
-    CapacityVerdict verdict{.lost = {}, .shortBy = pass.check.shortBy};
-    auto& lost = verdict.lost;
-    lost.insert(pass.problem.walled.begin(), pass.problem.walled.end());
+    const auto mode = capacityFast();
+    const auto timed = [&](const bool fast, double& seconds) {
+      const auto began = std::chrono::steady_clock::now();
+      auto pass =
+          capacityPass(state.wires, state.edges, &state.placed, NO_OWNER, fast);
+      seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                              began)
+                    .count();
+      return pass;
+    };
+    CapacityVerdict verdict;
+    auto pass = timed(mode == 1, verdict.seconds);
+    verdict.shortBy = pass.check.shortBy;
+    verdict.lost = lostOf(pass);
+    if (mode == 2) {
+      giveBack(pass);
+      pass = timed(true, verdict.fastSeconds);
+      verdict.fastLost = lostOf(pass);
+    }
+    giveBack(pass);
+    return verdict;
+  }
+
+  /// The capacity graph of a state of the insertion as the JSON
+  /// `writeCapacityGraph` writes, with `said` as the first line of its
+  /// summary. Nothing is said in the log.
+  [[nodiscard]] std::string capacityGraphJsonOf(const InsertionState& state,
+                                                const std::string& said) {
+    auto pass = capacityPass(state.wires, state.edges, &state.placed, NO_OWNER,
+                             capacityFast() == 1);
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    std::vector<MeasuredBottleneck> measured;
+    measured.reserve(pass.gates.size());
+    for (const auto& gate : pass.gates) {
+      MeasuredBottleneck one{.gate = gate};
+      one.cells = std::hypot(
+          static_cast<double>((static_cast<std::int64_t>(gate.second) % width) -
+                              (static_cast<std::int64_t>(gate.first) % width)),
+          static_cast<double>((static_cast<std::int64_t>(gate.second) / width) -
+                              (static_cast<std::int64_t>(gate.first) / width)));
+      one.holds =
+          wiresThroughGap(one.cells, static_cast<double>(tuning_.clearance));
+      measured.push_back(std::move(one));
+    }
+    auto& graph = pass.problem.graph;
+    std::vector<std::uint32_t> noWay;
+    for (std::uint32_t demand = 0; demand < pass.problem.demands.size();
+         ++demand) {
+      if (!pass.check.ways[demand].has_value()) {
+        noWay.push_back(pass.problem.wireOf[demand]);
+        continue;
+      }
+      for (const auto index : *pass.check.ways[demand]) {
+        graph[index].through.push_back(pass.problem.wireOf[demand]);
+      }
+    }
+    const auto lost = lostOf(pass);
+    const std::vector<std::uint32_t> lostList(lost.begin(), lost.end());
+    std::vector<std::string> summary{said};
+    summary.push_back(std::format(
+        "{} chambers, {} bottlenecks between two or more of them, {} "
+        "stretches to cross",
+        pass.chambers.count, pass.problem.gateEdges,
+        graph.size() - pass.problem.gateEdges));
+    if (!noWay.empty()) {
+      summary.push_back(std::format("no way in the graph for {}",
+                                    namesOf(state.wires, noWay)));
+    }
+    if (!pass.problem.walled.empty()) {
+      summary.push_back(std::format("a port in no chamber for {}",
+                                    namesOf(state.wires, pass.problem.walled)));
+    }
+    if (pass.check.shortBy > 0) {
+      summary.push_back(std::format("short by {} wire{}", pass.check.shortBy,
+                                    pass.check.shortBy == 1 ? "" : "s"));
+    }
+    std::string captured;
+    auto kept = std::move(debug_);
+    debug_ = [&captured](const std::string_view name,
+                         const std::string_view content) {
+      if (name == "final-capacity-graph.json") {
+        captured = content;
+      }
+      return std::string();
+    };
+    writeCapacityGraph(state.wires, pass.walls, pass.gates, measured,
+                       pass.chambers, graph, pass.problem.outerWires,
+                       pass.check, lostList.empty() ? "SAT" : "UNSAT", summary);
+    debug_ = std::move(kept);
+    giveBack(pass);
+    return captured;
+  }
+
+  /// The labels of a pass's walls and chambers, a cell each, kept for the
+  /// next pass: the chain search checks thousands of steps, and on a grid
+  /// of millions of cells fresh memory costs more than the labelling.
+  mutable std::vector<std::uint32_t> spareWallOf_;
+  mutable std::vector<std::uint32_t> spareChambers_;
+  void giveBack(CapacityPass& pass) const {
+    spareWallOf_ = std::move(pass.walls.of);
+    spareChambers_ = std::move(pass.chambers.of);
+  }
+
+  /// The outer wires a pass has no way for: a terminal in no chamber, no
+  /// way at all, or a way over an edge with overflow.
+  [[nodiscard]] static std::set<std::uint32_t>
+  lostOf(const CapacityPass& pass) {
+    std::set<std::uint32_t> lost(pass.problem.walled.begin(),
+                                 pass.problem.walled.end());
     for (std::size_t demand = 0; demand < pass.check.ways.size(); ++demand) {
       const auto& way = pass.check.ways[demand];
       const bool over =
@@ -11802,7 +12647,7 @@ public:
         lost.insert(pass.problem.wireOf[demand]);
       }
     }
-    return verdict;
+    return lost;
   }
 
   /// The capacity check after a settled chain (user, 2026-10-08). The
@@ -17207,7 +18052,8 @@ public:
                 index < check.overflow.size() ? check.overflow[index] : 0U},
                {"length", edge.length},
                {"through", names(edge.through)},
-               {"users", edge.users.has_value() ? names(*edge.users) : json()}};
+               {"users", edge.users.has_value() ? names(*edge.users) : json()},
+               {"terminal", edge.terminal}};
       if (edge.crossing) {
         one["name"] = std::format("× {} cells {}..{}", wireId(wires[edge.id]),
                                   edge.first, edge.last);

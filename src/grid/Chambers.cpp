@@ -20,7 +20,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <queue>
+#include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -84,9 +85,33 @@ bottleneckMoves(const std::vector<Bottleneck>& bottlenecks,
     const auto maxY = std::min<std::int64_t>(
         height - 1, static_cast<std::int64_t>(std::ceil(std::max(y0, y1))) + 1);
 
+    // Only a cell within two cells of the line can lie on it or step
+    // across it: per row, the cells beside the part of the line within two
+    // rows of it.
+    constexpr double NEAR = 2.0;
     auto& blocked = moves[index];
     for (std::int64_t y = minY; y <= maxY; ++y) {
-      for (std::int64_t x = minX; x <= maxX; ++x) {
+      const auto ay = static_cast<double>(y) + 0.5;
+      double from = 0.0;
+      double to = 1.0;
+      if (y1 != y0) {
+        const auto a = (ay - NEAR - y0) / (y1 - y0);
+        const auto b = (ay + NEAR - y0) / (y1 - y0);
+        from = std::max(0.0, std::min(a, b));
+        to = std::min(1.0, std::max(a, b));
+      } else if (std::abs(ay - y0) > NEAR) {
+        continue;
+      }
+      if (from > to) {
+        continue;
+      }
+      const auto xa = x0 + (from * (x1 - x0));
+      const auto xb = x0 + (to * (x1 - x0));
+      const auto firstX = std::max(minX, static_cast<std::int64_t>(std::floor(
+                                             std::min(xa, xb) - NEAR - 1.0)));
+      const auto lastX = std::min(
+          maxX, static_cast<std::int64_t>(std::ceil(std::max(xa, xb) + NEAR)));
+      for (std::int64_t x = firstX; x <= lastX; ++x) {
         const auto cell = grid.index(static_cast<std::uint32_t>(x),
                                      static_cast<std::uint32_t>(y));
         const auto ax = static_cast<double>(x) + 0.5;
@@ -126,6 +151,14 @@ bottleneckMoves(const std::vector<Bottleneck>& bottlenecks,
 Chambers chambersOf(const BitGrid& blocked,
                     const std::vector<Bottleneck>& bottlenecks,
                     const GridMetrics& grid) {
+  Chambers chambers;
+  chambersOf(blocked, bottlenecks, grid, chambers);
+  return chambers;
+}
+
+void chambersOf(const BitGrid& blocked,
+                const std::vector<Bottleneck>& bottlenecks,
+                const GridMetrics& grid, Chambers& chambers) {
   if (blocked.width() != grid.width || blocked.height() != grid.height) {
     throw std::invalid_argument(std::format(
         "the mask is {}x{} cells and the grid {}x{}", blocked.width(),
@@ -135,8 +168,14 @@ Chambers chambersOf(const BitGrid& blocked,
   const auto height = static_cast<std::int64_t>(grid.height);
   const auto moves = bottleneckMoves(bottlenecks, grid);
 
-  // The directions a gate refuses out of each cell, one bit each.
-  std::vector<std::uint8_t> refused(grid.cells(), 0);
+  // The directions a gate refuses out of each cell, one bit each. The bits
+  // are kept per thread from call to call and cleared where they were set:
+  // a grid of millions of cells is labelled many times, and fresh memory
+  // costs more than the labelling itself.
+  thread_local std::vector<std::uint8_t> refused;
+  if (refused.size() != grid.cells()) {
+    refused.assign(grid.cells(), 0);
+  }
   for (const auto& gate : moves) {
     for (const auto& move : gate) {
       refused[move.cell] |= static_cast<std::uint8_t>(1U << move.direction);
@@ -156,43 +195,159 @@ Chambers chambersOf(const BitGrid& blocked,
     return true;
   };
 
-  Chambers chambers;
-  chambers.of.assign(grid.cells(), NO_CHAMBER);
-  std::queue<std::size_t> pending;
-  for (std::size_t start = 0; start < chambers.of.size(); ++start) {
-    if (blocked.test(start) || chambers.of[start] != NO_CHAMBER ||
-        onALine(static_cast<std::int64_t>(start) % width,
-                static_cast<std::int64_t>(start) / width)) {
-      continue;
+  // The chambers are the connected pieces of the free space, labelled by
+  // runs: a row's free cells that no gate touches are one run, since every
+  // step between two of them is allowed. A cell with a refused step is a
+  // run of its own and is joined to the cells before it step by step, as
+  // a flood would. A run is joined to the run before it in its row and to
+  // every run of the row above it overlaps: straight up from any of its
+  // cells, and diagonally from its two ends past the corner rule; a
+  // diagonal step from inside a run reaches nothing a straight one does
+  // not. The union-find over the runs keeps the lowest run as the root,
+  // so numbering the roots in row order numbers the pieces in the order of
+  // their lowest cells, which is the order a flood from every unlabelled
+  // cell in turn would give.
+  struct Run {
+    std::int64_t from = 0;
+    std::int64_t to = 0;
+    bool single = false;
+  };
+  thread_local std::vector<Run> runs;
+  thread_local std::vector<std::uint32_t> parent;
+  thread_local std::vector<std::size_t> rowStart;
+  runs.clear();
+  parent.clear();
+  rowStart.assign(static_cast<std::size_t>(height) + 1, 0);
+  const auto find = [](std::uint32_t run) {
+    while (parent[run] != run) {
+      parent[run] = parent[parent[run]];
+      run = parent[run];
     }
-    const auto label = chambers.count++;
-    chambers.of[start] = label;
-    pending.push(start);
-    while (!pending.empty()) {
-      const auto current = pending.front();
-      pending.pop();
-      const auto cx = static_cast<std::int64_t>(current) % width;
-      const auto cy = static_cast<std::int64_t>(current) / width;
-      for (std::size_t step = 0; step < STEP_DX.size(); ++step) {
-        const auto nx = cx + STEP_DX[step];
-        const auto ny = cy + STEP_DY[step];
-        if (nx < 0 || ny < 0 || nx >= width || ny >= height ||
-            (refused[current] & (1U << step)) != 0U) {
+    return run;
+  };
+  const auto join = [&find](const std::uint32_t a, const std::uint32_t b) {
+    const auto rootA = find(a);
+    const auto rootB = find(b);
+    if (rootA < rootB) {
+      parent[rootB] = rootA;
+    } else if (rootB < rootA) {
+      parent[rootA] = rootB;
+    }
+  };
+  const auto free = [&](const std::int64_t x, const std::int64_t y) {
+    return !blocked.test(static_cast<std::size_t>((y * width) + x));
+  };
+  // The run of row `y` that holds column `x`, if any.
+  const auto runAt = [&](const std::int64_t x,
+                         const std::int64_t y) -> std::optional<std::uint32_t> {
+    const auto first = runs.begin() + static_cast<std::ptrdiff_t>(rowStart[y]);
+    const auto last =
+        runs.begin() + static_cast<std::ptrdiff_t>(rowStart[y + 1]);
+    const auto found = std::upper_bound(
+        first, last, x,
+        [](const std::int64_t v, const Run& r) { return v < r.from; });
+    if (found == first || std::prev(found)->to < x) {
+      return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(std::prev(found) - runs.begin());
+  };
+  for (std::int64_t y = 0; y < height; ++y) {
+    rowStart[y] = runs.size();
+    for (std::int64_t x = 0; x < width;) {
+      const auto cell = static_cast<std::size_t>((y * width) + x);
+      if (blocked.test(cell)) {
+        ++x;
+        continue;
+      }
+      if (refused[cell] != 0U) {
+        if (!onALine(x, y)) {
+          runs.push_back({.from = x, .to = x, .single = true});
+        }
+        ++x;
+        continue;
+      }
+      auto to = x;
+      while (to + 1 < width && free(to + 1, y) &&
+             refused[static_cast<std::size_t>((y * width) + to + 1)] == 0U) {
+        ++to;
+      }
+      runs.push_back({.from = x, .to = to, .single = false});
+      x = to + 1;
+    }
+    rowStart[y + 1] = runs.size();
+    for (auto index = rowStart[y]; index < rowStart[y + 1]; ++index) {
+      parent.push_back(static_cast<std::uint32_t>(index));
+    }
+    for (auto index = rowStart[y]; index < rowStart[y + 1]; ++index) {
+      const auto run = runs[index];
+      const auto me = static_cast<std::uint32_t>(index);
+      if (run.single) {
+        // Step by step, as a flood: left, above, above left, above right.
+        const auto cell = static_cast<std::size_t>((y * width) + run.from);
+        for (const auto step : std::array<std::size_t, 4>{3, 1, 7, 6}) {
+          const auto nx = run.from + STEP_DX[step];
+          const auto ny = y + STEP_DY[step];
+          if (nx < 0 || ny < 0 || nx >= width ||
+              (refused[cell] & (1U << step)) != 0U) {
+            continue;
+          }
+          if (step >= FIRST_DIAGONAL_STEP && !free(nx, y) &&
+              !free(run.from, ny)) {
+            continue;
+          }
+          if (const auto other = runAt(nx, ny)) {
+            join(me, *other);
+          }
+        }
+        continue;
+      }
+      // The cell left of the run is no cell of a plain run: a single cell,
+      // a line cell or a wall.
+      if (run.from > 0) {
+        if (const auto other = runAt(run.from - 1, y)) {
+          join(me, *other);
+        }
+      }
+      if (y == 0) {
+        continue;
+      }
+      const auto above = y - 1;
+      for (auto other = rowStart[above]; other < rowStart[y]; ++other) {
+        const auto& up = runs[other];
+        if (up.to < run.from - 1 || up.from > run.to + 1) {
           continue;
         }
-        const auto next = static_cast<std::size_t>((ny * width) + nx);
-        if (blocked.test(next) || chambers.of[next] != NO_CHAMBER) {
-          continue;
+        const bool straight = up.to >= run.from && up.from <= run.to;
+        const bool leftCorner =
+            up.to == run.from - 1 &&
+            (free(run.from - 1, y) || free(run.from, above));
+        const bool rightCorner = up.from == run.to + 1 &&
+                                 (free(run.to + 1, y) || free(run.to, above));
+        if (straight || leftCorner || rightCorner) {
+          join(me, static_cast<std::uint32_t>(other));
         }
-        if (step >= FIRST_DIAGONAL_STEP &&
-            blocked.test(static_cast<std::size_t>((cy * width) + nx)) &&
-            blocked.test(static_cast<std::size_t>((ny * width) + cx))) {
-          continue;
-        }
-        chambers.of[next] = label;
-        pending.push(next);
       }
     }
+  }
+  chambers.count = 0;
+  chambers.of.resize(grid.cells());
+  chambers.beside.clear();
+  thread_local std::vector<std::uint32_t> labelOf;
+  labelOf.assign(runs.size(), NO_CHAMBER);
+  for (std::size_t index = 0; index < runs.size(); ++index) {
+    const auto root = find(static_cast<std::uint32_t>(index));
+    labelOf[index] = root == index ? chambers.count++ : labelOf[root];
+  }
+  for (std::int64_t y = 0; y < height; ++y) {
+    auto* row = chambers.of.data() + (y * width);
+    std::int64_t x = 0;
+    for (auto index = rowStart[y]; index < rowStart[y + 1]; ++index) {
+      const auto& run = runs[index];
+      std::fill(row + x, row + run.from, NO_CHAMBER);
+      std::fill(row + run.from, row + run.to + 1, labelOf[index]);
+      x = run.to + 1;
+    }
+    std::fill(row + x, row + width, NO_CHAMBER);
   }
 
   chambers.beside.resize(moves.size());
@@ -207,7 +362,11 @@ Chambers chambersOf(const BitGrid& blocked,
     const auto repeated = std::ranges::unique(beside);
     beside.erase(repeated.begin(), repeated.end());
   }
-  return chambers;
+  for (const auto& gate : moves) {
+    for (const auto& move : gate) {
+      refused[move.cell] = 0;
+    }
+  }
 }
 
 } // namespace mqt::scpd::grid

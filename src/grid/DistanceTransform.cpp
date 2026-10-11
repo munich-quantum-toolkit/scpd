@@ -114,4 +114,90 @@ std::vector<uint32_t> squaredDistanceTransform(const BitGrid& blocked) {
   return distance;
 }
 
+NearestBlocked nearestBlocked(const BitGrid& blocked) {
+  const uint32_t width = blocked.width();
+  const uint32_t height = blocked.height();
+  NearestBlocked result{
+      .squared = std::vector<uint32_t>(blocked.size(), DISTANCE_UNBOUNDED),
+      .cell = std::vector<std::size_t>(blocked.size(), NO_NEAREST)};
+  if (width == 0 || height == 0) {
+    return result;
+  }
+  // Along each row: the column of the nearest blocked cell of the row.
+  constexpr auto NONE = static_cast<uint32_t>(-1);
+  std::vector<uint32_t> column(blocked.size(), NONE);
+  for (uint32_t y = 0; y < height; ++y) {
+    const std::size_t row = static_cast<std::size_t>(y) * width;
+    uint32_t last = NONE;
+    for (uint32_t x = 0; x < width; ++x) {
+      if (blocked.test(row + x)) {
+        last = x;
+      }
+      column[row + x] = last;
+    }
+    last = NONE;
+    for (uint32_t x = width; x-- > 0;) {
+      if (blocked.test(row + x)) {
+        last = x;
+      }
+      auto& own = column[row + x];
+      if (last != NONE && (own == NONE || last - x < x - own)) {
+        own = last;
+      }
+    }
+  }
+  // Down each column: the lower envelope of one parabola per row that has a
+  // blocked cell, as in `squaredDistanceTransform`.
+  std::vector<int64_t> rowCost(height);
+  std::vector<uint32_t> root(height);
+  std::vector<double> from(static_cast<std::size_t>(height) + 1);
+  for (uint32_t x = 0; x < width; ++x) {
+    std::size_t parabolas = 0;
+    const auto cost = [&](const uint32_t r) {
+      return static_cast<double>(rowCost[r]) +
+             (static_cast<double>(r) * static_cast<double>(r));
+    };
+    for (uint32_t y = 0; y < height; ++y) {
+      const auto nearest = column[(static_cast<std::size_t>(y) * width) + x];
+      if (nearest == NONE) {
+        continue;
+      }
+      const auto dx = static_cast<int64_t>(nearest) - static_cast<int64_t>(x);
+      rowCost[y] = dx * dx;
+      double meets = 0.0;
+      while (parabolas > 0) {
+        const auto last = root[parabolas - 1];
+        meets = (cost(y) - cost(last)) /
+                (2.0 * (static_cast<double>(y) - static_cast<double>(last)));
+        if (parabolas == 1 || meets > from[parabolas - 1]) {
+          break;
+        }
+        --parabolas;
+      }
+      root[parabolas] = y;
+      from[parabolas] =
+          parabolas == 0 ? -std::numeric_limits<double>::infinity() : meets;
+      ++parabolas;
+    }
+    if (parabolas == 0) {
+      continue;
+    }
+    std::size_t k = 0;
+    for (uint32_t y = 0; y < height; ++y) {
+      while (k + 1 < parabolas && from[k + 1] <= static_cast<double>(y)) {
+        ++k;
+      }
+      const auto dy = static_cast<int64_t>(y) - static_cast<int64_t>(root[k]);
+      const auto cell = (static_cast<std::size_t>(y) * width) + x;
+      const auto value = rowCost[root[k]] + (dy * dy);
+      result.squared[cell] =
+          static_cast<uint32_t>(std::min<int64_t>(value, DISTANCE_UNBOUNDED));
+      result.cell[cell] =
+          (static_cast<std::size_t>(root[k]) * width) +
+          column[(static_cast<std::size_t>(root[k]) * width) + x];
+    }
+  }
+  return result;
+}
+
 } // namespace mqt::scpd::grid

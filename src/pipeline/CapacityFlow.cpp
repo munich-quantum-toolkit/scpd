@@ -188,9 +188,13 @@ fewestEdges(const std::uint32_t chambers, const std::vector<FlowEdge>& edges,
         onward |= bit;
       }
       // An edge leads into its other chambers: back into the one it was
-      // entered from is no step, and crosses nothing.
-      for (const auto next : edges[index].chambers) {
-        if (next == chamber) {
+      // entered from is no step, and crosses nothing — unless that one is
+      // all it has, as a stretch of a feedline open at one end has.
+      const auto& sides = edges[index].chambers;
+      const bool loop = std::ranges::all_of(
+          sides, [chamber](const std::uint32_t c) { return c == chamber; });
+      for (const auto next : sides) {
+        if (next == chamber && !loop) {
           continue;
         }
         const auto reached = stateOf(next, onward);
@@ -198,6 +202,9 @@ fewestEdges(const std::uint32_t chambers, const std::vector<FlowEdge>& edges,
           over[reached] = index;
           before[reached] = state;
           pending.push(reached);
+        }
+        if (loop) {
+          break;
         }
       }
     }
@@ -297,8 +304,10 @@ shortestWay(const std::vector<FlowEdge>& edges,
       onward |= bit;
     }
     const auto& sides = edges[index].chambers;
+    const bool loop = std::ranges::all_of(
+        sides, [chamber](const std::uint32_t c) { return c == chamber; });
     for (std::size_t k = 0; k < sides.size(); ++k) {
-      if (sides[k] == chamber) {
+      if (sides[k] == chamber && !loop) {
         continue;
       }
       const auto state = ((first[index] + k) * masks) + onward;
@@ -306,6 +315,9 @@ shortestWay(const std::vector<FlowEdge>& edges,
         best[state] = cost;
         before[state] = from;
         pending.push({cost, state});
+      }
+      if (loop) {
+        break;
       }
     }
   };

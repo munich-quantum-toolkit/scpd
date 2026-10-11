@@ -12,6 +12,27 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Find the bottlenecks of the capacity check in the coupler insertion without
+  a medial axis (`SCPD_CAPACITY_FAST=1`; off by default). `grid::profileCuts`
+  walks along the walls the insertion moves (feedline edges, coupler pads,
+  leads) and takes every persistent minimum of the gap to another wall as a
+  bottleneck: the gap to the border, the artwork and the port runs of the plain
+  wires and the resonator targets is read off two feature transforms
+  (`grid::nearestBlocked`) built once per insertion, one for the walls inside
+  the feedline ring and one for those outside; the gap between two feedline
+  edges is the distance of their middle lines less both inflations; the mouth of
+  every port run's slot is closed by a cut from each flank's open end. No
+  distance transform and no Voronoi diagram of the chip is built per check.
+  `SCPD_CAPACITY_FAST=2` runs both and logs every step where they disagree. At 1
+  the report of `SCPD_BOTTLENECKS` draws the profile cuts as well. On 17q with
+  the capacity rule a check takes 0.017-0.057 s instead of 0.40-0.51 s, the
+  insertion 58 s instead of 227 s, the two refuse the same steps on 404 of 407
+  and the final routing is the same. `grid::chambersOf` labels the chambers by
+  runs of free cells with a union-find instead of a flood (45 to 6 ms on 17q),
+  with the same chambers in the same order; `bottleneckMoves` looks only at the
+  cells near a cut's line; the capacity check keeps the border and the artwork
+  and the cells of every port run from check to check. The medial axis gives
+  every step the verdict it gave before.
 - ✨ Move a coupler option that leaves the coupler box into it, by at most
   `SCPD_COUPLER_SHIFT` cells along each axis (20 by default; `=0` places every
   option on its place). The option is moved by what its cell outside the box
@@ -66,7 +87,11 @@ releases may include breaking changes.
   or fails the commit's test on more edges. With `SCPD_CAPACITY_RULE=1`
   (off by default) every step of the chain search is checked on the chains
   settled before with the prefix standing on top, and a step whose edge
-  closes a wire is refused.
+  closes a wire is refused. The prefix's chain is open at its end and
+  separates nothing yet, so the check prescribes no crossing of its edges
+  until the chain stands whole. A feedline edge from or to a launcher is no
+  limit, since the feedline routing lays those edges again: a bottleneck
+  with an end on one takes every wire, and every wire may cross one.
   A resonator's way through the graph is the one whose least length — from
   line to line of the edges it passes — is shortest, and it is no way when
   that is longer than the resonator's target length less its lead allows;
@@ -74,7 +99,10 @@ releases may include breaking changes.
   without it, and the time of the checks does not count against the chain's
   clock. `SCPD_CAPACITY_STEP=1` reports the check without the rule: each step
   says at `-v 1` whether the graph carries every wire and which wires its
-  edge closes, and each feedline edge of a settled chain says it once. `mqt-scpd couplers
+  edge closes, and each feedline edge of a settled chain says it once.
+  `SCPD_CAPACITY_STEP_GRAPHS=1` writes the graph the check saw at each of
+  those edges, as `step-c<chain>-f<edge>-capacity-graph.json` for
+  `capacityview`. `mqt-scpd couplers
   <run>` holds the Final stage after the coupler insertion (`CouplerSession`)
   and serves the page on a local port with a Couplers tab: every option of a
   coupler is drawn
@@ -483,6 +511,19 @@ releases may include breaking changes.
 
 ### Fixed
 
+- 🐛 Handle a feedline with a reflector, which has one launcher, in the coupler
+  insertion. Its edge at the reflector end runs between two couplers and is no
+  terminal edge: the fences, the end-pair reorder and the fresh routing of the
+  end edges ask whether an edge has a launcher end, not whether it is the first
+  or the last of its chain. In the capacity graph such a feedline stays open at
+  the reflector, so an edge of it may have one chamber on both sides; a wire
+  prescribed to cross it crosses from that chamber back into it (`checkInTurn`
+  takes such a stretch). On 45q wires 57 and 58 had no way across f20.
+- 🐛 Lay the pair at either end of a chain the other way round in the commit of
+  the coupler insertion, as the chain search does: an end edge that finds no way
+  after its predecessor is laid first, and the predecessor is routed again
+  against it. A chain the search runs out of time on is committed as it stands,
+  and on 57q its second edge f33 had no way.
 - 🐛 Keep the edges of one chain from crossing in the coupler insertion. The
   first and last edge of a chain fence every edge of it again
   (`SCPD_TERMINAL_EDGES_FENCE_ALL`, on by default); on 69q chain 2's f15

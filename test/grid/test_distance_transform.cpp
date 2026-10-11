@@ -88,4 +88,41 @@ TEST(DistanceTransform, AGridWithoutObstaclesIsUnbounded) {
   }
 }
 
+TEST(NearestBlocked, NamesABlockedCellAtTheExactDistance) {
+  for (const std::uint32_t seed : {7U, 8U, 9U}) {
+    std::mt19937 rng(seed);
+    std::bernoulli_distribution coin(seed == 9U ? 0.004 : 0.08);
+    BitGrid blocked(41, 29);
+    for (std::size_t i = 0; i < blocked.size(); ++i) {
+      if (coin(rng)) {
+        blocked.set(i);
+      }
+    }
+    const auto nearest = nearestBlocked(blocked);
+    const auto exact = bruteForce(blocked);
+    for (std::size_t i = 0; i < blocked.size(); ++i) {
+      ASSERT_EQ(nearest.squared[i], exact[i]) << seed << " cell " << i;
+      if (exact[i] == DISTANCE_UNBOUNDED) {
+        continue;
+      }
+      const auto site = nearest.cell[i];
+      ASSERT_NE(site, NO_NEAREST);
+      ASSERT_TRUE(blocked.test(site));
+      const auto dx =
+          static_cast<int64_t>(i % 41) - static_cast<int64_t>(site % 41);
+      const auto dy =
+          static_cast<int64_t>(i / 41) - static_cast<int64_t>(site / 41);
+      EXPECT_EQ(static_cast<uint32_t>((dx * dx) + (dy * dy)), exact[i]);
+    }
+  }
+}
+
+TEST(NearestBlocked, NamesNoCellOnAnEmptyGrid) {
+  const auto nearest = nearestBlocked(BitGrid(6, 3));
+  for (std::size_t i = 0; i < nearest.cell.size(); ++i) {
+    EXPECT_EQ(nearest.cell[i], NO_NEAREST);
+    EXPECT_EQ(nearest.squared[i], DISTANCE_UNBOUNDED);
+  }
+}
+
 } // namespace

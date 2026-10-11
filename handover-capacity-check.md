@@ -508,20 +508,299 @@ run directories `artifacts/dev/17q-len-b5`, `-b8`):
 Pictures: `artifacts/sat/17q-length-box5-final.svg` and
 `17q-length-box5-capacity-graph.svg`/`.html`.
 
+## 9. The fast check: profile cuts (2026-10-10)
+
+`SCPD_CAPACITY_FAST` (0 by default) changes how a check of the chain search
+finds its bottlenecks. Everything after the bottlenecks (chambers, graph,
+`checkInTurn`, the rule) is unchanged.
+
+### Why
+
+One check was a whole analysis of the chip. Measured on 17q over 241 checks of
+the chain search (this cloud machine, about three times slower than the Mac):
+
+| Step                                                       | ms per check |  Share |
+| ---------------------------------------------------------- | -----------: | -----: |
+| Voronoi (`construct_voronoi` 97, filter 34, sites 16)      |          146 |   30 % |
+| cuts (`findBottlenecks`, then `couplerCuts` drops a third) |          109 |   23 % |
+| chambers (flood 78, blocked moves 11)                      |           91 |   19 % |
+| distance transform                                         |           60 |   13 % |
+| axis (`rasterizeMedialAxis`)                               |           33 |    7 % |
+| walls (port runs 13, border 8.5, feedlines 4, artwork 3.6) |           31 |    6 % |
+| stretches and ports                                        |          3.3 |  < 1 % |
+| `checkInTurn`                                              |         0.16 | 0.03 % |
+| **one check**                                              |      **490** |        |
+
+More than 99 % is geometry of the whole chip, done again at every check.
+
+### How it works
+
+`grid::profileCuts` (`src/grid/ProfileCuts.cpp`) needs no medial axis:
+
+- **Static fields.** `fastCapacityOf` builds the walls that stay through an
+  insertion once (`wallsOf(…, staticOnly)`: border, artwork, the port runs of
+  the plain wires and of every resonator's target), and two feature transforms
+  of them (`grid::nearestBlocked`): one of the walls inside the feedline ring
+  (artwork, runs at targets), one of those outside (border, runs at sources).
+  Two fields let a cell of a feedline see a static wall on each side.
+- **Dynamic walls** (feedline edges, pads, leads) are traced (Moore tracing) and
+  walked along. The gap from every outline cell to each field is a profile; a
+  bottleneck is a persistent minimum: the gap rises by
+  `2 × SCPD_BOTTLENECK_RISE` on both sides before it falls below, a stretch of
+  one width counts once at its middle, and a change of the wall across counts as
+  a rise unless the gap falls there.
+- **Two dynamic walls.** The gap is the distance between their lines less both
+  radii: a feedline edge is its middle line inflated by `wallInflation`, a pad
+  or a lead its outline. This is how two feedline edges are cut.
+- **Mouths.** Every port run's slot is closed by a cut from each flank's open
+  end to the nearest dynamic wall ahead, unless a static wall is nearer
+  (`mouthOf`). The medial axis does this with its slot rules; a profile has no
+  minimum there.
+- **Lines and wedges.** A cut must cross only free cells and no slot. Where two
+  walls touch, or both touch a third dynamic wall near the cut (two edges of a
+  chain at their coupler), the wedge between them is no bottleneck. Cuts between
+  the same two walls with both ends within a room pitch are one.
+
+`SCPD_CAPACITY_FAST=2` runs the medial axis (which decides) and the profiles,
+and logs every step where the wires they close differ (`[Capacity Fast]`), and
+per chain how often they agree. At 1 the report after the insertion
+(`SCPD_BOTTLENECKS`, `final-capacity-graph.*`, `final-bottlenecks.svg`) is built
+from the profile cuts too, with no medial axis to draw. With either mode on,
+every chain logs the time of each step of the fast pass.
+
+Also in this work, with the same results:
+
+- `grid::chambersOf` labels the chambers in one pass with a union-find kept in
+  the labels (root = lowest cell), numbered in the order a flood would give;
+  `bottleneckMoves` looks only at cells within two cells of a cut's line (49 → 6
+  ms for 145 cuts). Tests:
+  `Chambers.LabelEveryCellAsAFloodFromTheLowestCellWould`,
+  `Chambers.ABottleneckRefusesEveryStepAcrossItsLine`.
+- The capacity pass hands its wall and chamber labels back for the next pass
+  (`giveBack`); the labelling keeps its scratch per thread.
+
+### Measured on 17q (2026-10-10)
+
+Cloud machine, `stop_after = "feedlines"`, no repair, `SCPD_CAPACITY_RULE=1`.
+Measured with a C++ driver outside the package that plans once and runs the
+Final stage, reading `benchmarks/17q/config.toml` as
+`test/pipeline/Benchmarks.hpp` does; the Python CLI was not used.
+
+| Arm                                             | Check per step | Insertion | Whole Final stage | Final routing                                    |
+| ----------------------------------------------- | -------------- | --------: | ----------------: | ------------------------------------------------ |
+| no rule                                         | –              |       8 s |              84 s | open 18, 19                                      |
+| rule, medial axis                               | 0.40-0.51 s    |     227 s |             306 s | open 18, 19                                      |
+| rule, profiles                                  | 0.063-0.144 s  |      85 s |             164 s | open 18, 19, same short/long, same angle cost 48 |
+| rule, profiles, after the second round below    | 0.017-0.057 s  |      58 s |             133 s | the same                                         |
+| rule, medial axis, after the second round below | 0.34-0.45 s    |     187 s |             261 s | the same                                         |
+
+The fast pass per check after the second round: walls 7-13 ms, profiles 12-24
+ms, chambers 5-15 ms, stretches 1-5 ms, `checkInTurn` 0.3 ms.
+
+**The second round** (same day):
+
+- `grid::chambersOf` labels by runs: a row's free cells that no cut touches are
+  one run and are joined as a whole to the runs above it they overlap
+  (diagonally only at a run's ends, past the corner rule); a cell with a refused
+  step is joined step by step as before. 17q: 45 → 6 ms per call. Test:
+  `Chambers.LabelEveryCellAsAFloodFromTheLowestCellWould`, now 20 grids with 30
+  cuts each.
+- `wallsOf` copies the border and the artwork from `baseWalls` (built once) and
+  lays every port run from `runStampOf`, the run's cells by geometry, kept while
+  the run's line stays the same (only the leads change). A cell another wall
+  holds is skipped as before.
+- The Moore trace of `grid::profileCuts` stops where its step out of the start
+  repeats its first step; the old stop could miss and trace a wall several times
+  (one outline of 19 500 cells on 17q). Test:
+  `ProfileCuts.CutsAThinWallToTheWallOnEachSide`.
+- A mouth of a static run is searched only as far as the static wall ahead of
+  it.
+
+Proof that the walls and chambers are unchanged: the medial-axis run with the
+rule after the second round gives every one of the 386 steps of the run before
+it the same verdict; it checks 32 steps more in the same time.
+
+Agreement (`SCPD_CAPACITY_FAST=2`, 407 steps): the two refuse the same steps on
+404 and close exactly the same wires on 327. The three refusals that differ are
+in chain 1: f6 on option 33 (the profiles close 20 21 22, the axis none) and f8
+on options … 29 4 (the axis closes 30, the profiles none). The profiles cost
+0.060, 0.091, 0.101 and 0.150 s per check in chains 0 to 3, the medial axis
+0.34-0.45 s.
+
+Tests: `ctest -E EveryChip` 408 of 410 after the second round.
+`FinalRouter.OnlyUnsettledRedrawsOneWire` fails as before;
+`CouplerInsertion.ASecondDoglegOffersAnotherPlacement` (anchor 580 against 581)
+fails too, in code this work does not touch.
+
+Cut for cut the profiles do not reproduce the axis (on the 17q end state about
+90 of 145 cuts match within a room pitch): the slot rules and the persistence
+along an axis and along a wall differ. The verdict is what the rule uses.
+
+### What is open
+
+1. **The remaining time** is the profiles (12-24 ms; `collectWalls` scans the
+   whole grid, the dynamic walls could come from the wall builder), the feedline
+   edges in the walls (each one's disc stamped again per check) and the chambers
+   (an incremental flood of only the chambers the step's walls touch: on the 17q
+   end state a new edge touches 11 chambers in the median, 7.8 % of the free
+   cells).
+2. **The three differing refusals** were not looked into.
+3. **Larger chips** were not run: 69q was stopped (user). `collectWalls` scans
+   the whole grid per check; on 69q the dynamic walls should come from the wall
+   builder instead.
+4. **The default** stays the medial axis until the user decides.
+
+## 10. An open chain prescribes no crossing (user, 2026-10-10)
+
+On 33q the rule made the result worse: 2 open wires, angle cost 80, four chains
+searched again without the rule, 609 s. Without the rule: 0 bad wires, angle
+cost 76. The step graphs (`SCPD_CAPACITY_STEP_GRAPHS=1`) showed why (user):
+every edge the check called closing lay on a chain the search had laid only up
+to that edge.
+
+The check prescribed every drawn edge between couplers to the plain wires that
+bridge it (`bridgers_`), the edges of the chain under search too. That chain is
+open at its end, so both sides of a new edge are one chamber, and
+`crossingStretches` lays no stretch where both sides are one chamber. A
+prescribed edge with no stretch leaves the wire no way. 12 of the 13 steps that
+closed a wire on the 33q run without the rule were this; source and target
+mostly lay in the same chamber.
+
+The fix: an edge of a chain that stands only in part (`Edge::open`, set by
+`stateOf` when fewer than all waypoints stand) is prescribed to no wire. It is
+still a wall, and its stretches, where it has any, stay open to its bridgers. A
+pocket that a half-laid chain closes against other walls is still found at the
+step that closes it. Test:
+`FinalRouter.TheStepCheckPrescribesNoCrossingOfAnOpenChain` (9q; it fails
+without the fix on chain 0 f2 and f3).
+
+33q, rule on, profiles, sequential, CLI, `stop_after = "feedlines"`:
+
+| Arm                  | Bad wires | Angle cost | Chains again without the rule | Insertion | Whole run |
+| -------------------- | --------- | ---------: | ----------------------------- | --------: | --------: |
+| rule, before the fix | 2 (open)  |         80 | 1, 3, 4, 6                    |         – |     609 s |
+| no rule              | 0         |         76 | –                             |    58.8 s |     346 s |
+| rule, with the fix   | 0         |         76 | –                             |    47.8 s |     370 s |
+
+With the fix every feedline edge of the seven chains is SAT, and the final
+routing is the one without the rule (short: 1, 9, 13, 22, 31, 49, 80, 87, 92,
+102). The rule still refuses three steps: chain 1 f6 on options 6 and 9 (wires
+18 and 19 pass the pad and the lead of coupler 20 through cuts of 9-13 cells,
+which take no wire) and chain 6 f35 on options 0 0 (eight wires). Whether those
+cuts are right is open.
+
+## 11. A gap at a terminal edge is no limit (user, 2026-10-11)
+
+On 57q the rule refused every step of chain 8, and four chains on 69q refused
+every step from their first edge on. A diagnosis run on 57q
+(`SCPD_CAPACITY_STEP_GRAPHS=1`, `-v 1`) showed:
+
+- No edge of the 446 steps that closed a wire meets another feedline edge (the
+  step line names any it meets: `its edge meets …`).
+- Every closure was capacity, not a missing way: a bottleneck full.
+- 10 of the 17 refused steps written out had a terminal edge (from or to a
+  launcher) at the full bottleneck. Chain 8: its first edge f62 runs beside f61,
+  the last edge of chain 7; the gap f62 · f61 takes 1-3 wires and five (178-182)
+  need it, and the gaps of 9-13 cells between f62 and the pad or lead of coupler
+  183 take none.
+- The other 7: chain 1 f14 · artwork (10 wires on 9 places), chain 4 f33 ·
+  artwork near Qb57 (2 on 1; f33 ends with no way, the one unrouted wire of 57q)
+  and chain 6, lead of 160 · f54 (9-12 cells, none).
+
+The feedline routing lays the terminal edges again, so a gap at one is no limit
+(user). `capacityProblemOf` gives a bottleneck with an end on a terminal edge
+the capacity of every wire; the edge stays a wall, and no wire is prescribed to
+cross it. The graph JSON marks such a bottleneck `"terminal": true`. Test:
+`FinalRouter.ATerminalEdgeTakesEveryWire` (9q; it fails without the change).
+
+Open: the gaps of 9-13 cells between a feedline edge and the pad or lead of the
+coupler beside it (33q chain 1 f6, 57q chain 6 f54) take no wire. Whether that
+is right is the user's call.
+
+## 12. The end pair the other way round in the commit (user, 2026-10-11)
+
+On 57q chain 4 ran out of time with the rule and again without it, and was
+committed as it stood. The commit lays the edges front to back, and f33 (its
+edge 1) found no way after f32: the one unrouted wire. The chain search lays an
+end pair the other way round when the later edge finds no way (`mayReorder` in
+`solveChainAStar`; it fired 15 times on chain 4), the commit did not.
+
+The commit now does the same for edge 1 and the last edge of a chain: it takes
+the predecessor up, lays the edge first, and routes the predecessor again
+against it; when either finds no way, both go back as they were. The log says
+`no way after f…, but both fit with f… laid first`.
+
+57q, rule on, profiles, terminal gaps open: 0 bad wires (was 1), 0 edges not
+drawn (was 1, f33), angle cost 138 (was 136; f32 is routed again), graph SAT,
+675 s. No test yet: none of the chips the tests run (4q, 9q) commits a chain the
+search left as it stood.
+
+## 13. Every wire may cross a terminal edge (user, 2026-10-11)
+
+On 69q the rule refused every option of the first edge of chains 1, 4, 7, 9 and
+11, and the final graph had no way for 14 wires (19, 20 · 72-75 · 133-136 ·
+176-179). The diagnosis run (`SCPD_CAPACITY_STEP_GRAPHS=1`, `-v 1`) showed one
+cause: the first edge of a chain meets the last edge of the chain before it at
+the next launcher (`its edge meets f5` and the like; chain 4's f26 and f25 run
+13 cells apart, and their walls of 9.5 cells each merge). Between them lie the
+chip ports of plain wires, in a pocket of three chambers with no bottleneck out:
+where two walls touch there is no gap to cut. The feedline routing lays the
+terminal edges again and every one of those wires was drawn in the end; only 183
+and 184 stayed open.
+
+The fix (user): a terminal edge is crossable. `crossingStretches` gives it
+stretches as any edge, open to every wire (`users` empty) and taking every wire.
+No wire is prescribed one, so a way may cross it or not. The graph JSON marks
+such a stretch `"terminal": true`. Tests:
+`FinalRouter.ATerminalEdgeTakesEveryWire` (9q) checks the stretches as well;
+`FinalRouter.DrawsTheCapacityGraphAfterTheBottlenecks` lets a way cross a
+terminal edge beside its prescribed ones.
+
+## 14. Feedlines with a reflector (user, 2026-10-11)
+
+On 45q the final graph had no way for wires 57 and 58 (Chip.port44/43 to
+Coupler24_28). Both are prescribed to cross f20, the first edge of chain 3.
+Chain 3 has one launcher: its other end is a reflector, so its first point is a
+coupler and f20 runs between two couplers. The chain stays open at the reflector
+when it stands whole, so f20 has chamber 55 on both sides (153 of its 158 cells)
+and `crossingStretches` laid no stretch: a prescribed edge with no stretch, no
+way. The rule then refused every last edge f25 of the chain (with it the chain
+stands whole and the prescription holds), and the chain ran out of time twice
+and was committed as it stood.
+
+The user's reading: f20 is taken for a terminal edge. In the capacity graph it
+was not (`Edge::terminal` asks for a launcher), but the chain search and the
+commit took the first and the last edge of a chain for terminal edges: the
+fences in `fenceCommittedEdges` and the prefix search, `pairAtAnEnd`,
+`CHAIN_FRESH_EDGES` and the commit's end-pair reorder. All of them now ask
+`atLauncher(chain, at)`. A chain with two launchers is unchanged.
+
+In the capacity graph an edge of a chain with a reflector end keeps the places
+where both sides are one chamber, as a stretch from that chamber back into it.
+`checkInTurn` takes such an edge as a step that crosses it (both searches
+skipped an edge back into the chamber they came from). The flow of
+`SCPD_CAPACITY_FLOW` already took it. The insertion logs every such chain:
+`chain 3: one launcher, a reflector at its first end`.
+
+Tests: `InTurn.AWireCrossesAFeedlineWithOneChamberOnBothSides`,
+`InTurn.AWireOfFixedLengthCrossesAFeedlineWithOneChamberOnBothSides` (both fail
+without the change). No test chip (4q, 9q) has a reflector.
 ## All switches of this work
 
-| Variable                    | Default | What it does                                                                                     |
-| --------------------------- | ------- | ------------------------------------------------------------------------------------------------ |
-| `SCPD_BOTTLENECK_ALL`       | off     | on: every cut, not only those with an end on a feedline edge, a pad or a lead                    |
-| `SCPD_CAPACITY_FLOW`        | off     | on: the integer flow instead of the wires routed one after another                               |
-| `SCPD_CAPACITY_CHAIN`       | off     | on: the check after every settled chain, and the search again                                    |
-| `SCPD_CAPACITY_STEP`        | off     | on: the analysis after every step of the chain search, report only (section 7)                   |
-| `SCPD_CAPACITY_RULE`        | off     | the chain search refuses a step whose edge closes a wire (section 8)                             |
-| `SCPD_CAPACITY_CHAIN_TRIES` | 3       | how often one chain is searched again                                                            |
-| `SCPD_COUPLER_BOX_MARGIN`   | 5       | cells the couplers keep further in from every side of the coupler box (section 6)                |
-| `SCPD_EDGE_LAUNCHER_MARGIN` | 5       | cells added to the run a feedline edge keeps closed in front of every other launcher (section 5) |
-| `SCPD_CAPACITY_BENCH`       | 0       | measurement only (section 2)                                                                     |
-| `SCPD_CAPACITY_DUMP`        | none    | measurement only (section 2)                                                                     |
+| Variable                    | Default | What it does                                                                                                              |
+| --------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `SCPD_BOTTLENECK_ALL`       | off     | on: every cut, not only those with an end on a feedline edge, a pad or a lead                                             |
+| `SCPD_CAPACITY_FLOW`        | off     | on: the integer flow instead of the wires routed one after another                                                        |
+| `SCPD_CAPACITY_CHAIN`       | off     | on: the check after every settled chain, and the search again                                                             |
+| `SCPD_CAPACITY_STEP`        | off     | on: the analysis after every step of the chain search, report only (section 7)                                            |
+| `SCPD_CAPACITY_RULE`        | off     | the chain search refuses a step whose edge closes a wire (section 8)                                                      |
+| `SCPD_CAPACITY_STEP_GRAPHS` | off     | on: the graph the check saw at every edge of a settled chain, as `step-c<chain>-f<edge>-capacity-graph.json` (section 10) |
+| `SCPD_CAPACITY_CHAIN_TRIES` | 3       | how often one chain is searched again                                                                                     |
+| `SCPD_COUPLER_BOX_MARGIN`   | 5       | cells the couplers keep further in from every side of the coupler box (section 6)                                         |
+| `SCPD_EDGE_LAUNCHER_MARGIN` | 5       | cells added to the run a feedline edge keeps closed in front of every other launcher (section 5)                          |
+| `SCPD_CAPACITY_FAST`        | 0       | 1: the bottlenecks of a check by profiles (section 9); 2: both, the axis decides, log the differences                     |
+| `SCPD_CAPACITY_BENCH`       | 0       | measurement only (section 2)                                                                                              |
+| `SCPD_CAPACITY_DUMP`        | none    | measurement only (section 2)                                                                                              |
 
 ## Tests
 

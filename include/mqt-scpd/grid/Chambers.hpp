@@ -85,4 +85,10 @@ struct Chambers {
 chambersOf(const BitGrid& blocked, const std::vector<Bottleneck>& bottlenecks,
            const GridMetrics& grid);
 
+/// `chambersOf` into chambers already there, so that a caller that labels
+/// one grid many times keeps the memory of the labels from call to call.
+MQT_SCPD_GRID_EXPORT void chambersOf(const BitGrid& blocked,
+                                     const std::vector<Bottleneck>& bottlenecks,
+                                     const GridMetrics& grid, Chambers& into);
+
 } // namespace mqt::scpd::grid
