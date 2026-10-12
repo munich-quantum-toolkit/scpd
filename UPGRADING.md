@@ -19,13 +19,12 @@ of changes including minor and patch releases, please refer to the
   `[[ports.bridge_pairs]]` rules that pair those ports. The `component` pattern
   has to match every `bridge_pair` port.
 
-The configurations in `benchmarks/<chip>/config.toml` carry these keys. Plan a
-benchmark chip with the chip input of
-[planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd):
+The configurations of the benchmark chips in
+[planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd)
+carry these keys:
 
 ```console
-mqt-scpd plan -c benchmarks/17q/config.toml \
-  --chip planar-superconducting-pd/inputs/17q/routing_config.json -o runs/17q
+mqt-scpd plan -c planar-superconducting-pd/inputs/17q/config.toml -o runs/17q
 ```
 
 The assignment expects the chip input to list the launcher ports once around the

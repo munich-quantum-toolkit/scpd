@@ -51,15 +51,12 @@ together, it names the offending port or key and exits with a nonzero status.
 ## Planning a Chip
 
 `mqt-scpd plan` runs the planning steps on a chip. The steps need a few keys
-that the configurations of the data repository do not carry yet: the
-`launcher_target` of the assignment, the `component` pattern, and the bridge
-rules of the couplers. This repository carries a configuration with these keys
-for every benchmark chip in `benchmarks/<chip>/config.toml`. Each takes the chip
-input of the data repository through `--chip`:
+beyond those of the other commands: the `launcher_target` of the assignment, the
+`component` pattern, and the bridge rules of the couplers. The configuration of
+every benchmark chip carries them:
 
 ```console
-mqt-scpd plan -c benchmarks/33q/config.toml \
-  --chip planar-superconducting-pd/inputs/33q/routing_config.json -o runs/33q
+mqt-scpd plan -c inputs/33q/config.toml -o runs/33q
 ```
 
 A run writes one artifact per step into its directory, in this order:

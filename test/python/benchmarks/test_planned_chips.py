@@ -8,7 +8,7 @@
 
 """The planning steps on the benchmark chips of planar-superconducting-pd.
 
-Each chip is planned once, with the configuration of this repository, and the plan is checked
+Each chip is planned once, with its configuration in the data repository, and the plan is checked
 against what the later stages rely on: every inner port is reached, every ring port has a launcher,
 every connection has a corridor, a crossing slot carries one wire, and no two wires meet inside a
 partition. The tests run when ``MQT_SCPD_BENCHMARKS`` names a clone of the data repository.
@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 
 DATA = Path(os.environ["MQT_SCPD_BENCHMARKS"]) if "MQT_SCPD_BENCHMARKS" in os.environ else None
 CHIPS = sorted(path.parent.name for path in DATA.glob("inputs/*/config.toml")) if DATA else []
-REPOSITORY = Path(__file__).resolve().parents[3] / "benchmarks"
 
 pytestmark = pytest.mark.skipif(DATA is None, reason="MQT_SCPD_BENCHMARKS names no clone of the benchmark data")
 
@@ -271,7 +270,7 @@ def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_pat
     """Every step runs without a fail, and the plan keeps the rules the later stages rely on."""
     assert DATA is not None
     directory = RunDirectory(tmp_path / chip)
-    config = directory.prepare(REPOSITORY / chip / "config.toml", DATA / "inputs" / chip / "routing_config.json")
+    config = directory.prepare(DATA / "inputs" / chip / "config.toml")
     chip_bytes = directory.classified_chip(config)
     fails = Fails()
     for step in STEPS:

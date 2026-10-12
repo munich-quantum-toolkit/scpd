@@ -38,8 +38,7 @@ releases may include breaking changes.
 - ✨ Add bridge pairs and components to the configuration: the `bridge_pair` and
   `component` patterns, the `[[ports.bridge_pairs]]` rules, the stage sections
   and `[run]` ([#140]) ([**@FeldmeierMichael**])
-- ✨ Add the configurations of the eight benchmark chips in `benchmarks/`, and
-  the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#140])
+- ✨ Add the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#140])
   ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins
   move primitives, with a distance-field heuristic, a bucket queue whose memory
