@@ -11,6 +11,7 @@
 // The registry: a name, a factory and a list. It exists so that a second
 // implementation of a stage is a new file rather than a refactor.
 
+#include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
@@ -18,9 +19,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
@@ -129,6 +132,75 @@ TEST(ShippedRegistries, HonorAConfiguredName) {
   EXPECT_EQ(selectedGlobalRouter(config), "other-router");
   EXPECT_EQ(selectedAssigner(config), "other-assigner");
   EXPECT_EQ(selectedCorridorRouter(config), "other-corridors");
+}
+
+/// The planning steps of a run that takes them all.
+const std::vector<std::string> ALL_STEPS = {"capacity", "global", "assign",
+                                            "corridor"};
+
+/// Whether one of the problems starts with a given text.
+bool mentions(const std::vector<std::string>& problems,
+              const std::string_view start) {
+  return std::ranges::any_of(problems, [&](const std::string& problem) {
+    return problem.starts_with(start);
+  });
+}
+
+TEST(PlanProblems, FindNothingWrongWithTheFixture) {
+  EXPECT_TRUE(
+      planProblems(test::miniChip(), test::miniConfig(), ALL_STEPS).empty());
+}
+
+TEST(PlanProblems, NameAnImplementationThatIsNotRegistered) {
+  auto config = test::miniConfig();
+  config.stages->global->router = "other-router";
+  config.stages->corridor->router = "other-corridors";
+
+  const auto problems = planProblems(test::miniChip(), config, ALL_STEPS);
+  EXPECT_EQ(problems.size(), 2U);
+  EXPECT_TRUE(mentions(problems, "[stages.global] router 'other-router' is no "
+                                 "known implementation; the registered ones "
+                                 "are hanan-milp"));
+  EXPECT_TRUE(mentions(problems, "[stages.corridor] router 'other-corridors'"));
+  // A run that ends before the corridor does not build its router.
+  EXPECT_EQ(
+      planProblems(test::miniChip(), config, {"capacity", "global"}).size(),
+      1U);
+}
+
+TEST(PlanProblems, AskForTheLauncherTargetOnlyWhenTheRunAssigns) {
+  auto config = test::miniConfig();
+  config.stages->assignment->launcher_target = 0;
+
+  EXPECT_TRUE(mentions(planProblems(test::miniChip(), config, ALL_STEPS),
+                       "[stages.assignment] launcher_target is missing"));
+  EXPECT_TRUE(
+      planProblems(test::miniChip(), config, {"capacity", "global"}).empty());
+}
+
+TEST(PlanProblems, RefuseAnOddNumberOfChainEnds) {
+  // One launcher end and no termination leave one chain with one end.
+  auto config = test::miniConfig();
+  config.rules->feedline_terminations = 0;
+
+  const auto problems = planProblems(test::miniChip(), config, ALL_STEPS);
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_EQ(problems[0],
+            "[stages.assignment] launcher_target 1 plus [design_rules] "
+            "feedline_terminations 0 is odd; every feedline chain has two "
+            "ends, so the sum has to be even");
+}
+
+TEST(PlanProblems, RefuseLaunchersListedWithTheRing) {
+  // The fixture lists its launchers clockwise against a counterclockwise
+  // ring. The reversed ring runs with them.
+  auto config = test::miniConfig();
+  auto& ring = config.ports->sequences->all_outer;
+  std::ranges::reverse(ring);
+
+  EXPECT_TRUE(mentions(planProblems(test::miniChip(config), config, ALL_STEPS),
+                       "the chip input lists the launcher ports in the "
+                       "direction of the port ring"));
 }
 
 } // namespace

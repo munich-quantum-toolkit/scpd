@@ -42,8 +42,9 @@ struct MQT_SCPD_PIPELINE_EXPORT InnerCircuit {
   /// The routable ports the configured ring does not carry, ascending.
   std::vector<std::uint32_t> innerPorts;
   /// The inner ports that no bridge claims, ascending. These are the ports the
-  /// inner circuit has to reach: every port of an inner qubit, and the one
-  /// port of a coupler that is left once its bridges are paired off.
+  /// inner circuit has to reach: every port of an inner qubit, the one port
+  /// of a coupler that is left once its bridges are paired off, and every
+  /// port of no component.
   std::vector<std::uint32_t> targets;
   /// Every declared bridge, oriented so that `from` is the inner end.
   std::vector<PortBridge> bridges;

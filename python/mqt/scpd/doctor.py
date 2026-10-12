@@ -10,7 +10,8 @@
 
 The doctor loads the configuration, loads and classifies the chip, prints the classification table
 so that a wrong pattern is visible in a second, and prints the outer port ring the run would use,
-checked label by label against the chip. It ends with the solvers the installation can reach.
+checked label by label against the chip. It refuses what would stop a run of the configured steps.
+It ends with the solvers the installation can reach.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from typing import TYPE_CHECKING
 from . import pyscpd
 from .chip import ChipError, chip_input_path, decode_chip, load_chip, obstacles_of, ports_of, role_name
 from .config import ConfigError, load_config, write_config
+from .run import RunError, steps_until
 from .solvers import available
 
 if TYPE_CHECKING:
@@ -160,7 +162,12 @@ def run_doctor(config_path: Path, *, list_ports: bool = False, chip_path: Path |
         report.fail(str(error))
         return report
     chip = decode_chip(chip_bytes)
-    if problem := pyscpd.launcher_order_problem(chip_bytes, config_bytes):
+    try:
+        steps = steps_until(config.run.stopAfter if config.run is not None else None)
+    except RunError as error:
+        report.fail(str(error))
+        steps = []
+    for problem in pyscpd.plan_problems(chip_bytes, config_bytes, steps):
         report.fail(problem)
     report.say("", f"obstacles: {len(obstacles_of(chip))}", f"ports: {len(ports_of(chip))}", "")
     report.say(*classification_table(chip, config))

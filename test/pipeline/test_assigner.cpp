@@ -153,58 +153,60 @@ CapacityPlanT planWithLaunchersOf(const ChipT& chip) {
   return plan;
 }
 
-std::string
-stageOrderProblem(const std::vector<std::array<double, 2>>& launchers) {
-  const auto chip = squareChip(launchers);
-  try {
-    static_cast<void>(assignmentInputs(chip, planWithLaunchersOf(chip),
-                                       routingWithRing({0, 1, 2, 3}, {0})));
-  } catch (const std::invalid_argument& error) {
-    return error.what();
-  }
-  return "";
-}
-
-TEST(AssignmentInputs, AcceptLaunchersNumberedAgainstTheRing) {
-  // The ring runs clockwise, so the launchers run counterclockwise: left,
-  // bottom, right, top. Any of them may come first.
-  EXPECT_EQ(stageOrderProblem(
-                {{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}}),
-            "");
-  EXPECT_EQ(stageOrderProblem(
-                {{110.0, 50.0}, {50.0, 110.0}, {-10.0, 50.0}, {50.0, -10.0}}),
-            "");
-}
-
-TEST(AssignmentInputs, RefuseLaunchersNumberedWithTheRing) {
-  EXPECT_NE(stageOrderProblem(
-                {{-10.0, 50.0}, {50.0, 110.0}, {110.0, 50.0}, {50.0, -10.0}})
-                .find("in the direction of the port ring"),
-            std::string::npos);
-}
-
-TEST(AssignmentInputs, RefuseLaunchersNumberedOutOfOrder) {
-  // Left, right, bottom, top: the walk crosses the chip twice.
-  EXPECT_NE(stageOrderProblem(
-                {{-10.0, 50.0}, {110.0, 50.0}, {50.0, -10.0}, {50.0, 110.0}})
-                .find("not numbered in order around the chip"),
-            std::string::npos);
-}
-
-TEST(LauncherOrder, GivesTheVerdictOfTheStageBeforeAnyStageRuns) {
-  // The same three chips as above, read with the configured ring instead of
-  // the ring of the Global stage and the launcher slots of the capacity plan.
+/// The configuration of squareChip: the ring runs clockwise around the four
+/// resonators.
+ConfigT squareConfig() {
   ConfigT config;
   config.ports = std::make_unique<flatbuffers::config::PortConfigT>();
   config.ports->sequences =
       std::make_unique<flatbuffers::config::PortSequencesT>();
   config.ports->sequences->all_outer = {"r0", "r1", "r2", "r3"};
-  for (const auto& launchers : std::vector<std::vector<std::array<double, 2>>>{
-           {{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}},
-           {{-10.0, 50.0}, {50.0, 110.0}, {110.0, 50.0}, {50.0, -10.0}},
-           {{-10.0, 50.0}, {110.0, 50.0}, {50.0, -10.0}, {50.0, 110.0}}}) {
-    const auto problem = launcherOrderProblem(squareChip(launchers), config);
-    EXPECT_EQ(problem.value_or(""), stageOrderProblem(launchers));
+  return config;
+}
+
+std::string
+orderProblemOf(const std::vector<std::array<double, 2>>& launchers) {
+  return launcherOrderProblem(squareChip(launchers), squareConfig())
+      .value_or("");
+}
+
+TEST(LauncherOrder, AcceptsLaunchersListedAgainstTheRing) {
+  // The ring runs clockwise, so the launchers run counterclockwise: left,
+  // bottom, right, top. Any of them may come first.
+  EXPECT_EQ(orderProblemOf(
+                {{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}}),
+            "");
+  EXPECT_EQ(orderProblemOf(
+                {{110.0, 50.0}, {50.0, 110.0}, {-10.0, 50.0}, {50.0, -10.0}}),
+            "");
+}
+
+TEST(LauncherOrder, RefusesLaunchersListedWithTheRing) {
+  EXPECT_NE(orderProblemOf(
+                {{-10.0, 50.0}, {50.0, 110.0}, {110.0, 50.0}, {50.0, -10.0}})
+                .find("in the direction of the port ring"),
+            std::string::npos);
+}
+
+TEST(LauncherOrder, RefusesLaunchersListedOutOfOrder) {
+  // Left, right, bottom, top: the walk crosses the chip twice.
+  EXPECT_NE(orderProblemOf(
+                {{-10.0, 50.0}, {110.0, 50.0}, {50.0, -10.0}, {50.0, 110.0}})
+                .find("does not list the launcher ports in order"),
+            std::string::npos);
+}
+
+TEST(LauncherOrder, IsWhatTheStageRefuses) {
+  const std::vector<std::array<double, 2>> launchers = {
+      {-10.0, 50.0}, {50.0, 110.0}, {110.0, 50.0}, {50.0, -10.0}};
+  const auto chip = squareChip(launchers);
+  try {
+    static_cast<void>(makeOrderedMilpAssigner()->run(
+        chip, planWithLaunchersOf(chip), routingWithRing({0, 1, 2, 3}, {0}),
+        squareConfig(), {}));
+    FAIL() << "the stage has to refuse launchers listed with the ring";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_EQ(error.what(), orderProblemOf(launchers));
   }
 }
 

@@ -99,3 +99,24 @@ def test_the_table_shows_the_bridge_pattern(tmp_path: Path) -> None:
 
     assert report.ok, report.text()
     assert "bridge_pair       0  ^C\\d+\\.port[12]$" in report.text()
+
+
+def test_what_would_stop_the_configured_steps_is_a_problem(tmp_path: Path) -> None:
+    """A run through the assignment needs a launcher target; a run that stops before it does not."""
+    config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
+    config = config.replace(
+        'input = "routing_config.json"', f'input = "{(FIXTURE / "routing_config.json").as_posix()}"'
+    ).replace("launcher_target = 1", "launcher_target = 0")
+    missing = tmp_path / "missing.toml"
+    missing.write_text(config, encoding="utf-8")
+
+    report = run_doctor(missing)
+    assert not report.ok
+    assert report.problems == [
+        "[stages.assignment] launcher_target is missing; it is a per-chip figure with no default"
+    ]
+
+    stopped = tmp_path / "stopped.toml"
+    stopped.write_text(config + '\n[run]\nstop_after = "global"\n', encoding="utf-8")
+    report = run_doctor(stopped)
+    assert report.ok, report.text()

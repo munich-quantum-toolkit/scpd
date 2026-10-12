@@ -31,14 +31,21 @@ __all__ = ["GUROBI_STATUS", "SolverUnavailableError", "available", "register", "
 
 #: What each Gurobi status code means in the terms of the core. Every other code is an error, which
 #: the core reports and does not raise. Code 4 says "infeasible or unbounded"; the solve repeats
-#: without dual reductions to tell the two apart, so that the code does not reach this table.
+#: without dual reductions to tell the two apart, so that the code does not reach this table. A
+#: limit that stops the search is "feasible", as for HiGHS: whether a solution exists is decided
+#: by whether one came back.
 GUROBI_STATUS: dict[int, str] = {
     2: "optimal",
     3: "infeasible",
     5: "unbounded",
-    9: "feasible",
-    11: "feasible",
-    13: "feasible",
+    7: "feasible",  # iteration limit
+    8: "feasible",  # node limit
+    9: "feasible",  # time limit
+    10: "feasible",  # solution limit
+    11: "feasible",  # interrupted
+    13: "feasible",  # suboptimal
+    15: "feasible",  # objective limit
+    16: "feasible",  # work limit
 }
 
 

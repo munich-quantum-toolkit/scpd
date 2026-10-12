@@ -87,6 +87,22 @@ TEST(HighsBackend, ReportsAnUnboundedModel) {
   EXPECT_EQ(solution.status, SolveStatus::Unbounded);
 }
 
+TEST(HighsBackend, DoesNotGuessBetweenInfeasibleAndUnbounded) {
+  // Two integers without an upper bound, which the objective pulls up. The
+  // model is unbounded, but HiGHS reports only that it has no optimum, so
+  // the backend reports that too rather than a guess.
+  Model model("either");
+  const auto x = model.addInteger("x", 0.0, INFINITE_BOUND, -1.0);
+  const auto y = model.addInteger("y", 0.0, INFINITE_BOUND, -1.0);
+  model.addGreaterOrEqual("tie", (1.0 * x) - (1.0 * y), 0.0);
+
+  const auto solution = makeHighsBackend()->solve(model, {});
+  EXPECT_EQ(solution.status, SolveStatus::Error);
+  EXPECT_NE(solution.message.find("infeasible or unbounded"),
+            std::string::npos);
+  EXPECT_FALSE(solution.hasValues());
+}
+
 TEST(HighsBackend, HonorsARangeConstraint) {
   // 2 <= x + y <= 3 with the objective pulling both up: the sum lands on 3.
   Model model("range");

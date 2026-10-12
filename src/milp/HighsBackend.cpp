@@ -40,7 +40,6 @@ SolveStatus statusOf(const HighsModelStatus status) {
   case HighsModelStatus::kInfeasible:
     return SolveStatus::Infeasible;
   case HighsModelStatus::kUnbounded:
-  case HighsModelStatus::kUnboundedOrInfeasible:
     return SolveStatus::Unbounded;
   case HighsModelStatus::kTimeLimit:
   case HighsModelStatus::kIterationLimit:
@@ -245,6 +244,13 @@ public:
     }
 
     solution.status = statusOf(highs.getModelStatus());
+    if (highs.getModelStatus() == HighsModelStatus::kUnboundedOrInfeasible) {
+      // HiGHS reports this for a MIP whose presolve or relaxation shows no
+      // optimum. Either answer would be a guess.
+      solution.message = "HiGHS found that the model is infeasible or "
+                         "unbounded, and not which of the two";
+      return solution;
+    }
     if (solution.status == SolveStatus::Error) {
       solution.message =
           std::format("HiGHS ended as {}",

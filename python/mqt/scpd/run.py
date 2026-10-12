@@ -168,11 +168,8 @@ class RunDirectory:
         """The copy of the chip input that the run uses."""
         return self.path / "00-chip.json"
 
-    def prepare(self, config_path: Path, chip_path: Path | None = None) -> ConfigT:
-        """Create the directory, or start it afresh, and copy the inputs into it.
-
-        Every artifact of an earlier run in the directory is deleted first, so no artifact stays
-        beside inputs it was not made from.
+    def inputs(self, config_path: Path, chip_path: Path | None = None) -> tuple[ConfigT, Path]:
+        """Read the configuration of a new run and find its chip input, without changing the directory.
 
         Args:
             config_path: The configuration to run.
@@ -180,7 +177,7 @@ class RunDirectory:
                 Without one, a run started from its own config.toml keeps its chip copy.
 
         Returns:
-            The configuration.
+            The configuration and the chip input.
 
         Raises:
             RunError: If the directory holds a config.toml of its own and no chip copy, so that it
@@ -199,6 +196,22 @@ class RunDirectory:
         if not chip.is_file():
             msg = f"cannot read the chip input {chip}: there is no such file"
             raise ChipError(msg)
+        return config, chip
+
+    def prepare(self, config_path: Path, chip_path: Path | None = None) -> ConfigT:
+        """Create the directory, or start it afresh, and copy the inputs into it.
+
+        Every artifact of an earlier run in the directory is deleted first, so no artifact stays
+        beside inputs it was not made from.
+
+        Args:
+            config_path: The configuration to run.
+            chip_path: A chip input that replaces the configured one, as for :meth:`inputs`.
+
+        Returns:
+            The configuration.
+        """
+        config, chip = self.inputs(config_path, chip_path)
         self.path.mkdir(parents=True, exist_ok=True)
         for name in STAGE_FILES.values():
             (self.path / name).unlink(missing_ok=True)

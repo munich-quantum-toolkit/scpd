@@ -302,28 +302,30 @@ def test_an_error_of_the_core_is_a_line_and_not_a_traceback(tmp_path: Path, caps
     text = text.replace(
         'input = "routing_config.json"', f'input = "{(Path(CONFIG).parent / "routing_config.json").as_posix()}"'
     )
-    config.write_text(text.replace("launcher_target = 1", "launcher_target = 0"), encoding="utf-8")
+    # Five chain ends on launchers and one termination are three chains, more than the fixture's
+    # two resonators can start.
+    config.write_text(text.replace("launcher_target = 1", "launcher_target = 5"), encoding="utf-8")
     run = tmp_path / "run"
 
     assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
 
     out = capsys.readouterr().out
-    assert "   ✗ [stages.assignment] launcher_target is missing" in out
+    assert "   ✗ the assignment did not solve: infeasible" in out
     assert "Traceback" not in out
     assert not (run / "03-assign.fb").exists()
 
 
-def test_launchers_numbered_with_the_ring_are_refused_before_any_stage(
+def test_launchers_listed_with_the_ring_are_refused_before_any_stage(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The doctor and a run that reaches the assignment refuse launchers numbered with the ring."""
+    """The doctor and a run that reaches the assignment refuse launchers listed with the ring."""
     chip = json.loads((Path(CONFIG).parent / "routing_config.json").read_text(encoding="utf-8"))
     ports = chip["ports"]
     # Chip.port1 and Chip.port3 change places, so the launchers run counter-clockwise, as the ring.
     ports["Chip.port1"], ports["Chip.port3"] = ports["Chip.port3"], ports["Chip.port1"]
     swapped = tmp_path / "chip.json"
     swapped.write_text(json.dumps(chip), encoding="utf-8")
-    problem = "the launcher ports are numbered in the direction of the port ring"
+    problem = "the chip input lists the launcher ports in the direction of the port ring"
 
     assert main(["doctor", "-c", CONFIG, "--chip", str(swapped)]) == 1
     assert problem in capsys.readouterr().out
@@ -335,6 +337,24 @@ def test_launchers_numbered_with_the_ring_are_refused_before_any_stage(
 
     # A run that ends before the assignment does not need the order.
     assert plan(run, "--chip", str(swapped), "--stop-after", "global") == 0
+
+
+def test_a_refused_run_keeps_the_run_it_would_replace(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A configuration that a step would refuse leaves the artifacts of the run directory alone."""
+    run = tmp_path / "run"
+    assert plan(run, "--stop-after", "global") == 0
+    before = sorted(path.name for path in run.glob("*.fb"))
+
+    config = tmp_path / "config.toml"
+    text = Path(CONFIG).read_text(encoding="utf-8")
+    text = text.replace(
+        'input = "routing_config.json"', f'input = "{(Path(CONFIG).parent / "routing_config.json").as_posix()}"'
+    )
+    config.write_text(text.replace("launcher_target = 1", "launcher_target = 0"), encoding="utf-8")
+    assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
+
+    assert "[stages.assignment] launcher_target is missing" in capsys.readouterr().err
+    assert sorted(path.name for path in run.glob("*.fb")) == before == ["01-capacity.fb", "02-global.fb"]
 
 
 def test_resuming_takes_neither_a_configuration_nor_a_chip(tmp_path: Path) -> None:

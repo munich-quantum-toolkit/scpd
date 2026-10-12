@@ -189,28 +189,15 @@ orderProblem(const std::vector<geometry::Point>& ring,
   }
   const auto launcherTurn = turnAroundCentroid(launchers);
   if (launcherTurn == 0) {
-    return "the launcher ports are not numbered in order around the chip; the "
-           "assignment needs them numbered against the direction of the port "
-           "ring";
+    return "the chip input does not list the launcher ports in order around "
+           "the chip; the assignment needs them listed once around it, "
+           "against the direction of the port ring";
   }
   if (launcherTurn == ringTurn) {
-    return "the launcher ports are numbered in the direction of the port ring; "
-           "the assignment needs them numbered against it";
+    return "the chip input lists the launcher ports in the direction of the "
+           "port ring; the assignment needs them listed against it";
   }
   return std::nullopt;
-}
-
-/// Refuses launcher slots that are not numbered against the direction of the
-/// ring.
-void requireLauncherOrder(const ChipT& chip, const AssignmentInputs& inputs) {
-  std::vector<geometry::Point> ringCenters;
-  ringCenters.reserve(inputs.ring.size());
-  for (const auto port : inputs.ring) {
-    ringCenters.push_back(chip.ports[port]->center);
-  }
-  if (const auto problem = orderProblem(ringCenters, inputs.launcherPosition)) {
-    throw std::invalid_argument(*problem);
-  }
 }
 
 /// The label of a port, or "termination" for a chain end without one.
@@ -228,6 +215,9 @@ public:
                                 const ConfigT& config,
                                 const Report& report) const override {
     report.progress("working out the inputs", "", 0, 0);
+    if (const auto problem = launcherOrderProblem(chip, config)) {
+      throw std::invalid_argument(*problem);
+    }
     const auto inputs = assignmentInputs(chip, capacity, global);
     const auto ring = ringEdgesOf(inputs);
     const auto resonators =
@@ -786,7 +776,6 @@ AssignmentInputs assignmentInputs(const ChipT& chip,
     inputs.nearestLauncher.push_back(static_cast<std::uint32_t>(best));
   }
 
-  requireLauncherOrder(chip, inputs);
   return inputs;
 }
 

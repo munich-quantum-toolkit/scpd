@@ -77,8 +77,8 @@ def command_plan(args: argparse.Namespace) -> int:
         The exit code.
 
     Raises:
-        ChipError: If the run reaches the assignment and the chip numbers its launchers in an order
-            the assignment refuses.
+        ConfigError: If the configuration and the chip would stop one of the steps, as
+            ``pyscpd.plan_problems`` reports it. The run directory stays as it was.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
     # The core reaches gurobipy only for a configuration that names the gurobi backend; every other
@@ -92,17 +92,22 @@ def command_plan(args: argparse.Namespace) -> int:
         config = directory.load()
         steps = [args.stage]
         subject = directory.path.name
+        chip = directory.classified_chip(config)
     else:
-        config = directory.prepare(args.config, args.chip)
+        config, chip_input = directory.inputs(args.config, args.chip)
         configured = config.run.stopAfter if config.run is not None else None
         steps = steps_until(args.stop_after if args.stop_after is not None else configured)
         subject = _subject(args.config)
-    chip = directory.classified_chip(config)
-    if "assign" in steps and (problem := pyscpd.launcher_order_problem(chip, write_config(config))):
-        # The Assignment stage refuses such a chip too, but only after the earlier stages have run.
-        raise ChipError(problem)
+        chip = load_chip(config, args.config, chip_input)
+    # Every check runs before a fresh run deletes the artifacts of the run it replaces.
+    config_bytes = write_config(config)
+    if problems := pyscpd.plan_problems(chip, config_bytes, steps):
+        raise ConfigError("; ".join(problems))
+    solver = pyscpd.solver_info(config_bytes)
+    if args.stage is None:
+        directory.prepare(args.config, args.chip)
 
-    console.header("plan", subject, str(directory.path), [pyscpd.solver_info(write_config(config))])
+    console.header("plan", subject, str(directory.path), [solver])
     last: str | None = None
     for step in steps:
         with console.stage(step) as block:

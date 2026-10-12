@@ -52,27 +52,24 @@ struct MQT_SCPD_PIPELINE_EXPORT AssignmentInputs {
  * @param global The global routing, which carries the ring and the
  * resonators.
  * @return The inputs.
- * @throws std::invalid_argument When the plan carries no launcher, when the
- * ring is empty, or when the launcher slots do not go once around the chip in
- * index order against the direction of the ring. The order is checked only
- * when there are at least three launchers, not all on one line, and the ring
- * encloses an area.
+ * @throws std::invalid_argument When the plan carries no launcher or the ring
+ * is empty.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT AssignmentInputs
 assignmentInputs(const ChipT& chip, const CapacityPlanT& capacity,
                  const GlobalRoutingT& global);
 
 /**
- * @brief Checks the launcher numbering of a chip against its configured ring,
- * before any stage runs.
+ * @brief Checks the order in which the chip input lists its launchers against
+ * the configured ring.
  *
- * The assignment walks the launchers in index order, so they have to go once
- * around the chip in the opposite direction to the port ring. The stage
- * refuses other launchers, but only after the capacity and global stages
- * have run. This check reads only the chip and the configuration, so a run
- * can refuse such a chip first. It reads the centers of the launchers that
- * get a slot and of the configured ring, and follows the same rules as
- * assignmentInputs().
+ * The assignment walks the launchers in the order of the chip input, so they
+ * have to go once around the chip in the opposite direction to the port ring.
+ * The check reads only the chip and the configuration: the centers of the
+ * launchers that get a slot, and of the configured ring. The Assignment stage
+ * runs this check and refuses what it reports, and planProblems() runs it
+ * before any stage. The order is checked only when there are at least three
+ * launchers, not all on one line, and the ring encloses an area.
  *
  * @param chip The classified chip.
  * @param config The configuration, which carries the ring.

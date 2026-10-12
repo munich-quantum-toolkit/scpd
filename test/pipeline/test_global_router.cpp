@@ -85,13 +85,19 @@ std::vector<std::string> coupledLabels() {
           "Coupler1_2.port4"};
 }
 
-ChipT coupledChip() {
+/// The chip of coupledLabels. Without components, no pattern groups the ports
+/// and every coupler port is a conventional port.
+ChipT coupledChip(const bool components = true) {
   PortPatternsT patterns;
   patterns.launcher = R"(^Chip\.port\d+$)";
   patterns.resonator = R"(^Qb\d+\.port0$)";
-  patterns.conventional = R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$)";
-  patterns.bridge_pair = R"(^Coupler\d+_\d+\.port[1-4]$)";
-  patterns.component = R"(^([^.]+)\.port\d+$)";
+  if (components) {
+    patterns.conventional = R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port0)$)";
+    patterns.bridge_pair = R"(^Coupler\d+_\d+\.port[1-4]$)";
+    patterns.component = R"(^([^.]+)\.port\d+$)";
+  } else {
+    patterns.conventional = R"(^(Qb\d+\.port1|Coupler\d+_\d+\.port\d+)$)";
+  }
 
   ChipT chip;
   for (const auto& label : coupledLabels()) {
@@ -134,6 +140,21 @@ TEST(InnerCircuit, HoldsThePortsTheRingDoesNotCarry) {
                              "Coupler1_2.port3", "Coupler1_2.port4"}));
   // The bridged ports are claimed, so the inner qubit's ports are left.
   EXPECT_EQ(circuit.targets, indicesOf(chip, {"Qb2.port0", "Qb2.port1"}));
+}
+
+TEST(InnerCircuit, TargetsEveryInnerPortOfNoComponent) {
+  const auto chip = coupledChip(false);
+  const auto circuit = innerCircuitOf(
+      chip, coupledConfig({"Qb1.port0", "Qb1.port1", "Coupler1_2.port0",
+                           "Coupler1_2.port2"}));
+
+  // No component groups the ports, so no bridge claims one and each inner
+  // port ends a wire.
+  EXPECT_TRUE(circuit.bridges.empty());
+  EXPECT_EQ(circuit.targets, circuit.innerPorts);
+  EXPECT_EQ(circuit.innerPorts,
+            indicesOf(chip, {"Qb2.port0", "Qb2.port1", "Coupler1_2.port1",
+                             "Coupler1_2.port3", "Coupler1_2.port4"}));
 }
 
 TEST(InnerCircuit, OrientsABridgeFromItsInnerEndToTheRing) {

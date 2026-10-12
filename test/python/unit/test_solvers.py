@@ -232,7 +232,8 @@ def test_gurobi_returns_the_values_in_the_order_of_the_names(monkeypatch: pytest
     [
         (3, 0, "infeasible"),
         (2, 0, "gurobi stopped without a solution"),
-        (7, 1, "gurobi ended with status 7"),
+        (8, 0, "gurobi stopped without a solution"),
+        (17, 1, "gurobi ended with status 17"),
     ],
 )
 def test_gurobi_without_a_solution_returns_no_values(
@@ -248,6 +249,16 @@ def test_gurobi_without_a_solution_returns_no_values(
     assert values == []
     assert not gurobi.parameters
     assert gurobi.disposed == 1
+
+
+@pytest.mark.parametrize("code", [7, 8, 9, 10, 11, 13, 15, 16])
+def test_gurobi_stopped_at_a_limit_keeps_its_solution(monkeypatch: pytest.MonkeyPatch, code: int) -> None:
+    """A limit that stops the search with a solution in hand gives that solution, as with HiGHS."""
+    with_gurobi(monkeypatch, FakeGurobi(code, 1))
+
+    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x", "y", "z"])
+
+    assert (status, objective, values) == ("feasible", 7.0, [1.0, 2.0, 0.0])
 
 
 @pytest.mark.parametrize(("resolved", "expected"), [(3, "infeasible"), (5, "unbounded")])

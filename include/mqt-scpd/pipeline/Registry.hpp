@@ -169,4 +169,28 @@ corridorRouters();
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
 selectedCorridorRouter(const ConfigT& config);
 
+/**
+ * @brief Lists what would stop a run of the planning stages, before any stage
+ * runs.
+ *
+ * A stage refuses these configurations too, but only once the stages before
+ * it have run. The check reads only the chip and the configuration:
+ *
+ * - every step names an implementation this build registers;
+ * - a run through the assignment sets `[stages.assignment] launcher_target`;
+ * - `launcher_target` plus `[design_rules] feedline_terminations` is even,
+ *   since every feedline chain has two ends;
+ * - the chip input lists its launchers against the direction of the port
+ *   ring, as launcherOrderProblem() checks.
+ *
+ * @param chip The classified chip.
+ * @param config The run configuration.
+ * @param steps The steps the run takes: `capacity`, `global`, `assign` or
+ * `corridor`. The check skips any other name.
+ * @return The problems, empty when there are none.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<std::string>
+planProblems(const ChipT& chip, const ConfigT& config,
+             const std::vector<std::string>& steps);
+
 } // namespace mqt::scpd::pipeline

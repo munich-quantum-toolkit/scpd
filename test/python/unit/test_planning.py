@@ -202,11 +202,14 @@ def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "detail")
 
 
-def capacity_plan() -> bytes:
+def capacity_plan(*, cyclic: bool = False) -> bytes:
     """A capacity plan with one gate, one keep-out ring and one chain.
 
     The chain runs from a launcher to the gate, and from the gate to port 1 and to an index that
     names no port.
+
+    Args:
+        cyclic: Link port 1 back to the gate, so that the chain is a cycle.
 
     Returns:
         The bytes of the artifact.
@@ -214,7 +217,7 @@ def capacity_plan() -> bytes:
     nodes = [
         CapacityNodeT(kind=CapacityElement.Launcher, id=0, next=[1]),
         CapacityNodeT(kind=CapacityElement.Bottleneck, id=0, next=[2, 3]),
-        CapacityNodeT(kind=CapacityElement.Target, id=1, next=[]),
+        CapacityNodeT(kind=CapacityElement.Target, id=1, next=[1] if cyclic else []),
         CapacityNodeT(kind=CapacityElement.Target, id=99, next=[]),
     ]
     grid = GridExtentT(width=1, height=1, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
@@ -242,6 +245,13 @@ def test_a_capacity_chain_joins_the_ports_and_the_gates_it_names(run: RunDirecto
     assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
     assert geometry.chains == [((50.0, 0.0), (300.0, 1600.0))]
     assert geometry.keepout == [[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]]
+
+
+def test_a_cyclic_capacity_chain_is_drawn_once(run: RunDirectory) -> None:
+    """A chain that leads back to a node it passed draws each link once and ends."""
+    geometry = planning_geometry(capacity_plan(cyclic=True), chip_of(run), "capacity")
+
+    assert geometry.chains == [((50.0, 0.0), (300.0, 1600.0)), ((300.0, 1600.0), (50.0, 0.0))]
 
 
 def test_the_global_picture_draws_the_gates_of_its_capacity_plan(run: RunDirectory) -> None:

@@ -16,7 +16,6 @@
 #include "mqt-scpd/io/Config.hpp"
 #include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/milp/Model.hpp"
-#include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/Solver.hpp"
@@ -221,16 +220,18 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "empty when there are none.");
 
   m.def(
-      "launcher_order_problem",
-      [](const nb::bytes& chip, const nb::bytes& config) {
-        return mqt::scpd::pipeline::launcherOrderProblem(
+      "plan_problems",
+      [](const nb::bytes& chip, const nb::bytes& config,
+         const std::vector<std::string>& steps) {
+        return mqt::scpd::pipeline::planProblems(
             mqt::scpd::io::readChip(asSpan(chip)),
-            mqt::scpd::io::readConfig(asSpan(config)));
+            mqt::scpd::io::readConfig(asSpan(config)), steps);
       },
-      "chip"_a, "config"_a,
-      "What is wrong with the launcher numbering of a classified chip against "
-      "the configured port ring, or None. The Assignment stage refuses the "
-      "same chips, after the earlier stages have run.");
+      "chip"_a, "config"_a, "steps"_a,
+      "What would stop a run of the given steps on a classified chip, before "
+      "any stage runs: an unknown implementation name, a missing or odd "
+      "launcher_target, or launchers listed in the direction of the port "
+      "ring. Empty when there is nothing.");
 
   m.def(
       "plan_capacity",

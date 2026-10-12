@@ -232,17 +232,23 @@ def _chains(plan: CapacityPlanT, chip: ChipT, geometry: PlanningGeometry) -> Non
             return ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
         return None
 
+    # A node is walked once. The core refuses a plan whose chains meet or cycle, but an artifact
+    # read here was not checked, and a cycle must not recurse without end.
+    walked: set[int] = set()
+
     def walk(index: int) -> None:
+        walked.add(index)
         here = position(index)
         for child in nodes[index].next or []:
             if int(child) < len(nodes):
                 there = position(int(child))
                 if here is not None and there is not None:
                     geometry.chains.append((here, there))
-                walk(int(child))
+                if int(child) not in walked:
+                    walk(int(child))
 
     for root in plan.chains or []:
-        if int(root) < len(nodes):
+        if int(root) < len(nodes) and int(root) not in walked:
             walk(int(root))
 
 

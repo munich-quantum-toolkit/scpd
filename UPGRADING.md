@@ -28,11 +28,16 @@ mqt-scpd plan -c benchmarks/17q/config.toml \
   --chip planar-superconducting-pd/inputs/17q/routing_config.json -o runs/17q
 ```
 
-The assignment expects the launcher ports to be numbered once around the chip,
-against the direction of the port ring, as on the benchmark chips. A chip with
-three or more launchers whose numbering does not meet this is a problem for
-`doctor`, and `plan` refuses it before the first stage when the run reaches the
-assignment.
+The assignment expects the chip input to list the launcher ports once around the
+chip, against the direction of the port ring, as on the benchmark chips.
+`launcher_target` plus `[design_rules] feedline_terminations` has to be even,
+since every feedline chain has two ends. `plan` checks these figures and the
+implementation names of the stages before its first stage, and refuses a run
+whose steps they would stop; the run directory then stays as it was. `doctor`
+reports the same problems for the steps that `[run] stop_after` configures.
+
+An inner routable port that the `component` pattern does not match ends a wire
+of the inner circuit, as a port of an inner qubit does.
 
 The planning stages solve with HiGHS unless `[stages.solver] backend` or the
 environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and

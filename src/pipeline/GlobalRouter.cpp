@@ -1102,6 +1102,12 @@ InnerCircuit innerCircuitOf(const ChipT& chip, const ConfigT& config) {
       }
     }
   }
+  // A port of no component has no bridge to claim it, so it ends a wire too.
+  for (const auto port : circuit.innerPorts) {
+    if (chip.ports[port]->component.empty()) {
+      circuit.targets.push_back(port);
+    }
+  }
   std::ranges::sort(circuit.targets);
   return circuit;
 }
