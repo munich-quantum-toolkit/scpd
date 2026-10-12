@@ -10,7 +10,7 @@
 build-backend = "scikit_build_core.build"
 requires = [
   "nanobind~=3.1.0",
-  "scikit-build-core>=1.0.3",
+  "scikit-build-core>=1.1",
   "vcs-versioning>=2.3",
 ]
 
@@ -44,7 +44,7 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Quantum Computing",
   "Typing :: Typed",
 ]
-dynamic = [ "version" ]
+dynamic = [ "import-names", "import-namespaces", "version" ]
 dependencies = [
   # The same version as FLATBUFFERS_VERSION in cmake/ExternalDependencies.cmake, which generates the code
   "flatbuffers~=25.12.19",
@@ -78,7 +78,6 @@ dev = [
   "nox>=2025.11.12",
 ]
 test = [
-  "flatbuffers~=25.12.19",
   # KLayout ships no wheels for Windows on ARM or for CPython 3.15; the export tests skip without it.
   "klayout~=0.30.6; python_version<'3.15' and (sys_platform!='win32' or platform_machine!='ARM64')",
   "pytest>=9.0.1",
@@ -102,7 +101,7 @@ docs = [
 build = [
   "cmake>=4.4.1",
   "nanobind~=3.1.0",
-  "scikit-build-core>=1.0.3",
+  "scikit-build-core>=1.1",
   "vcs-versioning>=2.3",
 ]
 
@@ -198,10 +197,6 @@ environment = { MACOSX_DEPLOYMENT_TARGET = "13.3" }
 
 [tool.cibuildwheel.windows]
 repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel} --namespace-pkg mqt --ignore-existing"
-before-test = "uv pip install --group test"
-# cibuildwheel 4.2 passes expanded dependency groups through cmd.exe, which interprets version
-# operators as redirections. Let uv resolve the group itself.
-test-groups = []
 
 
 [tool.ruff]
