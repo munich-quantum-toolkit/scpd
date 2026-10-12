@@ -19,12 +19,18 @@ from mqt.scpd.artifacts import write_artifact
 from mqt.scpd.chip import decode_chip
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
+from mqt.scpd.flatbuffers.artifacts.Bottleneck import BottleneckT
+from mqt.scpd.flatbuffers.artifacts.CapacityElement import CapacityElement
+from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
+from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
+from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
 from mqt.scpd.flatbuffers.artifacts.Lattice import LatticeT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
+from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
 from mqt.scpd.planning import Feedline, PlanningError, PlanningGeometry, planning_geometry
 from mqt.scpd.run import RunDirectory
 from mqt.scpd.steps import STEPS
@@ -194,3 +200,75 @@ def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "global")
     with pytest.raises(PlanningError, match="no planning stage"):
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "detail")
+
+
+def capacity_plan() -> bytes:
+    """A capacity plan with one gate, one keep-out ring and one chain.
+
+    The chain runs from a launcher to the gate, and from the gate to port 1 and to an index that
+    names no port.
+
+    Returns:
+        The bytes of the artifact.
+    """
+    nodes = [
+        CapacityNodeT(kind=CapacityElement.Launcher, id=0, next=[1]),
+        CapacityNodeT(kind=CapacityElement.Bottleneck, id=0, next=[2, 3]),
+        CapacityNodeT(kind=CapacityElement.Target, id=1, next=[]),
+        CapacityNodeT(kind=CapacityElement.Target, id=99, next=[]),
+    ]
+    grid = GridExtentT(width=1, height=1, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
+    plan = CapacityPlanT(
+        capacityGrid=grid,
+        detailGrid=grid,
+        partitions=[],
+        borders=[],
+        bottlenecks=[BottleneckT(from_=PointT(0.0, 0.0), to=PointT(100.0, 0.0), capacity=2)],
+        launchers=[],
+        nodes=nodes,
+        chains=[0],
+        portKeepout=[PolygonT(vertices=[PointT(0.0, 0.0), PointT(10.0, 0.0), PointT(0.0, 10.0)])],
+    )
+    return write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
+
+
+def test_a_capacity_chain_joins_the_ports_and_the_gates_it_names(run: RunDirectory) -> None:
+    """A chain runs from the middle of each gate to the next port.
+
+    A link is left out where one of its nodes has no place on the chip.
+    """
+    geometry = planning_geometry(capacity_plan(), chip_of(run), "capacity")
+
+    assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
+    assert geometry.chains == [((50.0, 0.0), (300.0, 1600.0))]
+    assert geometry.keepout == [[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]]
+
+
+def test_the_global_picture_draws_the_gates_of_its_capacity_plan(run: RunDirectory) -> None:
+    """The global stage is drawn over the gates and the keep-out of the capacity plan of its run."""
+    geometry = planning_geometry(run.artifact("global").read_bytes(), chip_of(run), "global", capacity=capacity_plan())
+
+    assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
+    assert geometry.keepout == [[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]]
+
+
+@pytest.mark.parametrize(
+    ("stage", "drawn", "expected"),
+    [
+        ("capacity", "global", "not a capacity plan"),
+        ("assign", "capacity", "not an assignment"),
+        ("corridor", "capacity", "not a corridor routing"),
+    ],
+)
+def test_every_stage_refuses_the_artifact_of_another(run: RunDirectory, stage: str, drawn: str, expected: str) -> None:
+    """Each planning stage draws its own artifact only."""
+    with pytest.raises(PlanningError, match=expected):
+        planning_geometry(run.artifact(drawn).read_bytes(), chip_of(run), stage)
+
+
+def test_a_capacity_artifact_has_to_be_a_capacity_plan(run: RunDirectory) -> None:
+    """The artifact that a stage is drawn over has to be the capacity plan of the run."""
+    with pytest.raises(PlanningError, match="the capacity artifact is not a capacity plan"):
+        planning_geometry(
+            run.artifact("global").read_bytes(), chip_of(run), "global", capacity=run.artifact("assign").read_bytes()
+        )

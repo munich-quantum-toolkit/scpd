@@ -20,7 +20,9 @@
 
 #include <gtest/gtest.h>
 
-#include <cstdlib>
+// <cstdlib> declares setenv, unsetenv and _putenv_s, but include-cleaner
+// knows no header for these functions outside the C++ standard.
+#include <cstdlib> // NOLINT(misc-include-cleaner)
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -57,7 +59,6 @@ public:
 #ifdef _WIN32
     _putenv_s(variable, value);
 #else
-    // POSIX declares setenv in <stdlib.h>, which <cstdlib> includes.
     setenv(variable, value, 1); // NOLINT(misc-include-cleaner)
 #endif
   }
