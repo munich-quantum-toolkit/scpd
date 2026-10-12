@@ -298,10 +298,9 @@ Problems validate(const ConfigT& config) {
     }
     if (stages.solver != nullptr) {
       const auto& backend = stages.solver->backend;
-      if (!backend.empty() && backend != "auto" && backend != "highs" &&
-          backend != "gurobi") {
+      if (!backend.empty() && backend != "highs" && backend != "gurobi") {
         problems.push_back(
-            "stages.solver: backend must be one of auto, highs, gurobi, not '" +
+            "stages.solver: backend must be one of highs, gurobi, not '" +
             backend + "'");
       }
       requireNonNegative(stages.solver->time_limit, "stages.solver: time_limit",
@@ -364,6 +363,23 @@ Problems validate(const ConfigT& config, const ChipT& chip) {
       problems.push_back("port '" + port->label + "' is paired by " +
                          std::to_string(claimed) + " bridge rule sides");
     }
+  }
+
+  // A rule pairs two ports of one component. A bridge port whose rule finds
+  // no partner there would end a wire inside the coupler, so it is a problem
+  // too. Ports without a component take no part in the pairing.
+  const auto bridging = bridgingPorts(chip, ports.bridge_pairs);
+  for (std::size_t index = 0; index < chip.ports.size(); ++index) {
+    const auto& port = chip.ports[index];
+    if (port == nullptr || port->role != UnassignedRole::BridgePair ||
+        port->component.empty() || matches[index].size() != 1 ||
+        bridging[index]) {
+      continue;
+    }
+    problems.push_back("port '" + port->label +
+                       "' is a bridge_pair port without a partner in "
+                       "component '" +
+                       port->component + "'");
   }
   return problems;
 }

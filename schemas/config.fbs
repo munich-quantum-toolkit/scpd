@@ -120,15 +120,16 @@ table AssignmentParams {
   /// The implementation, by the name it is registered under. Empty selects
   /// the default.
   assigner: string;
-  /// How many launchers the assignment activates. A figure per chip with no
-  /// default: zero means the configuration does not set it.
+  /// How many feedline chain ends the assignment puts on a launcher; every
+  /// other chain end is a termination. A figure per chip with no default:
+  /// zero means the configuration does not set it.
   launcher_target: uint32 = 0;
 }
 
 /// How the mixed-integer programs of the planning stages are solved.
 table SolverParams {
-  /// "auto", "highs" or "gurobi". Empty means "auto". The environment
-  /// variable SCPD_SOLVER overrides it for one run.
+  /// "highs" or "gurobi". Empty means "highs". The environment variable
+  /// SCPD_SOLVER overrides it for one run.
   backend: string;
   /// Seconds one solve may take, or zero for no limit.
   time_limit: double = 0.0;

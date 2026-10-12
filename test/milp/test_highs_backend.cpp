@@ -241,23 +241,23 @@ TEST(HighsBackend, EndsTheSolveWhenTheObserverThrowsAndRethrows) {
                std::runtime_error);
 }
 
-TEST(SolverChoice, ReadsTheThreeNamesAndRefusesTheRest) {
-  EXPECT_EQ(backendChoiceFromName("auto"), BackendChoice::Auto);
+TEST(SolverChoice, ReadsTheTwoNamesAndRefusesTheRest) {
   EXPECT_EQ(backendChoiceFromName("highs"), BackendChoice::Highs);
   EXPECT_EQ(backendChoiceFromName("gurobi"), BackendChoice::External);
+  EXPECT_THROW(static_cast<void>(backendChoiceFromName("auto")),
+               std::invalid_argument);
   EXPECT_THROW(static_cast<void>(backendChoiceFromName("cplex")),
                std::invalid_argument);
 }
 
-TEST(SolverChoice, FallsBackToHighsWhenNoExternalBackendIsRegistered) {
+TEST(SolverChoice, RefusesTheExternalBackendWhenNoneIsRegistered) {
   setExternalBackend(nullptr);
-  EXPECT_EQ(resolveBackend(BackendChoice::Auto)->name(), "highs");
   EXPECT_EQ(resolveBackend(BackendChoice::Highs)->name(), "highs");
   EXPECT_THROW(static_cast<void>(resolveBackend(BackendChoice::External)),
                std::runtime_error);
 }
 
-TEST(SolverChoice, PrefersARegisteredExternalBackendUnderAuto) {
+TEST(SolverChoice, UsesARegisteredExternalBackendOnlyWhenAskedFor) {
   // A backend that answers without solving anything is enough to show which
   // one the choice picked.
   auto stub = makeMpsBackend(
@@ -270,9 +270,8 @@ TEST(SolverChoice, PrefersARegisteredExternalBackendUnderAuto) {
       });
   setExternalBackend(std::move(stub));
 
-  EXPECT_EQ(resolveBackend(BackendChoice::Auto)->name(), "stub");
   EXPECT_EQ(resolveBackend(BackendChoice::External)->name(), "stub");
-  // An explicit choice of HiGHS is never overridden by what is registered.
+  // HiGHS is never replaced by what is registered.
   EXPECT_EQ(resolveBackend(BackendChoice::Highs)->name(), "highs");
 
   setExternalBackend(nullptr);

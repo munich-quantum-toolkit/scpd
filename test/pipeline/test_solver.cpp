@@ -136,8 +136,23 @@ TEST(SolveWith, SaysNothingAtTheSummaryLevel) {
 TEST(SolverName, NamesHighsWithItsVersion) {
   const auto highs = "HiGHS " + milp::highsVersion();
   EXPECT_EQ(solverName(configWithBackend("highs")), highs);
-  // Without an external backend in the process, auto is HiGHS.
+  // A configuration that names no backend uses HiGHS.
   EXPECT_EQ(solverName(ConfigT{}), highs);
+}
+
+TEST(SolverName, KeepsHighsWhenAnExternalBackendIsRegistered) {
+  // A registered backend is used only when the configuration asks for it, so
+  // a licence on the machine does not change the result of a run.
+  milp::setExternalBackend(milp::makeMpsBackend(
+      "stub", [](auto, const auto& names, const auto& /*options*/) {
+        milp::Solution solution;
+        solution.status = milp::SolveStatus::Optimal;
+        solution.values.assign(names.size(), 0.0);
+        return solution;
+      }));
+  EXPECT_EQ(solverName(ConfigT{}), "HiGHS " + milp::highsVersion());
+  EXPECT_EQ(solverName(configWithBackend("gurobi")), "stub");
+  milp::setExternalBackend(nullptr);
 }
 
 TEST(SolverName, FollowsTheEnvironmentLikeTheSolve) {

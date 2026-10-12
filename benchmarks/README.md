@@ -16,13 +16,13 @@ mqt-scpd plan -c benchmarks/17q/config.toml \
 Each file is the configuration of the data repository with these keys added or
 changed. The benchmark tests check that no other key differs.
 
-| Key                                             | Why the planning stages need it                                                                                                                                                |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `[ports.patterns] conventional`, `bridge_pair`  | A coupler port where a wire crosses the coupler is a bridge port, not a conventional one. Only `port0` of a coupler ends a wire.                                               |
-| `[ports.patterns] component`                    | The Global stage groups the ports of one component: the inner circuit has to reach the ports of a qubit, and a wire may cross a coupler between two of its ports.              |
-| `[[ports.bridge_pairs]]`                        | Which two bridge ports of one coupler a wire crosses between: `port1` with `port2`, and `port3` with `port4`.                                                                  |
-| `[grid] launcher_offset_x`, `launcher_offset_y` | The capacity grid blocks a border of this many detail cells. The launcher slot sits on the launcher port, so the border must not cover it; on most chips it is therefore zero. |
-| `[stages.assignment] launcher_target`           | How many launchers the assignment activates. A figure per chip with no default, taken from the prototype's driver of the same benchmark.                                       |
+| Key                                             | Why the planning stages need it                                                                                                                                                                           |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[ports.patterns] conventional`, `bridge_pair`  | A coupler port where a wire crosses the coupler is a bridge port, not a conventional one. Only `port0` of a coupler ends a wire.                                                                          |
+| `[ports.patterns] component`                    | The Global stage groups the ports of one component: the inner circuit has to reach the ports of a qubit, and a wire may cross a coupler between two of its ports.                                         |
+| `[[ports.bridge_pairs]]`                        | Which two bridge ports of one coupler a wire crosses between: `port1` with `port2`, and `port3` with `port4`.                                                                                             |
+| `[grid] launcher_offset_x`, `launcher_offset_y` | The capacity grid blocks a border of this many detail cells. The launcher slot sits on the launcher port, so the border must not cover it; on most chips it is therefore zero.                            |
+| `[stages.assignment] launcher_target`           | How many feedline chain ends the assignment puts on a launcher; every other chain end is a termination. A figure per chip with no default, taken from the research prototype's run of the same benchmark. |
 
 | Chip | `launcher_target` | Launcher offset |
 | ---- | ----------------: | --------------: |

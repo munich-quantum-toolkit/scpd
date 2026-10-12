@@ -49,7 +49,7 @@ Each `-v` adds lines to the ones below it.
 | none   | The header, the result and the rounds of each stage, the artifact line and the closing line |
 | `-v`   | The parameters of a stage, its steps, the size of each model and how each solve ended       |
 | `-vv`  | One line per item, such as a wire, a feedline chain or a connection                         |
-| `-vvv` | The log of the solver                                                                       |
+| `-vvv` | The log of HiGHS                                                                            |
 
 Warnings and failures show at every level.
 

@@ -194,8 +194,12 @@ Partitions extractPartitions(const BitGrid& blocked,
     }
 
     // Each ring is walked by following one outgoing edge per corner and
-    // consuming it, so a corner where four cells meet contributes to two
-    // rings rather than joining them into one.
+    // consuming it. Where four cells meet at a corner, the corner has two
+    // outgoing edges, and the walk order decides whether the two rings
+    // through it come out as two or as one. The walk starts at the first
+    // corner of a hash map, so the start corner and that choice can differ
+    // between standard libraries. The cells that the rings enclose are the
+    // same either way.
     while (!outgoing.empty()) {
       auto start = outgoing.begin()->first;
       auto current = outgoing.begin()->second.back();

@@ -199,9 +199,11 @@ class RunDirectory:
             (self.path / name).unlink(missing_ok=True)
             (self.path / f"{name}.tmp").unlink(missing_ok=True)
         # The chip comes first: a directory that holds a chip copy and no configuration is never
-        # taken for a directory of somebody else's configuration.
-        shutil.copyfile(chip, self.chip)
-        shutil.copyfile(config_path, self.config)
+        # taken for a directory of somebody else's configuration. An input that already is the copy
+        # of the run, as when a run is started again from its own files, stays where it is.
+        for source, copy in ((chip, self.chip), (config_path, self.config)):
+            if not (copy.exists() and copy.samefile(source)):
+                shutil.copyfile(source, copy)
         return config
 
     def load(self) -> ConfigT:

@@ -92,9 +92,6 @@ std::unique_ptr<ISolverBackend> makeMpsBackend(std::string name,
 }
 
 BackendChoice backendChoiceFromName(const std::string_view name) {
-  if (name == "auto") {
-    return BackendChoice::Auto;
-  }
   if (name == "highs") {
     return BackendChoice::Highs;
   }
@@ -103,8 +100,8 @@ BackendChoice backendChoiceFromName(const std::string_view name) {
   if (name == "gurobi") {
     return BackendChoice::External;
   }
-  throw std::invalid_argument(std::format(
-      "'{}' is no solver backend; use 'auto', 'highs' or 'gurobi'", name));
+  throw std::invalid_argument(
+      std::format("'{}' is no solver backend; use 'highs' or 'gurobi'", name));
 }
 
 void setExternalBackend(std::shared_ptr<ISolverBackend> backend) {
@@ -118,14 +115,12 @@ std::shared_ptr<ISolverBackend> externalBackend() {
 }
 
 std::shared_ptr<ISolverBackend> resolveBackend(const BackendChoice choice) {
-  if (choice != BackendChoice::Highs) {
+  if (choice == BackendChoice::External) {
     if (auto external = externalBackend()) {
       return external;
     }
-    if (choice == BackendChoice::External) {
-      throw std::runtime_error("no external solver is registered; install "
-                               "gurobipy and a licence, or use 'highs'");
-    }
+    throw std::runtime_error("no external solver is registered; install "
+                             "gurobipy and a licence, or use 'highs'");
   }
   // HiGHS is linked in, so this branch always has an answer. That is what
   // makes an installation without a commercial licence fully functional.

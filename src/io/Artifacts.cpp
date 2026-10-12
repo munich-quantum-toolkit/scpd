@@ -87,6 +87,76 @@ void validateWires(
   }
 }
 
+/// The capacity chains are trees stored flat, and the later stages walk them
+/// by index. Every index has to name a node, and no walk may come back to a
+/// node it left, or the walk would not end.
+void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
+                          Problems& problems) {
+  const auto count = plan.nodes.size();
+  bool linked = true;
+  for (std::size_t index = 0; index < count; ++index) {
+    if (plan.nodes[index] == nullptr) {
+      problems.push_back(std::format("capacity node {}: missing", index));
+      linked = false;
+      continue;
+    }
+    const auto& node = *plan.nodes[index];
+    for (const auto next : node.next) {
+      if (next >= count) {
+        problems.push_back(std::format(
+            "capacity node {} links to node {} of {}", index, next, count));
+        linked = false;
+      }
+    }
+    if (node.kind == flatbuffers::artifacts::CapacityElement::Bottleneck &&
+        node.id >= plan.bottlenecks.size()) {
+      problems.push_back(
+          std::format("capacity node {} names bottleneck {} of {}", index,
+                      node.id, plan.bottlenecks.size()));
+    }
+  }
+  for (std::size_t index = 0; index < plan.chains.size(); ++index) {
+    if (plan.chains[index] >= count) {
+      problems.push_back(
+          std::format("capacity chain {} starts at node {} of {}", index,
+                      plan.chains[index], count));
+    }
+  }
+  if (!linked) {
+    return;
+  }
+  // Kahn's order: the nodes that no link reaches go first, and a node follows
+  // once every link to it is taken. Nodes left over lie on a cycle.
+  std::vector<std::size_t> incoming(count, 0);
+  for (const auto& node : plan.nodes) {
+    for (const auto next : node->next) {
+      ++incoming[next];
+    }
+  }
+  std::vector<std::size_t> ready;
+  for (std::size_t index = 0; index < count; ++index) {
+    if (incoming[index] == 0) {
+      ready.push_back(index);
+    }
+  }
+  std::size_t ordered = 0;
+  while (!ready.empty()) {
+    const auto index = ready.back();
+    ready.pop_back();
+    ++ordered;
+    for (const auto next : plan.nodes[index]->next) {
+      if (--incoming[next] == 0) {
+        ready.push_back(next);
+      }
+    }
+  }
+  if (ordered != count) {
+    problems.push_back(std::format(
+        "capacity nodes link in a cycle: {} of {} nodes lie on or behind one",
+        count - ordered, count));
+  }
+}
+
 std::string join(const Problems& problems) {
   std::string joined;
   for (const auto& problem : problems) {
@@ -159,6 +229,8 @@ Problems validate(const ArtifactT& artifact) {
     break;
   }
   case StageOutput::CapacityPlan:
+    validateCapacityPlan(*artifact.output.AsCapacityPlan(), problems);
+    break;
   case StageOutput::GlobalRouting:
   case StageOutput::DetailRouting:
     break;

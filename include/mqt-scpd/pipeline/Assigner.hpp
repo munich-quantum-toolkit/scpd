@@ -50,8 +50,11 @@ struct MQT_SCPD_PIPELINE_EXPORT AssignmentInputs {
  * @param global The global routing, which carries the ring and the
  * resonators.
  * @return The inputs.
- * @throws std::invalid_argument When the plan carries no launcher or the ring
- * is empty.
+ * @throws std::invalid_argument When the plan carries no launcher, when the
+ * ring is empty, or when the launcher slots do not go once around the chip in
+ * index order against the direction of the ring. The order is checked only
+ * when there are at least three launchers, not all on one line, and the ring
+ * encloses an area.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT AssignmentInputs
 assignmentInputs(const ChipT& chip, const CapacityPlanT& capacity,

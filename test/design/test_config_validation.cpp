@@ -255,6 +255,25 @@ TEST(ConfigValidation, TheBridgePatternAndTheBridgeRulesMustAgree) {
             "port 'Coupler1_2.port1' is paired by 2 bridge rule sides");
 }
 
+TEST(ConfigValidation, ABridgePortNeedsItsPartnerInItsComponent) {
+  // The rule pairs port1 with port2, but the coupler carries only port1, so
+  // the wire would end inside the coupler.
+  ChipT chip = smallChip();
+  auto port = std::make_unique<PortT>();
+  port->label = "Coupler1_2.port1";
+  port->center = Point(0.0, 0.0);
+  port->role = UnassignedRole::BridgePair;
+  port->component = "Coupler1_2";
+  chip.ports.push_back(std::move(port));
+
+  ConfigT config = manualConfig();
+  config.ports->patterns->bridge_pair = R"(^Coupler\d+_\d+\.port[1-2]$)";
+  config.ports->bridge_pairs.push_back(couplerRule());
+  EXPECT_EQ(validate(config, chip),
+            (Problems{"port 'Coupler1_2.port1' is a bridge_pair port without "
+                      "a partner in component 'Coupler1_2'"}));
+}
+
 TEST(ConfigValidation, StageParametersMustBeUsable) {
   ConfigT config = manualConfig();
   config.grid = std::make_unique<GridParamsT>();
@@ -270,7 +289,7 @@ TEST(ConfigValidation, StageParametersMustBeUsable) {
   config.stages->solver->time_limit = -1.0;
   config.stages->solver->relative_gap = -0.5;
   const std::string backendProblem =
-      "stages.solver: backend must be one of auto, highs, gurobi, not 'cplex'";
+      "stages.solver: backend must be one of highs, gurobi, not 'cplex'";
   EXPECT_EQ(validate(config),
             (Problems{"grid: detail_factor must be at least one",
                       "stages.capacity: bottleneck_clearance must be positive",

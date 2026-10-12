@@ -19,23 +19,27 @@ releases may include breaking changes.
   a live progress line on a terminal, in the format of
   `docs/terminal_output.md`. Add `list-algorithms`, and `plot` and `render` with
   `--stage` and `--run-dir` for the planning stages; the assign and corridor
-  pictures show the feedline chains ([#139]) ([**@FeldmeierMichael**])
+  pictures show the feedline chains ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add the planning stages: the Capacity stage partitions the free space at
   its bottlenecks and budgets the wires of every capacity chain, the Global
   stage solves the inner circuit as a mixed-integer program on Hanan lattices,
   the Assignment stage assigns the ring ports to launchers and feedline chains
   with an integer program, and the Corridor stage routes every connection
   through the partitions over border slots. They write the artifacts
-  `01-capacity.fb` to `04-corridor.fb` ([#139]) ([**@FeldmeierMichael**])
+  `01-capacity.fb` to `04-corridor.fb` ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdMilp`: a linear model, the HiGHS backend with a progress and
   log observer, MPS output, and the choice of the backend through
-  `[stages.solver] backend` or `SCPD_SOLVER`; Gurobi is used through `gurobipy`
-  when it is installed and licensed ([#139]) ([**@FeldmeierMichael**])
+  `[stages.solver] backend` or `SCPD_SOLVER`: HiGHS by default, and Gurobi
+  through an installed and licensed `gurobipy` when the backend is `gurobi`
+  ([#140]) ([**@FeldmeierMichael**])
+- ➕ Add the C++ dependencies HiGHS 1.11.0 and Boost.Polygon 1.89.0, both
+  fetched at configure time and linked static, and the Python dependency `rich`
+  ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add bridge pairs and components to the configuration: the `bridge_pair` and
   `component` patterns, the `[[ports.bridge_pairs]]` rules, the stage sections
-  and `[run]` ([#139]) ([**@FeldmeierMichael**])
+  and `[run]` ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add the configurations of the eight benchmark chips in `benchmarks/`, and
-  the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#139])
+  the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#140])
   ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins
   move primitives, with a distance-field heuristic, a bucket queue whose memory
@@ -76,7 +80,7 @@ releases may include breaking changes.
 
 - 🎨 Start the result line of `plot`, `render` and `inspect` with `✓` and an
   error with `✗`, and show the `bridge_pair` pattern and the reachable solvers
-  in `doctor` ([#139]) ([**@FeldmeierMichael**])
+  in `doctor` ([#140]) ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that
@@ -100,7 +104,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
-[#139]: https://github.com/munich-quantum-toolkit/scpd/pull/139
+[#140]: https://github.com/munich-quantum-toolkit/scpd/pull/140
 [#134]: https://github.com/munich-quantum-toolkit/scpd/pull/134
 [#111]: https://github.com/munich-quantum-toolkit/scpd/pull/111
 [#98]: https://github.com/munich-quantum-toolkit/scpd/pull/98

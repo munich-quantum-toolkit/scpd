@@ -38,8 +38,8 @@ namespace mqt::scpd::pipeline {
  * @param report Where the solve reports.
  * @param task What the solve is for, such as "solving the inner circuit".
  * @return The solution.
- * @throws std::invalid_argument When the backend name is none of "auto",
- * "highs" and "gurobi".
+ * @throws std::invalid_argument When the backend name is neither "highs"
+ * nor "gurobi".
  * @throws std::runtime_error When "gurobi" is asked for and no external
  * backend is registered.
  */
@@ -55,8 +55,8 @@ solveWith(const milp::Model& model, const ConfigT& config, const Report& report,
  *
  * @param config The run configuration.
  * @return "HiGHS" and its version, or the name of the external backend.
- * @throws std::invalid_argument When the backend name is none of "auto",
- * "highs" and "gurobi".
+ * @throws std::invalid_argument When the backend name is neither "highs"
+ * nor "gurobi".
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string
 solverName(const ConfigT& config);

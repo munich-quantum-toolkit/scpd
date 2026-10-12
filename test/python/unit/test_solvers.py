@@ -42,16 +42,25 @@ def without_gurobipy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "gurobipy", None)
 
 
-@pytest.mark.usefixtures("without_gurobipy", "no_external_solver")
+@pytest.mark.usefixtures("without_gurobipy")
 def test_gurobi_is_unavailable_without_gurobipy() -> None:
-    """Without gurobipy the backend says why and registers nothing."""
+    """Without gurobipy the backend says why."""
     usable, why = available()
     assert not usable
     assert "gurobipy is not installed" in why
 
-    assert not register()
-    packed = write_config(load_config(FIXTURE))
-    assert pyscpd.solver_info(packed).startswith("HiGHS ")
+
+@pytest.mark.usefixtures("no_external_solver")
+def test_a_registered_gurobi_solves_only_when_the_configuration_names_it() -> None:
+    """A registered backend leaves a configuration that names no backend with HiGHS."""
+    register()
+    config = load_config(FIXTURE)
+    assert pyscpd.solver_info(write_config(config)).startswith("HiGHS ")
+
+    assert config.stages is not None
+    assert config.stages.solver is not None
+    config.stages.solver.backend = "gurobi"
+    assert pyscpd.solver_info(write_config(config)) == "gurobi"
 
 
 @pytest.mark.usefixtures("without_gurobipy")
@@ -114,8 +123,10 @@ class FakeModel:
         self.ObjVal = 7.0
 
     def setParam(self, name: str, value: float) -> None:  # ruff: ignore[invalid-function-name]
-        """Record a parameter of the solve."""
+        """Record a parameter of the solve, and give the status that the solve without dual reductions ends with."""
         self.gurobi.parameters[name] = value
+        if name == "DualReductions":
+            self.Status = self.gurobi.status_without_dual_reductions
 
     def optimize(self) -> None:
         """Record that the model was solved."""
@@ -156,9 +167,10 @@ class FakeGurobi:
 
     GurobiError = RuntimeError
 
-    def __init__(self, status: int = 2, solutions: int = 1) -> None:
+    def __init__(self, status: int = 2, solutions: int = 1, status_without_dual_reductions: int = 3) -> None:
         """Set the status and the number of solutions that every solve ends with."""
         self.status = status
+        self.status_without_dual_reductions = status_without_dual_reductions
         self.solutions = solutions
         self.parameters: dict[str, float] = {}
         self.solved: list[str] = []
@@ -193,14 +205,12 @@ def with_gurobi(monkeypatch: pytest.MonkeyPatch, gurobi: FakeGurobi) -> FakeGuro
     return gurobi
 
 
-@pytest.mark.usefixtures("no_external_solver")
-def test_gurobi_is_registered_when_a_licence_can_be_acquired(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With gurobipy and a licence the backend becomes the external solver of the process."""
+def test_gurobi_is_available_when_a_licence_can_be_acquired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With gurobipy and a licence the backend is available, and the licence check releases it."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi())
 
     assert available() == (True, "")
-    assert register()
-    assert gurobi.disposed == 2
+    assert gurobi.disposed == 1
 
 
 def test_gurobi_returns_the_values_in_the_order_of_the_names(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -236,3 +246,17 @@ def test_gurobi_without_a_solution_returns_no_values(
     assert values == []
     assert not gurobi.parameters
     assert gurobi.disposed == 1
+
+
+@pytest.mark.parametrize(("resolved", "expected"), [(3, "infeasible"), (5, "unbounded")])
+def test_gurobi_tells_infeasible_from_unbounded(monkeypatch: pytest.MonkeyPatch, resolved: int, expected: str) -> None:
+    """A solve that ends with "infeasible or unbounded" repeats without dual reductions and reports which."""
+    gurobi = with_gurobi(monkeypatch, FakeGurobi(4, 0, resolved))
+
+    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x"])
+
+    assert status == expected
+    assert math.isnan(objective)
+    assert values == []
+    assert gurobi.parameters == {"DualReductions": 0}
+    assert len(gurobi.solved) == 2

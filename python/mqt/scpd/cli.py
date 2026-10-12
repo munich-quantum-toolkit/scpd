@@ -77,8 +77,8 @@ def command_plan(args: argparse.Namespace) -> int:
         The exit code.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
-    # An installed and licensed gurobipy becomes the external solver of the process; without it
-    # the linked-in HiGHS solves, and a run works either way.
+    # The core reaches gurobipy only for a configuration that names the gurobi backend; every other
+    # configuration solves with the linked-in HiGHS.
     register_external_solver()
 
     directory = RunDirectory(args.output)

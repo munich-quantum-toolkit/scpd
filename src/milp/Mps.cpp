@@ -12,10 +12,14 @@
 
 #include "mqt-scpd/milp/Model.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <format>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -48,9 +52,36 @@ byColumn(const Model& model) {
   return columns;
 }
 
+/// Refuses a name that free-form MPS cannot carry: an empty one, or one with
+/// a space in it, since a space separates the fields of a line.
+void requireMpsName(const std::string& name, const std::string_view what) {
+  if (name.empty() ||
+      std::ranges::any_of(name, [](const unsigned char character) {
+        return std::isspace(character) != 0;
+      })) {
+    throw std::invalid_argument(std::format(
+        "the {} '{}' cannot be written as MPS: a name must be non-empty and "
+        "have no spaces",
+        what, name));
+  }
+}
+
 } // namespace
 
 std::string toMps(const Model& model) {
+  requireMpsName(model.name(), "model name");
+  for (const auto& variable : model.variables()) {
+    requireMpsName(variable.name, "variable name");
+  }
+  for (const auto& constraint : model.constraints()) {
+    requireMpsName(constraint.name, "row name");
+    if (constraint.name == OBJECTIVE_ROW) {
+      throw std::invalid_argument(std::format(
+          "the row name '{}' cannot be written as MPS: it names the objective",
+          OBJECTIVE_ROW));
+    }
+  }
+
   // MPS states a minimization, so a maximization is written with every
   // objective coefficient negated. The backend that hands the text to a
   // solver negates the value that comes back.

@@ -36,8 +36,9 @@ class AssignmentParams(object):
             return self._tab.String(o + self._tab.Pos)
         return None
 
-    # How many launchers the assignment activates. A figure per chip with no
-    # default: zero means the configuration does not set it.
+    # How many feedline chain ends the assignment puts on a launcher; every
+    # other chain end is a termination. A figure per chip with no default:
+    # zero means the configuration does not set it.
     # AssignmentParams
     def LauncherTarget(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))

@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <format>
 #include <memory>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -90,6 +91,113 @@ RingEdges ringEdgesOf(const AssignmentInputs& inputs) {
     ring.weights.push_back(static_cast<double>(between));
   }
   return ring;
+}
+
+/// The direction of a closed walk through the points around their centroid:
+/// +1 counterclockwise, -1 clockwise, and 0 when the walk does not go once
+/// around the centroid with every step turning the same way.
+int turnAroundCentroid(const std::vector<geometry::Point>& points) {
+  if (points.size() < 3) {
+    return 0;
+  }
+  double x = 0.0;
+  double y = 0.0;
+  for (const auto& point : points) {
+    x += point.x();
+    y += point.y();
+  }
+  const geometry::Point centroid(x / static_cast<double>(points.size()),
+                                 y / static_cast<double>(points.size()));
+  double total = 0.0;
+  int sign = 0;
+  for (std::size_t index = 0; index < points.size(); ++index) {
+    const auto from =
+        geometry::angleOf(geometry::subtract(points[index], centroid));
+    const auto to = geometry::angleOf(
+        geometry::subtract(points[(index + 1) % points.size()], centroid));
+    auto step = geometry::normalizeAngle(to - from);
+    if (step > std::numbers::pi) {
+      step -= 2.0 * std::numbers::pi;
+    }
+    if (step == 0.0) {
+      return 0;
+    }
+    const auto stepSign = step > 0.0 ? 1 : -1;
+    if (sign != 0 && stepSign != sign) {
+      return 0;
+    }
+    sign = stepSign;
+    total += step;
+  }
+  return std::abs(std::abs(total) - (2.0 * std::numbers::pi)) < 1e-6 ? sign : 0;
+}
+
+/// The direction of a closed walk through the points by its signed area:
+/// +1 counterclockwise, -1 clockwise, and 0 when the walk encloses no area.
+int windingOf(const std::vector<geometry::Point>& points) {
+  double area = 0.0;
+  double extent = 0.0;
+  for (std::size_t index = 0; index < points.size(); ++index) {
+    const auto& here = points[index];
+    const auto& next = points[(index + 1) % points.size()];
+    area += geometry::cross(here, next);
+    extent = std::max({extent, std::abs(here.x()), std::abs(here.y())});
+  }
+  if (std::abs(area) <= 1e-9 * extent * extent) {
+    return 0;
+  }
+  return area > 0.0 ? 1 : -1;
+}
+
+/// Whether every point lies on the line through the first two.
+bool onOneLine(const std::vector<geometry::Point>& points) {
+  double extent = 0.0;
+  for (const auto& point : points) {
+    extent = std::max({extent, std::abs(point.x() - points.front().x()),
+                       std::abs(point.y() - points.front().y())});
+  }
+  const auto along = geometry::subtract(points[1], points.front());
+  return std::ranges::all_of(points, [&](const geometry::Point& point) {
+    return std::abs(geometry::cross(
+               along, geometry::subtract(point, points.front()))) <=
+           1e-9 * extent * extent;
+  });
+}
+
+/// Refuses launchers that are not numbered against the direction of the
+/// ring.
+///
+/// The model treats launcher k+1 as the next launcher after k when it walks
+/// the ring, so the launcher slots have to go once around the chip in index
+/// order, and in the opposite direction to the ring. A chip that breaks this
+/// still solves, but with feeds between launchers that are not neighbours.
+/// Fewer than three launchers, launchers on one line, or a ring without area
+/// have no direction to check.
+void requireLauncherOrder(const ChipT& chip, const AssignmentInputs& inputs) {
+  if (inputs.launcherPosition.size() < 3 || inputs.ring.size() < 3) {
+    return;
+  }
+  std::vector<geometry::Point> ringCenters;
+  ringCenters.reserve(inputs.ring.size());
+  for (const auto port : inputs.ring) {
+    ringCenters.push_back(chip.ports[port]->center);
+  }
+  const auto ringTurn = windingOf(ringCenters);
+  if (ringTurn == 0 || onOneLine(inputs.launcherPosition)) {
+    return;
+  }
+  const auto launcherTurn = turnAroundCentroid(inputs.launcherPosition);
+  if (launcherTurn == 0) {
+    throw std::invalid_argument(
+        "the launcher ports are not numbered in order around the chip; the "
+        "assignment needs them numbered against the direction of the port "
+        "ring");
+  }
+  if (launcherTurn == ringTurn) {
+    throw std::invalid_argument(
+        "the launcher ports are numbered in the direction of the port ring; "
+        "the assignment needs them numbered against it");
+  }
 }
 
 /// The label of a port, or "termination" for a chain end without one.
@@ -367,8 +475,8 @@ private:
     return variables;
   }
 
-  /// The number of launcher ends the model has to use. It is a figure of the
-  /// chip with no default.
+  /// How many feedline chain ends the model puts on a launcher; every other
+  /// chain end is a termination. It is a figure of the chip with no default.
   [[nodiscard]] static std::uint32_t launcherTarget(const ConfigT& config) {
     if (config.stages != nullptr && config.stages->assignment != nullptr &&
         config.stages->assignment->launcher_target > 0) {
@@ -665,6 +773,7 @@ AssignmentInputs assignmentInputs(const ChipT& chip,
     inputs.nearestLauncher.push_back(static_cast<std::uint32_t>(best));
   }
 
+  requireLauncherOrder(chip, inputs);
   return inputs;
 }
 

@@ -30,16 +30,24 @@ if TYPE_CHECKING:
 __all__ = ["GUROBI_STATUS", "SolverUnavailableError", "available", "register", "solve_mps"]
 
 #: What each Gurobi status code means in the terms of the core. Every other code is an error, which
-#: the core reports and does not raise.
+#: the core reports and does not raise. Code 4 says "infeasible or unbounded"; the solve repeats
+#: without dual reductions to tell the two apart, so that the code does not reach this table.
 GUROBI_STATUS: dict[int, str] = {
     2: "optimal",
     3: "infeasible",
-    4: "unbounded",
     5: "unbounded",
     9: "feasible",
     11: "feasible",
     13: "feasible",
 }
+
+
+#: The Gurobi status code for "infeasible or unbounded".
+INFEASIBLE_OR_UNBOUNDED = 4
+
+
+#: Whether the backend is cleared at exit already, so that the hook is installed once.
+_CLEARED_AT_EXIT: list[bool] = []
 
 
 class SolverUnavailableError(RuntimeError):
@@ -108,6 +116,11 @@ def solve_mps(
             if relative_gap > 0.0:
                 model.setParam("MIPGap", relative_gap)
             model.optimize()
+            if model.Status == INFEASIBLE_OR_UNBOUNDED:
+                # Presolve stops at this code when it proves that no optimum exists. Without dual
+                # reductions Gurobi says which of the two cases holds, as HiGHS does.
+                model.setParam("DualReductions", 0)
+                model.optimize()
 
             status = GUROBI_STATUS.get(model.Status, f"gurobi ended with status {model.Status}")
             if status not in {"optimal", "feasible"} or model.SolCount == 0:
@@ -126,18 +139,18 @@ def solve_mps(
             environment.dispose()
 
 
-def register() -> bool:
-    """Install this backend as the external solver of the process, if Gurobi can be used.
+def register() -> None:
+    """Install this backend as the external solver of the process.
 
-    Returns:
-        Whether the backend was installed.
+    The core uses the backend only for a configuration that asks for ``gurobi``. Registering it
+    imports nothing and acquires no licence: a solve without gurobipy raises
+    :class:`SolverUnavailableError`, and a solve without a licence raises the error of Gurobi.
     """
     from .. import pyscpd  # ruff: ignore[import-outside-top-level]
 
-    usable, _ = available()
-    if usable:
-        pyscpd.set_solver(solve_mps)
-        # The core holds the function until the backend is cleared. Clearing it before the
-        # interpreter shuts down keeps the core from releasing a Python object after Python is gone.
+    pyscpd.set_solver(solve_mps)
+    # The core holds the function until the backend is cleared. Clearing it before the interpreter
+    # shuts down keeps the core from releasing a Python object after Python is gone.
+    if not _CLEARED_AT_EXIT:
         atexit.register(pyscpd.set_solver, None)
-    return usable
+        _CLEARED_AT_EXIT.append(True)

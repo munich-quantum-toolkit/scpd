@@ -24,6 +24,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -111,6 +112,82 @@ TEST(AssignmentInputs, RefuseAPlanWithoutALauncherOrARingWithoutAPort) {
   EXPECT_THROW(static_cast<void>(assignmentInputs(
                    chip, planWithLaunchersAt({0.0}), routingWithRing({}, {}))),
                std::invalid_argument);
+}
+
+// The launcher order, on a chip whose four ring ports sit clockwise on the
+// corners of a square and whose four launchers sit on the middle of its sides.
+
+ChipT squareChip(const std::vector<std::array<double, 2>>& launchers) {
+  ChipT chip;
+  const std::vector<std::array<double, 2>> corners = {
+      {0.0, 100.0}, {100.0, 100.0}, {100.0, 0.0}, {0.0, 0.0}};
+  for (std::size_t index = 0; index < corners.size(); ++index) {
+    auto port = std::make_unique<fbd::PortT>();
+    port->label = "r" + std::to_string(index);
+    port->center = {corners[index][0], corners[index][1]};
+    port->role = fbd::UnassignedRole::Resonator;
+    chip.ports.push_back(std::move(port));
+  }
+  for (std::size_t index = 0; index < launchers.size(); ++index) {
+    auto port = std::make_unique<fbd::PortT>();
+    port->label = "l" + std::to_string(index);
+    port->center = {launchers[index][0], launchers[index][1]};
+    port->role = fbd::UnassignedRole::Launcher;
+    chip.ports.push_back(std::move(port));
+  }
+  return chip;
+}
+
+CapacityPlanT planWithLaunchersOf(const ChipT& chip) {
+  CapacityPlanT plan;
+  for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
+    if (chip.ports[index]->role != fbd::UnassignedRole::Launcher) {
+      continue;
+    }
+    auto slot = std::make_unique<fba::LauncherSlotT>();
+    slot->port = fbd::PortRef(index);
+    slot->position = chip.ports[index]->center;
+    plan.launchers.push_back(std::move(slot));
+  }
+  return plan;
+}
+
+std::string
+launcherOrderProblem(const std::vector<std::array<double, 2>>& launchers) {
+  const auto chip = squareChip(launchers);
+  try {
+    static_cast<void>(assignmentInputs(chip, planWithLaunchersOf(chip),
+                                       routingWithRing({0, 1, 2, 3}, {0})));
+  } catch (const std::invalid_argument& error) {
+    return error.what();
+  }
+  return "";
+}
+
+TEST(AssignmentInputs, AcceptLaunchersNumberedAgainstTheRing) {
+  // The ring runs clockwise, so the launchers run counterclockwise: left,
+  // bottom, right, top. Any of them may come first.
+  EXPECT_EQ(launcherOrderProblem(
+                {{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}}),
+            "");
+  EXPECT_EQ(launcherOrderProblem(
+                {{110.0, 50.0}, {50.0, 110.0}, {-10.0, 50.0}, {50.0, -10.0}}),
+            "");
+}
+
+TEST(AssignmentInputs, RefuseLaunchersNumberedWithTheRing) {
+  EXPECT_NE(launcherOrderProblem(
+                {{-10.0, 50.0}, {50.0, 110.0}, {110.0, 50.0}, {50.0, -10.0}})
+                .find("in the direction of the port ring"),
+            std::string::npos);
+}
+
+TEST(AssignmentInputs, RefuseLaunchersNumberedOutOfOrder) {
+  // Left, right, bottom, top: the walk crosses the chip twice.
+  EXPECT_NE(launcherOrderProblem(
+                {{-10.0, 50.0}, {110.0, 50.0}, {50.0, -10.0}, {50.0, 110.0}})
+                .find("not numbered in order around the chip"),
+            std::string::npos);
 }
 
 // The stage on the two-qubit fixture.

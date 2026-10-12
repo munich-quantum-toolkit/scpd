@@ -71,43 +71,17 @@ set(HIGHS_VERSION
     1.11.0
     CACHE STRING "HiGHS version")
 set(HIGHS_URL https://github.com/ERGO-Code/HiGHS/archive/refs/tags/v${HIGHS_VERSION}.tar.gz)
-set(BUILD_EXAMPLES
-    OFF
-    CACHE BOOL "" FORCE)
-set(BUILD_CXX_EXAMPLE
-    OFF
-    CACHE BOOL "" FORCE)
-set(BUILD_CXX_EXE
-    OFF
-    CACHE BOOL "" FORCE)
-set(HIGHSINT64
-    OFF
-    CACHE BOOL "" FORCE)
-set(ZLIB
-    OFF
-    CACHE BOOL "" FORCE)
 FetchContent_Declare(highs URL ${HIGHS_URL} EXCLUDE_FROM_ALL)
 list(APPEND FETCH_PACKAGES highs)
 
 # Boost.Polygon supplies the Voronoi diagram of the capacity stage. Only that library is configured,
-# and a Boost installed on the system is never used. Boost's own CMake declares BUILD_SHARED_LIBS as
-# a cache option, which would turn every target of this project and of HiGHS into a shared library
-# and leave the wheel with a runtime dependency to ship, so the option is forced off.
-set(BUILD_SHARED_LIBS
-    OFF
-    CACHE BOOL "" FORCE)
+# and a Boost installed on the system is never used.
 set(BOOST_VERSION
     1.89.0
     CACHE STRING "Boost version")
 set(BOOST_URL
     https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-cmake.tar.xz
 )
-set(BOOST_INCLUDE_LIBRARIES
-    polygon
-    CACHE STRING "" FORCE)
-set(BOOST_ENABLE_CMAKE
-    ON
-    CACHE BOOL "" FORCE)
 FetchContent_Declare(Boost URL ${BOOST_URL} EXCLUDE_FROM_ALL)
 list(APPEND FETCH_PACKAGES Boost)
 
@@ -123,8 +97,27 @@ if(BUILD_MQT_SCPD_TESTS)
   list(APPEND FETCH_PACKAGES googletest)
 endif()
 
-# Make all declared dependencies available.
+# Make all declared dependencies available. The options of HiGHS and Boost are normal variables that
+# exist only inside the block, so they neither write the cache nor change a value that the user or a
+# parent project set. CMP0077 makes option() honor a normal variable, and CMP0126 keeps set(CACHE)
+# from removing one; the policy versions of Boost leave both unset.
+block(SCOPE_FOR VARIABLES PROPAGATE flatbuffers_SOURCE_DIR nlohmann_json_SOURCE_DIR)
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
+# HiGHS: the library only, with 32-bit indices and without zlib.
+set(BUILD_EXAMPLES OFF)
+set(BUILD_CXX_EXAMPLE OFF)
+set(BUILD_CXX_EXE OFF)
+set(HIGHSINT64 OFF)
+set(ZLIB OFF)
+# HiGHS defaults BUILD_SHARED_LIBS to ON, and a shared library would be one more file for the wheel
+# to ship, so both dependencies are built static.
+set(BUILD_SHARED_LIBS OFF)
+# Boost: Boost.Polygon only.
+set(BOOST_INCLUDE_LIBRARIES polygon)
+set(BOOST_ENABLE_CMAKE ON)
 FetchContent_MakeAvailable(${FETCH_PACKAGES})
+endblock()
 
 # HiGHS is always built without link-time optimization. The project switches it on for Release
 # builds only after the dependencies are made available, so a first configure builds HiGHS without

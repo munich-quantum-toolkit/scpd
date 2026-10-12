@@ -139,9 +139,11 @@ using MpsSolveFunction = std::function<Solution(
 makeMpsBackend(std::string name, MpsSolveFunction solve);
 
 /// Which backend a run uses.
+///
+/// HiGHS is the default, and an external backend is used only when it is
+/// asked for by name. A registered external backend never replaces HiGHS on
+/// its own, so whether a licence is at hand does not change a result.
 enum class BackendChoice : std::uint8_t {
-  /// The registered external backend when there is one, else HiGHS.
-  Auto,
   /// HiGHS, whatever is registered.
   Highs,
   /// The registered external backend, and an error when there is none.
@@ -150,7 +152,7 @@ enum class BackendChoice : std::uint8_t {
 
 /**
  * @brief Reads the backend a name stands for.
- * @param name One of "auto", "highs" and "gurobi".
+ * @param name One of "highs" and "gurobi".
  * @return The choice.
  * @throws std::invalid_argument On any other name.
  */

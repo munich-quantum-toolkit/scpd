@@ -64,8 +64,8 @@ pytestmark = pytest.mark.usefixtures("only_highs")
 
 @pytest.fixture
 def only_highs(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
-    """Keep a licensed gurobipy on the machine from becoming the solver of a test run."""
-    monkeypatch.setattr("mqt.scpd.cli.register_external_solver", lambda: False)
+    """Keep the solver of a test run from reaching a gurobipy on the machine."""
+    monkeypatch.setattr("mqt.scpd.cli.register_external_solver", lambda: None)
     yield
     pyscpd.set_solver(None)
 

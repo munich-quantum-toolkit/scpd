@@ -31,6 +31,9 @@ namespace mqt::scpd::milp {
  *
  * @param model The model.
  * @return The MPS text.
+ * @throws std::invalid_argument When the model, a variable or a row has an
+ * empty name or a name with a space, or when a row is named "COST", which
+ * names the objective row.
  */
 [[nodiscard]] MQT_SCPD_MILP_EXPORT std::string toMps(const Model& model);
 

@@ -515,11 +515,12 @@ private:
           continue;
         }
         if (port.has_value()) {
-          // Any other port is where a wire may start or pass, once.
-          model.addLessOrEqual(std::format("port_in_{}_{}", index, node),
-                               flow(index, node, false), 1.0);
-          model.addLessOrEqual(std::format("port_out_{}_{}", index, node),
-                               flow(index, node, true), 1.0);
+          // Any other port is where one wire starts or ends, and no wire runs
+          // on through it. A wire that did would join two connections into
+          // one component with three port ends, which names no connection.
+          model.addLessOrEqual(
+              std::format("port_{}_{}", index, node),
+              flow(index, node, false) + flow(index, node, true), 1.0);
           continue;
         }
         // A plain crossing passes on what it takes, and carries at most one

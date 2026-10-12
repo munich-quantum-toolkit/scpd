@@ -155,6 +155,7 @@ feedline_terminations = 0
 capacity_cells_x = 42
 
 [stages.assignment]
-# How many launchers the assignment activates. A figure per chip with no
-# default, taken from the prototype's driver of the same benchmark.
+# How many feedline chain ends the assignment puts on a launcher; every other
+# chain end is a termination. A figure per chip with no default, taken from the
+# research prototype's run of the same benchmark.
 launcher_target = 18

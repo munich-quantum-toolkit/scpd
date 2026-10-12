@@ -119,6 +119,19 @@ def test_preparing_again_starts_the_run_afresh(tmp_path: Path, monkeypatch: pyte
     assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
 
 
+def test_a_run_starts_again_from_its_own_inputs(tmp_path: Path) -> None:
+    """A run prepared from the copies it carries keeps them and starts afresh."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, ["capacity"])
+
+    directory.prepare(directory.config, directory.chip)
+
+    assert directory.config.read_bytes() == CONFIG.read_bytes()
+    assert directory.chip.read_bytes() == (FIXTURE / "routing_config.json").read_bytes()
+    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
+
+
 def test_preparing_refuses_a_directory_that_holds_a_configuration_of_its_own(tmp_path: Path) -> None:
     """A directory with a config.toml but without the chip copy of a run is no run, and stays as it was."""
     foreign = tmp_path / "chip"

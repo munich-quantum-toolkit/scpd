@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -203,6 +204,18 @@ TEST(Mps, NamesEveryRowAndColumnOfTheModel) {
   EXPECT_NE(text.find(" E  beta"), std::string::npos);
   EXPECT_NE(text.find("alpha"), std::string::npos);
   EXPECT_NE(text.find("ENDATA"), std::string::npos);
+}
+
+TEST(Mps, RefusesNamesTheTextCannotCarry) {
+  // A space would split the field, and COST is the objective row.
+  Model spaced("names");
+  static_cast<void>(spaced.addBinary("two words"));
+  EXPECT_THROW(static_cast<void>(toMps(spaced)), std::invalid_argument);
+
+  Model objective("names");
+  const auto x = objective.addBinary("x");
+  objective.addEqual("COST", 1.0 * x, 1.0);
+  EXPECT_THROW(static_cast<void>(toMps(objective)), std::invalid_argument);
 }
 
 } // namespace

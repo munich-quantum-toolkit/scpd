@@ -913,8 +913,9 @@ struct AssignmentParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *assigner() const {
     return GetPointer<const ::flatbuffers::String *>(VT_ASSIGNER);
   }
-  /// How many launchers the assignment activates. A figure per chip with no
-  /// default: zero means the configuration does not set it.
+  /// How many feedline chain ends the assignment puts on a launcher; every
+  /// other chain end is a termination. A figure per chip with no default:
+  /// zero means the configuration does not set it.
   uint32_t launcher_target() const {
     return GetField<uint32_t>(VT_LAUNCHER_TARGET, 0);
   }
@@ -1000,8 +1001,8 @@ struct SolverParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_TIME_LIMIT = 6,
     VT_RELATIVE_GAP = 8
   };
-  /// "auto", "highs" or "gurobi". Empty means "auto". The environment
-  /// variable SCPD_SOLVER overrides it for one run.
+  /// "highs" or "gurobi". Empty means "highs". The environment variable
+  /// SCPD_SOLVER overrides it for one run.
   const ::flatbuffers::String *backend() const {
     return GetPointer<const ::flatbuffers::String *>(VT_BACKEND);
   }

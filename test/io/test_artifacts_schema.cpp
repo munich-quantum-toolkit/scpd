@@ -185,6 +185,43 @@ TEST(ArtifactSchema, RefusesAFeedlineChainThatLeavesTheRing) {
   EXPECT_EQ(problems[0], "chain 0 names ring node 1 of 1");
 }
 
+TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrRunsInACycle) {
+  // The later stages walk a chain by index, so an index outside the nodes or
+  // a link back to an earlier node would make the walk read past the end or
+  // never stop.
+  const auto node = [](const std::vector<std::uint32_t>& next) {
+    auto entry = std::make_unique<CapacityNodeT>();
+    entry->kind = CapacityElement::Target;
+    entry->next = next;
+    return entry;
+  };
+
+  CapacityPlanT shared = emptyPlan();
+  shared.nodes.push_back(node({1, 2}));
+  shared.nodes.push_back(node({2}));
+  shared.nodes.push_back(node({}));
+  shared.chains = {0, 1};
+  // Two chains may share a subtree.
+  EXPECT_TRUE(validate(wrap(std::move(shared))).empty());
+
+  CapacityPlanT outside = emptyPlan();
+  outside.nodes.push_back(node({3}));
+  outside.chains = {2};
+  EXPECT_EQ(
+      validate(wrap(std::move(outside))),
+      (std::vector<std::string>{"capacity node 0 links to node 3 of 1",
+                                "capacity chain 0 starts at node 2 of 1"}));
+
+  CapacityPlanT cycle = emptyPlan();
+  cycle.nodes.push_back(node({1}));
+  cycle.nodes.push_back(node({0}));
+  cycle.chains = {0};
+  EXPECT_EQ(validate(wrap(std::move(cycle))),
+            (std::vector<std::string>{
+                "capacity nodes link in a cycle: 2 of 2 nodes lie on or "
+                "behind one"}));
+}
+
 TEST(ArtifactSchema, AssignmentRoundTrips) {
   AssignmentT assignment;
   assignment.connections.push_back(std::make_unique<ConnectionT>());

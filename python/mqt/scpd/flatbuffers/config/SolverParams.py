@@ -27,8 +27,8 @@ class SolverParams(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # "auto", "highs" or "gurobi". Empty means "auto". The environment
-    # variable SCPD_SOLVER overrides it for one run.
+    # "highs" or "gurobi". Empty means "highs". The environment variable
+    # SCPD_SOLVER overrides it for one run.
     # SolverParams
     def Backend(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))

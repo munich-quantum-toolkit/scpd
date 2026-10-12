@@ -51,7 +51,7 @@ std::string outcomeOf(const milp::Solution& solution) {
 
 /// The backend a configuration asks for, and what a solve may spend.
 struct Backend {
-  milp::BackendChoice choice = milp::BackendChoice::Auto;
+  milp::BackendChoice choice = milp::BackendChoice::Highs;
   milp::SolveOptions options;
 };
 
@@ -71,7 +71,7 @@ Backend backendOf(const ConfigT& config) {
       fromEnvironment != nullptr && *fromEnvironment != '\0') {
     name = fromEnvironment;
   }
-  backend.choice = milp::backendChoiceFromName(name.empty() ? "auto" : name);
+  backend.choice = milp::backendChoiceFromName(name.empty() ? "highs" : name);
   return backend;
 }
 
@@ -96,13 +96,11 @@ milp::Solution solveWith(const milp::Model& model, const ConfigT& config,
 }
 
 std::string solverName(const ConfigT& config) {
-  const auto choice = backendOf(config).choice;
-  const auto external = milp::externalBackend();
-  if (choice == milp::BackendChoice::Highs ||
-      (choice == milp::BackendChoice::Auto && external == nullptr)) {
+  if (backendOf(config).choice == milp::BackendChoice::Highs) {
     return "HiGHS " + milp::highsVersion();
   }
   // Without a registered backend the solve itself fails and says why.
+  const auto external = milp::externalBackend();
   return external != nullptr ? std::string(external->name()) : "gurobi";
 }
 
