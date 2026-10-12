@@ -118,8 +118,11 @@ def solve_mps(
             model.optimize()
             if model.Status == INFEASIBLE_OR_UNBOUNDED:
                 # Presolve stops at this code when it proves that no optimum exists. Without dual
-                # reductions Gurobi says which of the two cases holds, as HiGHS does.
+                # reductions Gurobi says which of the two cases holds, as HiGHS does. The second solve
+                # gets the time the first one left, so that both together keep to the limit.
                 model.setParam("DualReductions", 0)
+                if time_limit > 0.0:
+                    model.setParam("TimeLimit", max(time_limit - model.Runtime, 0.0))
                 model.optimize()
 
             status = GUROBI_STATUS.get(model.Status, f"gurobi ended with status {model.Status}")

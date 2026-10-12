@@ -12,6 +12,7 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/io/mqt_scpd_io_export.hpp"
 
 #include <cstdint>
@@ -32,6 +33,22 @@ using design::Problems;
  */
 [[nodiscard]] MQT_SCPD_IO_EXPORT Problems
 validate(const flatbuffers::artifacts::ArtifactT& artifact);
+
+/**
+ * @brief Checks that a stage artifact fits a chip.
+ *
+ * An artifact names ports by their index into the chip. An artifact that was
+ * made from another chip can name a port this chip does not have, and a
+ * stage that read it would read past the end of the port list.
+ *
+ * @param artifact The artifact to check.
+ * @param chip The chip a stage reads the artifact with.
+ * @return A problem for every port the artifact names that @p chip does not
+ * have, empty when the artifact fits.
+ */
+[[nodiscard]] MQT_SCPD_IO_EXPORT Problems
+validate(const flatbuffers::artifacts::ArtifactT& artifact,
+         const flatbuffers::design::ChipT& chip);
 
 /**
  * @brief Serializes a stage artifact as a run directory stores it.

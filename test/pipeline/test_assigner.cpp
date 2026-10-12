@@ -13,6 +13,7 @@
 
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/pipeline/Assigner.hpp"
@@ -153,7 +154,7 @@ CapacityPlanT planWithLaunchersOf(const ChipT& chip) {
 }
 
 std::string
-launcherOrderProblem(const std::vector<std::array<double, 2>>& launchers) {
+stageOrderProblem(const std::vector<std::array<double, 2>>& launchers) {
   const auto chip = squareChip(launchers);
   try {
     static_cast<void>(assignmentInputs(chip, planWithLaunchersOf(chip),
@@ -167,16 +168,16 @@ launcherOrderProblem(const std::vector<std::array<double, 2>>& launchers) {
 TEST(AssignmentInputs, AcceptLaunchersNumberedAgainstTheRing) {
   // The ring runs clockwise, so the launchers run counterclockwise: left,
   // bottom, right, top. Any of them may come first.
-  EXPECT_EQ(launcherOrderProblem(
+  EXPECT_EQ(stageOrderProblem(
                 {{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}}),
             "");
-  EXPECT_EQ(launcherOrderProblem(
+  EXPECT_EQ(stageOrderProblem(
                 {{110.0, 50.0}, {50.0, 110.0}, {-10.0, 50.0}, {50.0, -10.0}}),
             "");
 }
 
 TEST(AssignmentInputs, RefuseLaunchersNumberedWithTheRing) {
-  EXPECT_NE(launcherOrderProblem(
+  EXPECT_NE(stageOrderProblem(
                 {{-10.0, 50.0}, {50.0, 110.0}, {110.0, 50.0}, {50.0, -10.0}})
                 .find("in the direction of the port ring"),
             std::string::npos);
@@ -184,10 +185,27 @@ TEST(AssignmentInputs, RefuseLaunchersNumberedWithTheRing) {
 
 TEST(AssignmentInputs, RefuseLaunchersNumberedOutOfOrder) {
   // Left, right, bottom, top: the walk crosses the chip twice.
-  EXPECT_NE(launcherOrderProblem(
+  EXPECT_NE(stageOrderProblem(
                 {{-10.0, 50.0}, {110.0, 50.0}, {50.0, -10.0}, {50.0, 110.0}})
                 .find("not numbered in order around the chip"),
             std::string::npos);
+}
+
+TEST(LauncherOrder, GivesTheVerdictOfTheStageBeforeAnyStageRuns) {
+  // The same three chips as above, read with the configured ring instead of
+  // the ring of the Global stage and the launcher slots of the capacity plan.
+  ConfigT config;
+  config.ports = std::make_unique<flatbuffers::config::PortConfigT>();
+  config.ports->sequences =
+      std::make_unique<flatbuffers::config::PortSequencesT>();
+  config.ports->sequences->all_outer = {"r0", "r1", "r2", "r3"};
+  for (const auto& launchers : std::vector<std::vector<std::array<double, 2>>>{
+           {{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}},
+           {{-10.0, 50.0}, {50.0, 110.0}, {110.0, 50.0}, {50.0, -10.0}},
+           {{-10.0, 50.0}, {110.0, 50.0}, {50.0, -10.0}, {50.0, 110.0}}}) {
+    const auto problem = launcherOrderProblem(squareChip(launchers), config);
+    EXPECT_EQ(problem.value_or(""), stageOrderProblem(launchers));
+  }
 }
 
 // The stage on the two-qubit fixture.
@@ -337,11 +355,12 @@ TEST(Assigner, ReportsTheAssignmentAndHowItWasSolved) {
       assignMini(test::miniConfig(), report);
 
   ASSERT_EQ(results.size(), 1U);
-  ASSERT_EQ(results[0].size(), 3U);
-  EXPECT_EQ(results[0][0].text, "5 ports on 1 launcher");
-  EXPECT_TRUE(results[0][1].text.starts_with("objective "))
-      << results[0][1].text;
-  EXPECT_EQ(results[0][2].text, "optimal");
+  ASSERT_EQ(results[0].size(), 4U);
+  EXPECT_EQ(results[0][0].text, "5 ports");
+  EXPECT_EQ(results[0][1].text, "1 launcher end");
+  EXPECT_TRUE(results[0][2].text.starts_with("objective "))
+      << results[0][2].text;
+  EXPECT_EQ(results[0][3].text, "optimal");
   EXPECT_EQ(fails[0], 0U);
   EXPECT_TRUE(std::ranges::any_of(steps, [](const std::string& line) {
     return line.starts_with("model assignment");

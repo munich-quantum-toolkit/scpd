@@ -132,6 +132,21 @@ def test_a_run_starts_again_from_its_own_inputs(tmp_path: Path) -> None:
     assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
 
 
+def test_a_run_started_from_its_own_configuration_keeps_its_chip_copy(tmp_path: Path) -> None:
+    """A run started from its own config.toml without a chip input takes its chip copy.
+
+    The copied configuration names the chip input relative to the original configuration, which
+    does not resolve inside the run directory.
+    """
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+
+    directory.prepare(directory.config)
+
+    assert directory.chip.read_bytes() == (FIXTURE / "routing_config.json").read_bytes()
+    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
+
+
 def test_preparing_refuses_a_directory_that_holds_a_configuration_of_its_own(tmp_path: Path) -> None:
     """A directory with a config.toml but without the chip copy of a run is no run, and stays as it was."""
     foreign = tmp_path / "chip"

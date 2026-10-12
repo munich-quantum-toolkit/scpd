@@ -518,6 +518,10 @@ private:
           // Any other port is where one wire starts or ends, and no wire runs
           // on through it. A wire that did would join two connections into
           // one component with three port ends, which names no connection.
+          // Unlike the target and bridge constraints, this one holds per
+          // lattice: the components are read back per lattice, so a wire
+          // that ends at the port in one lattice and one that starts there in
+          // another are two connections with two ends each.
           model.addLessOrEqual(
               std::format("port_{}_{}", index, node),
               flow(index, node, false) + flow(index, node, true), 1.0);

@@ -19,7 +19,7 @@ mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.11.0
    14 inner wires · 8 lattices · length 23419.67                   0.04s
    ✓ 02-global.fb  14.1 kB · fails 0
 📌 assign
-   58 ports on 7 launchers · objective 27.84 · optimal             0.29s
+   58 ports · 7 launcher ends · objective 27.84 · optimal          0.29s
    ✓ 03-assign.fb  2.8 kB · fails 0
 🧭 corridor
    round 1 forward    routed 56/58 · fails 2                       0.07s

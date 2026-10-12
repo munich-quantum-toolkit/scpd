@@ -10,11 +10,13 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/io/Chip.hpp"
 #include "mqt-scpd/io/Config.hpp"
 #include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/milp/Model.hpp"
+#include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/Solver.hpp"
@@ -22,6 +24,7 @@
 #include <nanobind/nanobind.h>
 // The type casters below take part through the conversions they enable, not
 // through a name the code spells out.
+#include <nanobind/stl/optional.h>    // IWYU pragma: keep
 #include <nanobind/stl/pair.h>        // IWYU pragma: keep
 #include <nanobind/stl/string.h>      // IWYU pragma: keep
 #include <nanobind/stl/string_view.h> // IWYU pragma: keep
@@ -29,6 +32,7 @@
 #include <nanobind/stl/vector.h>      // IWYU pragma: keep
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -61,6 +65,25 @@ nb::bytes asArtifact(Output&& output, const std::string_view producer) {
   artifact.producer = producer;
   artifact.output.Set(std::forward<Output>(output));
   return asBytes(mqt::scpd::io::writeArtifact(artifact));
+}
+
+/// The artifact stored in @p bytes, checked against the chip a stage reads it
+/// with. Raises ValueError, naming every problem, for an artifact that names a
+/// port the chip does not have.
+mqt::scpd::flatbuffers::artifacts::ArtifactT
+fittingArtifact(const nb::bytes& bytes,
+                const mqt::scpd::flatbuffers::design::ChipT& chip) {
+  auto artifact = mqt::scpd::io::readArtifact(asSpan(bytes));
+  const auto problems = mqt::scpd::io::validate(artifact, chip);
+  if (!problems.empty()) {
+    std::string message = "the artifact does not fit the chip: ";
+    for (std::size_t index = 0; index < problems.size(); ++index) {
+      message += index == 0 ? "" : "; ";
+      message += problems[index];
+    }
+    throw std::invalid_argument(message);
+  }
+  return artifact;
 }
 
 /// The capacity plan an artifact carries.
@@ -198,6 +221,18 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "empty when there are none.");
 
   m.def(
+      "launcher_order_problem",
+      [](const nb::bytes& chip, const nb::bytes& config) {
+        return mqt::scpd::pipeline::launcherOrderProblem(
+            mqt::scpd::io::readChip(asSpan(chip)),
+            mqt::scpd::io::readConfig(asSpan(config)));
+      },
+      "chip"_a, "config"_a,
+      "What is wrong with the launcher numbering of a classified chip against "
+      "the configured port ring, or None. The Assignment stage refuses the "
+      "same chips, after the earlier stages have run.");
+
+  m.def(
       "plan_capacity",
       [](const nb::bytes& chip, const nb::bytes& config,
          const std::string_view producer, const nb::object& reporter,
@@ -227,7 +262,7 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
          const nb::object& reporter, const int verbosity) {
         const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
         const auto design = mqt::scpd::io::readChip(asSpan(chip));
-        const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
+        const auto plan = fittingArtifact(capacity, design);
         const auto report = reportTo(reporter, verbosity);
         const auto router = mqt::scpd::pipeline::globalRouters().make(
             mqt::scpd::pipeline::selectedGlobalRouter(configuration));
@@ -253,8 +288,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
          const int verbosity) {
         const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
         const auto design = mqt::scpd::io::readChip(asSpan(chip));
-        const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
-        const auto routing = mqt::scpd::io::readArtifact(asSpan(globalRouting));
+        const auto plan = fittingArtifact(capacity, design);
+        const auto routing = fittingArtifact(globalRouting, design);
         const auto report = reportTo(reporter, verbosity);
         const auto assigner = mqt::scpd::pipeline::assigners().make(
             mqt::scpd::pipeline::selectedAssigner(configuration));
@@ -280,8 +315,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
          const int verbosity) {
         const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
         const auto design = mqt::scpd::io::readChip(asSpan(chip));
-        const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
-        const auto assigned = mqt::scpd::io::readArtifact(asSpan(assignment));
+        const auto plan = fittingArtifact(capacity, design);
+        const auto assigned = fittingArtifact(assignment, design);
         const auto report = reportTo(reporter, verbosity);
         const auto router = mqt::scpd::pipeline::corridorRouters().make(
             mqt::scpd::pipeline::selectedCorridorRouter(configuration));

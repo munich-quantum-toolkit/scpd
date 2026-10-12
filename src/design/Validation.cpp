@@ -367,13 +367,19 @@ Problems validate(const ConfigT& config, const ChipT& chip) {
 
   // A rule pairs two ports of one component. A bridge port whose rule finds
   // no partner there would end a wire inside the coupler, so it is a problem
-  // too. Ports without a component take no part in the pairing.
+  // too. A bridge port that the component pattern does not match takes no
+  // part in the pairing at all, which is the same problem.
   const auto bridging = bridgingPorts(chip, ports.bridge_pairs);
   for (std::size_t index = 0; index < chip.ports.size(); ++index) {
     const auto& port = chip.ports[index];
     if (port == nullptr || port->role != UnassignedRole::BridgePair ||
-        port->component.empty() || matches[index].size() != 1 ||
-        bridging[index]) {
+        matches[index].size() != 1 || bridging[index]) {
+      continue;
+    }
+    if (port->component.empty()) {
+      problems.push_back("port '" + port->label +
+                         "' is a bridge_pair port that the component pattern "
+                         "does not match");
       continue;
     }
     problems.push_back("port '" + port->label +

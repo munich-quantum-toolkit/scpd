@@ -12,6 +12,7 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 
 #include <flatbuffers/flatbuffer_builder.h>
@@ -26,6 +27,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mqt::scpd::io {
@@ -120,6 +122,7 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
       problems.push_back(
           std::format("capacity chain {} starts at node {} of {}", index,
                       plan.chains[index], count));
+      linked = false;
     }
   }
   if (!linked) {
@@ -154,6 +157,27 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
     problems.push_back(std::format(
         "capacity nodes link in a cycle: {} of {} nodes lie on or behind one",
         count - ordered, count));
+    return;
+  }
+  // A chain is a tree. Two chains may share a subtree, but one chain that
+  // reaches a node over two paths would count the subtree behind it twice.
+  for (std::size_t chain = 0; chain < plan.chains.size(); ++chain) {
+    std::vector<bool> reached(count, false);
+    std::vector<std::size_t> pending{plan.chains[chain]};
+    reached[plan.chains[chain]] = true;
+    while (!pending.empty()) {
+      const auto index = pending.back();
+      pending.pop_back();
+      for (const auto next : plan.nodes[index]->next) {
+        if (reached[next]) {
+          problems.push_back(std::format(
+              "capacity chain {} reaches node {} twice", chain, next));
+          return;
+        }
+        reached[next] = true;
+        pending.push_back(next);
+      }
+    }
   }
 }
 
@@ -233,6 +257,93 @@ Problems validate(const ArtifactT& artifact) {
     break;
   case StageOutput::GlobalRouting:
   case StageOutput::DetailRouting:
+    break;
+  }
+  return problems;
+}
+
+Problems validate(const ArtifactT& artifact,
+                  const flatbuffers::design::ChipT& chip) {
+  using flatbuffers::design::ConnectionT;
+  using flatbuffers::design::PortRef;
+  const auto count = chip.ports.size();
+  Problems problems;
+  const auto check = [&](const std::uint32_t port, const std::string& where) {
+    if (port >= count) {
+      problems.push_back(
+          std::format("{} names port {} of {}", where, port, count));
+    }
+  };
+  const auto checkAll = [&](const std::vector<PortRef>& ports,
+                            const std::string_view what) {
+    for (std::size_t index = 0; index < ports.size(); ++index) {
+      check(ports[index].index(), std::format("{} {}", what, index));
+    }
+  };
+  const auto checkConnections =
+      [&](const std::vector<std::unique_ptr<ConnectionT>>& connections) {
+        for (std::size_t index = 0; index < connections.size(); ++index) {
+          if (connections[index] == nullptr) {
+            continue;
+          }
+          const auto& connection = *connections[index];
+          if (connection.source != nullptr) {
+            check(connection.source->index(),
+                  std::format("connection {} source", index));
+          }
+          check(connection.target.index(),
+                std::format("connection {} target", index));
+        }
+      };
+
+  switch (artifact.output.type) {
+  case StageOutput::CapacityPlan: {
+    const auto& plan = *artifact.output.AsCapacityPlan();
+    for (std::size_t index = 0; index < plan.launchers.size(); ++index) {
+      if (plan.launchers[index] != nullptr) {
+        check(plan.launchers[index]->port.index(),
+              std::format("launcher slot {}", index));
+      }
+    }
+    for (std::size_t index = 0; index < plan.nodes.size(); ++index) {
+      if (plan.nodes[index] != nullptr &&
+          plan.nodes[index]->kind ==
+              flatbuffers::artifacts::CapacityElement::Target) {
+        check(plan.nodes[index]->id, std::format("capacity node {}", index));
+      }
+    }
+    break;
+  }
+  case StageOutput::GlobalRouting: {
+    const auto& routing = *artifact.output.AsGlobalRouting();
+    checkConnections(routing.connections);
+    checkAll(routing.outer_ring, "ring node");
+    checkAll(routing.resonators, "resonator");
+    break;
+  }
+  case StageOutput::Assignment: {
+    const auto& assignment = *artifact.output.AsAssignment();
+    checkConnections(assignment.connections);
+    checkAll(assignment.ring, "ring node");
+    checkAll(assignment.launchers, "launcher");
+    for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
+      if (assignment.chains[index] == nullptr) {
+        continue;
+      }
+      const auto& chain = *assignment.chains[index];
+      for (const auto* end : {chain.start.get(), chain.end.get()}) {
+        if (end != nullptr) {
+          check(end->index(), std::format("chain {}", index));
+        }
+      }
+    }
+    break;
+  }
+  case StageOutput::FinalRouting:
+  case StageOutput::Geometry:
+  case StageOutput::CorridorRouting:
+  case StageOutput::DetailRouting:
+  case StageOutput::NONE:
     break;
   }
   return problems;

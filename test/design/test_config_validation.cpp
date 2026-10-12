@@ -220,6 +220,7 @@ TEST(ConfigValidation, TheBridgePatternAndTheBridgeRulesMustAgree) {
     port->label = label;
     port->center = Point(0.0, 0.0);
     port->role = role;
+    port->component = "Coupler1_2";
     chip.ports.push_back(std::move(port));
   };
   add("Coupler1_2.port1", UnassignedRole::BridgePair);
@@ -236,7 +237,9 @@ TEST(ConfigValidation, TheBridgePatternAndTheBridgeRulesMustAgree) {
             (Problems{"port 'Coupler1_2.port3' is paired by a bridge rule but "
                       "its role is conventional",
                       "port 'Coupler1_2.port2' is a bridge_pair port that no "
-                      "bridge rule pairs"}));
+                      "bridge rule pairs",
+                      "port 'Coupler1_2.port1' is a bridge_pair port without "
+                      "a partner in component 'Coupler1_2'"}));
 
   // No rule at all, while the pattern still names two ports.
   config.ports->bridge_pairs.clear();
@@ -272,6 +275,24 @@ TEST(ConfigValidation, ABridgePortNeedsItsPartnerInItsComponent) {
   EXPECT_EQ(validate(config, chip),
             (Problems{"port 'Coupler1_2.port1' is a bridge_pair port without "
                       "a partner in component 'Coupler1_2'"}));
+}
+
+TEST(ConfigValidation, ABridgePortNeedsAComponent) {
+  // The component pattern does not match the port, so the pairing never sees
+  // it and the wire would end inside the coupler.
+  ChipT chip = smallChip();
+  auto port = std::make_unique<PortT>();
+  port->label = "Coupler1_2.port1";
+  port->center = Point(0.0, 0.0);
+  port->role = UnassignedRole::BridgePair;
+  chip.ports.push_back(std::move(port));
+
+  ConfigT config = manualConfig();
+  config.ports->patterns->bridge_pair = R"(^Coupler\d+_\d+\.port[1-2]$)";
+  config.ports->bridge_pairs.push_back(couplerRule());
+  EXPECT_EQ(validate(config, chip),
+            (Problems{"port 'Coupler1_2.port1' is a bridge_pair port that the "
+                      "component pattern does not match"}));
 }
 
 TEST(ConfigValidation, StageParametersMustBeUsable) {

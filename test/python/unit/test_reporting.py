@@ -20,8 +20,11 @@ from pathlib import Path
 import pytest
 
 from mqt.scpd import pyscpd
+from mqt.scpd.artifacts import read_artifact, write_artifact
 from mqt.scpd.chip import load_chip
 from mqt.scpd.config import load_config, write_config
+from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
+from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 
 CONFIG = Path(__file__).resolve().parents[2] / "fixtures" / "mini" / "config.toml"
 
@@ -94,3 +97,15 @@ def test_an_error_of_the_reporter_leaves_a_stage_unchanged(inputs: tuple[bytes, 
         pyscpd.plan_capacity(chip, packed, "test", Raising("distance transform", ValueError("the reporter broke")), 0)
 
     assert pyscpd.plan_capacity(chip, packed, "test") == capacity
+
+
+def test_a_stage_refuses_an_artifact_of_another_chip(inputs: tuple[bytes, bytes, bytes, bytes]) -> None:
+    """An artifact that names a port the chip does not have is a ValueError and not a crash."""
+    chip, packed, capacity, routing = inputs
+    artifact = read_artifact(routing)
+    assert isinstance(artifact.output, GlobalRoutingT)
+    artifact.output.outerRing = [*(artifact.output.outerRing or []), PortRefT(index=999)]
+    foreign = write_artifact(artifact)
+
+    with pytest.raises(ValueError, match=r"the artifact does not fit the chip: ring node \d+ names port 999 of \d+"):
+        pyscpd.assign(chip, capacity, foreign, packed, "test")

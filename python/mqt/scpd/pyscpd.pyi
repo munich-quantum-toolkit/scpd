@@ -14,6 +14,9 @@ def load_chip(chip_json: str, config: bytes) -> bytes:
 def validate_config(config: bytes) -> list[str]:
     """The problems of a configuration that can be seen without the chip, empty when there are none."""
 
+def launcher_order_problem(chip: bytes, config: bytes) -> str | None:
+    """What is wrong with the launcher numbering of a classified chip against the configured port ring, or None. The Assignment stage refuses the same chips, after the earlier stages have run."""
+
 def plan_capacity(
     chip: bytes, config: bytes, producer: str, reporter: object | None = None, verbosity: int = 0
 ) -> bytes:

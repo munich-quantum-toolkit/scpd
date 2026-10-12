@@ -177,6 +177,7 @@ class RunDirectory:
         Args:
             config_path: The configuration to run.
             chip_path: A chip input that replaces the configured one, as ``--chip`` gives it.
+                Without one, a run started from its own config.toml keeps its chip copy.
 
         Returns:
             The configuration.
@@ -187,6 +188,10 @@ class RunDirectory:
             ChipError: If the chip input is no file.
         """
         config = load_config(config_path)
+        # The copied configuration still names the chip input relative to where it came from, so a
+        # run started from its own config.toml takes its own chip copy.
+        if chip_path is None and self.config.exists() and self.config.samefile(config_path):
+            chip_path = self.chip
         chip = chip_input_path(config, config_path, chip_path)
         if self.config.exists() and not self.chip.exists():
             msg = f"{self.path} is no run directory: it holds a config.toml of its own and no 00-chip.json"

@@ -185,10 +185,10 @@ TEST(ArtifactSchema, RefusesAFeedlineChainThatLeavesTheRing) {
   EXPECT_EQ(problems[0], "chain 0 names ring node 1 of 1");
 }
 
-TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrRunsInACycle) {
-  // The later stages walk a chain by index, so an index outside the nodes or
-  // a link back to an earlier node would make the walk read past the end or
-  // never stop.
+TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {
+  // The later stages walk a chain by index, so an index outside the nodes, a
+  // link back to an earlier node or a second path to one node would make the
+  // walk read past the end, never stop or count a subtree twice.
   const auto node = [](const std::vector<std::uint32_t>& next) {
     auto entry = std::make_unique<CapacityNodeT>();
     entry->kind = CapacityElement::Target;
@@ -197,12 +197,22 @@ TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrRunsInACycle) {
   };
 
   CapacityPlanT shared = emptyPlan();
-  shared.nodes.push_back(node({1, 2}));
+  shared.nodes.push_back(node({2}));
   shared.nodes.push_back(node({2}));
   shared.nodes.push_back(node({}));
   shared.chains = {0, 1};
   // Two chains may share a subtree.
   EXPECT_TRUE(validate(wrap(std::move(shared))).empty());
+
+  CapacityPlanT diamond = emptyPlan();
+  diamond.nodes.push_back(node({1, 2}));
+  diamond.nodes.push_back(node({2}));
+  diamond.nodes.push_back(node({}));
+  diamond.chains = {0};
+  // One chain may not reach a node twice: the walk would count it twice.
+  EXPECT_EQ(
+      validate(wrap(std::move(diamond))),
+      (std::vector<std::string>{"capacity chain 0 reaches node 2 twice"}));
 
   CapacityPlanT outside = emptyPlan();
   outside.nodes.push_back(node({3}));
@@ -220,6 +230,56 @@ TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrRunsInACycle) {
             (std::vector<std::string>{
                 "capacity nodes link in a cycle: 2 of 2 nodes lie on or "
                 "behind one"}));
+}
+
+TEST(ArtifactSchema, RefusesAPortTheChipDoesNotHave) {
+  // An artifact names ports by index, so one made from another chip can name
+  // a port past the end of this chip's port list.
+  ChipT chip;
+  chip.ports.push_back(std::make_unique<PortT>());
+  chip.ports.push_back(std::make_unique<PortT>());
+
+  GlobalRoutingT routing;
+  routing.outer_ring = {PortRef(0), PortRef(2)};
+  routing.resonators = {PortRef(1)};
+  routing.connections.push_back(std::make_unique<ConnectionT>());
+  routing.connections.back()->source = std::make_unique<PortRef>(5);
+  routing.connections.back()->target = PortRef(1);
+  EXPECT_EQ(validate(wrap(std::move(routing)), chip),
+            (std::vector<std::string>{"connection 0 source names port 5 of 2",
+                                      "ring node 1 names port 2 of 2"}));
+
+  AssignmentT assignment;
+  assignment.ring = {PortRef(1)};
+  assignment.launchers = {PortRef(3)};
+  auto chain = std::make_unique<FeedlineChainT>();
+  chain->start = std::make_unique<PortRef>(0);
+  chain->end = std::make_unique<PortRef>(4);
+  assignment.chains.push_back(std::move(chain));
+  EXPECT_EQ(validate(wrap(std::move(assignment)), chip),
+            (std::vector<std::string>{"launcher 0 names port 3 of 2",
+                                      "chain 0 names port 4 of 2"}));
+
+  CapacityPlanT plan;
+  auto slot = std::make_unique<LauncherSlotT>();
+  slot->port = PortRef(2);
+  plan.launchers.push_back(std::move(slot));
+  auto target = std::make_unique<CapacityNodeT>();
+  target->kind = CapacityElement::Target;
+  target->id = 9;
+  plan.nodes.push_back(std::move(target));
+  auto gate = std::make_unique<CapacityNodeT>();
+  gate->kind = CapacityElement::Bottleneck;
+  gate->id = 9;
+  plan.nodes.push_back(std::move(gate));
+  // A gate names a bottleneck and no port.
+  EXPECT_EQ(validate(wrap(std::move(plan)), chip),
+            (std::vector<std::string>{"launcher slot 0 names port 2 of 2",
+                                      "capacity node 0 names port 9 of 2"}));
+
+  GlobalRoutingT fitting;
+  fitting.outer_ring = {PortRef(0), PortRef(1)};
+  EXPECT_TRUE(validate(wrap(std::move(fitting)), chip).empty());
 }
 
 TEST(ArtifactSchema, AssignmentRoundTrips) {

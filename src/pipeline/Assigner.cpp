@@ -13,6 +13,7 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
+#include "mqt-scpd/grid/PortBands.hpp"
 #include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/Solver.hpp"
@@ -25,8 +26,11 @@
 #include <format>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -164,39 +168,48 @@ bool onOneLine(const std::vector<geometry::Point>& points) {
   });
 }
 
-/// Refuses launchers that are not numbered against the direction of the
-/// ring.
+/// What is wrong with the order of the launchers against the ring, or
+/// nothing.
 ///
 /// The model treats launcher k+1 as the next launcher after k when it walks
-/// the ring, so the launcher slots have to go once around the chip in index
-/// order, and in the opposite direction to the ring. A chip that breaks this
-/// still solves, but with feeds between launchers that are not neighbours.
-/// Fewer than three launchers, launchers on one line, or a ring without area
-/// have no direction to check.
-void requireLauncherOrder(const ChipT& chip, const AssignmentInputs& inputs) {
-  if (inputs.launcherPosition.size() < 3 || inputs.ring.size() < 3) {
-    return;
+/// the ring, so the launchers have to go once around the chip in index order,
+/// and in the opposite direction to the ring. A chip that breaks this still
+/// solves, but with feeds between launchers that are not neighbours. Fewer
+/// than three launchers, launchers on one line, or a ring without area have
+/// no direction to check.
+std::optional<std::string>
+orderProblem(const std::vector<geometry::Point>& ring,
+             const std::vector<geometry::Point>& launchers) {
+  if (launchers.size() < 3 || ring.size() < 3) {
+    return std::nullopt;
   }
+  const auto ringTurn = windingOf(ring);
+  if (ringTurn == 0 || onOneLine(launchers)) {
+    return std::nullopt;
+  }
+  const auto launcherTurn = turnAroundCentroid(launchers);
+  if (launcherTurn == 0) {
+    return "the launcher ports are not numbered in order around the chip; the "
+           "assignment needs them numbered against the direction of the port "
+           "ring";
+  }
+  if (launcherTurn == ringTurn) {
+    return "the launcher ports are numbered in the direction of the port ring; "
+           "the assignment needs them numbered against it";
+  }
+  return std::nullopt;
+}
+
+/// Refuses launcher slots that are not numbered against the direction of the
+/// ring.
+void requireLauncherOrder(const ChipT& chip, const AssignmentInputs& inputs) {
   std::vector<geometry::Point> ringCenters;
   ringCenters.reserve(inputs.ring.size());
   for (const auto port : inputs.ring) {
     ringCenters.push_back(chip.ports[port]->center);
   }
-  const auto ringTurn = windingOf(ringCenters);
-  if (ringTurn == 0 || onOneLine(inputs.launcherPosition)) {
-    return;
-  }
-  const auto launcherTurn = turnAroundCentroid(inputs.launcherPosition);
-  if (launcherTurn == 0) {
-    throw std::invalid_argument(
-        "the launcher ports are not numbered in order around the chip; the "
-        "assignment needs them numbered against the direction of the port "
-        "ring");
-  }
-  if (launcherTurn == ringTurn) {
-    throw std::invalid_argument(
-        "the launcher ports are numbered in the direction of the port ring; "
-        "the assignment needs them numbered against it");
+  if (const auto problem = orderProblem(ringCenters, inputs.launcherPosition)) {
+    throw std::invalid_argument(*problem);
   }
 }
 
@@ -283,8 +296,8 @@ public:
     report.line(Detail::Steps,
                 counted(assignment.chains.size(), "feedline chain"));
     report.result(
-        {{.text = std::format("{} on {}", counted(inputs.ring.size(), "port"),
-                              counted(target, "launcher"))},
+        {{.text = counted(inputs.ring.size(), "port")},
+         {.text = counted(target, "launcher end")},
          {.text = std::format("objective {:.2f}", assignment.objective)},
          {.text = std::string(milp::statusName(solution.status))}},
         0U);
@@ -775,6 +788,32 @@ AssignmentInputs assignmentInputs(const ChipT& chip,
 
   requireLauncherOrder(chip, inputs);
   return inputs;
+}
+
+std::optional<std::string> launcherOrderProblem(const ChipT& chip,
+                                                const ConfigT& config) {
+  std::unordered_map<std::string_view, std::uint32_t> byLabel;
+  std::vector<geometry::Point> launchers;
+  for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
+    const auto& port = *chip.ports[index];
+    byLabel.emplace(port.label, index);
+    // The capacity stage gives a slot to every launcher with a direction,
+    // in port order, and the stage checks the slots.
+    if (const auto step = grid::orientationStep(port.orientation);
+        port.role == fbd::UnassignedRole::Launcher &&
+        (step.x != 0 || step.y != 0)) {
+      launchers.push_back(port.center);
+    }
+  }
+  std::vector<geometry::Point> ring;
+  if (config.ports != nullptr && config.ports->sequences != nullptr) {
+    for (const auto& label : config.ports->sequences->all_outer) {
+      if (const auto found = byLabel.find(label); found != byLabel.end()) {
+        ring.push_back(chip.ports[found->second]->center);
+      }
+    }
+  }
+  return orderProblem(ring, launchers);
 }
 
 std::unique_ptr<IAssigner> makeOrderedMilpAssigner() {

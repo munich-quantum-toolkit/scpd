@@ -79,8 +79,9 @@ releases may include breaking changes.
 ### Changed
 
 - 🎨 Start the result line of `plot`, `render` and `inspect` with `✓` and an
-  error with `✗`, and show the `bridge_pair` pattern and the reachable solvers
-  in `doctor` ([#140]) ([**@FeldmeierMichael**])
+  error with `✗`, show the `bridge_pair` pattern and the reachable solvers in
+  `doctor`, and check there that the launchers are numbered against the port
+  ring ([#140]) ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that

@@ -16,6 +16,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
@@ -59,6 +61,26 @@ struct MQT_SCPD_PIPELINE_EXPORT AssignmentInputs {
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT AssignmentInputs
 assignmentInputs(const ChipT& chip, const CapacityPlanT& capacity,
                  const GlobalRoutingT& global);
+
+/**
+ * @brief Checks the launcher numbering of a chip against its configured ring,
+ * before any stage runs.
+ *
+ * The assignment walks the launchers in index order, so they have to go once
+ * around the chip in the opposite direction to the port ring. The stage
+ * refuses other launchers, but only after the capacity and global stages
+ * have run. This check reads only the chip and the configuration, so a run
+ * can refuse such a chip first. It reads the centers of the launchers that
+ * get a slot and of the configured ring, and follows the same rules as
+ * assignmentInputs().
+ *
+ * @param chip The classified chip.
+ * @param config The configuration, which carries the ring.
+ * @return What is wrong with the order, or nothing when it is right or has
+ * no direction to check.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
+launcherOrderProblem(const ChipT& chip, const ConfigT& config);
 
 /**
  * @brief Creates the assigner of the first release.

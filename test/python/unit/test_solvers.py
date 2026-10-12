@@ -121,6 +121,7 @@ class FakeModel:
         self.Status = gurobi.status
         self.SolCount = gurobi.solutions
         self.ObjVal = 7.0
+        self.Runtime = gurobi.runtime
 
     def setParam(self, name: str, value: float) -> None:  # ruff: ignore[invalid-function-name]
         """Record a parameter of the solve, and give the status that the solve without dual reductions ends with."""
@@ -172,6 +173,7 @@ class FakeGurobi:
         self.status = status
         self.status_without_dual_reductions = status_without_dual_reductions
         self.solutions = solutions
+        self.runtime = 0.0
         self.parameters: dict[str, float] = {}
         self.solved: list[str] = []
         self.disposed = 0
@@ -259,4 +261,16 @@ def test_gurobi_tells_infeasible_from_unbounded(monkeypatch: pytest.MonkeyPatch,
     assert math.isnan(objective)
     assert values == []
     assert gurobi.parameters == {"DualReductions": 0}
+    assert len(gurobi.solved) == 2
+
+
+def test_gurobi_keeps_to_the_time_limit_over_both_solves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The solve without dual reductions gets only the time that the first solve left."""
+    gurobi = with_gurobi(monkeypatch, FakeGurobi(4, 0, 3))
+    gurobi.runtime = 2.0
+
+    status, _, _ = solve_mps("NAME pair\nENDATA\n", ["x"], time_limit=5.0)
+
+    assert status == "infeasible"
+    assert gurobi.parameters == {"TimeLimit": 3.0, "DualReductions": 0}
     assert len(gurobi.solved) == 2

@@ -154,7 +154,9 @@ if(NOT TARGET mqt-scpd-highs)
   endif()
 endif()
 
-# Boost.Polygon, likewise as a system include.
+# Boost.Polygon, likewise as a system include. The block above does not propagate
+# boost_polygon_SOURCE_DIR: the project() call of Boost.Polygon writes it to the cache, and the
+# cache entry is visible here.
 if(NOT TARGET mqt-scpd-polygon)
   add_library(mqt-scpd-polygon INTERFACE)
   target_include_directories(mqt-scpd-polygon SYSTEM

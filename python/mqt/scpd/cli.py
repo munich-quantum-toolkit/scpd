@@ -75,6 +75,10 @@ def command_plan(args: argparse.Namespace) -> int:
 
     Returns:
         The exit code.
+
+    Raises:
+        ChipError: If the run reaches the assignment and the chip numbers its launchers in an order
+            the assignment refuses.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
     # The core reaches gurobipy only for a configuration that names the gurobi backend; every other
@@ -94,6 +98,9 @@ def command_plan(args: argparse.Namespace) -> int:
         steps = steps_until(args.stop_after if args.stop_after is not None else configured)
         subject = _subject(args.config)
     chip = directory.classified_chip(config)
+    if "assign" in steps and (problem := pyscpd.launcher_order_problem(chip, write_config(config))):
+        # The Assignment stage refuses such a chip too, but only after the earlier stages have run.
+        raise ChipError(problem)
 
     console.header("plan", subject, str(directory.path), [pyscpd.solver_info(write_config(config))])
     last: str | None = None

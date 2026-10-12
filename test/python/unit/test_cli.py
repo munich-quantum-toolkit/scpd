@@ -44,7 +44,7 @@ PLAN_OUTPUT = (
     r"   no inner circuit · \d+ ring ports?",
     r"   ✓ 02-global\.fb  SIZE · fails 0",
     r"📌 assign",
-    r"   \d+ ports? on \d+ launchers? · objective \d+\.\d\d · optimal",
+    r"   \d+ ports? · \d+ launcher ends? · objective \d+\.\d\d · optimal",
     r"   ✓ 03-assign\.fb  SIZE · fails 0",
     r"🧭 corridor",
     # Any number of rounds, and the last one routes every connection.
@@ -311,6 +311,30 @@ def test_an_error_of_the_core_is_a_line_and_not_a_traceback(tmp_path: Path, caps
     assert "   ✗ [stages.assignment] launcher_target is missing" in out
     assert "Traceback" not in out
     assert not (run / "03-assign.fb").exists()
+
+
+def test_launchers_numbered_with_the_ring_are_refused_before_any_stage(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The doctor and a run that reaches the assignment refuse launchers numbered with the ring."""
+    chip = json.loads((Path(CONFIG).parent / "routing_config.json").read_text(encoding="utf-8"))
+    ports = chip["ports"]
+    # Chip.port1 and Chip.port3 change places, so the launchers run counter-clockwise, as the ring.
+    ports["Chip.port1"], ports["Chip.port3"] = ports["Chip.port3"], ports["Chip.port1"]
+    swapped = tmp_path / "chip.json"
+    swapped.write_text(json.dumps(chip), encoding="utf-8")
+    problem = "the launcher ports are numbered in the direction of the port ring"
+
+    assert main(["doctor", "-c", CONFIG, "--chip", str(swapped)]) == 1
+    assert problem in capsys.readouterr().out
+
+    run = tmp_path / "run"
+    assert main(["plan", "-c", CONFIG, "--chip", str(swapped), "-o", str(run), "--no-progress"]) == 1
+    assert problem in capsys.readouterr().err
+    assert not list(run.glob("*.fb"))
+
+    # A run that ends before the assignment does not need the order.
+    assert plan(run, "--chip", str(swapped), "--stop-after", "global") == 0
 
 
 def test_resuming_takes_neither_a_configuration_nor_a_chip(tmp_path: Path) -> None:

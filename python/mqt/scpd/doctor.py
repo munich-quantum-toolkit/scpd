@@ -160,6 +160,8 @@ def run_doctor(config_path: Path, *, list_ports: bool = False, chip_path: Path |
         report.fail(str(error))
         return report
     chip = decode_chip(chip_bytes)
+    if problem := pyscpd.launcher_order_problem(chip_bytes, config_bytes):
+        report.fail(problem)
     report.say("", f"obstacles: {len(obstacles_of(chip))}", f"ports: {len(ports_of(chip))}", "")
     report.say(*classification_table(chip, config))
     if list_ports:

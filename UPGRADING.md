@@ -16,7 +16,8 @@ of changes including minor and patch releases, please refer to the
   figure of the chip and has no default.
 - A `component` pattern, which groups the ports by component, and, for a chip
   whose couplers carry a wire across, a `bridge_pair` pattern with the
-  `[[ports.bridge_pairs]]` rules that pair those ports.
+  `[[ports.bridge_pairs]]` rules that pair those ports. The `component` pattern
+  has to match every `bridge_pair` port.
 
 The configurations in `benchmarks/<chip>/config.toml` carry these keys. Plan a
 benchmark chip with the chip input of
@@ -28,8 +29,10 @@ mqt-scpd plan -c benchmarks/17q/config.toml \
 ```
 
 The assignment expects the launcher ports to be numbered once around the chip,
-against the direction of the port ring, as on the benchmark chips. It refuses a
-chip with three or more launchers whose numbering does not meet this.
+against the direction of the port ring, as on the benchmark chips. A chip with
+three or more launchers whose numbering does not meet this is a problem for
+`doctor`, and `plan` refuses it before the first stage when the run reaches the
+assignment.
 
 The planning stages solve with HiGHS unless `[stages.solver] backend` or the
 environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and

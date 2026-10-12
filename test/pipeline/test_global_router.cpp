@@ -20,6 +20,8 @@
 #include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/io/Chip.hpp"
+#include "mqt-scpd/milp/Backend.hpp"
+#include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/GlobalRouter.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
@@ -35,6 +37,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -458,6 +461,72 @@ TEST(GlobalRouter, ReachesAnInnerPortPastAnInternalBridge) {
     ASSERT_EQ(recorder.fails.size(), 1U);
     EXPECT_EQ(recorder.fails[0], 0U);
   }
+}
+
+/// A backend that answers with the longest circuit instead of the shortest.
+///
+/// A solve that stops at a gap or a time limit returns a feasible solution
+/// that is not the shortest one. This backend returns such a solution on
+/// purpose: it rewards every edge that the stage charges for. The largest
+/// coefficient is the penalty of an unreached target, and it keeps its sign,
+/// so the circuit still reaches every target it can.
+class LongestCircuitBackend final : public milp::ISolverBackend {
+public:
+  [[nodiscard]] std::string_view name() const override { return "longest"; }
+
+  [[nodiscard]] milp::Solution
+  solve(const milp::Model& model,
+        const milp::SolveOptions& options) const override {
+    double penalty = 0.0;
+    for (const auto& variable : model.variables()) {
+      penalty = std::max(penalty, variable.objective);
+    }
+    milp::Model longest(model.name());
+    for (const auto& variable : model.variables()) {
+      const auto objective = variable.objective == penalty
+                                 ? variable.objective
+                                 : -variable.objective;
+      std::ignore =
+          longest.addVariable(variable.name, variable.lower, variable.upper,
+                              variable.type, objective);
+    }
+    for (const auto& constraint : model.constraints()) {
+      milp::LinearExpr expression;
+      for (const auto& [index, coefficient] : constraint.coefficients) {
+        expression.add(milp::Var{.index = index}, coefficient);
+      }
+      longest.addRange(constraint.name, expression, constraint.lower,
+                       constraint.upper);
+    }
+    longest.setSense(model.sense());
+    return milp::makeHighsBackend()->solve(longest, options);
+  }
+};
+
+TEST(GlobalRouter, NamesEveryReachedTargetInAFeasibleSolution) {
+  // One lattice carries the inner port and three ring ports. The longest
+  // circuit runs wires through every port it may: a wire that ran on through
+  // a ring port would join two wires into one component with three port ends,
+  // and the target of that component would get no connection.
+  auto config = innerConfig();
+  config.stages->solver->backend = "gurobi";
+  const auto chip = test::miniChip(config);
+  const auto plan =
+      planOf({{.targets = indicesOf(
+                   chip, {"Q2.port1", "Q2.port0", "C12.port0", "Q1.port1"}),
+               .gate = {}}});
+  milp::setExternalBackend(std::make_shared<LongestCircuitBackend>());
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Summary));
+  milp::setExternalBackend(nullptr);
+
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 0U);
+  EXPECT_TRUE(std::ranges::any_of(routing.connections, [&](const auto& wire) {
+    return wire->target.index() == indexOf(chip, "Q2.port1");
+  }));
 }
 
 TEST(GlobalRouter, GivesTheSameAnswerTwice) {
