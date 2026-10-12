@@ -139,8 +139,8 @@ TEST(Report, ACopySharesTheThinning) {
   Recorder recorder;
   const auto report = recorder.report(Detail::Summary);
   // The copy is what the test is about.
-  const Report copy =
-      report; // NOLINT(performance-unnecessary-copy-initialization)
+  // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
+  const Report copy = report;
 
   report.progress("task", "", 1, 3);
   copy.progress("task", "", 2, 3);
