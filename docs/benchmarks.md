@@ -90,10 +90,17 @@ mqt-scpd render --run-dir runs/33q --stage capacity -o 33q-capacity.gds
 
 The pictures of the assign and corridor steps also show every feedline chain. A
 chain runs from its first launcher through the feeds of its resonators to its
-last launcher. In SVG each chain has a color of its own and names its launchers
-and resonators under the pointer; in GDS the chains are on layer 32,
-`plan.feedline`. A chain that ends at a termination ends at the feed of its
-resonator there, with a square mark.
+last launcher. In SVG every chain runs in horizontal and vertical steps in one
+color and names its launchers and resonators under the pointer; in GDS the
+chains are on layer 32, `plan.feedline`. A chain that ends at a termination ends
+at the feed of its resonator there, with a square mark.
+
+An SVG shows the chip like a layout tool shows a mask: hatched metal on a light
+substrate, a millimetre grid, rulers and a scale bar. Every port is a red
+marker. The capacity picture shows the partition borders, and the corridor
+picture shows the corridors as dark lines over light borders. Opened on its own
+in a browser, the picture has a **Layers** panel in its top left corner that
+shows and hides each layer, and it leaves out the finest detail when zoomed out.
 
 {doc}`terminal_output` describes what a run prints and what `-v`, `-vv` and
 `-vvv` add.

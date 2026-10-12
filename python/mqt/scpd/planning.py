@@ -96,6 +96,9 @@ class PlanningGeometry:
     ring: list[Point] = field(default_factory=list)
     #: The coarse route of each wire, from its feed over its crossings to its target.
     corridors: list[list[Point]] = field(default_factory=list)
+    #: The approach of each routed wire to its target port: from where its corridor ends, the first
+    #: cell beyond the band of the port, to the port.
+    stubs: list[tuple[Point, Point]] = field(default_factory=list)
     #: Every crossing slot a border offers, taken or not.
     slots: list[Point] = field(default_factory=list)
     #: Each feedline chain of the assignment, from its first launcher through the feeds of its
@@ -120,6 +123,7 @@ class PlanningGeometry:
             self.assignments,
             self.ring,
             self.corridors,
+            self.stubs,
             self.slots,
             self.feedlines,
         ))
@@ -329,17 +333,30 @@ def _feedlines(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry)
         )
 
 
-def _corridor(routing: CorridorRoutingT, geometry: PlanningGeometry) -> None:
-    """Fill the layers a corridor routing carries."""
+def _corridor(
+    routing: CorridorRoutingT, chip: ChipT, assignment: AssignmentT | None, geometry: PlanningGeometry
+) -> None:
+    """Fill the layers a corridor routing carries.
+
+    The routing holds one corridor per connection of the assignment, in its order, so the
+    assignment names the port each corridor approaches.
+    """
     for border in _entries(routing.slots):
         geometry.slots.extend(_point(position) for position in _entries(border.positions))
-    for corridor in _entries(routing.corridors):
-        if not corridor.partitions or corridor.source is None or corridor.target is None:
+    connections: list[Any] = list(assignment.connections or []) if assignment is not None else []
+    for index, corridor in enumerate(routing.corridors or []):
+        if corridor is None or not corridor.partitions or corridor.source is None or corridor.target is None:
             continue
         route = [_point(corridor.source)]
         route.extend(_point(crossing) for crossing in _entries(corridor.crossings))
         route.append(_point(corridor.target))
         geometry.corridors.append(route)
+        connection = connections[index] if index < len(connections) else None
+        if connection is None or connection.target is None:
+            continue
+        port = _center(chip, int(connection.target.index))
+        if port is not None and port != route[-1]:
+            geometry.stubs.append((route[-1], port))
 
 
 def _plan_of(capacity: bytes) -> CapacityPlanT:
@@ -391,7 +408,8 @@ def planning_geometry(
             free space they had to fit into: the global stage over the gates it paid for, and the
             corridor stage over the partitions its wires run through.
         assignment: The assignment artifact of the same run, for the corridor stage, which is drawn
-            with the feedlines that its resonator wires start at.
+            with the feedlines that its resonator wires start at and the approach of every wire to
+            its target port.
 
     Returns:
         The geometry, in layout units.
@@ -431,11 +449,12 @@ def planning_geometry(
         if not isinstance(output, CorridorRoutingT):
             msg = "the artifact is not a corridor routing"
             raise PlanningError(msg)
-        _corridor(output, geometry)
+        chosen = _assignment_of(assignment) if assignment is not None else None
+        _corridor(output, chip, chosen, geometry)
         # A corridor is a way through the partitions, so the partitions make the picture readable.
         if capacity is not None:
             _capacity(_plan_of(capacity), geometry)
         # The wire of a resonator starts at its feed, which its feedline passes.
-        if assignment is not None:
-            _feedlines(_assignment_of(assignment), chip, geometry)
+        if chosen is not None:
+            _feedlines(chosen, chip, geometry)
     return geometry

@@ -392,7 +392,7 @@ def test_plot_draws_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.Cap
 
     svg = output.read_text(encoding="utf-8")
     assert '<g class="l-corridor">' in svg
-    assert '<g class="l-partition">' in svg
+    assert '<g class="l-border">' in svg
     assert '<g class="l-feedline">' in svg
     assert capsys.readouterr().out.startswith(f"✓ {output}  ")
 

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.scpd.artifacts import write_artifact
+from mqt.scpd.artifacts import read_artifact, write_artifact
 from mqt.scpd.chip import decode_chip
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
@@ -192,6 +192,31 @@ def test_the_corridor_picture_draws_every_route_over_the_partitions(run: RunDire
     assert all(len(route) >= 2 for route in geometry.corridors)
     assert geometry.slots
     assert geometry.partitions
+
+
+def test_every_routed_wire_approaches_its_target_port(run: RunDirectory) -> None:
+    """A stub runs from where a corridor ends to the port its connection targets, by connection order."""
+    chip = chip_of(run)
+    corridor = run.artifact("corridor").read_bytes()
+    assignment = run.artifact("assign").read_bytes()
+
+    geometry = planning_geometry(corridor, chip, "corridor", assignment=assignment)
+
+    chosen = read_artifact(assignment).output
+    assert isinstance(chosen, AssignmentT)
+    ports = chip.ports or []
+    targets = set()
+    for connection in chosen.connections or []:
+        assert connection is not None
+        assert connection.target is not None
+        center = ports[connection.target.index].center
+        assert center is not None
+        targets.add((center.x, center.y))
+    assert len(geometry.stubs) == len(geometry.corridors)
+    assert all(start == route[-1] for (start, _), route in zip(geometry.stubs, geometry.corridors, strict=True))
+    assert all(port in targets for _, port in geometry.stubs)
+    # Without the assignment no corridor names its port.
+    assert not planning_geometry(corridor, chip, "corridor").stubs
 
 
 def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:

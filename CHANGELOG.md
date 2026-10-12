@@ -20,6 +20,14 @@ releases may include breaking changes.
   `docs/terminal_output.md`. Add `list-algorithms`, and `plot` and `render` with
   `--stage` and `--run-dir` for the planning stages; the assign and corridor
   pictures show the feedline chains ([#140]) ([**@FeldmeierMichael**])
+- 🎨 Draw `plot` pictures like a mask in a layout tool: hatched metal with an
+  inner contour on a light substrate, a millimetre grid, rulers, corner marks, a
+  scale bar and a caption. Every port is one red marker, feedlines run in
+  horizontal and vertical steps in one color, and corridors are solid dark
+  lines. The capacity picture shows the partition borders without the gates, and
+  no picture shows the port keep-out or the capacity chains. A picture opened on
+  its own has a panel that shows and hides each layer ([#140])
+  ([**@FeldmeierMichael**])
 - ✨ Add the planning stages: the Capacity stage partitions the free space at
   its bottlenecks and budgets the wires of every capacity chain, the Global
   stage solves the inner circuit as a mixed-integer program on Hanan lattices,

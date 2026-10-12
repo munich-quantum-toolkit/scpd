@@ -131,13 +131,13 @@ def command_plan(args: argparse.Namespace) -> int:
 
 
 def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | None]:
-    """The chip a picture is drawn from, its title, and the planning stage drawn over it.
+    """The chip a picture is drawn from, its name, and the planning stage drawn over it.
 
     The chip of a run directory is the copy the run carries; otherwise it is the chip the
     configuration names.
 
     Returns:
-        The classified chip, the title of the picture, and the planning shapes or None.
+        The classified chip, the name of the chip for the caption, and the planning shapes or None.
 
     Raises:
         PlotError: If the stage arrives with a later phase.
@@ -147,10 +147,10 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         msg = f"stage '{args.stage}' arrives with {STAGES[args.stage]}"
         raise PlotError(msg)
     if args.run_dir is None:
-        return load_chip(load_config(args.config), args.config, args.chip), str(args.config), None
+        return load_chip(load_config(args.config), args.config, args.chip), _subject(args.config), None
     directory = RunDirectory(args.run_dir)
     chip_bytes = directory.classified_chip(directory.load())
-    title = f"{directory.path} ({args.stage})"
+    title = directory.path.name
     if args.stage == "layout":
         return chip_bytes, title, None
     artifact = directory.artifact(args.stage)
@@ -175,7 +175,12 @@ def command_plot(args: argparse.Namespace) -> int:
     """
     chip_bytes, title, planning = _drawn(args)
     svg = layout_svg(
-        decode_chip(chip_bytes), width=args.width, tolerance=args.tolerance, title=title, planning=planning
+        decode_chip(chip_bytes),
+        width=args.width,
+        tolerance=args.tolerance,
+        title=title,
+        stage=args.stage,
+        planning=planning,
     )
     args.output.write_text(svg, encoding="utf-8")
     Console().success(f"{args.output}  {size(len(svg.encode('utf-8')))}")

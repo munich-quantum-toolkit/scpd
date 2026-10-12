@@ -10,8 +10,9 @@
 
 from __future__ import annotations
 
+import json
 import re
-from itertools import starmap
+from itertools import pairwise, starmap
 from pathlib import Path
 
 # The parsed SVG is the output of the code under test, not foreign input.
@@ -27,7 +28,7 @@ from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
 from mqt.scpd.planning import Feedline, PlanningGeometry
-from mqt.scpd.plot import OBSTACLE_FILL, ROLE_COLORS, PlotError, layout_svg, simplify
+from mqt.scpd.plot import FEEDLINE_COLOR, METAL_FILL, PORT_COLOR, PlotError, layout_svg, simplify
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 SVG = "{http://www.w3.org/2000/svg}"
@@ -68,14 +69,12 @@ def test_the_layout_view_keeps_every_vertex() -> None:
     svg = layout_svg(model, title="mini")
 
     root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
-    paths = {path.get("class"): path.get("d") or "" for path in root.findall(f"{SVG}path")}
-    drawn = sum(data.count("M") + data.count("l") for data in paths.values())
-    assert drawn == _distinct_vertices(model)
+    assert sum(len(subpath) for subpath in _subpaths(svg)) == _distinct_vertices(model)
     style = root.find(f"{SVG}style")
     assert style is not None
     assert style.text is not None
-    assert OBSTACLE_FILL in style.text
-    circles = root.findall(f"{SVG}circle")
+    assert METAL_FILL in style.text
+    circles = list(root.iter(f"{SVG}circle"))
     assert len([c for c in circles if c.find(f"{SVG}title") is not None]) == len(ports_of(model))
     classes = {c.get("class") for c in circles}
     assert {"launcher", "resonator", "conventional"} <= classes
@@ -117,7 +116,7 @@ def _subpaths(svg: str) -> list[list[tuple[float, float]]]:
         One vertex list per subpath, in path order.
     """
     subpaths = []
-    for data in re.findall(r'<path class="[of]" d="([^"]*)"', svg):
+    for data in re.findall(r'<path (?:class="f"|id="metal") d="([^"]*)"', svg):
         for subpath in filter(None, data.split("Z")):
             x = y = 0.0
             vertices = []
@@ -177,21 +176,21 @@ def test_a_planning_stage_is_drawn_over_the_chip_on_layers_of_its_own() -> None:
     assert "g.l-corridor>path" in style.text
 
 
-def test_every_feedline_chain_is_drawn_in_a_color_of_its_own() -> None:
-    """A chain shows its terminals and its termination and names its ports.
+def test_every_feedline_chain_runs_in_steps_in_one_color() -> None:
+    """A chain shows its terminals and its termination, names its ports, and runs horizontally and vertically.
 
-    Its color differs from those of its neighbours along the ring, and the color of the last chain
-    differs from that of the first.
+    Every chain takes the one feedline color, and a step between two points that differ in both
+    coordinates turns at the corner farther from the center of the chip.
     """
     feedlines = [
         Feedline(
-            points=[(0.0, 10.0 * index), (50.0, 10.0 * index), (100.0, 10.0 * index)],
-            terminals=[(50.0, 10.0 * index)],
+            points=[(0.0, 10.0 * index), (50.0, 40.0 + 10.0 * index), (100.0, 10.0 * index)],
+            terminals=[(50.0, 40.0 + 10.0 * index)],
             label=f"feedline {index + 1}",
         )
         for index in range(5)
     ]
-    feedlines[4].terminations = [(50.0, 40.0)]
+    feedlines[4].terminations = [(50.0, 80.0)]
 
     svg = layout_svg(_mini(), planning=PlanningGeometry(feedlines=feedlines))
 
@@ -199,10 +198,16 @@ def test_every_feedline_chain_is_drawn_in_a_color_of_its_own() -> None:
     (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-feedline")
     chains = layer.findall(f"{SVG}g")
     assert [chain.findtext(f"{SVG}title") for chain in chains] == [f"feedline {index}" for index in range(1, 6)]
-    colors = [chain.get("stroke") for chain in chains]
-    assert all(colors)
-    assert all(colors[index] != colors[index + 1] for index in range(4))
-    assert colors[4] != colors[0]
+    assert all(chain.get("stroke") is None for chain in chains)
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert f"g.l-feedline path{{fill:none;stroke:{FEEDLINE_COLOR}" in style.text
+    for chain in chains:
+        for path in chain.findall(f"{SVG}path"):
+            points = [(float(x), float(y)) for x, y in re.findall(r"[ML](-?[\d.]+) (-?[\d.]+)", path.get("d") or "")]
+            assert len(points) == 5
+            assert all(a[0] == b[0] or a[1] == b[1] for a, b in pairwise(points))
     assert len(layer.findall(f".//{SVG}circle")) == 5
     assert len(layer.findall(f".//{SVG}rect")) == 1
 
@@ -213,8 +218,8 @@ def test_a_planning_stage_without_shapes_changes_nothing() -> None:
     assert layout_svg(model, planning=PlanningGeometry()) == layout_svg(model)
 
 
-def test_a_bridge_port_has_a_colour_of_its_own() -> None:
-    """A port that a wire crosses its component through is drawn and counted under its own role."""
+def test_every_port_is_one_marker_of_one_color() -> None:
+    """A port keeps its role as the class of its marker, and the legend counts every port once."""
     chip = ChipT(
         ports=[PortT(label="Coupler1_2.port1", center=PointT(0.0, 0.0), role=UnassignedRole.BridgePair)],
         obstacles=[PolygonT(vertices=[PointT(-5.0, -5.0), PointT(5.0, -5.0), PointT(5.0, 5.0)])],
@@ -222,6 +227,90 @@ def test_a_bridge_port_has_a_colour_of_its_own() -> None:
 
     root = ET.fromstring(layout_svg(chip))  # ruff: ignore[suspicious-xml-element-tree-usage]
 
-    assert {circle.get("class") for circle in root.iter(f"{SVG}circle")} == {"bridge_pair"}
-    assert any(text.text == "bridge_pair (1)" for text in root.iter(f"{SVG}text"))
-    assert "bridge_pair" in ROLE_COLORS
+    markers = [circle for circle in root.iter(f"{SVG}circle") if circle.find(f"{SVG}title") is not None]
+    assert [circle.get("class") for circle in markers] == ["bridge_pair"]
+    assert any(text.text == "port (1)" for text in root.iter(f"{SVG}text"))
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert f".x-ports circle{{fill:{PORT_COLOR}" in style.text
+
+
+def _groups(svg: str) -> set[str | None]:
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    return {group.get("class") for group in root.iter(f"{SVG}g")}
+
+
+def test_a_stage_leaves_out_what_its_picture_does_not_need() -> None:
+    """The capacity picture shows borders, not outlines and gates; keep-out and chains never show."""
+    geometry = PlanningGeometry(
+        partitions=[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]],
+        borders=[[(0.0, 50.0), (100.0, 50.0)]],
+        bottlenecks=[((0.0, 0.0), (10.0, 0.0), 3)],
+        keepout=[[(0.0, 0.0), (5.0, 0.0), (5.0, 5.0)]],
+        chains=[((0.0, 0.0), (10.0, 10.0))],
+    )
+
+    capacity = _groups(layout_svg(_mini(), stage="capacity", planning=geometry))
+    assert "l-border" in capacity
+    assert capacity.isdisjoint({"l-partition", "l-bottleneck", "l-keepout", "l-chain"})
+
+    other = _groups(layout_svg(_mini(), stage="global", planning=geometry))
+    assert {"l-partition", "l-bottleneck"} <= other
+    assert other.isdisjoint({"l-keepout", "l-chain"})
+
+
+def test_the_corridors_are_solid_and_the_ground_under_them_light() -> None:
+    """A corridor is a solid band with a casing and a core, and continues along the stub to its port.
+
+    The corridor picture draws the borders light.
+    """
+    geometry = PlanningGeometry(
+        borders=[[(0.0, 50.0), (100.0, 50.0)]],
+        corridors=[[(0.0, 0.0), (50.0, 50.0)]],
+        stubs=[((50.0, 50.0), (50.0, 80.0))],
+    )
+
+    svg = layout_svg(_mini(), stage="corridor", planning=geometry)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    assert root.get("class") == "corridor"
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-corridor")
+    paths = layer.findall(f"{SVG}path")
+    assert [path.get("class") for path in paths] == ["casing", None, "core"]
+    assert all(path.get("d") == paths[0].get("d") for path in paths)
+    assert (paths[0].get("d") or "").count("M") == 2
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert "g.l-corridor>path{stroke-dasharray" not in style.text
+    assert "svg.corridor g.l-border>path" in style.text
+
+
+def test_the_panel_lists_the_layers_the_picture_carries() -> None:
+    """The layer panel names every layer that is drawn and none that is not."""
+    svg = layout_svg(_mini(), title="mini", stage="layout")
+
+    found = re.search(r"L = (\[.*?\]), f = ", svg)
+    assert found is not None
+    layers = json.loads(found[1])
+    names = [name for name, _, _ in layers]
+    assert {"Grid", "Metal", "Ports", "Frame"} <= set(names)
+    assert "Corridors" not in names
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    assert any(text.text == "LAYOUT" for text in root.iter(f"{SVG}text"))
+
+
+def test_a_feedline_turns_at_the_corner_away_from_the_center() -> None:
+    """A step that changes both coordinates turns where the line keeps to the outside of the chip."""
+    square = _chip(
+        [(0.0, 0.0), (1000.0, 0.0), (1000.0, 1000.0), (0.0, 1000.0)], [(400.0, 400.0), (600.0, 400.0), (500.0, 600.0)]
+    )
+    geometry = PlanningGeometry(feedlines=[Feedline(points=[(0.0, 0.0), (300.0, 100.0)], label="feedline 1")])
+
+    root = ET.fromstring(layout_svg(square, planning=geometry))  # ruff: ignore[suspicious-xml-element-tree-usage]
+
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-feedline")
+    # The picture has a margin of 20 and runs y downwards: the corner at (0, 100) lies farther from
+    # the center (500, 500) than the one at (300, 0).
+    assert layer.findall(f".//{SVG}path")[1].get("d") == "M20 1020L20 920L320 920"
