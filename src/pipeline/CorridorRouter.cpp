@@ -118,16 +118,10 @@ struct Route {
 };
 
 /// A chord already drawn across a partition, and the wire that drew it.
-///
-/// `fromPin` and `toPin` say whether that end is a place the wire is pinned
-/// to, which is the point it is fed at or the cell of its target port, and
-/// not a crossing slot that the search may move it off.
 struct Chord {
   Place from;
   Place to;
   std::size_t owner = 0;
-  bool fromPin = false;
-  bool toPin = false;
 };
 
 /// A cell coordinate back on the grid it came from.
@@ -200,29 +194,30 @@ struct Chord {
          std::min(a.y, b.y) <= c.y && c.y <= std::max(a.y, b.y);
 }
 
-/// Whether a wire is pinned to a point that another wire runs over.
+/// Whether one chord runs over a point where the other one ends.
 ///
-/// A wire is pinned at two places: the point it is fed at and the cell of its
-/// target port. Neither can move, so a second wire drawn over one is two
-/// wires on one point of the chip, however much room the corridor around them
-/// has. The crossing test does not see it: a chord that stops on another one
-/// never gets to its far side, so the two never cross properly, and a wire
-/// could run along a whole line of feed points without one crossing.
+/// The crossing test does not see it: a chord that stops on another one never
+/// gets to its far side, so the two never cross properly. Both kinds of end
+/// rule the second chord out:
 ///
-/// A crossing slot is a different matter. It is where the plan says a wire
-/// leaves one partition for the next, and the later stage may cross a little
-/// to either side of it, so a chord that grazes one still leaves room.
+/// - The point a wire is fed at and the cell of its target port cannot move,
+///   so a second wire drawn over one is two wires on one point of the chip. A
+///   wire could run along a whole line of feed points without one crossing.
+/// - A crossing slot lies on a border, and a straight chord inside a partition
+///   runs over a point of its border only where it lies along that border.
+///   The wire that crosses at the slot comes from inside the partition and
+///   goes on into the neighbour on the far side of the chord, so the two wires
+///   cross.
 [[nodiscard]] bool touches(const Chord& a, const Chord& b) {
-  const auto over = [](const Chord& chord, const Place& pin) {
-    return sideOf(chord.from, chord.to, pin) == 0 &&
-           between(chord.from, chord.to, pin) && !same(chord.from, pin) &&
-           !same(chord.to, pin);
+  const auto over = [](const Chord& chord, const Place& end) {
+    return sideOf(chord.from, chord.to, end) == 0 &&
+           between(chord.from, chord.to, end) && !same(chord.from, end) &&
+           !same(chord.to, end);
   };
-  const auto pinned = [&over](const Chord& chord, const Chord& other) {
-    return (other.fromPin && over(chord, other.from)) ||
-           (other.toPin && over(chord, other.to));
+  const auto endsOn = [&over](const Chord& chord, const Chord& other) {
+    return over(chord, other.from) || over(chord, other.to);
   };
-  return pinned(a, b) || pinned(b, a);
+  return endsOn(a, b) || endsOn(b, a);
 }
 
 /// Whether two chords may not both be drawn.
@@ -230,7 +225,7 @@ struct Chord {
 /// A proper crossing is what the plan has to rule out, so that the later
 /// stage can draw it. Two chords that run along each other are ruled out as
 /// well, because they put two wires in one place, and so is a chord drawn
-/// over a point another wire is pinned to.
+/// over a point where another chord ends.
 [[nodiscard]] bool meets(const Chord& a, const Chord& b) {
   return crosses(a.from, a.to, b.from, b.to) ||
          overlaps(a.from, a.to, b.from, b.to) || touches(a, b);
@@ -496,9 +491,7 @@ private:
         const auto blocked = placeTaken[placeOfSlot[slot]] ||
                              !clear(Chord{.from = place,
                                           .to = slotList[slot].place,
-                                          .owner = request.connection,
-                                          .fromPin = parent == NO_STATE,
-                                          .toPin = false},
+                                          .owner = request.connection},
                                     partition);
         if (blocked && displacement <= 0.0) {
           continue;
@@ -523,9 +516,7 @@ private:
     if (request.feedPartition == request.targetPartition) {
       const auto direct = clear(Chord{.from = request.feed,
                                       .to = request.target,
-                                      .owner = request.connection,
-                                      .fromPin = true,
-                                      .toPin = true},
+                                      .owner = request.connection},
                                 request.feedPartition);
       if (direct || displacement > 0.0) {
         shortest = distance(request.feed, request.target) +
@@ -547,9 +538,7 @@ private:
       if (partition == request.targetPartition) {
         const auto reaches = clear(Chord{.from = slot.place,
                                          .to = request.target,
-                                         .owner = request.connection,
-                                         .fromPin = false,
-                                         .toPin = true},
+                                         .owner = request.connection},
                                    partition);
         const auto total = best[state] + distance(slot.place, request.target) +
                            (reaches ? 0.0 : displacement);
@@ -659,24 +648,15 @@ private:
   void walk(const Request& request, const Route& route,
             const Visitor& visit) const {
     auto place = request.feed;
-    auto pin = true;
     for (std::size_t index = 0; index < route.slots.size(); ++index) {
       const auto& next = slotList[route.slots[index]].place;
-      visit(Chord{.from = place,
-                  .to = next,
-                  .owner = request.connection,
-                  .fromPin = pin,
-                  .toPin = false},
+      visit(Chord{.from = place, .to = next, .owner = request.connection},
             route.partitions[index]);
       place = next;
-      pin = false;
     }
-    visit(Chord{.from = place,
-                .to = request.target,
-                .owner = request.connection,
-                .fromPin = pin,
-                .toPin = true},
-          route.partitions.back());
+    visit(
+        Chord{.from = place, .to = request.target, .owner = request.connection},
+        route.partitions.back());
   }
 
   grid::GridMetrics detailGrid;

@@ -196,7 +196,25 @@ void expectOneWirePerSlot(const CorridorRoutingT& routing) {
   }
 }
 
-/// Checks that no two wires cross inside a partition.
+/// Whether @p chord runs over @p end between its own two ends.
+bool runsOver(const Chord& chord, const Point& end) {
+  const auto at = [&end](const Point& point) {
+    return std::abs(point.x() - end.x()) < 1.0e-6 &&
+           std::abs(point.y() - end.y()) < 1.0e-6;
+  };
+  const auto slack = 1.0e-9 * std::hypot(chord.to.x() - chord.from.x(),
+                                         chord.to.y() - chord.from.y());
+  return sideOf(chord.from, chord.to, end) == 0 &&
+         std::min(chord.from.x(), chord.to.x()) - slack <= end.x() &&
+         end.x() <= std::max(chord.from.x(), chord.to.x()) + slack &&
+         std::min(chord.from.y(), chord.to.y()) - slack <= end.y() &&
+         end.y() <= std::max(chord.from.y(), chord.to.y()) + slack &&
+         !at(chord.from) && !at(chord.to);
+}
+
+/// Checks that no two wires cross inside a partition, and that no chord runs
+/// over a point where a chord of another wire ends. Such a chord meets the
+/// other wire although the two never cross properly.
 void expectNoCrossingInsideAPartition(const CorridorRoutingT& routing) {
   std::map<std::uint32_t, std::vector<std::pair<std::size_t, Chord>>> drawn;
   for (std::size_t wire = 0; wire < routing.corridors.size(); ++wire) {
@@ -205,6 +223,11 @@ void expectNoCrossingInsideAPartition(const CorridorRoutingT& routing) {
         EXPECT_FALSE(crosses(chord.from, chord.to, theirs.from, theirs.to))
             << "wires " << wire << " and " << other
             << " cross inside partition " << chord.partition;
+        EXPECT_FALSE(runsOver(chord, theirs.from) ||
+                     runsOver(chord, theirs.to) ||
+                     runsOver(theirs, chord.from) || runsOver(theirs, chord.to))
+            << "wires " << wire << " and " << other
+            << " meet at an end inside partition " << chord.partition;
       }
       drawn[chord.partition].emplace_back(wire, chord);
     }

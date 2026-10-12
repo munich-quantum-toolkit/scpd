@@ -157,11 +157,8 @@ def same(a: Point, b: Point) -> bool:
     return abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) < 1e-6
 
 
-def chords(routing: CorridorRoutingT) -> list[tuple[int, int, Point, Point, bool, bool]]:
-    """Every chord of every corridor: the wire, its partition, its ends, and whether each end is pinned.
-
-    A wire is pinned at the point it is fed at and at the cell of its target port; a crossing slot
-    is no pin.
+def chords(routing: CorridorRoutingT) -> list[tuple[int, int, Point, Point]]:
+    """Every chord of every corridor: the wire, its partition and its ends.
 
     Returns:
         The chords.
@@ -175,15 +172,10 @@ def chords(routing: CorridorRoutingT) -> list[tuple[int, int, Point, Point, bool
             *((crossing.x, crossing.y) for crossing in entries(corridor.crossings)),
             (corridor.target.x, corridor.target.y),
         ]
-        for index, partition in enumerate(corridor.partitions):
-            drawn.append((
-                wire,
-                int(partition),
-                places[index],
-                places[index + 1],
-                index == 0,
-                index == len(corridor.partitions) - 1,
-            ))
+        drawn.extend(
+            (wire, int(partition), places[index], places[index + 1])
+            for index, partition in enumerate(corridor.partitions)
+        )
     return drawn
 
 
@@ -247,22 +239,25 @@ def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT) -> None:
     low_y, high_y = min(y for _, y in feeds), max(y for _, y in feeds)
     assert all(low_x < x < high_x and low_y < y < high_y for x, y in taken), "a wire crosses outside the ring"
 
-    by_partition: dict[int, list[tuple[int, Point, Point, bool, bool]]] = {}
-    for wire, partition, start, end, start_pin, end_pin in chords(routing):
-        for other, theirs_start, theirs_end, theirs_start_pin, theirs_end_pin in by_partition.get(partition, []):
+    # A chord that runs over the end of another one meets it although the two never cross: over a feed
+    # point or a port cell it puts two wires on one point, and over a crossing slot it lies along the
+    # border of that slot, which the other wire crosses.
+    by_partition: dict[int, list[tuple[int, Point, Point]]] = {}
+    for wire, partition, start, end in chords(routing):
+        for other, theirs_start, theirs_end in by_partition.get(partition, []):
             if other == wire:
                 continue
             assert not crosses(start, end, theirs_start, theirs_end), f"wires {wire} and {other} cross"
             assert not overlaps(start, end, theirs_start, theirs_end), f"wires {wire} and {other} overlap"
-            for chord, pins in (
-                ((start, end), ((theirs_start, theirs_start_pin), (theirs_end, theirs_end_pin))),
-                ((theirs_start, theirs_end), ((start, start_pin), (end, end_pin))),
+            for chord, ends in (
+                ((start, end), (theirs_start, theirs_end)),
+                ((theirs_start, theirs_end), (start, end)),
             ):
-                for pin, pinned in pins:
-                    on = side(chord[0], chord[1], pin) == 0 and between(chord[0], chord[1], pin)
-                    at_end = same(pin, chord[0]) or same(pin, chord[1])
-                    assert not (pinned and on and not at_end), f"wires {wire} and {other} share a pin"
-        by_partition.setdefault(partition, []).append((wire, start, end, start_pin, end_pin))
+                for point in ends:
+                    on = side(chord[0], chord[1], point) == 0 and between(chord[0], chord[1], point)
+                    at_end = same(point, chord[0]) or same(point, chord[1])
+                    assert not (on and not at_end), f"wire {wire} or {other} runs over the end of the other"
+        by_partition.setdefault(partition, []).append((wire, start, end))
 
 
 @pytest.mark.parametrize("chip", CHIPS)
