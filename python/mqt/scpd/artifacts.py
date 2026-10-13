@@ -221,11 +221,12 @@ def _chain_problems(chain: FeedlineChainT) -> list[str]:
 
 
 def _corridor_problems(corridor: CorridorT) -> list[str]:
-    problems = _missing(corridor, (("partitions", "partitions"), ("crossings", "crossings")))
-    if problems:
-        return problems
-    partitions = len(corridor.partitions or [])
-    crossings = len(corridor.crossings or [])
+    if corridor.partitions is None or corridor.crossings is None:
+        return _missing(corridor, (("partitions", "partitions"), ("crossings", "crossings")))
+    # The partitions may be a NumPy array, which has no single truth value, so only their number
+    # is read.
+    partitions = len(corridor.partitions)
+    crossings = len(corridor.crossings)
     # A wire crosses one border fewer than it runs through partitions, and a wire without a way
     # names neither.
     if partitions != crossings + 1 and (partitions, crossings) != (0, 0):

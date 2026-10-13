@@ -79,8 +79,12 @@ crossingPitch(const ConfigT& config);
  * strictly inside the rectangle the launcher cells span. Every wire starts on
  * the launcher ring, so a slot on or outside that rectangle sits beside or
  * behind a launcher, and a wire that crossed there would run along the back
- * of the ring. The Capacity stage counts these slots into the budget of a
- * border and the Corridor stage routes across them, so the two agree.
+ * of the ring. Where the launchers span no interval along an axis, as on one
+ * line of launchers or for a single launcher, the edges of the grid bound the
+ * slots along that axis instead. The chip bounds hold the port centres, so
+ * such launchers sit on the edge of the chip. The Capacity stage counts these
+ * slots into the budget of a border and the Corridor stage routes across
+ * them, so the two agree.
  *
  * @param border The border, in cell coordinates of the detail grid.
  * @param scene The scene of the run, which holds the launcher cells.

@@ -82,6 +82,9 @@ dev = [
 test = [
   # KLayout ships no wheels for Windows on ARM or for CPython 3.15; the export tests skip without it.
   "klayout~=0.30.6; python_version<'3.15' and (sys_platform!='win32' or platform_machine!='ARM64')",
+  # The generated FlatBuffers code reads a vector of numbers into a NumPy array when NumPy is
+  # importable. The tests read the artifacts with and without NumPy.
+  "numpy>=2.3.2",
   "pytest>=9.0.1",
   "pytest-cov>=7.1",
   "pytest-sugar>=1.1.1",

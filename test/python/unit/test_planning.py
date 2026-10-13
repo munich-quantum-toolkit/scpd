@@ -25,6 +25,8 @@ from mqt.scpd.flatbuffers.artifacts.Bottleneck import BottleneckT
 from mqt.scpd.flatbuffers.artifacts.CapacityElement import CapacityElement
 from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
+from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
@@ -43,6 +45,9 @@ if TYPE_CHECKING:
     from mqt.scpd.flatbuffers.design.Chip import ChipT
 
 CONFIG = Path(__file__).resolve().parents[2] / "fixtures" / "mini" / "config.toml"
+
+# Every picture is drawn from artifacts read once with lists and once with NumPy arrays.
+pytestmark = pytest.mark.usefixtures("vector_type")
 
 
 @pytest.fixture(scope="module")
@@ -229,6 +234,23 @@ def test_the_global_picture_draws_the_lattice_and_the_selected_edges(run: RunDir
     assert geometry.inner == [((100.0, 0.0), (100.0, 50.0))]
 
 
+def test_the_first_lattice_edge_can_be_selected(run: RunDirectory) -> None:
+    """Edge 0 is an edge like any other: when the circuit selects it, it is drawn as selected."""
+    lattice = LatticeT(points=[PointT(0.0, 0.0), PointT(100.0, 0.0)], edges=[0, 1], selected=[0])
+    data = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.GlobalRouting,
+            output=GlobalRoutingT(lattices=[lattice], connections=[], outerRing=[], resonators=[]),
+        )
+    )
+
+    geometry = planning_geometry(data, chip_of(run), "global")
+
+    assert geometry.lattice == [((0.0, 0.0), (100.0, 0.0))]
+    assert geometry.inner == [((0.0, 0.0), (100.0, 0.0))]
+
+
 def test_the_assignment_picture_draws_a_chord_from_every_ring_port_to_its_feed(run: RunDirectory) -> None:
     """The ring is drawn through its ports, and each port is joined to the point it is fed from."""
     geometry = planning_geometry(run.artifact("assign").read_bytes(), chip_of(run), "assign")
@@ -306,6 +328,18 @@ def test_a_feedline_runs_from_its_launcher_through_the_feeds_of_its_resonators(r
     assert feedline.label == "feedline 1: termination → Q1.port0, Q2 → Chip.port3"
 
 
+def test_a_feedline_through_the_first_resonator_alone_is_drawn(run: RunDirectory) -> None:
+    """A chain that names ring node 0 alone runs through the feed of that node."""
+    geometry = planning_geometry(
+        assignment_of([4], [PointT(250.0, 1600.0)], FeedlineChainT(nodes=[0], start=PortRefT(1))),
+        chip_of(run),
+        "assign",
+    )
+
+    (feedline,) = geometry.feedlines
+    assert feedline.terminals == [(250.0, 1600.0)]
+
+
 def test_a_feedline_alone_is_something_to_draw() -> None:
     """A stage that produced only feedlines still has a picture."""
     assert not PlanningGeometry(feedlines=[Feedline(points=[(0.0, 0.0), (1.0, 0.0)])]).is_empty()
@@ -340,6 +374,31 @@ def test_the_corridor_picture_draws_every_route_over_the_partitions(run: RunDire
     assert all(len(route) >= 2 for route in geometry.corridors)
     assert geometry.slots
     assert geometry.partitions
+
+
+@pytest.mark.parametrize("partitions", [[0], [0, 1]], ids=["one", "two"])
+def test_a_corridor_through_the_first_partition_is_read_and_drawn(run: RunDirectory, partitions: list[int]) -> None:
+    """Partition 0 is a partition like any other, so a corridor through it is complete and drawn."""
+    crossings = [PointT(50.0, 0.0)] if len(partitions) == 2 else []
+    corridor = CorridorT(partitions=partitions, crossings=crossings, source=PointT(0.0, 0.0), target=PointT(100.0, 0.0))
+    data = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.CorridorRouting,
+            output=CorridorRoutingT(corridors=[corridor], slots=[]),
+        )
+    )
+
+    output = read_artifact(data).output
+    geometry = planning_geometry(data, chip_of(run), "corridor")
+
+    assert isinstance(output, CorridorRoutingT)
+    assert output.corridors is not None
+    (read,) = output.corridors
+    assert read is not None
+    assert read.partitions is not None
+    assert [int(partition) for partition in read.partitions] == partitions
+    assert geometry.corridors == [[(0.0, 0.0), *((point.x, point.y) for point in crossings), (100.0, 0.0)]]
 
 
 def test_every_routed_wire_approaches_its_target_port(run: RunDirectory) -> None:
@@ -382,7 +441,7 @@ def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "detail")
 
 
-def capacity_plan(*, cyclic: bool = False) -> bytes:
+def capacity_plan(*, cyclic: bool = False, chains: list[int] | None = None) -> bytes:
     """A capacity plan with one gate, one keep-out ring and one chain.
 
     The chain runs from a launcher to the gate, and from the gate to port 1 and to an index that
@@ -390,6 +449,7 @@ def capacity_plan(*, cyclic: bool = False) -> bytes:
 
     Args:
         cyclic: Link port 1 back to the gate, so that the chain is a cycle.
+        chains: The nodes the chains start at; node 0, the launcher, when not given.
 
     Returns:
         The bytes of the artifact.
@@ -409,10 +469,18 @@ def capacity_plan(*, cyclic: bool = False) -> bytes:
         bottlenecks=[BottleneckT(from_=PointT(0.0, 0.0), to=PointT(100.0, 0.0), capacity=2)],
         launchers=[],
         nodes=nodes,
-        chains=[0],
+        chains=[0] if chains is None else chains,
         portKeepout=[PolygonT(vertices=[PointT(0.0, 0.0), PointT(10.0, 0.0), PointT(0.0, 10.0)])],
     )
     return write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
+
+
+def test_a_capacity_plan_without_chains_draws_none(run: RunDirectory) -> None:
+    """A plan whose chain list is empty draws no chain."""
+    geometry = planning_geometry(capacity_plan(chains=[]), chip_of(run), "capacity")
+
+    assert geometry.chains == []
+    assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
 
 
 def test_a_capacity_chain_joins_the_ports_and_the_gates_it_names(run: RunDirectory) -> None:

@@ -19,7 +19,6 @@ The package never imports ``gurobipy`` when it is imported, so an installation w
 
 from __future__ import annotations
 
-import atexit
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -51,10 +50,6 @@ GUROBI_STATUS: dict[int, str] = {
 
 #: The Gurobi status code for "infeasible or unbounded".
 INFEASIBLE_OR_UNBOUNDED = 4
-
-
-#: Whether the backend is cleared at exit already, so that the hook is installed once.
-_CLEARED_AT_EXIT: list[bool] = []
 
 
 class SolverUnavailableError(RuntimeError):
@@ -159,8 +154,3 @@ def register() -> None:
     from .. import pyscpd  # ruff: ignore[import-outside-top-level]
 
     pyscpd.set_solver(solve_mps)
-    # The core holds the function until the backend is cleared. Clearing it before the interpreter
-    # shuts down keeps the core from releasing a Python object after Python is gone.
-    if not _CLEARED_AT_EXIT:
-        atexit.register(pyscpd.set_solver, None)
-        _CLEARED_AT_EXIT.append(True)

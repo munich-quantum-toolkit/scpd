@@ -60,9 +60,15 @@ public:
       solution.backend = backendName;
     }
     // MPS states a minimization, so toMps() writes a maximization with its
-    // objective negated, and the value comes back negated as well.
-    if (model.sense() == Sense::Maximize && !std::isnan(solution.objective)) {
-      solution.objective = -solution.objective;
+    // objective negated. The objective and the bound come back negated as
+    // well.
+    if (model.sense() == Sense::Maximize) {
+      if (!std::isnan(solution.objective)) {
+        solution.objective = -solution.objective;
+      }
+      if (!std::isnan(solution.bound)) {
+        solution.bound = -solution.bound;
+      }
     }
     if (solution.hasValues() &&
         solution.values.size() != model.variableCount()) {
@@ -105,8 +111,14 @@ BackendChoice backendChoiceFromName(const std::string_view name) {
 }
 
 void setExternalBackend(std::shared_ptr<ISolverBackend> backend) {
-  const std::scoped_lock lock(externalMutex());
-  externalSlot() = std::move(backend);
+  // The previous backend is destroyed after the lock is released. Its
+  // destructor may run code of the caller, such as Python, that registers a
+  // backend in turn.
+  auto previous = std::move(backend);
+  {
+    const std::scoped_lock lock(externalMutex());
+    externalSlot().swap(previous);
+  }
 }
 
 std::shared_ptr<ISolverBackend> externalBackend() {

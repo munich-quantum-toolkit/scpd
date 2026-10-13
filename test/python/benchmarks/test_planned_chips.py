@@ -36,7 +36,7 @@ from mqt.scpd.run import BlockReporter, RunDirectory
 from mqt.scpd.steps import STEPS
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from mqt.scpd.console import Figure
     from mqt.scpd.flatbuffers.design.Chip import ChipT
@@ -66,6 +66,19 @@ def entries(items: Sequence[T | None] | None) -> list[T]:
         The entries, without the absent ones.
     """
     return [item for item in items or [] if item is not None]
+
+
+def indices(values: Iterable[int] | None) -> list[int]:
+    """The entries of a schema vector of indices, as integers.
+
+    The generated object model reads a vector of numbers into a NumPy array when NumPy is
+    importable, and into a list otherwise. A NumPy array has no single truth value, so the vector is
+    read into a list, never tested for truth.
+
+    Returns:
+        The indices, or none when the vector is absent.
+    """
+    return [] if values is None else [int(value) for value in values]
 
 
 class Fails:
@@ -165,17 +178,15 @@ def chords(routing: CorridorRoutingT) -> list[tuple[int, int, Point, Point]]:
     """
     drawn = []
     for wire, corridor in enumerate(entries(routing.corridors)):
-        if not corridor.partitions or corridor.source is None or corridor.target is None:
+        partitions = indices(corridor.partitions)
+        if not partitions or corridor.source is None or corridor.target is None:
             continue
         places = [
             (corridor.source.x, corridor.source.y),
             *((crossing.x, crossing.y) for crossing in entries(corridor.crossings)),
             (corridor.target.x, corridor.target.y),
         ]
-        drawn.extend(
-            (wire, int(partition), places[index], places[index + 1])
-            for index, partition in enumerate(corridor.partitions)
-        )
+        drawn.extend((wire, partition, places[index], places[index + 1]) for index, partition in enumerate(partitions))
     return drawn
 
 
@@ -206,7 +217,7 @@ def check_the_assignment(chip: ChipT, assignment: AssignmentT, launcher_target: 
     chained: list[int] = []
     ends = {"launcher": 0, "termination": 0}
     for chain in entries(assignment.chains):
-        chained.extend(int(node) for node in chain.nodes or [])
+        chained.extend(indices(chain.nodes))
         for end in (chain.start, chain.end):
             ends["launcher" if end is not None else "termination"] += 1
     assert sorted(chained) == sorted(resonators), "a resonator is in no chain or in two"
@@ -216,7 +227,7 @@ def check_the_assignment(chip: ChipT, assignment: AssignmentT, launcher_target: 
 def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT) -> None:
     """Every connection has a corridor, a slot carries one wire, and no two wires meet in a partition."""
     corridors = entries(routing.corridors)
-    assert all(corridor.partitions for corridor in corridors), "a connection has no corridor"
+    assert all(indices(corridor.partitions) for corridor in corridors), "a connection has no corridor"
 
     taken = [(crossing.x, crossing.y) for corridor in corridors for crossing in entries(corridor.crossings)]
     assert len(set(taken)) == len(taken), "two wires cross at one slot"
@@ -229,7 +240,7 @@ def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT) -> None:
         for position in entries(slots.positions)
     }
     for corridor in corridors:
-        partitions = [int(partition) for partition in corridor.partitions or []]
+        partitions = indices(corridor.partitions)
         crossings = entries(corridor.crossings)
         assert len(crossings) + 1 == len(partitions)
         for index, crossing in enumerate(crossings):

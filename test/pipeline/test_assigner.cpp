@@ -210,6 +210,38 @@ TEST(LauncherOrder, IsWhatTheStageRefuses) {
   }
 }
 
+TEST(Assigner, GivesEachOfTwoResonatorsAChainOfItsOwn) {
+  // Two launcher ends and two terminations on two resonators leave no chord
+  // to use: each resonator is a chain of one, from a launcher to a
+  // termination.
+  const auto chip = squareChip({{-10.0, 50.0}, {110.0, 50.0}});
+  auto config = squareConfig();
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  config.rules->max_feedline_utilization = 4;
+  config.rules->feedline_terminations = 2;
+  config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  config.stages->assignment =
+      std::make_unique<flatbuffers::config::AssignmentParamsT>();
+  config.stages->assignment->launcher_target = 2;
+
+  const auto assignment = makeOrderedMilpAssigner()->run(
+      chip, planWithLaunchersOf(chip), routingWithRing({0, 1}, {0, 1}), config,
+      {});
+
+  ASSERT_EQ(assignment.chains.size(), 2U);
+  std::set<std::uint32_t> chained;
+  for (const auto& chain : assignment.chains) {
+    ASSERT_EQ(chain->nodes.size(), 1U);
+    chained.insert(chain->nodes.front());
+    // The launcher is the start of the chain; the termination is its end.
+    ASSERT_NE(chain->start, nullptr);
+    EXPECT_EQ(chain->start->index(),
+              assignment.launchers[chain->nodes.front()].index());
+    EXPECT_EQ(chain->end, nullptr);
+  }
+  EXPECT_EQ(chained, (std::set<std::uint32_t>{0, 1}));
+}
+
 // The stage on the two-qubit fixture.
 
 /// The inputs of the stage on the fixture, and its assignment.

@@ -55,7 +55,7 @@ def algorithms() -> list[tuple[str, list[str]]]:
     """The implementations this build ships, as (stage, names) pairs in pipeline order."""
 
 def set_solver(solve: object | None) -> None:
-    """Register the external solver of the process, or clear it with None. The callable receives the MPS text, the variable names in model order, a time limit and a relative gap, and returns (status, objective, values)."""
+    """Register the external solver of the process, or clear it with None. The callable receives the MPS text, the variable names in model order, a time limit and a relative gap, and returns (status, objective, values). The module clears the solver at interpreter exit."""
 
 def solver_info(config: bytes) -> str:
     """The backend a solve with this configuration uses: HiGHS and its version, or the name of the external backend."""

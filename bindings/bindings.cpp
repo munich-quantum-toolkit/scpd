@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -54,6 +55,51 @@ std::span<const std::uint8_t> asSpan(const nb::bytes& bytes) {
 nb::bytes asBytes(const std::vector<std::uint8_t>& bytes) {
   return nb::bytes(bytes.data(), bytes.size());
 }
+
+/**
+ * @brief Holds a Python callable that the core keeps and may release on any
+ * thread.
+ *
+ * The core keeps the external solver in a shared pointer, and the last owner
+ * may be a stage that runs without the GIL. The destructor takes the GIL
+ * before it releases the reference. After the interpreter has shut down, no
+ * reference may be released, so the destructor leaks the reference instead.
+ */
+class PythonCallable {
+public:
+  /**
+   * @brief Takes a reference to a callable.
+   * @param callable The callable.
+   */
+  explicit PythonCallable(nb::object callable)
+      : callable(std::move(callable)) {}
+  PythonCallable(const PythonCallable&) = delete;
+  PythonCallable& operator=(const PythonCallable&) = delete;
+  PythonCallable(PythonCallable&&) = delete;
+  PythonCallable& operator=(PythonCallable&&) = delete;
+
+  /**
+   * @brief Releases the reference with the GIL held, or leaks it when the
+   * interpreter is gone.
+   */
+  ~PythonCallable() {
+    if (Py_IsInitialized() == 0) {
+      static_cast<void>(callable.release());
+      return;
+    }
+    const nb::gil_scoped_acquire gil;
+    callable.reset();
+  }
+
+  /**
+   * @brief Returns the callable. The caller must hold the GIL to call it.
+   * @return The callable.
+   */
+  [[nodiscard]] const nb::object& get() const { return callable; }
+
+private:
+  nb::object callable;
+};
 
 /// One stage output, wrapped as the artifact a run directory stores. The
 /// producer comes from the caller, because the version of the package is what
@@ -362,16 +408,19 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
           return;
         }
         // The external solver sees the MPS text of the model and nothing
-        // else, which is what makes the two backends interchangeable.
+        // else, which is what makes the two backends interchangeable. The
+        // function holds the callable through a shared owner, so that copies
+        // of the function never touch the reference count without the GIL.
+        auto callable = std::make_shared<const PythonCallable>(solve);
         mqt::scpd::milp::setExternalBackend(mqt::scpd::milp::makeMpsBackend(
-            "gurobi", [solve](const std::string_view mps,
-                              const std::vector<std::string>& names,
-                              const mqt::scpd::milp::SolveOptions& options) {
+            "gurobi", [callable](const std::string_view mps,
+                                 const std::vector<std::string>& names,
+                                 const mqt::scpd::milp::SolveOptions& options) {
               const nb::gil_scoped_acquire gil;
               const auto answer = nb::cast<
                   std::tuple<std::string, double, std::vector<double>>>(
-                  solve(nb::str(mps.data(), mps.size()), names,
-                        options.timeLimit, options.relativeGap));
+                  callable->get()(nb::str(mps.data(), mps.size()), names,
+                                  options.timeLimit, options.relativeGap));
               const auto& [status, objective, values] = answer;
               mqt::scpd::milp::Solution solution;
               solution.backend = "gurobi";
@@ -398,7 +447,13 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "Register the external solver of the process, or clear it with None. "
       "The callable receives the MPS text, the variable names in model "
       "order, a time limit and a relative gap, and returns (status, "
-      "objective, values).");
+      "objective, values). The module clears the solver at interpreter "
+      "exit.");
+  // The core keeps the solver in process state, which outlives the
+  // interpreter. Clearing it at exit releases the callable while Python can
+  // still run its destructor.
+  nb::module_::import_("atexit").attr("register")(m.attr("set_solver"),
+                                                  nb::none());
 
   m.def(
       "solver_info",

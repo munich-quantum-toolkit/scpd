@@ -193,7 +193,13 @@ public:
     nextStampLabel = nextLabel;
     closeEveryGate();
 
-    stamp(targetCell, {targetCell}, {});
+    // The target is the seed of the first chamber, and a chamber labels no
+    // seed, so the target takes the label of the first chamber here. A walk
+    // whose first chamber reaches a launcher labels nothing.
+    const auto first = nextStampLabel;
+    if (stamp({targetCell}, {})) {
+      labels[targetCell] = first;
+    }
 
     openEveryGate();
     nextLabel = nextStampLabel;
@@ -488,19 +494,21 @@ private:
   }
 
   /// One chamber of a chain, labelled, then the chambers beyond its gates.
-  void stamp(const std::size_t targetCell,
-             const std::vector<std::size_t>& seeds,
-             const std::unordered_set<std::size_t>& skip) {
+  ///
+  /// The seeds of the chamber keep their labels.
+  ///
+  /// @return Whether the chamber was labelled, which it is unless it reaches
+  /// a launcher.
+  [[nodiscard]] bool stamp(const std::vector<std::size_t>& seeds,
+                           const std::unordered_set<std::size_t>& skip) {
     const auto chamber = flood(seeds);
     if (chamber.reachesALauncher) {
       // The chamber that reaches a launcher belongs to no chain in
       // particular, so it is left for the watershed rather than claimed.
-      return;
+      return false;
     }
     visitedCells.insert(chamber.cells.begin(), chamber.cells.end());
 
-    // The target itself is in the first chamber even where it was a seed.
-    (*labelSink)[targetCell] = nextStampLabel;
     for (const auto cell : chamber.cells) {
       if (std::ranges::find(seeds, cell) == seeds.end()) {
         (*labelSink)[cell] = nextStampLabel;
@@ -521,9 +529,10 @@ private:
       // Every chamber beyond a gate is a partition of its own, which is what
       // makes a gate a border rather than a line drawn through one region.
       ++nextStampLabel;
-      stamp(targetCell, seedsBeyond(gate, chamber), siblings);
+      static_cast<void>(stamp(seedsBeyond(gate, chamber), siblings));
       setClosed(gate, true);
     }
+    return true;
   }
 
   /// The cells a chain continues from once a gate is open: the cells of the

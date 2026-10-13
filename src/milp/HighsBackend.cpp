@@ -25,6 +25,7 @@
 #include <format>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -78,6 +79,22 @@ void logLines(const SolveObserver& observer, const std::string& message) {
       break;
     }
     rest.remove_prefix(end + 1);
+  }
+}
+
+/// The thread count that the last solve on this thread asked HiGHS for, or
+/// none before the first solve. HiGHS keeps one task scheduler per calling
+/// thread and refuses a solve whose thread count differs from the count the
+/// scheduler started with.
+thread_local std::optional<std::uint32_t> schedulerThreads;
+
+/// Restarts the HiGHS scheduler of the calling thread when a solve asks for
+/// another thread count than the solve before. Zero asks for the default of
+/// HiGHS, which the restarted scheduler then takes.
+void prepareScheduler(const std::uint32_t threads) {
+  if (schedulerThreads != threads) {
+    Highs::resetGlobalScheduler(true);
+    schedulerThreads = threads;
   }
 }
 
@@ -229,6 +246,7 @@ public:
       static_cast<void>(highs.setOptionValue(
           "threads", static_cast<HighsInt>(options.threads)));
     }
+    prepareScheduler(options.threads);
 
     if (highs.passModel(highsModel) != HighsStatus::kOk) {
       solution.message = "HiGHS rejected the model";
@@ -258,11 +276,13 @@ public:
       return solution;
     }
     if (solution.status == SolveStatus::Feasible &&
-        !highs.getSolution().value_valid) {
-      // A limit was reached before any solution was found, which is not a
-      // feasible answer however the status reads.
+        (!highs.getSolution().value_valid ||
+         highs.getInfo().primal_solution_status != kSolutionStatusFeasible)) {
+      // A limit was reached before a feasible point was found. HiGHS may still
+      // hand back values, such as the start of a simplex solve, but they break
+      // rows, so they are no feasible answer however the status reads.
       solution.status = SolveStatus::Error;
-      solution.message = "HiGHS stopped at a limit without a solution";
+      solution.message = "HiGHS stopped at a limit without a feasible solution";
       return solution;
     }
     if (!solution.hasValues()) {

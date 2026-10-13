@@ -243,6 +243,78 @@ TEST(HighsBackend, GivesValuesToEverySolveThatALimitStops) {
   }
 }
 
+/// A covering program too large to solve within a millisecond: each of 3000
+/// rows asks that 30 of 3000 variables in [0, 1] add up to at least 10.
+Model largeCover() {
+  constexpr std::size_t size = 3000;
+  Model model("large-cover");
+  std::vector<Var> variables;
+  variables.reserve(size);
+  for (std::size_t column = 0; column < size; ++column) {
+    variables.push_back(
+        model.addContinuous(std::format("x{}", column), 0.0, 1.0, 1.0));
+  }
+  std::uint64_t state = 1;
+  const auto next = [&state] {
+    state = (state * 6364136223846793005ULL) + 1442695040888963407ULL;
+    return state >> 33U;
+  };
+  for (std::size_t row = 0; row < size; ++row) {
+    LinearExpr cover;
+    for (std::size_t term = 0; term < 30; ++term) {
+      const auto column = static_cast<std::size_t>(next() % size);
+      const auto coefficient =
+          0.1 + (0.9 * static_cast<double>(next() % 1000U) / 1000.0);
+      cover.add(variables[column], coefficient);
+    }
+    model.addGreaterOrEqual(std::format("r{}", row), cover, 10.0);
+  }
+  return model;
+}
+
+TEST(HighsBackend, ReportsAFeasibleSolveOnlyWithValuesThatHoldEveryRow) {
+  // A time limit can stop a linear solve before it reaches a primal feasible
+  // point, while HiGHS still hands back an array of values. Those values are
+  // no solution, and the backend must not report them as one.
+  const auto model = largeCover();
+  SolveOptions options;
+  options.timeLimit = 1.0e-3;
+
+  const auto solution = makeHighsBackend()->solve(model, options);
+
+  if (solution.status == SolveStatus::Feasible ||
+      solution.status == SolveStatus::Optimal) {
+    ASSERT_EQ(solution.values.size(), model.variableCount());
+    std::size_t violated = 0;
+    for (const auto& constraint : model.constraints()) {
+      double activity = 0.0;
+      for (const auto& [column, coefficient] : constraint.coefficients) {
+        activity += coefficient * solution.values[column];
+      }
+      violated += activity < constraint.lower - 1.0e-6 ? 1U : 0U;
+    }
+    EXPECT_EQ(violated, 0U) << "of " << model.constraintCount() << " rows";
+  } else {
+    EXPECT_EQ(solution.status, SolveStatus::Error);
+    EXPECT_FALSE(solution.message.empty());
+  }
+}
+
+TEST(HighsBackend, SolvesWithAnotherThreadCountEachTime) {
+  // HiGHS keeps one task scheduler per calling thread. A solve that asks for
+  // a thread count other than the one of the solve before still solves.
+  const auto model = hardKnapsack();
+  for (const std::uint32_t threads : {1U, 2U, 0U, 1U}) {
+    SolveOptions options;
+    options.threads = threads;
+
+    const auto solution = makeHighsBackend()->solve(model, options);
+
+    EXPECT_EQ(solution.status, SolveStatus::Optimal)
+        << "threads " << threads << ": " << solution.message;
+  }
+}
+
 TEST(HighsBackend, EndsTheSolveWhenTheObserverThrowsAndRethrows) {
   // A Python KeyboardInterrupt reaches the core as an exception from a
   // callback. The solve stops at the next chance and the exception leaves the
@@ -308,6 +380,31 @@ TEST(MpsBackend, RefusesAWrongNumberOfValues) {
   const auto solution = backend->solve(model, {});
   EXPECT_EQ(solution.status, SolveStatus::Error);
   EXPECT_NE(solution.message.find("2 variables"), std::string::npos);
+}
+
+TEST(MpsBackend, NegatesTheObjectiveAndTheBoundOfAMaximization) {
+  // MPS states a minimization, so the external solver answers a maximization
+  // with the objective and the bound of the negated program.
+  Model model("maximum");
+  const auto a = model.addBinary("a", 3.0);
+  const auto b = model.addBinary("b", 4.0);
+  model.setSense(Sense::Maximize);
+  model.addLessOrEqual("one", (1.0 * a) + (1.0 * b), 1.0);
+
+  const auto backend = makeMpsBackend(
+      "negated", [](auto, const auto& /*names*/, const auto& /*options*/) {
+        Solution solution;
+        solution.status = SolveStatus::Feasible;
+        solution.objective = -4.0;
+        solution.bound = -4.5;
+        solution.values = {0.0, 1.0};
+        return solution;
+      });
+  const auto solution = backend->solve(model, {});
+
+  ASSERT_EQ(solution.status, SolveStatus::Feasible);
+  EXPECT_DOUBLE_EQ(solution.objective, 4.0);
+  EXPECT_DOUBLE_EQ(solution.bound, 4.5);
 }
 
 TEST(MpsBackend, NeedsASolveFunction) {

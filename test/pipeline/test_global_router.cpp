@@ -331,6 +331,67 @@ double selectedLength(const GlobalRoutingT& routing) {
   return length;
 }
 
+/// One port of a chip placed by hand.
+struct HandPort {
+  std::string label;
+  Point center;
+  /// The direction the port faces, in degrees.
+  double orientation = 0.0;
+};
+
+/// A chip of hand-placed ports and rectangles of artwork.
+///
+/// The ports are classified by @p patterns. Each rectangle is given by its
+/// lower left and upper right corner.
+ChipT handChip(const std::vector<HandPort>& ports,
+               const PortPatternsT& patterns,
+               const std::vector<std::pair<Point, Point>>& rectangles = {}) {
+  ChipT chip;
+  for (const auto& [label, center, orientation] : ports) {
+    auto port = std::make_unique<PortT>();
+    port->label = label;
+    port->center = center;
+    port->orientation = orientation;
+    chip.ports.push_back(std::move(port));
+  }
+  for (const auto& [low, high] : rectangles) {
+    auto polygon = std::make_unique<flatbuffers::geometry::PolygonT>();
+    polygon->vertices = {low, Point(high.x(), low.y()), high,
+                         Point(low.x(), high.y())};
+    chip.obstacles.push_back(std::move(polygon));
+  }
+  EXPECT_TRUE(design::classifyPorts(chip, patterns).empty());
+  return chip;
+}
+
+/// The patterns of a hand chip without bridges: `R.port0` is a resonator, and
+/// every other port named `X.port0` is a conventional port of its own
+/// component.
+PortPatternsT handPatterns() {
+  PortPatternsT patterns;
+  patterns.launcher = R"(^Chip\.port\d+$)";
+  patterns.resonator = R"(^R\.port0$)";
+  patterns.conventional = R"(^[A-QS-Z]\.port0$)";
+  patterns.component = R"(^([^.]+)\.port\d+$)";
+  return patterns;
+}
+
+/// The configuration of a hand chip. Without design rules, the lattice lines
+/// of a port run through its center.
+ConfigT handConfig(const std::vector<std::string>& ring) {
+  ConfigT config;
+  config.ports = std::make_unique<flatbuffers::config::PortConfigT>();
+  config.ports->sequences =
+      std::make_unique<flatbuffers::config::PortSequencesT>();
+  config.ports->sequences->all_outer = ring;
+  config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  config.stages->global =
+      std::make_unique<flatbuffers::config::GlobalParamsT>();
+  config.stages->solver =
+      std::make_unique<flatbuffers::config::SolverParamsT>();
+  return config;
+}
+
 /// Everything the stage reports, as a renderer would receive it.
 struct Recorder {
   std::vector<std::pair<Detail, std::string>> lines;
@@ -399,6 +460,67 @@ TEST(GlobalRouter, ReachesAnInnerPortAroundTheArtwork) {
   // No bridge leads anywhere, so the ring is the configured one.
   EXPECT_EQ(ringOf(routing),
             indicesOf(chip, config.ports->sequences->all_outer));
+}
+
+TEST(GlobalRouter, RunsNoLatticeEdgeAcrossArtwork) {
+  // The lattice of the two anchors is a rectangle. Its edges run through the
+  // pad of Q2, the coupler bar and the pad of Q1, and no node of it lies on
+  // artwork, so only the edges themselves can say that no wire fits.
+  const auto config = innerConfig();
+  const auto chip = test::miniChip(config);
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"Q2.port1", "Q1.port1"}), .gate = {}}});
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Summary));
+
+  EXPECT_TRUE(routing.connections.empty());
+  EXPECT_DOUBLE_EQ(selectedLength(routing), 0.0);
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 1U);
+}
+
+TEST(GlobalRouter, LeavesAPortWhoseAnchorLiesOnItsOwnArtwork) {
+  // The anchor of S lies inside the square around it. The edge to T leaves
+  // the square and crosses nothing else, so the wire runs.
+  const auto chip = handChip(
+      {{.label = "S.port0", .center = Point(0.0, 0.0)},
+       {.label = "T.port0", .center = Point(100.0, 0.0), .orientation = 180.0}},
+      handPatterns(), {{Point(-10.0, -10.0), Point(10.0, 10.0)}});
+  const auto config = handConfig({"S.port0"});
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
+
+  const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  EXPECT_EQ(routing.connections[0]->source->index(), indexOf(chip, "S.port0"));
+  EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "T.port0"));
+  EXPECT_NEAR(routing.objective, 100.0, 1.0e-9);
+}
+
+TEST(GlobalRouter, RunsOneWireFromAPortOnSeveralLattices) {
+  // S borders two chains, so it is a node of two lattices. A port takes one
+  // wire, so only one of A and B is reached.
+  const auto chip =
+      handChip({{.label = "S.port0", .center = Point(0.0, 0.0)},
+                {.label = "A.port0", .center = Point(100.0, 0.0)},
+                {.label = "B.port0", .center = Point(0.0, 100.0)}},
+               handPatterns());
+  const auto config = handConfig({"S.port0"});
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"S.port0", "A.port0"}), .gate = {}},
+       {.targets = indicesOf(chip, {"S.port0", "B.port0"}), .gate = {}}});
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Summary));
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  EXPECT_EQ(routing.connections[0]->source->index(), indexOf(chip, "S.port0"));
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 1U);
 }
 
 TEST(GlobalRouter, CountsATargetThatNoLatticeCarriesAsAFail) {
@@ -482,6 +604,48 @@ TEST(GlobalRouter, ReachesAnInnerPortPastAnInternalBridge) {
     ASSERT_EQ(recorder.fails.size(), 1U);
     EXPECT_EQ(recorder.fails[0], 0U);
   }
+}
+
+TEST(GlobalRouter, MarksTheRingPortOfAResonatorWirePastAnInternalBridge) {
+  // The resonator T is fed through two bridges. The wire runs from the inner
+  // end X.port1 of the ring bridge to I.port1, crosses the internal bridge,
+  // and runs on from I.port2 to T. It surfaces at X.port2, so the assignment
+  // has to see X.port2 as a resonator.
+  PortPatternsT patterns;
+  patterns.launcher = R"(^Chip\.port\d+$)";
+  patterns.resonator = R"(^[RT]\.port0$)";
+  patterns.conventional = R"(^C\.port0$)";
+  patterns.bridge_pair = R"(^[XI]\.port[12]$)";
+  patterns.component = R"(^([^.]+)\.port\d+$)";
+  const auto chip = handChip(
+      {{.label = "X.port1", .center = Point(0.0, 0.0)},
+       {.label = "X.port2", .center = Point(0.0, -50.0), .orientation = 270.0},
+       {.label = "I.port1", .center = Point(10.0, 0.0), .orientation = 180.0},
+       {.label = "I.port2", .center = Point(90.0, 0.0)},
+       {.label = "T.port0", .center = Point(100.0, 0.0), .orientation = 180.0},
+       {.label = "R.port0", .center = Point(500.0, 500.0)}},
+      patterns);
+  auto config = handConfig({"X.port2", "R.port0"});
+  config.stages->global->internal_bridges = true;
+  auto rule = std::make_unique<BridgeRuleT>();
+  rule->first = R"(^([XI])\.port1$)";
+  rule->second = R"(^([XI])\.port2$)";
+  config.ports->bridge_pairs.push_back(std::move(rule));
+  const auto plan =
+      planOf({{.targets = indicesOf(chip, {"X.port1", "I.port1", "T.port0"}),
+               .gate = std::nullopt},
+              {.targets = indicesOf(chip, {"I.port2", "T.port0"}),
+               .gate = std::nullopt},
+              {.targets = indicesOf(chip, {"X.port2"}), .gate = std::nullopt}});
+
+  const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+
+  ASSERT_EQ(routing.connections.size(), 2U);
+  EXPECT_NEAR(routing.objective, 20.0, 1.0e-9);
+  EXPECT_EQ(ringOf(routing), indicesOf(chip, {"X.port2", "R.port0"}));
+  auto resonators = indicesOf(chip, {"X.port2", "T.port0", "R.port0"});
+  std::ranges::sort(resonators);
+  EXPECT_EQ(resonatorsOf(routing), resonators);
 }
 
 /// A backend that answers with the longest circuit instead of the shortest.

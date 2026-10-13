@@ -90,6 +90,17 @@ std::vector<grid::Point> crossingSlots(const grid::PartitionBorder& border,
     maxX = std::max(maxX, x);
     maxY = std::max(maxY, y);
   }
+  // Launchers on one line span no interval along that axis. The chip bounds
+  // hold the port centres, so such a line lies on the edge of the chip, and
+  // the grid bounds the slots along that axis instead.
+  if (minX == maxX) {
+    minX = 0.0;
+    maxX = static_cast<double>(scene.detail.width);
+  }
+  if (minY == maxY) {
+    minY = 0.0;
+    maxY = static_cast<double>(scene.detail.height);
+  }
   auto slots = grid::borderSlots(border, scene.detail, pitch);
   std::erase_if(slots, [&](const grid::Point& slot) {
     return slot.x() <= minX || slot.x() >= maxX || slot.y() <= minY ||

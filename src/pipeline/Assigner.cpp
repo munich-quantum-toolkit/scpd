@@ -410,7 +410,12 @@ private:
       const auto starts = model.addBinary(std::format("starts_{}", index));
 
       // `starts` is one exactly where the anchor ends a chain and the chord
-      // that leaves it is unused, which is where a new corridor begins.
+      // that leaves it is unused, which is where a new corridor begins. An
+      // anchor ends a chain where it takes a launcher, a termination, or
+      // both, and it takes both where it is a chain of its own. The first
+      // row keeps `starts` at zero at an anchor without an end, and the
+      // second where the leaving chord is used. The last two rows set it
+      // where either end is there and the leaving chord is unused.
       model.addLessOrEqual(std::format("starts_a_{}", index),
                            milp::LinearExpr(starts) -
                                variables.launcher[index] -
@@ -418,9 +423,11 @@ private:
                            0.0);
       model.addLessOrEqual(std::format("starts_b_{}", index),
                            milp::LinearExpr(starts) + leaving, 1.0);
-      model.addGreaterOrEqual(std::format("starts_c_{}", index),
+      model.addGreaterOrEqual(
+          std::format("starts_launcher_{}", index),
+          milp::LinearExpr(starts) - variables.launcher[index] + leaving, 0.0);
+      model.addGreaterOrEqual(std::format("starts_termination_{}", index),
                               milp::LinearExpr(starts) -
-                                  variables.launcher[index] -
                                   variables.termination[index] + leaving,
                               0.0);
 
@@ -724,7 +731,9 @@ private:
         chain->start = std::make_unique<fbd::PortRef>(
             inputs.launchers[slotOf[ring.anchors[first]]]);
       }
-      if (launcherAt(last)) {
+      // A chain of one anchor has one launcher at most, since its other end
+      // is a termination, and that launcher is where the chain starts.
+      if (last != first && launcherAt(last)) {
         chain->end = std::make_unique<fbd::PortRef>(
             inputs.launchers[slotOf[ring.anchors[last]]]);
       }

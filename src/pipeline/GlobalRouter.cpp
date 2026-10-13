@@ -117,13 +117,74 @@ bool onArtwork(const ChipT& chip, const fbg::Point& point) {
   });
 }
 
+/// Whether a lattice edge runs through chip artwork.
+///
+/// The edge is cut where it crosses the border of a polygon, and each piece
+/// is tested at its midpoint. The piece next to a port end is exempt: the
+/// anchor of a port may lie on the artwork of its component, and a wire from
+/// there has to leave that artwork first. Every other piece on artwork
+/// blocks the edge.
+bool throughArtwork(const ChipT& chip, const fbg::Point& from,
+                    const fbg::Point& to, const bool fromPort,
+                    const bool toPort) {
+  const auto direction = geometry::subtract(to, from);
+  for (const auto& polygon : chip.obstacles) {
+    const auto& vertices = polygon->vertices;
+    if (vertices.size() < 3) {
+      continue;
+    }
+    const auto box = geometry::boundingBox(*polygon);
+    if (std::max(from.x(), to.x()) < box.minX ||
+        std::min(from.x(), to.x()) > box.maxX ||
+        std::max(from.y(), to.y()) < box.minY ||
+        std::min(from.y(), to.y()) > box.maxY) {
+      continue;
+    }
+    // The edge parameters where the edge crosses the border, 0 at from and 1
+    // at to.
+    std::vector<double> cuts{0.0, 1.0};
+    for (std::size_t index = 0, previous = vertices.size() - 1;
+         index < vertices.size(); previous = index++) {
+      const auto side = geometry::subtract(vertices[index], vertices[previous]);
+      const auto denominator = geometry::cross(direction, side);
+      if (std::abs(denominator) < COORDINATE_EPSILON) {
+        // A side parallel to the edge cuts nothing. The pieces next to that
+        // side decide.
+        continue;
+      }
+      const auto offset = geometry::subtract(vertices[previous], from);
+      const auto along = geometry::cross(offset, side) / denominator;
+      const auto across = geometry::cross(offset, direction) / denominator;
+      if (along > 0.0 && along < 1.0 && across >= 0.0 && across <= 1.0) {
+        cuts.push_back(along);
+      }
+    }
+    // A cut through a vertex is found on both of its sides. The empty piece
+    // between the two would be tested at the vertex, which is no test.
+    std::ranges::sort(cuts);
+    cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
+    for (std::size_t piece = 0; piece + 1 < cuts.size(); ++piece) {
+      if ((piece == 0 && fromPort) || (piece + 2 == cuts.size() && toPort)) {
+        continue;
+      }
+      const auto middle = (cuts[piece] + cuts[piece + 1]) / 2.0;
+      if (insidePolygon(*polygon, {from.x() + (middle * direction.x()),
+                                   from.y() + (middle * direction.y())})) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /// The Hanan lattice of a set of ports: one line through the x of every
 /// anchor and one through its y.
 ///
 /// A node on chip artwork is removed, and every edge that touched it goes
-/// with it. Without that the inner circuit routes through the couplers and
-/// the qubits it routes between, and its objective is the length of paths
-/// that nobody can build.
+/// with it. An edge that runs through artwork goes as well, since its two
+/// ends may lie on either side of it. Without that the inner circuit routes
+/// through the couplers and the qubits it routes between, and its objective
+/// is the length of paths that nobody can build.
 Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
                      const double reach) {
   Lattice lattice;
@@ -191,16 +252,11 @@ Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
   // of a port stays whatever it sits on: a wire has to start or end there,
   // and without the node the model could not say so.
   std::vector<bool> removed(lattice.nodes.size(), false);
-  bool any = false;
   for (std::size_t node = 0; node < lattice.nodes.size(); ++node) {
     if (!lattice.nodes[node].port.has_value() &&
         onArtwork(chip, lattice.nodes[node].position)) {
       removed[node] = true;
-      any = true;
     }
-  }
-  if (!any) {
-    return lattice;
   }
   for (std::size_t node = 0; node < lattice.nodes.size(); ++node) {
     if (removed[node]) {
@@ -209,6 +265,26 @@ Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
     }
     std::erase_if(lattice.nodes[node].neighbors,
                   [&](const std::size_t other) { return removed[other]; });
+  }
+
+  // Two nodes off the artwork can still have artwork between them. Each edge
+  // is tested once, and a blocked edge goes in both directions.
+  std::set<std::pair<std::size_t, std::size_t>> blocked;
+  for (std::size_t node = 0; node < lattice.nodes.size(); ++node) {
+    for (const auto other : lattice.nodes[node].neighbors) {
+      const auto& from = lattice.nodes[node];
+      const auto& to = lattice.nodes[other];
+      if (node < other &&
+          throughArtwork(chip, from.position, to.position,
+                         from.port.has_value(), to.port.has_value())) {
+        blocked.emplace(node, other);
+      }
+    }
+  }
+  for (std::size_t node = 0; node < lattice.nodes.size(); ++node) {
+    std::erase_if(lattice.nodes[node].neighbors, [&](const std::size_t other) {
+      return blocked.contains(std::minmax(node, other));
+    });
   }
   return lattice;
 }
@@ -509,22 +585,8 @@ private:
       const auto& lattice = lattices[index];
       for (std::size_t node = 0; node < lattice.nodes.size(); ++node) {
         const auto port = lattice.nodes[node].port;
-        if (port.has_value() && targets.contains(*port)) {
-          // A target draws its one wire over every lattice at once, which
-          // the target constraints below say.
-          continue;
-        }
         if (port.has_value()) {
-          // Any other port is where one wire starts or ends, and no wire runs
-          // on through it. A wire that did would join two connections into
-          // one component with three port ends, which names no connection.
-          // Unlike the target and bridge constraints, this one holds per
-          // lattice: the components are read back per lattice, so a wire
-          // that ends at the port in one lattice and one that starts there in
-          // another are two connections with two ends each.
-          model.addLessOrEqual(
-              std::format("port_{}_{}", index, node),
-              flow(index, node, false) + flow(index, node, true), 1.0);
+          // A port is constrained over every lattice at once, below.
           continue;
         }
         // A plain crossing passes on what it takes, and carries at most one
@@ -548,6 +610,24 @@ private:
                                1.0);
         }
       }
+    }
+
+    // Any port other than a target is where one wire starts or ends, and no
+    // wire runs on through it. A wire that did would join two connections
+    // into one component with three port ends, which names no connection. A
+    // port that borders several chambers is a node of several lattices, and
+    // it is still one port: it takes one wire over all of them.
+    std::set<std::uint32_t> ends;
+    for (const auto& lattice : lattices) {
+      for (const auto& entry : lattice.nodeOfPort) {
+        if (!targets.contains(entry.first)) {
+          ends.insert(entry.first);
+        }
+      }
+    }
+    for (const auto port : ends) {
+      model.addLessOrEqual(std::format("port_{}", port),
+                           portFlow(port, false) + portFlow(port, true), 1.0);
     }
 
     // A target is where a wire ends: everything that arrives stays, and a
@@ -1008,6 +1088,25 @@ private:
       surfaceOf.emplace(bridge.from, bridge.to);
     }
 
+    // The inner wire of a resonator may cross internal bridges before it
+    // surfaces, so it can be several connections long. The connections and
+    // the internal bridges join the ports into these wires.
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> joined;
+    const auto join = [&joined](const std::uint32_t a, const std::uint32_t b) {
+      joined[a].push_back(b);
+      joined[b].push_back(a);
+    };
+    for (const auto& connection : routing.connections) {
+      if (connection->source != nullptr) {
+        join(connection->source->index(), connection->target.index());
+      }
+    }
+    for (const auto& bridge : circuit.bridges) {
+      if (!surfaceOf.contains(bridge.from) && !surfaceOf.contains(bridge.to)) {
+        join(bridge.from, bridge.to);
+      }
+    }
+
     // A resonator inside the ring is fed where its inner wire surfaces. The
     // assignment works on the ring, so the ring port that the wire came out
     // of is a resonator to it as well. The port of the qubit stays a
@@ -1020,14 +1119,23 @@ private:
       }
     }
     std::vector<std::uint32_t> surfaced;
-    for (const auto& connection : routing.connections) {
-      if (connection->source == nullptr ||
-          !resonators.contains(connection->target.index())) {
-        continue;
-      }
-      if (const auto surface = surfaceOf.find(connection->source->index());
-          surface != surfaceOf.end()) {
-        surfaced.push_back(surface->second);
+    for (const auto resonator : resonators) {
+      std::unordered_set<std::uint32_t> seen{resonator};
+      std::vector<std::uint32_t> pending{resonator};
+      while (!pending.empty()) {
+        const auto port = pending.back();
+        pending.pop_back();
+        if (const auto surface = surfaceOf.find(port);
+            surface != surfaceOf.end()) {
+          surfaced.push_back(surface->second);
+        }
+        if (const auto next = joined.find(port); next != joined.end()) {
+          for (const auto other : next->second) {
+            if (seen.insert(other).second) {
+              pending.push_back(other);
+            }
+          }
+        }
       }
     }
     resonators.insert(surfaced.begin(), surfaced.end());

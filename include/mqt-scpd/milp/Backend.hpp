@@ -60,7 +60,10 @@ struct SolveOptions {
   /// The relative gap at which a solve stops early, or zero for the default of
   /// the backend.
   double relativeGap = 0.0;
-  /// The threads the backend may use, or zero for its own default.
+  /// The threads the backend may use, or zero for its own default, which for
+  /// HiGHS is half the hardware threads. HiGHS keeps one pool of worker
+  /// threads per calling thread and restarts that pool when a solve asks for
+  /// another count than the solve before on the same calling thread.
   std::uint32_t threads = 0;
   /// Where the backend reports while it solves.
   SolveObserver observer;

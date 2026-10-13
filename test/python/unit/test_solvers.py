@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import math
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -100,6 +102,70 @@ def test_a_registered_solver_receives_the_model_as_mps() -> None:
     mps, names = seen[0]
     assert "COLUMNS" in mps
     assert "flow_0" in names
+
+
+def run_python(script: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run a script in a new interpreter, so that a crash of the interpreter fails one test only.
+
+    Returns:
+        The finished process, with its output.
+    """
+    return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]  # this interpreter runs a fixed script
+        [sys.executable, "-c", textwrap.dedent(script), *arguments],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def test_a_solver_that_clears_itself_during_a_solve_ends_the_stage_cleanly() -> None:
+    """The core releases a callable that unregisters itself during a solve and keeps the interpreter alive."""
+    script = """
+        import sys
+        from pathlib import Path
+
+        from mqt.scpd import pyscpd
+        from mqt.scpd.chip import load_chip
+        from mqt.scpd.config import load_config, write_config
+
+
+        def clear_and_refuse(mps, names, time_limit, relative_gap):
+            pyscpd.set_solver(None)
+            return "infeasible", 0.0, []
+
+
+        pyscpd.set_solver(clear_and_refuse)
+        del clear_and_refuse
+        config = load_config(Path(sys.argv[1]))
+        config.stages.solver.backend = "gurobi"
+        packed = write_config(config)
+        chip = load_chip(config, Path(sys.argv[1]))
+        capacity = pyscpd.plan_capacity(chip, packed, "test")
+        routing = pyscpd.route_global(chip, capacity, packed, "test")
+        try:
+            pyscpd.assign(chip, capacity, routing, packed, "test")
+        except RuntimeError as error:
+            print(error)
+    """
+
+    finished = run_python(script, str(FIXTURE))
+
+    assert finished.returncode == 0, finished.stderr
+    assert "the assignment did not solve: infeasible" in finished.stdout
+
+
+def test_a_solver_registered_until_exit_lets_the_interpreter_exit_cleanly() -> None:
+    """The core releases a callable that it alone holds and that is never cleared before the interpreter shuts down."""
+    script = """
+        from mqt.scpd import pyscpd
+
+        pyscpd.set_solver(lambda mps, names, time_limit, relative_gap: ("infeasible", 0.0, []))
+    """
+
+    finished = run_python(script)
+
+    assert finished.returncode == 0, finished.stderr
 
 
 class FakeVariable:

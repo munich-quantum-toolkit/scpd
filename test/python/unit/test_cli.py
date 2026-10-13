@@ -378,6 +378,7 @@ def test_list_algorithms_names_one_line_per_stage(capsys: pytest.CaptureFixture[
     ]
 
 
+@pytest.mark.usefixtures("vector_type")
 def test_plot_draws_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A planning stage is drawn from the run directory, over the chip the run carries.
 
@@ -414,6 +415,7 @@ def test_a_planning_stage_needs_a_run(tmp_path: Path, capsys: pytest.CaptureFixt
 
 
 @pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")
+@pytest.mark.usefixtures("vector_type")
 def test_render_writes_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A planning stage goes into the layout file beside the artwork."""
     run = tmp_path / "run"

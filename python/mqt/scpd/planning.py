@@ -29,6 +29,8 @@ from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from .run import STAGE_FILES
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.design.Chip import ChipT
 
@@ -153,6 +155,19 @@ def _entries(items: list[Any] | None) -> list[Any]:
         The entries, without the absent ones.
     """
     return [item for item in (items or []) if item is not None]
+
+
+def _indices(values: Iterable[int] | None) -> list[int]:
+    """The entries of a schema vector of indices, as integers.
+
+    The generated object model reads a vector of numbers into a NumPy array when NumPy is
+    importable, and into a list otherwise. A NumPy array has no single truth value, so the vector is
+    read here into a list, never tested for truth.
+
+    Returns:
+        The indices, or none when the vector is absent.
+    """
+    return [] if values is None else [int(value) for value in values]
 
 
 def _point(value: _Coordinates) -> Point:
@@ -497,25 +512,25 @@ def _chains(plan: CapacityPlanT, chip: ChipT, geometry: PlanningGeometry) -> Non
     def walk(index: int) -> None:
         walked.add(index)
         here = position(index)
-        for child in nodes[index].next or []:
-            if int(child) < len(nodes):
-                there = position(int(child))
+        for child in _indices(nodes[index].next):
+            if child < len(nodes):
+                there = position(child)
                 if here is not None and there is not None:
                     geometry.chains.append((here, there))
-                if int(child) not in walked:
-                    walk(int(child))
+                if child not in walked:
+                    walk(child)
 
-    for root in plan.chains or []:
-        if int(root) < len(nodes) and int(root) not in walked:
-            walk(int(root))
+    for root in _indices(plan.chains):
+        if root < len(nodes) and root not in walked:
+            walk(root)
 
 
 def _global(routing: GlobalRoutingT, geometry: PlanningGeometry) -> None:
     """Fill the layers a global routing carries."""
     for lattice in _entries(routing.lattices):
         points = [_point(point) for point in _entries(lattice.points)]
-        edges = [int(edge) for edge in (lattice.edges or [])]
-        selected = {int(index) for index in (lattice.selected or [])}
+        edges = _indices(lattice.edges)
+        selected = set(_indices(lattice.selected))
         for index in range(0, len(edges) - 1, 2):
             first, second = edges[index], edges[index + 1]
             if first >= len(points) or second >= len(points):
@@ -563,7 +578,7 @@ def _feedlines(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry)
     ring = _entries(assignment.ring)
     feeds = _entries(assignment.feeds)
     for number, chain in enumerate(_entries(assignment.chains), start=1):
-        nodes = [int(node) for node in (chain.nodes or []) if int(node) < min(len(ring), len(feeds))]
+        nodes = [node for node in _indices(chain.nodes) if node < min(len(ring), len(feeds))]
         if not nodes:
             continue
         terminals = [_point(feeds[node]) for node in nodes]
@@ -621,7 +636,7 @@ def _corridor(
         geometry.slots.extend(_point(position) for position in _entries(border.positions))
     connections: list[Any] = list(assignment.connections or []) if assignment is not None else []
     for index, corridor in enumerate(routing.corridors or []):
-        if corridor is None or not corridor.partitions or corridor.source is None or corridor.target is None:
+        if corridor is None or not _indices(corridor.partitions) or corridor.source is None or corridor.target is None:
             continue
         route = [_point(corridor.source)]
         route.extend(_point(crossing) for crossing in _entries(corridor.crossings))
