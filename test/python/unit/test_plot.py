@@ -28,7 +28,7 @@ from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
 from mqt.scpd.planning import Feedline, PlanningGeometry
-from mqt.scpd.plot import FEEDLINE_COLOR, METAL_FILL, PORT_COLOR, PlotError, layout_svg, simplify
+from mqt.scpd.plot import FEEDLINE_COLOR, METAL_FILL, PARTITION_TONES, PORT_COLOR, PlotError, layout_svg, simplify
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 SVG = "{http://www.w3.org/2000/svg}"
@@ -261,14 +261,14 @@ def test_a_stage_leaves_out_what_its_picture_does_not_need() -> None:
 
 
 def test_the_corridors_are_solid_and_the_ground_under_them_light() -> None:
-    """A corridor is a solid band with a casing and a core, and continues along the stub to its port.
+    """A corridor is a solid line on a casing, and continues along the stub to its port.
 
-    The corridor picture draws the borders light.
+    The turns of the stub are rounded, and the corridor picture draws the borders light.
     """
     geometry = PlanningGeometry(
         borders=[[(0.0, 50.0), (100.0, 50.0)]],
         corridors=[[(0.0, 0.0), (50.0, 50.0)]],
-        stubs=[((50.0, 50.0), (50.0, 80.0))],
+        stubs=[[(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)]],
     )
 
     svg = layout_svg(_mini(), stage="corridor", planning=geometry)
@@ -277,9 +277,11 @@ def test_the_corridors_are_solid_and_the_ground_under_them_light() -> None:
     assert root.get("class") == "corridor"
     (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-corridor")
     paths = layer.findall(f"{SVG}path")
-    assert [path.get("class") for path in paths] == ["casing", None, "core"]
+    assert [path.get("class") for path in paths] == ["casing", None]
     assert all(path.get("d") == paths[0].get("d") for path in paths)
-    assert (paths[0].get("d") or "").count("M") == 2
+    data = paths[0].get("d") or ""
+    assert data.count("M") == 1
+    assert data.count("Q") == 2
     style = root.find(f"{SVG}style")
     assert style is not None
     assert style.text is not None
@@ -314,3 +316,65 @@ def test_a_feedline_turns_at_the_corner_away_from_the_center() -> None:
     # The picture has a margin of 20 and runs y downwards: the corner at (0, 100) lies farther from
     # the center (500, 500) than the one at (300, 0).
     assert layer.findall(f".//{SVG}path")[1].get("d") == "M20 1020L20 920L320 920"
+
+
+def test_a_border_is_drawn_without_its_staircase() -> None:
+    """A slanted border drawn as single-cell steps comes out as one line, and a real bend stays."""
+    staircase = [(float(step), float(step)) for step in range(0, 21, 2)]
+    stairs = [point for a, b in pairwise(staircase) for point in (a, (b[0], a[1]))] + [staircase[-1]]
+    bend = [(0.0, 0.0), (2.0, 0.0), (4.0, 0.0), (4.0, 2.0), (4.0, 4.0)]
+
+    svg = layout_svg(_mini(), planning=PlanningGeometry(borders=[stairs, bend]))
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-border")
+    data = layer.find(f"{SVG}path")
+    assert data is not None
+    runs = [re.findall(r"(-?[\d.]+) (-?[\d.]+)", run) for run in (data.get("d") or "").split("M")[1:]]
+    assert [len(run) for run in runs] == [2, 3]
+
+
+def test_the_blocked_cells_lie_under_the_artwork() -> None:
+    """Every blocked rectangle is one subpath of a layer drawn before the metal."""
+    blocked = [
+        [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+        [(20.0, 0.0), (30.0, 0.0), (30.0, 10.0), (20.0, 10.0)],
+    ]
+
+    svg = layout_svg(_mini(), stage="capacity", planning=PlanningGeometry(blocked=blocked))
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-raster")
+    data = layer.find(f"{SVG}path")
+    assert data is not None
+    assert (data.get("d") or "").count("M") == 2
+    assert svg.index('class="l-raster"') < svg.index('<use class="o"')
+    assert 'class="l-raster"' not in layout_svg(
+        _mini(), planning=PlanningGeometry(borders=[[(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]])
+    )
+
+
+def test_a_border_of_one_cell_edge_is_left_out() -> None:
+    """Two partitions that touch at one point only have a border of one edge, which reads as a speck."""
+    geometry = PlanningGeometry(borders=[[(0.0, 0.0), (1.0, 0.0)], [(0.0, 5.0), (1.0, 5.0), (2.0, 5.0)]])
+
+    root = ET.fromstring(layout_svg(_mini(), planning=geometry))  # ruff: ignore[suspicious-xml-element-tree-usage]
+
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-border")
+    data = layer.find(f"{SVG}path")
+    assert data is not None
+    assert (data.get("d") or "").count("M") == 1
+
+
+def test_the_partitions_take_the_grey_of_their_tone_where_the_stage_shows_them() -> None:
+    """The capacity and corridor pictures shade each toned partition under the grid; others do not."""
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    geometry = PlanningGeometry(partitions=[square, square, square], partition_tones=[0, 1, None])
+
+    for stage in ("capacity", "corridor"):
+        svg = layout_svg(_mini(), stage=stage, planning=geometry)
+        root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+        (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-tone")
+        assert [path.get("fill") for path in layer.findall(f"{SVG}path")] == list(PARTITION_TONES[:2])
+        assert svg.index('class="l-tone"') < svg.index('class="x-grid')
+    assert 'class="l-tone"' not in layout_svg(_mini(), stage="global", planning=geometry)

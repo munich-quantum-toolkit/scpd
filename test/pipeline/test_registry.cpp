@@ -134,9 +134,11 @@ TEST(ShippedRegistries, HonorAConfiguredName) {
   EXPECT_EQ(selectedCorridorRouter(config), "other-corridors");
 }
 
-/// The planning steps of a run that takes them all.
-const std::vector<std::string> ALL_STEPS = {"capacity", "global", "assign",
-                                            "corridor"};
+/// The planning steps of a run that takes them all. A function rather than a
+/// constant, so that building the list cannot throw before main().
+std::vector<std::string> allSteps() {
+  return {"capacity", "global", "assign", "corridor"};
+}
 
 /// Whether one of the problems starts with a given text.
 bool mentions(const std::vector<std::string>& problems,
@@ -148,7 +150,7 @@ bool mentions(const std::vector<std::string>& problems,
 
 TEST(PlanProblems, FindNothingWrongWithTheFixture) {
   EXPECT_TRUE(
-      planProblems(test::miniChip(), test::miniConfig(), ALL_STEPS).empty());
+      planProblems(test::miniChip(), test::miniConfig(), allSteps()).empty());
 }
 
 TEST(PlanProblems, NameAnImplementationThatIsNotRegistered) {
@@ -156,7 +158,7 @@ TEST(PlanProblems, NameAnImplementationThatIsNotRegistered) {
   config.stages->global->router = "other-router";
   config.stages->corridor->router = "other-corridors";
 
-  const auto problems = planProblems(test::miniChip(), config, ALL_STEPS);
+  const auto problems = planProblems(test::miniChip(), config, allSteps());
   EXPECT_EQ(problems.size(), 2U);
   EXPECT_TRUE(mentions(problems, "[stages.global] router 'other-router' is no "
                                  "known implementation; the registered ones "
@@ -172,7 +174,7 @@ TEST(PlanProblems, AskForTheLauncherTargetOnlyWhenTheRunAssigns) {
   auto config = test::miniConfig();
   config.stages->assignment->launcher_target = 0;
 
-  EXPECT_TRUE(mentions(planProblems(test::miniChip(), config, ALL_STEPS),
+  EXPECT_TRUE(mentions(planProblems(test::miniChip(), config, allSteps()),
                        "[stages.assignment] launcher_target is missing"));
   EXPECT_TRUE(
       planProblems(test::miniChip(), config, {"capacity", "global"}).empty());
@@ -183,7 +185,7 @@ TEST(PlanProblems, RefuseAnOddNumberOfChainEnds) {
   auto config = test::miniConfig();
   config.rules->feedline_terminations = 0;
 
-  const auto problems = planProblems(test::miniChip(), config, ALL_STEPS);
+  const auto problems = planProblems(test::miniChip(), config, allSteps());
   ASSERT_EQ(problems.size(), 1U);
   EXPECT_EQ(problems[0],
             "[stages.assignment] launcher_target 1 plus [design_rules] "
@@ -198,7 +200,7 @@ TEST(PlanProblems, RefuseLaunchersListedWithTheRing) {
   auto& ring = config.ports->sequences->all_outer;
   std::ranges::reverse(ring);
 
-  EXPECT_TRUE(mentions(planProblems(test::miniChip(config), config, ALL_STEPS),
+  EXPECT_TRUE(mentions(planProblems(test::miniChip(config), config, allSteps()),
                        "the chip input lists the launcher ports in the "
                        "direction of the port ring"));
 }

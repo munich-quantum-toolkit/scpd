@@ -24,7 +24,7 @@ not needed.
 from __future__ import annotations
 
 import json
-from itertools import starmap
+from itertools import pairwise, starmap
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
 
@@ -50,6 +50,10 @@ STAGES: dict[str, str] = {
 
 #: The substrate, as the two ends of a faint diagonal gradient.
 SUBSTRATE: tuple[str, str] = ("#f7f7f6", "#efeeeb")
+#: The blocked cells of the grid a plan was cut on, under the artwork.
+RASTER_FILL = "#4a4a50"
+#: The light greys the partitions take by their tone, so that neighbours differ.
+PARTITION_TONES: tuple[str, ...] = ("#ecebe7", "#dfdeda", "#e6e4df", "#d6d4cf", "#f0efeb", "#dad8d3")
 #: The fill of the metal, its edge, and the hatch and inner contour drawn on it.
 METAL_FILL = "#7b7b80"
 METAL_EDGE = "#4c4c52"
@@ -61,8 +65,9 @@ PORT_COLOR = "#e34948"
 INK = "#1b1a18"
 MUTED = "#55524b"
 FRAME = "#b5b1a8"
-#: The color of every feedline chain. The chains tell apart by their tooltips, not by color.
-FEEDLINE_COLOR = "#2a78d6"
+#: The color of every feedline chain: a grey that stays apart from the dark corridors and the red
+#: ports. The chains tell apart by their tooltips, not by color.
+FEEDLINE_COLOR = "#8e8e94"
 
 #: The stroke of each planning layer. Feedlines, inner wires and corridors run over the metal, so
 #: they get a white casing under them.
@@ -88,7 +93,7 @@ _PLANNING_WIDTHS: dict[str, float] = {
     "inner": 2.0,
     "assignment": 1.0,
     "ring": 1.0,
-    "corridor": 3.4,
+    "corridor": 2.0,
 }
 
 #: The planning layers each stage leaves out of its picture. The keep-out of the port approaches
@@ -102,6 +107,9 @@ _HIDDEN: dict[str, frozenset[str]] = {
 
 #: The borders under the corridors are only the ground the wires run on, so the corridor picture
 #: draws them light and the dark wires stand out.
+#: The stages whose picture shades every partition in the grey of its tone.
+_TONED = frozenset({"capacity", "corridor"})
+
 _CORRIDOR_GROUND = "svg.corridor g.l-border>path{stroke:#c9ccd1;stroke-width:1}"
 
 #: Lengths of the decoration, in layout units (micrometres).
@@ -111,6 +119,8 @@ _GRID_MAJOR = 1000
 _HATCH_PITCH = 36.0
 _INSET = 20.0
 _INSET_WIDTH = 6.0
+#: The largest radius of a turn of the approach of a wire into its port, in layout units.
+_STUB_RADIUS = 60.0
 
 
 class PlotError(ValueError):
@@ -221,6 +231,50 @@ def _rectilinear(points: Sequence[tuple[float, float]], center: tuple[float, flo
     return stepped
 
 
+def _straightened(run: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
+    """A border run with its staircase smoothed out.
+
+    A border follows the cell edges, so a slanted border is a staircase of single cells. Every
+    corner that lies within 0.8 of a cell of the line between its neighbors goes, which turns a
+    staircase into the slant it stands for and keeps every real bend.
+
+    Returns:
+        The kept points, in order.
+    """
+    steps = [abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in pairwise(run)]
+    cell = min((step for step in steps if step > 0), default=0.0)
+    return simplify(run, 0.8 * cell) if cell > 0 else list(run)
+
+
+def _rounded(points: Sequence[tuple[float, float]], first_turn: int, radius: float) -> str:
+    """Path data of a polyline whose turns from ``first_turn`` on are arcs.
+
+    Each of those turns becomes a quadratic curve through the corner, which starts and ends at most
+    ``radius`` from it and at most halfway along each of its two segments.
+
+    Returns:
+        The path data.
+    """
+    parts = [f"M{_number(points[0][0])} {_number(points[0][1])}"]
+    for index in range(1, len(points) - 1):
+        corner = points[index]
+        if index < first_turn:
+            parts.append(f"L{_number(corner[0])} {_number(corner[1])}")
+            continue
+        ends = []
+        for neighbour in (points[index - 1], points[index + 1]):
+            dx, dy = neighbour[0] - corner[0], neighbour[1] - corner[1]
+            length = (dx * dx + dy * dy) ** 0.5 or 1.0
+            reach = min(radius, length / 2) / length
+            ends.append((corner[0] + dx * reach, corner[1] + dy * reach))
+        parts.append(
+            f"L{_number(ends[0][0])} {_number(ends[0][1])}"
+            f"Q{_number(corner[0])} {_number(corner[1])} {_number(ends[1][0])} {_number(ends[1][1])}"
+        )
+    parts.append(f"L{_number(points[-1][0])} {_number(points[-1][1])}")
+    return "".join(parts)
+
+
 def _planning_layers(
     planning: PlanningGeometry,
     to_view: Callable[[float, float], tuple[float, float]],
@@ -260,7 +314,10 @@ def _planning_layers(
     if planning.partitions and "partitions" not in hidden:
         group("partition", "".join(polyline(ring, close=True) for ring in planning.partitions))
     if planning.borders:
-        group("border", "".join(polyline(border) for border in planning.borders))
+        # A run of a single cell edge is where two partitions touch at one point only, between
+        # blocked cells; it reads as a speck rather than as a border.
+        runs = [border for border in planning.borders if len(border) > 2]
+        group("border", "".join(polyline(_straightened(border)) for border in runs))
     if planning.bottlenecks and "bottlenecks" not in hidden:
         data = "".join(polyline([first, second]) for first, second, _ in planning.bottlenecks)
         # The wire budget sits beside its gate: a gate without its number only says that a
@@ -289,14 +346,20 @@ def _planning_layers(
         )
         parts.append(f'<g class="l-slot">{ticks}</g>')
     if planning.corridors or planning.stubs:
-        # A corridor is drawn like a coplanar waveguide, as the feedlines are, and continues along
-        # the approach of its target port.
-        data = "".join(polyline(route) for route in planning.corridors)
-        data += "".join(polyline([start, port]) for start, port in planning.stubs)
-        parts.append(
-            f'<g class="l-corridor"><path class="casing" d="{data}"/><path d="{data}"/>'
-            f'<path class="core" d="{data}"/></g>'
-        )
+        # A corridor continues along the approach of its target port, in one line whose turns into
+        # the port are rounded.
+        stubs = {stub[0]: stub for stub in planning.stubs}
+        data = ""
+        for route in planning.corridors:
+            stub = stubs.pop(route[-1], None)
+            if stub is None:
+                data += polyline(route)
+                continue
+            data += _rounded(
+                list(starmap(to_view, [*route, *stub[1:]])), first_turn=len(route) - 1, radius=_STUB_RADIUS
+            )
+        data += "".join(polyline(stub) for stub in stubs.values())
+        group("corridor", data, cased=True)
     if planning.launchers:
         circles = "".join(
             f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 0.7)}"/>'
@@ -348,15 +411,14 @@ def _planning_style(font: float) -> str:
         "text-anchor:middle;paint-order:stroke;stroke:#ffffff;stroke-width:0.25em;stroke-linejoin:round}"
         "g.l-assignment>path{stroke-dasharray:6 4}"
         "g.l-inner>path.casing{stroke:#ffffff;stroke-width:4.6}"
-        "g.l-corridor>path.casing{stroke:#ffffff;stroke-width:6.2;stroke-opacity:.9}"
-        "g.l-corridor>path.core{stroke:#ffffff;stroke-width:0.9;stroke-opacity:.85}"
+        "g.l-corridor>path.casing{stroke:#ffffff;stroke-width:4.6;stroke-opacity:.9}"
         f"g.l-launcher>circle{{fill:none;stroke:{PLANNING_COLORS['launcher']};stroke-width:1.6;"
         "vector-effect:non-scaling-stroke}"
         f"g.l-slot>circle{{fill:{PLANNING_COLORS['slot']};fill-opacity:0.55;stroke:none}}"
-        f"g.l-feedline path{{fill:none;stroke:{FEEDLINE_COLOR};stroke-width:4.2;stroke-linejoin:round;"
+        f"g.l-feedline path{{fill:none;stroke:{FEEDLINE_COLOR};stroke-width:6.4;stroke-linejoin:round;"
         "stroke-linecap:round;vector-effect:non-scaling-stroke}"
-        "g.l-feedline path.casing{stroke:#ffffff;stroke-width:7}"
-        "g.l-feedline path.core{stroke:#ffffff;stroke-width:1.1;stroke-opacity:.9}"
+        "g.l-feedline path.casing{stroke:#ffffff;stroke-width:9.6}"
+        "g.l-feedline path.core{stroke:#ffffff;stroke-width:1.3;stroke-opacity:.9}"
         f"g.l-feedline circle,g.l-feedline rect{{fill:{FEEDLINE_COLOR};stroke:#ffffff;stroke-width:1.2;"
         "vector-effect:non-scaling-stroke}"
     )
@@ -430,6 +492,8 @@ def _frame(box: tuple[float, float, float, float], view_height: float, pad: floa
 #: The layers the panel can show and hide, by the selector of their elements.
 _LAYERS: tuple[tuple[str, str, str], ...] = (
     ("Grid", ".x-grid", MUTED),
+    ("Partition tones", ".l-tone", PARTITION_TONES[1]),
+    ("Raster", ".l-raster", RASTER_FILL),
     ("Substrate", ".x-holes", MUTED),
     ("Metal", ".o,.x-rim,.x-hatch,.x-inset", METAL_FILL),
     ("Ports", ".x-ports", PORT_COLOR),
@@ -459,16 +523,16 @@ _SCRIPT = """(function () {
     return e;
   }
   // What is finer than a few screen pixels is left out, so a zoomed-out view stays sharp.
-  function load() {
+  function showDetail() {
     var m = svg.getScreenCTM(), k = m ? m.a : 1;
-    svg.querySelectorAll(".x-holes").forEach(function (n) { n.classList.toggle("load-off", k * %s < 9); });
-    svg.querySelectorAll(".x-minor").forEach(function (n) { n.classList.toggle("load-off", k * %s < 7); });
-    svg.querySelectorAll(".x-hatch").forEach(function (n) { n.classList.toggle("load-off", k * %s < 4); });
+    svg.querySelectorAll(".x-holes").forEach(function (n) { n.classList.toggle("detail-off", k * %s < 9); });
+    svg.querySelectorAll(".x-minor").forEach(function (n) { n.classList.toggle("detail-off", k * %s < 7); });
+    svg.querySelectorAll(".x-hatch").forEach(function (n) { n.classList.toggle("detail-off", k * %s < 4); });
   }
-  window.addEventListener("resize", load);
-  window.addEventListener("wheel", function () { requestAnimationFrame(load); }, {passive: true});
-  if (window.visualViewport) window.visualViewport.addEventListener("resize", load);
-  load();
+  window.addEventListener("resize", showDetail);
+  window.addEventListener("wheel", function () { requestAnimationFrame(showDetail); }, {passive: true});
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", showDetail);
+  showDetail();
   var panel = el("g", {"class": "x-panel"}, svg);
   var bg = el("rect", {"class": "x-bg", x: x0, y: y0, width: w, height: rowH, rx: 0.4 * f}, panel);
   var head = el("g", {"class": "x-head"}, panel);
@@ -635,6 +699,22 @@ def layout_svg(
         '<clipPath id="metal-clip"><use href="#metal"/></clipPath>'
     )
     hidden = _HIDDEN.get(stage, frozenset())
+    tones = ""
+    if planning is not None and stage in _TONED and any(tone is not None for tone in planning.partition_tones):
+        # Every partition in the grey of its tone, under the millimetre grid.
+        shaded = zip(planning.partitions, planning.partition_tones, strict=False)
+        tones = "".join(
+            f'<path fill="{PARTITION_TONES[tone % len(PARTITION_TONES)]}" '
+            f'd="{_path_data(list(starmap(to_view, ring)))}"/>'
+            for ring, tone in shaded
+            if tone is not None
+        )
+        tones = f'<g class="l-tone">{tones}</g>'
+    raster = ""
+    if planning is not None and planning.blocked:
+        # The grid as the stage saw it: the cells it blocked, under the artwork.
+        cells = "".join(_path_data(list(starmap(to_view, ring))) for ring in planning.blocked)
+        raster = f'<g class="l-raster"><path d="{cells}"/></g>'
     overlay = _planning_layers(planning, to_view, radius, 0.8 * font, center, hidden) if planning is not None else ""
     style = (
         f"text{{font:{_number(font)}px {_FONT};fill:{MUTED}}}"
@@ -660,7 +740,8 @@ def layout_svg(
         "user-select:none}g.x-panel g.x-row,g.x-panel g.x-head{cursor:pointer}"
         f"g.x-panel rect.x-bg{{fill:{SUBSTRATE[0]};fill-opacity:.94;stroke:{FRAME};stroke-opacity:.5}}"
         "g.x-panel g.x-row:hover rect.x-hit{fill-opacity:.07}g.x-panel g.x-row.off text{opacity:.45}"
-        ".load-off{display:none}"
+        ".detail-off{display:none}"
+        f"g.l-raster>path{{fill:{RASTER_FILL};stroke:none}}"
     )
     if overlay:
         style += _planning_style(0.8 * font) + _CORRIDOR_GROUND
@@ -686,10 +767,10 @@ def layout_svg(
     body = (
         f'<rect width="{_number(view_width)}" height="{_number(view_height)}" fill="url(#substrate)"/>'
         f'<rect class="x-holes" x="{_number(left)}" y="{_number(top)}" width="{_number(right - left)}" '
-        f'height="{_number(bottom - top)}" fill="url(#holes)"/>'
+        f'height="{_number(bottom - top)}" fill="url(#holes)"/>{tones}'
         f'<path class="x-grid x-minor" shape-rendering="crispEdges" d="{"".join(minor)}"/>'
         f'<path class="x-grid" shape-rendering="crispEdges" d="{"".join(major)}"/>'
-        f'<path class="f" d="{"".join(outlines)}"/>'
+        f'<path class="f" d="{"".join(outlines)}"/>{raster}'
         '<use class="x-rim" href="#metal"/><use class="o" href="#metal"/><use class="x-hatch" href="#metal"/>'
         '<g class="x-inset" clip-path="url(#metal-clip)"><use class="line" href="#metal"/>'
         '<use class="fill" href="#metal"/></g>'

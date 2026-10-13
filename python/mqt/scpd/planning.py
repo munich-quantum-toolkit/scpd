@@ -16,6 +16,7 @@ pipeline; both read the artifacts of a run directory, so either can draw a run t
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -28,6 +29,7 @@ from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from .run import STAGE_FILES
 
 if TYPE_CHECKING:
+    from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.design.Chip import ChipT
 
 __all__ = ["PLANNING_STAGES", "Feedline", "PlanningError", "PlanningGeometry", "planning_geometry"]
@@ -76,10 +78,21 @@ class PlanningGeometry:
 
     #: The outline of every partition of the free space, as closed rings.
     partitions: list[list[Point]] = field(default_factory=list)
+    #: A tone for each ring of ``partitions``, so that two partitions that share a border never
+    #: share a tone: a small number from zero up. None for a partition the artwork closes in.
+    partition_tones: list[int | None] = field(default_factory=list)
+    #: The blocked cells of the grid the partitions were cut on, as rectangles: artwork, the
+    #: clearance around it, and the approach of every port. A strip of free cells that no partition
+    #: reached, narrower than three cells, is no blockage and is left out.
+    blocked: list[list[Point]] = field(default_factory=list)
     #: What the approaches of the ports keep clear, as closed rings.
     keepout: list[list[Point]] = field(default_factory=list)
-    #: The border between two partitions, as the run of cell edges it consists of.
+    #: The border between two partitions, as the runs of cell edges it consists of, one polyline
+    #: per run.
     borders: list[list[Point]] = field(default_factory=list)
+    #: The borders between partitions that artwork and blocked cells close in on every side, so
+    #: that no wire from a launcher reaches them, in the same form as ``borders``.
+    enclosed_borders: list[list[Point]] = field(default_factory=list)
     #: The line across the narrowest place of a corridor, and how many wires fit through it.
     bottlenecks: list[tuple[Point, Point, int]] = field(default_factory=list)
     #: Where the wires of each launcher enter the chip.
@@ -96,9 +109,9 @@ class PlanningGeometry:
     ring: list[Point] = field(default_factory=list)
     #: The coarse route of each wire, from its feed over its crossings to its target.
     corridors: list[list[Point]] = field(default_factory=list)
-    #: The approach of each routed wire to its target port: from where its corridor ends, the first
-    #: cell beyond the band of the port, to the port.
-    stubs: list[tuple[Point, Point]] = field(default_factory=list)
+    #: The approach of each routed wire to its target port, from where its corridor ends, the first
+    #: cell beyond the band of the port: across to the axis of the port, then along it into the port.
+    stubs: list[list[Point]] = field(default_factory=list)
     #: Every crossing slot a border offers, taken or not.
     slots: list[Point] = field(default_factory=list)
     #: Each feedline chain of the assignment, from its first launcher through the feeds of its
@@ -115,6 +128,7 @@ class PlanningGeometry:
             self.partitions,
             self.keepout,
             self.borders,
+            self.enclosed_borders,
             self.bottlenecks,
             self.launchers,
             self.chains,
@@ -200,18 +214,258 @@ def _bottlenecks(plan: CapacityPlanT, geometry: PlanningGeometry) -> None:
         geometry.bottlenecks.append((_point(bottleneck.from_), _point(bottleneck.to), int(bottleneck.capacity)))
 
 
+def _border_runs(samples: list[Point], grid: GridExtentT | None) -> list[list[Point]]:
+    """The cell edges of one border, joined into runs.
+
+    A plan stores a border as the midpoints of its cell edges, in the order the grid was scanned
+    rather than along the border, so they are no polyline. A midpoint on a whole cell coordinate
+    across x lies on a vertical edge, and any other on a horizontal one; each edge spans one cell.
+    Edges that share an end form one run, and a run ends where the border forks or stops.
+
+    Args:
+        samples: The midpoints, in layout units.
+        grid: The detail grid the plan was made on.
+
+    Returns:
+        The runs, each as the corners it passes, in a fixed order.
+    """
+    if grid is None or grid.origin is None or not grid.cellWidth or not grid.cellHeight:
+        return [samples] if samples else []
+    origin_x, width, height = float(grid.origin.x), float(grid.cellWidth), float(grid.cellHeight)
+    edges: list[tuple[Point, Point]] = []
+    for x, y in samples:
+        across = (x - origin_x) / width
+        if abs(across - round(across)) < 0.25:
+            edges.append(((x, y - height / 2), (x, y + height / 2)))
+        else:
+            edges.append(((x - width / 2, y), (x + width / 2, y)))
+
+    def key(point: Point) -> Point:
+        return (round(point[0], 3), round(point[1], 3))
+
+    touching: dict[Point, list[int]] = {}
+    for index, (first, second) in enumerate(edges):
+        touching.setdefault(key(first), []).append(index)
+        touching.setdefault(key(second), []).append(index)
+    used = [False] * len(edges)
+    runs: list[list[Point]] = []
+    # A run starts where the border stops or forks; what is left after that are closed loops.
+    ends = sorted(corner for corner, indices in touching.items() if len(indices) != 2)
+    for start in [*ends, *sorted(touching)]:
+        for first_edge in touching[start]:
+            if used[first_edge]:
+                continue
+            run, corner, edge = [start], start, first_edge
+            while True:
+                used[edge] = True
+                first, second = edges[edge]
+                corner = key(second) if key(first) == corner else key(first)
+                run.append(corner)
+                onward = [other for other in touching[corner] if not used[other]]
+                if len(touching[corner]) != 2 or not onward:
+                    break
+                edge = onward[0]
+            runs.append(run)
+    return _bridged(runs, 3.0 * max(width, height))
+
+
+def _closest_join(runs: list[list[Point]], gap: float) -> tuple[int, int, list[Point]] | None:
+    """The first two runs whose ends lie at most ``gap`` apart, and the run they join into.
+
+    Returns:
+        The index of the first run, the index of the second, and the joined run, or None.
+    """
+    for index, run in enumerate(runs):
+        for other in range(index + 1, len(runs)):
+            candidate = runs[other]
+            for head, tail in ((run, candidate), (run, candidate[::-1]), (candidate, run), (candidate[::-1], run)):
+                if math.dist(head[-1], tail[0]) <= gap:
+                    return index, other, head + tail[1:] if head[-1] == tail[0] else head + tail
+    return None
+
+
+def _bridged(runs: list[list[Point]], gap: float) -> list[list[Point]]:
+    """Join the runs of one border whose ends lie at most ``gap`` apart.
+
+    Where a thin strip of blocked cells lies between two partitions, they touch only in places, and
+    their border falls apart into single cell edges. Joined across gaps of a few cells, the border
+    reads as the one line it is.
+
+    Returns:
+        The joined runs, in the order the first of each was found.
+    """
+    runs = [list(run) for run in runs]
+    while (join := _closest_join(runs, gap)) is not None:
+        index, other, joined = join
+        runs[index] = joined
+        del runs[other]
+    return runs
+
+
+def _blocked(plan: CapacityPlanT) -> list[list[Point]]:
+    """The blocked cells of the detail grid, as rectangles in layout units.
+
+    The free cells are those of the partitions, so every other cell of the grid is blocked. A
+    partition outline runs along the cell corners, cell k from corner k to corner k + 1. A row is a
+    bit mask, and the outlines fill it under the even-odd rule. An opening by three by three cells
+    then removes what is narrower than three cells: free cells that touch only at their corners,
+    which no partition grows into, and the clearance is never that thin.
+
+    Returns:
+        The rectangles, as closed rings of four corners.
+    """
+    grid = plan.detailGrid
+    if grid is None or grid.origin is None or not grid.width or not grid.height:
+        return []
+    width, height = int(grid.width), int(grid.height)
+    origin_x, origin_y = float(grid.origin.x), float(grid.origin.y)
+    cell_width, cell_height = float(grid.cellWidth), float(grid.cellHeight)
+    crossings: list[list[int]] = [[] for _ in range(height)]
+    for partition in _entries(plan.partitions):
+        for ring in _entries(partition.outlines):
+            corners = [
+                (round((vertex.x - origin_x) / cell_width), round((vertex.y - origin_y) / cell_height))
+                for vertex in _entries(ring.vertices)
+            ]
+            for (ax, ay), (bx, by) in zip(corners, [*corners[1:], *corners[:1]], strict=True):
+                if ax == bx and ay != by:
+                    for row in range(max(min(ay, by), 0), min(max(ay, by), height)):
+                        crossings[row].append(ax)
+    full = (1 << width) - 1
+    blocked = []
+    for row in crossings:
+        free = 0
+        row.sort()
+        for entry, leave in zip(row[0::2], row[1::2], strict=False):
+            start, end = max(entry, 0), min(leave, width)
+            if end > start:
+                free |= ((1 << (end - start)) - 1) << start
+        blocked.append(full & ~free)
+
+    def erode(rows: list[int]) -> list[int]:
+        # Off the grid counts as blocked, so the blocked border of the grid survives.
+        across = [row & ((row << 1) | 1) & ((row >> 1) | (1 << (width - 1))) for row in rows]
+        return [
+            (across[y - 1] if y > 0 else full) & across[y] & (across[y + 1] if y + 1 < height else full)
+            for y in range(height)
+        ]
+
+    def dilate(rows: list[int]) -> list[int]:
+        across = [(row | (row << 1) | (row >> 1)) & full for row in rows]
+        return [
+            (across[y - 1] if y > 0 else 0) | across[y] | (across[y + 1] if y + 1 < height else 0)
+            for y in range(height)
+        ]
+
+    opened = dilate(erode(blocked))
+    # Runs of a row that the row above continues unchanged grow one rectangle.
+    rectangles: list[list[Point]] = []
+    open_runs: dict[tuple[int, int], int] = {}
+    for y in range(height + 1):
+        row = opened[y] if y < height else 0
+        runs, x = set(), 0
+        while row >> x:
+            if (row >> x) & 1:
+                start = x
+                while (row >> x) & 1:
+                    x += 1
+                runs.add((start, x))
+            else:
+                x += 1
+        for run in list(open_runs):
+            if run not in runs:
+                top = open_runs.pop(run)
+                x0, x1 = origin_x + run[0] * cell_width, origin_x + run[1] * cell_width
+                y0, y1 = origin_y + top * cell_height, origin_y + y * cell_height
+                rectangles.append([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+        for run in runs:
+            open_runs.setdefault(run, y)
+    return rectangles
+
+
+def _enclosed(plan: CapacityPlanT) -> set[int]:
+    """The labels of the partitions that artwork and blocked cells close in on every side.
+
+    Two partitions that share a border are joined. A group of joined partitions is open when one of
+    them reaches the outermost free cells of the grid, on any of its four sides; every other group
+    lies closed in, inside the artwork.
+
+    Returns:
+        The labels of the partitions of the closed groups.
+    """
+    joined: dict[int, set[int]] = {}
+    for border in _entries(plan.borders):
+        first, second = int(border.first), int(border.second)
+        joined.setdefault(first, set()).add(second)
+        joined.setdefault(second, set()).add(first)
+    extents: dict[int, tuple[float, float, float, float]] = {}
+    for partition in _entries(plan.partitions):
+        points = [_point(vertex) for ring in _entries(partition.outlines) for vertex in _entries(ring.vertices)]
+        if points:
+            xs, ys = [x for x, _ in points], [y for _, y in points]
+            extents[int(partition.label)] = (min(xs), min(ys), max(xs), max(ys))
+    if not extents:
+        return set()
+    # The partitions on the outermost free cells, one per side at least.
+    outer = {
+        label
+        for side in range(4)
+        for best in [(min if side < 2 else max)(extent[side] for extent in extents.values())]
+        for label, extent in extents.items()
+        if extent[side] == best
+    }
+    reached, pending = set(outer), list(outer)
+    while pending:
+        for other in joined.get(pending.pop(), set()):
+            if other not in reached:
+                reached.add(other)
+                pending.append(other)
+    return set(extents) - reached
+
+
+def _tones(plan: CapacityPlanT, enclosed: set[int]) -> dict[int, int]:
+    """A tone for every open partition, so that two that share a border differ.
+
+    The partitions take tones greedily, the one with the most neighbours first and ties by label, so
+    that the result depends only on the plan. Each takes the lowest tone no neighbour has yet.
+
+    Returns:
+        The tone of each open partition, by label.
+    """
+    neighbours: dict[int, set[int]] = {
+        int(partition.label): set() for partition in _entries(plan.partitions) if int(partition.label) not in enclosed
+    }
+    for border in _entries(plan.borders):
+        first, second = int(border.first), int(border.second)
+        if first in neighbours and second in neighbours:
+            neighbours[first].add(second)
+            neighbours[second].add(first)
+    tones: dict[int, int] = {}
+    for label in sorted(neighbours, key=lambda label: (-len(neighbours[label]), label)):
+        taken = {tones[other] for other in neighbours[label] if other in tones}
+        tones[label] = next(tone for tone in range(len(taken) + 1) if tone not in taken)
+    return tones
+
+
 def _capacity(plan: CapacityPlanT, geometry: PlanningGeometry) -> None:
     """Fill the layers a capacity plan carries."""
     _keepout(plan, geometry)
+    geometry.blocked = _blocked(plan)
+    enclosed = _enclosed(plan)
+    tones = _tones(plan, enclosed)
     for partition in _entries(plan.partitions):
         for ring in _entries(partition.outlines):
             points = [_point(vertex) for vertex in _entries(ring.vertices)]
             if len(points) >= 3:
                 geometry.partitions.append(points)
+                geometry.partition_tones.append(tones.get(int(partition.label)))
     for border in _entries(plan.borders):
         samples = [_point(sample) for sample in _entries(border.samples)]
-        if samples:
-            geometry.borders.append(samples)
+        runs = _border_runs(samples, plan.detailGrid)
+        if int(border.first) in enclosed:
+            geometry.enclosed_borders.extend(runs)
+        else:
+            geometry.borders.extend(runs)
     _bottlenecks(plan, geometry)
     for slot in _entries(plan.launchers):
         geometry.launchers.append(_point(slot.position))
@@ -333,6 +587,28 @@ def _feedlines(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry)
         )
 
 
+def _stub(chip: ChipT, index: int, start: Point) -> list[Point]:
+    """The approach from where a corridor ends to its target port.
+
+    A wire enters a port along the direction of the port, so the approach turns once: across to the
+    axis of the port, then along it into the port.
+
+    Returns:
+        The points of the approach, or nothing when the index names no port.
+    """
+    port = _center(chip, index)
+    if port is None or port == start:
+        return []
+    ports: list[Any] = chip.ports or []
+    angle = math.radians(float(ports[index].orientation))
+    direction = (math.cos(angle), math.sin(angle))
+    along = max((start[0] - port[0]) * direction[0] + (start[1] - port[1]) * direction[1], 0.0)
+    corner = (port[0] + along * direction[0], port[1] + along * direction[1])
+    if math.dist(corner, start) < 1e-6 or math.dist(corner, port) < 1e-6:
+        return [start, port]
+    return [start, corner, port]
+
+
 def _corridor(
     routing: CorridorRoutingT, chip: ChipT, assignment: AssignmentT | None, geometry: PlanningGeometry
 ) -> None:
@@ -354,9 +630,9 @@ def _corridor(
         connection = connections[index] if index < len(connections) else None
         if connection is None or connection.target is None:
             continue
-        port = _center(chip, int(connection.target.index))
-        if port is not None and port != route[-1]:
-            geometry.stubs.append((route[-1], port))
+        stub = _stub(chip, int(connection.target.index), route[-1])
+        if stub:
+            geometry.stubs.append(stub)
 
 
 def _plan_of(capacity: bytes) -> CapacityPlanT:

@@ -169,7 +169,7 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
         for ring in rings:
             top.shapes(layer(name)).insert(kdb.DPolygon(list(starmap(kdb.DPoint, ring))))
             written += 1
-    for border in planning.borders:
+    for border in [*planning.borders, *planning.enclosed_borders]:
         if len(border) >= 2:
             top.shapes(layer("borders")).insert(path(border))
             written += 1

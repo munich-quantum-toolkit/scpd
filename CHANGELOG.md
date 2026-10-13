@@ -26,8 +26,15 @@ releases may include breaking changes.
   horizontal and vertical steps in one color, and corridors are solid dark
   lines. The capacity picture shows the partition borders without the gates, and
   no picture shows the port keep-out or the capacity chains. A picture opened on
-  its own has a panel that shows and hides each layer ([#140])
-  ([**@FeldmeierMichael**])
+  its own has a panel that shows and hides each layer. `plot` and `render` draw
+  a partition border along its cell edges instead of through them in the order
+  the grid was scanned, and `plot` straightens the staircase of a slanted
+  border. The capacity and corridor pictures show the blocked cells of the grid
+  in dark grey under the artwork, without strips of free cells too thin to
+  block, and leave out the borders of the partitions that the artwork closes in.
+  A corridor runs on into its target port along the direction of the port, with
+  rounded turns. Both pictures shade every partition in a light grey that
+  differs from its neighbours ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add the planning stages: the Capacity stage partitions the free space at
   its bottlenecks and budgets the wires of every capacity chain, the Global
   stage solves the inner circuit as a mixed-integer program on Hanan lattices,
