@@ -100,5 +100,5 @@ refinement_rounds = 5
 # every resonator is made its target length, and the two figures the stage is
 # judged by are `bad = unrouted + open + crossing` and the resonators off
 # their length.
-repair_trials = 0
-stop_after    = "feedlines"
+#repair_trials = 0
+#stop_after    = "feedlines"

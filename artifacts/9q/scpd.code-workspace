@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "../../../scpd"
+		},
+		{
+			"path": "../../../scpd-phase-3"
+		},
+		{
+			"path": "../../../scpd-phase-2"
+		},
+		{
+			"path": "../.."
+		}
+	],
+	"settings": {}
+}

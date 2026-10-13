@@ -1,0 +1,45 @@
+⚡ Narrow the refinement band and make the Final stage's searches cheaper
+
+The capacity rule of the coupler insertion, the profile cuts and the
+bottleneck report are on by default (SCPD_CAPACITY_RULE,
+SCPD_CAPACITY_FAST=1, SCPD_BOTTLENECKS). With them every benchmark ends
+the feedline routing with no bad wire.
+
+Both refinements now search a band of their own,
+refinement_corridor_spacings: 6 wire spacings by default, 0 takes
+corridor_spacings. A refinement moves a way that already stands, and its
+search, its corridor and its room price grow with the band. Fewer rounds
+were measured as well and rejected: 45q and 69q end with bad wires.
+
+Three changes give the same artifacts byte for byte on all eight
+benchmarks:
+
+- DubinsRouter::attachCorridor packs again only the 64-cell words of the
+  corridor that changed since the last packing.
+- The room price of the refinement is computed inside the box of the
+  corridor's open cells, grown by one cell.
+- The free strip of a meander along an axis reads the free depth of each
+  cell once per insertion (DubinsRouter::FreeStripMemo).
+
+To the end of the feedline refinement, one chip at a time on the Mac
+(whole run, before -> after; bad / short / long after):
+
+  4q    4 ->   4 s   0 / 1 / 0
+  9q   15 ->  10 s   0 / 0 / 0
+  17q  47 ->  40 s   0 / 3 / 0
+  21q  82 ->  49 s   0 / 1 / 0
+  33q  98 ->  83 s   0 / 1 / 0
+  45q 252 -> 172 s   0 / 0 / 0
+  57q 336 -> 243 s   0 / 0 / 0
+  69q 774 -> 643 s   0 / 1 / 0
+
+Tests: DubinsRouter.ACorridorPackedAgainRoutesAsAnUnpackedOne,
+DubinsRouter.TheFreeStripWithAMemoIsTheFreeStripWithoutOne,
+FinalRouter.TheCapacityRuleAndTheBottleneckReportAreOnByDefault and
+test_the_refinement_band_is_six_spacings_unless_the_file_sets_it.
+FinalRouter.DrawsItsGridAndEverySearchWhenAsked checks SVG files only,
+since the stage now also writes the capacity graph as JSON.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+
+

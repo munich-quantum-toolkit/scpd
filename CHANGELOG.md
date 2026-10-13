@@ -483,11 +483,14 @@ releases may include breaking changes.
   place to cross only strictly inside the rectangle the feed points span, so no
   wire leaves through the ring and comes back in behind another port ([#115])
   ([**@FeldmeierMichael**])
-- 🐛 Refuse a wire that runs over a point another wire is pinned to: the point
-  it is fed at, or the cell of its target port. Neither can be moved aside, and
-  the crossing test cannot see the case at all — a chord that stops on another
-  one never reaches its far side — so a wire could run down a whole line of
-  feed points with no crossing reported ([#115]) ([**@FeldmeierMichael**])
+- 🐛 Refuse a wire that runs over a point where another wire's chord ends: the
+  point it is fed at, the cell of its target port, or a crossing slot. A feed
+  point or a port cell cannot be moved aside. A chord runs over a slot only
+  where it lies along that slot's border, so the wire crossing there crosses
+  the chord as well. The crossing test cannot see either case — a chord that
+  stops on another one never reaches its far side — so a wire could run down a
+  whole line of feed points, or along a border past another wire's slots, with
+  no crossing reported ([#115]) ([**@FeldmeierMichael**])
 - ✨ Render the Corridor stage: `plot --stage corridor` draws every wire's way
   through the partitions and every crossing slot, taken or free, and
   `render --stage corridor` writes the same on layers of its own ([#115])
@@ -556,6 +559,11 @@ releases may include breaking changes.
 
 ### Changed
 
+- ⚡ Give the prefix search of the coupler insertion 20 s per chain by default
+  instead of 10 s (`SCPD_CHAIN_ASTAR_SECONDS`). In 10 s, chain 3 of 45q
+  reaches no complete run of options, and one of its feedline edges is not
+  drawn. With 20 s, every edge is drawn and 45q ends with no bad wire; 30, 60
+  and 120 s give the same run.
 - ⚡ Give both refinements of the Final stage a band of their own,
   `refinement_corridor_spacings` (6 wire spacings by default; `0` takes
   `corridor_spacings`). A refinement moves a way that already stands, and its

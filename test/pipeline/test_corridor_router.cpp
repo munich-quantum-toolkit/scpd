@@ -103,15 +103,11 @@ bool crosses(const Point& a, const Point& b, const Point& c, const Point& d) {
          (sideOf(c, d, a) * sideOf(c, d, b)) < 0;
 }
 
-/// One chord of a corridor: which partition it runs across, where it goes, and
-/// whether its ends are places the wire is pinned to — the point it is fed at
-/// and the cell of its target port — rather than crossing slots.
+/// One chord of a corridor: which partition it runs across and where it goes.
 struct Chord {
   std::uint32_t partition = 0;
   Point from;
   Point to;
-  bool fromPin = false;
-  bool toPin = false;
 };
 
 /// The chords one corridor draws, in order.
@@ -122,21 +118,15 @@ std::vector<Chord> chordsOf(const flatbuffers::artifacts::CorridorT& corridor) {
     return chords;
   }
   auto place = *corridor.source;
-  auto pin = true;
   for (std::size_t i = 0; i < corridor.crossings.size(); ++i) {
     chords.push_back({.partition = corridor.partitions[i],
                       .from = place,
-                      .to = corridor.crossings[i],
-                      .fromPin = pin,
-                      .toPin = false});
+                      .to = corridor.crossings[i]});
     place = corridor.crossings[i];
-    pin = false;
   }
   chords.push_back({.partition = corridor.partitions.back(),
                     .from = place,
-                    .to = *corridor.target,
-                    .fromPin = pin,
-                    .toPin = true});
+                    .to = *corridor.target});
   return chords;
 }
 
@@ -294,36 +284,36 @@ void expectEveryCrossingIsInsideTheRing(const CorridorRoutingT& routing) {
   }
 }
 
-/// Whether one wire is pinned to a point the other runs over.
+/// Whether one chord runs over a point the other one ends at.
 bool touches(const Chord& a, const Chord& b) {
-  const auto over = [](const Chord& chord, const Point& pin) {
-    return sideOf(chord.from, chord.to, pin) == 0 &&
-           between(chord.from, chord.to, pin) && !samePlace(chord.from, pin) &&
-           !samePlace(chord.to, pin);
+  const auto over = [](const Chord& chord, const Point& end) {
+    return sideOf(chord.from, chord.to, end) == 0 &&
+           between(chord.from, chord.to, end) && !samePlace(chord.from, end) &&
+           !samePlace(chord.to, end);
   };
-  const auto pinned = [&over](const Chord& chord, const Chord& other) {
-    return (other.fromPin && over(chord, other.from)) ||
-           (other.toPin && over(chord, other.to));
+  const auto endsOn = [&over](const Chord& chord, const Chord& other) {
+    return over(chord, other.from) || over(chord, other.to);
   };
-  return pinned(a, b) || pinned(b, a);
+  return endsOn(a, b) || endsOn(b, a);
 }
 
-/// No wire runs over a point another wire is pinned to.
+/// No wire runs over a point another wire ends a chord at.
 ///
-/// A wire is pinned where it is fed and at the cell of its target port, and
-/// neither can be moved aside, so a second wire drawn over one is two wires on
-/// one point of the chip. The crossing test does not see it: a chord that
-/// stops on another one never reaches its far side, so the two never cross
-/// properly, and a wire can run down a whole line of feed points without a
-/// crossing being reported.
-void expectNoWireRunsOverAnothersPin(const CorridorRoutingT& routing) {
+/// That point is where the other wire is fed, the cell of its target port, or
+/// the slot where it crosses a border. A feed point and a port cell cannot be
+/// moved aside, so a second wire drawn over one is two wires on one point of
+/// the chip. A chord that runs over a slot lies along the border that slot is
+/// on, so the wire crossing there has to cross the chord as well. The crossing
+/// test does not see either case: a chord that stops on another one never
+/// reaches its far side, so the two never cross properly.
+void expectNoWireRunsOverAnotherEnd(const CorridorRoutingT& routing) {
   std::map<std::uint32_t, std::vector<std::pair<std::size_t, Chord>>> drawn;
   for (std::size_t wire = 0; wire < routing.corridors.size(); ++wire) {
     for (const auto& chord : chordsOf(*routing.corridors[wire])) {
       for (const auto& [other, theirs] : drawn[chord.partition]) {
         EXPECT_FALSE(touches(chord, theirs))
             << "wire " << wire << " and wire " << other
-            << " share a pin in partition " << chord.partition << ": ("
+            << " meet at an end in partition " << chord.partition << ": ("
             << chord.from.x() << ", " << chord.from.y() << ")->("
             << chord.to.x() << ", " << chord.to.y() << ") and ("
             << theirs.from.x() << ", " << theirs.from.y() << ")->("
@@ -368,7 +358,7 @@ TEST_P(BenchmarkCorridors, FollowsTheRulesOfThePartitionGraph) {
   expectEveryStepCrossesABorder(routing, planned.capacity);
   expectNoTwoWiresCrossInAPartition(routing);
   expectNoTwoWiresOverlap(routing);
-  expectNoWireRunsOverAnothersPin(routing);
+  expectNoWireRunsOverAnotherEnd(routing);
   expectEveryCrossingIsInsideTheRing(routing);
 }
 

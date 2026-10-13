@@ -6413,19 +6413,20 @@ public:
   /// do not reach opens its jogs and searches again, and the second attempt
   /// starts the clock over, so such a chain can spend twice this.
   ///
-  /// **Ten seconds, because the answer arrives early and the rest is the
-  /// proof.** 57q's chain 4 is the only chain on any chip that has ever
-  /// reached the limit. It comes home at **220000 either way** — after 202
-  /// edge searches at 10 s, after 3209 at 180 s — so the extra 170 s bought
-  /// no better run of options, only the certainty that none exists. 57q
-  /// still draws all 66 edges at `stateFaults` 0 (user, 2026-09-30).
+  /// **Twenty seconds, because some chains need more than ten to reach their
+  /// first complete run.** 45q's chain 3 reaches none in 10 s, so one of its
+  /// feedline edges is not drawn. In 20 s it reaches a complete run, and 30,
+  /// 60 and 120 s give the same run. Where a chain reaches its answer early,
+  /// the rest of the time is the proof: 57q's chain 4 comes home at
+  /// **220000 either way**, after 202 edge searches at 10 s and after 3209 at
+  /// 180 s.
   ///
   /// The cost is the word in the log: a chain that reaches the limit reports
   /// `best in the time given` and `ChainSolution::optimal` is false, so the
   /// search no longer claims an optimum it has not proved.
   [[nodiscard]] static std::chrono::nanoseconds chainAStarBudget() {
     static const auto budget = [] {
-      const double seconds = envReal("SCPD_CHAIN_ASTAR_SECONDS", 10.0);
+      const double seconds = envReal("SCPD_CHAIN_ASTAR_SECONDS", 20.0);
       return std::chrono::nanoseconds(
           static_cast<std::int64_t>(std::max(0.0, seconds) * 1e9));
     }();
