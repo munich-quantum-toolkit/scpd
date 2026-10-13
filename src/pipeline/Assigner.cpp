@@ -580,9 +580,10 @@ private:
     //   launcher after it. Fed on the leaving segment, the chain would run
     //   past its own launcher and have to turn back to it.
     //
-    // Where a launcher was given n resonators on one segment, they land at
-    // 1/(n+1) ... n/(n+1) of it. The one the walk reaches first lands first
-    // on the segment as well, so the wires of the group do not cross.
+    // Where n resonators are fed on one segment, they land at 1/(n+1) ...
+    // n/(n+1) of it. The one the walk reaches first lands first on the
+    // segment as well, so their wires do not cross, and no two of them share
+    // a feed point.
     const auto ends = endsAChain(inputs, ring, variables, solution);
     assignment.feeds.reserve(inputs.ring.size());
     std::vector<std::vector<std::size_t>> given(launchers);
@@ -590,40 +591,58 @@ private:
       assignment.feeds.push_back(inputs.launcherPosition[slotOf[index]]);
       given[slotOf[index]].push_back(index);
     }
+    const auto groupOf = [&](const std::size_t slot, const bool ending) {
+      std::vector<std::size_t> group;
+      for (const auto index : given[slot]) {
+        if (inputs.isResonator[index] && ends[index] == ending) {
+          group.push_back(index);
+        }
+      }
+      return group;
+    };
+    // Each segment runs from a slot to the slot after it along the walk. The
+    // resonators that leave the first slot and the ones that arrive at the
+    // second share it.
     for (std::size_t slot = 0; slot < launchers; ++slot) {
-      const auto& here = inputs.launcherPosition[slot];
-      // The segment that leaves the slot along the walk, and the one that
-      // arrives at it.
-      const auto& after =
-          inputs.launcherPosition[(slot + launchers - 1) % launchers];
-      const auto& before = inputs.launcherPosition[(slot + 1) % launchers];
-      for (const bool ending : {false, true}) {
-        std::vector<std::size_t> group;
-        for (const auto index : given[slot]) {
-          if (inputs.isResonator[index] && ends[index] == ending) {
-            group.push_back(index);
-          }
-        }
-        if (group.empty()) {
-          continue;
-        }
-        const auto& there = ending ? before : after;
-        if (geometry::distance(here, there) == 0.0) {
-          // The two slots are one point, and there is nothing to interpolate.
-          continue;
-        }
-        // On the leaving segment the walk runs from the launcher outward, so
-        // the first of the group in ring order sits nearest to it. On the
-        // arriving segment the walk runs toward the launcher, so the first in
-        // ring order sits farthest from it.
-        const auto count = group.size();
+      const auto next = (slot + launchers - 1) % launchers;
+      const auto& from = inputs.launcherPosition[slot];
+      const auto& to = inputs.launcherPosition[next];
+      if (geometry::distance(from, to) == 0.0) {
+        // The two slots are one point, and there is nothing to interpolate.
+        continue;
+      }
+      const auto leaving = groupOf(slot, false);
+      const auto arriving = groupOf(next, true);
+      const auto place = [&](const std::size_t index,
+                             const geometry::Point& here,
+                             const geometry::Point& there, const double ratio) {
+        assignment.feeds[index] =
+            geometry::Point(here.x() + (ratio * (there.x() - here.x())),
+                            here.y() + (ratio * (there.y() - here.y())));
+      };
+      // On the leaving segment the walk runs from the launcher outward, so
+      // the first of the group in ring order sits nearest to it. On the
+      // arriving segment the walk runs toward the launcher, so the first in
+      // ring order sits farthest from it. Where both groups share the
+      // segment, the leaving group comes first along the walk, and all of
+      // them divide it evenly.
+      const auto count = leaving.size() + arriving.size();
+      const auto ratioOf = [count](const std::size_t step) {
+        return static_cast<double>(step) / static_cast<double>(count + 1);
+      };
+      if (arriving.empty()) {
         for (std::size_t taken = 0; taken < count; ++taken) {
-          const auto step = ending ? (count - taken) : (taken + 1);
-          const auto ratio =
-              static_cast<double>(step) / static_cast<double>(count + 1);
-          assignment.feeds[group[taken]] =
-              geometry::Point(here.x() + (ratio * (there.x() - here.x())),
-                              here.y() + (ratio * (there.y() - here.y())));
+          place(leaving[taken], from, to, ratioOf(taken + 1));
+        }
+      } else if (leaving.empty()) {
+        for (std::size_t taken = 0; taken < count; ++taken) {
+          place(arriving[taken], to, from, ratioOf(count - taken));
+        }
+      } else {
+        auto walked = leaving;
+        walked.insert(walked.end(), arriving.begin(), arriving.end());
+        for (std::size_t taken = 0; taken < count; ++taken) {
+          place(walked[taken], from, to, ratioOf(taken + 1));
         }
       }
     }

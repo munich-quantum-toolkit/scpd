@@ -129,9 +129,9 @@ table Assignment {
   /// A conventional port is fed at the launcher slot that `launchers` names,
   /// and no two of them share one. A resonator is fed at no launcher: the
   /// wire that reaches it comes past the slot, so its feed sits on the
-  /// segment from its own launcher to the next launcher along. Where a
-  /// launcher was given n resonators, they divide that segment evenly, in
-  /// ring order.
+  /// segment between its own launcher and a neighbouring one. The resonators
+  /// fed on one segment divide it evenly, in ring order, so no two of them
+  /// share a feed point.
   feeds: [geometry.Point] (required);
   /// The feedline chains the model chose: which resonators one feedline
   /// drives, from one launcher to the next. The Final stage routes each of

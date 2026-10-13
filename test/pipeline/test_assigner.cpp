@@ -259,6 +259,16 @@ TEST(Assigner, ConnectsEveryRingPortInRingOrder) {
   }
 }
 
+TEST(Assigner, GivesNoTwoRingNodesOneFeedPoint) {
+  const auto [chip, global, assignment] = assignMini(test::miniConfig());
+
+  std::set<std::pair<double, double>> feeds;
+  for (const auto& feed : assignment.feeds) {
+    EXPECT_TRUE(feeds.emplace(feed.x(), feed.y()).second)
+        << "two ring nodes are fed at (" << feed.x() << ", " << feed.y() << ")";
+  }
+}
+
 TEST(Assigner, DrivesEveryResonatorFromOneFeedlineChain) {
   const auto config = test::miniConfig();
   const auto [chip, global, assignment] = assignMini(config);

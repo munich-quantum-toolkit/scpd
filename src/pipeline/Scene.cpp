@@ -15,13 +15,16 @@
 #include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
+#include "mqt-scpd/grid/Partitions.hpp"
 #include "mqt-scpd/grid/PortBands.hpp"
 #include "mqt-scpd/grid/Rasterize.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -68,6 +71,31 @@ double crossingPitch(const ConfigT& config) {
     return config.stages->capacity->crossing_pitch;
   }
   return flatbuffers::config::CapacityParamsT{}.crossing_pitch;
+}
+
+std::vector<grid::Point> crossingSlots(const grid::PartitionBorder& border,
+                                       const CapacityScene& scene,
+                                       const double pitch) {
+  // The rectangle runs through the centres of the outermost launcher cells.
+  auto minX = std::numeric_limits<double>::max();
+  auto minY = std::numeric_limits<double>::max();
+  auto maxX = std::numeric_limits<double>::lowest();
+  auto maxY = std::numeric_limits<double>::lowest();
+  for (const auto cell : scene.launcherCell) {
+    const auto coordinate = scene.detail.cell(cell);
+    const auto x = static_cast<double>(coordinate.x()) + 0.5;
+    const auto y = static_cast<double>(coordinate.y()) + 0.5;
+    minX = std::min(minX, x);
+    minY = std::min(minY, y);
+    maxX = std::max(maxX, x);
+    maxY = std::max(maxY, y);
+  }
+  auto slots = grid::borderSlots(border, scene.detail, pitch);
+  std::erase_if(slots, [&](const grid::Point& slot) {
+    return slot.x() <= minX || slot.x() >= maxX || slot.y() <= minY ||
+           slot.y() >= maxY;
+  });
+  return slots;
 }
 
 CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {

@@ -48,12 +48,11 @@ struct BottleneckOptions {
   /// How far apart two cuts of one narrowing may end and still be one gate,
   /// in layout units.
   ///
-  /// The search reports a candidate wherever the clearance stops falling, so
-  /// a narrowing whose clearance stays flat over a few cells comes back as
-  /// several lines that share a wall and end a cell or two apart on the other.
-  /// They are one place. The wire pitch is the length to give here, being the
-  /// distance within which the count of wires can change at all. Zero keeps
-  /// every candidate.
+  /// The raster can break one narrowing into several minima of the clearance
+  /// a cell or two apart, and their lines share a wall and end a cell or two
+  /// apart on the other. They are one place. The wire pitch is the length to
+  /// give here, being the distance within which the count of wires can change
+  /// at all. Zero keeps every candidate.
   double sameNarrowing = 0.0;
   /// Cells that no bottleneck may cross, because the space around a port is
   /// not a wall that capacity divides around: the targets of the run.
@@ -63,13 +62,22 @@ struct BottleneckOptions {
 /**
  * @brief Finds the bottlenecks of a rasterized chip.
  *
- * A candidate is a cell of the medial axis whose clearance is a local minimum
- * along the axis, or one edge of a plateau of minima. From it the free space
- * splits into shores, the connected groups of its off-axis neighbors, and a
- * bottleneck exists where there are two. Each shore is walked downhill in the
- * distance transform until it reaches a wall, and the two walls reached are
- * the ends of the bottleneck. The shores are kept apart during the walk, so
- * the two ends lie on different sides of the corridor.
+ * A candidate is a stretch of one arm of the medial axis with constant
+ * clearance whose bounding cells on both sides are at least as wide, so that a
+ * corridor of constant width gives one candidate and a corridor that widens
+ * step by step gives one at its narrow end. The middle cell of the stretch
+ * stands for it. A junction or a dead end of the axis is never a candidate.
+ *
+ * Around the middle cell the free space splits into shores, the connected
+ * groups of its off-axis neighbors, and a bottleneck exists where there are
+ * two. Each shore is walked downhill in the distance transform until it
+ * reaches a wall, and the two walls reached are the ends of the bottleneck.
+ * The shores are kept apart during the walk, so the two ends lie on different
+ * sides of the corridor.
+ *
+ * Cells outside the grid are no wall. A passage between the artwork and an
+ * open edge of the grid is therefore not found, and the caller blocks a border
+ * of cells where the edge has to act as a wall.
  *
  * @param blocked The obstacle mask.
  * @param axis The rasterized medial axis of the mask.

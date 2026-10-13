@@ -85,29 +85,6 @@ struct Request {
   Place target;
   PartitionLabel feedPartition = LABEL_NONE;
   PartitionLabel targetPartition = LABEL_NONE;
-  /// Whether the assignment gave this wire a point to be fed at. A wire
-  /// without one is not routed, and its feed says nothing about where the
-  /// ring runs.
-  bool fed = false;
-};
-
-/// The rectangle the ports feed from.
-///
-/// Every wire starts at a point on the launcher ring, so the box that those
-/// points span is the outside of the chip as far as this stage is concerned.
-struct Bounds {
-  double minX = 0.0;
-  double minY = 0.0;
-  double maxX = 0.0;
-  double maxY = 0.0;
-
-  /// Whether a place lies inside the ring, and not on it.
-  ///
-  /// A place on the rectangle sits beside the feed point of some port, and a
-  /// wire that crosses there has slipped behind that port.
-  [[nodiscard]] bool hold(const Place& place) const {
-    return place.x > minX && place.x < maxX && place.y > minY && place.y < maxY;
-  }
 };
 
 /// The slots a wire crosses and the partitions it runs through. There is
@@ -180,11 +157,6 @@ struct Chord {
          std::max(first.first, second.first);
 }
 
-/// Whether two places are one place.
-[[nodiscard]] bool same(const Place& a, const Place& b) {
-  return a.x == b.x && a.y == b.y;
-}
-
 /// Whether the point `c` lies on the chord from `a` to `b`, between its ends.
 ///
 /// The three points are known to lie on one line, so what is left is whether
@@ -194,25 +166,23 @@ struct Chord {
          std::min(a.y, b.y) <= c.y && c.y <= std::max(a.y, b.y);
 }
 
-/// Whether one chord runs over a point where the other one ends.
+/// Whether one chord ends on the other, or the two share an end.
 ///
 /// The crossing test does not see it: a chord that stops on another one never
-/// gets to its far side, so the two never cross properly. Both kinds of end
-/// rule the second chord out:
+/// gets to its far side, so the two never cross properly. Every end of a chord
+/// is a fixed point that one wire passes: the point the wire is fed at, the
+/// cell of its target port, or a crossing slot. A second wire drawn over that
+/// point, or ending on it as well, puts two wires on one point of the chip. A
+/// wire could otherwise run along a whole line of feed points without one
+/// crossing.
 ///
-/// - The point a wire is fed at and the cell of its target port cannot move,
-///   so a second wire drawn over one is two wires on one point of the chip. A
-///   wire could run along a whole line of feed points without one crossing.
-/// - A crossing slot lies on a border, and a straight chord inside a partition
-///   runs over a point of its border only where it lies along that border.
-///   The wire that crosses at the slot comes from inside the partition and
-///   goes on into the neighbour on the far side of the chord, so the two wires
-///   cross.
+/// The rule is stricter than the drawing needs. In a partition that is not
+/// convex, a straight chord can run over a slot at an inward corner of the
+/// border, and the wire through that slot need not cross the other wire.
 [[nodiscard]] bool touches(const Chord& a, const Chord& b) {
   const auto over = [](const Chord& chord, const Place& end) {
     return sideOf(chord.from, chord.to, end) == 0 &&
-           between(chord.from, chord.to, end) && !same(chord.from, end) &&
-           !same(chord.to, end);
+           between(chord.from, chord.to, end);
   };
   const auto endsOn = [&over](const Chord& chord, const Chord& other) {
     return over(chord, other.from) || over(chord, other.to);
@@ -226,6 +196,10 @@ struct Chord {
 /// stage can draw it. Two chords that run along each other are ruled out as
 /// well, because they put two wires in one place, and so is a chord drawn
 /// over a point where another chord ends.
+///
+/// The chords are straight lines between where a wire enters and leaves a
+/// partition. They stand in for the wires, and they decide exactly only in a
+/// convex partition, where every chord stays inside.
 [[nodiscard]] bool meets(const Chord& a, const Chord& b) {
   return crosses(a.from, a.to, b.from, b.to) ||
          overlaps(a.from, a.to, b.from, b.to) || touches(a, b);
@@ -234,9 +208,10 @@ struct Chord {
 /// The partition graph of one run, with the wires committed to it.
 class Corridors {
 public:
-  Corridors(const CapacityPlanT& plan, const grid::GridMetrics& detail,
-            const double wireSpacing, const Bounds& ring)
-      : detailGrid(detail) {
+  Corridors(const CapacityPlanT& plan, const CapacityScene& scene,
+            const double wireSpacing)
+      : detailGrid(scene.detail) {
+    const auto& detail = scene.detail;
     for (std::uint32_t index = 0; index < plan.borders.size(); ++index) {
       const auto& border = *plan.borders[index];
       grid::PartitionBorder geometry{
@@ -248,14 +223,7 @@ public:
         const auto cell = detail.toCell(sample);
         geometry.samples.emplace_back(onGrid(cell.x()), onGrid(cell.y()));
       }
-      for (const auto& slot :
-           grid::borderSlots(geometry, detail, wireSpacing)) {
-        // Outside the ring the ports feed from there is nothing to route: a
-        // wire that crosses there leaves through the ring, runs along the
-        // back of it and comes in again behind another port.
-        if (!ring.hold({.x = slot.x(), .y = slot.y()})) {
-          continue;
-        }
+      for (const auto& slot : crossingSlots(geometry, scene, wireSpacing)) {
         slotsByPartition[geometry.first].push_back(slotList.size());
         slotsByPartition[geometry.second].push_back(slotList.size());
         slotList.push_back({.place = {.x = slot.x(), .y = slot.y()},
@@ -777,8 +745,7 @@ public:
 
     const auto requests = requestsOf(scene, assignment, labels);
 
-    Corridors corridors(capacity, scene.detail, crossingPitch(config),
-                        ringOf(requests));
+    Corridors corridors(capacity, scene, crossingPitch(config));
     openPockets(corridors, chip, scene, labels);
 
     const auto sweeps = sweepsOf(config);
@@ -990,38 +957,6 @@ private:
     }
   }
 
-  /// The rectangle the ports feed from, in cells of the detail grid.
-  ///
-  /// A wire without a feed point says nothing about where the ring runs, and
-  /// a run in which no wire has one has nothing to route; the ring is then
-  /// the whole plane, which changes nothing.
-  [[nodiscard]] static Bounds ringOf(const std::vector<Request>& requests) {
-    auto found = false;
-    Bounds ring;
-    for (const auto& request : requests) {
-      if (!request.fed) {
-        continue;
-      }
-      if (!found) {
-        ring = {.minX = request.feed.x,
-                .minY = request.feed.y,
-                .maxX = request.feed.x,
-                .maxY = request.feed.y};
-        found = true;
-        continue;
-      }
-      ring.minX = std::min(ring.minX, request.feed.x);
-      ring.minY = std::min(ring.minY, request.feed.y);
-      ring.maxX = std::max(ring.maxX, request.feed.x);
-      ring.maxY = std::max(ring.maxY, request.feed.y);
-    }
-    if (!found) {
-      const auto limit = std::numeric_limits<double>::max();
-      return {.minX = -limit, .minY = -limit, .maxX = limit, .maxY = limit};
-    }
-    return ring;
-  }
-
   /// One request per connection of the assignment, in its order.
   [[nodiscard]] static std::vector<Request>
   requestsOf(const CapacityScene& scene, const AssignmentT& assignment,
@@ -1054,7 +989,6 @@ private:
           request.feed = placeOf(scene.detail, cell);
           request.feedPartition =
               partitionAt(labels, scene.detail, cell, LABEL_REACH);
-          request.fed = true;
         }
       }
       requests.push_back(request);

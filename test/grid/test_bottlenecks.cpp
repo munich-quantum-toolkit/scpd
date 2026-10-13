@@ -106,6 +106,48 @@ TEST(Bottlenecks, FindsThePinchOfACorridorAndSpansIt) {
   EXPECT_TRUE(spansThePinch);
 }
 
+/// A corridor that is wide on the left, narrows to a half height of two at
+/// column 10 and widens again by one cell every six columns to the right.
+BitGrid funnel() {
+  BitGrid mask(WIDTH, HEIGHT);
+  constexpr std::uint32_t middle = HEIGHT / 2;
+  for (std::uint32_t x = 0; x < WIDTH; ++x) {
+    const auto half = x < 10 ? 15U : 2U + ((x - 10) / 6);
+    for (std::uint32_t y = 0; y < HEIGHT; ++y) {
+      if (y + half < middle || y > middle + half) {
+        mask.setCell(x, y);
+      }
+    }
+  }
+  return mask;
+}
+
+TEST(Bottlenecks, ReportsAPinchOfConstantWidthOnce) {
+  // The pinch keeps one width over five columns, 28 to 32. Every column of it
+  // is as narrow as the next, and it is one gate across the middle one.
+  const auto scene = sceneOf(pinchedCorridor(3));
+  const auto found =
+      findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+
+  ASSERT_EQ(found.size(), 1U);
+  EXPECT_EQ(found.front().saddle % WIDTH, 30U);
+  EXPECT_EQ(found.front().first % WIDTH, 30U);
+  EXPECT_EQ(found.front().second % WIDTH, 30U);
+}
+
+TEST(Bottlenecks, FindsOnlyTheNarrowEndOfAFunnel) {
+  // Each step of the funnel keeps one width over six columns, and every step
+  // but the first has a narrower one beside it.
+  const auto scene = sceneOf(funnel());
+  const auto found =
+      findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+
+  ASSERT_EQ(found.size(), 1U);
+  const auto column = found.front().saddle % WIDTH;
+  EXPECT_GE(column, 10U);
+  EXPECT_LE(column, 15U);
+}
+
 TEST(Bottlenecks, FindsAPinchAtTheEdgeOfTheGrid) {
   for (const auto& [from, to] : {std::pair{0U, 3U}, std::pair{57U, 60U}}) {
     SCOPED_TRACE(std::format("pinch from x = {} to x = {}", from, to));

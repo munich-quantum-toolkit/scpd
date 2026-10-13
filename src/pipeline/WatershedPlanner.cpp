@@ -602,15 +602,17 @@ private:
 ///
 /// A gate whose only child is another gate is two gates in a line, and the
 /// wires that pass the first are exactly the wires that reach the second. Only
-/// the narrower of the two binds; keeping both would count one constraint
-/// twice.
+/// the one with the smaller wire budget binds, the shorter one where the
+/// budgets are equal; keeping both would count one constraint twice.
 class ChainPruner {
 public:
   using NodeList = std::vector<std::unique_ptr<fba::CapacityNodeT>>;
 
   ChainPruner(NodeList& nodes, const std::vector<grid::Bottleneck>& bottlenecks,
+              const std::vector<std::uint32_t>& budgets,
               const grid::GridMetrics& grid)
-      : nodeList(&nodes), gateList(&bottlenecks), detailGrid(&grid) {}
+      : nodeList(&nodes), gateList(&bottlenecks), gateBudgets(&budgets),
+        detailGrid(&grid) {}
 
   void prune(const std::uint32_t root) {
     // One rule feeds the other: collapsing a run can leave a gate with nothing
@@ -628,7 +630,19 @@ private:
     return (*nodeList)[node]->kind == fba::CapacityElement::Bottleneck;
   }
 
-  /// The length of a gate, which is what decides which of two binds.
+  /// Whether the first of two gates binds tighter than the second: it carries
+  /// fewer wires, or as many and is shorter.
+  [[nodiscard]] bool tighter(const std::uint32_t first,
+                             const std::uint32_t second) const {
+    const auto firstBudget = (*gateBudgets)[(*nodeList)[first]->id];
+    const auto secondBudget = (*gateBudgets)[(*nodeList)[second]->id];
+    if (firstBudget != secondBudget) {
+      return firstBudget < secondBudget;
+    }
+    return width(first) < width(second);
+  }
+
+  /// The length of a gate, in cells.
   [[nodiscard]] double width(const std::uint32_t node) const {
     const auto& gate = (*gateList)[(*nodeList)[node]->id];
     const std::size_t firstRow = gate.first / detailGrid->width;
@@ -668,8 +682,8 @@ private:
       if (!isGate(grandchild)) {
         continue;
       }
-      if (width(grandchild) < width(child)) {
-        // The far gate is the narrower one, so it replaces the near one and
+      if (tighter(grandchild, child)) {
+        // The far gate binds tighter, so it replaces the near one and
         // keeps what lay beyond it.
         child = grandchild;
       } else {
@@ -683,6 +697,7 @@ private:
 
   NodeList* nodeList;
   const std::vector<grid::Bottleneck>* gateList;
+  const std::vector<std::uint32_t>* gateBudgets;
   const grid::GridMetrics* detailGrid;
 };
 
@@ -883,13 +898,11 @@ private:
       }
       const auto center = border.center();
       entry->center = scene.detail.toLayout(center.x(), center.y());
-      // The border carries as many wires as its length allows: one per
-      // crossing slot, and the slots sit one crossing pitch apart along it.
-      // The Corridor stage draws its slots from the same function and the
-      // same pitch, so the budget and what is routed across it cannot
-      // disagree.
+      // The border carries one wire per crossing slot. The Corridor stage
+      // routes across the slots of the same function, so the budget and
+      // what is routed across the border agree.
       entry->budget = static_cast<std::uint32_t>(
-          grid::borderSlots(border, scene.detail, pitch).size());
+          crossingSlots(border, scene, pitch).size());
       plan.borders.push_back(std::move(entry));
     }
   }
@@ -993,7 +1006,7 @@ private:
                         .gates = {}});
     }
 
-    ChainPruner pruner(plan.nodes, candidates, scene.detail);
+    ChainPruner pruner(plan.nodes, candidates, builder.budgets, scene.detail);
     for (auto& chain : chains) {
       pruner.prune(chain.root);
       collectGates(plan, chain.root, chain.gates);

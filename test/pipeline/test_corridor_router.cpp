@@ -212,14 +212,24 @@ bool runsOver(const Chord& chord, const Point& end) {
          !at(chord.from) && !at(chord.to);
 }
 
-/// Checks that no two wires cross inside a partition, and that no chord runs
-/// over a point where a chord of another wire ends. Such a chord meets the
-/// other wire although the two never cross properly.
+/// Whether two points are one place, up to the round trip through layout
+/// units.
+bool samePlace(const Point& a, const Point& b) {
+  return std::abs(a.x() - b.x()) < 1.0e-6 && std::abs(a.y() - b.y()) < 1.0e-6;
+}
+
+/// Checks that no two wires cross inside a partition, that no chord runs over
+/// a point where a chord of another wire ends, and that no two wires share an
+/// end. Such chords meet the other wire although the two never cross
+/// properly.
 void expectNoCrossingInsideAPartition(const CorridorRoutingT& routing) {
   std::map<std::uint32_t, std::vector<std::pair<std::size_t, Chord>>> drawn;
   for (std::size_t wire = 0; wire < routing.corridors.size(); ++wire) {
     for (const auto& chord : chordsOf(*routing.corridors[wire])) {
       for (const auto& [other, theirs] : drawn[chord.partition]) {
+        if (other == wire) {
+          continue;
+        }
         EXPECT_FALSE(crosses(chord.from, chord.to, theirs.from, theirs.to))
             << "wires " << wire << " and " << other
             << " cross inside partition " << chord.partition;
@@ -228,6 +238,12 @@ void expectNoCrossingInsideAPartition(const CorridorRoutingT& routing) {
                      runsOver(theirs, chord.from) || runsOver(theirs, chord.to))
             << "wires " << wire << " and " << other
             << " meet at an end inside partition " << chord.partition;
+        EXPECT_FALSE(samePlace(chord.from, theirs.from) ||
+                     samePlace(chord.from, theirs.to) ||
+                     samePlace(chord.to, theirs.from) ||
+                     samePlace(chord.to, theirs.to))
+            << "wires " << wire << " and " << other
+            << " share an end inside partition " << chord.partition;
       }
       drawn[chord.partition].emplace_back(wire, chord);
     }
@@ -403,6 +419,51 @@ TEST(CorridorRouter, PlacesTheWiresThatNoRoundPlaced) {
   expectNoCrossingInsideAPartition(routing);
 }
 
+TEST(CorridorRouter, RoutesAWireThatCrossesBordersOnItsOwn) {
+  // Which slots exist does not depend on which wires are routed, so a wire
+  // that crosses borders among all the others still has its way alone.
+  const auto planned = planMini();
+  const auto full = routeMini(planned);
+  const auto crossing =
+      std::ranges::find_if(full.corridors, [](const auto& corridor) {
+        return !corridor->crossings.empty();
+      });
+  ASSERT_NE(crossing, full.corridors.end());
+  const auto index =
+      static_cast<std::size_t>(crossing - full.corridors.begin());
+
+  auto alone = planMini();
+  auto connection = std::make_unique<flatbuffers::design::ConnectionT>(
+      *alone.assignment.connections[index]);
+  const auto feed = alone.assignment.feeds[index];
+  alone.assignment.connections.clear();
+  alone.assignment.connections.push_back(std::move(connection));
+  alone.assignment.feeds = {feed};
+
+  const auto routing = routeMini(alone);
+
+  ASSERT_EQ(routing.corridors.size(), 1U);
+  EXPECT_EQ(unroutedOf(routing), 0U);
+  EXPECT_FALSE(routing.corridors[0]->crossings.empty());
+}
+
+TEST(CorridorRouter, OffersEveryBorderAsManySlotsAsItsBudget) {
+  const auto planned = planMini();
+  const auto routing = routeMini(planned);
+
+  std::vector<std::size_t> offered(planned.capacity.borders.size(), 0);
+  for (const auto& slots : routing.slots) {
+    if (!slots->pocket) {
+      ASSERT_LT(slots->border, offered.size());
+      offered[slots->border] += slots->positions.size();
+    }
+  }
+  for (std::size_t border = 0; border < offered.size(); ++border) {
+    EXPECT_EQ(offered[border], planned.capacity.borders[border]->budget)
+        << "border " << border;
+  }
+}
+
 TEST(CorridorRouter, RoutesNoWireWithoutAFeedPoint) {
   auto planned = planMini();
   planned.assignment.feeds.clear();
@@ -436,13 +497,16 @@ Planned fedAtTheTarget(const double offset) {
 TEST(CorridorRouter, NeedsNoCrossingForAWireFedInItsTargetPartition) {
   const auto routing = routeMini(fedAtTheTarget(100.0));
 
-  EXPECT_LT(unroutedOf(routing), routing.corridors.size());
+  std::size_t inOne = 0;
   for (const auto& corridor : routing.corridors) {
-    if (!corridor->partitions.empty()) {
+    if (!corridor->partitions.empty() &&
+        corridor->partitions.front() == corridor->partitions.back()) {
+      ++inOne;
       EXPECT_EQ(corridor->partitions.size(), 1U);
       EXPECT_TRUE(corridor->crossings.empty());
     }
   }
+  EXPECT_GT(inOne, 0U);
 }
 
 TEST(CorridorRouter, LeavesAWireFedDeepInsideTheArtworkUnrouted) {

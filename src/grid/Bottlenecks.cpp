@@ -95,36 +95,82 @@ private:
   std::span<const std::uint32_t> distances;
 };
 
-/// The cells of the axis whose clearance is a local minimum along it.
+/// Whether a cell lies inside one arm of the axis, with one neighbor on each
+/// side. A dead end is where the axis stops, and a junction is where arms
+/// meet; neither is where a corridor narrows.
+bool insideAnArm(const MedialAxis& axis, const std::size_t cell) {
+  const auto found = axis.neighbors.find(cell);
+  return found != axis.neighbors.end() && found->second.size() == 2 &&
+         axis.cells[cell] != AxisCell::Endpoint;
+}
+
+/// One cell for every narrowest stretch of the axis.
+///
+/// A stretch is a run of cells inside one arm with the same clearance. It is a
+/// narrowing when the cells that bound it on both sides are at least as wide;
+/// a single cell below both neighbors is a stretch of one. A corridor of
+/// constant width is one stretch, and a corridor that widens step by step has
+/// a stretch at every step but a narrowing only at its narrow end. The middle
+/// cell of the stretch stands for it.
 std::vector<std::size_t> saddlePoints(const CellSpace& space,
                                       const MedialAxis& axis,
                                       const std::uint32_t limit) {
+  // The axis is held in a hash map, so the order it yields is not the order
+  // of the grid. Walking the cells in grid order makes the bottleneck list,
+  // and every label derived from it, the same on every run.
+  std::vector<std::size_t> cells;
+  cells.reserve(axis.neighbors.size());
+  for (const auto& entry : axis.neighbors) {
+    cells.push_back(entry.first);
+  }
+  std::ranges::sort(cells);
+
+  std::unordered_set<std::size_t> inStretch;
   std::vector<std::size_t> saddles;
-  for (const auto& [cell, neighbors] : axis.neighbors) {
-    // A dead end is where the axis stops, not where a corridor narrows.
-    if (axis.cells[cell] == AxisCell::Endpoint || neighbors.size() != 2) {
+  for (const auto cell : cells) {
+    if (inStretch.contains(cell) || !insideAnArm(axis, cell)) {
       continue;
     }
     const auto here = space.clearance(cell);
     if (here >= limit) {
       continue;
     }
-    const auto before = space.clearance(neighbors[0]);
-    const auto after = space.clearance(neighbors[1]);
-    // A true minimum, or either edge of a plateau of them. The plateau cases
-    // matter because a corridor of constant width has no strict minimum at
-    // all and would otherwise contribute no bottleneck.
-    const bool minimum = here <= before && here <= after;
-    const bool plateauEdge =
-        (here == before && here > after) || (here == after && here > before);
-    if (!minimum && !plateauEdge) {
+    // Walk the stretch away from the cell in both directions, and look at the
+    // cell that ends it on each side.
+    std::unordered_set<std::size_t> own{cell};
+    std::array<std::vector<std::size_t>, 2> sides;
+    bool narrowest = true;
+    const auto& around = axis.neighbors.at(cell);
+    for (std::size_t side = 0; side < 2; ++side) {
+      auto previous = cell;
+      auto current = around[side];
+      while (insideAnArm(axis, current) && space.clearance(current) == here &&
+             !own.contains(current)) {
+        own.insert(current);
+        sides[side].push_back(current);
+        const auto& next = axis.neighbors.at(current);
+        const auto following = next[0] == previous ? next[1] : next[0];
+        previous = current;
+        current = following;
+      }
+      // A stretch that closes on itself has no lower cell beside it.
+      if (!own.contains(current) && space.clearance(current) < here) {
+        narrowest = false;
+      }
+    }
+    inStretch.insert(own.begin(), own.end());
+    if (!narrowest) {
       continue;
     }
-    saddles.push_back(cell);
+
+    std::vector<std::size_t> stretch(sides[0].rbegin(), sides[0].rend());
+    stretch.push_back(cell);
+    stretch.insert(stretch.end(), sides[1].begin(), sides[1].end());
+    if (stretch.back() < stretch.front()) {
+      std::ranges::reverse(stretch);
+    }
+    saddles.push_back(stretch[stretch.size() / 2]);
   }
-  // The axis is held in a hash map, so the order it yields is not the order
-  // of the grid. Sorting makes the bottleneck list, and every label derived
-  // from it, the same on every run.
   std::ranges::sort(saddles);
   return saddles;
 }

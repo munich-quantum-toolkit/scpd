@@ -15,6 +15,7 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
+#include "mqt-scpd/grid/Partitions.hpp"
 #include "mqt-scpd/grid/Watershed.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/io/Chip.hpp"
@@ -24,6 +25,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -232,6 +236,51 @@ TEST(CapacityScene, FreesTheCellOfEveryLauncher) {
   EXPECT_EQ(scene.targetCell.size(), 5U);
   for (const auto cell : scene.targetCell) {
     EXPECT_FALSE(scene.blocked.test(cell));
+  }
+}
+
+TEST(CapacityScene, OffersOnlyTheCrossingSlotsInsideTheLauncherRing) {
+  const auto config = test::miniConfig();
+  const auto scene = buildScene(test::miniChip(), config);
+  double minX = 0.0;
+  double minY = 0.0;
+  double maxX = 0.0;
+  double maxY = 0.0;
+  for (std::size_t index = 0; index < scene.launcherCell.size(); ++index) {
+    const auto cell = scene.detail.cell(scene.launcherCell[index]);
+    const auto x = static_cast<double>(cell.x()) + 0.5;
+    const auto y = static_cast<double>(cell.y()) + 0.5;
+    minX = index == 0 ? x : std::min(minX, x);
+    minY = index == 0 ? y : std::min(minY, y);
+    maxX = index == 0 ? x : std::max(maxX, x);
+    maxY = index == 0 ? y : std::max(maxY, y);
+  }
+  // A border along the middle row from one edge of the grid to the other
+  // runs past the launchers on both sides.
+  grid::PartitionBorder border{.first = 2, .second = 3, .samples = {}};
+  const auto row = std::floor(static_cast<double>(scene.detail.height) / 2.0);
+  for (std::uint32_t x = 0; x < scene.detail.width; ++x) {
+    border.samples.emplace_back(static_cast<double>(x) + 0.5, row);
+  }
+  const auto pitch = crossingPitch(config);
+
+  const auto all = grid::borderSlots(border, scene.detail, pitch);
+  const auto offered = crossingSlots(border, scene, pitch);
+
+  EXPECT_LT(offered.size(), all.size());
+  EXPECT_FALSE(offered.empty());
+  for (const auto& slot : offered) {
+    EXPECT_GT(slot.x(), minX);
+    EXPECT_LT(slot.x(), maxX);
+    EXPECT_GT(slot.y(), minY);
+    EXPECT_LT(slot.y(), maxY);
+  }
+  for (const auto& slot : all) {
+    const auto inside = slot.x() > minX && slot.x() < maxX && slot.y() > minY &&
+                        slot.y() < maxY;
+    EXPECT_EQ(inside, std::ranges::any_of(offered, [&](const auto& kept) {
+                return kept.x() == slot.x() && kept.y() == slot.y();
+              }));
   }
 }
 

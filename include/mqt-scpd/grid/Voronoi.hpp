@@ -46,8 +46,11 @@ struct MedialEdge {
  * wall is an artifact of the raster and is dropped; two sites belong to one
  * wall when a walk over the boundary cells reaches one from the other within
  * four steps. An edge that passes through a blocked cell is dropped as well,
- * because the axis of the free space cannot run through an obstacle. The grid
- * border counts as a wall.
+ * because the axis of the free space cannot run through an obstacle.
+ *
+ * Only blocked cells inside the grid are sites, so the edge of the grid is no
+ * wall: the free space between the artwork and an open edge has no axis. A
+ * caller that needs the edge as a wall blocks a border of cells along it.
  *
  * @param blocked The obstacle mask.
  * @return The edges that survive both filters, in cell coordinates, each
@@ -88,7 +91,7 @@ struct MedialAxis {
 /**
  * @brief Rasterizes the medial axis onto the grid.
  *
- * Each edge is walked as a four-connected line through the cells its ends
+ * Each edge is walked as an eight-connected line through the cells its ends
  * truncate to, and a blocked cell is never marked. Each cell is joined to the
  * cell before it on the same edge, so the result is a graph over the grid. A
  * cell with three or more neighbors is a junction, and a cell with one

@@ -132,7 +132,8 @@ public:
  * A wire is told which partitions it runs through and where it crosses from
  * one into the next. A border is crossed at one of a fixed set of slots, and
  * no two wires take the same one. Inside a partition two wires may not cross
- * each other either. Only the connections of the assignment are routed here;
+ * or meet either, judged by the straight chords between where they enter and
+ * leave it. Only the connections of the assignment are routed here;
  * the inner circuit paid for the free space it crosses when it was solved.
  */
 class MQT_SCPD_PIPELINE_EXPORT ICorridorRouter {

@@ -200,6 +200,8 @@ def check_the_assignment(chip: ChipT, assignment: AssignmentT, launcher_target: 
     ]
     assert len(used) == len(ring) - len(resonators)
     assert len(set(used)) == len(used), "two conventional ports share a launcher"
+    feeds = [(feed.x, feed.y) for feed in entries(assignment.feeds)]
+    assert len(set(feeds)) == len(feeds), "two ring nodes share a feed point"
 
     chained: list[int] = []
     ends = {"launcher": 0, "termination": 0}
@@ -234,14 +236,21 @@ def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT) -> None:
             if (crossing.x, crossing.y) not in pockets:
                 assert tuple(sorted(partitions[index : index + 2])) in borders, "a wire leaves into no neighbour"
 
-    feeds = [(corridor.source.x, corridor.source.y) for corridor in corridors if corridor.source is not None]
-    low_x, high_x = min(x for x, _ in feeds), max(x for x, _ in feeds)
-    low_y, high_y = min(y for _, y in feeds), max(y for _, y in feeds)
+    launchers = [(slot.position.x, slot.position.y) for slot in entries(plan.launchers)]
+    low_x, high_x = min(x for x, _ in launchers), max(x for x, _ in launchers)
+    low_y, high_y = min(y for _, y in launchers), max(y for _, y in launchers)
     assert all(low_x < x < high_x and low_y < y < high_y for x, y in taken), "a wire crosses outside the ring"
 
-    # A chord that runs over the end of another one meets it although the two never cross: over a feed
-    # point or a port cell it puts two wires on one point, and over a crossing slot it lies along the
-    # border of that slot, which the other wire crosses.
+    offered = [0] * len(entries(plan.borders))
+    for slots in entries(routing.slots):
+        if not slots.pocket:
+            offered[slots.border] += len(entries(slots.positions))
+    assert offered == [border.budget for border in entries(plan.borders)], (
+        "a budget differs from the slots of its border"
+    )
+
+    # A chord that runs over the end of another one, or shares an end with it, meets it although the two
+    # never cross: every end is a feed point, a port cell or a crossing slot, which one wire passes.
     by_partition: dict[int, list[tuple[int, Point, Point]]] = {}
     for wire, partition, start, end in chords(routing):
         for other, theirs_start, theirs_end in by_partition.get(partition, []):
@@ -257,6 +266,7 @@ def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT) -> None:
                     on = side(chord[0], chord[1], point) == 0 and between(chord[0], chord[1], point)
                     at_end = same(point, chord[0]) or same(point, chord[1])
                     assert not (on and not at_end), f"wire {wire} or {other} runs over the end of the other"
+                    assert not at_end, f"wires {wire} and {other} share an end"
         by_partition.setdefault(partition, []).append((wire, start, end))
 
 

@@ -12,6 +12,7 @@
 
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
+#include "mqt-scpd/grid/Partitions.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
@@ -69,6 +70,28 @@ struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT double
 crossingPitch(const ConfigT& config);
+
+/**
+ * @brief Returns the crossing slots of a partition border that a wire may
+ * take.
+ *
+ * These are the slots of grid::borderSlots() at the crossing pitch that lie
+ * strictly inside the rectangle the launcher cells span. Every wire starts on
+ * the launcher ring, so a slot on or outside that rectangle sits beside or
+ * behind a launcher, and a wire that crossed there would run along the back
+ * of the ring. The Capacity stage counts these slots into the budget of a
+ * border and the Corridor stage routes across them, so the two agree.
+ *
+ * @param border The border, in cell coordinates of the detail grid.
+ * @param scene The scene of the run, which holds the launcher cells.
+ * @param pitch The crossing pitch, in layout units.
+ * @return The slots, in cell coordinates, in the order of
+ * grid::borderSlots().
+ * @throws std::invalid_argument When @p pitch is not positive.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<grid::Point>
+crossingSlots(const grid::PartitionBorder& border, const CapacityScene& scene,
+              double pitch);
 
 /**
  * @brief Builds the grids and masks of a run.
