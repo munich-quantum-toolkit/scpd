@@ -34,7 +34,9 @@ releases may include breaking changes.
   block, and leave out the borders of the partitions that the artwork closes in.
   A corridor runs on into its target port along the direction of the port, with
   rounded turns. Both pictures shade every partition in a light grey that
-  differs from its neighbours ([#140]) ([**@FeldmeierMichael**])
+  differs from its neighbours. The assign picture lies over the same plan, draws
+  its chords as thick black dashes and leaves out the ring of its ports ([#140])
+  ([**@FeldmeierMichael**])
 - ✨ Add the planning stages: the Capacity stage partitions the free space at
   its bottlenecks and budgets the wires of every capacity chain, the Global
   stage solves the inner circuit as a mixed-integer program on Hanan lattices,

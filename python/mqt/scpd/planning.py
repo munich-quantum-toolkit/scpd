@@ -682,7 +682,7 @@ def planning_geometry(
         stage: The stage the artifact is drawn as.
         capacity: The capacity artifact of the same run, for the stages that are drawn over the
             free space they had to fit into: the global stage over the gates it paid for, and the
-            corridor stage over the partitions its wires run through.
+            assign and corridor stages over the partitions their chords and wires run through.
         assignment: The assignment artifact of the same run, for the corridor stage, which is drawn
             with the feedlines that its resonator wires start at and the approach of every wire to
             its target port.
@@ -721,6 +721,8 @@ def planning_geometry(
             msg = "the artifact is not an assignment"
             raise PlanningError(msg)
         _assignment(output, chip, geometry)
+        if capacity is not None:
+            _capacity(_plan_of(capacity), geometry)
     else:
         if not isinstance(output, CorridorRoutingT):
             msg = "the artifact is not a corridor routing"

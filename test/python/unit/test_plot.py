@@ -378,3 +378,22 @@ def test_the_partitions_take_the_grey_of_their_tone_where_the_stage_shows_them()
         assert [path.get("fill") for path in layer.findall(f"{SVG}path")] == list(PARTITION_TONES[:2])
         assert svg.index('class="l-tone"') < svg.index('class="x-grid')
     assert 'class="l-tone"' not in layout_svg(_mini(), stage="global", planning=geometry)
+
+
+def test_the_assign_picture_shows_its_chords_over_the_plan_without_the_ring() -> None:
+    """The chords are thick black dashes over the toned partitions; the ring of the ports is left out."""
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    geometry = PlanningGeometry(
+        partitions=[square],
+        partition_tones=[0],
+        ring=[(0.0, 0.0), (50.0, 0.0), (50.0, 50.0)],
+        assignments=[((0.0, 0.0), (20.0, 20.0))],
+    )
+
+    svg = layout_svg(_mini(), stage="assign", planning=geometry)
+
+    groups = _groups(svg)
+    assert {"l-assignment", "l-tone"} <= groups
+    assert "l-ring" not in groups
+    assert "g.l-assignment>path{fill:none;stroke:#111111;stroke-width:1.8" in svg
+    assert "l-ring" in _groups(layout_svg(_mini(), planning=geometry))

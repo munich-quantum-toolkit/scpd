@@ -236,6 +236,22 @@ def test_the_assignment_picture_draws_a_chord_from_every_ring_port_to_its_feed(r
     assert len(geometry.ring) == 5
     assert len(geometry.assignments) == 5
     assert {chord[0] for chord in geometry.assignments} == set(geometry.ring)
+    assert not geometry.borders
+
+
+def test_the_assignment_picture_lies_over_the_plan_of_its_run(run: RunDirectory) -> None:
+    """With the capacity plan, the chords are drawn over its partitions and blocked cells."""
+    geometry = planning_geometry(
+        run.artifact("assign").read_bytes(),
+        chip_of(run),
+        "assign",
+        capacity=run.artifact("capacity").read_bytes(),
+    )
+
+    assert geometry.assignments
+    assert geometry.borders
+    assert geometry.blocked
+    assert any(tone is not None for tone in geometry.partition_tones)
 
 
 def assignment_of(ring: list[int], feeds: list[PointT], chain: FeedlineChainT) -> bytes:

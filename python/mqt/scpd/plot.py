@@ -78,7 +78,7 @@ PLANNING_COLORS: dict[str, str] = {
     "launcher": "#e34948",
     "lattice": "#b3afa6",
     "inner": "#008300",
-    "assignment": "#4a3aa7",
+    "assignment": "#111111",
     "ring": "#6b675f",
     "corridor": "#2b2b2e",
     "slot": "#55524b",
@@ -91,26 +91,28 @@ _PLANNING_WIDTHS: dict[str, float] = {
     "bottleneck": 1.6,
     "lattice": 0.5,
     "inner": 2.0,
-    "assignment": 1.0,
+    "assignment": 1.8,
     "ring": 1.0,
     "corridor": 2.0,
 }
 
 #: The planning layers each stage leaves out of its picture. The keep-out of the port approaches
-#: and the capacity chains are left out everywhere. The capacity and corridor pictures show the
-#: partitions by their borders alone: an outline traces the keep-out around every port as well. They
-#: leave the gates out too.
+#: and the capacity chains are left out everywhere. The capacity, assign and corridor pictures show
+#: the partitions by their borders alone: an outline traces the keep-out around every port as well.
+#: They leave the gates out too, and the assign picture the ring of its ports, which the chords to
+#: the feeds already show.
 _HIDDEN: dict[str, frozenset[str]] = {
     "capacity": frozenset({"bottlenecks", "partitions"}),
+    "assign": frozenset({"bottlenecks", "partitions", "ring"}),
     "corridor": frozenset({"bottlenecks", "partitions"}),
 }
 
-#: The borders under the corridors are only the ground the wires run on, so the corridor picture
-#: draws them light and the dark wires stand out.
 #: The stages whose picture shades every partition in the grey of its tone.
-_TONED = frozenset({"capacity", "corridor"})
+_TONED = frozenset({"capacity", "assign", "corridor"})
 
-_CORRIDOR_GROUND = "svg.corridor g.l-border>path{stroke:#c9ccd1;stroke-width:1}"
+#: The borders under the chords and the corridors are only the ground they run on, so those pictures
+#: draw them light and the dark lines stand out.
+_LIGHT_GROUND = "svg.assign g.l-border>path,svg.corridor g.l-border>path{stroke:#c9ccd1;stroke-width:1}"
 
 #: Lengths of the decoration, in layout units (micrometres).
 _HOLE_PITCH = 120.0
@@ -332,7 +334,7 @@ def _planning_layers(
         group("lattice", "".join(polyline([first, second]) for first, second in planning.lattice))
     if planning.inner:
         group("inner", "".join(polyline([first, second]) for first, second in planning.inner), cased=True)
-    if planning.ring:
+    if planning.ring and "ring" not in hidden:
         # The ring is a closed cycle, so it is drawn as one.
         group("ring", polyline(planning.ring, close=True))
     if planning.assignments:
@@ -409,7 +411,7 @@ def _planning_style(font: float) -> str:
     style += (
         f"g.l-bottleneck>text{{font:600 {_number(font)}px {_FONT};fill:{PLANNING_COLORS['bottleneck']};"
         "text-anchor:middle;paint-order:stroke;stroke:#ffffff;stroke-width:0.25em;stroke-linejoin:round}"
-        "g.l-assignment>path{stroke-dasharray:6 4}"
+        "g.l-assignment>path{stroke-dasharray:8 5}"
         "g.l-inner>path.casing{stroke:#ffffff;stroke-width:4.6}"
         "g.l-corridor>path.casing{stroke:#ffffff;stroke-width:4.6;stroke-opacity:.9}"
         f"g.l-launcher>circle{{fill:none;stroke:{PLANNING_COLORS['launcher']};stroke-width:1.6;"
@@ -744,7 +746,7 @@ def layout_svg(
         f"g.l-raster>path{{fill:{RASTER_FILL};stroke:none}}"
     )
     if overlay:
-        style += _planning_style(0.8 * font) + _CORRIDOR_GROUND
+        style += _planning_style(0.8 * font) + _LIGHT_GROUND
     name = escape(title)
     heading = ""
     if title:
