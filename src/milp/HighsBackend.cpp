@@ -86,15 +86,19 @@ void logLines(const SolveObserver& observer, const std::string& message) {
 /// none before the first solve. HiGHS keeps one task scheduler per calling
 /// thread and refuses a solve whose thread count differs from the count the
 /// scheduler started with.
-thread_local std::optional<std::uint32_t> schedulerThreads;
+std::optional<std::uint32_t>& schedulerThreads() {
+  thread_local std::optional<std::uint32_t> threads;
+  return threads;
+}
 
 /// Restarts the HiGHS scheduler of the calling thread when a solve asks for
 /// another thread count than the solve before. Zero asks for the default of
 /// HiGHS, which the restarted scheduler then takes.
 void prepareScheduler(const std::uint32_t threads) {
-  if (schedulerThreads != threads) {
+  auto& last = schedulerThreads();
+  if (last != threads) {
     Highs::resetGlobalScheduler(true);
-    schedulerThreads = threads;
+    last = threads;
   }
 }
 

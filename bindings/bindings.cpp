@@ -83,7 +83,7 @@ public:
    * interpreter is gone.
    */
   ~PythonCallable() {
-    if (Py_IsInitialized() == 0) {
+    if (!nb::is_alive()) {
       static_cast<void>(callable.release());
       return;
     }
