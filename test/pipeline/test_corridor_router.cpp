@@ -12,6 +12,7 @@
 // stages, which is that every wire has a way through, a crossing slot carries
 // one wire and no two wires cross inside a partition, and what it reports.
 
+#include "../SplitMix.hpp"
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
@@ -46,6 +47,7 @@ namespace {
 using flatbuffers::artifacts::ArtifactT;
 using flatbuffers::artifacts::CorridorT;
 using flatbuffers::geometry::Point;
+using mqt::scpd::test::SplitMix;
 
 /// What the stages before the corridor router make of the fixture.
 struct Planned {
@@ -246,6 +248,36 @@ void expectNoCrossingInsideAPartition(const CorridorRoutingT& routing) {
             << " share an end inside partition " << chord.partition;
       }
       drawn[chord.partition].emplace_back(wire, chord);
+    }
+  }
+}
+
+/// Checks that no wire is a short: it passes each place once, and two of its
+/// chords meet only where one follows the other.
+void expectNoShortInsideAWire(const CorridorRoutingT& routing) {
+  for (std::size_t wire = 0; wire < routing.corridors.size(); ++wire) {
+    const auto& crossings = routing.corridors[wire]->crossings;
+    for (std::size_t first = 0; first < crossings.size(); ++first) {
+      for (std::size_t second = first + 1; second < crossings.size();
+           ++second) {
+        EXPECT_FALSE(samePlace(crossings[first], crossings[second]))
+            << "wire " << wire << " passes one place twice";
+      }
+    }
+    const auto chords = chordsOf(*routing.corridors[wire]);
+    for (std::size_t first = 0; first < chords.size(); ++first) {
+      for (std::size_t second = first + 2; second < chords.size(); ++second) {
+        const auto& mine = chords[first];
+        const auto& theirs = chords[second];
+        if (mine.partition != theirs.partition) {
+          continue;
+        }
+        EXPECT_FALSE(crosses(mine.from, mine.to, theirs.from, theirs.to) ||
+                     runsOver(mine, theirs.from) || runsOver(mine, theirs.to) ||
+                     runsOver(theirs, mine.from) || runsOver(theirs, mine.to))
+            << "wire " << wire << " meets itself inside partition "
+            << mine.partition;
+      }
     }
   }
 }
@@ -583,6 +615,211 @@ TEST(CorridorRouter, ReportsEveryConnectionAtTheItemsLevel) {
               counted(corridor.partitions.size(), "partition"));
     EXPECT_EQ(figures[1].text, counted(corridor.crossings.size(), "crossing"));
   }
+}
+
+// The stage on many assignments: whatever the assignment asks for, the
+// corridors keep the rules that the later stages rely on.
+
+/// Checks every rule of the routing against the plan it was made from: one
+/// corridor per connection, a way through neighbouring partitions over
+/// offered slots, one wire per slot, no wires that meet inside a partition,
+/// no wire that meets itself, and as many fails as wires without a way.
+void expectTheRulesHold(const Planned& planned, const CorridorRoutingT& routing,
+                        const Received& received) {
+  ASSERT_EQ(routing.corridors.size(), planned.assignment.connections.size());
+  std::set<std::pair<std::uint32_t, std::uint32_t>> borders;
+  for (const auto& border : planned.capacity.borders) {
+    borders.insert(std::minmax(border->first, border->second));
+  }
+  std::vector<Point> offered;
+  std::vector<Point> pockets;
+  for (const auto& slots : routing.slots) {
+    for (const auto& position : slots->positions) {
+      offered.push_back(position);
+      if (slots->pocket) {
+        pockets.push_back(position);
+      }
+    }
+  }
+  const auto among = [](const std::vector<Point>& points, const Point& point) {
+    return std::ranges::any_of(points, [&point](const Point& candidate) {
+      return samePlace(candidate, point);
+    });
+  };
+  for (std::size_t wire = 0; wire < routing.corridors.size(); ++wire) {
+    const auto& corridor = *routing.corridors[wire];
+    if (corridor.partitions.empty()) {
+      EXPECT_TRUE(corridor.crossings.empty()) << "wire " << wire;
+      continue;
+    }
+    EXPECT_NE(corridor.source, nullptr) << "wire " << wire;
+    EXPECT_NE(corridor.target, nullptr) << "wire " << wire;
+    ASSERT_EQ(corridor.crossings.size() + 1, corridor.partitions.size())
+        << "wire " << wire;
+    for (std::size_t index = 0; index < corridor.crossings.size(); ++index) {
+      const auto& crossing = corridor.crossings[index];
+      EXPECT_TRUE(among(offered, crossing))
+          << "wire " << wire << " crosses where no slot is offered";
+      if (!among(pockets, crossing)) {
+        EXPECT_TRUE(borders.contains(std::minmax(
+            corridor.partitions[index], corridor.partitions[index + 1])))
+            << "wire " << wire << " leaves partition "
+            << corridor.partitions[index] << " into one that is no neighbour";
+      }
+    }
+  }
+  expectOneWirePerSlot(routing);
+  expectNoCrossingInsideAPartition(routing);
+  expectNoShortInsideAWire(routing);
+  EXPECT_EQ(received.fails, unroutedOf(routing));
+}
+
+/// The smallest box around every polygon of the chip.
+std::pair<Point, Point> extentOf(const ChipT& chip) {
+  Point low(0.0, 0.0);
+  Point high(0.0, 0.0);
+  bool first = true;
+  for (const auto& polygon : chip.obstacles) {
+    for (const auto& vertex : polygon->vertices) {
+      if (first) {
+        low = vertex;
+        high = vertex;
+        first = false;
+      }
+      low = Point(std::min(low.x(), vertex.x()), std::min(low.y(), vertex.y()));
+      high =
+          Point(std::max(high.x(), vertex.x()), std::max(high.y(), vertex.y()));
+    }
+  }
+  return {low, high};
+}
+
+/// An assignment of @p planned drawn at random: between one and twice as many
+/// connections as the fixture has, each to a port of the ring or, now and
+/// then, to a launcher, which has no target cell. A feed point lies on a
+/// launcher slot, on the way between two slots, or anywhere on the chip,
+/// pads and artwork included.
+AssignmentT randomAssignment(const Planned& planned, SplitMix& random) {
+  std::vector<std::uint32_t> targets;
+  targets.reserve(planned.assignment.connections.size());
+  for (const auto& connection : planned.assignment.connections) {
+    targets.push_back(connection->target.index());
+  }
+  const auto& slots = planned.capacity.launchers;
+  const auto [low, high] = extentOf(planned.chip);
+  const auto between = [&random](const Point& from, const Point& to) {
+    const auto ratio = random.unit();
+    return Point(from.x() + (ratio * (to.x() - from.x())),
+                 from.y() + (ratio * (to.y() - from.y())));
+  };
+
+  AssignmentT assignment;
+  const auto count = random.between(
+      1, 2 * static_cast<std::int64_t>(planned.assignment.connections.size()));
+  for (std::int64_t index = 0; index < count; ++index) {
+    auto connection = std::make_unique<flatbuffers::design::ConnectionT>();
+    const auto pick = [&random](const std::size_t size) {
+      return static_cast<std::size_t>(
+          random.between(0, static_cast<std::int64_t>(size) - 1));
+    };
+    connection->target = flatbuffers::design::PortRef(
+        random.unit() < 0.1 ? slots[pick(slots.size())]->port.index()
+                            : targets[pick(targets.size())]);
+    assignment.connections.push_back(std::move(connection));
+
+    const auto& slot = slots[pick(slots.size())]->position;
+    const auto& next = slots[pick(slots.size())]->position;
+    const auto draw = random.unit();
+    if (draw < 0.3) {
+      assignment.feeds.push_back(slot);
+    } else if (draw < 0.8) {
+      assignment.feeds.push_back(between(slot, next));
+    } else {
+      // Two draws in one argument list come in an order that the compiler
+      // chooses, so each has a statement of its own.
+      const auto x = random.unit();
+      const auto y = random.unit();
+      assignment.feeds.emplace_back(low.x() + (x * (high.x() - low.x())),
+                                    low.y() + (y * (high.y() - low.y())));
+    }
+  }
+  return assignment;
+}
+
+TEST(CorridorRouter, KeepsItsRulesOnRandomAssignments) {
+  // Random assignments with random sweep settings. Many of them ask for more
+  // wires than the borders have slots, feed a wire from artwork, or send it
+  // to a launcher, so wires compete, are ripped up and are left without a
+  // way.
+  SplitMix random(71);
+  const auto fixture = planMini();
+  auto planned = planMini();
+  std::size_t routed = 0;
+  std::size_t unrouted = 0;
+  for (int round = 0; round < 200; ++round) {
+    SCOPED_TRACE(std::format("round {}", round));
+    planned.assignment = randomAssignment(fixture, random);
+    const auto rounds = static_cast<std::uint32_t>(random.between(0, 12));
+    const auto maxRelaxation =
+        static_cast<std::uint32_t>(random.between(0, 30));
+    const auto config = sweepConfig(rounds, maxRelaxation);
+    Received received;
+
+    const auto routing =
+        routeMini(planned, receiving(received, Detail::Summary), config);
+
+    expectTheRulesHold(planned, routing, received);
+    if (HasFailure()) {
+      return;
+    }
+    unrouted += unroutedOf(routing);
+    routed += routing.corridors.size() - unroutedOf(routing);
+  }
+  // The draws cover both outcomes.
+  EXPECT_GT(routed, 0U);
+  EXPECT_GT(unrouted, 0U);
+}
+
+TEST(CorridorRouter, RoutesEveryWireOfEveryAssignmentOfTheFixture) {
+  // The assignments that the Assignment stage makes of the fixture, for each
+  // port the ring may open at and each feedline utilization that carries its
+  // chain of two resonators: every wire finds a way.
+  const auto ring = test::miniConfig().ports->sequences->all_outer;
+  std::set<std::vector<std::uint32_t>> distinct;
+  for (std::size_t first = 0; first < ring.size(); ++first) {
+    for (const std::uint32_t utilization : {2U, 3U, 4U}) {
+      SCOPED_TRACE(std::format("the ring opens at {}, utilization {}",
+                               ring[first], utilization));
+      auto config = test::miniConfig();
+      std::ranges::rotate(config.ports->sequences->all_outer,
+                          config.ports->sequences->all_outer.begin() +
+                              static_cast<std::ptrdiff_t>(first));
+      config.rules->max_feedline_utilization = utilization;
+      Planned planned{
+          .chip = test::miniChip(config), .capacity = {}, .assignment = {}};
+      planned.capacity = makeWatershedPlanner()->run(planned.chip, config, {});
+      const auto global = makeHananMilpRouter()->run(
+          planned.chip, planned.capacity, config, {});
+      planned.assignment = makeOrderedMilpAssigner()->run(
+          planned.chip, planned.capacity, global, config, {});
+      std::vector<std::uint32_t> launchers;
+      launchers.reserve(planned.assignment.launchers.size());
+      for (const auto& launcher : planned.assignment.launchers) {
+        launchers.push_back(launcher.index());
+      }
+      distinct.insert(launchers);
+      Received received;
+
+      const auto routing = makePartitionAStarRouter()->run(
+          planned.chip, planned.capacity, planned.assignment, config,
+          receiving(received, Detail::Summary));
+
+      expectTheRulesHold(planned, routing, received);
+      EXPECT_EQ(unroutedOf(routing), 0U);
+    }
+  }
+  // The rotations give the router more than one assignment to route.
+  EXPECT_GT(distinct.size(), 1U);
 }
 
 } // namespace
