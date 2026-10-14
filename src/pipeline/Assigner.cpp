@@ -79,6 +79,8 @@ RingEdges ringEdgesOf(const AssignmentInputs& inputs) {
       ring.anchors.push_back(index);
     }
   }
+  // A single resonator has no other resonator to join. It is a chain of
+  // its own, with a launcher at one end and a termination at the other.
   if (ring.anchors.size() < 2) {
     return ring;
   }
@@ -218,6 +220,9 @@ public:
     if (const auto problem = launcherOrderProblem(chip, config)) {
       throw std::invalid_argument(*problem);
     }
+    if (config.rules == nullptr) {
+      throw std::invalid_argument("the configuration carries no design rules");
+    }
     const auto inputs = assignmentInputs(chip, capacity, global);
     const auto ring = ringEdgesOf(inputs);
     const auto resonators =
@@ -239,16 +244,6 @@ public:
     for (const auto port : inputs.ring) {
       assignment.ring.emplace_back(port);
     }
-    if (ring.anchors.size() < 2) {
-      // A ring with fewer than two resonators has no chain to build. The
-      // artifact is written with the ring alone, and every port of the ring
-      // is reported as a fail, since none of them is given a launcher.
-      report.result({{.text = counted(inputs.ring.size(), "port")},
-                     {.text = "nothing to assign"}},
-                    inputs.ring.size());
-      return assignment;
-    }
-
     const auto target = launcherTarget(config);
     if (report.wants(Detail::Steps)) {
       const auto& rules = *config.rules;
@@ -287,7 +282,7 @@ public:
                 counted(assignment.chains.size(), "feedline chain"));
     report.result(
         {{.text = counted(inputs.ring.size(), "port")},
-         {.text = counted(target, "launcher end")},
+         {.text = counted(ring.anchors.empty() ? 0U : target, "launcher end")},
          {.text = std::format("objective {:.2f}", assignment.objective)},
          {.text = std::string(milp::statusName(solution.status))}},
         0U);
@@ -342,11 +337,20 @@ private:
     // That is worth little to the proximity term and makes the solve of a
     // large chip much slower, and the crossing count, which is what this
     // stage is for, stays the same.
+    //
+    // The walk opens on the first ring node, and that node starts the turn.
+    // A resonator there that takes no launcher holds no place of its own, so
+    // it may stand one above the turn, at the launcher count. That is the
+    // place where the walk closes, and it leaves the whole turn to the nodes
+    // after it. Without that, where the ring opens would decide whether the
+    // chip has an assignment.
     const auto span = launchers - 1.0;
+    const auto opensOnResonator = inputs.isResonator.front();
     variables.flow.reserve(inputs.ring.size());
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
+      const auto top = index == 0 && opensOnResonator ? launchers : span;
       variables.flow.push_back(
-          model.addInteger(std::format("flow_{}", index), 0.0, span));
+          model.addInteger(std::format("flow_{}", index), 0.0, top));
     }
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
       variables.launcher.push_back(
@@ -385,8 +389,17 @@ private:
     // counted along the walk. A count starts at the first resonator the walk
     // meets, which is the second anchor whenever the ring opens on a
     // conventional port.
-    model.addEqual("flow_start", milp::LinearExpr(variables.flow.front()),
-                   span);
+    if (opensOnResonator) {
+      model.addGreaterOrEqual("flow_start",
+                              milp::LinearExpr(variables.flow.front()), span);
+      model.addLessOrEqual("flow_start_top",
+                           milp::LinearExpr(variables.flow.front()) +
+                               variables.launcher[ring.positionOf.front()],
+                           launchers);
+    } else {
+      model.addEqual("flow_start", milp::LinearExpr(variables.flow.front()),
+                     span);
+    }
     for (std::size_t index = 1; index < inputs.ring.size(); ++index) {
       const auto step =
           milp::LinearExpr(variables.flow[index]) - variables.flow[index - 1];
@@ -406,7 +419,11 @@ private:
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
       const auto previous =
           variables.utilization[(index + 1) % ring.anchors.size()];
-      const auto leaving = variables.edge[ring.leaving[index]];
+      // A single resonator has no chord to leave it.
+      const auto leaving =
+          ring.leaving.empty()
+              ? milp::LinearExpr()
+              : milp::LinearExpr(variables.edge[ring.leaving[index]]);
       const auto starts = model.addBinary(std::format("starts_{}", index));
 
       // `starts` is one exactly where the anchor ends a chain and the chord
@@ -452,9 +469,12 @@ private:
       activeLaunchers.add(variables.launcher[index], 1.0);
       activeTerminations.add(variables.termination[index], 1.0);
     }
-    model.addEqual("launcher_target", activeLaunchers,
-                   static_cast<double>(target));
-    model.addEqual("termination_target", activeTerminations, terminations);
+    // A ring without a resonator has no chain, and so no chain end to place.
+    if (!ring.anchors.empty()) {
+      model.addEqual("launcher_target", activeLaunchers,
+                     static_cast<double>(target));
+      model.addEqual("termination_target", activeTerminations, terminations);
+    }
 
     // Between two assignments with as many crossings, the better one sends
     // each node to the launcher nearest to it. The ring of launchers is
@@ -464,7 +484,8 @@ private:
       // How many turns of the launcher ring lie between the potential and the
       // launcher nearest to the node. The potential spans the whole ring, so
       // this reaches as far as the ring is long.
-      const auto turns = std::ceil((span + launchers) / launchers);
+      const auto top = index == 0 && opensOnResonator ? launchers : span;
+      const auto turns = std::ceil((top + launchers) / launchers);
       const auto wrap =
           model.addInteger(std::format("wrap_{}", index), -turns, 1.0);
       const auto gap = model.addContinuous(std::format("gap_{}", index), 0.0,
@@ -497,6 +518,17 @@ private:
         "figure with no default");
   }
 
+  /// Whether the model uses the chord that leaves the anchor at @p position.
+  /// A single resonator has no chord.
+  [[nodiscard]] static bool leavingUsed(const RingEdges& ring,
+                                        const Variables& variables,
+                                        const milp::Solution& solution,
+                                        const std::size_t position) {
+    return !ring.leaving.empty() &&
+           std::llround(
+               solution.valueOf(variables.edge[ring.leaving[position]])) == 1;
+  }
+
   /// Which ring node is the last anchor of a chain that ends at a launcher.
   ///
   /// This is the walk of `readBackChains`, run before the feeds are placed:
@@ -511,18 +543,13 @@ private:
     if (anchors == 0) {
       return ends;
     }
-    const auto used = [&](const std::size_t edge) {
-      return std::llround(solution.valueOf(variables.edge[edge])) == 1;
-    };
     const auto launcherAt = [&](const std::size_t position) {
       return std::llround(solution.valueOf(variables.launcher[position])) == 1;
     };
-    const auto entering = [&](const std::size_t position) {
-      return ring.leaving[(position + anchors - 1) % anchors];
-    };
     std::vector<bool> taken(anchors, false);
     for (std::size_t first = 0; first < anchors; ++first) {
-      if (taken[first] || used(entering(first))) {
+      if (taken[first] || leavingUsed(ring, variables, solution,
+                                      (first + anchors - 1) % anchors)) {
         continue;
       }
       auto position = first;
@@ -530,7 +557,7 @@ private:
       while (true) {
         taken[position] = true;
         ++count;
-        if (!used(ring.leaving[position])) {
+        if (!leavingUsed(ring, variables, solution, position)) {
           break;
         }
         const auto next = (position + 1) % anchors;
@@ -696,20 +723,15 @@ private:
                              const milp::Solution& solution,
                              const std::vector<std::size_t>& slotOf) {
     const auto anchors = ring.anchors.size();
-    const auto used = [&](const std::size_t edge) {
-      return std::llround(solution.valueOf(variables.edge[edge])) == 1;
-    };
     const auto launcherAt = [&](const std::size_t position) {
       return std::llround(solution.valueOf(variables.launcher[position])) == 1;
     };
-    // The chord that enters an anchor is the one that leaves the anchor
-    // before it.
-    const auto entering = [&](const std::size_t position) {
-      return ring.leaving[(position + anchors - 1) % anchors];
-    };
     std::vector<bool> taken(anchors, false);
     for (std::size_t first = 0; first < anchors; ++first) {
-      if (taken[first] || used(entering(first))) {
+      // The chord that enters an anchor is the one that leaves the anchor
+      // before it.
+      if (taken[first] || leavingUsed(ring, variables, solution,
+                                      (first + anchors - 1) % anchors)) {
         continue;
       }
       auto chain = std::make_unique<fba::FeedlineChainT>();
@@ -718,7 +740,7 @@ private:
         taken[position] = true;
         chain->nodes.push_back(
             static_cast<std::uint32_t>(ring.anchors[position]));
-        if (!used(ring.leaving[position])) {
+        if (!leavingUsed(ring, variables, solution, position)) {
           break;
         }
         position = (position + 1) % anchors;

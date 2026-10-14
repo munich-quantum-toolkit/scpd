@@ -294,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="count",
         default=0,
-        help="show more: -v the steps of a stage and its solves, -vv one line per item, -vvv the solver log",
+        help="show more: -v the steps of a stage and its solves, -vv one line per item, -vvv the log of HiGHS",
     )
     plan.add_argument("--no-progress", action="store_true", help="never show the live progress line")
     plan.set_defaults(run=command_plan)

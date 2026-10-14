@@ -144,12 +144,19 @@ bool onArtwork(const ChipT& chip, const fbg::Point& point) {
 /// The edge is cut where it crosses the border of a polygon, and each piece
 /// is tested at its midpoint. The anchor of a port may lie on the artwork of
 /// its component, and a wire from there has to leave that artwork first. So
-/// the piece next to a port end is exempt if the port lies strictly inside
-/// the polygon and the edge leaves the polygon there. Every other piece on
-/// artwork blocks the edge.
+/// the piece next to a port end is exempt if all of these hold:
+///
+/// - the anchor lies strictly inside the polygon,
+/// - the port itself lies inside the polygon or on its border, so the
+///   polygon is artwork of the port's own component,
+/// - the edge runs the way the port faces, and
+/// - the edge leaves the polygon there.
+///
+/// Every other piece on artwork blocks the edge. @p fromPort and @p toPort
+/// are the ports at the two ends, or null at a node without a port.
 bool throughArtwork(const ChipT& chip, const fbg::Point& from,
-                    const fbg::Point& to, const bool fromPort,
-                    const bool toPort) {
+                    const fbg::Point& to, const fbd::PortT* fromPort,
+                    const fbd::PortT* toPort) {
   const auto direction = geometry::subtract(to, from);
   for (const auto& polygon : chip.obstacles) {
     const auto& vertices = polygon->vertices;
@@ -194,16 +201,27 @@ bool throughArtwork(const ChipT& chip, const fbg::Point& from,
           insidePolygon(*polygon, {from.x() + (middle * direction.x()),
                                    from.y() + (middle * direction.y())});
     }
-    // A port end leaves the artwork only if it lies strictly inside the
-    // polygon and the next piece lies outside. A port on the border, or an
-    // edge that stays inside, has no exit to exempt.
-    const auto leaves = [&](const bool port, const fbg::Point& end,
-                            const std::size_t next) {
-      return port && pieces > 1 && !covered[next] &&
-             insidePolygon(*polygon, end) && !onBorder(*polygon, end);
+    // A port end leaves the artwork only if its anchor lies strictly inside
+    // the polygon of its own component, the edge runs the way the port
+    // faces, and the next piece lies outside. An anchor on the border, an
+    // anchor on the artwork of another component, an edge back through the
+    // component, or an edge that stays inside has no exit to exempt.
+    const auto leaves = [&](const fbd::PortT* port, const fbg::Point& end,
+                            const fbg::Point& away, const std::size_t next) {
+      if (port == nullptr || pieces < 2 || covered[next] ||
+          !insidePolygon(*polygon, end) || onBorder(*polygon, end)) {
+        return false;
+      }
+      if (!insidePolygon(*polygon, port->center) &&
+          !onBorder(*polygon, port->center)) {
+        return false;
+      }
+      const auto radians = port->orientation * std::numbers::pi / 180.0;
+      return geometry::dot(geometry::subtract(away, end),
+                           {std::cos(radians), std::sin(radians)}) > 0.0;
     };
-    const auto fromLeaves = leaves(fromPort, from, 1);
-    const auto toLeaves = leaves(toPort, to, pieces - 2);
+    const auto fromLeaves = leaves(fromPort, from, to, 1);
+    const auto toLeaves = leaves(toPort, to, from, pieces - 2);
     for (std::size_t piece = 0; piece < pieces; ++piece) {
       if ((piece == 0 && fromLeaves) || (piece + 1 == pieces && toLeaves)) {
         continue;
@@ -309,13 +327,15 @@ Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
   // Two nodes off the artwork can still have artwork between them. Each edge
   // is tested once, and a blocked edge goes in both directions.
   std::set<std::pair<std::size_t, std::size_t>> blocked;
+  const auto portAt = [&](const Lattice::Node& end) -> const fbd::PortT* {
+    return end.port.has_value() ? chip.ports[*end.port].get() : nullptr;
+  };
   for (std::size_t node = 0; node < lattice.nodes.size(); ++node) {
     for (const auto other : lattice.nodes[node].neighbors) {
       const auto& from = lattice.nodes[node];
       const auto& to = lattice.nodes[other];
-      if (node < other &&
-          throughArtwork(chip, from.position, to.position,
-                         from.port.has_value(), to.port.has_value())) {
+      if (node < other && throughArtwork(chip, from.position, to.position,
+                                         portAt(from), portAt(to))) {
         blocked.emplace(node, other);
       }
     }

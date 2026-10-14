@@ -10,9 +10,14 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mqt.scpd.doctor import run_doctor
+
+if TYPE_CHECKING:
+    import pytest
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 
@@ -118,5 +123,32 @@ def test_what_would_stop_the_configured_steps_is_a_problem(tmp_path: Path) -> No
 
     stopped = tmp_path / "stopped.toml"
     stopped.write_text(config + '\n[run]\nstop_after = "global"\n', encoding="utf-8")
+    report = run_doctor(stopped)
+    assert report.ok, report.text()
+
+
+def test_a_solver_backend_the_run_cannot_reach_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unknown backend, or Gurobi without gurobipy, would stop the run, so the doctor refuses both."""
+    monkeypatch.setenv("SCPD_SOLVER", "cplex")
+    report = run_doctor(FIXTURE / "config.toml")
+    assert report.problems == ["'cplex' is no solver backend; use 'highs' or 'gurobi'"]
+
+    monkeypatch.setenv("SCPD_SOLVER", "gurobi")
+    monkeypatch.setitem(sys.modules, "gurobipy", None)
+    report = run_doctor(FIXTURE / "config.toml")
+    assert len(report.problems) == 1
+    assert report.problems[0].startswith("the configuration asks for gurobi, but gurobipy is not installed")
+
+
+def test_a_run_that_solves_nothing_needs_no_solver(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A run that stops after the capacity step never reaches the solver backend."""
+    config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
+    stopped = tmp_path / "config.toml"
+    stopped.write_text(
+        config.replace('input = "routing_config.json"', f'input = "{(FIXTURE / "routing_config.json").as_posix()}"')
+        + '\n[run]\nstop_after = "capacity"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SCPD_SOLVER", "cplex")
     report = run_doctor(stopped)
     assert report.ok, report.text()

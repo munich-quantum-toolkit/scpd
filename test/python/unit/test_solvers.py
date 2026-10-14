@@ -199,6 +199,10 @@ class FakeModel:
         """Record that the model was solved."""
         self.gurobi.solved.append(self.mps)
 
+    def dispose(self) -> None:
+        """Record the release."""
+        self.gurobi.released.append("model")
+
     @staticmethod
     def getVars() -> list[FakeVariable]:  # ruff: ignore[invalid-function-name]
         """The variables, in an order other than the one of the model.
@@ -227,6 +231,7 @@ class FakeEnvironment:
     def dispose(self) -> None:
         """Count the release."""
         self.gurobi.disposed += 1
+        self.gurobi.released.append("environment")
 
 
 class FakeGurobi:
@@ -243,6 +248,7 @@ class FakeGurobi:
         self.parameters: dict[str, float] = {}
         self.solved: list[str] = []
         self.disposed = 0
+        self.released: list[str] = []
 
     def Env(self, *, empty: bool) -> FakeEnvironment:  # ruff: ignore[invalid-function-name]
         """A new environment.
@@ -290,7 +296,7 @@ def test_gurobi_returns_the_values_in_the_order_of_the_names(monkeypatch: pytest
     assert gurobi.solved == ["NAME pair\nENDATA\n"]
     assert gurobi.parameters == {"TimeLimit": 5.0, "MIPGap": 0.01}
     assert (status, objective, values) == ("optimal", 7.0, [1.0, 2.0, 0.0])
-    assert gurobi.disposed == 1
+    assert gurobi.released == ["model", "environment"]
 
 
 @pytest.mark.parametrize(
@@ -314,7 +320,7 @@ def test_gurobi_without_a_solution_returns_no_values(
     assert math.isnan(objective)
     assert values == []
     assert not gurobi.parameters
-    assert gurobi.disposed == 1
+    assert gurobi.released == ["model", "environment"]
 
 
 @pytest.mark.parametrize("code", [7, 8, 9, 10, 11, 13, 15, 16])

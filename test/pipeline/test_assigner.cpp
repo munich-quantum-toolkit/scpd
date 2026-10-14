@@ -412,28 +412,155 @@ TEST(Assigner, ReportsTheAssignmentAndHowItWasSolved) {
   EXPECT_EQ(entries.size(), assignment.chains.size());
 }
 
-TEST(Assigner, SaysSoWhenThereIsNothingToAssign) {
-  // With one resonator on the ring there is no chain to build. Every port of
-  // the ring is left without a launcher, and each one counts as a fail.
-  auto config = test::miniConfig();
-  config.ports->patterns->resonator = R"(^Q1\.port0$)";
-  config.ports->patterns->conventional =
-      R"(^(Q\d+\.port1|C\d+\.port0|Q2\.port0)$)";
-  std::vector<std::vector<Figure>> results;
+// The stage on chips whose ports sit on the sides of a square: the ring runs
+// clockwise and the launchers counterclockwise around it.
+
+/// A chip of eight ring ports, clockwise around the square from its top left
+/// corner, and six launchers outside it, counterclockwise.
+ChipT octagonChip() {
+  ChipT chip;
+  const std::vector<std::array<double, 2>> ring = {
+      {0.0, 300.0}, {150.0, 300.0}, {300.0, 300.0}, {300.0, 150.0},
+      {300.0, 0.0}, {150.0, 0.0},   {0.0, 0.0},     {0.0, 150.0}};
+  const std::vector<std::array<double, 2>> launchers = {
+      {-50.0, 225.0}, {-50.0, 75.0},  {150.0, -50.0},
+      {350.0, 75.0},  {350.0, 225.0}, {150.0, 350.0}};
+  for (std::size_t index = 0; index < ring.size(); ++index) {
+    auto port = std::make_unique<fbd::PortT>();
+    port->label = "r" + std::to_string(index);
+    port->center = {ring[index][0], ring[index][1]};
+    chip.ports.push_back(std::move(port));
+  }
+  for (std::size_t index = 0; index < launchers.size(); ++index) {
+    auto port = std::make_unique<fbd::PortT>();
+    port->label = "l" + std::to_string(index);
+    port->center = {launchers[index][0], launchers[index][1]};
+    port->role = fbd::UnassignedRole::Launcher;
+    chip.ports.push_back(std::move(port));
+  }
+  return chip;
+}
+
+/// The configuration of octagonChip with a ring that opens at @p first.
+ConfigT octagonConfig(const std::size_t first, const std::uint32_t target,
+                      const std::uint32_t terminations) {
+  ConfigT config;
+  config.ports = std::make_unique<flatbuffers::config::PortConfigT>();
+  config.ports->sequences =
+      std::make_unique<flatbuffers::config::PortSequencesT>();
+  for (std::size_t step = 0; step < 8; ++step) {
+    config.ports->sequences->all_outer.push_back(
+        "r" + std::to_string((first + step) % 8));
+  }
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  config.rules->max_feedline_utilization = 8;
+  config.rules->feedline_terminations = terminations;
+  config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  config.stages->assignment =
+      std::make_unique<flatbuffers::config::AssignmentParamsT>();
+  config.stages->assignment->launcher_target = target;
+  return config;
+}
+
+/// The assignment of octagonChip, with the ring opened at @p first and the
+/// ports @p resonators as resonators.
+AssignmentT assignOctagon(const std::size_t first,
+                          const std::vector<std::uint32_t>& resonators,
+                          const std::uint32_t target,
+                          const std::uint32_t terminations,
+                          const Report& report = {}) {
+  const auto chip = octagonChip();
+  std::vector<std::uint32_t> ring;
+  ring.reserve(8);
+  for (std::uint32_t step = 0; step < 8; ++step) {
+    ring.push_back(static_cast<std::uint32_t>((first + step) % 8));
+  }
+  return makeOrderedMilpAssigner()->run(
+      chip, planWithLaunchersOf(chip), routingWithRing(ring, resonators),
+      octagonConfig(first, target, terminations), report);
+}
+
+TEST(Assigner, FindsTheSameOptimumWhereverTheRingOpens) {
+  // Four conventional ports and two launcher ends need all six launchers.
+  // The ring may open on a resonator that takes no launcher, and that
+  // resonator must not take a launcher place of its own.
+  const std::vector<std::uint32_t> resonators = {0, 3, 4, 7};
+  const auto objective = assignOctagon(1, resonators, 2, 2).objective;
+  for (std::size_t first = 0; first < 8; ++first) {
+    EXPECT_NEAR(assignOctagon(first, resonators, 2, 2).objective, objective,
+                1.0e-6)
+        << "the ring opens at r" << first;
+  }
+}
+
+/// The assignment of octagonChip on a ring of only the ports @p ring.
+AssignmentT assignPartOfOctagon(const std::vector<std::uint32_t>& ring,
+                                const std::vector<std::uint32_t>& resonators,
+                                const std::uint32_t target,
+                                const std::uint32_t terminations,
+                                const Report& report = {}) {
+  const auto chip = octagonChip();
+  auto config = octagonConfig(0, target, terminations);
+  config.ports->sequences->all_outer.clear();
+  for (const auto port : ring) {
+    config.ports->sequences->all_outer.push_back("r" + std::to_string(port));
+  }
+  return makeOrderedMilpAssigner()->run(chip, planWithLaunchersOf(chip),
+                                        routingWithRing(ring, resonators),
+                                        config, report);
+}
+
+TEST(Assigner, GivesALoneResonatorAChainOfItsOwn) {
+  // One resonator is a chain from a launcher to a termination, and every
+  // conventional port is still given a launcher.
   std::vector<std::optional<std::uint64_t>> fails;
   const Report report(Detail::Summary,
-                      {.result = [&](const std::vector<Figure>& figures,
+                      {.result = [&](const std::vector<Figure>& /*figures*/,
                                      const std::optional<std::uint64_t> count) {
-                        results.push_back(figures);
                         fails.push_back(count);
                       }});
 
-  const auto [chip, global, assignment] = assignMini(config, report);
+  const auto assignment =
+      assignPartOfOctagon({0, 1, 2, 4, 5, 6}, {2}, 1, 1, report);
 
-  EXPECT_TRUE(assignment.connections.empty());
-  ASSERT_EQ(results.size(), 1U);
-  EXPECT_EQ(results[0].back().text, "nothing to assign");
-  EXPECT_EQ(fails[0], assignment.ring.size());
+  ASSERT_EQ(assignment.chains.size(), 1U);
+  const auto& chain = *assignment.chains.front();
+  ASSERT_EQ(chain.nodes.size(), 1U);
+  EXPECT_EQ(chain.nodes[0], 2U);
+  ASSERT_NE(chain.start, nullptr);
+  EXPECT_EQ(chain.start->index(), assignment.launchers[chain.nodes[0]].index());
+  EXPECT_EQ(chain.end, nullptr);
+  std::set<std::uint32_t> launchers;
+  for (const auto& launcher : assignment.launchers) {
+    launchers.insert(launcher.index());
+  }
+  EXPECT_EQ(launchers.size(), 6U);
+  ASSERT_EQ(fails.size(), 1U);
+  EXPECT_EQ(fails[0], 0U);
+}
+
+TEST(Assigner, GivesEveryPortOfARingWithoutResonatorsALauncher) {
+  // Six conventional ports and no resonator: no chain, and six launchers.
+  const auto assignment = assignPartOfOctagon({0, 1, 2, 4, 5, 6}, {}, 2, 0);
+
+  EXPECT_TRUE(assignment.chains.empty());
+  std::set<std::uint32_t> launchers;
+  for (const auto& connection : assignment.connections) {
+    ASSERT_NE(connection->source, nullptr);
+    launchers.insert(connection->source->index());
+  }
+  EXPECT_EQ(launchers.size(), 6U);
+}
+
+TEST(Assigner, RefusesAConfigurationWithoutDesignRules) {
+  auto config = test::miniConfig();
+  const auto chip = test::miniChip(config);
+  const auto capacity = makeWatershedPlanner()->run(chip, config, {});
+  const auto global = makeHananMilpRouter()->run(chip, capacity, config, {});
+  config.rules.reset();
+  EXPECT_THROW(static_cast<void>(makeOrderedMilpAssigner()->run(
+                   chip, capacity, global, config, {})),
+               std::invalid_argument);
 }
 
 } // namespace

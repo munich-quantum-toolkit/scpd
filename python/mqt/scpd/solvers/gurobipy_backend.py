@@ -113,33 +113,37 @@ def solve_mps(
         environment.start()
         try:
             model = gurobipy.read(str(path), env=environment)
-            if time_limit > 0.0:
-                model.setParam("TimeLimit", time_limit)
-            if relative_gap > 0.0:
-                model.setParam("MIPGap", relative_gap)
-            model.optimize()
-            if model.Status == INFEASIBLE_OR_UNBOUNDED:
-                # Presolve stops at this code when it proves that no optimum exists. Without dual
-                # reductions Gurobi says which of the two cases holds, as HiGHS does. The second solve
-                # gets the time the first one left, so that both together keep to the limit.
-                model.setParam("DualReductions", 0)
+            # Gurobi frees a model before the environment that holds it.
+            try:
                 if time_limit > 0.0:
-                    model.setParam("TimeLimit", max(time_limit - model.Runtime, 0.0))
+                    model.setParam("TimeLimit", time_limit)
+                if relative_gap > 0.0:
+                    model.setParam("MIPGap", relative_gap)
                 model.optimize()
+                if model.Status == INFEASIBLE_OR_UNBOUNDED:
+                    # Presolve stops at this code when it proves that no optimum exists. Without dual
+                    # reductions Gurobi says which of the two cases holds, as HiGHS does. The second solve
+                    # gets the time the first one left, so that both together keep to the limit.
+                    model.setParam("DualReductions", 0)
+                    if time_limit > 0.0:
+                        model.setParam("TimeLimit", max(time_limit - model.Runtime, 0.0))
+                    model.optimize()
 
-            status = GUROBI_STATUS.get(model.Status, f"gurobi ended with status {model.Status}")
-            if status not in {"optimal", "feasible"} or model.SolCount == 0:
-                if status in {"optimal", "feasible"}:
-                    status = "gurobi stopped without a solution"
-                return status, float("nan"), []
+                status = GUROBI_STATUS.get(model.Status, f"gurobi ended with status {model.Status}")
+                if status not in {"optimal", "feasible"} or model.SolCount == 0:
+                    if status in {"optimal", "feasible"}:
+                        status = "gurobi stopped without a solution"
+                    return status, float("nan"), []
 
-            # MPS keeps names and nothing else, so the values are matched by name and not by the
-            # order in which Gurobi holds the variables.
-            by_name = {variable.VarName: variable.X for variable in model.getVars()}
-            # MPS states a minimization. The core writes a maximization with its objective
-            # negated and negates the value it gets back, so the value is returned as the text
-            # states it.
-            return status, float(model.ObjVal), [by_name.get(name, 0.0) for name in names]
+                # MPS keeps names and nothing else, so the values are matched by name and not by the
+                # order in which Gurobi holds the variables.
+                by_name = {variable.VarName: variable.X for variable in model.getVars()}
+                # MPS states a minimization. The core writes a maximization with its objective
+                # negated and negates the value it gets back, so the value is returned as the text
+                # states it.
+                return status, float(model.ObjVal), [by_name.get(name, 0.0) for name in names]
+            finally:
+                model.dispose()
         finally:
             environment.dispose()
 

@@ -49,6 +49,7 @@ using flatbuffers::artifacts::CapacityElement;
 using flatbuffers::artifacts::CapacityNodeT;
 using flatbuffers::config::BridgeRuleT;
 using flatbuffers::config::PortPatternsT;
+using flatbuffers::design::DesignRulesT;
 using flatbuffers::design::PortT;
 using flatbuffers::geometry::Point;
 
@@ -550,6 +551,46 @@ TEST(GlobalRouter, RunsNoWireThatStaysInsideTheArtwork) {
   // S and T both lie inside the rectangle, and the edge never leaves it.
   EXPECT_FALSE(runsAcross(Point(1.0, 0.0), Point(101.0, 0.0),
                           Point(-10.0, -10.0), Point(110.0, 10.0)));
+}
+
+/// Whether the global stage runs a wire from S to T when every anchor lies
+/// @p reach in front of its port. S faces along +x, T along -x, and the one
+/// rectangle of artwork lies between @p low and @p high.
+bool runsWithReach(const Point& source, const Point& target, const Point& low,
+                   const Point& high, const double reach) {
+  const auto chip =
+      handChip({{.label = "S.port0", .center = source},
+                {.label = "T.port0", .center = target, .orientation = 180.0}},
+               handPatterns(), {{low, high}});
+  auto config = handConfig({"S.port0"});
+  config.rules = std::make_unique<DesignRulesT>();
+  config.rules->min_straight_length = reach;
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
+  const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+  return !routing.connections.empty();
+}
+
+TEST(GlobalRouter, LeavesTheArtworkOfThePortInFrontOfIt) {
+  // S lies inside its square, and its anchor 10 in front of it as well. The
+  // edge to T leaves the square the way S faces.
+  EXPECT_TRUE(runsWithReach(Point(0.0, 0.0), Point(100.0, 0.0),
+                            Point(-20.0, -20.0), Point(20.0, 20.0), 10.0));
+}
+
+TEST(GlobalRouter, RunsNoWireFromAnAnchorOnTheArtworkOfAnotherComponent) {
+  // The anchor of S lies 10 in front of S, inside a square that S does not
+  // touch. The square is artwork of another component, and the edge to T
+  // crosses it.
+  EXPECT_FALSE(runsWithReach(Point(0.0, 0.0), Point(100.0, 0.0),
+                             Point(5.0, -5.0), Point(15.0, 5.0), 10.0));
+}
+
+TEST(GlobalRouter, RunsNoWireBackThroughTheArtworkOfThePort) {
+  // S faces right, and T lies to its left. The edge from the anchor of S to
+  // T runs back through the square that S lies on.
+  EXPECT_FALSE(runsWithReach(Point(0.0, 0.0), Point(-100.0, 0.0),
+                             Point(-20.0, -10.0), Point(10.0, 10.0), 5.0));
 }
 
 TEST(GlobalRouter, RunsOneWireFromAPortOnSeveralLattices) {

@@ -10,8 +10,9 @@
 
 The doctor loads the configuration, loads and classifies the chip, prints the classification table
 so that a wrong pattern is visible in a second, and prints the outer port ring the run would use,
-checked label by label against the chip. It refuses what would stop a run of the configured steps.
-It ends with the solvers the installation can reach.
+checked label by label against the chip. It refuses what would stop a run of the configured steps,
+a solver backend that the run cannot reach included. It ends with the solvers the installation can
+reach.
 """
 
 from __future__ import annotations
@@ -25,6 +26,9 @@ from .chip import ChipError, chip_input_path, decode_chip, load_chip, obstacles_
 from .config import ConfigError, load_config, write_config
 from .run import RunError, steps_until
 from .solvers import available
+
+#: The steps that solve a MILP, and so need the configured solver backend.
+SOLVING_STEPS = frozenset({"global", "assign"})
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -110,6 +114,25 @@ def solver_summary() -> list[str]:
     ]
 
 
+def solver_problem(config_bytes: bytes) -> str | None:
+    """What keeps a run from the solver backend that the configuration and ``SCPD_SOLVER`` choose.
+
+    Args:
+        config_bytes: The packed configuration.
+
+    Returns:
+        The problem, or None when the backend can solve.
+    """
+    try:
+        solver = pyscpd.solver_info(config_bytes)
+    except ValueError as error:
+        return str(error)
+    if solver.startswith("HiGHS "):
+        return None
+    usable, why = available()
+    return None if usable else f"the configuration asks for {solver}, but {why}"
+
+
 def ring_summary(config: ConfigT) -> list[str]:
     """The configured outer port ring: the size of each sequence and the sequences themselves.
 
@@ -168,6 +191,8 @@ def run_doctor(config_path: Path, *, list_ports: bool = False, chip_path: Path |
         report.fail(str(error))
         steps = []
     for problem in pyscpd.plan_problems(chip_bytes, config_bytes, steps):
+        report.fail(problem)
+    if SOLVING_STEPS.intersection(steps) and (problem := solver_problem(config_bytes)) is not None:
         report.fail(problem)
     report.say("", f"obstacles: {len(obstacles_of(chip))}", f"ports: {len(ports_of(chip))}", "")
     report.say(*classification_table(chip, config))

@@ -15,8 +15,8 @@ releases may include breaking changes.
 - ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory:
   `--stop-after` and `[run] stop_after` end a run after a step, `--stage` runs
   one step again on the copies the run carries, and `-v`, `-vv` and `-vvv` show
-  the steps, the items and the solver log. A run prints one block per stage with
-  a live progress line on a terminal, in the format of
+  the steps, the items and the log of HiGHS. A run prints one block per stage
+  with a live progress line on a terminal, in the format of
   `docs/terminal_output.md`. Add `list-algorithms`, and `plot` and `render` with
   `--stage` and `--run-dir` for the planning stages; the assign and corridor
   pictures show the feedline chains ([#140]) ([**@FeldmeierMichael**])
