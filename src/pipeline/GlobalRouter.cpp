@@ -107,6 +107,28 @@ bool insidePolygon(const fbg::PolygonT& polygon, const fbg::Point& point) {
   return inside;
 }
 
+/// Whether a point lies on a side of a polygon.
+bool onBorder(const fbg::PolygonT& polygon, const fbg::Point& point) {
+  const auto& vertices = polygon.vertices;
+  for (std::size_t index = 0, previous = vertices.size() - 1;
+       index < vertices.size(); previous = index++) {
+    const auto side = geometry::subtract(vertices[index], vertices[previous]);
+    const auto offset = geometry::subtract(point, vertices[previous]);
+    const auto length = geometry::dot(side, side);
+    const auto along =
+        length > 0.0
+            ? std::clamp(geometry::dot(offset, side) / length, 0.0, 1.0)
+            : 0.0;
+    if (geometry::distance(point,
+                           {vertices[previous].x() + (along * side.x()),
+                            vertices[previous].y() + (along * side.y())}) <
+        COORDINATE_EPSILON) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /// Whether a point lies on chip artwork.
 ///
 /// Every polygon of the chip is artwork, the first one included: the chip
@@ -120,10 +142,11 @@ bool onArtwork(const ChipT& chip, const fbg::Point& point) {
 /// Whether a lattice edge runs through chip artwork.
 ///
 /// The edge is cut where it crosses the border of a polygon, and each piece
-/// is tested at its midpoint. The piece next to a port end is exempt: the
-/// anchor of a port may lie on the artwork of its component, and a wire from
-/// there has to leave that artwork first. Every other piece on artwork
-/// blocks the edge.
+/// is tested at its midpoint. The anchor of a port may lie on the artwork of
+/// its component, and a wire from there has to leave that artwork first. So
+/// the piece next to a port end is exempt if the port lies strictly inside
+/// the polygon and the edge leaves the polygon there. Every other piece on
+/// artwork blocks the edge.
 bool throughArtwork(const ChipT& chip, const fbg::Point& from,
                     const fbg::Point& to, const bool fromPort,
                     const bool toPort) {
@@ -163,13 +186,29 @@ bool throughArtwork(const ChipT& chip, const fbg::Point& from,
     // between the two would be tested at the vertex, which is no test.
     std::ranges::sort(cuts);
     cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
-    for (std::size_t piece = 0; piece + 1 < cuts.size(); ++piece) {
-      if ((piece == 0 && fromPort) || (piece + 2 == cuts.size() && toPort)) {
+    const auto pieces = cuts.size() - 1;
+    std::vector<bool> covered(pieces);
+    for (std::size_t piece = 0; piece < pieces; ++piece) {
+      const auto middle = (cuts[piece] + cuts[piece + 1]) / 2.0;
+      covered[piece] =
+          insidePolygon(*polygon, {from.x() + (middle * direction.x()),
+                                   from.y() + (middle * direction.y())});
+    }
+    // A port end leaves the artwork only if it lies strictly inside the
+    // polygon and the next piece lies outside. A port on the border, or an
+    // edge that stays inside, has no exit to exempt.
+    const auto leaves = [&](const bool port, const fbg::Point& end,
+                            const std::size_t next) {
+      return port && pieces > 1 && !covered[next] &&
+             insidePolygon(*polygon, end) && !onBorder(*polygon, end);
+    };
+    const auto fromLeaves = leaves(fromPort, from, 1);
+    const auto toLeaves = leaves(toPort, to, pieces - 2);
+    for (std::size_t piece = 0; piece < pieces; ++piece) {
+      if ((piece == 0 && fromLeaves) || (piece + 1 == pieces && toLeaves)) {
         continue;
       }
-      const auto middle = (cuts[piece] + cuts[piece + 1]) / 2.0;
-      if (insidePolygon(*polygon, {from.x() + (middle * direction.x()),
-                                   from.y() + (middle * direction.y())})) {
+      if (covered[piece]) {
         return true;
       }
     }

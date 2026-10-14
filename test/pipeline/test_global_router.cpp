@@ -500,6 +500,58 @@ TEST(GlobalRouter, LeavesAPortWhoseAnchorLiesOnItsOwnArtwork) {
   EXPECT_NEAR(routing.objective, 100.0, 1.0e-9);
 }
 
+TEST(GlobalRouter, LeavesAPortWhoseAnchorLiesOnItsOwnArtworkAtTheTarget) {
+  // The same exit at the other end of the edge: the anchor of T lies inside
+  // the square around it.
+  const auto chip = handChip(
+      {{.label = "S.port0", .center = Point(0.0, 0.0)},
+       {.label = "T.port0", .center = Point(100.0, 0.0), .orientation = 180.0}},
+      handPatterns(), {{Point(90.0, -10.0), Point(110.0, 10.0)}});
+  const auto config = handConfig({"S.port0"});
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
+
+  const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  EXPECT_NEAR(routing.objective, 100.0, 1.0e-9);
+}
+
+/// A chip of the ports S and T and one rectangle of artwork between
+/// @p low and @p high, and whether the global stage runs a wire from S to T.
+bool runsAcross(const Point& source, const Point& target, const Point& low,
+                const Point& high) {
+  const auto chip =
+      handChip({{.label = "S.port0", .center = source},
+                {.label = "T.port0", .center = target, .orientation = 180.0}},
+               handPatterns(), {{low, high}});
+  const auto config = handConfig({"S.port0"});
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
+  const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+  return !routing.connections.empty();
+}
+
+TEST(GlobalRouter, RunsNoWireFromAPortOnTheBorderAcrossTheArtwork) {
+  // S lies on the left side of the square, and the edge crosses the square
+  // to its right side. S does not leave the square, so the edge is blocked.
+  EXPECT_FALSE(runsAcross(Point(-10.0, 0.0), Point(100.0, 0.0),
+                          Point(-10.0, -10.0), Point(10.0, 10.0)));
+}
+
+TEST(GlobalRouter, RunsNoWireBetweenPortsOnOppositeSidesOfTheArtwork) {
+  // S and T lie on opposite sides of the rectangle, and the edge runs
+  // through it from one side to the other.
+  EXPECT_FALSE(runsAcross(Point(0.0, 0.0), Point(100.0, 0.0), Point(0.0, -10.0),
+                          Point(100.0, 10.0)));
+}
+
+TEST(GlobalRouter, RunsNoWireThatStaysInsideTheArtwork) {
+  // S and T both lie inside the rectangle, and the edge never leaves it.
+  EXPECT_FALSE(runsAcross(Point(1.0, 0.0), Point(101.0, 0.0),
+                          Point(-10.0, -10.0), Point(110.0, 10.0)));
+}
+
 TEST(GlobalRouter, RunsOneWireFromAPortOnSeveralLattices) {
   // S borders two chains, so it is a node of two lattices. A port takes one
   // wire, so only one of A and B is reached.
