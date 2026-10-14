@@ -357,11 +357,53 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
   // the border rather than a distance to everything taken so far: a border
   // that bends back towards itself would otherwise lose the slots on its
   // return leg, and those are the ones a wire coming from that side needs.
-  std::vector<bool> walked(border.samples.size(), false);
+  // Each piece is walked from one of its ends, so that the walk runs along it
+  // once instead of down one leg and then from the middle down the other.
+  const auto count = border.samples.size();
+  const auto adjacent = [&](const std::size_t a, const std::size_t b) {
+    const auto dx = border.samples[a].x() - border.samples[b].x();
+    const auto dy = border.samples[a].y() - border.samples[b].y();
+    return (dx * dx) + (dy * dy) <= ADJACENT_SAMPLE_SQUARED;
+  };
+  // For each sample, how many adjacent samples the walk has not reached yet.
+  std::vector<std::size_t> open(count, 0);
+  for (std::size_t a = 0; a < count; ++a) {
+    for (std::size_t b = a + 1; b < count; ++b) {
+      if (adjacent(a, b)) {
+        ++open[a];
+        ++open[b];
+      }
+    }
+  }
+  std::vector<bool> walked(count, false);
+  const auto walk = [&](const std::size_t sample) {
+    walked[sample] = true;
+    for (std::size_t other = 0; other < count; ++other) {
+      if (!walked[other] && adjacent(sample, other)) {
+        --open[other];
+      }
+    }
+  };
+  // The first sample not yet walked that ends a run, or on a closed loop,
+  // which has no end, the first sample not yet walked.
+  const auto startOfPiece = [&] {
+    auto loop = count;
+    for (std::size_t i = 0; i < count; ++i) {
+      if (walked[i]) {
+        continue;
+      }
+      if (open[i] <= 1) {
+        return i;
+      }
+      loop = std::min(loop, i);
+    }
+    return loop;
+  };
+  // The nearest sample the walk has not reached, when it touches the sample.
   const auto step = [&](const std::size_t from) {
-    auto nearest = border.samples.size();
+    auto nearest = count;
     auto best = std::numeric_limits<double>::infinity();
-    for (std::size_t i = 0; i < border.samples.size(); ++i) {
+    for (std::size_t i = 0; i < count; ++i) {
       if (walked[i]) {
         continue;
       }
@@ -372,36 +414,30 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
         nearest = i;
       }
     }
-    // Two samples of one border are cell edges that touch, so a step is about
-    // one cell. A longer one means the border is in pieces, and the walk
-    // starts again on the next of them.
-    return std::pair{nearest, best <= ADJACENT_SAMPLE_SQUARED};
+    return best <= ADJACENT_SAMPLE_SQUARED ? nearest : count;
   };
 
   const auto layout = [&](const std::size_t index) {
     return grid.toLayout(border.samples[index].x(), border.samples[index].y());
   };
 
+  // The first sample of each piece is a slot; along one piece a sample becomes
+  // a slot once it is one spacing past the last.
   std::vector<Point> slots;
-  auto current = std::size_t{0};
-  walked[0] = true;
-  slots.push_back(border.samples[0]);
-  auto last = layout(0);
-  while (true) {
-    const auto [next, adjacent] = step(current);
-    if (next == border.samples.size()) {
-      break;
+  for (auto current = startOfPiece(); current != count;
+       current = startOfPiece()) {
+    walk(current);
+    slots.push_back(border.samples[current]);
+    auto last = layout(current);
+    for (auto next = step(current); next != count; next = step(current)) {
+      walk(next);
+      const auto here = layout(next);
+      if (std::hypot(here.x() - last.x(), here.y() - last.y()) >= spacing) {
+        slots.push_back(border.samples[next]);
+        last = here;
+      }
+      current = next;
     }
-    walked[next] = true;
-    const auto here = layout(next);
-    // The first sample of a new piece is a slot of its own; along one piece a
-    // sample becomes a slot once it is one spacing past the last.
-    if (!adjacent ||
-        std::hypot(here.x() - last.x(), here.y() - last.y()) >= spacing) {
-      slots.push_back(border.samples[next]);
-      last = here;
-    }
-    current = next;
   }
   return slots;
 }

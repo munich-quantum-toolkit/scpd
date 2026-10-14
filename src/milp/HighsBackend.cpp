@@ -235,9 +235,12 @@ public:
       if (logs) {
         static_cast<void>(highs.startCallback(kCallbackLogging));
       }
-      if (observer.progress) {
-        static_cast<void>(highs.startCallback(kCallbackMipInterrupt));
-      }
+      // The logging callback has no input to stop the solve through. The
+      // interrupt callbacks do, so they run for every observer: an exception
+      // from the log then also stops a simplex, interior point or MIP solve.
+      static_cast<void>(highs.startCallback(kCallbackSimplexInterrupt));
+      static_cast<void>(highs.startCallback(kCallbackIpmInterrupt));
+      static_cast<void>(highs.startCallback(kCallbackMipInterrupt));
     }
     if (options.timeLimit > 0.0) {
       static_cast<void>(highs.setOptionValue("time_limit", options.timeLimit));

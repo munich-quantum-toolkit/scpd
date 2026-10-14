@@ -187,6 +187,39 @@ TEST(BorderSlots, PutsTheSlotsOneWireSpacingApart) {
   }
 }
 
+TEST(BorderSlots, KeepsTheSpacingOnABorderThatBends) {
+  // An arch: up the left leg at x = 2.5, across the top at y = 8.5 and down
+  // the right leg at x = 6.5. The samples start in the middle of the top, so
+  // the order they come in does not start the walk at an end.
+  PartitionBorder border{
+      .first = FIRST_PARTITION_LABEL,
+      .second = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 1),
+      .samples = {}};
+  for (std::uint32_t x = 4; x <= 6; ++x) {
+    border.samples.emplace_back(static_cast<double>(x), 8.5);
+  }
+  border.samples.emplace_back(3.0, 8.5);
+  for (std::uint32_t y = 2; y <= 8; ++y) {
+    border.samples.emplace_back(2.5, static_cast<double>(y));
+    border.samples.emplace_back(6.5, static_cast<double>(y));
+  }
+  const auto grid = unitGrid(10, 10);
+
+  const auto slots = borderSlots(border, grid, 3.0);
+
+  // The arch is one piece about 17 units long: six slots fit at a spacing of
+  // three, and no two of them lie closer than that.
+  EXPECT_EQ(slots.size(), 6U);
+  for (std::size_t i = 0; i < slots.size(); ++i) {
+    for (std::size_t j = i + 1; j < slots.size(); ++j) {
+      EXPECT_GE(
+          std::hypot(slots[i].x() - slots[j].x(), slots[i].y() - slots[j].y()),
+          3.0)
+          << i << " and " << j;
+    }
+  }
+}
+
 TEST(BorderSlots, GivesABorderShorterThanOneSpacingASingleSlot) {
   const auto grid = GridMetrics::fit(
       {.minX = 0.0, .minY = 0.0, .maxX = 10.0, .maxY = 10.0}, 10, 10);

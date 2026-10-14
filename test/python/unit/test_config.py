@@ -10,11 +10,23 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
-from mqt.scpd.config import ConfigError, load_config, parse_config, read_config, shipped_config_problems, write_config
+from mqt.scpd.config import (
+    DESIGN_RULES,
+    GRID_DEFAULTS,
+    RUN_DEFAULTS,
+    STAGE_DEFAULTS,
+    ConfigError,
+    load_config,
+    parse_config,
+    read_config,
+    shipped_config_problems,
+    write_config,
+)
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 
@@ -348,3 +360,30 @@ def test_load_config_names_the_file(tmp_path: Path) -> None:
 def test_the_fixture_follows_the_shipped_rules() -> None:
     """The fixture configuration loads under the rules for a shipped file."""
     load_config(FIXTURE / "config.toml", strict=True)
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return f'"{value}"'
+    return str(value)
+
+
+def test_the_configuration_reference_lists_every_key_with_its_default() -> None:
+    """docs/configuration.md has a row for every key the loader reads, with the default the loader applies."""
+    reference = (Path(__file__).resolve().parents[3] / "docs" / "configuration.md").read_text(encoding="utf-8")
+    rows: dict[tuple[str, str], str] = {}
+    section = ""
+    for line in reference.splitlines():
+        if heading := re.fullmatch(r"## `\[+([a-z_.]+)\]+`", line):
+            section = heading[1]
+        elif row := re.fullmatch(r"\| `([a-z_]+)` +\| (\S+) +\|.*", line):
+            rows[section, row[1]] = row[2]
+
+    expected = {("design_rules", key): "—" for key in DESIGN_RULES}
+    expected.update({("grid", key): f"`{_toml_value(value)}`" for key, value in GRID_DEFAULTS.items()})
+    for name, defaults in STAGE_DEFAULTS.items():
+        expected.update({(f"stages.{name}", key): f"`{_toml_value(value)}`" for key, value in defaults.items()})
+    expected.update({("run", key): f"`{_toml_value(value)}`" for key, value in RUN_DEFAULTS.items()})
+    assert {key: rows.get(key) for key in expected} == expected

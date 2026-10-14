@@ -74,6 +74,13 @@ std::size_t clampedIndex(const uint32_t width, const uint32_t height,
   return (static_cast<std::size_t>(cy) * width) + static_cast<std::size_t>(cx);
 }
 
+/// Whether a cell lies on a grid of the given size.
+bool onGrid(const uint32_t width, const uint32_t height, const int64_t x,
+            const int64_t y) {
+  return x >= 0 && y >= 0 && std::cmp_less(x, width) &&
+         std::cmp_less(y, height);
+}
+
 /// Undoes a stamped band: every cell returns to what it was.
 void unstampBand(BitGrid& mask, const StampedBand& band) {
   for (std::size_t i = 0; i < band.cells.size(); ++i) {
@@ -97,13 +104,34 @@ Step orientationStep(const double orientationDegrees) {
   return {.x = sign(dx), .y = sign(dy)};
 }
 
+namespace {
+
+/// The length of one step in layout units.
+double stepLength(const Step step, const GridMetrics& grid) {
+  return std::hypot(static_cast<double>(step.x) * grid.cellWidth,
+                    static_cast<double>(step.y) * grid.cellHeight);
+}
+
+} // namespace
+
 uint32_t bandHalfWidth(const double spacing, const GridMetrics& grid,
-                       const bool diagonal) {
-  auto square = static_cast<int64_t>(std::ceil(spacing / grid.cellWidth));
+                       const Step step) {
+  // The width runs along the step at a right angle to the band.
+  const Step across{.x = -step.y, .y = step.x};
+  auto cell = stepLength(across, grid);
+  if (cell <= 0.0) {
+    return 0;
+  }
+  if (step.diagonal()) {
+    // The spacing is first counted in cells along an axis, as for a straight
+    // band, and the diagonal then shortens it.
+    cell /= std::numbers::sqrt2;
+  }
+  auto square = static_cast<int64_t>(std::ceil(spacing / cell));
   if (square % 2 == 0) {
     ++square;
   }
-  if (diagonal) {
+  if (step.diagonal()) {
     return static_cast<uint32_t>(
         (static_cast<double>(square) / std::numbers::sqrt2) / 2.0);
   }
@@ -111,12 +139,12 @@ uint32_t bandHalfWidth(const double spacing, const GridMetrics& grid,
 }
 
 uint32_t bandLength(const double length, const GridMetrics& grid,
-                    const bool diagonal) {
-  double cells = length / grid.cellWidth;
-  if (diagonal) {
-    cells /= std::numbers::sqrt2;
+                    const Step step) {
+  const auto cell = stepLength(step, grid);
+  if (cell <= 0.0) {
+    return 0;
   }
-  return static_cast<uint32_t>(std::max(0.0, std::floor(cells)));
+  return static_cast<uint32_t>(std::max(0.0, std::floor(length / cell)));
 }
 
 StampedBand stampBand(BitGrid& mask, const PortBand& band) {
@@ -182,6 +210,7 @@ StampedBand stampBand(BitGrid& mask, const PortBand& band) {
   stamped.lastForwardCenter =
       DCoord(static_cast<uint32_t>(std::clamp<int64_t>(lastX, 0, width - 1)),
              static_cast<uint32_t>(std::clamp<int64_t>(lastY, 0, height - 1)));
+  stamped.lastForwardOnGrid = onGrid(width, height, lastX, lastY);
   return stamped;
 }
 
@@ -191,10 +220,13 @@ std::optional<std::size_t> placeTargetBeyondBand(BitGrid& mask,
                                                  const Step step) {
   const uint32_t width = mask.width();
   const uint32_t height = mask.height();
-  const std::size_t ideal = clampedIndex(
-      width, height, static_cast<int64_t>(band.lastForwardCenter.x()) + step.x,
-      static_cast<int64_t>(band.lastForwardCenter.y()) + step.y);
-  if (!before.test(ideal)) {
+  const auto idealX = static_cast<int64_t>(band.lastForwardCenter.x()) + step.x;
+  const auto idealY = static_cast<int64_t>(band.lastForwardCenter.y()) + step.y;
+  const std::size_t ideal = clampedIndex(width, height, idealX, idealY);
+  // A band that runs off the grid has no cell beyond it: the clamped cell
+  // would be one of the band's own.
+  if (band.lastForwardOnGrid && onGrid(width, height, idealX, idealY) &&
+      !before.test(ideal)) {
     mask.set(ideal, false);
     return ideal;
   }

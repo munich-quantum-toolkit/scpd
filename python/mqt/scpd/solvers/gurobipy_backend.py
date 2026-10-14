@@ -30,7 +30,8 @@ __all__ = ["GUROBI_STATUS", "SolverUnavailableError", "available", "register", "
 
 #: What each Gurobi status code means in the terms of the core. Every other code is an error, which
 #: the core reports and does not raise. Code 4 says "infeasible or unbounded"; the solve repeats
-#: without dual reductions to tell the two apart, so that the code does not reach this table. A
+#: without dual reductions to tell the two apart, so that the code does not reach this table. Code
+#: 11 says that Ctrl-C stopped the solve, and :func:`solve_mps` raises KeyboardInterrupt for it. A
 #: limit that stops the search is "feasible", as for HiGHS: whether a solution exists is decided
 #: by whether one came back.
 GUROBI_STATUS: dict[int, str] = {
@@ -41,7 +42,6 @@ GUROBI_STATUS: dict[int, str] = {
     8: "feasible",  # node limit
     9: "feasible",  # time limit
     10: "feasible",  # solution limit
-    11: "feasible",  # interrupted
     13: "feasible",  # suboptimal
     15: "feasible",  # objective limit
     16: "feasible",  # work limit
@@ -50,6 +50,10 @@ GUROBI_STATUS: dict[int, str] = {
 
 #: The Gurobi status code for "infeasible or unbounded".
 INFEASIBLE_OR_UNBOUNDED = 4
+
+#: The Gurobi status code for a solve that Ctrl-C stopped. Gurobi takes the signal itself while it
+#: solves, so Python raises no KeyboardInterrupt of its own.
+INTERRUPTED = 11
 
 
 class SolverUnavailableError(RuntimeError):
@@ -95,6 +99,8 @@ def solve_mps(
 
     Raises:
         SolverUnavailableError: If ``gurobipy`` cannot be imported.
+        KeyboardInterrupt: If Ctrl-C stopped the solve. The model and the environment are released
+            first.
     """
     try:
         import gurobipy  # ruff: ignore[import-outside-top-level]  # ty: ignore[unresolved-import]
@@ -109,9 +115,9 @@ def solve_mps(
         path.write_text(mps, encoding="utf-8")
 
         environment = gurobipy.Env(empty=True)
-        environment.setParam("OutputFlag", 0)
-        environment.start()
         try:
+            environment.setParam("OutputFlag", 0)
+            environment.start()
             model = gurobipy.read(str(path), env=environment)
             # Gurobi frees a model before the environment that holds it.
             try:
@@ -128,6 +134,10 @@ def solve_mps(
                     if time_limit > 0.0:
                         model.setParam("TimeLimit", max(time_limit - model.Runtime, 0.0))
                     model.optimize()
+                if model.Status == INTERRUPTED:
+                    # The finally clauses release the model and the environment before the
+                    # interrupt reaches the command line.
+                    raise KeyboardInterrupt
 
                 status = GUROBI_STATUS.get(model.Status, f"gurobi ended with status {model.Status}")
                 if status not in {"optimal", "feasible"} or model.SolCount == 0:
@@ -138,10 +148,16 @@ def solve_mps(
                 # MPS keeps names and nothing else, so the values are matched by name and not by the
                 # order in which Gurobi holds the variables.
                 by_name = {variable.VarName: variable.X for variable in model.getVars()}
+                # The core writes every variable into the MPS text, so a name that Gurobi does not
+                # know means that the model and the answer do not belong together.
+                if missing := [name for name in names if name not in by_name]:
+                    shown = ", ".join(missing[:3]) + (", ..." if len(missing) > 3 else "")
+                    message = f"gurobi returned no value for {len(missing)} of {len(names)} variables: {shown}"
+                    return message, float("nan"), []
                 # MPS states a minimization. The core writes a maximization with its objective
                 # negated and negates the value it gets back, so the value is returned as the text
                 # states it.
-                return status, float(model.ObjVal), [by_name.get(name, 0.0) for name in names]
+                return status, float(model.ObjVal), [by_name[name] for name in names]
             finally:
                 model.dispose()
         finally:

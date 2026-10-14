@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from . import pyscpd
 from ._version import version as __version__
-from .chip import ChipError, chip_input_path, load_chip
+from .chip import RUN_CHIP, ChipError, chip_input_path, load_chip
 from .config import load_config, write_config
 from .console import Figure
 from .steps import STEPS
@@ -166,7 +166,7 @@ class RunDirectory:
     @property
     def chip(self) -> Path:
         """The copy of the chip input that the run uses."""
-        return self.path / "00-chip.json"
+        return self.path / RUN_CHIP
 
     def inputs(self, config_path: Path, chip_path: Path | None = None) -> tuple[ConfigT, Path]:
         """Read the configuration of a new run and find its chip input, without changing the directory.
@@ -174,7 +174,8 @@ class RunDirectory:
         Args:
             config_path: The configuration to run.
             chip_path: A chip input that replaces the configured one, as ``--chip`` gives it.
-                Without one, a run started from its own config.toml keeps its chip copy.
+                Without one, the configuration of another run takes that run's chip copy, as
+                :func:`~mqt.scpd.chip.chip_input_path` finds it.
 
         Returns:
             The configuration and the chip input.
@@ -185,10 +186,6 @@ class RunDirectory:
             ChipError: If the chip input is no file.
         """
         config = load_config(config_path)
-        # The copied configuration still names the chip input relative to where it came from, so a
-        # run started from its own config.toml takes its own chip copy.
-        if chip_path is None and self.config.exists() and self.config.samefile(config_path):
-            chip_path = self.chip
         chip = chip_input_path(config, config_path, chip_path)
         if self.config.exists() and not self.chip.exists():
             msg = f"{self.path} is no run directory: it holds a config.toml of its own and no 00-chip.json"
@@ -276,6 +273,9 @@ class RunDirectory:
         packed = write_config(config)
         producer = f"mqt-scpd {__version__}"
         level = min(max(verbosity, 0), 3)
+        # The artifacts of the later steps go before the core runs, so that a step that fails leaves
+        # none of them beside an input they were not made from.
+        self.invalidate_after(stage)
         # Each step reads the artifacts of the steps before it, and a missing one stops the step
         # before the core runs.
         if stage == "capacity":
@@ -289,14 +289,13 @@ class RunDirectory:
             capacity, assignment = self._read("capacity"), self._read("assign")
             data = pyscpd.route_corridor(chip, capacity, assignment, packed, producer, reporter, level)
         _write_whole(path, data)
-        self.invalidate_after(stage)
         return StageResult(stage=stage, path=path, size=len(data))
 
     def invalidate_after(self, stage: str) -> list[Path]:
         """Delete the artifact of every step after one.
 
         Args:
-            stage: The step that was just run.
+            stage: The step whose later steps lose their artifacts.
 
         Returns:
             The files that were removed.

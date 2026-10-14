@@ -12,6 +12,8 @@ releases may include breaking changes.
 
 ### Added
 
+- 📝 Add a configuration reference that lists every key of `config.toml` with
+  its default and meaning ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory:
   `--stop-after` and `[run] stop_after` end a run after a step, `--stage` runs
   one step again on the copies the run carries, and `-v`, `-vv` and `-vvv` show
@@ -57,8 +59,9 @@ releases may include breaking changes.
 - ✨ Add bridge pairs and components to the configuration: the `bridge_pair` and
   `component` patterns, the `[[ports.bridge_pairs]]` rules, the stage sections
   and `[run]` ([#140]) ([**@FeldmeierMichael**])
-- ✨ Add the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#140])
-  ([**@FeldmeierMichael**])
+- ✨ Add the `--chip` option of `doctor`, `plot`, `render` and `plan`; without
+  it, these commands read the `config.toml` of a run directory with the chip
+  copy `00-chip.json` beside it ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins
   move primitives, with a distance-field heuristic, a bucket queue whose memory
   is that of its largest search, one shared read-only obstacle mask and
@@ -97,9 +100,10 @@ releases may include breaking changes.
 ### Changed
 
 - 🎨 Start the result line of `plot`, `render` and `inspect` with `✓` and an
-  error with `✗`, show the `bridge_pair` pattern and the reachable solvers in
-  `doctor`, and check there, as `plan` does before its first stage, what would
-  stop a run of the configured steps ([#140]) ([**@FeldmeierMichael**])
+  error of every command except `doctor` with `✗`, show the `bridge_pair`
+  pattern and the reachable solvers in `doctor`, and check there, as `plan` does
+  before its first stage, what would stop a run of the configured steps ([#140])
+  ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that

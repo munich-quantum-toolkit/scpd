@@ -43,11 +43,33 @@ TEST(PortBands, OrientationsStepAlongTheAxesAndDiagonals) {
 
 TEST(PortBands, WidthsAndLengthsComeFromTheRules) {
   // 185 units on 10 unit cells: 19 cells, an odd square, half 9.
-  EXPECT_EQ(bandHalfWidth(185.0, tenUnits(), false), 9U);
-  EXPECT_EQ(bandHalfWidth(185.0, tenUnits(), true), 6U);
-  EXPECT_EQ(bandHalfWidth(200.0, tenUnits(), false), 10U);
-  EXPECT_EQ(bandLength(100.0, tenUnits(), false), 10U);
-  EXPECT_EQ(bandLength(100.0, tenUnits(), true), 7U);
+  constexpr Step straight{.x = 0, .y = 1};
+  constexpr Step diagonal{.x = 1, .y = 1};
+  EXPECT_EQ(bandHalfWidth(185.0, tenUnits(), straight), 9U);
+  EXPECT_EQ(bandHalfWidth(185.0, tenUnits(), diagonal), 6U);
+  EXPECT_EQ(bandHalfWidth(200.0, tenUnits(), straight), 10U);
+  EXPECT_EQ(bandLength(100.0, tenUnits(), straight), 10U);
+  EXPECT_EQ(bandLength(100.0, tenUnits(), diagonal), 7U);
+  EXPECT_EQ(bandHalfWidth(185.0, tenUnits(), Step{}), 0U);
+  EXPECT_EQ(bandLength(100.0, tenUnits(), Step{}), 0U);
+}
+
+TEST(PortBands, OnCellsThatAreNotSquareEachAxisCountsItsOwnStep) {
+  // Cells ten units wide and five units high.
+  const auto grid = GridMetrics::fit(
+      BoundingBox{.minX = 0.0, .minY = 0.0, .maxX = 1000.0, .maxY = 1000.0},
+      101, 201);
+  constexpr Step alongX{.x = 1, .y = 0};
+  constexpr Step alongY{.x = 0, .y = -1};
+  // Along x a step is ten units long, and the width runs over five unit
+  // cells: 185 units are 37 cells, half 18.
+  EXPECT_EQ(bandLength(100.0, grid, alongX), 10U);
+  EXPECT_EQ(bandHalfWidth(185.0, grid, alongX), 18U);
+  // Along y the two swap: 20 steps, and 19 ten unit cells across, half 9.
+  EXPECT_EQ(bandLength(100.0, grid, alongY), 20U);
+  EXPECT_EQ(bandHalfWidth(185.0, grid, alongY), 9U);
+  // A diagonal step is the diagonal of one cell, about 11.18 units long.
+  EXPECT_EQ(bandLength(100.0, grid, Step{.x = 1, .y = 1}), 8U);
 }
 
 TEST(PortBands, AStraightBandCoversItsStrips) {
@@ -183,6 +205,30 @@ TEST(PortBands, PlacingFallsBackWhenTheWalkLeavesTheGrid) {
   EXPECT_FALSE(before.test(*target));
   EXPECT_EQ(*target % 50, 27U);
   EXPECT_FALSE(mask.test(*target));
+}
+
+TEST(PortBands, PlacingBeyondABandThatRunsOffTheGridTakesNoCellOfTheBand) {
+  // The band reaches past the right edge, so no cell lies beyond it. The
+  // target is the nearest free cell once the band is undone, and not a cell
+  // of the band at the edge.
+  const BitGrid before(20, 20);
+  BitGrid mask = before;
+  const PortBand band{.center = DCoord(17, 10),
+                      .step = {.x = 1, .y = 0},
+                      .forward = 5,
+                      .backward = 0,
+                      .halfWidth = 1};
+  const StampedBand stamped = stampBand(mask, band);
+  EXPECT_FALSE(stamped.lastForwardOnGrid);
+  const auto target = placeTargetBeyondBand(mask, before, stamped, band.step);
+  ASSERT_TRUE(target.has_value());
+  EXPECT_FALSE(mask.test(*target));
+  // The band was undone, so only the target changed the mask.
+  for (std::size_t cell = 0; cell < 400; ++cell) {
+    if (cell != *target) {
+      EXPECT_FALSE(mask.test(cell)) << cell;
+    }
+  }
 }
 
 TEST(PortBands, PlacingFindsNoTargetOnAFullGrid) {

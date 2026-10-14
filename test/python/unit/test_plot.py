@@ -289,6 +289,25 @@ def test_the_corridors_are_solid_and_the_ground_under_them_light() -> None:
     assert "svg.corridor g.l-border>path" in style.text
 
 
+def test_corridors_that_end_at_one_point_each_continue_along_their_stub() -> None:
+    """Two corridors that end at the same point both join their own stub in one line with rounded turns."""
+    geometry = PlanningGeometry(
+        corridors=[[(0.0, 0.0), (50.0, 50.0)], [(100.0, 0.0), (50.0, 50.0)]],
+        stubs=[
+            [(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)],
+            [(50.0, 50.0), (50.0, 400.0), (-500.0, 400.0)],
+        ],
+    )
+
+    svg = layout_svg(_mini(), stage="corridor", planning=geometry)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-corridor")
+    data = layer.findall(f"{SVG}path")[0].get("d") or ""
+    assert data.count("M") == 2
+    assert data.count("Q") == 4
+
+
 def test_the_panel_lists_the_layers_the_picture_carries() -> None:
     """The layer panel names every layer that is drawn and none that is not."""
     svg = layout_svg(_mini(), title="mini", stage="layout")

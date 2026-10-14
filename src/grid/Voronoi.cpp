@@ -247,6 +247,8 @@ MedialAxis rasterizeMedialAxis(const BitGrid& blocked, const GridMetrics& grid,
     std::size_t previous = grid.cells();
     for (const auto cell : cells) {
       if (blocked.test(cell)) {
+        // The cells on either side of a blocked cell are no neighbors.
+        previous = grid.cells();
         continue;
       }
       axis.cells[cell] = AxisCell::Path;

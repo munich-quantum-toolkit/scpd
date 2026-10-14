@@ -283,8 +283,9 @@ public:
    * @param type The type.
    * @param objective The objective coefficient.
    * @return The variable.
-   * @throws std::invalid_argument When the name is empty or taken, or when
-   * @p lower is above @p upper.
+   * @throws std::invalid_argument When the name is empty or taken, when a
+   * bound is not a number, or when the lower bound is above the upper bound
+   * after the clipping.
    */
   Var addVariable(std::string_view name, double lower, double upper,
                   VarType type, double objective = 0.0);

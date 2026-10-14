@@ -98,6 +98,22 @@ crossingSlots(const grid::PartitionBorder& border, const CapacityScene& scene,
               double pitch);
 
 /**
+ * @brief Returns where the Capacity stage places the slot of each launcher.
+ *
+ * A launcher with a direction gets a slot at the center of the detail cell
+ * its own center rounds to. The positions match the slots of buildScene()
+ * without building the masks.
+ *
+ * @param chip The classified chip.
+ * @param config The run configuration, whose grid section places the cells.
+ * @return The slot positions in layout units, in port order.
+ * @throws std::invalid_argument When the detail grid of the configuration has
+ * no cells.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<geometry::Point>
+launcherSlotPositions(const ChipT& chip, const ConfigT& config);
+
+/**
  * @brief Builds the grids and masks of a run.
  *
  * A configuration without a grid section takes the grid defaults of the

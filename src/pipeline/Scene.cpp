@@ -26,6 +26,8 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
@@ -64,7 +66,41 @@ grid::GridMetrics capacityGrid(const geometry::BoundingBox& box,
                                 params.capacity_cells_y);
 }
 
+/// The capacity grid and the detail grid a configuration asks for. A
+/// configuration leaves out [grid] when every value in it is a default, so an
+/// absent section is one of defaults.
+std::pair<grid::GridMetrics, grid::GridMetrics> gridsOf(const ChipT& chip,
+                                                        const ConfigT& config) {
+  const flatbuffers::config::GridParamsT defaults;
+  const auto& params = config.grid != nullptr ? *config.grid : defaults;
+  if (params.detail_factor == 0) {
+    throw std::invalid_argument(
+        "a detail grid of zero cells per capacity cell has no cells");
+  }
+  const auto capacity = capacityGrid(grid::chipBounds(chip), params);
+  return {capacity, capacity.refined(params.detail_factor)};
+}
+
+/// Whether a port gets a launcher slot: it is a launcher with a direction.
+bool hasSlot(const flatbuffers::design::PortT& port) {
+  const auto step = grid::orientationStep(port.orientation);
+  return port.role == UnassignedRole::Launcher && (step.x != 0 || step.y != 0);
+}
+
 } // namespace
+
+std::vector<geometry::Point> launcherSlotPositions(const ChipT& chip,
+                                                   const ConfigT& config) {
+  const auto detail = gridsOf(chip, config).second;
+  std::vector<geometry::Point> positions;
+  for (const auto& port : chip.ports) {
+    if (hasSlot(*port)) {
+      const auto cell = detail.clampToCell(port->center);
+      positions.push_back(detail.toLayout(cell.x(), cell.y()));
+    }
+  }
+  return positions;
+}
 
 double crossingPitch(const ConfigT& config) {
   if (config.stages != nullptr && config.stages->capacity != nullptr) {
@@ -113,20 +149,12 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
   if (config.rules == nullptr) {
     throw std::invalid_argument("the configuration carries no design rules");
   }
-  // A configuration leaves out [grid] when every value in it is a default, so
-  // an absent section is one of defaults.
   const flatbuffers::config::GridParamsT defaults;
   const auto& params = config.grid != nullptr ? *config.grid : defaults;
   const auto& rules = *config.rules;
-  if (params.detail_factor == 0) {
-    throw std::invalid_argument(
-        "a detail grid of zero cells per capacity cell has no cells");
-  }
 
   CapacityScene scene;
-  const auto box = grid::chipBounds(chip);
-  scene.capacity = capacityGrid(box, params);
-  scene.detail = scene.capacity.refined(params.detail_factor);
+  std::tie(scene.capacity, scene.detail) = gridsOf(chip, config);
 
   // The mask carries no obstacle keepout. The keepout makes the clearance a
   // hard constraint on a search, and nothing searches on this grid: the stage
@@ -173,12 +201,12 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
         .forward =
             grid::bandLength((bridging[index] ? BRIDGE_FORWARD_FACTOR : 1.0) *
                                  rules.min_straight_length,
-                             scene.detail, step.diagonal()),
+                             scene.detail, step),
         .backward =
             grid::bandLength(BACKWARD_BAND_FACTOR * rules.min_straight_length,
-                             scene.detail, step.diagonal()),
-        .halfWidth = grid::bandHalfWidth(rules.min_wire_spacing, scene.detail,
-                                         step.diagonal())};
+                             scene.detail, step),
+        .halfWidth =
+            grid::bandHalfWidth(rules.min_wire_spacing, scene.detail, step)};
 
     const auto stamped = grid::stampBand(scene.blocked, band);
     for (std::size_t position = 0; position < stamped.cells.size();
@@ -206,11 +234,7 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
   // stand where it starts, and it is the only cell this loop touches.
   for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
     const auto& port = *chip.ports[index];
-    if (port.role != UnassignedRole::Launcher) {
-      continue;
-    }
-    const auto step = grid::orientationStep(port.orientation);
-    if (step.x == 0 && step.y == 0) {
+    if (!hasSlot(port)) {
       continue;
     }
     const auto center = scene.detail.clampToCell(port.center);

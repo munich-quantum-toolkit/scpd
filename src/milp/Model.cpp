@@ -122,22 +122,26 @@ Var Model::addVariable(const std::string_view name, const double lower,
   if (name.empty()) {
     throw std::invalid_argument("a model variable needs a name");
   }
-  if (lower > upper) {
-    throw std::invalid_argument(std::format(
-        "variable '{}' has a lower bound of {} above its upper bound of {}",
-        name, lower, upper));
+  if (std::isnan(lower) || std::isnan(upper)) {
+    throw std::invalid_argument(
+        std::format("variable '{}' has a bound that is not a number", name));
   }
-  if (takenNames.contains(std::string(name))) {
-    throw std::invalid_argument(std::format(
-        "the name '{}' is already taken in model '{}'", name, modelName));
-  }
-
   auto low = lower;
   auto high = upper;
   if (type == VarType::Binary) {
     low = std::max(low, 0.0);
     high = std::min(high, 1.0);
   }
+  if (low > high) {
+    throw std::invalid_argument(std::format(
+        "variable '{}' has a lower bound of {} above its upper bound of {}",
+        name, low, high));
+  }
+  if (takenNames.contains(std::string(name))) {
+    throw std::invalid_argument(std::format(
+        "the name '{}' is already taken in model '{}'", name, modelName));
+  }
+
   variableList.push_back({.name = std::string(name),
                           .lower = low,
                           .upper = high,

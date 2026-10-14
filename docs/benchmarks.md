@@ -71,7 +71,9 @@ A run writes one artifact per step into its directory, in this order:
 The global step runs before the assignment, because the inner circuit decides at
 which coupler ports its wires surface, and the assignment works on the ring that
 those ports extend. The run directory also keeps a copy of the configuration and
-of the chip input, `config.toml` and `00-chip.json`.
+of the chip input, `config.toml` and `00-chip.json`. Every command that takes
+`-c` reads that `config.toml` with the chip copy beside it, so
+`mqt-scpd doctor -c runs/33q/config.toml` checks the inputs of the run.
 
 `--stop-after <step>`, or `stop_after` in the `[run]` section of the
 configuration, ends a run after a step. `--stage <step>` runs one step again on
@@ -120,7 +122,9 @@ chip. The port labels go to layer 10, with the port's role as the datatype,
 which keeps them clear of the wire, coupler, bridge, and clearance layers 2 to 5
 of the routed layouts. A planning step goes to the layers from 20 on, one per
 kind of shape, such as `plan.partition` on layer 21 and `plan.corridor` on layer
-30.
+30. Layer 30 also carries the approach of each corridor to its target port. The
+cells the grid blocked are on layer 33, `plan.blocked`, and the wire budget of
+each bottleneck is a text on layer 34, `plan.budget`.
 
 ## What the Current Release Does
 

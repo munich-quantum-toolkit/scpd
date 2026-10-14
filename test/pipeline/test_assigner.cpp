@@ -213,7 +213,8 @@ TEST(LauncherOrder, IsWhatTheStageRefuses) {
 
 std::string
 placesProblemOf(const std::vector<std::array<double, 2>>& launchers) {
-  return launcherPlacesProblem(squareChip(launchers)).value_or("");
+  return launcherPlacesProblem(squareChip(launchers), squareConfig())
+      .value_or("");
 }
 
 /// The reason the stage gives for a chip whose launchers cannot feed its
@@ -239,6 +240,22 @@ TEST(LauncherPlaces, RefuseLaunchersOnOneLine) {
                 std::string(PLACES_REASON));
 }
 
+TEST(LauncherPlaces, AcceptLaunchersAroundTheChipWhenTheFirstTwoCoincide) {
+  // The first two launchers share a center, so they give no line a
+  // direction; the other two lie off every line through it.
+  EXPECT_EQ(placesProblemOf(
+                {{-10.0, 50.0}, {-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}}),
+            "");
+}
+
+TEST(LauncherPlaces, JudgeTheSlotsAndNotTheCenters) {
+  // The third launcher lies a hundredth of a unit off the line of the other
+  // two, far less than a detail cell, so its slot lies on that line.
+  EXPECT_EQ(placesProblemOf({{-10.0, -10.0}, {50.0, -10.0}, {110.0, -9.99}}),
+            "the launcher ports of the chip lie on one line; " +
+                std::string(PLACES_REASON));
+}
+
 TEST(LauncherPlaces, AcceptTwoLaunchersOnAChipWithoutResonators) {
   auto chip = squareChip({{-10.0, 50.0}, {110.0, 50.0}});
   for (auto& port : chip.ports) {
@@ -246,7 +263,7 @@ TEST(LauncherPlaces, AcceptTwoLaunchersOnAChipWithoutResonators) {
       port->role = fbd::UnassignedRole::Conventional;
     }
   }
-  EXPECT_EQ(launcherPlacesProblem(chip), std::nullopt);
+  EXPECT_EQ(launcherPlacesProblem(chip, squareConfig()), std::nullopt);
 }
 
 TEST(LauncherPlaces, AreWhatTheStageRefuses) {
@@ -322,6 +339,39 @@ TEST(Assigner, GivesEachOfTwoResonatorsAChainOfItsOwn) {
     EXPECT_EQ(chain->end, nullptr);
   }
   EXPECT_EQ(chained, (std::set<std::uint32_t>{0, 1}));
+}
+
+TEST(Assigner, RefusesFeedsCloserThanTheWireSpacing) {
+  // Neighbouring launchers lie about 85 units apart. A resonator fed between
+  // two of them lies half of that from each, below a wire spacing of 50.
+  const auto chip =
+      squareChip({{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}});
+  auto config = squareConfig();
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  config.rules->max_feedline_utilization = 4;
+  config.rules->feedline_terminations = 2;
+  config.rules->min_wire_spacing = 50.0;
+  config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  config.stages->assignment =
+      std::make_unique<flatbuffers::config::AssignmentParamsT>();
+  config.stages->assignment->launcher_target = 2;
+
+  try {
+    static_cast<void>(makeOrderedMilpAssigner()->run(
+        chip, planWithLaunchersOf(chip), routingWithRing({0, 1}, {0, 1}),
+        config, {}));
+    FAIL() << "the stage has to refuse feeds closer than the wire spacing";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_NE(std::string(error.what()).find("too close to feed 1 resonator"),
+              std::string::npos)
+        << error.what();
+  }
+
+  // At a spacing of 40 every part is long enough.
+  config.rules->min_wire_spacing = 40.0;
+  EXPECT_NO_THROW(static_cast<void>(makeOrderedMilpAssigner()->run(
+      chip, planWithLaunchersOf(chip), routingWithRing({0, 1}, {0, 1}), config,
+      {})));
 }
 
 // The stage on the two-qubit fixture.

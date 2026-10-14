@@ -57,30 +57,31 @@ orientationStep(double orientationDegrees);
  * @brief Returns the half width of a band that keeps a spacing free on both
  * sides of a port.
  *
- * The spacing is rounded up to whole cells and to an odd count, so that the
- * band is centered on the cell of the port, and then halved. A diagonal band,
- * whose width runs along the other diagonal, is narrower by the square root
- * of two.
+ * The spacing runs across the band. It is rounded up to whole cells and to
+ * an odd count, so that the band is centered on the cell of the port, and then
+ * halved. A diagonal band, whose width runs along the other diagonal, is
+ * narrower by the square root of two. On a grid whose cells are not square,
+ * the spacing is counted in the cell step across the band.
  *
  * @param spacing The spacing, in layout units.
- * @param grid The grid, whose cell width the spacing is counted in.
- * @param diagonal Whether the band runs along a diagonal.
- * @return The half width, in cells.
+ * @param grid The grid, whose cell steps the spacing is counted in.
+ * @param step The step the band runs along.
+ * @return The half width, in cells, or zero for a zero step.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT uint32_t
-bandHalfWidth(double spacing, const GridMetrics& grid, bool diagonal);
+bandHalfWidth(double spacing, const GridMetrics& grid, Step step);
 
 /**
- * @brief Returns a length as whole cells along a step.
+ * @brief Returns a length as whole steps along a band.
  * @param length The length, in layout units.
- * @param grid The grid, whose cell width the length is counted in.
- * @param diagonal Whether the step runs along a diagonal, which makes each
- * step longer by the square root of two.
- * @return The length in whole cells, rounded down.
+ * @param grid The grid, whose cell steps give the length of one step.
+ * @param step The step, whose length in layout units counts both of its
+ * components.
+ * @return The length in whole steps, rounded down, or zero for a zero step.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT uint32_t bandLength(double length,
                                                        const GridMetrics& grid,
-                                                       bool diagonal);
+                                                       Step step);
 
 /// The keep-out band of a port: a strip across the direction the wire leaves
 /// the port, repeated forward along that direction and backward against it,
@@ -106,6 +107,8 @@ struct StampedBand {
   std::vector<bool> wasBlocked;
   /// The center of the last strip along the step, clamped onto the grid.
   DCoord lastForwardCenter{0, 0};
+  /// Whether that center lies on the grid without the clamping.
+  bool lastForwardOnGrid = true;
 };
 
 /**
@@ -126,7 +129,8 @@ struct StampedBand {
  * capacity grid.
  *
  * The ideal target is the first cell beyond the band along the step. When that
- * cell was free before the bands, it is freed and taken. When it was blocked,
+ * cell lies on the grid and was free before the bands, it is freed and taken.
+ * When it lies off the grid or was blocked,
  * the band is undone, and a walk along the step takes the first cell, or the
  * first eight-neighbor of a cell, that was free before the bands. When the
  * walk leaves the grid first, the nearest such cell by breadth-first search

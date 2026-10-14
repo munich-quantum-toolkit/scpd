@@ -220,6 +220,24 @@ def test_a_step_that_fails_keeps_the_old_artifact(tmp_path: Path, monkeypatch: p
     assert not list(directory.path.glob("*.tmp"))
 
 
+def test_a_step_that_fails_removes_the_later_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A step that raises leaves no artifact of a later step, which came from the step's old artifact."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, list(STEPS))
+
+    def broken(*args: object) -> bytes:
+        del args
+        msg = "the global stage broke"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(pyscpd, "route_global", broken)
+    with pytest.raises(RuntimeError, match="broke"):
+        run_through(directory, ["global"])
+
+    assert sorted(path.name for path in directory.path.glob("*.fb")) == ["01-capacity.fb", "02-global.fb"]
+
+
 def test_an_artifact_is_replaced_whole_or_not_at_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A write that breaks off halfway leaves the old artifact and no partial file."""
     directory = RunDirectory(tmp_path / "run")

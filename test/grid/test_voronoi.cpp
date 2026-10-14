@@ -154,6 +154,25 @@ TEST(MedialAxis, RefusesAMaskOfTheWrongSize) {
       std::invalid_argument);
 }
 
+TEST(MedialAxis, JoinsNoCellsAcrossABlockedCell) {
+  // A single blocked cell on an edge splits it: the free cells on either side
+  // are no neighbors.
+  BitGrid mask(10, 3);
+  mask.setCell(5, 1);
+  const auto grid = squareGrid(10, 3);
+  const auto axis = rasterizeMedialAxis(
+      mask, grid, {{.x0 = 1.0, .y0 = 1.0, .x1 = 8.0, .y1 = 1.0}});
+  const auto left = grid.index(4, 1);
+  const auto right = grid.index(6, 1);
+  ASSERT_TRUE(axis.onAxis(left));
+  ASSERT_TRUE(axis.onAxis(right));
+  EXPECT_FALSE(axis.onAxis(grid.index(5, 1)));
+  EXPECT_EQ(axis.neighbors.at(left).size(), 1U);
+  EXPECT_EQ(axis.neighbors.at(right).size(), 1U);
+  EXPECT_EQ(axis.cells[left], AxisCell::Endpoint);
+  EXPECT_EQ(axis.cells[right], AxisCell::Endpoint);
+}
+
 TEST(MedialAxis, MarksNoCellWithoutAnEdge) {
   const auto mask = corridor(20, 9, 2);
   const auto axis = rasterizeMedialAxis(mask, squareGrid(20, 9), {});

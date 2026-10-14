@@ -102,3 +102,33 @@ def test_every_feedline_chain_is_one_path_on_the_feedline_layer(tmp_path: Path) 
     shapes = layout.top_cell().shapes(layout.layer(number, datatype))
     assert shapes.size() == 2
     assert all(shape.is_path() for shape in shapes.each())
+
+
+def test_the_stubs_the_blocked_cells_and_the_budgets_are_written(tmp_path: Path) -> None:
+    """A stub goes on the corridor layer, a blocked cell and a wire budget each on a layer of their own."""
+    config_path = FIXTURE / "config.toml"
+    chip = decode_chip(load_chip(load_config(config_path), config_path))
+    geometry = PlanningGeometry(
+        blocked=[[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]],
+        bottlenecks=[((0.0, 0.0), (100.0, 0.0), 3)],
+        corridors=[[(0.0, 0.0), (50.0, 50.0)]],
+        stubs=[[(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)]],
+    )
+
+    summary = write_layout(chip, tmp_path / "plan.gds", planning=geometry)
+
+    assert summary.planning == 5
+    layout = kdb.Layout()
+    layout.read(str(summary.path))
+    top = layout.top_cell()
+
+    def shapes(name: str) -> list[kdb.Shape]:
+        number, datatype, _ = PLANNING_LAYERS[name]
+        return list(top.shapes(layout.layer(number, datatype)).each())
+
+    assert [shape.is_path() for shape in shapes("corridors")] == [True, True]
+    assert [shape.is_polygon() or shape.is_box() for shape in shapes("blocked")] == [True]
+    (budget,) = shapes("budgets")
+    assert budget.text_string == "3"
+    assert (budget.text_dpos.x, budget.text_dpos.y) == pytest.approx((50.0, 0.0))
+    assert len({number for number, _, _ in PLANNING_LAYERS.values()}) == len(PLANNING_LAYERS)

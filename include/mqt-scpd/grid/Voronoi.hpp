@@ -93,7 +93,8 @@ struct MedialAxis {
  *
  * Each edge is walked as an eight-connected line through the cells its ends
  * truncate to, and a blocked cell is never marked. Each cell is joined to the
- * cell before it on the same edge, so the result is a graph over the grid. A
+ * cell before it on the same edge unless a blocked cell lies between them, so
+ * the result is a graph over the grid. A
  * cell with three or more neighbors is a junction, and a cell with one
  * neighbor is an endpoint.
  *

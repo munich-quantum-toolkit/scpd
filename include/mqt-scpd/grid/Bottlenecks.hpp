@@ -97,10 +97,10 @@ findBottlenecks(const BitGrid& blocked, const MedialAxis& axis,
 /**
  * @brief Counts the wires that fit through a bottleneck.
  *
- * The gap is the length of the bottleneck in layout units, and every wire
- * takes one pitch: a wire spacing plus an obstacle spacing. A gap no longer
- * than the obstacle spacing carries nothing, and a gap shorter than a wire
- * spacing carries no whole wire either.
+ * The gap is the length of the bottleneck in layout units, with each axis
+ * counted in its own cell step. Every wire takes one pitch: a wire spacing
+ * plus an obstacle spacing. A gap no longer than the obstacle spacing carries
+ * nothing, and a gap shorter than a wire spacing carries no whole wire either.
  *
  * @param bottleneck The bottleneck.
  * @param grid The metrics of the grid it was found on.

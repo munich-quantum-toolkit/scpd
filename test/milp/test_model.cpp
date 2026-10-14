@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <stdexcept>
 
 namespace mqt::scpd::milp {
@@ -76,6 +77,13 @@ TEST(MilpModel, RefusesCrossedBoundsAndAnEmptyName) {
                std::invalid_argument);
   EXPECT_THROW(static_cast<void>(model.addContinuous("", 0.0, 1.0)),
                std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(model.addContinuous(
+                   "x", std::numeric_limits<double>::quiet_NaN(), 1.0)),
+               std::invalid_argument);
+  // Clipped to [0, 1], the bounds [2, 3] of a binary variable cross.
+  EXPECT_THROW(
+      static_cast<void>(model.addVariable("b", 2.0, 3.0, VarType::Binary)),
+      std::invalid_argument);
 
   const auto x = model.addContinuous("x", 0.0, 1.0);
   EXPECT_THROW(model.addRange("crossed", 1.0 * x, 4.0, 2.0),

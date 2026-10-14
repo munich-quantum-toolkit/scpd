@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -244,15 +245,17 @@ TEST(HighsBackend, GivesValuesToEverySolveThatALimitStops) {
 }
 
 /// A covering program too large to solve within a millisecond: each of 3000
-/// rows asks that 30 of 3000 variables in [0, 1] add up to at least 10.
-Model largeCover() {
+/// rows asks that 30 of 3000 variables in [0, 1] add up to at least 10. With
+/// @p integral the variables are binary.
+Model largeCover(const bool integral = false) {
   constexpr std::size_t size = 3000;
   Model model("large-cover");
   std::vector<Var> variables;
   variables.reserve(size);
   for (std::size_t column = 0; column < size; ++column) {
-    variables.push_back(
-        model.addContinuous(std::format("x{}", column), 0.0, 1.0, 1.0));
+    const auto name = std::format("x{}", column);
+    variables.push_back(integral ? model.addBinary(name, 1.0)
+                                 : model.addContinuous(name, 0.0, 1.0, 1.0));
   }
   std::uint64_t state = 1;
   const auto next = [&state] {
@@ -327,6 +330,23 @@ TEST(HighsBackend, EndsTheSolveWhenTheObserverThrowsAndRethrows) {
 
   EXPECT_THROW(static_cast<void>(makeHighsBackend()->solve(model, options)),
                std::runtime_error);
+}
+
+TEST(HighsBackend, EndsTheSolveWhenOnlyTheLogObserverThrows) {
+  // The log can be the only observer, as at the solver log level without a
+  // progress display. Its exception still ends the solve at the next chance,
+  // long before the time limit.
+  const auto model = largeCover(true);
+  SolveOptions options;
+  options.timeLimit = 60.0;
+  options.observer.log = [](const std::string_view) {
+    throw std::runtime_error("stopped by the observer");
+  };
+
+  const auto start = std::chrono::steady_clock::now();
+  EXPECT_THROW(static_cast<void>(makeHighsBackend()->solve(model, options)),
+               std::runtime_error);
+  EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(30));
 }
 
 TEST(SolverChoice, ReadsTheTwoNamesAndRefusesTheRest) {

@@ -46,8 +46,16 @@ ROLE_NAMES: dict[int, str] = {
 }
 
 
+#: The name of the chip copy in a run directory, beside the run's copy of the configuration.
+RUN_CHIP = "00-chip.json"
+
+
 def chip_input_path(config: ConfigT, config_path: Path, chip_path: Path | None = None) -> Path:
-    """The chip input of a run: the one given, else the one the configuration names.
+    """The chip input of a run: the one given, else the copy of a run directory, else the configured one.
+
+    A run directory holds a copy of the configuration as ``config.toml`` and a copy of the chip as
+    ``00-chip.json``. The copied configuration still names the chip input relative to where it
+    came from, so a ``config.toml`` with a ``00-chip.json`` beside it takes that copy.
 
     Args:
         config: The loaded configuration.
@@ -59,6 +67,9 @@ def chip_input_path(config: ConfigT, config_path: Path, chip_path: Path | None =
     """
     if chip_path is not None:
         return chip_path
+    run_chip = config_path.parent / RUN_CHIP
+    if config_path.name == "config.toml" and run_chip.is_file():
+        return run_chip
     return config_path.parent / (config.chipInput or "")
 
 

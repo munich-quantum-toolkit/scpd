@@ -133,11 +133,11 @@ rasterizePartitions(std::span<const PartitionOutline> outlines,
  * @brief Returns the crossing slots of a border: the places a wire may cross
  * it.
  *
- * Two wires that cross one border keep a spacing apart, so the border is
- * walked from sample to nearest sample and a sample becomes a slot once it
- * lies one spacing past the last slot. A border in several pieces starts a
- * new slot on each piece, and a border shorter than one spacing still carries
- * one wire, so the first sample is always a slot.
+ * Two wires that cross one border keep a spacing apart, so each piece of the
+ * border is walked from one of its ends, from sample to nearest sample, and a
+ * sample becomes a slot once it lies one spacing past the last slot. A closed
+ * piece has no end and is walked from its first sample. Each piece starts
+ * with a slot, so a border shorter than one spacing still carries one wire.
  *
  * @param border The border.
  * @param grid The metrics of the grid, which convert the samples to layout

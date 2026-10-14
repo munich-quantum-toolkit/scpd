@@ -31,12 +31,13 @@ The assignment expects the chip input to list the launcher ports once around the
 chip, against the direction of the port ring, as on the benchmark chips. A chip
 with resonators needs at least three launchers that do not all lie on one line.
 With fewer, two resonators could share one feed point, and the assignment
-refuses the chip. `launcher_target` plus `[design_rules] feedline_terminations`
-has to be even, since every feedline chain has two ends. `plan` checks these
-figures and the implementation names of the stages before its first stage, and
-refuses a run whose steps they would stop; the run directory then stays as it
-was. `doctor` reports the same problems for the steps that `[run] stop_after`
-configures.
+refuses the chip. The assignment also refuses a solution that puts two feeds, or
+a feed and its launcher, closer together than `[design_rules] min_wire_spacing`.
+`launcher_target` plus `[design_rules] feedline_terminations` has to be even,
+since every feedline chain has two ends. `plan` checks these figures and the
+implementation names of the stages before its first stage, and refuses a run
+whose steps they would stop; the run directory then stays as it was. `doctor`
+reports the same problems for the steps that `[run] stop_after` configures.
 
 An inner routable port that the `component` pattern does not match ends a wire
 of the inner circuit, as a port of an inner qubit does.
@@ -51,9 +52,11 @@ that `[run] stop_after` configures.
 ### Output of the commands
 
 `plot`, `render` and `inspect -o` end with a line that starts with `✓`, and
-every command reports an error on a line that starts with `✗`, both in the
-format of `docs/terminal_output.md`. A script that looked for `wrote` or
-`error:` looks for these instead.
+every command except `doctor` reports an error on a line that starts with `✗`,
+both in the format of `docs/terminal_output.md`. A script that looked for
+`wrote` or `error:` looks for these instead. `doctor` reports each problem on a
+line that starts with `PROBLEM:` and ends with `doctor: OK` or
+`doctor: <n> problem(s)`.
 
 <!-- Version links -->
 

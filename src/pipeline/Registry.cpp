@@ -171,26 +171,31 @@ std::vector<std::string> planProblems(const ChipT& chip, const ConfigT& config,
         target, config.rules->feedline_terminations));
   }
   note(launcherOrderProblem(chip, config));
-  note(launcherPlacesProblem(chip));
+  note(launcherPlacesProblem(chip, config));
   return problems;
 }
+
+namespace {
+
+/// Whether the global step solves a model: it does where the chip has an
+/// inner circuit. A ring that the global step refuses counts as one it
+/// solves, so that the list keeps the step.
+bool globalSolves(const ChipT& chip, const ConfigT& config) {
+  try {
+    return !innerCircuitOf(chip, config).targets.empty();
+  } catch (const std::invalid_argument&) {
+    return true;
+  }
+}
+
+} // namespace
 
 std::vector<std::string> solvingSteps(const ChipT& chip, const ConfigT& config,
                                       const std::vector<std::string>& steps) {
   std::vector<std::string> solving;
   for (const auto& step : steps) {
-    if (step == "assign") {
+    if (step == "assign" || (step == "global" && globalSolves(chip, config))) {
       solving.push_back(step);
-    } else if (step == "global") {
-      bool solves = true;
-      try {
-        solves = !innerCircuitOf(chip, config).targets.empty();
-      } catch (const std::invalid_argument&) {
-        // The global step refuses this ring, and the list keeps the step.
-      }
-      if (solves) {
-        solving.push_back(step);
-      }
     }
   }
   return solving;

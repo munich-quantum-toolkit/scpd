@@ -21,6 +21,7 @@ import pytest
 
 from mqt.scpd import pyscpd
 from mqt.scpd.chip import load_chip
+from mqt.scpd.cli import main
 from mqt.scpd.config import load_config, write_config
 from mqt.scpd.solvers import SolverUnavailableError, available, register, solve_mps
 
@@ -226,7 +227,14 @@ class FakeEnvironment:
         del name, value
 
     def start(self) -> None:
-        """Start the environment."""
+        """Start the environment, or fail as Gurobi does without a licence.
+
+        Raises:
+            RuntimeError: If the fake module has no licence.
+        """
+        if not self.gurobi.licensed:
+            msg = "no Gurobi license found"
+            raise RuntimeError(msg)
 
     def dispose(self) -> None:
         """Count the release."""
@@ -245,6 +253,7 @@ class FakeGurobi:
         self.status_without_dual_reductions = status_without_dual_reductions
         self.solutions = solutions
         self.runtime = 0.0
+        self.licensed = True
         self.parameters: dict[str, float] = {}
         self.solved: list[str] = []
         self.disposed = 0
@@ -291,12 +300,62 @@ def test_gurobi_returns_the_values_in_the_order_of_the_names(monkeypatch: pytest
     """Gurobi reads the MPS text, honours the limits and answers by variable name."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi())
 
-    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x", "y", "z"], time_limit=5.0, relative_gap=0.01)
+    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x", "y"], time_limit=5.0, relative_gap=0.01)
 
     assert gurobi.solved == ["NAME pair\nENDATA\n"]
     assert gurobi.parameters == {"TimeLimit": 5.0, "MIPGap": 0.01}
-    assert (status, objective, values) == ("optimal", 7.0, [1.0, 2.0, 0.0])
+    assert (status, objective, values) == ("optimal", 7.0, [1.0, 2.0])
     assert gurobi.released == ["model", "environment"]
+
+
+def test_gurobi_without_a_value_for_a_variable_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A variable that Gurobi does not know makes the solve an error that names the variable."""
+    gurobi = with_gurobi(monkeypatch, FakeGurobi())
+
+    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x", "y", "z"])
+
+    assert status == "gurobi returned no value for 1 of 3 variables: z"
+    assert math.isnan(objective)
+    assert values == []
+    assert gurobi.released == ["model", "environment"]
+
+
+def test_gurobi_without_a_licence_releases_its_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An environment that cannot start raises the error of Gurobi and is released."""
+    gurobi = with_gurobi(monkeypatch, FakeGurobi())
+    gurobi.licensed = False
+
+    with pytest.raises(RuntimeError, match="no Gurobi license found"):
+        solve_mps("NAME pair\nENDATA\n", ["x"])
+
+    assert gurobi.solved == []
+    assert gurobi.released == ["environment"]
+
+
+def test_an_interrupted_gurobi_solve_raises_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl-C during a Gurobi solve raises KeyboardInterrupt once the model and the environment are released."""
+    gurobi = with_gurobi(monkeypatch, FakeGurobi(11, 1))
+
+    with pytest.raises(KeyboardInterrupt):
+        solve_mps("NAME pair\nENDATA\n", ["x", "y"])
+
+    assert gurobi.released == ["model", "environment"]
+
+
+@pytest.mark.usefixtures("no_external_solver")
+def test_a_run_interrupted_in_gurobi_ends_with_130(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl-C during a Gurobi solve ends the run as Ctrl-C during a HiGHS solve does, and writes no artifact."""
+    with_gurobi(monkeypatch, FakeGurobi(11, 1))
+    monkeypatch.setenv("SCPD_SOLVER", "gurobi")
+    run = tmp_path / "run"
+
+    assert main(["plan", "-c", str(FIXTURE), "-o", str(run), "--no-progress"]) == 130
+
+    out = capsys.readouterr().out
+    assert "📌 assign\n   ✗ interrupted" in out
+    assert not (run / "03-assign.fb").exists()
 
 
 @pytest.mark.parametrize(
@@ -323,14 +382,14 @@ def test_gurobi_without_a_solution_returns_no_values(
     assert gurobi.released == ["model", "environment"]
 
 
-@pytest.mark.parametrize("code", [7, 8, 9, 10, 11, 13, 15, 16])
+@pytest.mark.parametrize("code", [7, 8, 9, 10, 13, 15, 16])
 def test_gurobi_stopped_at_a_limit_keeps_its_solution(monkeypatch: pytest.MonkeyPatch, code: int) -> None:
     """A limit that stops the search with a solution in hand gives that solution, as with HiGHS."""
     with_gurobi(monkeypatch, FakeGurobi(code, 1))
 
-    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x", "y", "z"])
+    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x", "y"])
 
-    assert (status, objective, values) == ("feasible", 7.0, [1.0, 2.0, 0.0])
+    assert (status, objective, values) == ("feasible", 7.0, [1.0, 2.0])
 
 
 @pytest.mark.parametrize(("resolved", "expected"), [(3, "infeasible"), (5, "unbounded")])

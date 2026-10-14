@@ -19,6 +19,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -201,9 +202,8 @@ TEST(Bottlenecks, DropsOneThatWouldRunOverATarget) {
       findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
   ASSERT_FALSE(without.empty());
 
-  // Putting a target on every cell of the first bottleneck's line removes
-  // exactly that bottleneck: a port is not a wall that capacity divides
-  // around.
+  // A target on the middle cell of the first bottleneck's line removes that
+  // bottleneck: a port is not a wall that capacity divides around.
   std::vector<std::size_t> targets;
   const auto& gone = without.front();
   const auto x0 = static_cast<int>(gone.first % WIDTH);
@@ -216,6 +216,9 @@ TEST(Bottlenecks, DropsOneThatWouldRunOverATarget) {
   const auto with = findBottlenecks(scene.mask, scene.axis, scene.distance,
                                     scene.grid, {.targets = targets});
   EXPECT_LT(with.size(), without.size());
+  EXPECT_TRUE(std::ranges::none_of(with, [&gone](const Bottleneck& kept) {
+    return kept.first == gone.first && kept.second == gone.second;
+  }));
 }
 
 TEST(Bottlenecks, RefusesInputsThatDoNotDescribeOneGrid) {
@@ -241,6 +244,31 @@ TEST(BottleneckCapacity, CountsTheWiresThatFitTheGap) {
   // where neither end sits on a reserved cell.
   EXPECT_EQ(bottleneckCapacity(across, grid, 25.0, 5.0, false), 4U);
   EXPECT_EQ(bottleneckCapacity(across, grid, 25.0, 5.0, true), 3U);
+}
+
+TEST(BottleneckCapacity, CountsEachAxisInItsOwnCellStep) {
+  // Cells ten layout units wide and five high.
+  const auto grid = GridMetrics::fit(
+      {.minX = 0.0, .minY = 0.0, .maxX = 990.0, .maxY = 990.0}, 100, 199);
+  ASSERT_DOUBLE_EQ(grid.cellWidth, 10.0);
+  ASSERT_DOUBLE_EQ(grid.cellHeight, 5.0);
+
+  // Ten cells along x are 100 units: four wires at a pitch of 30.
+  const Bottleneck acrossX{.first = 0, .second = 10, .saddle = 5};
+  EXPECT_EQ(bottleneckCapacity(acrossX, grid, 25.0, 5.0, false), 4U);
+  // Ten rows up, at cell 1000 of rows 100 cells wide, are 50 units: two
+  // wires.
+  const Bottleneck acrossY{.first = 0, .second = 1000, .saddle = 500};
+  EXPECT_EQ(bottleneckCapacity(acrossY, grid, 25.0, 5.0, false), 2U);
+}
+
+TEST(BottleneckCapacity, CarriesNoWireThroughAGapBelowTheWireSpacing) {
+  const auto grid = GridMetrics::fit(
+      {.minX = 0.0, .minY = 0.0, .maxX = 990.0, .maxY = 990.0}, 100, 100);
+  // A gap of 20 is wider than the obstacle clearance of 5 and narrower than
+  // the wire spacing of 25.
+  const Bottleneck narrow{.first = 0, .second = 2, .saddle = 1};
+  EXPECT_EQ(bottleneckCapacity(narrow, grid, 25.0, 5.0, false), 0U);
 }
 
 TEST(BottleneckCapacity, CarriesNothingThroughAGapBelowTheObstacleClearance) {

@@ -89,17 +89,19 @@ launcherOrderProblem(const ChipT& chip, const ConfigT& config);
  * ports include a resonator therefore needs at least three launchers that do
  * not all lie on one line.
  *
- * The check reads only the chip: its resonator ports and the launchers that
- * get a slot. planProblems() runs it before any stage. The Assignment stage
- * refuses the same launchers only where the ring it assigns carries a
- * resonator.
+ * The check reads the resonator ports of the chip and the launcher slots at
+ * the places the Capacity stage gives them, so that it judges the points the
+ * Assignment stage feeds between. planProblems() runs it before any stage.
+ * The Assignment stage refuses the same launchers only where the ring it
+ * assigns carries a resonator.
  *
  * @param chip The classified chip.
+ * @param config The run configuration, whose grid places the slots.
  * @return What is wrong with the launchers, or nothing when the chip has no
  * resonator or launchers enough.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
-launcherPlacesProblem(const ChipT& chip);
+launcherPlacesProblem(const ChipT& chip, const ConfigT& config);
 
 /**
  * @brief Creates the assigner of the first release.

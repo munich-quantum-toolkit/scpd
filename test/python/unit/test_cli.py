@@ -97,6 +97,49 @@ def test_the_chip_option_replaces_the_configured_input(tmp_path: Path, capsys: p
         assert main(["render", "-c", str(config), "--chip", chip, "-o", str(tmp_path / "chip.gds")]) == 0
 
 
+def test_every_command_reads_the_chip_copy_beside_the_configuration_of_a_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The config.toml of a run names the original chip input; every command takes the run's chip copy instead."""
+    run = tmp_path / "run"
+    assert plan(run, "--stop-after", "capacity") == 0
+    capsys.readouterr()
+    config = str(run / "config.toml")
+
+    assert main(["doctor", "-c", config]) == 0
+    assert f"chip input: {run / '00-chip.json'}" in capsys.readouterr().out
+    assert main(["plot", "-c", config, "-o", str(tmp_path / "chip.svg")]) == 0
+    assert (tmp_path / "chip.svg").is_file()
+    if HAS_KLAYOUT:
+        assert main(["render", "-c", config, "-o", str(tmp_path / "chip.gds")]) == 0
+
+    other = tmp_path / "other"
+    assert main(["plan", "-c", config, "-o", str(other), "--no-progress", "--stop-after", "capacity"]) == 0
+    assert (other / "00-chip.json").read_bytes() == (run / "00-chip.json").read_bytes()
+    assert (other / "01-capacity.fb").is_file()
+
+
+def test_plan_reports_a_value_the_core_refuses_against_the_configuration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A value that the core refuses names the configuration file, for a new run and for a resumed step."""
+    config = stopping_after(tmp_path, "capacity")
+    refused = config.read_text(encoding="utf-8") + "\n[stages.solver]\ntime_limit = -1.0\n"
+    config.write_text(refused, encoding="utf-8")
+    problem = "stages.solver: time_limit must not be negative"
+    run = tmp_path / "run"
+
+    assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
+    assert capsys.readouterr().err == f"✗ {config}: {problem}\n"
+    assert not run.exists()
+
+    assert plan(run, "--stop-after", "capacity") == 0
+    capsys.readouterr()
+    (run / "config.toml").write_text(refused, encoding="utf-8")
+    assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 1
+    assert capsys.readouterr().err == f"✗ {run / 'config.toml'}: {problem}\n"
+
+
 def test_plot_writes_the_layout_and_refuses_later_stages(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """The layout stage renders; a stage of a later phase names that phase."""
     output = tmp_path / "layout.svg"

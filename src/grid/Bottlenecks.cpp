@@ -495,19 +495,12 @@ std::uint32_t bottleneckCapacity(const Bottleneck& bottleneck,
   const auto y0 = static_cast<double>(firstRow);
   const auto x1 = static_cast<double>(bottleneck.second % grid.width);
   const auto y1 = static_cast<double>(secondRow);
-  // The gap is measured along the axis with the smaller cell step, which is
-  // the same conversion `cellsFor` inverts.
-  const auto step = std::min(grid.cellWidth, grid.cellHeight);
-  const auto gap = std::hypot(x1 - x0, y1 - y0) * step;
+  const auto gap =
+      std::hypot((x1 - x0) * grid.cellWidth, (y1 - y0) * grid.cellHeight);
 
   const auto pitch = wireSpacing + obstacleSpacing;
-  if (gap <= obstacleSpacing || pitch <= 0.0) {
+  if (gap <= obstacleSpacing || gap < wireSpacing || pitch <= 0.0) {
     return 0;
-  }
-  if (gap < wireSpacing) {
-    // Below one wire spacing the corridor carries whatever whole wires fit,
-    // which is none unless the gap already exceeds a pitch.
-    return static_cast<std::uint32_t>(std::max(0.0, gap / pitch));
   }
   const auto exact = gap / pitch;
   const auto count = roundDown ? std::floor(exact) : std::ceil(exact);

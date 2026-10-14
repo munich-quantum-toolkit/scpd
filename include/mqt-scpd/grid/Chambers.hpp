@@ -38,16 +38,17 @@ struct BlockedMove {
  * @brief Lists the moves each bottleneck refuses.
  *
  * A gate is a cut and not a wall: it stops a wire from crossing the line
- * between its two obstacle cells, and it takes no free space of its own. It
- * refuses the move between two cells whose center-to-center segment crosses
- * the line, in both directions. A cell whose own center lies on the line,
- * other than the two ends, is enclosed: every move out of it and into it is
- * refused, because a wire there is already on the wrong side of every
- * crossing.
+ * between its two obstacle cells. It refuses the move between two cells whose
+ * center-to-center segment crosses the line, in both directions. A cell whose
+ * own center lies on the line, other than the two ends, is enclosed: every
+ * move out of it and into it is refused, because a wire there is already on
+ * the wrong side of every crossing. Along an axis every cell between the two
+ * ends has its center on the line, so such a gate encloses all of them; a
+ * gate at another angle encloses only the cells its line meets at a center.
  *
- * Blocking the cells of the line instead would take free space from the
- * chambers on both sides, and a line of cells is eight-connected, so a walk
- * that moves diagonally would step through it.
+ * Blocking every cell the line passes through instead would take more free
+ * space from the chambers on both sides, and a line of cells is
+ * eight-connected, so a walk that moves diagonally would step through it.
  *
  * @param bottlenecks The bottlenecks.
  * @param grid The metrics of the grid they were found on.

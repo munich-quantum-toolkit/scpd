@@ -15,6 +15,7 @@
 #include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/grid/PortBands.hpp"
 #include "mqt-scpd/milp/Model.hpp"
+#include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/Solver.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
@@ -155,14 +156,21 @@ int windingOf(const std::vector<geometry::Point>& points) {
   return area > 0.0 ? 1 : -1;
 }
 
-/// Whether every point lies on the line through the first two.
+/// Whether every point lies on one line. The line runs through the first
+/// point and the point farthest from it, so that points listed twice do not
+/// leave it without a direction.
 bool onOneLine(const std::vector<geometry::Point>& points) {
   double extent = 0.0;
+  const geometry::Point* farthest = &points.front();
   for (const auto& point : points) {
     extent = std::max({extent, std::abs(point.x() - points.front().x()),
                        std::abs(point.y() - points.front().y())});
+    if (geometry::distance(point, points.front()) >
+        geometry::distance(*farthest, points.front())) {
+      farthest = &point;
+    }
   }
-  const auto along = geometry::subtract(points[1], points.front());
+  const auto along = geometry::subtract(*farthest, points.front());
   return std::ranges::all_of(points, [&](const geometry::Point& point) {
     return std::abs(geometry::cross(
                along, geometry::subtract(point, points.front()))) <=
@@ -305,7 +313,8 @@ public:
                       solution.message.empty() ? "" : ", " + solution.message));
     }
     assignment.objective = solution.objective;
-    readBack(assignment, inputs, ring, variables, solution);
+    readBack(assignment, chip, inputs, ring, variables, solution,
+             config.rules->min_wire_spacing);
 
     if (report.wants(Detail::Items)) {
       for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
@@ -623,9 +632,13 @@ private:
     return ends;
   }
 
-  static void readBack(AssignmentT& assignment, const AssignmentInputs& inputs,
-                       const RingEdges& ring, const Variables& variables,
-                       const milp::Solution& solution) {
+  /// Reads the solution into the assignment and places the feeds.
+  /// @throws std::invalid_argument When neighbouring feeds would lie closer
+  /// than @p spacing.
+  static void readBack(AssignmentT& assignment, const ChipT& chip,
+                       const AssignmentInputs& inputs, const RingEdges& ring,
+                       const Variables& variables,
+                       const milp::Solution& solution, const double spacing) {
     const auto launchers = inputs.launchers.size();
     const auto offset = static_cast<std::int64_t>(
         std::llround(solution.valueOf(variables.offset)));
@@ -670,9 +683,12 @@ private:
     // Where n resonators are fed on one segment, they land at 1/(n+1) ...
     // n/(n+1) of it. The one the walk reaches first lands first on the
     // segment as well, so their wires do not cross. The stage assigns a ring
-    // with a resonator only on three or more launchers around the chip that
-    // do not all lie on one line, as placesProblem() checks. Their segments
-    // overlap nowhere, so no two resonators share a feed point.
+    // with a resonator only on three or more launchers that do not all lie
+    // on one line, as placesProblem() checks, and only where each part of a
+    // segment is at least one wire spacing long. Where the launchers also go
+    // once around the chip, as orderProblem() checks for a ring with an
+    // area, their segments overlap nowhere and no two resonators share a
+    // feed point.
     const auto ends = endsAChain(inputs, ring, variables, solution);
     assignment.feeds.reserve(inputs.ring.size());
     std::vector<std::vector<std::size_t>> given(launchers);
@@ -706,12 +722,27 @@ private:
       const auto next = (slot + launchers - 1) % launchers;
       const auto& from = inputs.launcherPosition[slot];
       const auto& to = inputs.launcherPosition[next];
-      if (geometry::distance(from, to) == 0.0) {
-        // The two slots are one point, and there is nothing to interpolate.
-        continue;
-      }
       const auto leaving = groupOf(slot, false);
       const auto arriving = groupOf(next, true);
+      if (leaving.empty() && arriving.empty()) {
+        continue;
+      }
+      // Neighbouring feeds, and the first and last feed and their launchers,
+      // lie one part of the segment apart. Closer than the wire spacing, the
+      // wires that reach them break it, and on a short segment two feeds can
+      // fall on one cell of the routing grid.
+      const auto parts = leaving.size() + arriving.size() + 1;
+      if (const auto part =
+              geometry::distance(from, to) / static_cast<double>(parts);
+          part <= 0.0 || part < spacing) {
+        throw std::invalid_argument(std::format(
+            "the launcher ports {} and {} lie {:.1f} apart, too close to feed "
+            "{} {} between them at the wire spacing of {}",
+            chip.ports[inputs.launchers[slot]]->label,
+            chip.ports[inputs.launchers[next]]->label,
+            geometry::distance(from, to), parts - 1,
+            parts == 2 ? "resonator" : "resonators", spacing));
+      }
       const auto place = [&](const std::size_t index,
                              const geometry::Point& here,
                              const geometry::Point& there, const double ratio) {
@@ -913,13 +944,19 @@ std::optional<std::string> launcherOrderProblem(const ChipT& chip,
   return orderProblem(ring, launchers);
 }
 
-std::optional<std::string> launcherPlacesProblem(const ChipT& chip) {
+std::optional<std::string> launcherPlacesProblem(const ChipT& chip,
+                                                 const ConfigT& config) {
   if (std::ranges::none_of(chip.ports, [](const auto& port) {
         return port->role == fbd::UnassignedRole::Resonator;
       })) {
     return std::nullopt;
   }
-  return placesProblem(slottedLaunchers(chip));
+  if (config.grid != nullptr && config.grid->detail_factor == 0) {
+    // A grid without cells places no slot. The configuration check reports
+    // it.
+    return std::nullopt;
+  }
+  return placesProblem(launcherSlotPositions(chip, config));
 }
 
 std::unique_ptr<IAssigner> makeOrderedMilpAssigner() {

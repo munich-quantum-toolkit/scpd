@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import pyscpd
 from .artifacts import ArtifactError
@@ -32,6 +33,9 @@ from .plot import STAGES, PlotError, layout_svg
 from .run import BlockReporter, RunDirectory, RunError, steps_until
 from .solvers import register as register_external_solver
 from .steps import STEPS
+
+if TYPE_CHECKING:
+    from .flatbuffers.config.Config import ConfigT
 
 
 def _positive_int(text: str) -> int:
@@ -59,6 +63,25 @@ def _subject(config_path: Path) -> str:
     return config_path.parent.name if config_path.name == "config.toml" else config_path.stem
 
 
+def _validated(config: ConfigT, config_path: Path) -> ConfigT:
+    """Check what the core refuses in a configuration before the chip is loaded, as the doctor does.
+
+    Args:
+        config: The loaded configuration.
+        config_path: The configuration file, which a problem names.
+
+    Returns:
+        The configuration.
+
+    Raises:
+        ConfigError: If the core refuses a value of the configuration.
+    """
+    if problems := pyscpd.validate_config(write_config(config)):
+        msg = f"{config_path}: " + "; ".join(problems)
+        raise ConfigError(msg)
+    return config
+
+
 def command_doctor(args: argparse.Namespace) -> int:
     """Run the doctor and print its report.
 
@@ -77,9 +100,9 @@ def command_plan(args: argparse.Namespace) -> int:
         The exit code.
 
     Raises:
-        ConfigError: If the configuration and the chip would stop one of the steps, as
-            ``pyscpd.plan_problems`` and ``solver_problem`` report it. The run directory stays as
-            it was.
+        ConfigError: If the core refuses a value of the configuration, or if the configuration
+            and the chip would stop one of the steps, as ``pyscpd.plan_problems`` and
+            ``solver_problem`` report it. The run directory stays as it was.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
     # The core reaches gurobipy only for a configuration that names the gurobi backend; every other
@@ -90,12 +113,13 @@ def command_plan(args: argparse.Namespace) -> int:
     if args.stage is not None:
         # A resumed step reads the configuration and the chip the run carries, so that it equals
         # the step of an uninterrupted run.
-        config = directory.load()
+        config = _validated(directory.load(), directory.config)
         steps = [args.stage]
         subject = directory.path.name
         chip = directory.classified_chip(config)
     else:
         config, chip_input = directory.inputs(args.config, args.chip)
+        _validated(config, args.config)
         configured = config.run.stopAfter if config.run is not None else None
         steps = steps_until(args.stop_after if args.stop_after is not None else configured)
         subject = _subject(args.config)

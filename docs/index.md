@@ -27,6 +27,7 @@ self
 
 installation
 benchmarks
+configuration
 references
 CHANGELOG
 UPGRADING

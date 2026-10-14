@@ -56,6 +56,8 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "corridors": (30, 0, "plan.corridor"),
     "slots": (31, 0, "plan.slot"),
     "feedlines": (32, 0, "plan.feedline"),
+    "blocked": (33, 0, "plan.blocked"),
+    "budgets": (34, 0, "plan.budget"),
 }
 
 #: The width of a planning line, in layout units. A path needs a width to be a shape at all; this
@@ -146,9 +148,10 @@ def write_layout(
 def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometry) -> int:
     """Write the shapes of one planning stage onto their layers.
 
-    A partition and a keepout are polygons, because they are areas of the free space. Everything
-    else is a path or a small square, because it is a line across or along the free space, or a
-    point on it.
+    A partition, a keepout and a blocked cell are polygons, because they are areas of the grid. The
+    wire budget of a bottleneck is a text at the middle of its line, on a layer of its own. A
+    corridor and the approach to its target port are paths on the same layer. Everything else is a
+    path or a small square, because it is a line across or along the free space, or a point on it.
 
     Returns:
         How many shapes were written.
@@ -165,7 +168,11 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
         return kdb.DPolygon(kdb.DBox(x - radius, y - radius, x + radius, y + radius))
 
     written = 0
-    for name, rings in (("keepout", planning.keepout), ("partitions", planning.partitions)):
+    for name, rings in (
+        ("keepout", planning.keepout),
+        ("partitions", planning.partitions),
+        ("blocked", planning.blocked),
+    ):
         for ring in rings:
             top.shapes(layer(name)).insert(kdb.DPolygon(list(starmap(kdb.DPoint, ring))))
             written += 1
@@ -173,9 +180,11 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
         if len(border) >= 2:
             top.shapes(layer("borders")).insert(path(border))
             written += 1
-    for first, second, _ in planning.bottlenecks:
+    for first, second, budget in planning.bottlenecks:
         top.shapes(layer("bottlenecks")).insert(path([first, second]))
-        written += 1
+        middle = kdb.DVector((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
+        top.shapes(layer("budgets")).insert(kdb.DText(str(budget), kdb.DTrans(middle)))
+        written += 2
     for x, y in planning.launchers:
         top.shapes(layer("launchers")).insert(square(x, y, PLANNING_MARKER_RADIUS))
         written += 1
@@ -192,7 +201,7 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
     if len(planning.ring) >= 2:
         top.shapes(layer("ring")).insert(path([*planning.ring, planning.ring[0]]))
         written += 1
-    for route in planning.corridors:
+    for route in [*planning.corridors, *planning.stubs]:
         if len(route) >= 2:
             top.shapes(layer("corridors")).insert(path(route))
             written += 1
