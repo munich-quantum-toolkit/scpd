@@ -586,6 +586,38 @@ TEST(GlobalRouter, RunsNoWireFromAnAnchorOnTheArtworkOfAnotherComponent) {
                              Point(5.0, -5.0), Point(15.0, 5.0), 10.0));
 }
 
+TEST(GlobalRouter, RunsNoWireSidewaysOutOfTheArtworkOfThePort) {
+  // S and T face the same way, and their anchors lie 100 in front of them.
+  // The edge between the anchors runs at a right angle to the way S faces,
+  // through the square that S lies in. It does not leave the square the way
+  // S faces. In each case, the cosine of the angle between the edge and the
+  // way S faces is a positive rounding error instead of zero.
+  struct Case {
+    double orientation;
+    Point target;
+  };
+  for (const auto& [orientation, target] :
+       {Case{.orientation = 90.0, .target = Point(5000.0, 0.0)},
+        Case{.orientation = 180.0, .target = Point(0.0, 5000.0)},
+        Case{.orientation = 270.0, .target = Point(-5000.0, 0.0)}}) {
+    const auto chip = handChip(
+        {{.label = "S.port0",
+          .center = Point(0.0, 0.0),
+          .orientation = orientation},
+         {.label = "T.port0", .center = target, .orientation = orientation}},
+        handPatterns(), {{Point(-500.0, -500.0), Point(500.0, 500.0)}});
+    auto config = handConfig({"S.port0"});
+    config.rules = std::make_unique<DesignRulesT>();
+    config.rules->min_straight_length = 100.0;
+    const auto plan = planOf(
+        {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
+
+    const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+
+    EXPECT_TRUE(routing.connections.empty()) << "S faces " << orientation;
+  }
+}
+
 TEST(GlobalRouter, RunsNoWireBackThroughTheArtworkOfThePort) {
   // S faces right, and T lies to its left. The edge from the anchor of S to
   // T runs back through the square that S lies on.

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -253,12 +254,7 @@ def test_plan_stops_after_the_step_it_is_told(tmp_path: Path, capsys: pytest.Cap
 
 def test_the_configured_stop_holds_unless_the_command_says_otherwise(tmp_path: Path) -> None:
     """[run] stop_after sets where a run ends, and --stop-after overrides it."""
-    config = tmp_path / "config.toml"
-    text = Path(CONFIG).read_text(encoding="utf-8")
-    text = text.replace(
-        'input = "routing_config.json"', f'input = "{(Path(CONFIG).parent / "routing_config.json").as_posix()}"'
-    )
-    config.write_text(text + '\n[run]\nstop_after = "capacity"\n', encoding="utf-8")
+    config = stopping_after(tmp_path, "capacity")
 
     assert main(["plan", "-c", str(config), "-o", str(tmp_path / "configured"), "--no-progress"]) == 0
     assert sorted(path.name for path in (tmp_path / "configured").glob("*.fb")) == ["01-capacity.fb"]
@@ -460,6 +456,85 @@ def test_an_unknown_solver_is_a_line_and_not_a_traceback(
     assert captured.err.startswith("✗ ")
     assert "cplex" in captured.err
     assert "Traceback" not in captured.out + captured.err
+
+
+def stopping_after(directory: Path, step: str) -> Path:
+    """Write the fixture configuration with ``[run] stop_after`` set to a step.
+
+    Returns:
+        The path of the configuration.
+    """
+    config = directory / "config.toml"
+    text = Path(CONFIG).read_text(encoding="utf-8")
+    text = text.replace(
+        'input = "routing_config.json"', f'input = "{(Path(CONFIG).parent / "routing_config.json").as_posix()}"'
+    )
+    config.write_text(text + f'\n[run]\nstop_after = "{step}"\n', encoding="utf-8")
+    return config
+
+
+def test_doctor_and_plan_refuse_an_unknown_solver_for_a_run_that_solves_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unknown backend name is a mistake for every run, so the doctor and the run refuse it alike."""
+    config = stopping_after(tmp_path, "capacity")
+    monkeypatch.setenv("SCPD_SOLVER", "cplex")
+    problem = "'cplex' is no solver backend; use 'highs' or 'gurobi'"
+
+    assert main(["doctor", "-c", str(config)]) == 1
+    assert problem in capsys.readouterr().out
+
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
+    assert problem in capsys.readouterr().err
+    assert not list(run.glob("*.fb"))
+
+
+@pytest.mark.parametrize(("step", "code"), [("global", 0), ("assign", 1)])
+def test_doctor_and_plan_need_a_reachable_solver_only_for_a_run_that_solves(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, step: str, code: int
+) -> None:
+    """Gurobi without gurobipy stops the doctor and the run where a step solves, and neither elsewhere.
+
+    The fixture's ring carries every routable port, so its global step has no inner circuit to solve.
+    The assignment always solves.
+    """
+    config = stopping_after(tmp_path, step)
+    monkeypatch.setenv("SCPD_SOLVER", "gurobi")
+    monkeypatch.setitem(sys.modules, "gurobipy", None)
+    problem = "the configuration asks for gurobi, but gurobipy is not installed"
+
+    assert main(["doctor", "-c", str(config)]) == code
+    assert (problem in capsys.readouterr().out) == (code == 1)
+
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == code
+    assert (problem in capsys.readouterr().err) == (code == 1)
+    written = sorted(path.name for path in run.glob("*.fb"))
+    assert written == ([] if code == 1 else ["01-capacity.fb", "02-global.fb"])
+
+
+@pytest.mark.parametrize(("step", "code"), [("corridor", 0), ("assign", 1)])
+def test_a_resumed_step_needs_a_reachable_solver_only_where_it_solves(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, step: str, code: int
+) -> None:
+    """Gurobi without gurobipy stops a resumed assignment, and a resumed corridor step runs.
+
+    The run directory keeps the artifacts of a refused step as they were.
+    """
+    run = tmp_path / "run"
+    assert plan(run, "--stop-after", "assign") == 0
+    capsys.readouterr()
+    assignment = (run / "03-assign.fb").read_bytes()
+    monkeypatch.setenv("SCPD_SOLVER", "gurobi")
+    monkeypatch.setitem(sys.modules, "gurobipy", None)
+    problem = "the configuration asks for gurobi, but gurobipy is not installed"
+
+    assert main(["plan", "-o", str(run), "--stage", step, "--no-progress"]) == code
+
+    assert (problem in capsys.readouterr().err) == (code == 1)
+    assert (run / "03-assign.fb").read_bytes() == assignment
+    assert (run / "04-corridor.fb").is_file() == (code == 0)
 
 
 def test_any_error_of_a_stage_ends_the_run_in_its_block(

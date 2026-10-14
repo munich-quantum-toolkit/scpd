@@ -15,6 +15,7 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
+#include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
@@ -210,11 +211,92 @@ TEST(LauncherOrder, IsWhatTheStageRefuses) {
   }
 }
 
+std::string
+placesProblemOf(const std::vector<std::array<double, 2>>& launchers) {
+  return launcherPlacesProblem(squareChip(launchers)).value_or("");
+}
+
+/// The reason the stage gives for a chip whose launchers cannot feed its
+/// resonators.
+constexpr std::string_view PLACES_REASON =
+    "feeding resonators needs at least three launchers that do not all lie "
+    "on one line; with fewer, two resonators can share one feed point";
+
+TEST(LauncherPlaces, AcceptThreeLaunchersAroundTheChip) {
+  EXPECT_EQ(placesProblemOf({{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}}), "");
+}
+
+TEST(LauncherPlaces, RefuseFewerThanThreeLaunchers) {
+  EXPECT_EQ(placesProblemOf({{-10.0, 50.0}, {110.0, 50.0}}),
+            "the chip has 2 launcher ports; " + std::string(PLACES_REASON));
+  EXPECT_EQ(placesProblemOf({{-10.0, 50.0}}),
+            "the chip has 1 launcher port; " + std::string(PLACES_REASON));
+}
+
+TEST(LauncherPlaces, RefuseLaunchersOnOneLine) {
+  EXPECT_EQ(placesProblemOf({{-10.0, -10.0}, {50.0, -10.0}, {110.0, -10.0}}),
+            "the launcher ports of the chip lie on one line; " +
+                std::string(PLACES_REASON));
+}
+
+TEST(LauncherPlaces, AcceptTwoLaunchersOnAChipWithoutResonators) {
+  auto chip = squareChip({{-10.0, 50.0}, {110.0, 50.0}});
+  for (auto& port : chip.ports) {
+    if (port->role == fbd::UnassignedRole::Resonator) {
+      port->role = fbd::UnassignedRole::Conventional;
+    }
+  }
+  EXPECT_EQ(launcherPlacesProblem(chip), std::nullopt);
+}
+
+TEST(LauncherPlaces, AreWhatTheStageRefuses) {
+  // Two launchers and a ring with a resonator: the feeds of the resonators
+  // on the two segments between the launchers lie on one line.
+  const std::vector<std::array<double, 2>> launchers = {{-10.0, 50.0},
+                                                        {110.0, 50.0}};
+  const auto chip = squareChip(launchers);
+  auto config = squareConfig();
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  try {
+    static_cast<void>(makeOrderedMilpAssigner()->run(
+        chip, planWithLaunchersOf(chip), routingWithRing({0, 1, 2, 3}, {0}),
+        config, {}));
+    FAIL() << "the stage has to refuse two launchers for a resonator";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_EQ(error.what(), placesProblemOf(launchers));
+  }
+}
+
+TEST(Assigner, GivesEveryPortOfARingWithoutResonatorsOneOfTwoLaunchers) {
+  // Without a resonator there is no feed to place, so two launchers serve
+  // two conventional ports.
+  const auto chip = squareChip({{-10.0, 50.0}, {110.0, 50.0}});
+  auto config = squareConfig();
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  config.rules->max_feedline_utilization = 4;
+  config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  config.stages->assignment =
+      std::make_unique<flatbuffers::config::AssignmentParamsT>();
+  config.stages->assignment->launcher_target = 2;
+
+  const auto assignment = makeOrderedMilpAssigner()->run(
+      chip, planWithLaunchersOf(chip), routingWithRing({0, 1}, {}), config, {});
+
+  EXPECT_TRUE(assignment.chains.empty());
+  std::set<std::uint32_t> launchers;
+  for (const auto& connection : assignment.connections) {
+    ASSERT_NE(connection->source, nullptr);
+    launchers.insert(connection->source->index());
+  }
+  EXPECT_EQ(launchers.size(), 2U);
+}
+
 TEST(Assigner, GivesEachOfTwoResonatorsAChainOfItsOwn) {
   // Two launcher ends and two terminations on two resonators leave no chord
   // to use: each resonator is a chain of one, from a launcher to a
   // termination.
-  const auto chip = squareChip({{-10.0, 50.0}, {110.0, 50.0}});
+  const auto chip =
+      squareChip({{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}});
   auto config = squareConfig();
   config.rules = std::make_unique<fbd::DesignRulesT>();
   config.rules->max_feedline_utilization = 4;
@@ -480,16 +562,119 @@ AssignmentT assignOctagon(const std::size_t first,
       octagonConfig(first, target, terminations), report);
 }
 
+/// The side of the line through @p from and @p to that @p point lies on: 1 to
+/// the left, -1 to the right, and 0 on the line.
+int sideOf(const geometry::Point& from, const geometry::Point& to,
+           const geometry::Point& point) {
+  const auto cross = geometry::cross(geometry::subtract(to, from),
+                                     geometry::subtract(point, from));
+  constexpr auto tolerance = 1.0e-9;
+  if (cross > tolerance) {
+    return 1;
+  }
+  return cross < -tolerance ? -1 : 0;
+}
+
+/// Whether the segments @p a0 to @p a1 and @p b0 to @p b1 share a point.
+bool touch(const geometry::Point& a0, const geometry::Point& a1,
+           const geometry::Point& b0, const geometry::Point& b1) {
+  const auto a0Side = sideOf(b0, b1, a0);
+  const auto a1Side = sideOf(b0, b1, a1);
+  const auto b0Side = sideOf(a0, a1, b0);
+  const auto b1Side = sideOf(a0, a1, b1);
+  if (a0Side * a1Side > 0 || b0Side * b1Side > 0) {
+    return false;
+  }
+  if (a0Side != 0 || a1Side != 0) {
+    return true;
+  }
+  // All four points lie on one line: the segments share a point where their
+  // extents overlap on both axes.
+  return std::max(std::min(a0.x(), a1.x()), std::min(b0.x(), b1.x())) <=
+             std::min(std::max(a0.x(), a1.x()), std::max(b0.x(), b1.x())) &&
+         std::max(std::min(a0.y(), a1.y()), std::min(b0.y(), b1.y())) <=
+             std::min(std::max(a0.y(), a1.y()), std::max(b0.y(), b1.y()));
+}
+
+/// Whether the line of a feedline chain, from its start launcher through the
+/// feeds of its nodes to its end launcher, meets itself. Two neighboring
+/// pieces meet where the second turns back along the first, and two other
+/// pieces where they share a point.
+bool meetsItself(const ChipT& chip, const AssignmentT& assignment,
+                 const fba::FeedlineChainT& chain) {
+  std::vector<geometry::Point> line;
+  if (chain.start != nullptr) {
+    line.push_back(chip.ports[chain.start->index()]->center);
+  }
+  for (const auto node : chain.nodes) {
+    line.push_back(assignment.feeds[node]);
+  }
+  if (chain.end != nullptr) {
+    line.push_back(chip.ports[chain.end->index()]->center);
+  }
+  for (std::size_t first = 0; first + 1 < line.size(); ++first) {
+    for (std::size_t second = first + 1; second + 1 < line.size(); ++second) {
+      const auto& a0 = line[first];
+      const auto& a1 = line[first + 1];
+      const auto& b0 = line[second];
+      const auto& b1 = line[second + 1];
+      if (second == first + 1) {
+        const auto ahead = ((a1.x() - a0.x()) * (b1.x() - b0.x())) +
+                           ((a1.y() - a0.y()) * (b1.y() - b0.y()));
+        if (sideOf(a0, a1, b1) == 0 && ahead <= 0.0) {
+          return true;
+        }
+      } else if (touch(a0, a1, b0, b1)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/// A set of resonators on octagonChip with its count of terminations.
+struct OctagonCase {
+  std::vector<std::uint32_t> resonators;
+  std::uint32_t terminations = 0;
+};
+
+/// The resonator sets on octagonChip whose ring may open on resonators that
+/// take no launcher. On {0, 3, 4, 7}, four conventional ports and two
+/// launcher ends need all six launchers. On {0, 1, 6, 7}, the ring may open
+/// on two such resonators in a row.
+std::vector<OctagonCase> openingCases() {
+  return {OctagonCase{.resonators = {0, 3, 4, 7}, .terminations = 2},
+          OctagonCase{.resonators = {0, 1, 6, 7}, .terminations = 0}};
+}
+
 TEST(Assigner, FindsTheSameOptimumWhereverTheRingOpens) {
-  // Four conventional ports and two launcher ends need all six launchers.
-  // The ring may open on a resonator that takes no launcher, and that
-  // resonator must not take a launcher place of its own.
-  const std::vector<std::uint32_t> resonators = {0, 3, 4, 7};
-  const auto objective = assignOctagon(1, resonators, 2, 2).objective;
-  for (std::size_t first = 0; first < 8; ++first) {
-    EXPECT_NEAR(assignOctagon(first, resonators, 2, 2).objective, objective,
-                1.0e-6)
-        << "the ring opens at r" << first;
+  // A resonator that the ring opens on and that takes no launcher must not
+  // take a launcher place of its own.
+  for (const auto& [resonators, terminations] : openingCases()) {
+    const auto objective =
+        assignOctagon(1, resonators, 2, terminations).objective;
+    for (std::size_t first = 0; first < 8; ++first) {
+      EXPECT_NEAR(assignOctagon(first, resonators, 2, terminations).objective,
+                  objective, 1.0e-6)
+          << "the ring opens at r" << first << " with " << terminations
+          << " terminations";
+    }
+  }
+}
+
+TEST(Assigner, RunsEveryChainOneWayWhereverTheRingOpens) {
+  // Every chain runs one way along its launchers, the chain that crosses the
+  // opening of the ring as well, so the line of a chain never meets itself.
+  const auto chip = octagonChip();
+  for (const auto& [resonators, terminations] : openingCases()) {
+    for (std::size_t first = 0; first < 8; ++first) {
+      const auto assignment = assignOctagon(first, resonators, 2, terminations);
+      for (const auto& chain : assignment.chains) {
+        EXPECT_FALSE(meetsItself(chip, assignment, *chain))
+            << "the ring opens at r" << first << " with " << terminations
+            << " terminations";
+      }
+    }
   }
 }
 

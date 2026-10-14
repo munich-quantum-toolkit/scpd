@@ -49,6 +49,12 @@ namespace fbg = flatbuffers::geometry;
 /// measured in micrometres, so this is far below anything the input resolves.
 constexpr double COORDINATE_EPSILON = 1.0e-7;
 
+/// An edge runs the way a port faces only where the cosine of the angle
+/// between the two exceeds this. The direction of a port comes from a sine
+/// and a cosine, and for a port that faces along an axis, the component
+/// across that axis is a rounding error of either sign rather than zero.
+constexpr double DIRECTION_EPSILON = 1.0e-9;
+
 /// The port each label names.
 std::unordered_map<std::string, std::uint32_t> portsByLabel(const ChipT& chip) {
   std::unordered_map<std::string, std::uint32_t> byLabel;
@@ -217,8 +223,9 @@ bool throughArtwork(const ChipT& chip, const fbg::Point& from,
         return false;
       }
       const auto radians = port->orientation * std::numbers::pi / 180.0;
-      return geometry::dot(geometry::subtract(away, end),
-                           {std::cos(radians), std::sin(radians)}) > 0.0;
+      const auto along = geometry::subtract(away, end);
+      return geometry::dot(along, {std::cos(radians), std::sin(radians)}) >
+             DIRECTION_EPSILON * geometry::norm(along);
     };
     const auto fromLeaves = leaves(fromPort, from, to, 1);
     const auto toLeaves = leaves(toPort, to, from, pieces - 2);

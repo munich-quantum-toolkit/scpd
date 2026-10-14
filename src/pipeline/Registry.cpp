@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <format>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -170,7 +171,29 @@ std::vector<std::string> planProblems(const ChipT& chip, const ConfigT& config,
         target, config.rules->feedline_terminations));
   }
   note(launcherOrderProblem(chip, config));
+  note(launcherPlacesProblem(chip));
   return problems;
+}
+
+std::vector<std::string> solvingSteps(const ChipT& chip, const ConfigT& config,
+                                      const std::vector<std::string>& steps) {
+  std::vector<std::string> solving;
+  for (const auto& step : steps) {
+    if (step == "assign") {
+      solving.push_back(step);
+    } else if (step == "global") {
+      bool solves = true;
+      try {
+        solves = !innerCircuitOf(chip, config).targets.empty();
+      } catch (const std::invalid_argument&) {
+        // The global step refuses this ring, and the list keeps the step.
+      }
+      if (solves) {
+        solving.push_back(step);
+      }
+    }
+  }
+  return solving;
 }
 
 } // namespace mqt::scpd::pipeline

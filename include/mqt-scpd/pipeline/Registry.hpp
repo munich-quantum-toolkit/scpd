@@ -181,7 +181,9 @@ selectedCorridorRouter(const ConfigT& config);
  * - `launcher_target` plus `[design_rules] feedline_terminations` is even,
  *   since every feedline chain has two ends;
  * - the chip input lists its launchers against the direction of the port
- *   ring, as launcherOrderProblem() checks.
+ *   ring, as launcherOrderProblem() checks;
+ * - a chip with a resonator has at least three launchers that do not all lie
+ *   on one line, as launcherPlacesProblem() checks.
  *
  * @param chip The classified chip.
  * @param config The run configuration.
@@ -191,6 +193,32 @@ selectedCorridorRouter(const ConfigT& config);
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<std::string>
 planProblems(const ChipT& chip, const ConfigT& config,
+             const std::vector<std::string>& steps);
+
+/**
+ * @brief Lists the steps of a run that solve a mixed-integer program, and so
+ * need the solver backend.
+ *
+ * The function names the solving steps from the implementations that
+ * globalRouters() and assigners() register: the global router `hanan-milp`
+ * and the assigner `ordered-milp`. Each of them is the only implementation of
+ * its stage, and each of them solves a mixed-integer program. An implementation
+ * that solves no program has to change this function.
+ *
+ * The assignment always solves. The global step solves only where the chip
+ * has an inner circuit, as innerCircuitOf() derives it. A global step whose
+ * capacity chains reach no inner target solves nothing either, but that is
+ * known only once the capacity step has run, so the list keeps such a step.
+ * A ring that innerCircuitOf() refuses stops the global step anyway, and the
+ * list keeps that step too.
+ *
+ * @param chip The classified chip.
+ * @param config The run configuration.
+ * @param steps The steps the run takes, in the names of planProblems().
+ * @return The steps of @p steps that solve, in their order.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<std::string>
+solvingSteps(const ChipT& chip, const ConfigT& config,
              const std::vector<std::string>& steps);
 
 } // namespace mqt::scpd::pipeline

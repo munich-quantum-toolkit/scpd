@@ -28,19 +28,25 @@ mqt-scpd plan -c planar-superconducting-pd/inputs/17q/config.toml -o runs/17q
 ```
 
 The assignment expects the chip input to list the launcher ports once around the
-chip, against the direction of the port ring, as on the benchmark chips.
-`launcher_target` plus `[design_rules] feedline_terminations` has to be even,
-since every feedline chain has two ends. `plan` checks these figures and the
-implementation names of the stages before its first stage, and refuses a run
-whose steps they would stop; the run directory then stays as it was. `doctor`
-reports the same problems for the steps that `[run] stop_after` configures.
+chip, against the direction of the port ring, as on the benchmark chips. A chip
+with resonators needs at least three launchers that do not all lie on one line.
+With fewer, two resonators could share one feed point, and the assignment
+refuses the chip. `launcher_target` plus `[design_rules] feedline_terminations`
+has to be even, since every feedline chain has two ends. `plan` checks these
+figures and the implementation names of the stages before its first stage, and
+refuses a run whose steps they would stop; the run directory then stays as it
+was. `doctor` reports the same problems for the steps that `[run] stop_after`
+configures.
 
 An inner routable port that the `component` pattern does not match ends a wire
 of the inner circuit, as a port of an inner qubit does.
 
 The planning stages solve with HiGHS unless `[stages.solver] backend` or the
 environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and
-licensed `gurobipy`.
+licensed `gurobipy`. `plan` also refuses before its first stage a backend name
+that the core does not know, and a Gurobi backend without a usable `gurobipy`
+when a step of the run solves. `doctor` reports the same problems for the steps
+that `[run] stop_after` configures.
 
 ### Output of the commands
 

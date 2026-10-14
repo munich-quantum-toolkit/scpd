@@ -12,12 +12,10 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from mqt.scpd.doctor import run_doctor
-
-if TYPE_CHECKING:
-    import pytest
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 
@@ -140,15 +138,24 @@ def test_a_solver_backend_the_run_cannot_reach_is_a_problem(monkeypatch: pytest.
     assert report.problems[0].startswith("the configuration asks for gurobi, but gurobipy is not installed")
 
 
-def test_a_run_that_solves_nothing_needs_no_solver(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A run that stops after the capacity step never reaches the solver backend."""
+@pytest.mark.parametrize("step", ["capacity", "global"])
+def test_a_run_that_solves_nothing_needs_no_solver(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, step: str) -> None:
+    """A run that solves nothing never reaches the solver backend, but an unknown backend name is still a problem.
+
+    The fixture's ring carries every routable port, so its global step has no inner circuit to solve.
+    """
     config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
     stopped = tmp_path / "config.toml"
     stopped.write_text(
         config.replace('input = "routing_config.json"', f'input = "{(FIXTURE / "routing_config.json").as_posix()}"')
-        + '\n[run]\nstop_after = "capacity"\n',
+        + f'\n[run]\nstop_after = "{step}"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("SCPD_SOLVER", "cplex")
+    monkeypatch.setenv("SCPD_SOLVER", "gurobi")
+    monkeypatch.setitem(sys.modules, "gurobipy", None)
     report = run_doctor(stopped)
     assert report.ok, report.text()
+
+    monkeypatch.setenv("SCPD_SOLVER", "cplex")
+    report = run_doctor(stopped)
+    assert report.problems == ["'cplex' is no solver backend; use 'highs' or 'gurobi'"]

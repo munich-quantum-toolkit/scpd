@@ -202,6 +202,39 @@ orderProblem(const std::vector<geometry::Point>& ring,
   return std::nullopt;
 }
 
+/// What keeps the launchers at @p launchers from feeding resonators, or
+/// nothing. The feeds of resonators lie on the segments between neighbouring
+/// launchers, and those segments need to lie on more than one line.
+std::optional<std::string>
+placesProblem(const std::vector<geometry::Point>& launchers) {
+  constexpr std::string_view reason =
+      "feeding resonators needs at least three launchers that do not all lie "
+      "on one line; with fewer, two resonators can share one feed point";
+  if (launchers.size() < 3) {
+    return std::format("the chip has {} launcher {}; {}", launchers.size(),
+                       launchers.size() == 1 ? "port" : "ports", reason);
+  }
+  if (onOneLine(launchers)) {
+    return std::format("the launcher ports of the chip lie on one line; {}",
+                       reason);
+  }
+  return std::nullopt;
+}
+
+/// The centers of the launchers that the capacity stage gives a slot: every
+/// launcher with a direction, in port order.
+std::vector<geometry::Point> slottedLaunchers(const ChipT& chip) {
+  std::vector<geometry::Point> launchers;
+  for (const auto& port : chip.ports) {
+    if (const auto step = grid::orientationStep(port->orientation);
+        port->role == fbd::UnassignedRole::Launcher &&
+        (step.x != 0 || step.y != 0)) {
+      launchers.push_back(port->center);
+    }
+  }
+  return launchers;
+}
+
 /// The label of a port, or "termination" for a chain end without one.
 std::string endName(const ChipT& chip,
                     const std::unique_ptr<fbd::PortRef>& port) {
@@ -224,6 +257,12 @@ public:
       throw std::invalid_argument("the configuration carries no design rules");
     }
     const auto inputs = assignmentInputs(chip, capacity, global);
+    if (std::ranges::find(inputs.isResonator, true) !=
+        inputs.isResonator.end()) {
+      if (const auto problem = placesProblem(inputs.launcherPosition)) {
+        throw std::invalid_argument(*problem);
+      }
+    }
     const auto ring = ringEdgesOf(inputs);
     const auto resonators =
         static_cast<std::size_t>(std::ranges::count(inputs.isResonator, true));
@@ -339,18 +378,27 @@ private:
     // stage is for, stays the same.
     //
     // The walk opens on the first ring node, and that node starts the turn.
-    // A resonator there that takes no launcher holds no place of its own, so
-    // it may stand one above the turn, at the launcher count. That is the
-    // place where the walk closes, and it leaves the whole turn to the nodes
-    // after it. Without that, where the ring opens would decide whether the
-    // chip has an assignment.
+    // A resonator that takes no launcher holds no place of its own. The
+    // resonators the ring opens on, up to the first that takes a launcher,
+    // may therefore stand one above the turn, at the launcher count. That is
+    // the place where the walk closes, and it leaves the whole turn to the
+    // nodes after them. Without that, where the ring opens would decide
+    // whether the chip has an assignment, and at what cost. A resonator of
+    // that run that takes a launcher stands below the launcher count: the
+    // first resonator through the row `flow_start_top`, and every later one
+    // through its flow step.
     const auto span = launchers - 1.0;
     const auto opensOnResonator = inputs.isResonator.front();
+    const auto opening =
+        static_cast<std::size_t>(std::ranges::find(inputs.isResonator, false) -
+                                 inputs.isResonator.begin());
+    const auto topOf = [&](const std::size_t index) {
+      return index < opening ? launchers : span;
+    };
     variables.flow.reserve(inputs.ring.size());
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
-      const auto top = index == 0 && opensOnResonator ? launchers : span;
       variables.flow.push_back(
-          model.addInteger(std::format("flow_{}", index), 0.0, top));
+          model.addInteger(std::format("flow_{}", index), 0.0, topOf(index)));
     }
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
       variables.launcher.push_back(
@@ -484,8 +532,7 @@ private:
       // How many turns of the launcher ring lie between the potential and the
       // launcher nearest to the node. The potential spans the whole ring, so
       // this reaches as far as the ring is long.
-      const auto top = index == 0 && opensOnResonator ? launchers : span;
-      const auto turns = std::ceil((top + launchers) / launchers);
+      const auto turns = std::ceil((topOf(index) + launchers) / launchers);
       const auto wrap =
           model.addInteger(std::format("wrap_{}", index), -turns, 1.0);
       const auto gap = model.addContinuous(std::format("gap_{}", index), 0.0,
@@ -587,11 +634,17 @@ private:
     // the launcher ring, so the launcher is that place modulo the launcher
     // count.
     std::vector<std::size_t> slotOf(inputs.ring.size(), 0);
+    // Whether the node stands at the place where the walk closes, at the
+    // launcher count, above the turn. Only resonators of the run that the
+    // ring opens on can stand there, and only those before the first of the
+    // run that takes a launcher. The solver may also place them in the turn.
+    std::vector<bool> closing(inputs.ring.size(), false);
     assignment.launchers.reserve(inputs.ring.size());
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
       const auto placed = static_cast<std::int64_t>(
           std::llround(solution.valueOf(variables.flow[index])));
       const auto count = static_cast<std::int64_t>(launchers);
+      closing[index] = placed == count;
       slotOf[index] = static_cast<std::size_t>(
           (((placed + offset) % count) + count) % count);
       assignment.launchers.emplace_back(inputs.launchers[slotOf[index]]);
@@ -616,14 +669,26 @@ private:
     //
     // Where n resonators are fed on one segment, they land at 1/(n+1) ...
     // n/(n+1) of it. The one the walk reaches first lands first on the
-    // segment as well, so their wires do not cross, and no two of them share
-    // a feed point.
+    // segment as well, so their wires do not cross. The stage assigns a ring
+    // with a resonator only on three or more launchers around the chip that
+    // do not all lie on one line, as placesProblem() checks. Their segments
+    // overlap nowhere, so no two resonators share a feed point.
     const auto ends = endsAChain(inputs, ring, variables, solution);
     assignment.feeds.reserve(inputs.ring.size());
     std::vector<std::vector<std::size_t>> given(launchers);
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
       assignment.feeds.push_back(inputs.launcherPosition[slotOf[index]]);
       given[slotOf[index]].push_back(index);
+    }
+    // Each slot lists its nodes in the order the walk reaches them. That is
+    // ring order, except where the walk closes: the nodes at the end of the
+    // ring may stand at place zero, resonators of the run that the ring opens
+    // on may stand at the launcher count, and both places name one slot. The
+    // walk runs from the end of the ring on to its start, so the nodes at the
+    // launcher count come last.
+    for (auto& nodes : given) {
+      std::ranges::stable_partition(
+          nodes, [&](const std::size_t index) { return !closing[index]; });
     }
     const auto groupOf = [&](const std::size_t slot, const bool ending) {
       std::vector<std::size_t> group;
@@ -655,9 +720,9 @@ private:
                             here.y() + (ratio * (there.y() - here.y())));
       };
       // On the leaving segment the walk runs from the launcher outward, so
-      // the first of the group in ring order sits nearest to it. On the
-      // arriving segment the walk runs toward the launcher, so the first in
-      // ring order sits farthest from it. Where both groups share the
+      // the first of the group along the walk sits nearest to it. On the
+      // arriving segment the walk runs toward the launcher, so the first along
+      // the walk sits farthest from it. Where both groups share the
       // segment, the leaving group comes first along the walk, and all of
       // them divide it evenly.
       const auto count = leaving.size() + arriving.size();
@@ -832,18 +897,11 @@ AssignmentInputs assignmentInputs(const ChipT& chip,
 std::optional<std::string> launcherOrderProblem(const ChipT& chip,
                                                 const ConfigT& config) {
   std::unordered_map<std::string_view, std::uint32_t> byLabel;
-  std::vector<geometry::Point> launchers;
   for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
-    const auto& port = *chip.ports[index];
-    byLabel.emplace(port.label, index);
-    // The capacity stage gives a slot to every launcher with a direction,
-    // in port order, and the stage checks the slots.
-    if (const auto step = grid::orientationStep(port.orientation);
-        port.role == fbd::UnassignedRole::Launcher &&
-        (step.x != 0 || step.y != 0)) {
-      launchers.push_back(port.center);
-    }
+    byLabel.emplace(chip.ports[index]->label, index);
   }
+  // The stage checks the slots, which are these launchers in this order.
+  const auto launchers = slottedLaunchers(chip);
   std::vector<geometry::Point> ring;
   if (config.ports != nullptr && config.ports->sequences != nullptr) {
     for (const auto& label : config.ports->sequences->all_outer) {
@@ -853,6 +911,15 @@ std::optional<std::string> launcherOrderProblem(const ChipT& chip,
     }
   }
   return orderProblem(ring, launchers);
+}
+
+std::optional<std::string> launcherPlacesProblem(const ChipT& chip) {
+  if (std::ranges::none_of(chip.ports, [](const auto& port) {
+        return port->role == fbd::UnassignedRole::Resonator;
+      })) {
+    return std::nullopt;
+  }
+  return placesProblem(slottedLaunchers(chip));
 }
 
 std::unique_ptr<IAssigner> makeOrderedMilpAssigner() {

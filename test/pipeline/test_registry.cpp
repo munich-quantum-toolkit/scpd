@@ -13,6 +13,7 @@
 
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
@@ -203,6 +204,51 @@ TEST(PlanProblems, RefuseLaunchersListedWithTheRing) {
   EXPECT_TRUE(mentions(planProblems(test::miniChip(config), config, allSteps()),
                        "the chip input lists the launcher ports in the "
                        "direction of the port ring"));
+}
+
+TEST(PlanProblems, RefuseTooFewLaunchersForTheResonatorsWhenTheRunAssigns) {
+  // Two of the four launchers of the fixture become ports of no role.
+  auto chip = test::miniChip();
+  for (auto& port : chip.ports) {
+    if (port->label == "Chip.port2" || port->label == "Chip.port3") {
+      port->role = flatbuffers::design::UnassignedRole::Unset;
+    }
+  }
+
+  EXPECT_TRUE(mentions(planProblems(chip, test::miniConfig(), allSteps()),
+                       "the chip has 2 launcher ports; feeding resonators"));
+  EXPECT_TRUE(
+      planProblems(chip, test::miniConfig(), {"capacity", "global"}).empty());
+}
+
+TEST(SolvingSteps, NameTheAssignmentAndNotAGlobalStepWithoutAnInnerCircuit) {
+  // The ring of the fixture carries every routable port.
+  const auto config = test::miniConfig();
+
+  EXPECT_EQ(solvingSteps(test::miniChip(config), config, allSteps()),
+            std::vector<std::string>{"assign"});
+  EXPECT_TRUE(
+      solvingSteps(test::miniChip(config), config, {"capacity", "global"})
+          .empty());
+}
+
+TEST(SolvingSteps, NameAGlobalStepWithAnInnerCircuit) {
+  // Q2.port1 leaves the ring, and the global step has to reach it.
+  auto config = test::miniConfig();
+  std::erase(config.ports->sequences->all_outer, "Q2.port1");
+
+  EXPECT_EQ(solvingSteps(test::miniChip(config), config, allSteps()),
+            (std::vector<std::string>{"global", "assign"}));
+}
+
+TEST(SolvingSteps, NameAGlobalStepThatRefusesItsRing) {
+  // A ring label that names no port stops the global step, which keeps it in
+  // the list.
+  auto config = test::miniConfig();
+  config.ports->sequences->all_outer.emplace_back("Nowhere.port0");
+
+  EXPECT_EQ(solvingSteps(test::miniChip(), config, {"capacity", "global"}),
+            std::vector<std::string>{"global"});
 }
 
 } // namespace

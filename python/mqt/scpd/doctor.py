@@ -27,9 +27,6 @@ from .config import ConfigError, load_config, write_config
 from .run import RunError, steps_until
 from .solvers import available
 
-#: The steps that solve a MILP, and so need the configured solver backend.
-SOLVING_STEPS = frozenset({"global", "assign"})
-
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -114,20 +111,26 @@ def solver_summary() -> list[str]:
     ]
 
 
-def solver_problem(config_bytes: bytes) -> str | None:
+def solver_problem(chip_bytes: bytes, config_bytes: bytes, steps: list[str]) -> str | None:
     """What keeps a run from the solver backend that the configuration and ``SCPD_SOLVER`` choose.
 
+    A backend name that the core does not know is a problem for every run. A backend that cannot
+    solve is a problem only for a run with a step that solves, as ``pyscpd.solving_steps`` lists
+    them. The doctor and ``plan`` both run this check, so they report the same problem for the same steps.
+
     Args:
+        chip_bytes: The classified chip.
         config_bytes: The packed configuration.
+        steps: The steps the run takes.
 
     Returns:
-        The problem, or None when the backend can solve.
+        The problem, or None when the run can reach what it solves with.
     """
     try:
         solver = pyscpd.solver_info(config_bytes)
     except ValueError as error:
         return str(error)
-    if solver.startswith("HiGHS "):
+    if solver.startswith("HiGHS ") or not pyscpd.solving_steps(chip_bytes, config_bytes, steps):
         return None
     usable, why = available()
     return None if usable else f"the configuration asks for {solver}, but {why}"
@@ -192,7 +195,7 @@ def run_doctor(config_path: Path, *, list_ports: bool = False, chip_path: Path |
         steps = []
     for problem in pyscpd.plan_problems(chip_bytes, config_bytes, steps):
         report.fail(problem)
-    if SOLVING_STEPS.intersection(steps) and (problem := solver_problem(config_bytes)) is not None:
+    if (problem := solver_problem(chip_bytes, config_bytes, steps)) is not None:
         report.fail(problem)
     report.say("", f"obstacles: {len(obstacles_of(chip))}", f"ports: {len(ports_of(chip))}", "")
     report.say(*classification_table(chip, config))

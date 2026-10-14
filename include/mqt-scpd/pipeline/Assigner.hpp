@@ -80,6 +80,28 @@ assignmentInputs(const ChipT& chip, const CapacityPlanT& capacity,
 launcherOrderProblem(const ChipT& chip, const ConfigT& config);
 
 /**
+ * @brief Checks that the launchers of a chip with resonators can feed them.
+ *
+ * The assignment feeds a resonator on the segment between two neighbouring
+ * launchers. With one launcher, that segment has no length. With two
+ * launchers, or with launchers that all lie on one line, two segments run
+ * along one line, and two resonators can share one feed point. A chip whose
+ * ports include a resonator therefore needs at least three launchers that do
+ * not all lie on one line.
+ *
+ * The check reads only the chip: its resonator ports and the launchers that
+ * get a slot. planProblems() runs it before any stage. The Assignment stage
+ * refuses the same launchers only where the ring it assigns carries a
+ * resonator.
+ *
+ * @param chip The classified chip.
+ * @return What is wrong with the launchers, or nothing when the chip has no
+ * resonator or launchers enough.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
+launcherPlacesProblem(const ChipT& chip);
+
+/**
  * @brief Creates the assigner of the first release.
  *
  * The assigner solves a model of the ring of outer ports that keeps the

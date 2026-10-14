@@ -276,8 +276,23 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "chip"_a, "config"_a, "steps"_a,
       "What would stop a run of the given steps on a classified chip, before "
       "any stage runs: an unknown implementation name, a missing or odd "
-      "launcher_target, or launchers listed in the direction of the port "
-      "ring. Empty when there is nothing.");
+      "launcher_target, launchers listed in the direction of the port ring, "
+      "or fewer than three launchers off one line on a chip with resonators. "
+      "Empty when there is nothing.");
+
+  m.def(
+      "solving_steps",
+      [](const nb::bytes& chip, const nb::bytes& config,
+         const std::vector<std::string>& steps) {
+        return mqt::scpd::pipeline::solvingSteps(
+            mqt::scpd::io::readChip(asSpan(chip)),
+            mqt::scpd::io::readConfig(asSpan(config)), steps);
+      },
+      "chip"_a, "config"_a, "steps"_a,
+      "The steps of a run that solve a mixed-integer program, and so need "
+      "the solver backend: the assignment, and the global step where the "
+      "chip has an inner circuit. The list keeps a global step whose port "
+      "ring the core refuses, since that step stops the run anyway.");
 
   m.def(
       "plan_capacity",

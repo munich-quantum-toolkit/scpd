@@ -24,7 +24,7 @@ from .artifacts import ArtifactError
 from .chip import ChipError, decode_chip, load_chip
 from .config import ConfigError, load_config, write_config
 from .console import Console, size
-from .doctor import run_doctor
+from .doctor import run_doctor, solver_problem
 from .export import HAS_KLAYOUT
 from .inspection import InspectionError, artifact_to_json
 from .planning import PLANNING_STAGES, PlanningError, PlanningGeometry, planning_geometry
@@ -78,7 +78,8 @@ def command_plan(args: argparse.Namespace) -> int:
 
     Raises:
         ConfigError: If the configuration and the chip would stop one of the steps, as
-            ``pyscpd.plan_problems`` reports it. The run directory stays as it was.
+            ``pyscpd.plan_problems`` and ``solver_problem`` report it. The run directory stays as
+            it was.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
     # The core reaches gurobipy only for a configuration that names the gurobi backend; every other
@@ -101,7 +102,10 @@ def command_plan(args: argparse.Namespace) -> int:
         chip = load_chip(config, args.config, chip_input)
     # Every check runs before a fresh run deletes the artifacts of the run it replaces.
     config_bytes = write_config(config)
-    if problems := pyscpd.plan_problems(chip, config_bytes, steps):
+    problems = pyscpd.plan_problems(chip, config_bytes, steps)
+    if (problem := solver_problem(chip, config_bytes, steps)) is not None:
+        problems.append(problem)
+    if problems:
         raise ConfigError("; ".join(problems))
     solver = pyscpd.solver_info(config_bytes)
     if args.stage is None:
