@@ -158,7 +158,7 @@ def _mini() -> ChipT:
 def test_a_planning_stage_is_drawn_over_the_chip_on_layers_of_its_own() -> None:
     """Every kind of planning shape is one group with its own stroke, and a gate shows its budget."""
     geometry = PlanningGeometry(
-        partitions=[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]],
+        partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
         bottlenecks=[((0.0, 0.0), (10.0, 0.0), 3)],
         corridors=[[(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)]],
         slots=[(50.0, 50.0)],
@@ -244,7 +244,7 @@ def _groups(svg: str) -> set[str | None]:
 def test_a_stage_leaves_out_what_its_picture_does_not_need() -> None:
     """The capacity picture shows borders, not outlines and gates; keep-out and chains never show."""
     geometry = PlanningGeometry(
-        partitions=[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]],
+        partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
         borders=[[(0.0, 50.0), (100.0, 50.0)]],
         bottlenecks=[((0.0, 0.0), (10.0, 0.0), 3)],
         keepout=[[(0.0, 0.0), (5.0, 0.0), (5.0, 5.0)]],
@@ -388,7 +388,7 @@ def test_a_border_of_one_cell_edge_is_left_out() -> None:
 def test_the_partitions_take_the_grey_of_their_tone_where_the_stage_shows_them() -> None:
     """The capacity and corridor pictures shade each toned partition under the grid; others do not."""
     square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
-    geometry = PlanningGeometry(partitions=[square, square, square], partition_tones=[0, 1, None])
+    geometry = PlanningGeometry(partitions=[[square], [square], [square]], partition_tones=[0, 1, None])
 
     for stage in ("capacity", "corridor"):
         svg = layout_svg(_mini(), stage=stage, planning=geometry)
@@ -399,11 +399,25 @@ def test_the_partitions_take_the_grey_of_their_tone_where_the_stage_shows_them()
     assert 'class="l-tone"' not in layout_svg(_mini(), stage="global", planning=geometry)
 
 
+def test_the_tone_of_a_partition_leaves_its_hole_open() -> None:
+    """The rings of a partition make one path filled even-odd, so the hole in it stays unshaded."""
+    outer = [(0.0, 0.0), (30.0, 0.0), (30.0, 30.0), (0.0, 30.0)]
+    hole = [(10.0, 10.0), (20.0, 10.0), (20.0, 20.0), (10.0, 20.0)]
+    geometry = PlanningGeometry(partitions=[[outer, hole]], partition_tones=[0])
+
+    root = ET.fromstring(layout_svg(_mini(), stage="capacity", planning=geometry))  # ruff: ignore[suspicious-xml-element-tree-usage]
+
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-tone")
+    (path,) = layer.findall(f"{SVG}path")
+    assert path.get("fill-rule") == "evenodd"
+    assert (path.get("d") or "").count("M") == 2
+
+
 def test_the_assign_picture_shows_its_chords_over_the_plan_without_the_ring() -> None:
     """The chords are thick black dashes over the toned partitions; the ring of the ports is left out."""
     square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
     geometry = PlanningGeometry(
-        partitions=[square],
+        partitions=[[square]],
         partition_tones=[0],
         ring=[(0.0, 0.0), (50.0, 0.0), (50.0, 50.0)],
         assignments=[((0.0, 0.0), (20.0, 20.0))],

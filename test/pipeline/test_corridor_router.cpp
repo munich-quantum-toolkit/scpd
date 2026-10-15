@@ -374,6 +374,29 @@ TEST(CorridorRouter, KeepsTheCrossingPitchBetweenWiresWhereBordersMeet) {
   EXPECT_GT(routed, 0U);
 }
 
+TEST(CorridorRouter, StartsAndEndsEveryWireAtTheCentreOfACell) {
+  // The source of a corridor is the cell its feed was placed at, and its
+  // target the cell its port is reached at, so both are layout points of
+  // cells of the detail grid.
+  const auto planned = planMini();
+  const auto routing = routeMini(planned);
+  const auto detail = buildScene(planned.chip, test::miniConfig()).detail;
+  constexpr auto tolerance = 1.0e-9;
+  std::size_t ends = 0;
+  for (const auto& corridor : routing.corridors) {
+    for (const auto* end : {corridor->source.get(), corridor->target.get()}) {
+      if (end == nullptr) {
+        continue;
+      }
+      const auto cell = detail.toCell(*end);
+      EXPECT_NEAR(cell.x(), std::round(cell.x()), tolerance);
+      EXPECT_NEAR(cell.y(), std::round(cell.y()), tolerance);
+      ++ends;
+    }
+  }
+  EXPECT_GT(ends, 0U);
+}
+
 TEST(CorridorRouter, LeavesAPartitionOnlyIntoANeighbour) {
   const auto planned = planMini();
   const auto routing = routeMini(planned);
@@ -509,6 +532,50 @@ TEST(CorridorRouter, PlacesTheWiresThatNoRoundPlaced) {
             std::format("placed {}", routed));
   EXPECT_GT(routed, 0U);
   expectOneWirePerSlot(routing);
+  expectNoCrossingInsideAPartition(routing);
+}
+
+TEST(CorridorRouter, MovesAWireThatHoldsASlotNearTheOneAnotherWants) {
+  // Four wires fed at slots of the fixture, found by a search over random
+  // feeds. With no sweep, the exchange pass is the only one that moves a
+  // wire. The way of the wire to Q1.port0 needs a slot next to one that
+  // another wire holds, so the exchange pass has to see the holder of that
+  // slot as a wire in the way, or the wire stays without a way.
+  const auto fixture = planMini();
+  std::vector<Point> offered;
+  for (const auto& slots : routeMini(fixture).slots) {
+    for (const auto& position : slots->positions) {
+      offered.push_back(position);
+    }
+  }
+  ASSERT_GT(offered.size(), 278U);
+  const auto portOf = [&fixture](const std::string_view label) {
+    const auto found =
+        std::ranges::find_if(fixture.chip.ports, [&](const auto& port) {
+          return port->label == label;
+        });
+    EXPECT_NE(found, fixture.chip.ports.end()) << label;
+    return static_cast<std::uint32_t>(found - fixture.chip.ports.begin());
+  };
+  auto planned = planMini();
+  planned.assignment.connections.clear();
+  planned.assignment.feeds.clear();
+  for (const auto& [slot, label] :
+       {std::pair<std::size_t, std::string_view>{278, "C12.port0"},
+        {150, "Q1.port1"},
+        {116, "Q2.port0"},
+        {3, "Q1.port0"}}) {
+    auto connection = std::make_unique<flatbuffers::design::ConnectionT>();
+    connection->target = flatbuffers::design::PortRef(portOf(label));
+    planned.assignment.connections.push_back(std::move(connection));
+    planned.assignment.feeds.push_back(offered[slot]);
+  }
+
+  const auto routing = routeMini(planned, {}, sweepConfig(0, 30));
+
+  EXPECT_EQ(unroutedOf(routing), 0U);
+  expectOneWirePerSlot(routing);
+  expectThePitchBetweenWires(routing, crossingPitch(test::miniConfig()));
   expectNoCrossingInsideAPartition(routing);
 }
 
@@ -659,8 +726,12 @@ TEST(CorridorRouter, RefusesAPlanMadeWithAnotherCrossingPitch) {
   auto config = test::miniConfig();
   config.stages->capacity->crossing_pitch = crossingPitch(config) / 2.0;
 
-  EXPECT_NE(refusalOf(planned, config).find("crossing pitch"),
-            std::string::npos);
+  const auto refusal = refusalOf(planned, config);
+  EXPECT_NE(refusal.find("another crossing pitch or by another version"),
+            std::string::npos)
+      << refusal;
+  EXPECT_NE(refusal.find("run the capacity step again"), std::string::npos)
+      << refusal;
 }
 
 TEST(CorridorRouter, RefusesAPartitionThatFallsApartIntoPieces) {

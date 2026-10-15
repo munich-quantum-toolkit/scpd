@@ -64,7 +64,7 @@ def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> Non
     config_path = FIXTURE / "config.toml"
     chip = decode_chip(load_chip(load_config(config_path), config_path))
     geometry = PlanningGeometry(
-        partitions=[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]],
+        partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
         corridors=[[(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)]],
         slots=[(50.0, 50.0)],
     )
@@ -80,6 +80,27 @@ def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> Non
         number, datatype, _ = PLANNING_LAYERS[name]
         assert top.shapes(layout.layer(number, datatype)).size() == 1, name
     assert top.shapes(layout.layer(*OBSTACLE_LAYER)).size() == 4
+
+
+def test_a_partition_with_a_hole_is_one_shape_with_the_hole_open(tmp_path: Path) -> None:
+    """The rings of a partition make one polygon, and the inner ring is its hole, not a filled square."""
+    config_path = FIXTURE / "config.toml"
+    chip = decode_chip(load_chip(load_config(config_path), config_path))
+    outer = [(0.0, 0.0), (300.0, 0.0), (300.0, 300.0), (0.0, 300.0)]
+    hole = [(100.0, 100.0), (200.0, 100.0), (200.0, 200.0), (100.0, 200.0)]
+    geometry = PlanningGeometry(partitions=[[outer, hole]])
+
+    summary = write_layout(chip, tmp_path / "hole.gds", planning=geometry)
+
+    assert summary.planning == 1
+    layout = kdb.Layout()
+    layout.read(str(summary.path))
+    number, datatype, _ = PLANNING_LAYERS["partitions"]
+    region = kdb.Region(layout.top_cell().begin_shapes_rec(layout.layer(number, datatype)))
+    assert region.count() == 1
+    assert region.area() * layout.dbu**2 == pytest.approx(300.0 * 300.0 - 100.0 * 100.0)
+    inside_hole = kdb.Region(kdb.DBox(140.0, 140.0, 160.0, 160.0).to_itype(layout.dbu))
+    assert (region & inside_hole).is_empty()
 
 
 def test_every_feedline_chain_is_one_path_on_the_feedline_layer(tmp_path: Path) -> None:

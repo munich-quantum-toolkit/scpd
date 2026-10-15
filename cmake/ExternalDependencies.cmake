@@ -98,12 +98,17 @@ if(BUILD_MQT_SCPD_TESTS)
 endif()
 
 # Make all declared dependencies available. The options of HiGHS and Boost are normal variables that
-# exist only inside the block, so they neither write the cache nor change a value that the user or a
-# parent project set. CMP0077 makes option() honor a normal variable, and CMP0126 keeps set(CACHE)
-# from removing one; the policy versions of Boost leave both unset.
+# exist only inside the block, so these options neither write the cache nor change a value that the
+# user or a parent project set. CMP0077 makes option() honor a normal variable, and CMP0126 keeps
+# set(CACHE) from removing one; the policy versions of Boost leave both unset. HiGHS and Boost still
+# include CPack, which writes CPACK_* entries to the cache and CPackConfig.cmake to the build tree.
+# The project builds no CPack package, so nothing reads them.
 block(SCOPE_FOR VARIABLES PROPAGATE flatbuffers_SOURCE_DIR nlohmann_json_SOURCE_DIR)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
+# The tests of the dependencies: HiGHS would otherwise add its test tree and the CTest dashboard
+# targets. The project's own tests do not depend on this variable.
+set(BUILD_TESTING OFF)
 # HiGHS: the library only, with 32-bit indices and without zlib.
 set(BUILD_EXAMPLES OFF)
 set(BUILD_CXX_EXAMPLE OFF)

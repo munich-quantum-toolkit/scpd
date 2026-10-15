@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -193,6 +194,29 @@ def test_inspect_prints_an_artifact_as_json(tmp_path: Path, capsys: pytest.Captu
     assert main(["inspect", str(artifact), "-o", str(output)]) == 0
     assert json.loads(output.read_text(encoding="utf-8")) == document
     assert capsys.readouterr().out.startswith(f"✓ {output}  ")
+
+
+def test_inspect_stops_quietly_when_the_reader_goes_away(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reader such as ``head`` that closes the pipe early is no error to report."""
+    artifact = tmp_path / "03-global.fb"
+    artifact.write_bytes(
+        write_artifact(
+            ArtifactT(
+                producer="test",
+                outputType=StageOutput.GlobalRouting,
+                output=GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[]),
+            )
+        )
+    )
+    read, written = os.pipe()
+    os.close(read)
+    with os.fdopen(written, "w", encoding="utf-8") as closed:
+        monkeypatch.setattr(sys, "stdout", closed)
+        assert main(["inspect", str(artifact)]) == 1
+        monkeypatch.undo()
+    assert not capsys.readouterr().err
 
 
 def test_problems_exit_with_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -645,6 +669,45 @@ def test_a_planning_stage_needs_a_run(tmp_path: Path, capsys: pytest.CaptureFixt
     assert "04-corridor.fb is missing" in capsys.readouterr().err
 
 
+def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A step that failed keeps its old artifact without a record, and a changed input outdates every artifact.
+
+    Either way the picture of the step is refused, since it would show what the run inputs no longer make.
+    """
+    run = tmp_path / "run"
+    assert plan(run, "--stop-after", "assign") == 0
+    capsys.readouterr()
+    output = tmp_path / "assign.svg"
+
+    def broken(*args: object) -> bytes:
+        del args
+        msg = "the assignment broke"
+        raise RuntimeError(msg)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(pyscpd, "assign", broken)
+        assert main(["plan", "-o", str(run), "--stage", "assign", "--no-progress"]) == 1
+    capsys.readouterr()
+    assert (run / "03-assign.fb").is_file()
+    assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 1
+    assert "03-assign.fb carries no record of the inputs it was made from" in capsys.readouterr().err
+    assert not output.exists()
+
+    assert main(["plan", "-o", str(run), "--stage", "assign", "--no-progress"]) == 0
+    capsys.readouterr()
+    assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 0
+    capsys.readouterr()
+
+    config = run / "config.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8") + "\n[stages.capacity]\ncrossing_pitch = 120.0\n", encoding="utf-8"
+    )
+    assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 1
+    assert "[stages.capacity] in config.toml changed after the capacity step" in capsys.readouterr().err
+
+
 @pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")
 @pytest.mark.usefixtures("vector_type")
 def test_render_writes_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -714,7 +777,7 @@ def test_doctor_and_plan_refuse_an_unknown_solver_for_a_run_that_solves_nothing(
     """An unknown backend name is a mistake for every run, so the doctor and the run refuse it alike."""
     config = stopping_after(tmp_path, "capacity")
     monkeypatch.setenv("SCPD_SOLVER", "cplex")
-    problem = "'cplex' is no solver backend; use 'highs' or 'gurobi'"
+    problem = "SCPD_SOLVER: 'cplex' is no solver backend; use 'highs' or 'gurobi'"
 
     assert main(["doctor", "-c", str(config)]) == 1
     assert problem in capsys.readouterr().out
@@ -737,7 +800,7 @@ def test_doctor_and_plan_need_a_reachable_solver_only_for_a_run_that_solves(
     config = stopping_after(tmp_path, step)
     monkeypatch.setenv("SCPD_SOLVER", "gurobi")
     monkeypatch.setitem(sys.modules, "gurobipy", None)
-    problem = "the configuration asks for gurobi, but gurobipy is not installed"
+    problem = "SCPD_SOLVER asks for gurobi, but gurobipy is not installed"
 
     assert main(["doctor", "-c", str(config)]) == code
     assert (problem in capsys.readouterr().out) == (code == 1)
@@ -763,7 +826,7 @@ def test_a_resumed_step_needs_a_reachable_solver_only_where_it_solves(
     assignment = (run / "03-assign.fb").read_bytes()
     monkeypatch.setenv("SCPD_SOLVER", "gurobi")
     monkeypatch.setitem(sys.modules, "gurobipy", None)
-    problem = "the configuration asks for gurobi, but gurobipy is not installed"
+    problem = "SCPD_SOLVER asks for gurobi, but gurobipy is not installed"
 
     assert main(["plan", "-o", str(run), "--stage", step, "--no-progress"]) == code
 

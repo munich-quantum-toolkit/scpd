@@ -207,7 +207,7 @@ public:
   ///
   /// @throws std::invalid_argument When a border of the plan offers another
   /// number of slots than its budget, which a plan made with another
-  /// crossing pitch does.
+  /// crossing pitch, or by a version that picks the slots another way, does.
   Corridors(const CapacityPlanT& plan, const CapacityScene& scene,
             const double pitch)
       : detailGrid(scene.detail) {
@@ -220,15 +220,16 @@ public:
           .samples = {}};
       geometry.samples.reserve(border.samples.size());
       for (const auto& sample : border.samples) {
-        const auto cell = detail.toCell(sample);
-        geometry.samples.emplace_back(onGrid(cell.x()), onGrid(cell.y()));
+        const auto corner = grid::layoutToCorner(detail, sample);
+        geometry.samples.emplace_back(onGrid(corner.x()), onGrid(corner.y()));
       }
       const auto slots = crossingSlots(geometry, scene, pitch);
       if (slots.size() != border.budget) {
         throw std::invalid_argument(std::format(
             "border {} between partitions {} and {} offers {} crossing slots "
             "and the plan gives it a budget of {}; the plan was made with "
-            "another crossing pitch",
+            "another crossing pitch or by another version of mqt-scpd, so run "
+            "the capacity step again",
             index, border.first, border.second, slots.size(), border.budget));
       }
       for (const auto& slot : slots) {
@@ -383,7 +384,8 @@ public:
 
   /// The layout position of a slot, for the artifact.
   [[nodiscard]] fbg::Point layoutOf(const std::size_t slot) const {
-    return detailGrid.toLayout(slotList[slot].place.x, slotList[slot].place.y);
+    return grid::cornerToLayout(detailGrid, slotList[slot].place.x,
+                                slotList[slot].place.y);
   }
 
 private:
@@ -597,8 +599,8 @@ private:
   }
 
   [[nodiscard]] double distance(const Place& a, const Place& b) const {
-    const auto from = detailGrid.toLayout(a.x, a.y);
-    const auto to = detailGrid.toLayout(b.x, b.y);
+    const auto from = grid::cornerToLayout(detailGrid, a.x, a.y);
+    const auto to = grid::cornerToLayout(detailGrid, b.x, b.y);
     return std::hypot(from.x() - to.x(), from.y() - to.y());
   }
 
@@ -736,7 +738,7 @@ void requireSameGrid(const CapacityPlanT& plan,
           .label = static_cast<PartitionLabel>(partition->label), .ring = {}};
       outline.ring.reserve(ring->vertices.size());
       for (const auto& vertex : ring->vertices) {
-        outline.ring.push_back(detail.toCell(vertex));
+        outline.ring.push_back(grid::layoutToCorner(detail, vertex));
       }
       outlines.push_back(std::move(outline));
     }
@@ -1151,7 +1153,8 @@ private:
              const std::vector<std::optional<Route>>& routes,
              const grid::GridMetrics& detail) {
     const auto layoutOf = [&detail](const Place& place) {
-      return std::make_unique<fbg::Point>(detail.toLayout(place.x, place.y));
+      return std::make_unique<fbg::Point>(
+          grid::cornerToLayout(detail, place.x, place.y));
     };
 
     CorridorRoutingT routing;

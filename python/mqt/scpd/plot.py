@@ -315,7 +315,10 @@ def _planning_layers(
         parts.append(f'<g class="l-{name}">{casing}<path d="{data}"/></g>')
 
     if planning.partitions and "partitions" not in hidden:
-        group("partition", "".join(polyline(ring, close=True) for ring in planning.partitions))
+        group(
+            "partition",
+            "".join(polyline(ring, close=True) for partition in planning.partitions for ring in partition),
+        )
     if planning.borders:
         # A run of a single cell edge is where two partitions touch at one point only, between
         # blocked cells; it reads as a speck rather than as a border.
@@ -710,10 +713,11 @@ def layout_svg(
     if planning is not None and stage in _TONED and any(tone is not None for tone in planning.partition_tones):
         # Every partition in the grey of its tone, under the millimetre grid.
         shaded = zip(planning.partitions, planning.partition_tones, strict=False)
+        # The rings of one partition make one path, so a hole stays open.
         tones = "".join(
-            f'<path fill="{PARTITION_TONES[tone % len(PARTITION_TONES)]}" '
-            f'd="{_path_data(list(starmap(to_view, ring)))}"/>'
-            for ring, tone in shaded
+            f'<path fill="{PARTITION_TONES[tone % len(PARTITION_TONES)]}" fill-rule="evenodd" '
+            f'd="{"".join(_path_data(list(starmap(to_view, ring))) for ring in partition)}"/>'
+            for partition, tone in shaded
             if tone is not None
         )
         tones = f'<g class="l-tone">{tones}</g>'

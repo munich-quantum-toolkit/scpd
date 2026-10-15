@@ -804,6 +804,54 @@ TEST(Assigner, RunsEveryChainOneWayWhereverTheRingOpens) {
   }
 }
 
+TEST(Assigner, GivesEveryChainALauncher) {
+  // Two launcher ends and two terminations make two chains. The target rows
+  // count only ends, so a chain from a termination to a termination costs no
+  // more than two chains from a launcher to a termination. On {0, 1, 3, 4, 5}
+  // the stage once chose such a chain.
+  std::size_t solved = 0;
+  for (std::uint32_t subset = 0; subset < (1U << 8U); ++subset) {
+    std::vector<std::uint32_t> resonators;
+    for (std::uint32_t port = 0; port < 8; ++port) {
+      if ((subset & (1U << port)) != 0) {
+        resonators.push_back(port);
+      }
+    }
+    if (resonators.size() < 2) {
+      continue;
+    }
+    AssignmentT assignment;
+    try {
+      assignment = assignOctagon(0, resonators, 2, 2);
+    } catch (const std::invalid_argument&) {
+      // Too many conventional ports for the six launchers.
+      continue;
+    }
+    ++solved;
+    for (const auto& chain : assignment.chains) {
+      EXPECT_TRUE(chain->start != nullptr || chain->end != nullptr)
+          << "a chain without a launcher on resonator set " << subset;
+    }
+  }
+  EXPECT_GT(solved, 0U);
+  EXPECT_NO_THROW(static_cast<void>(assignOctagon(0, {0, 1, 3, 4, 5}, 2, 2)));
+}
+
+TEST(Assigner, SaysWhenTheTerminationsOutnumberTheLauncherEnds) {
+  // Two launcher ends and four terminations make three chains, so one of
+  // them has no launcher.
+  try {
+    static_cast<void>(assignOctagon(0, {0, 1, 2, 3, 4, 5}, 2, 4));
+    FAIL() << "more terminations than launcher ends have to be refused";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_NE(std::string(error.what())
+                  .find("[design_rules] feedline_terminations 4 is larger "
+                        "than [stages.assignment] launcher_target 2"),
+              std::string::npos)
+        << error.what();
+  }
+}
+
 /// The assignment of octagonChip on a ring of only the ports @p ring.
 AssignmentT assignPartOfOctagon(const std::vector<std::uint32_t>& ring,
                                 const std::vector<std::uint32_t>& resonators,

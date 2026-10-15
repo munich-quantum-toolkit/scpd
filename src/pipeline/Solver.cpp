@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <format>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -68,11 +69,17 @@ Backend backendOf(const ConfigT& config) {
     backend.options.relativeGap = solver.relative_gap;
     backend.options.threads = solver.threads;
   }
+  std::string_view source = "[stages.solver] backend";
   if (const auto* fromEnvironment = std::getenv("SCPD_SOLVER");
       fromEnvironment != nullptr && *fromEnvironment != '\0') {
     name = fromEnvironment;
+    source = "SCPD_SOLVER";
   }
-  backend.choice = milp::backendChoiceFromName(name.empty() ? "highs" : name);
+  try {
+    backend.choice = milp::backendChoiceFromName(name.empty() ? "highs" : name);
+  } catch (const std::invalid_argument& error) {
+    throw std::invalid_argument(std::format("{}: {}", source, error.what()));
+  }
   return backend;
 }
 

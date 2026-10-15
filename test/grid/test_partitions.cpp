@@ -68,6 +68,22 @@ TEST(Partitions, FindsTheBorderBetweenTwoLabelsAndItsLength) {
   EXPECT_DOUBLE_EQ(border.center().y(), 3.0);
 }
 
+TEST(Partitions, ConvertCornerCoordinatesHalfACellFromTheCellCentres) {
+  // Ten by six cells over a box with steps of 10 and 20 layout units. The
+  // centre of cell (0, 0) is the origin of the grid, at (100, -50).
+  const auto grid = GridMetrics::fit(
+      {.minX = 100.0, .minY = -50.0, .maxX = 190.0, .maxY = 50.0}, 10, 6);
+
+  // The corners of the grid lie half a cell step outside the box.
+  EXPECT_EQ(cornerToLayout(grid, 0.0, 0.0), Point(95.0, -60.0));
+  EXPECT_EQ(cornerToLayout(grid, 10.0, 6.0), Point(195.0, 60.0));
+  // The centre of a cell in corner coordinates is the layout point of the
+  // cell.
+  EXPECT_EQ(cornerToLayout(grid, 3.5, 2.5), grid.toLayout(3.0, 2.0));
+  EXPECT_EQ(layoutToCorner(grid, grid.toLayout(3.0, 2.0)), Point(3.5, 2.5));
+  EXPECT_EQ(layoutToCorner(grid, Point(95.0, -60.0)), Point(0.0, 0.0));
+}
+
 TEST(Partitions, TracesOneClosedOutlinePerLabel) {
   const auto grid = unitGrid(10, 6);
   const BitGrid free(10, 6);

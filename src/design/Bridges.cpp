@@ -99,9 +99,6 @@ std::vector<ComponentPorts> componentsOf(const flatbuffers::design::ChipT& chip,
     auto& component = byName[port->component];
     component.name = port->component;
     component.ports.push_back(index);
-    if (port->role == flatbuffers::design::UnassignedRole::Resonator) {
-      component.qubit = true;
-    }
   }
 
   const auto matches = bridgeMatchesOf(chip, rules);

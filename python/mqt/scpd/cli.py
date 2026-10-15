@@ -16,6 +16,8 @@ was interrupted. What a command writes follows ``docs/terminal_output.md``.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,7 +32,7 @@ from .export import HAS_KLAYOUT
 from .inspection import InspectionError, artifact_to_json
 from .planning import PLANNING_STAGES, PlanningError, PlanningGeometry, planning_geometry
 from .plot import STAGES, PlotError, layout_svg
-from .run import BlockReporter, RunDirectory, RunError, steps_until
+from .run import BlockReporter, RunDirectory, RunError, input_digests, steps_until
 from .solvers import register as register_external_solver
 from .steps import STEPS
 
@@ -169,7 +171,8 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
 
     Raises:
         PlotError: If the stage arrives with a later phase.
-        RunError: If the artifact of the stage is missing from the run.
+        RunError: If the artifact of the stage is missing from the run, or if it or an earlier
+            artifact was made from inputs the run no longer holds.
     """
     if STAGES[args.stage] not in {"phase 1", "phase 3"}:
         msg = f"stage '{args.stage}' arrives with {STAGES[args.stage]}"
@@ -177,7 +180,8 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
     if args.run_dir is None:
         return load_chip(load_config(args.config), args.config, args.chip), _subject(args.config), None
     directory = RunDirectory(args.run_dir)
-    chip_bytes = directory.classified_chip(directory.load())
+    config = directory.load()
+    chip_bytes = directory.classified_chip(config)
     title = directory.path.resolve().name
     if args.stage == "layout":
         return chip_bytes, title, None
@@ -185,6 +189,7 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
     if not artifact.is_file():
         msg = f"{artifact} is missing; run `mqt-scpd plan` up to the {args.stage} step first"
         raise RunError(msg)
+    directory.check_current(args.stage, input_digests(config, chip_bytes))
     # The global picture is drawn over the gates the circuit paid for, and the assign and corridor
     # pictures over the partitions their chords and wires run through, the corridor picture with the
     # feedlines its resonator wires start at.
@@ -264,6 +269,8 @@ def command_inspect(args: argparse.Namespace) -> int:
     text = artifact_to_json(args.artifact.read_bytes())
     if args.output is None:
         sys.stdout.write(text)
+        # A reader that went away is noticed here, where main() handles it, and not at exit.
+        sys.stdout.flush()
     else:
         args.output.write_text(text, encoding="utf-8")
         Console().success(f"{args.output}  {size(len(text.encode('utf-8')))}")
@@ -382,6 +389,13 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         Console(file=sys.stderr).failure("interrupted")
         return 130
+    except BrokenPipeError:
+        # The reader of the output went away, as `head` does once it has its lines. That is no
+        # error to report. Python flushes the output once more at exit, so it goes to the null
+        # device instead.
+        with contextlib.suppress(OSError, ValueError):
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 1
     # The errors of the inputs, and every error the core raises outside a stage, such as a backend
     # name it does not know.
     except (

@@ -170,12 +170,18 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
     written = 0
     for name, rings in (
         ("keepout", planning.keepout),
-        ("partitions", planning.partitions),
         ("blocked", planning.blocked),
     ):
         for ring in rings:
             top.shapes(layer(name)).insert(kdb.DPolygon(list(starmap(kdb.DPoint, ring))))
             written += 1
+    for partition in planning.partitions:
+        # The rings of a partition are combined even-odd, so a ring inside another one is a hole.
+        region = kdb.Region()
+        for ring in partition:
+            region ^= kdb.Region(kdb.DPolygon(list(starmap(kdb.DPoint, ring))).to_itype(layout.dbu))
+        top.shapes(layer("partitions")).insert(region)
+        written += 1
     for border in [*planning.borders, *planning.enclosed_borders]:
         if len(border) >= 2:
             top.shapes(layer("borders")).insert(path(border))

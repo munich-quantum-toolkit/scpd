@@ -1495,7 +1495,9 @@ struct FeedlineChainT : public ::flatbuffers::NativeTable {
 /// resonator before it, a chord to the one after it, or an end. An end is a
 /// launcher, or one of the permitted terminations where the feedline stops.
 /// A chain is a run of resonators joined by chords, and the Final stage
-/// drives it with one feedline: launcher, coupler, coupler, …, launcher.
+/// drives it with one feedline: launcher, coupler, coupler, …, launcher. A
+/// chain has a launcher at one end at least; its other end may be a
+/// termination.
 struct FeedlineChain FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FeedlineChainT NativeTableType;
   typedef FeedlineChainBuilder Builder;
@@ -1739,13 +1741,16 @@ struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
   }
-  /// The outer port ring that the Assignment stage consumes. The inner
-  /// circuit extends the configured ring with the coupler ports it surfaces
-  /// at, so the assignment reads this ring and not the configuration.
+  /// The outer port ring that the Assignment stage consumes: the configured
+  /// ring in its order, without the ring end of each outer bridge where no
+  /// inner wire surfaces. The assignment reads this ring and not the
+  /// configuration.
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *outer_ring() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_OUTER_RING);
   }
-  /// The resonator ports the assignment has to give a launcher.
+  /// The resonator ports of the chip, and the ring ports where the inner
+  /// wire of a resonator surfaces. The Assignment stage treats the ring
+  /// nodes among them as resonators.
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *resonators() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_RESONATORS);
   }
@@ -1880,7 +1885,9 @@ struct BorderSlots FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t border() const {
     return GetField<uint32_t>(VT_BORDER, 0);
   }
-  /// The slots in layout units, in the order the border runs.
+  /// The slots in layout units, in the order of the walk that picked them.
+  /// The walk runs from sample to adjacent sample and starts again at another
+  /// end where it runs out, so the order can jump along the border.
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *positions() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_POSITIONS);
   }

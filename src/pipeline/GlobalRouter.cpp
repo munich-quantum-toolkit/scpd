@@ -302,6 +302,22 @@ bool throughArtwork(const ChipT& chip, const fbg::Point& from,
   return false;
 }
 
+/// The lines of a lattice through @p values, in ascending order.
+///
+/// Two anchors on one line can differ in the last bits, since each is a
+/// port centre moved along its direction. A value within COORDINATE_EPSILON
+/// of the first value of its run is the same line, so the run gives one line
+/// and not several parallel ones a hair apart.
+std::vector<double> linesThrough(const std::set<double>& values) {
+  std::vector<double> lines;
+  for (const auto value : values) {
+    if (lines.empty() || value - lines.back() > COORDINATE_EPSILON) {
+      lines.push_back(value);
+    }
+  }
+  return lines;
+}
+
 /// The Hanan lattice of a set of ports: one line through the x of every
 /// anchor and one through its y.
 ///
@@ -328,8 +344,8 @@ Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
     ys.insert(anchor.y());
   }
 
-  const std::vector<double> columns(xs.begin(), xs.end());
-  const std::vector<double> rows(ys.begin(), ys.end());
+  const auto columns = linesThrough(xs);
+  const auto rows = linesThrough(ys);
   lattice.nodes.reserve(columns.size() * rows.size());
   for (const auto row : rows) {
     for (const auto column : columns) {
@@ -895,9 +911,10 @@ private:
   /// Each chain of outer space carries an integer flow of its own: its
   /// launcher supplies it, each of its gates passes at most its capacity, and
   /// each of its targets draws one wire. Where a target is the outer end of a
-  /// bridge, it draws exactly what the inner circuit sends out through that
-  /// bridge. An inner wire may therefore surface at an outer port only where
-  /// the chain behind that port can carry it to a launcher.
+  /// bridge, the chains that border it and that a launcher supplies together
+  /// draw exactly what the inner circuit sends out through that bridge. An
+  /// inner wire may therefore surface at an outer port only where a chain
+  /// behind that port can carry it to a launcher.
   ///
   /// A chain that belongs to the inner circuit is left out. Its targets are
   /// what the circuit has to reach, or the ports it reaches them through,
@@ -927,27 +944,57 @@ private:
       }
     }
 
+    const auto isTarget = [&](const ChainLink& link) {
+      return capacity.nodes[link.node]->kind == fba::CapacityElement::Target;
+    };
+    const auto portOf = [&](const ChainLink& link) {
+      return capacity.nodes[link.node]->id;
+    };
+
+    // What each chain can reach: a launcher supplies it, and a gate without
+    // room stops it. A target that the supply cannot reach draws nothing.
+    struct Walked {
+      std::size_t chain = 0;
+      std::vector<ChainLink> links;
+      std::vector<bool> supplied;
+    };
+    std::vector<Walked> walked;
     for (std::size_t chain = 0; chain < capacity.chains.size(); ++chain) {
-      const auto links = chainLinks(capacity, capacity.chains[chain]);
-
-      const auto isTarget = [&](const ChainLink& link) {
-        return capacity.nodes[link.node]->kind == fba::CapacityElement::Target;
-      };
-      const auto portOf = [&](const ChainLink& link) {
-        return capacity.nodes[link.node]->id;
-      };
-
+      auto links = chainLinks(capacity, capacity.chains[chain]);
       if (std::ranges::any_of(links, [&](const ChainLink& link) {
             return isTarget(link) && claimed.contains(portOf(link));
           })) {
         continue;
       }
+      auto supplied = suppliedLinks(capacity, links);
+      walked.push_back({.chain = chain,
+                        .links = std::move(links),
+                        .supplied = std::move(supplied)});
+    }
 
-      // What the chain can reach: a launcher supplies it, and a gate without
-      // room stops it. A target that the supply cannot reach draws nothing,
-      // and nothing may surface there either, because a wire that came out
-      // at such a port would have no free space to leave through.
-      const auto supplied = suppliedLinks(capacity, links);
+    // A ring end of a bridge may border several chains. The wire that
+    // surfaces there leaves through any of them that a launcher supplies, so
+    // the rows of the bridge sum over those chains and come with the last of
+    // them. Only where no chain supplies the ring end does nothing surface
+    // there, because a wire that came out there would have no free space to
+    // leave through.
+    std::unordered_map<std::uint32_t, std::size_t> suppliers;
+    std::unordered_map<std::uint32_t, std::size_t> lastSupplier;
+    for (std::size_t index = 0; index < walked.size(); ++index) {
+      const auto& [chain, links, supplied] = walked[index];
+      for (std::size_t at = 0; at < links.size(); ++at) {
+        if (isTarget(links[at]) && supplied[at] &&
+            insideOf.contains(portOf(links[at]))) {
+          ++suppliers[portOf(links[at])];
+          lastSupplier[portOf(links[at])] = index;
+        }
+      }
+    }
+    std::unordered_map<std::uint32_t, milp::LinearExpr> drawn;
+    std::unordered_set<std::uint32_t> sealed;
+
+    for (std::size_t index = 0; index < walked.size(); ++index) {
+      const auto& [chain, links, supplied] = walked[index];
 
       const auto demand =
           static_cast<double>(std::ranges::count_if(links, isTarget));
@@ -1008,13 +1055,13 @@ private:
           const auto inside = insideOf.find(element.id);
           if (!supplied[at]) {
             // Cut off from every launcher of its chain. A demand here would
-            // only make the model infeasible, and a wire that surfaced here
-            // would claim free space that does not exist.
+            // only make the model infeasible.
             model.addEqual(std::format("chain_{}_cut_in_{}", chain, at), in,
                            0.0);
             model.addEqual(std::format("chain_{}_cut_out_{}", chain, at), out,
                            0.0);
-            if (inside != insideOf.end()) {
+            if (inside != insideOf.end() && !suppliers.contains(element.id) &&
+                sealed.insert(element.id).second) {
               model.addEqual(std::format("chain_{}_sealed_{}", chain, at),
                              portFlow(inside->second, true), 0.0);
             }
@@ -1029,10 +1076,21 @@ private:
           // A target where the inner circuit can surface draws exactly what
           // the circuit sends out through the bridge, and never the reverse:
           // the wire leaves the inner region there and does not enter it.
+          auto& total = drawn[element.id];
+          total.add(in - out);
+          if (suppliers.at(element.id) > 1) {
+            // No chain hands a wire on to another one through the port.
+            model.addGreaterOrEqual(
+                std::format("chain_{}_bridge_draw_{}", chain, at), in - out,
+                0.0);
+          }
+          if (lastSupplier.at(element.id) != index) {
+            break;
+          }
           model.addEqual(std::format("chain_{}_bridge_{}", chain, at),
-                         in - out - portFlow(inside->second, true), 0.0);
+                         total - portFlow(inside->second, true), 0.0);
           model.addLessOrEqual(std::format("chain_{}_bridge_cap_{}", chain, at),
-                               in - out, 1.0);
+                               total, 1.0);
           model.addEqual(std::format("chain_{}_bridge_back_{}", chain, at),
                          portFlow(inside->second, false), 0.0);
           break;

@@ -70,6 +70,15 @@ refinement(const GridMetrics& detail, const GridMetrics& coarse) {
 
 } // namespace
 
+Point cornerToLayout(const GridMetrics& grid, const double x, const double y) {
+  return grid.toLayout(x - 0.5, y - 0.5);
+}
+
+Point layoutToCorner(const GridMetrics& grid, const Point point) {
+  const auto cell = grid.toCell(point);
+  return {cell.x() + 0.5, cell.y() + 0.5};
+}
+
 Point PartitionBorder::center() const {
   if (samples.empty()) {
     return {};
@@ -506,7 +515,8 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
   };
 
   const auto layout = [&](const std::size_t index) {
-    return grid.toLayout(border.samples[index].x(), border.samples[index].y());
+    return cornerToLayout(grid, border.samples[index].x(),
+                          border.samples[index].y());
   };
 
   // A sample becomes a slot when it lies at least one spacing from every slot

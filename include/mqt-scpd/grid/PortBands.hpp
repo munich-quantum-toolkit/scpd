@@ -126,7 +126,7 @@ struct StampedBand {
 
 /**
  * @brief Places the cell where a wire meets the band of its port, on the
- * capacity grid.
+ * grid of @p mask.
  *
  * The ideal target is the first cell beyond the band along the step. When that
  * cell lies on the grid and was free before the bands, it is freed and taken.

@@ -187,12 +187,15 @@ std::vector<grid::Point> crossingSlots(const grid::PartitionBorder& border,
     minY = 0.0;
     maxY = static_cast<double>(scene.detail.height);
   }
-  auto slots = grid::borderSlots(border, scene.detail, pitch);
-  std::erase_if(slots, [&](const grid::Point& slot) {
-    return slot.x() <= minX || slot.x() >= maxX || slot.y() <= minY ||
-           slot.y() >= maxY;
+  // The samples outside the rectangle are dropped before the slots are
+  // picked. A slot picked outside and dropped afterwards would still keep
+  // every sample within one pitch of it from becoming a slot.
+  auto inside = border;
+  std::erase_if(inside.samples, [&](const grid::Point& sample) {
+    return sample.x() <= minX || sample.x() >= maxX || sample.y() <= minY ||
+           sample.y() >= maxY;
   });
-  return slots;
+  return grid::borderSlots(inside, scene.detail, pitch);
 }
 
 CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {

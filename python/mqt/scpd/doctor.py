@@ -17,6 +17,7 @@ reach.
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -133,7 +134,8 @@ def solver_problem(chip_bytes: bytes, config_bytes: bytes, steps: list[str]) -> 
     if solver.startswith("HiGHS ") or not pyscpd.solving_steps(chip_bytes, config_bytes, steps):
         return None
     usable, why = available()
-    return None if usable else f"the configuration asks for {solver}, but {why}"
+    source = "SCPD_SOLVER" if os.environ.get("SCPD_SOLVER") else "[stages.solver] backend"
+    return None if usable else f"{source} asks for {solver}, but {why}"
 
 
 def ring_summary(config: ConfigT) -> list[str]:

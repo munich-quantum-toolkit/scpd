@@ -58,8 +58,10 @@ class CapacityParams(object):
     # It decides how finely a border is divided for the Corridor stage, and so
     # how many wires PartitionBorder.budget lets through. The Corridor stage
     # keeps the crossings of two wires at least one crossing pitch apart, also
-    # where two borders meet. Where a wire runs inside a partition, and the
-    # clearance of the drawn wire, the later routing stages decide.
+    # where two borders meet. The pitch applies to crossings only: a wire may
+    # cross a border closer than one pitch to the target cell or the feed of
+    # another wire. Where a wire runs inside a partition, and the clearance of
+    # the drawn wire, the later routing stages decide.
     #
     # The default is the prototype's own figure: its wire spacing less twenty
     # units, with no reason given for the twenty.

@@ -78,9 +78,11 @@ class PlanningGeometry:
     own without knowing what a partition or a capacity chain is.
     """
 
-    #: The outline of every partition of the free space, as closed rings.
-    partitions: list[list[Point]] = field(default_factory=list)
-    #: A tone for each ring of ``partitions``, so that two partitions that share a border never
+    #: The outline of every partition of the free space, as its closed rings. A partition with a
+    #: hole has more than one ring, and a point lies in the partition where it lies inside an odd
+    #: number of them.
+    partitions: list[list[list[Point]]] = field(default_factory=list)
+    #: A tone for each partition of ``partitions``, so that two partitions that share a border never
     #: share a tone: a small number from zero up. None for a partition the artwork closes in.
     partition_tones: list[int | None] = field(default_factory=list)
     #: The blocked cells of the grid the partitions were cut on, as rectangles: artwork, the
@@ -229,6 +231,18 @@ def _bottlenecks(plan: CapacityPlanT, geometry: PlanningGeometry) -> None:
         geometry.bottlenecks.append((_point(bottleneck.from_), _point(bottleneck.to), int(bottleneck.capacity)))
 
 
+def _corner(value: float, origin: float, step: float) -> float:
+    """A layout coordinate in corner coordinates of the grid, not rounded.
+
+    The centre of cell k lies at ``origin + k * step``, so corner k, where cell k starts, lies half a
+    step before it. The partition geometry of a plan runs along these corners.
+
+    Returns:
+        The coordinate, in cells from corner 0.
+    """
+    return (value - origin) / step + 0.5
+
+
 def _border_runs(samples: list[Point], grid: GridExtentT | None) -> list[list[Point]]:
     """The cell edges of one border, joined into runs.
 
@@ -249,7 +263,7 @@ def _border_runs(samples: list[Point], grid: GridExtentT | None) -> list[list[Po
     origin_x, width, height = float(grid.origin.x), float(grid.cellWidth), float(grid.cellHeight)
     edges: list[tuple[Point, Point]] = []
     for x, y in samples:
-        across = (x - origin_x) / width
+        across = _corner(x, origin_x, width)
         if abs(across - round(across)) < 0.25:
             edges.append(((x, y - height / 2), (x, y + height / 2)))
         else:
@@ -339,7 +353,7 @@ def _blocked(plan: CapacityPlanT) -> list[list[Point]]:
     for partition in _entries(plan.partitions):
         for ring in _entries(partition.outlines):
             corners = [
-                (round((vertex.x - origin_x) / cell_width), round((vertex.y - origin_y) / cell_height))
+                (round(_corner(vertex.x, origin_x, cell_width)), round(_corner(vertex.y, origin_y, cell_height)))
                 for vertex in _entries(ring.vertices)
             ]
             for (ax, ay), (bx, by) in zip(corners, [*corners[1:], *corners[:1]], strict=True):
@@ -390,8 +404,8 @@ def _blocked(plan: CapacityPlanT) -> list[list[Point]]:
         for run in list(open_runs):
             if run not in runs:
                 top = open_runs.pop(run)
-                x0, x1 = origin_x + run[0] * cell_width, origin_x + run[1] * cell_width
-                y0, y1 = origin_y + top * cell_height, origin_y + y * cell_height
+                x0, x1 = origin_x + (run[0] - 0.5) * cell_width, origin_x + (run[1] - 0.5) * cell_width
+                y0, y1 = origin_y + (top - 0.5) * cell_height, origin_y + (y - 0.5) * cell_height
                 rectangles.append([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
         for run in runs:
             open_runs.setdefault(run, y)
@@ -469,11 +483,11 @@ def _capacity(plan: CapacityPlanT, geometry: PlanningGeometry) -> None:
     enclosed = _enclosed(plan)
     tones = _tones(plan, enclosed)
     for partition in _entries(plan.partitions):
-        for ring in _entries(partition.outlines):
-            points = [_point(vertex) for vertex in _entries(ring.vertices)]
-            if len(points) >= 3:
-                geometry.partitions.append(points)
-                geometry.partition_tones.append(tones.get(int(partition.label)))
+        rings = [[_point(vertex) for vertex in _entries(ring.vertices)] for ring in _entries(partition.outlines)]
+        rings = [ring for ring in rings if len(ring) >= 3]
+        if rings:
+            geometry.partitions.append(rings)
+            geometry.partition_tones.append(tones.get(int(partition.label)))
     for border in _entries(plan.borders):
         samples = [_point(sample) for sample in _entries(border.samples)]
         runs = _border_runs(samples, plan.detailGrid)
@@ -550,6 +564,8 @@ def _assignment(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry
         position = _center(chip, int(entry.index))
         if position is not None:
             geometry.ring.append(position)
+    # A resonator is fed on its feedline, so only the feed of a conventional port is a launcher slot.
+    chained = {node for chain in _entries(assignment.chains) for node in _indices(chain.nodes)}
     for index, entry in enumerate(ring):
         source = _center(chip, int(entry.index))
         if source is None:
@@ -566,9 +582,9 @@ def _assignment(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry
         else:
             continue
         geometry.assignments.append((source, target))
-        if index < len(feeds) and index < len(launchers):
+        if index < len(feeds) and index < len(launchers) and index not in chained:
             center = _center(chip, int(launchers[index].index))
-            if center is not None and target != center:
+            if center is not None and target != center and target not in geometry.launchers:
                 geometry.launchers.append(target)
     _feedlines(assignment, chip, geometry)
 
@@ -735,9 +751,10 @@ def planning_geometry(
         if not isinstance(output, AssignmentT):
             msg = "the artifact is not an assignment"
             raise PlanningError(msg)
-        _assignment(output, chip, geometry)
+        # The plan comes first, so that a feed on a launcher slot of the plan is not marked twice.
         if capacity is not None:
             _capacity(_plan_of(capacity), geometry)
+        _assignment(output, chip, geometry)
     else:
         if not isinstance(output, CorridorRoutingT):
             msg = "the artifact is not a corridor routing"

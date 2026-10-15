@@ -15,7 +15,9 @@ np = import_numpy()
 # resonator before it, a chord to the one after it, or an end. An end is a
 # launcher, or one of the permitted terminations where the feedline stops.
 # A chain is a run of resonators joined by chords, and the Final stage
-# drives it with one feedline: launcher, coupler, coupler, …, launcher.
+# drives it with one feedline: launcher, coupler, coupler, …, launcher. A
+# chain has a launcher at one end at least; its other end may be a
+# termination.
 class FeedlineChain(object):
     __slots__ = ['_tab']
 

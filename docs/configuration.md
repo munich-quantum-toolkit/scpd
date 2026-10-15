@@ -105,6 +105,9 @@ assignment or corridor step, and name the grid that the configuration asks for.
 | `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive                                                 |
 | `crossing_pitch`       | `165.0` | The distance between two places on one partition border where a wire may cross it, and the least distance between the crossings of two wires; it decides how many wires a border lets through; positive |
 
+`crossing_pitch` applies to crossings only. A wire may cross a border closer
+than one pitch to the target cell or the feed of another wire.
+
 ## `[stages.global]`
 
 | Key                | Default | Meaning                                                                                                    |
@@ -127,13 +130,15 @@ gets no feed.
 | `launcher_target` | `0`     | How many feedline chain ends stop at a launcher; `0` leaves it unset, and `plan` refuses a run that reaches the assignment |
 
 `launcher_target` plus `[design_rules] feedline_terminations` must be even,
-since every feedline chain has two ends. A ring with resonators sets three more
+since every feedline chain has two ends. A ring with resonators sets four more
 limits, which the assignment refuses to break:
 
 - the conventional ports of the ring plus `launcher_target` are at most the
   launcher ports of the chip;
 - `launcher_target` and `feedline_terminations` are each at most the resonators
   of the ring;
+- `feedline_terminations` is at most `launcher_target`, since every feedline
+  chain has a launcher at one end at least;
 - the resonators of the ring are at most the feedline chains,
   (`launcher_target` + `feedline_terminations`) / 2, times
   `[design_rules] max_feedline_utilization`.
@@ -156,6 +161,10 @@ objective and the best bound the solver proved differ by at most that fraction
 of the objective. With `relative_gap` at `0.0`, the gap is the default of the
 backend, which is `1e-4` for HiGHS (`mip_rel_gap`) and for Gurobi (`MIPGap`).
 
+HiGHS and Gurobi reach the same optimum, but between optimal solutions of equal
+objective each can choose another one. A later stage then works on another input
+and can reach another objective.
+
 A solve that stops at `time_limit` keeps the best solution it has found by then.
 That solution depends on the speed of the machine, so the same inputs can give
 different artifacts. Leave `time_limit` at `0.0` where a run has to repeat.
@@ -169,14 +178,18 @@ of `1024` is the largest value that Gurobi accepts.
 
 ## `[stages.corridor]`
 
-| Key              | Default | Meaning                                                                                       |
-| ---------------- | ------- | --------------------------------------------------------------------------------------------- |
-| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                 |
-| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward                            |
-| `max_relaxation` | `30`    | How many neighbouring connections a connection without a way may rip up, along the sweep      |
+| Key              | Default | Meaning                                                                                                                                 |
+| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                           |
+| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward                                                                      |
+| `max_relaxation` | `30`    | How many neighbouring connections along the sweep a connection without a way may rip up, and then how many wires in its way it may move |
 
 A connection that has a way keeps it. The later sweeps let a connection without
-a way take room that another connection has not claimed yet.
+a way take room that another connection has not claimed yet. After the sweeps,
+two passes run, also with `rounds` at `0`. The rescue pass gives each connection
+still without a way free room where it finds some, and takes nothing from
+anyone. The exchange pass lets such a connection move the wires in its way, and
+keeps the change only when fewer connections are left without a way.
 
 ## `[run]`
 

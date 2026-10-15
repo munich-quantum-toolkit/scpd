@@ -406,17 +406,43 @@ class RunDirectory:
                     removed.append(path)
         return removed
 
+    def check_current(self, stage: str, digests: dict[str, str]) -> None:
+        """Refuse the artifact of a step, and every earlier artifact, when an input changed since.
+
+        A picture of a step draws its artifact over the earlier ones, so each of them has to come
+        from the inputs the run holds now. A step that failed keeps its old artifact without a
+        record, and that artifact is refused as well.
+
+        Args:
+            stage: The step.
+            digests: The digests of the inputs the run holds now, as :func:`input_digests` gives them.
+
+        Raises:
+            RunError: If one of the artifacts has no readable record, or if an input it records has
+                changed.
+        """  # ruff: ignore[docstring-extraneous-exception]  # _check_records() raises it
+        names = list(STAGE_FILES)
+        self._check_records(names[: names.index(stage) + 1], digests)
+
     def _check_unchanged(self, stage: str, digests: dict[str, str]) -> None:
         """Refuse a step when an earlier artifact was made from inputs that have changed since.
-
-        A missing earlier artifact is left to :meth:`_read`, which names the step to run first.
 
         Raises:
             RunError: If an earlier artifact has no readable record, or if an input it records has
                 changed.
-        """
+        """  # ruff: ignore[docstring-extraneous-exception]  # _check_records() raises it
         names = list(STAGE_FILES)
-        for earlier in names[: names.index(stage)]:
+        self._check_records(names[: names.index(stage)], digests)
+
+    def _check_records(self, stages: Sequence[str], digests: dict[str, str]) -> None:
+        """Refuse artifacts made from inputs that have changed since.
+
+        A missing artifact is left to the caller, which names the step to run first.
+
+        Raises:
+            RunError: If an artifact has no readable record, or if an input it records has changed.
+        """
+        for earlier in stages:
             artifact = self.artifact(earlier)
             if not artifact.is_file():
                 continue

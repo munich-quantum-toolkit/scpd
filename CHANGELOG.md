@@ -21,9 +21,9 @@ releases may include breaking changes.
   and `-v`, `-vv` and `-vvv` show the steps, the items and the log of HiGHS. A
   run prints one block per stage with a live progress line on a terminal, in the
   format of `docs/terminal_output.md`. Add `list-algorithms`, and `plot` and
-  `render` with `--stage` and `--run-dir` for the planning stages; the assign
-  and corridor pictures show the feedline chains ([#140])
-  ([**@FeldmeierMichael**])
+  `render` with `--stage` and `--run-dir` for the planning stages, which refuse
+  an artifact whose inputs have changed since; the assign and corridor pictures
+  show the feedline chains ([#140]) ([**@FeldmeierMichael**])
 - 🎨 Draw `plot` pictures like a mask in a layout tool: hatched metal with an
   inner contour on a light substrate, a millimetre grid, rulers, corner marks, a
   scale bar and a caption. Every port is one red marker, feedlines run in

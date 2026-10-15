@@ -37,13 +37,15 @@ a feed and its launcher, closer together than `[design_rules] min_wire_spacing`.
 since every feedline chain has two ends. The counts of the ring set more limits:
 the conventional ports of the ring plus `launcher_target` need at most as many
 launchers as the chip has, `launcher_target` and `feedline_terminations` are
-each at most the resonators of the ring, and the resonators are at most the
-feedline chains times `[design_rules] max_feedline_utilization`
-(`docs/configuration.md` lists them). The global step refuses a ring that
-carries both ends of a bridge. `plan` checks these figures, the ring and the
-implementation names of the stages before its first stage, and refuses a run
-whose steps they would stop; the run directory then stays as it was. `doctor`
-reports the same problems for the steps that `[run] stop_after` configures.
+each at most the resonators of the ring, `feedline_terminations` is at most
+`launcher_target`, since every feedline chain has a launcher at one end at
+least, and the resonators are at most the feedline chains times
+`[design_rules] max_feedline_utilization` (`docs/configuration.md` lists them).
+The global step refuses a ring that carries both ends of a bridge. `plan` checks
+these figures, the ring and the implementation names of the stages before its
+first stage, and refuses a run whose steps they would stop; the run directory
+then stays as it was. `doctor` reports the same problems for the steps that
+`[run] stop_after` configures.
 
 An inner routable port that the `component` pattern does not match ends a wire
 of the inner circuit, as a port of an inner qubit does.
@@ -57,6 +59,8 @@ Every step writes a record of its inputs beside its artifact, for example
 section the step reads. `plan --stage <step>` refuses a step when the chip or
 such a section has changed since an earlier step wrote its artifact, and names
 the section and the step to run again. The run directory then stays as it was.
+`plot` and `render` with `--run-dir` refuse a stage in the same way, and also an
+artifact without a record, which a step that failed leaves behind.
 
 The planning stages solve with HiGHS unless `[stages.solver] backend` or the
 environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and

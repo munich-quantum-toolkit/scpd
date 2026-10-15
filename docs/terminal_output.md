@@ -144,6 +144,10 @@ with `TERM=dumb`. `NO_COLOR` turns colour off.
 | 2    | The arguments are wrong                                              |
 | 130  | The command was interrupted                                          |
 
+A command whose output goes to a reader that closes early, such as
+`mqt-scpd inspect run/01-capacity.fb | head`, stops without a message and
+returns 1.
+
 ## Adding a Stage
 
 A stage reports through the `Report` it is given and never prints.
@@ -151,7 +155,9 @@ A stage reports through the `Report` it is given and never prints.
 1. Report the result exactly once, through `Report::result`. A stage that can
    fail on part of its work passes the number of fails as well.
 2. Report each round of a stage that works in rounds through `Report::entry`,
-   with the label `round <n> forward` or `round <n> backward`, counted from 1.
+   with the label `round <n> forward` or `round <n> backward`, counted from 1. A
+   pass after the rounds that changes the result gets an entry of its own, such
+   as `rescue` and `exchange` in the Corridor stage.
 3. Build each figure with `counted`, `verdict` or one of the forms above, and
    join figures with `FIGURE_SEPARATOR`.
 4. Report the steps, the parameters and the solves at `Detail::Steps`, and one

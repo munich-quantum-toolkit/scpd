@@ -111,8 +111,9 @@ launcherPlacesProblem(const ChipT& chip, const ConfigT& config);
  * The Assignment stage refuses a ring whose counts leave its model no
  * solution: the conventional ports and the launcher ends need more launchers
  * than the chip has, `launcher_target` or `[design_rules]
- * feedline_terminations` exceeds the resonators, or the resonators exceed the
- * feedline chains times `[design_rules] max_feedline_utilization`. The global
+ * feedline_terminations` exceeds the resonators, `feedline_terminations`
+ * exceeds `launcher_target`, or the resonators exceed the feedline chains times
+ * `[design_rules] max_feedline_utilization`. The global
  * step decides only the ring ends of bridges: such a port leaves the ring when
  * no inner wire surfaces there, and it is a resonator when the wire comes
  * from one. Every other ring port keeps the role the chip gives it. The check

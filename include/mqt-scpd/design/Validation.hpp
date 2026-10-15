@@ -106,7 +106,7 @@ validate(const flatbuffers::config::PortPatternsT& patterns);
  * @brief Validates one bridge rule.
  * @param rule The rule to check.
  * @return A problem for every side that is empty, does not compile, or does
- * not capture exactly the component name the two sides pair on, named
+ * not have exactly one capture group, the key the two sides pair on, named
  * @c first or @c second, empty when the rule is valid.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems

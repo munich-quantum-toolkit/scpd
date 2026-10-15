@@ -48,7 +48,9 @@ class BorderSlots(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
 
-    # The slots in layout units, in the order the border runs.
+    # The slots in layout units, in the order of the walk that picked them.
+    # The walk runs from sample to adjacent sample and starts again at another
+    # end where it runs out, so the order can jump along the border.
     # BorderSlots
     def Positions(self, j: int) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))

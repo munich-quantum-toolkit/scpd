@@ -80,13 +80,55 @@ def test_the_capacity_picture_holds_the_partitions_and_the_launchers(run: RunDir
     geometry = planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "capacity")
 
     assert geometry.partitions
-    assert all(len(ring) >= 3 for ring in geometry.partitions)
+    assert all(len(ring) >= 3 for partition in geometry.partitions for ring in partition)
     assert geometry.borders
     assert len(geometry.launchers) == 4
     assert not geometry.corridors
     # The grid blocks a border of cells along its edge.
     assert geometry.blocked
     assert len(geometry.partition_tones) == len(geometry.partitions)
+
+
+def test_the_assign_picture_marks_only_the_launcher_slots(run: RunDirectory) -> None:
+    """The feed of a conventional port is a launcher slot, and the feed of a resonator lies on its feedline.
+
+    Over the capacity plan, the assign picture marks the slots of the plan and no feed of a resonator.
+    """
+    capacity = run.artifact("capacity").read_bytes()
+    slots = planning_geometry(capacity, chip_of(run), "capacity").launchers
+
+    geometry = planning_geometry(run.artifact("assign").read_bytes(), chip_of(run), "assign", capacity)
+
+    assert sorted(geometry.launchers) == sorted(slots)
+    assert all(not set(feedline.terminals) & set(geometry.launchers) for feedline in geometry.feedlines)
+
+
+def test_a_partition_keeps_its_rings_together(run: RunDirectory) -> None:
+    """A partition with a hole is one entry of two rings, with one tone."""
+    grid = GridExtentT(width=12, height=12, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
+    holed = PartitionT(
+        label=2,
+        outlines=[
+            PolygonT(vertices=[PointT(0.0, 0.0), PointT(12.0, 0.0), PointT(12.0, 12.0), PointT(0.0, 12.0)]),
+            PolygonT(vertices=[PointT(4.0, 4.0), PointT(8.0, 4.0), PointT(8.0, 8.0), PointT(4.0, 8.0)]),
+        ],
+    )
+    plan = CapacityPlanT(
+        capacityGrid=grid,
+        detailGrid=grid,
+        partitions=[holed],
+        borders=[],
+        bottlenecks=[],
+        launchers=[],
+        nodes=[],
+        chains=[],
+    )
+    data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
+
+    geometry = planning_geometry(data, chip_of(run), "capacity")
+
+    assert [len(partition) for partition in geometry.partitions] == [2]
+    assert len(geometry.partition_tones) == 1
 
 
 def test_a_border_runs_along_its_cell_edges(run: RunDirectory) -> None:
@@ -111,7 +153,7 @@ def test_a_border_runs_along_its_cell_edges(run: RunDirectory) -> None:
 
 def test_the_pieces_of_a_border_close_together_are_one_run(run: RunDirectory) -> None:
     """Two edges of a border two cells apart join into one run; a piece far away stays a run of its own."""
-    grid = GridExtentT(width=20, height=20, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
+    grid = GridExtentT(width=20, height=20, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
     border = PartitionBorderT(
         first=1,
         second=2,
@@ -142,7 +184,7 @@ def _square(label: int, x0: float, y0: float, x1: float, y1: float) -> Partition
 
 def test_the_blocked_cells_leave_out_what_is_too_thin_to_block(run: RunDirectory) -> None:
     """A strip of one cell between two partitions is no blockage; a block of four cells is."""
-    grid = GridExtentT(width=12, height=12, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
+    grid = GridExtentT(width=12, height=12, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
     # Columns 0 to 4 and 6 to 11 are free, except a block of four by four cells at 7 to 10 and 4 to 7.
     partitions = [
         _square(2, 0.0, 0.0, 5.0, 12.0),
@@ -179,7 +221,7 @@ def test_the_blocked_cells_leave_out_what_is_too_thin_to_block(run: RunDirectory
 
 def test_the_borders_of_closed_in_partitions_are_kept_apart(run: RunDirectory) -> None:
     """A group of partitions that no border joins to the outermost free cells is closed in."""
-    grid = GridExtentT(width=20, height=20, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
+    grid = GridExtentT(width=20, height=20, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
     partitions = [
         _square(1, 0.0, 0.0, 10.0, 20.0),
         _square(2, 10.0, 0.0, 20.0, 20.0),
@@ -461,7 +503,7 @@ def capacity_plan(*, cyclic: bool = False, chains: list[int] | None = None) -> b
         CapacityNodeT(kind=CapacityElement.Target, id=1, next=[1] if cyclic else []),
         CapacityNodeT(kind=CapacityElement.Target, id=99, next=[]),
     ]
-    grid = GridExtentT(width=1, height=1, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
+    grid = GridExtentT(width=1, height=1, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
     plan = CapacityPlanT(
         capacityGrid=grid,
         detailGrid=grid,

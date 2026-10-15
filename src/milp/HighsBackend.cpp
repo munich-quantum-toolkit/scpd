@@ -226,6 +226,14 @@ public:
       solution.message = "HiGHS refused its own output option";
       return solution;
     }
+    // The model and the MPS text count a bound as infinite from
+    // INFINITE_BOUND on. HiGHS does so from 1e20 on unless told otherwise,
+    // and would read a bound between the two as none.
+    if (highs.setOptionValue("infinite_bound", INFINITE_BOUND) !=
+        HighsStatus::kOk) {
+      solution.message = "HiGHS refused its infinite bound option";
+      return solution;
+    }
 
     // An exception from an observer must not unwind through HiGHS. It is kept,
     // the solve is asked to stop, and the exception leaves after run().
@@ -288,6 +296,11 @@ public:
     // threshold of 1e-9, and then solves the model it kept. Only an error is
     // a refusal.
     if (highs.passModel(highsModel) == HighsStatus::kError) {
+      // HiGHS logs why it rejects the model, and the observer of that log
+      // may have thrown.
+      if (failure != nullptr) {
+        std::rethrow_exception(failure);
+      }
       solution.message = "HiGHS rejected the model";
       return solution;
     }

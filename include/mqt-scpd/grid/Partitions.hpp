@@ -55,6 +55,32 @@ struct PartitionBorder {
   [[nodiscard]] MQT_SCPD_GRID_EXPORT Point center() const;
 };
 
+/**
+ * @brief Converts a position in corner coordinates into a layout point.
+ *
+ * The partition geometry puts the corner of cell (0, 0) at the origin, so the
+ * centre of cell (x, y) lies at (x + 0.5, y + 0.5). GridMetrics puts the
+ * centre of a cell at its whole-number position, half a cell from there.
+ *
+ * @param grid The metrics of the grid.
+ * @param x The position along x, in corner coordinates.
+ * @param y The position along y, in corner coordinates.
+ * @return The layout point.
+ */
+[[nodiscard]] MQT_SCPD_GRID_EXPORT Point cornerToLayout(const GridMetrics& grid,
+                                                        double x, double y);
+
+/**
+ * @brief Converts a layout point into corner coordinates, the inverse of
+ * cornerToLayout().
+ *
+ * @param grid The metrics of the grid.
+ * @param point The layout point.
+ * @return The position in corner coordinates, not rounded.
+ */
+[[nodiscard]] MQT_SCPD_GRID_EXPORT Point layoutToCorner(const GridMetrics& grid,
+                                                        Point point);
+
 /// The geometry that the labels of a grid induce.
 struct Partitions {
   /// The outlines, grouped by label in ascending order.
@@ -75,7 +101,7 @@ struct Partitions {
  *
  * Coordinates are in cells, with the corner of cell (0, 0) at the origin: a
  * border sample at (4.5, 7.0) lies on the edge between the cells (4, 6) and
- * (4, 7). GridMetrics::toLayout() converts them.
+ * (4, 7). cornerToLayout() converts them into layout units.
  *
  * @param blocked The obstacle mask. A blocked cell counts as no label.
  * @param labels The label of every cell, row-major. A label below

@@ -101,10 +101,24 @@ TEST(SolveWith, SolvesWithTheConfiguredBackend) {
   EXPECT_DOUBLE_EQ(solution.objective, 1.0);
 }
 
-TEST(SolveWith, RefusesABackendItDoesNotKnow) {
-  EXPECT_THROW(static_cast<void>(solveWith(
-                   pairModel(), configWithBackend("cplex"), {}, "solving")),
-               std::invalid_argument);
+/// The message with which solveWith refuses @p config, or an empty string.
+std::string refusalOf(const ConfigT& config) {
+  try {
+    static_cast<void>(solveWith(pairModel(), config, {}, "solving"));
+  } catch (const std::invalid_argument& error) {
+    return error.what();
+  }
+  return {};
+}
+
+TEST(SolveWith, RefusesABackendItDoesNotKnowAndSaysWhoNamedIt) {
+  EXPECT_EQ(refusalOf(configWithBackend("cplex")),
+            "[stages.solver] backend: 'cplex' is no solver backend; use "
+            "'highs' or 'gurobi'");
+  const ScopedVariable solver("SCPD_SOLVER", "cplex");
+  EXPECT_EQ(refusalOf(configWithBackend("highs")),
+            "SCPD_SOLVER: 'cplex' is no solver backend; use 'highs' or "
+            "'gurobi'");
 }
 
 TEST(SolveWith, LetsTheEnvironmentOverrideTheConfiguration) {

@@ -35,6 +35,7 @@
 #include <memory>
 #include <optional>
 #include <queue>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -857,7 +858,18 @@ public:
     report.progress("watershed", "", 0, 0);
     const auto seeds =
         grid::freeCellSeeds(scene.blocked, scene.detail, scene.capacity);
-    nextLabel = grid::runWatershed(scene.blocked, seeds, labels, nextLabel);
+    try {
+      nextLabel = grid::runWatershed(scene.blocked, seeds, labels, nextLabel);
+    } catch (const std::length_error&) {
+      // Every free capacity cell seeds a partition of its own.
+      throw std::length_error(std::format(
+          "the capacity grid has {} free cells, and with the chambers they "
+          "need more than the {} partition labels a plan holds; lower [grid] "
+          "capacity_cells_x",
+          seeds.size(),
+          std::numeric_limits<grid::PartitionLabel>::max() -
+              grid::FIRST_PARTITION_LABEL));
+    }
     grid::smoothPartitionBorders(scene.blocked, seeds, labels,
                                  grid::FIRST_PARTITION_LABEL, SMOOTHING_RADIUS,
                                  SMOOTHING_ROUNDS);
@@ -953,7 +965,8 @@ private:
       auto ring = std::make_unique<fbg::PolygonT>();
       ring->vertices.reserve(outline.ring.size());
       for (const auto& corner : outline.ring) {
-        ring->vertices.push_back(scene.detail.toLayout(corner.x(), corner.y()));
+        ring->vertices.push_back(
+            grid::cornerToLayout(scene.detail, corner.x(), corner.y()));
       }
       plan.port_keepout.push_back(std::move(ring));
     }
@@ -975,7 +988,8 @@ private:
       auto ring = std::make_unique<fbg::PolygonT>();
       ring->vertices.reserve(outline.ring.size());
       for (const auto& corner : outline.ring) {
-        ring->vertices.push_back(scene.detail.toLayout(corner.x(), corner.y()));
+        ring->vertices.push_back(
+            grid::cornerToLayout(scene.detail, corner.x(), corner.y()));
       }
       plan.partitions[found->second]->outlines.push_back(std::move(ring));
     }
@@ -986,13 +1000,15 @@ private:
       entry->second = border.second;
       entry->samples.reserve(border.samples.size());
       for (const auto& sample : border.samples) {
-        entry->samples.push_back(scene.detail.toLayout(sample.x(), sample.y()));
+        entry->samples.push_back(
+            grid::cornerToLayout(scene.detail, sample.x(), sample.y()));
       }
       const auto center = border.center();
-      entry->center = scene.detail.toLayout(center.x(), center.y());
+      entry->center =
+          grid::cornerToLayout(scene.detail, center.x(), center.y());
       // The border carries one wire per crossing slot. The Corridor stage
-      // routes across the slots of the same function, so the budget and
-      // what is routed across the border agree.
+      // routes across the slots of the same function, so the budget counts
+      // the slots it offers.
       entry->budget = static_cast<std::uint32_t>(
           crossingSlots(border, scene, pitch).size());
       plan.borders.push_back(std::move(entry));

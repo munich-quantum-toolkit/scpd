@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -67,6 +68,56 @@ TEST(CapacityPlanner, PlansTheMiniChip) {
   for (const auto& border : plan.borders) {
     EXPECT_GE(border->budget, 1U);
     EXPECT_FALSE(border->samples.empty());
+  }
+}
+
+TEST(CapacityPlanner, DrawsThePartitionsAroundTheirCells) {
+  // A cell of the detail grid covers half a cell step on each side of its
+  // layout point. The partitions cover the free cells, so their outlines
+  // reach half a cell step beyond the grid box on every side and no further.
+  const auto config = test::miniConfig();
+  const auto chip = test::miniChip(config);
+  const auto plan = makeWatershedPlanner()->run(chip, config, {});
+  const auto detail = buildScene(chip, config).detail;
+  const auto box = detail.box();
+  const auto halfX = detail.cellWidth / 2.0;
+  const auto halfY = detail.cellHeight / 2.0;
+  constexpr auto tolerance = 1.0e-9;
+
+  auto lowX = std::numeric_limits<double>::max();
+  auto lowY = std::numeric_limits<double>::max();
+  auto highX = std::numeric_limits<double>::lowest();
+  auto highY = std::numeric_limits<double>::lowest();
+  for (const auto& partition : plan.partitions) {
+    for (const auto& ring : partition->outlines) {
+      for (const auto& vertex : ring->vertices) {
+        lowX = std::min(lowX, vertex.x());
+        lowY = std::min(lowY, vertex.y());
+        highX = std::max(highX, vertex.x());
+        highY = std::max(highY, vertex.y());
+      }
+    }
+  }
+  EXPECT_NEAR(lowX, box.minX - halfX, tolerance);
+  EXPECT_NEAR(lowY, box.minY - halfY, tolerance);
+  EXPECT_NEAR(highX, box.maxX + halfX, tolerance);
+  EXPECT_NEAR(highY, box.maxY + halfY, tolerance);
+}
+
+TEST(CapacityPlanner, SaysWhichKeyToLowerWhenThePartitionLabelsRunOut) {
+  // Every free capacity cell seeds a partition, and a plan holds fewer than
+  // 65536 of them.
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 400;
+  config.grid->detail_factor = 1;
+  try {
+    static_cast<void>(
+        makeWatershedPlanner()->run(test::miniChip(config), config, {}));
+    FAIL() << "a grid with more free cells than labels has to be refused";
+  } catch (const std::length_error& error) {
+    EXPECT_NE(std::string(error.what()).find("lower [grid] capacity_cells_x"),
+              std::string::npos)
+        << error.what();
   }
 }
 
@@ -402,7 +453,7 @@ bool everyPartitionIsOnePiece(const CapacityPlanT& plan,
     for (const auto& ring : partition->outlines) {
       grid::PartitionOutline outline{.label = label, .ring = {}};
       for (const auto& vertex : ring->vertices) {
-        outline.ring.push_back(scene.detail.toCell(vertex));
+        outline.ring.push_back(grid::layoutToCorner(scene.detail, vertex));
       }
       outlines.push_back(std::move(outline));
     }
@@ -456,9 +507,14 @@ TEST(CapacityPlanner, JoinsThePartitionsOnBothSidesOfEveryGate) {
     const auto normalY = (to.x() - from.x()) / length;
     const auto middleX = (from.x() + to.x()) / 2.0;
     const auto middleY = (from.y() + to.y()) / 2.0;
-    // The first partition met when walking away from the gate on one side.
+    // The first partition met when walking away from the gate on one side,
+    // from the centre of the detail cell next to the cells that the gate line
+    // runs through. Those cells belong to the chamber beyond, which may be
+    // no more than two cells wide.
+    const auto beyond = static_cast<int>(std::ceil(
+        std::max(plan.detail_grid->cell_width, plan.detail_grid->cell_height)));
     const auto sideOf = [&](const double sign) -> std::optional<std::uint32_t> {
-      for (int units = 1; units <= 20; ++units) {
+      for (int units = beyond; units <= beyond + 20; ++units) {
         const auto step = sign * static_cast<double>(units);
         if (const auto label = partitionAt(plan, middleX + (step * normalX),
                                            middleY + (step * normalY))) {
@@ -613,7 +669,7 @@ grid::PartitionBorder middleRow(const CapacityScene& scene) {
   return border;
 }
 
-TEST(CapacityScene, OffersOnlyTheCrossingSlotsInsideTheLauncherRing) {
+TEST(CapacityScene, PicksTheCrossingSlotsFromTheSamplesInsideTheLauncherRing) {
   const auto config = test::miniConfig();
   const auto scene = buildScene(test::miniChip(), config);
   double minX = 0.0;
@@ -634,23 +690,31 @@ TEST(CapacityScene, OffersOnlyTheCrossingSlotsInsideTheLauncherRing) {
   const auto border = middleRow(scene);
   const auto pitch = crossingPitch(config);
 
-  const auto all = grid::borderSlots(border, scene.detail, pitch);
   const auto offered = crossingSlots(border, scene, pitch);
 
-  EXPECT_LT(offered.size(), all.size());
-  EXPECT_FALSE(offered.empty());
+  // The slots are picked from the samples inside the ring alone. A slot
+  // picked outside the ring and dropped afterwards would keep the samples
+  // within one pitch of it from becoming slots, so the walk over the inside
+  // samples starts at the first of them and takes it.
+  auto inside = border;
+  std::erase_if(inside.samples, [&](const grid::Point& sample) {
+    return sample.x() <= minX || sample.x() >= maxX || sample.y() <= minY ||
+           sample.y() >= maxY;
+  });
+  ASSERT_FALSE(inside.samples.empty());
+  ASSERT_LT(inside.samples.size(), border.samples.size());
+  const auto expected = grid::borderSlots(inside, scene.detail, pitch);
+  ASSERT_EQ(offered.size(), expected.size());
+  for (std::size_t index = 0; index < offered.size(); ++index) {
+    EXPECT_EQ(offered[index].x(), expected[index].x());
+    EXPECT_EQ(offered[index].y(), expected[index].y());
+  }
+  EXPECT_EQ(offered.front().x(), inside.samples.front().x());
   for (const auto& slot : offered) {
     EXPECT_GT(slot.x(), minX);
     EXPECT_LT(slot.x(), maxX);
     EXPECT_GT(slot.y(), minY);
     EXPECT_LT(slot.y(), maxY);
-  }
-  for (const auto& slot : all) {
-    const auto inside = slot.x() > minX && slot.x() < maxX && slot.y() > minY &&
-                        slot.y() < maxY;
-    EXPECT_EQ(inside, std::ranges::any_of(offered, [&](const auto& kept) {
-                return kept.x() == slot.x() && kept.y() == slot.y();
-              }));
   }
 }
 

@@ -714,6 +714,30 @@ TEST(GlobalRouter, RunsOneWireFromAPortOnSeveralLattices) {
   EXPECT_EQ(recorder.fails[0], 1U);
 }
 
+TEST(GlobalRouter, DrawsOneLatticeLineThroughAnchorsThatDifferInTheLastBits) {
+  // Each anchor lies min_straight_length in front of its port. S faces up
+  // and A faces down, so both anchors lie on x = 0, but the cosine of 90 and
+  // 270 degrees leaves them about 1e-14 apart. They share one column of the
+  // lattice, not two columns that let two wires run on one line.
+  const auto chip = handChip(
+      {ringEnd(),
+       {.label = "S.port0", .center = Point(0.0, 0.0), .orientation = 90.0},
+       {.label = "A.port0", .center = Point(0.0, 300.0), .orientation = 270.0}},
+      handPatterns());
+  auto config = handConfig({"S.port1"});
+  config.rules = std::make_unique<DesignRulesT>();
+  config.rules->min_straight_length = 50.0;
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"A.port0", "S.port0"}), .gate = {}}});
+
+  const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+
+  ASSERT_EQ(routing.lattices.size(), 1U);
+  EXPECT_EQ(routing.lattices[0]->points.size(), 2U);
+  ASSERT_EQ(routing.connections.size(), 1U);
+  EXPECT_NEAR(selectedLength(routing), 200.0, 1.0e-9);
+}
+
 TEST(GlobalRouter, CountsATargetThatNoLatticeCarriesAsAFail) {
   // A chain of one port is a single lattice node, which is no lattice.
   const auto config = innerConfig();
@@ -770,6 +794,30 @@ TEST(GlobalRouter, CountsAResonatorAsAFailWhereNoRingBridgeCanCarryItsWire) {
   EXPECT_EQ(resonatorsOf(routing), indicesOf(chip, {"Q1.port0", "Q2.port0"}));
   ASSERT_EQ(recorder.fails.size(), 1U);
   EXPECT_EQ(recorder.fails[0], 1U);
+}
+
+TEST(GlobalRouter, SurfacesThroughABridgeThatAnotherChainCutsOff) {
+  // The ring end of the bridge borders a second chain, whose gate has no
+  // room. The first chain still carries the wire to a launcher, so the wire
+  // surfaces there as it does without the second chain.
+  const auto config = bridgedConfig();
+  const auto chip = bridgedChip();
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"Q2.port0", "C12.port1", "Q2.port1"}),
+        .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"C12.port2"}), .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"C12.port2"}), .gate = 0U}});
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Summary));
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  EXPECT_EQ(routing.connections[0]->source->index(),
+            indexOf(chip, "C12.port1"));
+  EXPECT_NEAR(routing.objective, 450.0, 1.0e-9);
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 0U);
 }
 
 TEST(GlobalRouter, CountsAResonatorAsAFailWithoutARingBridge) {

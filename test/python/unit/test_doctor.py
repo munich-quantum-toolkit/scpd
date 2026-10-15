@@ -129,13 +129,30 @@ def test_a_solver_backend_the_run_cannot_reach_is_a_problem(monkeypatch: pytest.
     """An unknown backend, or Gurobi without gurobipy, would stop the run, so the doctor refuses both."""
     monkeypatch.setenv("SCPD_SOLVER", "cplex")
     report = run_doctor(FIXTURE / "config.toml")
-    assert report.problems == ["'cplex' is no solver backend; use 'highs' or 'gurobi'"]
+    assert report.problems == ["SCPD_SOLVER: 'cplex' is no solver backend; use 'highs' or 'gurobi'"]
 
     monkeypatch.setenv("SCPD_SOLVER", "gurobi")
     monkeypatch.setitem(sys.modules, "gurobipy", None)
     report = run_doctor(FIXTURE / "config.toml")
     assert len(report.problems) == 1
-    assert report.problems[0].startswith("the configuration asks for gurobi, but gurobipy is not installed")
+    assert report.problems[0].startswith("SCPD_SOLVER asks for gurobi, but gurobipy is not installed")
+
+
+def test_a_solver_problem_names_where_the_backend_name_comes_from(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without ``SCPD_SOLVER``, the problem names the configuration key that chose the backend."""
+    monkeypatch.delenv("SCPD_SOLVER", raising=False)
+    config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
+    config = config.replace(
+        'input = "routing_config.json"', f'input = "{(FIXTURE / "routing_config.json").as_posix()}"'
+    )
+    gurobi = tmp_path / "gurobi.toml"
+    gurobi.write_text(config + '\n[stages.solver]\nbackend = "gurobi"\n', encoding="utf-8")
+    monkeypatch.setitem(sys.modules, "gurobipy", None)
+    problems = run_doctor(gurobi).problems
+    assert len(problems) == 1
+    assert problems[0].startswith("[stages.solver] backend asks for gurobi, but gurobipy is not installed")
 
 
 @pytest.mark.parametrize("step", ["capacity", "global"])
@@ -158,4 +175,4 @@ def test_a_run_that_solves_nothing_needs_no_solver(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setenv("SCPD_SOLVER", "cplex")
     report = run_doctor(stopped)
-    assert report.problems == ["'cplex' is no solver backend; use 'highs' or 'gurobi'"]
+    assert report.problems == ["SCPD_SOLVER: 'cplex' is no solver backend; use 'highs' or 'gurobi'"]

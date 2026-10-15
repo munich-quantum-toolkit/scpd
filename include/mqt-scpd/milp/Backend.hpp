@@ -76,8 +76,9 @@ struct SolveOptions {
  * @brief A solver behind the model abstraction.
  *
  * The interface is what MPS carries. A backend that solves in the process and
- * one that hands the model to another program see the same model and answer
- * the same way.
+ * one that hands the model to another program see the same model and reach
+ * the same optimum. Between optimal solutions of equal objective, two
+ * backends can choose differently.
  */
 class MQT_SCPD_MILP_EXPORT ISolverBackend {
 public:
@@ -103,7 +104,9 @@ public:
    * @param options What the solve may spend, and where it reports.
    * @return The solution. A model that cannot be solved is a status, never an
    * exception.
-   * @throws Whatever an observer of @p options throws.
+   * @throws Whatever an observer of @p options throws. A backend that hands
+   * the model to another program also throws what that hand-over throws, as
+   * makeMpsBackend() says.
    */
   [[nodiscard]] virtual Solution solve(const Model& model,
                                        const SolveOptions& options) const = 0;
@@ -138,7 +141,9 @@ using MpsSolveFunction = std::function<Solution(
  * @brief Creates a backend that round-trips a model through MPS text.
  * @param name The name of the backend.
  * @param solve The function that solves the MPS text.
- * @return The backend.
+ * @return The backend. Its solve() throws std::invalid_argument for a model
+ * that MPS cannot carry, such as one with a space in a name, and passes on
+ * whatever @p solve throws, such as an error of the solver or an interrupt.
  * @throws std::invalid_argument When @p solve is empty.
  */
 [[nodiscard]] MQT_SCPD_MILP_EXPORT std::unique_ptr<ISolverBackend>

@@ -53,8 +53,6 @@ struct BridgeMatch {
 struct ComponentPorts {
   /// The component the ports name.
   std::string name;
-  /// Whether the component carries a resonator port, which makes it a qubit.
-  bool qubit = false;
   /// Its routable ports, by port index, ascending.
   std::vector<std::uint32_t> ports;
   /// The pairs a wire crosses, in the order the rules declare them.
@@ -83,9 +81,9 @@ bridgeMatchesOf(const flatbuffers::design::ChipT& chip,
 /**
  * @brief Groups the routable ports of a chip by component and pairs them.
  *
- * A component that carries a resonator port is a qubit. No rule names the
- * ports of a qubit, so each of them ends a wire. The ports of a coupler pair
- * off across its artwork, and a port left over ends a wire too.
+ * The ports of a coupler pair off across its artwork. A port that no rule
+ * pairs, such as a port of a qubit or a port of a coupler that is left over,
+ * ends a wire.
  *
  * Which two ports pair is declared: a rule names both sides of the crossing,
  * each with one capture group, and two ports of one component pair when they

@@ -93,6 +93,27 @@ TEST(MilpModel, RefusesCrossedBoundsAndAnEmptyName) {
                std::invalid_argument);
 }
 
+TEST(MilpModel, RefusesBoundsThatLeaveNoValue) {
+  // A lower bound of infinity or an upper bound of minus infinity leaves no
+  // value. HiGHS refuses such a variable, and the MPS text would write it as
+  // free.
+  Model model("empty");
+  EXPECT_THROW(static_cast<void>(
+                   model.addContinuous("x", INFINITE_BOUND, INFINITE_BOUND)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(
+                   model.addContinuous("x", -INFINITE_BOUND, -INFINITE_BOUND)),
+               std::invalid_argument);
+  EXPECT_EQ(model.variableCount(), 0U);
+
+  const auto x = model.addContinuous("x", 0.0, 1.0);
+  EXPECT_THROW(model.addLessOrEqual("below", 1.0 * x, -INFINITE_BOUND),
+               std::invalid_argument);
+  EXPECT_THROW(model.addGreaterOrEqual("above", 1.0 * x, INFINITE_BOUND),
+               std::invalid_argument);
+  EXPECT_EQ(model.constraintCount(), 0U);
+}
+
 TEST(MilpModel, RefusesARowBoundThatIsNotANumber) {
   // HiGHS refuses a bound that is not a number, and the MPS text cannot carry
   // one, so the model refuses it before either backend sees it.

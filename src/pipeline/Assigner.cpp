@@ -266,6 +266,8 @@ struct RingCounts {
 /// - every resonator takes at most one launcher and one termination;
 /// - every chain has two ends, so the launcher ends and the terminations add
 ///   up to an even number;
+/// - every chain has a launcher at one end at least, so there are no more
+///   terminations than launcher ends;
 /// - a chain carries at most `max_feedline_utilization` resonators.
 ///
 /// A ring without a resonator takes no launcher end and meets the last three
@@ -299,6 +301,14 @@ std::optional<std::string> countProblem(const RingCounts& counts,
         "termination",
         counts.exact ? "" : "at most ",
         counted(counts.mostResonators, "resonator"), target, terminations);
+  }
+  if (terminations > target) {
+    return std::format(
+        "[design_rules] feedline_terminations {} is larger than "
+        "[stages.assignment] launcher_target {}; every feedline chain needs a "
+        "launcher at one end at least, so at most one termination per launcher "
+        "end",
+        terminations, target);
   }
   if ((target + terminations) % 2 != 0) {
     if (!counts.exact) {
@@ -534,6 +544,42 @@ private:
       degree.add(variables.launcher[index], 1.0);
       degree.add(variables.termination[index], 1.0);
       model.addEqual(std::format("degree_{}", index), degree, 2.0);
+    }
+
+    // Every chain has a launcher at one end at least, since nothing drives a
+    // chain with a termination at both ends. The target rows count ends, not
+    // chains, so they allow such a chain wherever two terminations are left
+    // to place. `fed` carries along the used chords whether the first anchor
+    // of the chain took a launcher, and the last anchor needs that or a
+    // launcher of its own. A single resonator takes both ends by its degree
+    // row, and with fewer than two terminations no chain can end at a
+    // termination on both sides.
+    if (!ring.leaving.empty() && rules.feedline_terminations >= 2) {
+      const auto anchors = ring.anchors.size();
+      std::vector<milp::Var> fed;
+      fed.reserve(anchors);
+      for (std::size_t index = 0; index < anchors; ++index) {
+        fed.push_back(model.addBinary(std::format("fed_{}", index)));
+      }
+      for (std::size_t index = 0; index < anchors; ++index) {
+        const auto before = (index + anchors - 1) % anchors;
+        const auto entering = variables.edge[ring.leaving[before]];
+        const auto leaving = variables.edge[ring.leaving[index]];
+        // Where the chain starts, `fed` needs the launcher of this anchor.
+        model.addLessOrEqual(std::format("fed_start_{}", index),
+                             milp::LinearExpr(fed[index]) -
+                                 variables.launcher[index] - entering,
+                             0.0);
+        // Further along the chain, it needs `fed` of the anchor before.
+        model.addLessOrEqual(
+            std::format("fed_along_{}", index),
+            milp::LinearExpr(fed[index]) - fed[before] + entering, 1.0);
+        // Where the chain ends, one of its two ends is a launcher.
+        model.addGreaterOrEqual(std::format("fed_end_{}", index),
+                                milp::LinearExpr(fed[index]) +
+                                    variables.launcher[index] + leaving,
+                                1.0);
+      }
     }
 
     // The flow runs around the ring and never increases: a conventional port

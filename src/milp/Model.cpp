@@ -169,6 +169,13 @@ Var Model::addVariable(const std::string_view name, const double lower,
         "variable '{}' has a lower bound of {} above its upper bound of {}",
         name, low, high));
   }
+  // A lower bound of infinity, or an upper bound of minus infinity, leaves no
+  // value. HiGHS refuses such a variable, and MPS has no way to write it.
+  if (low >= INFINITE_BOUND || high <= -INFINITE_BOUND) {
+    throw std::invalid_argument(std::format(
+        "variable '{}' has the bounds {} and {}, which no value lies between",
+        name, low, high));
+  }
   if (takenNames.contains(std::string(name))) {
     throw std::invalid_argument(std::format(
         "the name '{}' is already taken in model '{}'", name, modelName));
@@ -237,6 +244,11 @@ void Model::addRow(const std::string_view name, const LinearExpr& expression,
   if (low > high) {
     throw std::invalid_argument(std::format(
         "constraint '{}' has a lower bound of {} above its upper bound of {}",
+        name, low, high));
+  }
+  if (low >= INFINITE_BOUND || high <= -INFINITE_BOUND) {
+    throw std::invalid_argument(std::format(
+        "constraint '{}' has the bounds {} and {}, which no value lies between",
         name, low, high));
   }
 
