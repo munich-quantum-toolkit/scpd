@@ -735,7 +735,8 @@ ChipT launcherLineChip() {
 
 TEST(CapacityScene, OffersTheCrossingSlotsAlongALineOfLaunchers) {
   // The launchers span no interval along x, so the grid bounds the slots
-  // there. Along y the launcher cells still bound them.
+  // there. No launcher sits on the top or the bottom edge, so the grid bounds
+  // them along y as well.
   const auto config = test::miniConfig();
   const auto scene = buildScene(launcherLineChip(), config);
   ASSERT_EQ(scene.launcherCell.size(), 4U);
@@ -781,6 +782,42 @@ TEST(CapacityScene, OffersTheCrossingSlotsAroundASingleLauncher) {
 
   EXPECT_FALSE(offered.empty());
   EXPECT_EQ(offered.size(), all.size());
+}
+
+TEST(CapacityScene, OffersTheCrossingSlotsBeyondLaunchersOnTwoOppositeEdges) {
+  // Chip.port0 sits on the left edge and Chip.port2 on the right edge, lower
+  // down. No launcher sits on the top edge, so a border above both of them
+  // still offers every slot.
+  auto text = test::miniChipText();
+  const std::string_view from = "[2000.0, 200.0]";
+  const auto at = text.find(from);
+  ASSERT_NE(at, std::string::npos);
+  text.replace(at, from.size(), "[2000.0, -300.0]");
+  auto chip = io::loadChip(text, test::miniConfig());
+  for (auto& port : chip.ports) {
+    if (port->label == "Chip.port1" || port->label == "Chip.port3") {
+      port->role = flatbuffers::design::UnassignedRole::Unset;
+    }
+  }
+  const auto config = test::miniConfig();
+  const auto scene = buildScene(chip, config);
+  ASSERT_EQ(scene.launcherCell.size(), 2U);
+  auto border = middleRow(scene);
+  const auto row = std::floor(static_cast<double>(scene.detail.height) * 0.8);
+  for (auto& sample : border.samples) {
+    sample = grid::Point(sample.x(), row);
+  }
+  for (const auto cell : scene.launcherCell) {
+    ASSERT_GT(row, static_cast<double>(scene.detail.cell(cell).y()) + 0.5);
+  }
+  const auto pitch = crossingPitch(config);
+
+  const auto offered = crossingSlots(border, scene, pitch);
+
+  EXPECT_FALSE(offered.empty());
+  for (const auto& slot : offered) {
+    EXPECT_EQ(slot.y(), row);
+  }
 }
 
 } // namespace

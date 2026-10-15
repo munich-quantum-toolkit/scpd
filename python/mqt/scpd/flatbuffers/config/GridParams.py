@@ -40,23 +40,6 @@ class GridParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
 
-    # A border of detail cells along each axis that stays blocked in the
-    # capacity stage, so that the free space near the edge of the grid does not
-    # look wider than it is.
-    # GridParams
-    def LauncherOffsetX(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 15
-
-    # GridParams
-    def LauncherOffsetY(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 15
-
     # Cells of the detail grid per cell of the capacity grid, along each axis.
     # GridParams
     def DetailFactor(self):
@@ -83,18 +66,6 @@ def GridParamsAddCapacityCellsY(builder: flatbuffers.Builder, capacityCellsY: in
 def AddCapacityCellsY(builder: flatbuffers.Builder, capacityCellsY: int):
     GridParamsAddCapacityCellsY(builder, capacityCellsY)
 
-def GridParamsAddLauncherOffsetX(builder: flatbuffers.Builder, launcherOffsetX: int):
-    builder.PrependUint32Slot(2, launcherOffsetX, 15)
-
-def AddLauncherOffsetX(builder: flatbuffers.Builder, launcherOffsetX: int):
-    GridParamsAddLauncherOffsetX(builder, launcherOffsetX)
-
-def GridParamsAddLauncherOffsetY(builder: flatbuffers.Builder, launcherOffsetY: int):
-    builder.PrependUint32Slot(3, launcherOffsetY, 15)
-
-def AddLauncherOffsetY(builder: flatbuffers.Builder, launcherOffsetY: int):
-    GridParamsAddLauncherOffsetY(builder, launcherOffsetY)
-
 def GridParamsAddDetailFactor(builder: flatbuffers.Builder, detailFactor: int):
     builder.PrependUint32Slot(4, detailFactor, 30)
 
@@ -115,14 +86,10 @@ class GridParamsT(object):
         self,
         capacityCellsX = 50,
         capacityCellsY = 0,
-        launcherOffsetX = 15,
-        launcherOffsetY = 15,
         detailFactor = 30,
     ):
         self.capacityCellsX = capacityCellsX  # type: int
         self.capacityCellsY = capacityCellsY  # type: int
-        self.launcherOffsetX = launcherOffsetX  # type: int
-        self.launcherOffsetY = launcherOffsetY  # type: int
         self.detailFactor = detailFactor  # type: int
 
     @classmethod
@@ -148,8 +115,6 @@ class GridParamsT(object):
             return
         self.capacityCellsX = gridParams.CapacityCellsX()
         self.capacityCellsY = gridParams.CapacityCellsY()
-        self.launcherOffsetX = gridParams.LauncherOffsetX()
-        self.launcherOffsetY = gridParams.LauncherOffsetY()
         self.detailFactor = gridParams.DetailFactor()
 
     # GridParamsT
@@ -157,8 +122,6 @@ class GridParamsT(object):
         GridParamsStart(builder)
         GridParamsAddCapacityCellsX(builder, self.capacityCellsX)
         GridParamsAddCapacityCellsY(builder, self.capacityCellsY)
-        GridParamsAddLauncherOffsetX(builder, self.launcherOffsetX)
-        GridParamsAddLauncherOffsetY(builder, self.launcherOffsetY)
         GridParamsAddDetailFactor(builder, self.detailFactor)
         gridParams = GridParamsEnd(builder)
         return gridParams

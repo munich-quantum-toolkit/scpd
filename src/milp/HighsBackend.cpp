@@ -226,9 +226,8 @@ public:
       solution.message = "HiGHS refused its own output option";
       return solution;
     }
-    // The model and the MPS text count a bound as infinite from
-    // INFINITE_BOUND on. HiGHS does so from 1e20 on unless told otherwise,
-    // and would read a bound between the two as none.
+    // HiGHS counts a bound as infinite from its own option on. The option
+    // follows the model, so a change to INFINITE_BOUND reaches HiGHS too.
     if (highs.setOptionValue("infinite_bound", INFINITE_BOUND) !=
         HighsStatus::kOk) {
       solution.message = "HiGHS refused its infinite bound option";

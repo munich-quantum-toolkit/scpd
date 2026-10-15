@@ -47,7 +47,7 @@ jobs:
         with:
           repository: cda-tum/planar-superconducting-pd
           # renovate: datasource=git-refs depName=https://github.com/cda-tum/planar-superconducting-pd branch=main
-          ref: 2fa91190b91dd68df31881f32b401c4b33934fdb
+          ref: f2ace2ee01ecde2ab71f03fd65e667db2f49a5e5
           path: planar-superconducting-pd
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0

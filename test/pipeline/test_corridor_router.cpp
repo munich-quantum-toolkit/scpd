@@ -17,6 +17,7 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/flatbuffers/geometry.hpp"
+#include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
@@ -32,6 +33,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -392,6 +394,80 @@ TEST(CorridorRouter, StartsAndEndsEveryWireAtTheCentreOfACell) {
       EXPECT_NEAR(cell.x(), std::round(cell.x()), tolerance);
       EXPECT_NEAR(cell.y(), std::round(cell.y()), tolerance);
       ++ends;
+    }
+  }
+  EXPECT_GT(ends, 0U);
+}
+
+TEST(CorridorRouter, PutsEverySlotOnASampleOfItsBorder) {
+  // The stage picks the slots from the samples of the plan, so each slot lies
+  // on the border where the Capacity stage counted it.
+  const auto planned = planMini();
+  const auto routing = routeMini(planned);
+  std::size_t slots = 0;
+  for (const auto& entry : routing.slots) {
+    const auto& samples = planned.capacity.borders[entry->border]->samples;
+    for (const auto& position : entry->positions) {
+      double nearest = std::numeric_limits<double>::infinity();
+      for (const auto& sample : samples) {
+        nearest = std::min(nearest, geometry::distance(position, sample));
+      }
+      EXPECT_LT(nearest, 1.0e-6)
+          << "slot (" << position.x() << ", " << position.y() << ")";
+      ++slots;
+    }
+  }
+  EXPECT_GT(slots, 0U);
+}
+
+/// The label of the partition whose outlines hold a point, by the even-odd
+/// rule over all of its rings, or none.
+std::optional<std::uint32_t> partitionAt(const CapacityPlanT& plan,
+                                         const Point& point) {
+  for (const auto& partition : plan.partitions) {
+    bool inside = false;
+    for (const auto& outline : partition->outlines) {
+      const auto& ring = outline->vertices;
+      for (std::size_t index = 0, previous = ring.size() - 1;
+           index < ring.size(); previous = index++) {
+        const auto& a = ring[index];
+        const auto& b = ring[previous];
+        if ((a.y() > point.y()) != (b.y() > point.y()) &&
+            point.x() < a.x() + ((point.y() - a.y()) * (b.x() - a.x()) /
+                                 (b.y() - a.y()))) {
+          inside = !inside;
+        }
+      }
+    }
+    if (inside) {
+      return partition->label;
+    }
+  }
+  return std::nullopt;
+}
+
+TEST(CorridorRouter, StartsAndEndsEveryCorridorInThePartitionsAtItsEnds) {
+  // The stage reads the partitions from the outlines of the plan, so the
+  // partition a corridor starts in is the one around its source, and the one
+  // it ends in is the one around its target.
+  const auto planned = planMini();
+  const auto routing = routeMini(planned);
+  std::size_t ends = 0;
+  for (const auto& corridor : routing.corridors) {
+    if (corridor->partitions.empty()) {
+      continue;
+    }
+    for (const auto& [end, label] :
+         {std::pair{corridor->source.get(), corridor->partitions.front()},
+          std::pair{corridor->target.get(), corridor->partitions.back()}}) {
+      if (end == nullptr) {
+        continue;
+      }
+      if (const auto around = partitionAt(planned.capacity, *end)) {
+        EXPECT_EQ(*around, label)
+            << "end (" << end->x() << ", " << end->y() << ")";
+        ++ends;
+      }
     }
   }
   EXPECT_GT(ends, 0U);
@@ -785,6 +861,29 @@ TEST(CorridorRouter, CompletesTheProgressOfEveryRound) {
   ASSERT_NE(first, last.end());
   EXPECT_GT(first->second.second, 0U);
   EXPECT_EQ(first->second.first, first->second.second);
+}
+
+TEST(CorridorRouter, CountsTheWiresOfTheExchangePass) {
+  // The exchange pass can run long on a crowded chip, so it reports how many
+  // wires it has offered a swap, and it ends at the count of all wires.
+  const auto planned = crowded(4);
+  std::optional<std::pair<std::uint64_t, std::uint64_t>> last;
+  const Report report(Detail::Summary,
+                      {.progress = [&last](const std::string_view task,
+                                           const std::string_view /*detail*/,
+                                           const std::uint64_t done,
+                                           const std::uint64_t total) {
+                        if (task == "exchanging wires") {
+                          last = {done, total};
+                        }
+                      }});
+
+  static_cast<void>(routeMini(planned, report, sweepConfig(2, 30)));
+
+  const auto wires = planned.assignment.connections.size();
+  ASSERT_TRUE(last.has_value());
+  EXPECT_EQ(last->first, wires);
+  EXPECT_EQ(last->second, wires);
 }
 
 TEST(CorridorRouter, SweepsTwelveRoundsWithoutACorridorSection) {

@@ -569,8 +569,6 @@ struct GridParamsT : public ::flatbuffers::NativeTable {
   typedef GridParams TableType;
   uint32_t capacity_cells_x = 50;
   uint32_t capacity_cells_y = 0;
-  uint32_t launcher_offset_x = 15;
-  uint32_t launcher_offset_y = 15;
   uint32_t detail_factor = 30;
 };
 
@@ -584,8 +582,6 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CAPACITY_CELLS_X = 4,
     VT_CAPACITY_CELLS_Y = 6,
-    VT_LAUNCHER_OFFSET_X = 8,
-    VT_LAUNCHER_OFFSET_Y = 10,
     VT_DETAIL_FACTOR = 12
   };
   uint32_t capacity_cells_x() const {
@@ -594,15 +590,6 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// Zero derives the value from the chip aspect ratio.
   uint32_t capacity_cells_y() const {
     return GetField<uint32_t>(VT_CAPACITY_CELLS_Y, 0);
-  }
-  /// A border of detail cells along each axis that stays blocked in the
-  /// capacity stage, so that the free space near the edge of the grid does not
-  /// look wider than it is.
-  uint32_t launcher_offset_x() const {
-    return GetField<uint32_t>(VT_LAUNCHER_OFFSET_X, 15);
-  }
-  uint32_t launcher_offset_y() const {
-    return GetField<uint32_t>(VT_LAUNCHER_OFFSET_Y, 15);
   }
   /// Cells of the detail grid per cell of the capacity grid, along each axis.
   uint32_t detail_factor() const {
@@ -613,8 +600,6 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_CAPACITY_CELLS_X, 4) &&
            VerifyField<uint32_t>(verifier, VT_CAPACITY_CELLS_Y, 4) &&
-           VerifyField<uint32_t>(verifier, VT_LAUNCHER_OFFSET_X, 4) &&
-           VerifyField<uint32_t>(verifier, VT_LAUNCHER_OFFSET_Y, 4) &&
            VerifyField<uint32_t>(verifier, VT_DETAIL_FACTOR, 4) &&
            verifier.EndTable();
   }
@@ -632,12 +617,6 @@ struct GridParamsBuilder {
   }
   void add_capacity_cells_y(uint32_t capacity_cells_y) {
     fbb_.AddElement<uint32_t>(GridParams::VT_CAPACITY_CELLS_Y, capacity_cells_y, 0);
-  }
-  void add_launcher_offset_x(uint32_t launcher_offset_x) {
-    fbb_.AddElement<uint32_t>(GridParams::VT_LAUNCHER_OFFSET_X, launcher_offset_x, 15);
-  }
-  void add_launcher_offset_y(uint32_t launcher_offset_y) {
-    fbb_.AddElement<uint32_t>(GridParams::VT_LAUNCHER_OFFSET_Y, launcher_offset_y, 15);
   }
   void add_detail_factor(uint32_t detail_factor) {
     fbb_.AddElement<uint32_t>(GridParams::VT_DETAIL_FACTOR, detail_factor, 30);
@@ -657,13 +636,9 @@ inline ::flatbuffers::Offset<GridParams> CreateGridParams(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t capacity_cells_x = 50,
     uint32_t capacity_cells_y = 0,
-    uint32_t launcher_offset_x = 15,
-    uint32_t launcher_offset_y = 15,
     uint32_t detail_factor = 30) {
   GridParamsBuilder builder_(_fbb);
   builder_.add_detail_factor(detail_factor);
-  builder_.add_launcher_offset_y(launcher_offset_y);
-  builder_.add_launcher_offset_x(launcher_offset_x);
   builder_.add_capacity_cells_y(capacity_cells_y);
   builder_.add_capacity_cells_x(capacity_cells_x);
   return builder_.Finish();
@@ -1752,8 +1727,6 @@ inline bool operator==(const GridParamsT &lhs, const GridParamsT &rhs) {
   return
       (lhs.capacity_cells_x == rhs.capacity_cells_x) &&
       (lhs.capacity_cells_y == rhs.capacity_cells_y) &&
-      (lhs.launcher_offset_x == rhs.launcher_offset_x) &&
-      (lhs.launcher_offset_y == rhs.launcher_offset_y) &&
       (lhs.detail_factor == rhs.detail_factor);
 }
 
@@ -1773,8 +1746,6 @@ inline void GridParams::UnPackTo(GridParamsT *_o, const ::flatbuffers::resolver_
   (void)_resolver;
   { auto _e = capacity_cells_x(); _o->capacity_cells_x = _e; }
   { auto _e = capacity_cells_y(); _o->capacity_cells_y = _e; }
-  { auto _e = launcher_offset_x(); _o->launcher_offset_x = _e; }
-  { auto _e = launcher_offset_y(); _o->launcher_offset_y = _e; }
   { auto _e = detail_factor(); _o->detail_factor = _e; }
 }
 
@@ -1788,15 +1759,11 @@ inline ::flatbuffers::Offset<GridParams> GridParams::Pack(::flatbuffers::FlatBuf
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GridParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _capacity_cells_x = _o->capacity_cells_x;
   auto _capacity_cells_y = _o->capacity_cells_y;
-  auto _launcher_offset_x = _o->launcher_offset_x;
-  auto _launcher_offset_y = _o->launcher_offset_y;
   auto _detail_factor = _o->detail_factor;
   return mqt::scpd::flatbuffers::config::CreateGridParams(
       _fbb,
       _capacity_cells_x,
       _capacity_cells_y,
-      _launcher_offset_x,
-      _launcher_offset_y,
       _detail_factor);
 }
 

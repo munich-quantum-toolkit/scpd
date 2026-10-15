@@ -349,6 +349,12 @@ class Console:
         line.append(self.plain(" " + text))
         self.write(line)
 
+    def warning(self, text: str) -> None:
+        """Write a warning about the whole command, at every verbosity."""
+        line = Text()
+        line.append(self.plain("⚠ " + text), style="yellow")
+        self.write(line)
+
     def failure(self, text: str) -> None:
         """Write the line of a command that could not do what it was asked: a red cross and why."""
         line = Text()

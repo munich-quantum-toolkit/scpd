@@ -53,8 +53,6 @@ inline flatbuffers::config::ConfigT miniConfig() {
   config.rules->feedline_terminations = 1;
   config.grid = std::make_unique<GridParamsT>();
   config.grid->capacity_cells_x = 12;
-  config.grid->launcher_offset_x = 0;
-  config.grid->launcher_offset_y = 0;
   config.stages = std::make_unique<StageParamsT>();
   config.stages->capacity = std::make_unique<CapacityParamsT>();
   config.stages->global = std::make_unique<GlobalParamsT>();

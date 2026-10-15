@@ -24,9 +24,10 @@
 
 namespace mqt::scpd::milp {
 
-/// A bound that does not constrain. MPS calls this value infinite, and every
-/// backend reads it as free.
-inline constexpr double INFINITE_BOUND = 1.0e30;
+/// A bound that does not constrain. A bound of this size or larger counts as
+/// none. The value is the one that MPS readers use, Gurobi and HiGHS among
+/// them, so every backend reads the same model.
+inline constexpr double INFINITE_BOUND = 1.0e20;
 
 /// Whether a variable ranges over the reals or the integers.
 enum class VarType : std::uint8_t {

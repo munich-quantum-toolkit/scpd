@@ -497,6 +497,23 @@ def test_doctor_and_plan_refuse_more_launcher_ends_than_the_chip_has_launchers(
     assert main(["plan", "-c", str(config), "-o", str(run), "--stop-after", "global", "--no-progress"]) == 0
 
 
+def test_doctor_and_plan_warn_about_a_key_that_no_stage_reads(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A removed key fails no check, and the doctor and the run name it so that it can go."""
+    config = with_launcher_target(tmp_path, 1)
+    text = config.read_text(encoding="utf-8")
+    config.write_text(text.replace("capacity_cells_x = 12", "capacity_cells_x = 12\nlauncher_offset_x = 0"))
+    warning = "[grid] launcher_offset_x has no effect, and a later version will refuse it; remove it"
+
+    assert main(["doctor", "-c", str(config)]) == 0
+    assert f"WARNING: {warning}" in capsys.readouterr().out
+
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(config), "-o", str(run), "--stop-after", "capacity", "--no-progress"]) == 0
+    assert warning in capsys.readouterr().out
+
+
 def test_doctor_and_plan_refuse_a_ring_that_carries_both_ends_of_a_bridge(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

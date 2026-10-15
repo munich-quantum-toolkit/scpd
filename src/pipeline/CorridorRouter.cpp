@@ -908,8 +908,7 @@ public:
            verdict("fails", afterRescue)});
     }
 
-    report.progress("exchanging wires", "", 0, 0);
-    exchange(corridors, requests, routes, sweeps);
+    exchange(corridors, requests, routes, sweeps, report);
     // A corridor has no clearance to break, so the fails of the stage are the
     // connections without a way.
     const auto left = unrouted(routes);
@@ -965,11 +964,15 @@ private:
 
   /// Offers every wire still without a way a swap with the wires in its way,
   /// and keeps the swap only when fewer wires are left without one.
+  ///
+  /// The pass reports each wire it comes to, because on a crowded chip it can
+  /// run for minutes, and a report is where the run can stop.
   static void exchange(Corridors& corridors,
                        const std::vector<Request>& requests,
                        std::vector<std::optional<Route>>& routes,
-                       const Sweeps& sweeps) {
+                       const Sweeps& sweeps, const Report& report) {
     for (std::size_t index = 0; index < requests.size(); ++index) {
+      report.progress("exchanging wires", "", index, requests.size());
       if (routes[index].has_value()) {
         continue;
       }
@@ -1002,6 +1005,7 @@ private:
         restore(corridors, requests, routes, before);
       }
     }
+    report.progress("exchanging wires", "", requests.size(), requests.size());
   }
 
   /// One request per connection of the assignment, in its order.

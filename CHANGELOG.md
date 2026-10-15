@@ -45,7 +45,8 @@ releases may include breaking changes.
   its bottlenecks, one at the narrowest stretch of each corridor, and budgets
   the wires of every capacity chain, the Global stage solves the inner circuit
   as a mixed-integer program on Hanan lattices, with every inner wire leaving
-  through a bridge to the ring, the Assignment stage assigns the ring ports to
+  through a bridge to the ring, and counts a ring port that the gates behind it
+  have no room for as a fail, the Assignment stage assigns the ring ports to
   launchers and feedline chains with an integer program and feeds no two of them
   at one point, and the Corridor stage routes every connection through the
   partitions over the border slots inside the launcher ring, which are the slots
@@ -106,6 +107,10 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y`: the
+  capacity step blocks no border of its grid, so the launchers on the edge stay
+  free. A configuration that sets them still loads, and `doctor` and `plan` warn
+  about each key ([#140]) ([**@FeldmeierMichael**])
 - 🎨 Start the result line of `plot`, `render` and `inspect` with `✓` and an
   input or stage error of every command except `doctor` with `✗`, show the
   `bridge_pair` pattern and the reachable solvers in `doctor`, and check there,

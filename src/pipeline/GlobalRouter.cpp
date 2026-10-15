@@ -448,6 +448,12 @@ struct Arc {
   milp::Var variable;
 };
 
+/// The marker of a ring port that a chain may find no room for.
+struct Shortfall {
+  milp::Var marker;
+  std::uint32_t port = 0;
+};
+
 /// What the solved flow says beyond the artifact.
 struct Circuit {
   /// The ports a wire of the circuit leaves from.
@@ -501,15 +507,28 @@ public:
       return routing;
     }
 
-    report.progress("building the model", "", 0, 0);
-    milp::Model model("inner-circuit");
+    // The first model asks the chains for room for every ring port behind
+    // their gates. Only where the gates have no room for all of them does a
+    // second model let ring ports go short, so that a chip with room keeps
+    // the circuit of the first.
     std::vector<milp::Var> unreached;
+    std::vector<Shortfall> crowded;
     double penalty = 0.0;
-    const auto arcs = build(model, capacity, lattices, circuit,
-                            internalBridgesAllowed(config), unreached, penalty);
-
-    const auto solution =
-        solveWith(model, config, report, "solving the inner circuit");
+    std::vector<Arc> arcs;
+    milp::Solution solution;
+    for (const bool shortfalls : {false, true}) {
+      report.progress("building the model", "", 0, 0);
+      milp::Model model("inner-circuit");
+      unreached.clear();
+      crowded.clear();
+      arcs = build(model, capacity, lattices, circuit,
+                   internalBridgesAllowed(config), shortfalls, unreached,
+                   crowded, penalty);
+      solution = solveWith(model, config, report, "solving the inner circuit");
+      if (solution.status != milp::SolveStatus::Infeasible) {
+        break;
+      }
+    }
     if (!solution.hasValues()) {
       throw std::runtime_error(
           std::format("the inner circuit did not solve: {}{}",
@@ -517,18 +536,26 @@ public:
                       solution.message.empty() ? "" : ", " + solution.message));
     }
     // The objective is the length of the circuit. The connections already
-    // say which target the lattice could not serve, so the penalty of each
-    // such target comes back out of the cost.
-    const auto missed =
-        std::ranges::count_if(unreached, [&](const milp::Var marker) {
-          return solution.isSet(marker);
-        });
+    // say which target the lattice could not serve, and the shortfalls which
+    // ring port a chain had no room for, so the penalty of each comes back
+    // out of the cost.
+    auto missed = std::ranges::count_if(unreached, [&](const milp::Var marker) {
+      return solution.isSet(marker);
+    });
+    std::set<std::uint32_t> withoutRoom;
+    for (const auto& [marker, port] : crowded) {
+      if (solution.isSet(marker)) {
+        ++missed;
+        withoutRoom.insert(port);
+      }
+    }
     routing.objective =
         solution.objective - (penalty * static_cast<double>(missed));
 
     const auto solved = readBack(routing, lattices, arcs, solution, circuit);
     fillRing(routing, chip, config, circuit, solved.sources);
-    finish(routing, chip, circuit, solved.lengths, report);
+    finish(routing, chip, circuit, solved.lengths, report,
+           {withoutRoom.begin(), withoutRoom.end()});
     return routing;
   }
 
@@ -543,18 +570,30 @@ private:
   /// Reports the ring, the wires and the result of the stage.
   ///
   /// A target counts as a fail when no connection reaches it, whatever the
-  /// reason: no lattice carries it, or the model left it unreached.
+  /// reason: no lattice carries it, or the model left it unreached. A ring
+  /// port in @p withoutRoom counts as a fail too: a chain behind it has no
+  /// room for its wire to a launcher.
   static void finish(const GlobalRoutingT& routing, const ChipT& chip,
                      const InnerCircuit& circuit,
-                     const std::vector<double>& lengths, const Report& report) {
+                     const std::vector<double>& lengths, const Report& report,
+                     const std::vector<std::uint32_t>& withoutRoom = {}) {
     if (report.wants(Detail::Steps)) {
       report.line(Detail::Steps,
                   std::format("{}{}{}",
                               counted(routing.outer_ring.size(), "ring port"),
                               FIGURE_SEPARATOR,
                               counted(routing.resonators.size(), "resonator")));
+      if (!withoutRoom.empty()) {
+        report.line(Detail::Steps,
+                    std::format("{} without room to a launcher",
+                                counted(withoutRoom.size(), "ring port")));
+      }
     }
     if (report.wants(Detail::Items)) {
+      for (const auto port : withoutRoom) {
+        report.line(Detail::Items, std::format("{} has no room to a launcher",
+                                               chip.ports[port]->label));
+      }
       for (std::size_t index = 0; index < routing.connections.size(); ++index) {
         const auto& connection = *routing.connections[index];
         report.line(Detail::Items,
@@ -574,7 +613,8 @@ private:
         reached.insert(connection->target.index());
       }
     }
-    const auto fails = circuit.targets.size() - reached.size();
+    const auto fails =
+        circuit.targets.size() - reached.size() + withoutRoom.size();
     if (circuit.targets.empty()) {
       report.result({{.text = "no inner circuit"},
                      {.text = counted(routing.outer_ring.size(), "ring port")}},
@@ -660,14 +700,17 @@ private:
   /// The flow model over every lattice.
   ///
   /// `unreached` collects the marker of every target that the model may leave
-  /// unserved, and `penalty` the cost of one marker. The caller takes the
-  /// markers back out of the objective: the penalty makes an unserved target
-  /// a last resort, and left in, it would make the cost of a run that misses
-  /// a target incomparable with the cost of one that reaches them all.
+  /// unserved, `crowded` the marker of every ring port that a chain may find
+  /// no room for when @p shortfalls allows that, and `penalty` the cost of one
+  /// marker. The caller takes the markers back out of the objective: the
+  /// penalty makes an unserved target a last resort, and left in, it would
+  /// make the cost of a run that misses a target incomparable with the cost
+  /// of one that reaches them all.
   [[nodiscard]] static std::vector<Arc>
   build(milp::Model& model, const CapacityPlanT& capacity,
         const std::vector<Lattice>& lattices, const InnerCircuit& circuit,
-        const bool internal, std::vector<milp::Var>& unreached,
+        const bool internal, const bool shortfalls,
+        std::vector<milp::Var>& unreached, std::vector<Shortfall>& crowded,
         double& penalty) {
     const std::unordered_set<std::uint32_t> targets(circuit.targets.begin(),
                                                     circuit.targets.end());
@@ -874,7 +917,9 @@ private:
     // circuit surfaces where the wire is shortest, typically at the coupler
     // it already stands on, and not where the chip can carry it out to a
     // launcher.
-    addChainCapacity(model, capacity, circuit, portFlow);
+    addChainCapacity(
+        model, capacity, circuit, portFlow,
+        shortfalls ? std::optional{unreachedPenalty} : std::nullopt, crowded);
 
     model.setSense(milp::Sense::Minimize);
     return arcs;
@@ -919,10 +964,18 @@ private:
   /// A chain that belongs to the inner circuit is left out. Its targets are
   /// what the circuit has to reach, or the ports it reaches them through,
   /// and a constraint of those against themselves says nothing.
+  ///
+  /// A plain ring port draws its wire through the gates of the chain like
+  /// any other target. With a @p penalty, a port that the gates have no room
+  /// for goes short at that cost and is marked in @p crowded, instead of the
+  /// model finding no solution. The stage then names the port and counts it
+  /// as a fail.
   template <typename PortFlow>
   static void
   addChainCapacity(milp::Model& model, const CapacityPlanT& capacity,
-                   const InnerCircuit& circuit, const PortFlow& portFlow) {
+                   const InnerCircuit& circuit, const PortFlow& portFlow,
+                   const std::optional<double> penalty,
+                   std::vector<Shortfall>& crowded) {
     // The inner end of each bridge by its ring port, and the ports that the
     // inner circuit owns.
     std::unordered_map<std::uint32_t, std::uint32_t> insideOf;
@@ -1068,9 +1121,17 @@ private:
             break;
           }
           if (inside == insideOf.end()) {
-            // A plain outer target draws the one wire it is there for.
+            // A plain outer target draws the one wire it is there for, unless
+            // the gates on the way have no room for it.
+            auto drawnHere = in - out;
+            if (penalty.has_value()) {
+              const auto missing = model.addBinary(
+                  std::format("chain_{}_short_{}", chain, at), *penalty);
+              crowded.push_back({.marker = missing, .port = element.id});
+              drawnHere.add(missing, 1.0);
+            }
             model.addEqual(std::format("chain_{}_target_{}", chain, at),
-                           in - out, 1.0);
+                           drawnHere, 1.0);
             break;
           }
           // A target where the inner circuit can surface draws exactly what

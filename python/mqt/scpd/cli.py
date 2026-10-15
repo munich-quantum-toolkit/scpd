@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from . import pyscpd
 from .artifacts import ArtifactError
 from .chip import ChipError, decode_chip, load_chip
-from .config import ConfigError, load_config, write_config
+from .config import ConfigError, load_config, removed_keys_in, write_config
 from .console import Console, size
 from .doctor import run_doctor, solver_problem
 from .export import HAS_KLAYOUT
@@ -138,6 +138,8 @@ def command_plan(args: argparse.Namespace) -> int:
         directory.prepare(args.config, args.chip)
 
     console.header("plan", subject, str(directory.path), [solver])
+    for warning in removed_keys_in(args.config if args.stage is None else directory.config):
+        console.warning(warning)
     last: str | None = None
     for step in steps:
         with console.stage(step) as block:

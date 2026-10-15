@@ -820,6 +820,31 @@ TEST(GlobalRouter, SurfacesThroughABridgeThatAnotherChainCutsOff) {
   EXPECT_EQ(recorder.fails[0], 0U);
 }
 
+TEST(GlobalRouter, CountsARingPortAsAFailWhereItsChainHasNoRoom) {
+  // Q1.port0 and Q1.port1 lie behind a gate that passes one wire. The inner
+  // circuit still solves as it does without them, and the ring port that the
+  // chain has no room for counts as a fail.
+  const auto config = bridgedConfig();
+  const auto chip = bridgedChip();
+  auto plan = planOf(
+      {{.targets = indicesOf(chip, {"Q2.port0", "C12.port1", "Q2.port1"}),
+        .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"C12.port2"}), .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"Q1.port0", "Q1.port1"}), .gate = 1U}});
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Items));
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  EXPECT_NEAR(routing.objective, 450.0, 1.0e-9);
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 1U);
+  EXPECT_TRUE(recorder.said(Detail::Steps, "1 ring port without room"));
+  EXPECT_TRUE(recorder.said(Detail::Items, "Q1.port0 has no room") ||
+              recorder.said(Detail::Items, "Q1.port1 has no room"));
+}
+
 TEST(GlobalRouter, CountsAResonatorAsAFailWithoutARingBridge) {
   // Both ends of the bridge lie off the ring, so no wire can surface on the
   // ring. Shut, the bridge carries no flow; open, it leads only to the other

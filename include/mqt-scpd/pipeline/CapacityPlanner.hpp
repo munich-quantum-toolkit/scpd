@@ -82,13 +82,14 @@ crossingPitch(const ConfigT& config);
  *
  * These are the slots of grid::borderSlots() at the crossing pitch, picked
  * from the samples that lie strictly inside the rectangle the launcher cells
- * span. Every wire starts on
- * the launcher ring, so a slot on or outside that rectangle sits beside or
- * behind a launcher, and a wire that crossed there would run along the back
- * of the ring. Where the launchers span no interval along an axis, as on one
- * line of launchers or for a single launcher, the edges of the grid bound the
- * slots along that axis instead. The chip bounds hold the port centres, so
- * such launchers sit on the edge of the chip. The Capacity stage counts these
+ * span. Every wire starts on the launcher ring, so a slot on or outside that
+ * rectangle sits beside or behind a launcher, and a wire that crossed there
+ * would run along the back of the ring. Where the launchers span no interval
+ * along an axis, as on one line of launchers or for a single launcher, the
+ * edges of the grid bound the slots along that axis instead. The chip bounds
+ * hold the port centres, so such launchers sit on the edge of the chip. The
+ * same holds for each edge of the grid that no launcher sits on, where a
+ * launcher sits on the edge nearest to it. The Capacity stage counts these
  * slots into the budget of a border, and the Corridor stage routes across the
  * same slots.
  *
@@ -187,6 +188,14 @@ buildScene(const ChipT& chip, const ConfigT& config);
  * each target into the capacity chains, carves the chambers the chains cross
  * into partitions, and grows the rest of the free space from the middle of
  * every clear capacity cell.
+ *
+ * A bottleneck of a chain usually parts two partitions, so the Corridor stage
+ * meets a border there. A bottleneck between a wall and an island is the
+ * exception when the free space also runs around the other side of the
+ * island and the chain dropped the gate there: both sides of the bottleneck
+ * then lie in one partition. The Global stage still budgets the wires of the
+ * chain through the bottleneck, which counts less room than the island
+ * leaves, and the Corridor stage meets no border at it.
  *
  * @return The planner.
  */

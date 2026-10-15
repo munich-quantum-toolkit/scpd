@@ -22,6 +22,7 @@
 #include "mqt-scpd/pipeline/Stages.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -179,14 +180,33 @@ std::vector<grid::Point> crossingSlots(const grid::PartitionBorder& border,
   // Launchers on one line span no interval along that axis. The chip bounds
   // hold the port centres, so such a line lies on the edge of the chip, and
   // the grid bounds the slots along that axis instead.
+  const auto width = static_cast<double>(scene.detail.width);
+  const auto height = static_cast<double>(scene.detail.height);
   if (minX == maxX) {
     minX = 0.0;
-    maxX = static_cast<double>(scene.detail.width);
+    maxX = width;
   }
   if (minY == maxY) {
     minY = 0.0;
-    maxY = static_cast<double>(scene.detail.height);
+    maxY = height;
   }
+  // A launcher sits on the edge of the grid nearest to it. Where no launcher
+  // sits on an edge, no launcher stands behind a slot near it, and the grid
+  // bounds the slots on that side too. Without that, launchers on two
+  // opposite edges would cut every slot beyond the outermost of them.
+  std::array<bool, 4> sides{}; // left, right, bottom, top
+  for (const auto cell : scene.launcherCell) {
+    const auto coordinate = scene.detail.cell(cell);
+    const auto x = static_cast<double>(coordinate.x()) + 0.5;
+    const auto y = static_cast<double>(coordinate.y()) + 0.5;
+    const std::array<double, 4> away{x, width - x, y, height - y};
+    sides.at(static_cast<std::size_t>(std::ranges::min_element(away) -
+                                      away.begin())) = true;
+  }
+  minX = sides[0] ? minX : 0.0;
+  maxX = sides[1] ? maxX : width;
+  minY = sides[2] ? minY : 0.0;
+  maxY = sides[3] ? maxY : height;
   // The samples outside the rectangle are dropped before the slots are
   // picked. A slot picked outside and dropped afterwards would still keep
   // every sample within one pitch of it from becoming a slot.
@@ -202,8 +222,6 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
   if (config.rules == nullptr) {
     throw std::invalid_argument("the configuration carries no design rules");
   }
-  const flatbuffers::config::GridParamsT defaults;
-  const auto& params = config.grid != nullptr ? *config.grid : defaults;
   const auto& rules = *config.rules;
 
   CapacityScene scene;
@@ -216,14 +234,10 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
   // axis, which is what this grid exists to find. The routing grids of the
   // later stages carry it.
   //
-  // The launcher offset is a border of detail cells that stays blocked along
-  // each axis. It keeps the free space near the edge of the grid from looking
-  // wider than it is.
+  // No border of the grid stays blocked: the launchers sit on the edge of the
+  // grid, and a blocked border would wall them in.
   const auto raster =
-      grid::rasterizeObstacles(chip, scene.detail,
-                               {.keepoutExemptions = {},
-                                .borderX = params.launcher_offset_x,
-                                .borderY = params.launcher_offset_y});
+      grid::rasterizeObstacles(chip, scene.detail, {.keepoutExemptions = {}});
   scene.blocked = raster.blocked;
   scene.reserved = grid::BitGrid(scene.detail.width, scene.detail.height);
   scene.keepout = grid::BitGrid(scene.detail.width, scene.detail.height);

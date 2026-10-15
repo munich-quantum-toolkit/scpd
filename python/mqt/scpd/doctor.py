@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 from . import pyscpd
 from .chip import ChipError, chip_input_path, decode_chip, load_chip, obstacles_of, ports_of, role_name
-from .config import ConfigError, load_config, write_config
+from .config import ConfigError, load_config, removed_keys_in, write_config
 from .run import RunError, steps_until
 from .solvers import available
 
@@ -50,6 +50,10 @@ class DoctorReport:
     def say(self, *lines: str) -> None:
         """Append report lines."""
         self.lines.extend(lines)
+
+    def warn(self, warning: str) -> None:
+        """Record a warning, which appears in the report and fails no check."""
+        self.lines.append(f"WARNING: {warning}")
 
     def fail(self, problem: str) -> None:
         """Record a problem, which also appears in the report."""
@@ -177,6 +181,8 @@ def run_doctor(config_path: Path, *, list_ports: bool = False, chip_path: Path |
         report.fail(str(error))
         return report
     report.say(f"chip input: {chip_input_path(config, config_path, chip_path)}")
+    for warning in removed_keys_in(config_path):
+        report.warn(warning)
 
     config_bytes = write_config(config)
     for problem in pyscpd.validate_config(config_bytes):

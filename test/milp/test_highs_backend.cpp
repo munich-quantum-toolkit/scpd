@@ -88,15 +88,21 @@ TEST(HighsBackend, ReportsAnUnboundedModel) {
   EXPECT_EQ(solution.status, SolveStatus::Unbounded);
 }
 
-TEST(HighsBackend, KeepsABoundBelowTheInfiniteBoundOfTheModel) {
-  // HiGHS counts a bound from 1e20 on as infinite by default. The model and
-  // the MPS text count one from INFINITE_BOUND on, so 1e25 is a bound.
+TEST(HighsBackend, KeepsABoundBelowTheInfiniteBound) {
   Model model("large");
-  static_cast<void>(model.addContinuous("x", 0.0, 1.0e25, -1.0));
+  static_cast<void>(model.addContinuous("x", 0.0, 0.5 * INFINITE_BOUND, -1.0));
 
   const auto solution = makeHighsBackend()->solve(model, {});
   EXPECT_EQ(solution.status, SolveStatus::Optimal);
-  EXPECT_DOUBLE_EQ(solution.objective, -1.0e25);
+  EXPECT_DOUBLE_EQ(solution.objective, -0.5 * INFINITE_BOUND);
+}
+
+TEST(HighsBackend, CountsABoundAboveTheInfiniteBoundAsNone) {
+  Model model("huge");
+  static_cast<void>(model.addContinuous("x", 0.0, 1.0e25, -1.0));
+
+  const auto solution = makeHighsBackend()->solve(model, {});
+  EXPECT_EQ(solution.status, SolveStatus::Unbounded);
 }
 
 TEST(HighsBackend, RethrowsWhatTheObserverThrowsWhileHighsRejectsTheModel) {

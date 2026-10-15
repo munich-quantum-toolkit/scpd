@@ -72,6 +72,10 @@ Solution solveMpsText(const std::string_view mps,
     solution.status = SolveStatus::Infeasible;
     return solution;
   }
+  if (status == HighsModelStatus::kUnbounded) {
+    solution.status = SolveStatus::Unbounded;
+    return solution;
+  }
   if (status != HighsModelStatus::kOptimal) {
     solution.message =
         "the model read back from MPS did not solve to optimality";
@@ -151,6 +155,16 @@ TEST(Mps, CarriesAFreeContinuousVariable) {
   const auto x = model.addContinuous("x", -INFINITE_BOUND, INFINITE_BOUND, 1.0);
   model.addGreaterOrEqual("floor", 1.0 * x, -3.0);
   expectAgreement(model);
+}
+
+TEST(Mps, CountsTheSameBoundsAsInfiniteAsTheHighsBackend) {
+  // An MPS reader counts a bound as infinite from 1e20 on. The direct
+  // backend has to draw the line at the same value.
+  for (const double bound : {0.5 * INFINITE_BOUND, 1.0e25}) {
+    Model model("large");
+    static_cast<void>(model.addContinuous("x", 0.0, bound, -1.0));
+    expectAgreement(model);
+  }
 }
 
 TEST(Mps, CarriesARangeRow) {

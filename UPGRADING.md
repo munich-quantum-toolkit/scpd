@@ -50,6 +50,11 @@ then stays as it was. `doctor` reports the same problems for the steps that
 An inner routable port that the `component` pattern does not match ends a wire
 of the inner circuit, as a port of an inner qubit does.
 
+No stage reads `[grid] launcher_offset_x` and `launcher_offset_y` any more: the
+capacity step blocks no border of its grid, since the launchers sit on the edge
+of the grid. A configuration that sets them still loads, and `doctor` and `plan`
+warn about each key. Remove them; a later version refuses them.
+
 The detail grid, `[grid] capacity_cells_x` and `capacity_cells_y` times
 `detail_factor`, may have at most 25,000,000 cells. `plan` and `doctor` refuse a
 larger grid before the first stage; `docs/configuration.md` explains the limit.

@@ -24,6 +24,8 @@ from mqt.scpd.config import (
     load_config,
     parse_config,
     read_config,
+    removed_keys,
+    removed_keys_in,
     shipped_config_problems,
     write_config,
 )
@@ -129,7 +131,7 @@ def test_the_grid_section_is_optional_and_partial() -> None:
 
     assert config.grid is not None
     assert (config.grid.capacityCellsX, config.grid.capacityCellsY) == (25, 25)
-    assert (config.grid.launcherOffsetX, config.grid.launcherOffsetY) == (15, 15)
+    assert config.grid.detailFactor == 30
 
 
 @pytest.mark.parametrize(
@@ -174,10 +176,33 @@ def test_shipped_configurations_carry_only_what_differs_from_the_defaults() -> N
     assert shipped_config_problems({"ports": {}}) == []
     parse_config(MANUAL, strict=True)
 
-    problems = shipped_config_problems({"grid": {"capacity_cells_x": 50, "launcher_offset_x": 20}})
+    problems = shipped_config_problems({"grid": {"capacity_cells_x": 50, "detail_factor": 20}})
     assert problems == ["[grid] capacity_cells_x is set to its default 50; remove it"]
     with pytest.raises(ConfigError, match="capacity_cells_x is set to its default"):
         parse_config(MANUAL + "\n[grid]\ncapacity_cells_x = 50\n", strict=True)
+
+
+def test_a_removed_key_loads_and_is_named() -> None:
+    """A key that no stage reads any more still loads, and the loader names it so it can go."""
+    text = WITH_GRID.replace("capacity_cells_x = 25", "capacity_cells_x = 25\nlauncher_offset_x = 0")
+    config = parse_config(text)
+
+    assert config.grid is not None
+    assert config.grid.capacityCellsX == 25
+    message = "[grid] launcher_offset_x has no effect, and a later version will refuse it; remove it"
+    assert removed_keys({"grid": {"launcher_offset_x": 0, "capacity_cells_x": 25}}) == [message]
+    assert removed_keys({"grid": {"capacity_cells_x": 25}}) == []
+    assert shipped_config_problems({"grid": {"launcher_offset_y": 7}}) == [message.replace("_x", "_y")]
+
+
+def test_removed_keys_in_reads_the_file(tmp_path: Path) -> None:
+    """The file variant names the removed keys of a file, and nothing for a file it cannot read."""
+    path = tmp_path / "config.toml"
+    path.write_text(MANUAL + "\n[grid]\nlauncher_offset_y = 0\n", encoding="utf-8")
+    assert removed_keys_in(path) == [
+        "[grid] launcher_offset_y has no effect, and a later version will refuse it; remove it"
+    ]
+    assert removed_keys_in(tmp_path / "absent.toml") == []
 
 
 def test_configuration_round_trips_through_the_core_bytes() -> None:

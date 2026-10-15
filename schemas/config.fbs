@@ -64,11 +64,10 @@ table GridParams {
   capacity_cells_x: uint32 = 50;
   /// Zero derives the value from the chip aspect ratio.
   capacity_cells_y: uint32 = 0;
-  /// A border of detail cells along each axis that stays blocked in the
-  /// capacity stage, so that the free space near the edge of the grid does not
-  /// look wider than it is.
-  launcher_offset_x: uint32 = 15;
-  launcher_offset_y: uint32 = 15;
+  /// Read by no stage. A blocked border along the edge of the grid walls in
+  /// the launchers that sit there. The slots keep the table layout.
+  launcher_offset_x: uint32 = 15 (deprecated);
+  launcher_offset_y: uint32 = 15 (deprecated);
   /// Cells of the detail grid per cell of the capacity grid, along each axis.
   detail_factor: uint32 = 30;
 }

@@ -81,12 +81,11 @@ cell into a finer detail grid.
 | ------------------- | ------- | ------------------------------------------------------------------------------------------ |
 | `capacity_cells_x`  | `50`    | The cells of the capacity grid across the width of the chip; at least one                  |
 | `capacity_cells_y`  | `0`     | The cells of the capacity grid across the height of the chip; `0` takes the aspect ratio   |
-| `launcher_offset_x` | `15`    | The detail cells along the left and right edges of the grid that stay blocked              |
-| `launcher_offset_y` | `15`    | The detail cells along the top and bottom edges of the grid that stay blocked              |
 | `detail_factor`     | `30`    | The detail cells per capacity cell along each axis; at least one                           |
 
-A launcher that sits on the edge of the chip needs `launcher_offset_x` and
-`launcher_offset_y` small enough that the blocked border does not cover it.
+No stage reads `launcher_offset_x` and `launcher_offset_y` any more. The loader
+still accepts them, and `doctor` and `plan` warn about each one; a later version
+refuses them.
 
 The detail grid has `capacity_cells_x` × `detail_factor` cells across and
 `capacity_cells_y` × `detail_factor` cells down; with `capacity_cells_y` at `0`,

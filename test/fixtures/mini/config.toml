@@ -40,10 +40,6 @@ feedline_terminations = 1
 
 [grid]
 capacity_cells_x = 12
-# The launchers sit on the edge of the chip, so the blocked border of the
-# capacity grid must not cover them.
-launcher_offset_x = 0
-launcher_offset_y = 0
 
 [stages.assignment]
 launcher_target = 1
