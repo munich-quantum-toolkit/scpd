@@ -202,6 +202,10 @@ buildScene(const ChipT& chip, const ConfigT& config);
  * they follow one another in a chain, the chain keeps the one with the smallest
  * budget, so the raster picks the cut that sets the budget of the corridor,
  * and that cut can count fewer wires than the rest of the corridor carries.
+ * The medial axis lies off the middle of a corridor by up to one cell (see
+ * grid::rasterizeMedialAxis()), so the opening beside a rectangular obstacle
+ * can get more than one bottleneck too, and two mirrored openings different
+ * ones.
  *
  * @return The planner.
  */

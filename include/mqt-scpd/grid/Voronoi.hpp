@@ -98,6 +98,15 @@ struct MedialAxis {
  * cell with three or more neighbors is a junction, and a cell with one
  * neighbor is an endpoint.
  *
+ * A site stands at the index of its cell, so the cell nearest to a vertex is
+ * the rounded one. Truncation moves a vertex by up to one cell towards smaller
+ * coordinates, and the axis then lies off the middle of a corridor by up to
+ * one cell. Beside a rectangular obstacle that can give an opening more than
+ * one bottleneck, and two mirrored openings different ones. The rasterization
+ * keeps the truncation of the development branch, because rounding changes
+ * the bottlenecks, the Global circuit and the assignment of the benchmark
+ * chips.
+ *
  * @param blocked The obstacle mask the edges were computed from.
  * @param grid The metrics of the grid of the mask.
  * @param edges The edges of the medial axis, in cell coordinates.

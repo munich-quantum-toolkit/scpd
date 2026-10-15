@@ -859,7 +859,9 @@ public:
     // A round can rip up more wires than it places again, so the fails of
     // the rounds go up and down, and on a crowded chip two rounds can undo
     // each other until the last. The plan of the round with the fewest fails
-    // is kept, the latest of them on a tie.
+    // is kept, the latest of them on a tie. Its fails include the wires that
+    // the round ripped near its end and had no sweep left to place again;
+    // the stage takes that plan as it is.
     auto best = routes;
     auto bestLeft = requests.size();
     std::uint32_t bestRound = 0;
@@ -899,41 +901,14 @@ public:
                     verdict("fails", bestLeft)});
     }
 
-    // A wire that the sweep ripped on its way past is left for the sweep to
-    // place again, and the last round has no sweep after it. Every wire still
-    // without a way is therefore offered the room the others left, and only
-    // that: this pass takes nothing from anyone, so it can be repeated until
-    // it places nothing more.
-    report.progress("placing what is left", "", 0, 0);
-    const auto beforeRescue = unrouted(routes);
-    for (auto placed = true; placed;) {
-      placed = false;
-      for (std::size_t index = 0; index < requests.size(); ++index) {
-        if (routes[index].has_value()) {
-          continue;
-        }
-        if (auto found = corridors.route(requests[index]); found.has_value()) {
-          corridors.commit(requests[index], *found);
-          routes[index] = std::move(found);
-          placed = true;
-        }
-      }
-    }
-    const auto afterRescue = unrouted(routes);
-    if (afterRescue != beforeRescue) {
-      report.entry(
-          Detail::Summary, "rescue",
-          {{.text = std::format("placed {}", beforeRescue - afterRescue)},
-           verdict("fails", afterRescue)});
-    }
-
+    const auto beforeExchange = unrouted(routes);
     exchange(corridors, requests, routes, sweeps, report);
     // A corridor has no clearance to break, so the fails of the stage are the
     // connections without a way.
     const auto left = unrouted(routes);
-    if (left != afterRescue) {
+    if (left != beforeExchange) {
       report.entry(Detail::Summary, "exchange",
-                   {{.text = std::format("placed {}", afterRescue - left)},
+                   {{.text = std::format("placed {}", beforeExchange - left)},
                     verdict("fails", left)});
     }
 

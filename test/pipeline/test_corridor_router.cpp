@@ -595,27 +595,11 @@ TEST(CorridorRouter, KeepsItsRulesWhenWiresCompete) {
   }
 }
 
-TEST(CorridorRouter, PlacesTheWiresThatNoRoundPlaced) {
-  // Without a sweep, every wire is placed in the room the others leave.
-  const auto planned = crowded(2);
-  Received received;
-  const auto routing = routeMini(planned, receiving(received, Detail::Summary),
-                                 sweepConfig(0, 30));
-
-  const auto routed = routing.corridors.size() - unroutedOf(routing);
-  ASSERT_EQ(received.summary.size(), 1U);
-  EXPECT_EQ(received.summary[0].first, "rescue");
-  EXPECT_EQ(received.summary[0].second[0].text,
-            std::format("placed {}", routed));
-  EXPECT_GT(routed, 0U);
-  expectOneWirePerSlot(routing);
-  expectNoCrossingInsideAPartition(routing);
-}
-
 TEST(CorridorRouter, MovesAWireThatHoldsASlotNearTheOneAnotherWants) {
   // Four wires fed at slots of the fixture, found by a search over random
-  // feeds. With no sweep, the exchange pass is the only one that moves a
-  // wire. The way of the wire to Q1.port0 needs a slot next to one that
+  // feeds. One round that may rip up no neighbour leaves the wire to
+  // Q1.port0 without a way, so the exchange pass is the only one that moves
+  // a wire. The way of the wire to Q1.port0 needs a slot next to one that
   // another wire holds, so the exchange pass has to see the holder of that
   // slot as a wire in the way, or the wire stays without a way.
   const auto fixture = planMini();
@@ -648,7 +632,7 @@ TEST(CorridorRouter, MovesAWireThatHoldsASlotNearTheOneAnotherWants) {
     planned.assignment.feeds.push_back(offered[slot]);
   }
 
-  const auto routing = routeMini(planned, {}, sweepConfig(0, 30));
+  const auto routing = routeMini(planned, {}, sweepConfig(1, 0));
 
   EXPECT_EQ(unroutedOf(routing), 0U);
   expectOneWirePerSlot(routing);

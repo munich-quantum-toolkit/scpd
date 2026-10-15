@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <numbers>
@@ -488,11 +489,16 @@ public:
     GlobalRoutingT routing;
     routing.objective = 0.0;
 
+    // A ring port that no bridge joins needs a way to a launcher whatever
+    // the inner circuit does, so a gate without room in front of it is a
+    // fail on every chip.
+    const auto cutOff = cutOffPorts(capacity, circuit);
+
     // A chip whose ring is its whole port set has no inner circuit. That is
     // a valid state of the pipeline, and the artifact is written empty.
     if (circuit.targets.empty()) {
       fillRing(routing, chip, config, circuit, {});
-      finish(routing, chip, circuit, {}, report);
+      finish(routing, chip, circuit, {}, report, cutOff);
       return routing;
     }
 
@@ -503,7 +509,7 @@ public:
       // could supply them, or a single point. There is no circuit to solve,
       // and a solver takes no empty model.
       fillRing(routing, chip, config, circuit, {});
-      finish(routing, chip, circuit, {}, report);
+      finish(routing, chip, circuit, {}, report, cutOff);
       return routing;
     }
 
@@ -542,7 +548,7 @@ public:
     auto missed = std::ranges::count_if(unreached, [&](const milp::Var marker) {
       return solution.isSet(marker);
     });
-    std::set<std::uint32_t> withoutRoom;
+    std::set<std::uint32_t> withoutRoom(cutOff.begin(), cutOff.end());
     for (const auto& [marker, port] : crowded) {
       if (solution.isSet(marker)) {
         ++missed;
@@ -1199,6 +1205,43 @@ private:
       }
     }
     return supplied;
+  }
+
+  /// The ring ports that no bridge joins and that no chain carries to a
+  /// launcher, ascending.
+  ///
+  /// Such a port lies behind a gate without room on every chain that carries
+  /// it. Its wire then has no way to a launcher, while the ring end of a
+  /// bridge needs one only where an inner wire surfaces there.
+  [[nodiscard]] static std::vector<std::uint32_t>
+  cutOffPorts(const CapacityPlanT& capacity, const InnerCircuit& circuit) {
+    std::unordered_set<std::uint32_t> notPlain(circuit.innerPorts.begin(),
+                                               circuit.innerPorts.end());
+    for (const auto& bridge : circuit.outerBridges) {
+      notPlain.insert(bridge.to);
+    }
+    std::set<std::uint32_t> carried;
+    std::unordered_set<std::uint32_t> reached;
+    for (const auto root : capacity.chains) {
+      const auto links = chainLinks(capacity, root);
+      const auto supplied = suppliedLinks(capacity, links);
+      for (std::size_t at = 0; at < links.size(); ++at) {
+        const auto& element = *capacity.nodes[links[at].node];
+        if (element.kind != fba::CapacityElement::Target ||
+            notPlain.contains(element.id)) {
+          continue;
+        }
+        carried.insert(element.id);
+        if (supplied[at]) {
+          reached.insert(element.id);
+        }
+      }
+    }
+    std::vector<std::uint32_t> cutOff;
+    std::ranges::copy_if(
+        carried, std::back_inserter(cutOff),
+        [&](const std::uint32_t port) { return !reached.contains(port); });
+    return cutOff;
   }
 
   /// Reads the solved flow back into the artifact.

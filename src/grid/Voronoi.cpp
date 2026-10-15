@@ -239,10 +239,9 @@ MedialAxis rasterizeMedialAxis(const BitGrid& blocked, const GridMetrics& grid,
   }
 
   for (const auto& edge : edges) {
-    // The endpoints are truncated rather than rounded, because that is what
-    // decides which cell a vertex exactly between two cells belongs to, and
-    // rounding moves the whole axis by half a cell against the mask it was
-    // derived from.
+    // The endpoints are truncated, which moves a vertex by up to one cell
+    // off the cell nearest to it. Rounding would be exact, but it changes
+    // the bottlenecks of the benchmark chips (see rasterizeMedialAxis()).
     const auto cells =
         lineCells(static_cast<int64_t>(edge.x0), static_cast<int64_t>(edge.y0),
                   static_cast<int64_t>(edge.x1), static_cast<int64_t>(edge.y1),

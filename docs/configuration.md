@@ -125,8 +125,10 @@ The wires of the ring ports behind a gate of a capacity chain pass that gate on
 their way to a launcher, and so do the inner wires that surface there. When the
 gates have no room for all of them, the step solves the circuit again and lets
 ring ports go without room. Each such ring port is a fail of the global step,
-and `-vv` names it. The step checks the room only when it solves an inner
-circuit: a chip without inner ports has no such fail.
+and `-vv` names it. A ring port that no bridge joins always needs a way to a
+launcher: where a gate without room cuts it off on every chain that carries it,
+it is a fail too, also on a chip without inner ports. The ring end of a bridge
+may be cut off, because it needs a way only where an inner wire surfaces there.
 
 ## `[stages.assignment]`
 
@@ -194,10 +196,11 @@ The later sweeps let a connection without a way take room that another
 connection has not claimed yet. A sweep can take a way from a connection that
 had one, so the fails of the rounds can go up as well as down. The stage keeps
 the plan of the round with the fewest fails, and goes back to it when the last
-round ends with more. After the sweeps, two passes run, also with `rounds` at
-`0`. The rescue pass gives each connection still without a way free room where
-it finds some, and takes nothing from anyone. The exchange pass lets such a
-connection move the wires in its way, and keeps the change only when fewer
+round ends with more. The fails of a round count every connection without a way
+at its end, also one that the round ripped up near its end and had no sweep left
+to place again; the stage takes the plan of the best round as it is. After the
+sweeps, also with `rounds` at `0`, the exchange pass lets each connection
+without a way move the wires in its way, and keeps the change only when fewer
 connections are left without a way.
 
 ## `[run]`

@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -43,11 +44,16 @@ namespace {
 Solution solveMpsText(const std::string_view mps,
                       const std::vector<std::string>& names,
                       const SolveOptions& /*options*/) {
-  // A counter rather than the process id, so the name is the same on every
-  // platform the tests run on.
+  // CTest runs every test in a process of its own, and parallel runs share
+  // the temporary directory, so the name carries the test, a counter for
+  // the solves within it, and a random part against other processes.
   static std::atomic<unsigned> counter{0};
-  const auto path = std::filesystem::temp_directory_path() /
-                    std::format("mqt-scpd-milp-{}.mps", counter.fetch_add(1));
+  std::random_device random;
+  const auto path =
+      std::filesystem::temp_directory_path() /
+      std::format("mqt-scpd-milp-{}-{}-{:08x}{:08x}.mps",
+                  testing::UnitTest::GetInstance()->current_test_info()->name(),
+                  counter.fetch_add(1), random(), random());
   {
     std::ofstream file(path);
     file << mps;

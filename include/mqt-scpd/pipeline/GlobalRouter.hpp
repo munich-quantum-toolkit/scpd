@@ -91,9 +91,13 @@ innerCircuitOf(const ChipT& chip, const ConfigT& config);
  * the ring ports behind a gate and the inner wires that surface there. When
  * the gates have no room for all of them, the model has no solution. The
  * router then solves a second model, in which a ring port may go without room
- * at a penalty, and counts each ring port without room as a fail. A chip
- * without an inner circuit, or without a lattice to solve it on, has no model
- * and so no such fail.
+ * at a penalty, and counts each ring port without room as a fail.
+ *
+ * A ring port that no bridge joins needs a way to a launcher on every chip.
+ * Where each chain that carries such a port has a gate without room between
+ * the port and its launcher, the port counts as a fail, also on a chip
+ * without an inner circuit. The ring end of a bridge may be cut off: it needs
+ * a way only where an inner wire surfaces there.
  *
  * @return The router.
  */

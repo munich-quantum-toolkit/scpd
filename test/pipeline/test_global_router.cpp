@@ -845,6 +845,72 @@ TEST(GlobalRouter, CountsARingPortAsAFailWhereItsChainHasNoRoom) {
               recorder.said(Detail::Items, "Q1.port1 has no room"));
 }
 
+TEST(GlobalRouter, CountsEveryRingPortBehindAGateWithoutRoomAsAFail) {
+  // A gate that passes no wire cuts Q1.port0 and Q1.port1 off from every
+  // launcher. Neither port is the ring end of a bridge, so both need a way
+  // to a launcher, and both count as a fail. Less room never gives fewer
+  // fails.
+  const auto config = bridgedConfig();
+  const auto chip = bridgedChip();
+  auto plan = planOf(
+      {{.targets = indicesOf(chip, {"Q2.port0", "C12.port1", "Q2.port1"}),
+        .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"C12.port2"}), .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"Q1.port0", "Q1.port1"}), .gate = 0U}});
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Items));
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  EXPECT_NEAR(routing.objective, 450.0, 1.0e-9);
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 2U);
+  EXPECT_TRUE(recorder.said(Detail::Steps, "2 ring ports without room"));
+  EXPECT_TRUE(recorder.said(Detail::Items, "Q1.port0 has no room"));
+  EXPECT_TRUE(recorder.said(Detail::Items, "Q1.port1 has no room"));
+}
+
+TEST(GlobalRouter, CountsARingPortBehindAGateWithoutRoomWithoutAnInnerCircuit) {
+  // The fixture has no inner circuit, so the stage solves no model. A ring
+  // port that a gate without room cuts off is a fail all the same.
+  const auto config = test::miniConfig();
+  const auto chip = test::miniChip();
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"Q1.port0", "Q1.port1", "C12.port0"}),
+        .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"Q2.port0"}), .gate = 0U}});
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Items));
+
+  EXPECT_TRUE(routing.connections.empty());
+  ASSERT_EQ(recorder.results.size(), 1U);
+  EXPECT_EQ(recorder.results[0][0].text, "no inner circuit");
+  EXPECT_EQ(recorder.fails[0], 1U);
+  EXPECT_TRUE(recorder.said(Detail::Items, "Q2.port0 has no room"));
+}
+
+TEST(GlobalRouter, CountsNoRingPortAsAFailThatAnotherChainCarries) {
+  // Q1.port0 lies behind a gate without room on one chain, and a second
+  // chain carries it to a launcher, so it has a way.
+  const auto config = test::miniConfig();
+  const auto chip = test::miniChip();
+  const auto plan =
+      planOf({{.targets = indicesOf(chip, {"Q1.port0"}), .gate = 0U},
+              {.targets = indicesOf(
+                   chip, {"Q1.port0", "Q1.port1", "C12.port0", "Q2.port0"}),
+               .gate = std::nullopt}});
+  Recorder recorder;
+
+  static_cast<void>(makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Summary)));
+
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 0U);
+}
+
 TEST(GlobalRouter, CountsAResonatorAsAFailWithoutARingBridge) {
   // Both ends of the bridge lie off the ring, so no wire can surface on the
   // ring. Shut, the bridge carries no flow; open, it leads only to the other
