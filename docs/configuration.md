@@ -121,6 +121,13 @@ assignment gives every ring port a wire of its own. An inner port that no such
 wire can reach is a fail of the global step. An inner resonator that is a fail
 gets no feed.
 
+The wires of the ring ports behind a gate of a capacity chain pass that gate on
+their way to a launcher, and so do the inner wires that surface there. When the
+gates have no room for all of them, the step solves the circuit again and lets
+ring ports go without room. Each such ring port is a fail of the global step,
+and `-vv` names it. The step checks the room only when it solves an inner
+circuit: a chip without inner ports has no such fail.
+
 ## `[stages.assignment]`
 
 | Key               | Default | Meaning                                                                                                                    |
@@ -183,12 +190,15 @@ of `1024` is the largest value that Gurobi accepts.
 | `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward                                                                      |
 | `max_relaxation` | `30`    | How many neighbouring connections along the sweep a connection without a way may rip up, and then how many wires in its way it may move |
 
-A connection that has a way keeps it. The later sweeps let a connection without
-a way take room that another connection has not claimed yet. After the sweeps,
-two passes run, also with `rounds` at `0`. The rescue pass gives each connection
-still without a way free room where it finds some, and takes nothing from
-anyone. The exchange pass lets such a connection move the wires in its way, and
-keeps the change only when fewer connections are left without a way.
+The later sweeps let a connection without a way take room that another
+connection has not claimed yet. A sweep can take a way from a connection that
+had one, so the fails of the rounds can go up as well as down. The stage keeps
+the plan of the round with the fewest fails, and goes back to it when the last
+round ends with more. After the sweeps, two passes run, also with `rounds` at
+`0`. The rescue pass gives each connection still without a way free room where
+it finds some, and takes nothing from anyone. The exchange pass lets such a
+connection move the wires in its way, and keeps the change only when fewer
+connections are left without a way.
 
 ## `[run]`
 

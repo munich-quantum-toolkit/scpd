@@ -32,6 +32,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <limits>
 #include <map>
@@ -1127,6 +1128,54 @@ TEST(CorridorRouter, RoutesEveryWireOfEveryAssignmentOfTheFixture) {
   }
   // The rotations give the router more than one assignment to route.
   EXPECT_GT(distinct.size(), 1U);
+}
+
+TEST(CorridorRouter, EndsNoWorseThanItsBestRound) {
+  // Where wires compete, a round can rip up more wires than it places again,
+  // and the fails of the rounds go up and down. The stage keeps the best
+  // round, so it ends with no more fails than that round had, whether the
+  // rounds stop on a good one or a bad one.
+  SplitMix random(5);
+  const auto fixture = planMini();
+  auto planned = planMini();
+  for (int draw = 0; draw < 100; ++draw) {
+    planned.assignment = randomAssignment(fixture, random);
+    for (const std::uint32_t rounds : {11U, 12U}) {
+      SCOPED_TRACE(std::format("assignment {}, {} rounds", draw, rounds));
+      Received received;
+      const auto routing =
+          routeMini(planned, receiving(received, Detail::Summary),
+                    sweepConfig(rounds, 30));
+
+      // The fails of each round, and the entry that names the round the
+      // stage went back to.
+      std::vector<std::size_t> fails;
+      std::optional<std::string> back;
+      for (const auto& [label, figures] : received.summary) {
+        if (label.starts_with("round ")) {
+          fails.push_back(
+              std::stoul(figures[1].text.substr(std::strlen("fails "))));
+        } else if (label.starts_with("back to round ")) {
+          back = label;
+        }
+      }
+      ASSERT_FALSE(fails.empty());
+      const auto best = std::ranges::min(fails);
+      EXPECT_LE(unroutedOf(routing), best);
+      if (fails.back() > best) {
+        // The latest round with the fewest fails, counted from 1.
+        std::size_t latest = 0;
+        for (std::size_t round = 0; round < fails.size(); ++round) {
+          if (fails[round] == best) {
+            latest = round + 1;
+          }
+        }
+        EXPECT_EQ(back, std::format("back to round {}", latest));
+      } else {
+        EXPECT_FALSE(back.has_value());
+      }
+    }
+  }
 }
 
 } // namespace

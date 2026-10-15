@@ -87,6 +87,14 @@ innerCircuitOf(const ChipT& chip, const ConfigT& config);
  * wire through a ring bridge can reach stays unreached and counts as a fail,
  * an inner resonator included: the assignment places no feed for it.
  *
+ * The wires to a launcher pass the gates of the capacity chains: the wires of
+ * the ring ports behind a gate and the inner wires that surface there. When
+ * the gates have no room for all of them, the model has no solution. The
+ * router then solves a second model, in which a ring port may go without room
+ * at a penalty, and counts each ring port without room as a fail. A chip
+ * without an inner circuit, or without a lattice to solve it on, has no model
+ * and so no such fail.
+ *
  * @return The router.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::unique_ptr<IGlobalRouter>

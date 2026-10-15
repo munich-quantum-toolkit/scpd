@@ -93,11 +93,11 @@ A stage that can fail on part of its work reports how many parts failed. The
 artifact line shows that count, and the closing line adds the counts of every
 stage. A run that ends with fails exits with code 1.
 
-| Stage    | A fail is                                         |
-| -------- | ------------------------------------------------- |
-| global   | An inner port that no wire of the circuit reaches |
-| assign   | A ring port that the assignment gives no launcher |
-| corridor | A connection without a way through the partitions |
+| Stage    | A fail is                                                                                                 |
+| -------- | --------------------------------------------------------------------------------------------------------- |
+| global   | An inner port that no wire of the circuit reaches, or a ring port that its capacity chain has no room for |
+| assign   | None: the stage gives every ring port a launcher, or it stops with an error                               |
+| corridor | A connection without a way through the partitions                                                         |
 
 ## Stage Marks
 
@@ -157,7 +157,7 @@ A stage reports through the `Report` it is given and never prints.
 2. Report each round of a stage that works in rounds through `Report::entry`,
    with the label `round <n> forward` or `round <n> backward`, counted from 1. A
    pass after the rounds that changes the result gets an entry of its own, such
-   as `rescue` and `exchange` in the Corridor stage.
+   as `back to round <n>`, `rescue` and `exchange` in the Corridor stage.
 3. Build each figure with `counted`, `verdict` or one of the forms above, and
    join figures with `FIGURE_SEPARATOR`.
 4. Report the steps, the parameters and the solves at `Detail::Steps`, and one

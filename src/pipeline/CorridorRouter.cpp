@@ -347,10 +347,11 @@ public:
   ///
   /// Without this two wires trade one slot back and forth: each displaces
   /// the other, each round undoes the last, and neither settles. The price
-  /// only rises, so the wire in the way finds its own way cheaper elsewhere
-  /// in the end and gives the slot up. The charge is a fraction of one
+  /// only rises, so the wire in the way often finds its own way cheaper
+  /// elsewhere and gives the slot up. The charge is a fraction of one
   /// displacement, so a few rounds of wanting a slot add up to more than the
-  /// detour around it.
+  /// detour around it. Where the slots are too few for every wire, no price
+  /// settles the trade, and the stage keeps the best round instead.
   void chargeFor(const Request& request, const Route& route) {
     const auto amount = displacementPrice() / HISTORY_STEPS;
     std::vector<std::size_t> held;
@@ -855,6 +856,13 @@ public:
     }
 
     std::vector<std::optional<Route>> routes(requests.size());
+    // A round can rip up more wires than it places again, so the fails of
+    // the rounds go up and down, and on a crowded chip two rounds can undo
+    // each other until the last. The plan of the round with the fewest fails
+    // is kept, the latest of them on a tie.
+    auto best = routes;
+    auto bestLeft = requests.size();
+    std::uint32_t bestRound = 0;
     std::uint32_t rounds = 0;
     for (std::uint32_t round = 0; round < sweeps.rounds; ++round) {
       const auto forward = (round % 2) == 0;
@@ -871,6 +879,11 @@ public:
       report.entry(
           Detail::Summary, name,
           {routedFigure(left, requests.size()), verdict("fails", left)});
+      if (left <= bestLeft) {
+        best = routes;
+        bestLeft = left;
+        bestRound = rounds;
+      }
       // Only a round that routes everything ends the sweeps. A round in which
       // nothing moved is not the end: a wire that found no way charged the
       // slots it wanted, and it takes several such rounds before the charge
@@ -878,6 +891,12 @@ public:
       if (left == 0) {
         break;
       }
+    }
+    if (unrouted(routes) > bestLeft) {
+      restore(corridors, requests, routes, best);
+      report.entry(Detail::Summary, std::format("back to round {}", bestRound),
+                   {routedFigure(bestLeft, requests.size()),
+                    verdict("fails", bestLeft)});
     }
 
     // A wire that the sweep ripped on its way past is left for the sweep to
@@ -1073,7 +1092,9 @@ private:
     // Nothing free reaches the target. The wires ahead of this one in the
     // sweep are taken out one after another until it fits. The sweep has not
     // settled them yet, so it gives each of them a new way before the round
-    // is over.
+    // is over. Near the end of the sweep the count runs on past the last wire
+    // to the first ones, which this round has passed; those wait for the
+    // next round, or for the passes after the last one.
     std::vector<std::pair<std::size_t, Route>> ripped;
     const auto total = static_cast<std::int64_t>(requests.size());
     for (std::uint32_t relax = 1; relax <= sweeps.maxRelaxation; ++relax) {

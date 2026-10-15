@@ -1104,10 +1104,11 @@ struct CorridorParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   /// Sweeps over the connections, alternating forward and backward.
   ///
-  /// A connection that has a way keeps it. The sweeps exist so that a
-  /// connection without a way can take room that a later one has not claimed
-  /// yet, and so that the order of the connections does not decide the
-  /// result on its own.
+  /// The sweeps exist so that a connection without a way can take room that
+  /// a later one has not claimed yet, and so that the order of the
+  /// connections does not decide the result on its own. A sweep can take a
+  /// way from a connection that had one; the stage keeps the round with the
+  /// fewest connections without a way.
   uint32_t rounds() const {
     return GetField<uint32_t>(VT_ROUNDS, 12);
   }

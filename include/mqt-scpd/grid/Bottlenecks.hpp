@@ -68,6 +68,14 @@ struct BottleneckOptions {
  * step by step gives one at its narrow end. The middle cell of the stretch
  * stands for it. A junction or a dead end of the axis is never a candidate.
  *
+ * A corridor of constant width gives one candidate only when it runs along a
+ * grid axis or a diagonal. At any other angle the raster makes the clearance
+ * step between two values, such as 9 and 8 squared cells, and every lower
+ * step is a candidate: about one every two cells along the corridor. The
+ * cuts of these candidates differ in length by a cell or so, and
+ * BottleneckOptions::sameNarrowing does not merge them, because the
+ * staircase of the wall gives no two of them a wall cell in common.
+ *
  * Around the middle cell the free space splits into shores, the connected
  * groups of its off-axis neighbors, and a bottleneck exists where there are
  * two. Each shore is walked downhill in the distance transform until it
@@ -84,8 +92,7 @@ struct BottleneckOptions {
  * @param squaredDistance The squared distance transform of the mask.
  * @param grid The metrics of the grid of the mask.
  * @param options How the bottlenecks are found.
- * @return The bottlenecks, ordered by the cell of their candidate, one per
- * narrowing.
+ * @return The bottlenecks, ordered by the cell of their candidate.
  * @throws std::invalid_argument When the mask, the axis and the distance
  * transform do not describe one grid.
  */

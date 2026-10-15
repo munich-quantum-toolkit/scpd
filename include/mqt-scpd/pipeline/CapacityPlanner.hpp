@@ -197,6 +197,12 @@ buildScene(const ChipT& chip, const ConfigT& config);
  * chain through the bottleneck, which counts less room than the island
  * leaves, and the Corridor stage meets no border at it.
  *
+ * A corridor that runs at an angle other than a grid axis or a diagonal gives
+ * a row of bottlenecks along its length (see grid::findBottlenecks()). Where
+ * they follow one another in a chain, the chain keeps the one with the smallest
+ * budget, so the raster picks the cut that sets the budget of the corridor,
+ * and that cut can count fewer wires than the rest of the corridor carries.
+ *
  * @return The planner.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::unique_ptr<ICapacityPlanner>
