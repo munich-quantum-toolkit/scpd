@@ -27,11 +27,13 @@ namespace mqt::scpd::pipeline {
  * the next, and a later stage draws it inside each partition.
  *
  * Two rules make the plan one that the later stage can follow. No two wires
- * take the same slot, so a border carries no more wires than it has room for.
- * Inside one partition no two wires cross, run along each other or meet at a
- * point, so the wires leave a border in the order they arrive at it. The rule
- * is checked on the straight chord between where a wire enters and leaves a
- * partition, which is exact only in a convex partition.
+ * take the same slot, so a border carries no more wires than it has room for,
+ * and the crossings of two wires lie at least one crossing pitch apart, also
+ * where two borders meet and their slots lie closer than that. Inside one
+ * partition no two wires cross, run along each other or meet at a point, so the
+ * wires leave a border in the order they arrive at it. The rule is checked on
+ * the straight chord between where a wire enters and leaves a partition, which
+ * is exact only in a convex partition.
  *
  * @return The router.
  */

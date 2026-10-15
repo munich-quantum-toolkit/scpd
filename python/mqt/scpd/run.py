@@ -13,11 +13,18 @@ continued from any completed step. Running a step deletes the artifacts of every
 the directory never holds a later artifact beside an earlier one it did not come from. An artifact
 is written to a file of its own first and then renamed, so no half-written artifact is left behind.
 
+Beside each artifact a step writes a record of the inputs it read: a digest of the classified chip
+and of every configuration section the step reads. A step refuses to run on an earlier artifact
+whose inputs have changed since, so a resumed step never reads an artifact that the current
+configuration would not make.
+
 Python does the file work. The core never opens a file: it takes bytes and returns bytes.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import shutil
 from dataclasses import dataclass
 from itertools import starmap
@@ -28,6 +35,7 @@ from ._version import version as __version__
 from .chip import RUN_CHIP, ChipError, chip_input_path, load_chip
 from .config import load_config, write_config
 from .console import Figure
+from .flatbuffers.config.GridParams import GridParamsT
 from .steps import STEPS
 
 if TYPE_CHECKING:
@@ -36,7 +44,16 @@ if TYPE_CHECKING:
 
     from .flatbuffers.config.Config import ConfigT
 
-__all__ = ["STAGE_FILES", "BlockReporter", "RunDirectory", "RunError", "StageResult", "steps_until"]
+__all__ = [
+    "STAGE_FILES",
+    "STEP_INPUTS",
+    "BlockReporter",
+    "RunDirectory",
+    "RunError",
+    "StageResult",
+    "input_digests",
+    "steps_until",
+]
 
 
 class RunError(RuntimeError):
@@ -51,6 +68,62 @@ STAGE_FILES: dict[str, str] = {
     "assign": "03-assign.fb",
     "corridor": "04-corridor.fb",
 }
+
+
+#: The inputs each step reads besides the artifacts of the steps before it: the configuration
+#: sections, named as in ``config.toml``, and the chip copy of the run as the configuration classifies it.
+STEP_INPUTS: dict[str, tuple[str, ...]] = {
+    "capacity": ("[ports]", "[design_rules]", "[grid]", "[stages.capacity]", RUN_CHIP),
+    "global": ("[ports]", "[design_rules]", "[grid]", "[stages.global]", "[stages.solver]", RUN_CHIP),
+    "assign": ("[ports]", "[design_rules]", "[grid]", "[stages.assignment]", "[stages.solver]", RUN_CHIP),
+    "corridor": ("[ports]", "[design_rules]", "[grid]", "[stages.capacity]", "[stages.corridor]", RUN_CHIP),
+}
+
+
+def _plain(value: object) -> object:
+    """A value of the configuration schema as JSON data, with its fields in a fixed order.
+
+    Returns:
+        The value as dictionaries, lists, text and numbers.
+    """
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    if hasattr(value, "__dict__"):
+        return {key: _plain(item) for key, item in sorted(vars(value).items())}
+    return value
+
+
+def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
+    """The SHA-256 digest of every input a step can read.
+
+    Args:
+        config: The configuration of the run.
+        chip: The classified chip.
+
+    Returns:
+        The digest of each configuration section and of the chip, under the names of
+        :data:`STEP_INPUTS`.
+    """
+    stages = config.stages
+    sections: dict[str, object] = {
+        "[ports]": config.ports,
+        "[design_rules]": config.rules,
+        # A configuration without [grid] takes the defaults, as one that states them does.
+        "[grid]": config.grid if config.grid is not None else GridParamsT(),
+        "[stages.capacity]": stages.capacity if stages is not None else None,
+        "[stages.global]": stages.global_ if stages is not None else None,
+        "[stages.assignment]": stages.assignment if stages is not None else None,
+        "[stages.solver]": stages.solver if stages is not None else None,
+        "[stages.corridor]": stages.corridor if stages is not None else None,
+    }
+    digests = {
+        name: hashlib.sha256(json.dumps(_plain(section), sort_keys=True).encode("utf-8")).hexdigest()
+        for name, section in sections.items()
+    }
+    digests[RUN_CHIP] = hashlib.sha256(chip).hexdigest()
+    return digests
 
 
 def steps_until(stop_after: str | None) -> list[str]:
@@ -158,6 +231,18 @@ class RunDirectory:
             raise RunError(msg)
         return self.path / STAGE_FILES[stage]
 
+    def record(self, stage: str) -> Path:
+        """The file in which a step records the inputs its artifact was made from.
+
+        Args:
+            stage: The step.
+
+        Returns:
+            The path, whether or not the file exists.
+        """
+        artifact = self.artifact(stage)
+        return artifact.with_name(f"{artifact.stem}.inputs.json")
+
     @property
     def config(self) -> Path:
         """The copy of the configuration that the run uses."""
@@ -213,9 +298,10 @@ class RunDirectory:
         """
         config, chip = self.inputs(config_path, chip_path)
         self.path.mkdir(parents=True, exist_ok=True)
-        for name in STAGE_FILES.values():
-            (self.path / name).unlink(missing_ok=True)
-            (self.path / f"{name}.tmp").unlink(missing_ok=True)
+        for stage in STAGE_FILES:
+            for path in (self.artifact(stage), self.record(stage)):
+                path.unlink(missing_ok=True)
+                path.with_name(f"{path.name}.tmp").unlink(missing_ok=True)
         # The chip comes first: a directory that holds a chip copy and no configuration is never
         # taken for a directory of somebody else's configuration. An input that already is the copy
         # of the run, as when a run is started again from its own files, stays where it is.
@@ -270,15 +356,20 @@ class RunDirectory:
             What the step wrote.
 
         Raises:
-            RunError: If the name is no step of this release, or an input of the step is missing.
-        """  # ruff: ignore[docstring-extraneous-exception]  # artifact() and _read() raise it
+            RunError: If the name is no step of this release, if an input of the step is missing, or
+                if an input of an earlier step has changed since that step wrote its artifact. A
+                changed input leaves the directory as it was.
+        """  # ruff: ignore[docstring-extraneous-exception]  # artifact(), _read() and _check_unchanged() raise it
         path = self.artifact(stage)
+        digests = input_digests(config, chip)
+        self._check_unchanged(stage, digests)
         packed = write_config(config)
         producer = f"mqt-scpd {__version__}"
         level = min(max(verbosity, 0), 3)
         # The artifacts of the later steps go before the core runs, so that a step that fails leaves
         # none of them beside an input they were not made from.
         self.invalidate_after(stage)
+        self.record(stage).unlink(missing_ok=True)
         # Each step reads the artifacts of the steps before it, and a missing one stops the step
         # before the core runs.
         if stage == "capacity":
@@ -292,10 +383,13 @@ class RunDirectory:
             capacity, assignment = self._read("capacity"), self._read("assign")
             data = pyscpd.route_corridor(chip, capacity, assignment, packed, producer, reporter, level)
         _write_whole(path, data)
+        # The record comes after the artifact, so an artifact never carries the record of other inputs.
+        record = {name: digests[name] for name in STEP_INPUTS[stage]}
+        _write_whole(self.record(stage), (json.dumps(record, indent=2) + "\n").encode("utf-8"))
         return StageResult(stage=stage, path=path, size=len(data))
 
     def invalidate_after(self, stage: str) -> list[Path]:
-        """Delete the artifact of every step after one.
+        """Delete the artifact and the record of every step after one.
 
         Args:
             stage: The step whose later steps lose their artifacts.
@@ -306,11 +400,40 @@ class RunDirectory:
         names = list(STAGE_FILES)
         removed = []
         for later in names[names.index(stage) + 1 :]:
-            path = self.artifact(later)
-            if path.is_file():
-                path.unlink()
-                removed.append(path)
+            for path in (self.artifact(later), self.record(later)):
+                if path.is_file():
+                    path.unlink()
+                    removed.append(path)
         return removed
+
+    def _check_unchanged(self, stage: str, digests: dict[str, str]) -> None:
+        """Refuse a step when an earlier artifact was made from inputs that have changed since.
+
+        A missing earlier artifact is left to :meth:`_read`, which names the step to run first.
+
+        Raises:
+            RunError: If an earlier artifact has no readable record, or if an input it records has
+                changed.
+        """
+        names = list(STAGE_FILES)
+        for earlier in names[: names.index(stage)]:
+            artifact = self.artifact(earlier)
+            if not artifact.is_file():
+                continue
+            try:
+                record = json.loads(self.record(earlier).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+            if not isinstance(record, dict) or set(record) != set(STEP_INPUTS[earlier]):
+                msg = f"{artifact.name} carries no record of the inputs it was made from; run the {earlier} step again"
+                raise RunError(msg)
+            for name in STEP_INPUTS[earlier]:
+                if record[name] != digests[name]:
+                    where = name if name == RUN_CHIP else f"{name} in config.toml"
+                    msg = (
+                        f"{where} changed after the {earlier} step wrote {artifact.name}; run the {earlier} step again"
+                    )
+                    raise RunError(msg)
 
     def _read(self, stage: str) -> bytes:
         path = self.artifact(stage)

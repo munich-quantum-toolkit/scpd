@@ -1859,9 +1859,12 @@ struct BorderSlotsT : public ::flatbuffers::NativeTable {
 /// The crossing slots of one partition border.
 ///
 /// A wire leaves one partition for another at one of these, and no two wires
-/// take the same one. The slots sit one crossing pitch apart along the
-/// border, so their count is what the border can carry, which is what
-/// PartitionBorder.budget reports.
+/// take the same one. The slots of one border lie at least one crossing pitch
+/// apart, so their count is the most wires that the border can carry, which is
+/// what PartitionBorder.budget reports. The crossings of two wires also lie at
+/// least one crossing pitch apart, so a wire that crosses another border within
+/// one crossing pitch of a slot blocks that slot. The border then carries fewer
+/// wires than its budget.
 struct BorderSlots FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef BorderSlotsT NativeTableType;
   typedef BorderSlotsBuilder Builder;

@@ -217,6 +217,17 @@ def test_plot_refuses_a_picture_without_size(tmp_path: Path, option: list[str]) 
     assert info.value.code == 2
 
 
+def test_wrong_arguments_print_the_usage_and_exit_with_two(capsys: pytest.CaptureFixture[str]) -> None:
+    """Wrong arguments give the argparse usage message, not a line that starts with ✗."""
+    with pytest.raises(SystemExit) as info:
+        main(["plot", "-c", CONFIG])
+    assert info.value.code == 2
+
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ")
+    assert "mqt-scpd plot: error: " in err
+
+
 def plan(run: Path, *options: str) -> int:
     """Plan the fixture into a run directory, without the live line.
 
@@ -249,9 +260,13 @@ def test_plan_runs_every_step_into_the_run_directory(tmp_path: Path, capsys: pyt
     assert sorted(path.name for path in run.iterdir()) == [
         "00-chip.json",
         "01-capacity.fb",
+        "01-capacity.inputs.json",
         "02-global.fb",
+        "02-global.inputs.json",
         "03-assign.fb",
+        "03-assign.inputs.json",
         "04-corridor.fb",
+        "04-corridor.inputs.json",
         "config.toml",
     ]
     output = "\n".join(untimed(capsys.readouterr().out, run))
@@ -335,6 +350,53 @@ def test_a_step_resumes_a_run_from_its_own_copies(tmp_path: Path, capsys: pytest
     lines = untimed(capsys.readouterr().out, run)
     assert lines[0] == "mqt-scpd plan run → RUN  ·  HiGHS x.y.z"
     assert lines[-1] == "✓ 1 stage · stopped after global · fails 0"
+
+
+def test_a_run_directory_named_from_inside_it_still_names_the_chip(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run directory given as `.` names the chip after the directory, in the header and in the picture."""
+    run = tmp_path / "run"
+    assert plan(run, "--stop-after", "capacity") == 0
+    capsys.readouterr()
+    monkeypatch.chdir(run)
+
+    assert main(["plan", "-o", ".", "--stage", "global", "--no-progress"]) == 0
+    assert capsys.readouterr().out.splitlines()[0].startswith("mqt-scpd plan run → . ")
+
+    output = tmp_path / "global.svg"
+    assert main(["plot", "--run-dir", ".", "--stage", "global", "-o", str(output)]) == 0
+    assert '<text class="title" ' in output.read_text(encoding="utf-8")
+    assert '">run</text>' in output.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("stage", ["global", "assign", "corridor"])
+def test_a_step_refuses_a_run_whose_design_rules_changed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stage: str
+) -> None:
+    """A design rule edited in the run's config.toml stops every later step until the capacity step runs again."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    before = {path.name: path.read_bytes() for path in run.glob("0[1-4]-*")}
+    config = run / "config.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace("min_straight_length = 100.0", "min_straight_length = 300.0"),
+        encoding="utf-8",
+    )
+    capsys.readouterr()
+
+    assert main(["plan", "-o", str(run), "--stage", stage, "--no-progress"]) == 1
+
+    lines = untimed(capsys.readouterr().out, run)
+    assert lines[3] == (
+        "   ✗ [design_rules] in config.toml changed after the capacity step wrote 01-capacity.fb; "
+        "run the capacity step again"
+    )
+    assert {path.name: path.read_bytes() for path in run.glob("0[1-4]-*")} == before
+
+    assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 0
+    for step in ("global", "assign", "corridor"):
+        assert main(["plan", "-o", str(run), "--stage", step, "--no-progress"]) == 0
 
 
 def test_a_step_without_its_input_fails_in_its_block(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

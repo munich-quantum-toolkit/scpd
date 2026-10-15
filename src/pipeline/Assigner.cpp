@@ -13,7 +13,6 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
-#include "mqt-scpd/grid/PortBands.hpp"
 #include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/GlobalRouter.hpp"
@@ -44,9 +43,17 @@ namespace fba = flatbuffers::artifacts;
 namespace fbd = flatbuffers::design;
 
 /// How much the distance of a ring node from its nearest launcher counts
-/// against a crossing. The weight is small on purpose: the model minimizes
-/// crossings first, and prefers the nearer launcher only between two
-/// assignments with as many crossings.
+/// against a crossing. The weight is small, so that the model mainly
+/// minimizes crossings and uses the distance to choose between assignments
+/// with as many crossings.
+///
+/// The order is not strict. The chord weights are whole numbers, and each of
+/// the n ring nodes adds at most `PROXIMITY_WEIGHT * L/2` for L launcher
+/// slots. When that sum can pass 1, the model may accept one more crossing
+/// to bring the launchers nearer. On every benchmark chip the model finds as
+/// few crossings as a model with a weight of 0.00001, which keeps the sum
+/// below 1. A smaller weight is no fix: with it, the default relative gap of
+/// the solver ends the search before the distances are minimized.
 constexpr double PROXIMITY_WEIGHT = 0.01;
 
 /// The ring edges: one per pair of consecutive resonators, weighted by how
@@ -320,9 +327,7 @@ std::optional<std::string> countProblem(const RingCounts& counts,
 std::vector<geometry::Point> slottedLaunchers(const ChipT& chip) {
   std::vector<geometry::Point> launchers;
   for (const auto& port : chip.ports) {
-    if (const auto step = grid::orientationStep(port->orientation);
-        port->role == fbd::UnassignedRole::Launcher &&
-        (step.x != 0 || step.y != 0)) {
+    if (hasLauncherSlot(*port)) {
       launchers.push_back(port->center);
     }
   }

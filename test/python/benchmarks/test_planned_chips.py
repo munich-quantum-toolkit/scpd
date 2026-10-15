@@ -10,8 +10,9 @@
 
 Each chip is planned once, with its configuration in the data repository, and the plan is checked
 against what the later stages rely on: every inner port is reached, every ring port has a launcher,
-every connection has a corridor, a crossing slot carries one wire, and no two wires meet inside a
-partition. The tests run when ``MQT_SCPD_BENCHMARKS`` names a clone of the data repository.
+every connection has a corridor, a crossing slot carries one wire, two wires cross at least one
+crossing pitch apart, and no two wires meet inside a partition. The tests run when
+``MQT_SCPD_BENCHMARKS`` names a clone of the data repository.
 """
 
 from __future__ import annotations
@@ -224,8 +225,33 @@ def check_the_assignment(chip: ChipT, assignment: AssignmentT, launcher_target: 
     assert ends == {"launcher": launcher_target, "termination": terminations}
 
 
-def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT) -> None:
-    """Every connection has a corridor, a slot carries one wire, and no two wires meet in a partition."""
+def check_the_pitch(routing: CorridorRoutingT, pitch: float) -> None:
+    """Two wires cross at least one crossing pitch apart, on one border or on two.
+
+    One wire may cross closer to itself, as it does where it passes a corner from one partition into
+    the next. The crossings are binned into squares one pitch wide, so that each one is compared only
+    with the crossings of its own square and the eight around it.
+    """
+    squares: dict[tuple[int, int], list[tuple[int, Point]]] = {}
+    for wire, corridor in enumerate(entries(routing.corridors)):
+        for crossing in entries(corridor.crossings):
+            square = (math.floor(crossing.x / pitch), math.floor(crossing.y / pitch))
+            squares.setdefault(square, []).append((wire, (crossing.x, crossing.y)))
+    for (column, row), crossings in squares.items():
+        for wire, (x, y) in crossings:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for other, (other_x, other_y) in squares.get((column + dx, row + dy), []):
+                        assert other == wire or math.hypot(x - other_x, y - other_y) >= pitch, (
+                            f"wires {wire} and {other} cross closer than the crossing pitch"
+                        )
+
+
+def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT, pitch: float) -> None:
+    """Every connection has a corridor, a slot carries one wire, and no two wires meet in a partition.
+
+    Two wires also cross at least one crossing pitch apart.
+    """
     corridors = entries(routing.corridors)
     assert all(indices(corridor.partitions) for corridor in corridors), "a connection has no corridor"
 
@@ -251,6 +277,7 @@ def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT) -> None:
     assert offered == [border.budget for border in entries(plan.borders)], (
         "a budget differs from the slots of its border"
     )
+    check_the_pitch(routing, pitch)
 
     # A chord that runs over the end of another one, or shares an end with it, meets it although the two
     # never cross: every end is a feed point, a port cell or a crossing slot, which one wire passes.
@@ -295,8 +322,9 @@ def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_pat
     assert config.stages is not None
     assert config.stages.assignment is not None
     assert config.rules is not None
+    assert config.stages.capacity is not None
     check_the_assignment(model, assignment, config.stages.assignment.launcherTarget, config.rules.feedlineTerminations)
-    check_the_corridors(routing, plan)
+    check_the_corridors(routing, plan, config.stages.capacity.crossingPitch)
     if chip in OBJECTIVES:
         assert assignment.objective == pytest.approx(OBJECTIVES[chip], abs=1e-9)
 

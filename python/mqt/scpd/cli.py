@@ -115,7 +115,7 @@ def command_plan(args: argparse.Namespace) -> int:
         # the step of an uninterrupted run.
         config = _validated(directory.load(), directory.config)
         steps = [args.stage]
-        subject = directory.path.name
+        subject = directory.path.resolve().name
         chip = directory.classified_chip(config)
     else:
         config, chip_input = directory.inputs(args.config, args.chip)
@@ -178,7 +178,7 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         return load_chip(load_config(args.config), args.config, args.chip), _subject(args.config), None
     directory = RunDirectory(args.run_dir)
     chip_bytes = directory.classified_chip(directory.load())
-    title = directory.path.name
+    title = directory.path.resolve().name
     if args.stage == "layout":
         return chip_bytes, title, None
     artifact = directory.artifact(args.stage)

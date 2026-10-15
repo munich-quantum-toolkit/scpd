@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/Partitions.hpp"
@@ -100,6 +101,19 @@ crossingPitch(const ConfigT& config);
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<grid::Point>
 crossingSlots(const grid::PartitionBorder& border, const CapacityScene& scene,
               double pitch);
+
+/**
+ * @brief Returns whether the Capacity stage gives a port a launcher slot.
+ *
+ * A port gets a slot when it is a launcher with a direction. The Capacity
+ * stage and the checks of the Assignment stage read the launchers through
+ * this one rule.
+ *
+ * @param port The port of the classified chip.
+ * @return True when the port gets a launcher slot.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT bool
+hasLauncherSlot(const flatbuffers::design::PortT& port);
 
 /**
  * @brief Returns where the Capacity stage places the slot of each launcher.

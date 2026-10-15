@@ -329,6 +329,40 @@ TEST(BorderSlots, KeepsTheSpacingOnABorderThatBends) {
   }
 }
 
+TEST(BorderSlots, KeepsTheSpacingOnAStaircase) {
+  // A border that falls to the left at 45 degrees from a short top row, in
+  // the row order of the scan. On the staircase the sample after the next
+  // one lies within the reach of a step, so neither end of the staircase has
+  // a single neighbour, and the walk does not start at an end.
+  PartitionBorder border{
+      .first = FIRST_PARTITION_LABEL,
+      .second = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 1),
+      .samples = {{7.5, 0.0},
+                  {8.5, 0.0},
+                  {7.0, 0.5},
+                  {9.0, 0.5},
+                  {6.5, 1.0},
+                  {9.5, 1.0}}};
+  for (std::uint32_t step = 0; step < 6; ++step) {
+    const auto offset = static_cast<double>(step);
+    border.samples.emplace_back(6.0 - offset, 1.5 + offset);
+    border.samples.emplace_back(5.5 - offset, 2.0 + offset);
+  }
+  const auto grid = unitGrid(12, 12);
+
+  const auto slots = borderSlots(border, grid, 4.0);
+
+  ASSERT_FALSE(slots.empty());
+  for (std::size_t i = 0; i < slots.size(); ++i) {
+    for (std::size_t j = i + 1; j < slots.size(); ++j) {
+      EXPECT_GE(
+          std::hypot(slots[i].x() - slots[j].x(), slots[i].y() - slots[j].y()),
+          4.0)
+          << i << " and " << j;
+    }
+  }
+}
+
 TEST(BorderSlots, GivesABorderShorterThanOneSpacingASingleSlot) {
   const auto grid = GridMetrics::fit(
       {.minX = 0.0, .minY = 0.0, .maxX = 10.0, .maxY = 10.0}, 10, 10);

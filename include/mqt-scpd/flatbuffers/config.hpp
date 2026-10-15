@@ -716,10 +716,11 @@ struct CapacityParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// How far apart the places sit where a wire may cross a partition border,
   /// in layout units.
   ///
-  /// This is a planning pitch and not a clearance rule. It decides how finely
-  /// a border is divided for the Corridor stage, and so how many wires
-  /// PartitionBorder.budget lets through. Where a wire runs, and how far it
-  /// keeps from its neighbour, the later routing stages decide.
+  /// It decides how finely a border is divided for the Corridor stage, and so
+  /// how many wires PartitionBorder.budget lets through. The Corridor stage
+  /// keeps the crossings of two wires at least one crossing pitch apart, also
+  /// where two borders meet. Where a wire runs inside a partition, and the
+  /// clearance of the drawn wire, the later routing stages decide.
   ///
   /// The default is the prototype's own figure: its wire spacing less twenty
   /// units, with no reason given for the twenty.

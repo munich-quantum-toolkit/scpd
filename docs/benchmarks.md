@@ -83,6 +83,21 @@ the copies a run carries and deletes the artifacts of every later step:
 mqt-scpd plan -o runs/33q --stage corridor
 ```
 
+Beside each artifact a step writes a record of its inputs, for example
+`01-capacity.inputs.json`. The record holds a digest of the chip copy and of
+each section of `config.toml` that the step reads. `--stage` refuses a step when
+the chip copy or such a section has changed since an earlier step wrote its
+artifact, because the step would read an artifact that the current configuration
+does not make. The message names the section and the step to run again; running
+that step deletes the artifacts of every later step:
+
+```console
+✗ [design_rules] in config.toml changed after the capacity step wrote 01-capacity.fb; run the capacity step again
+```
+
+A step may run again after a change to a section that only it reads, such as
+`[stages.corridor]` for the corridor step.
+
 `plot` and `render` draw a planning step of a run over the chip:
 
 ```console

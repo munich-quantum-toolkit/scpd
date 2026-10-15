@@ -240,20 +240,9 @@ public:
                             .border = index});
       }
     }
-    // Where three partitions meet, one point is a sample of more than one
-    // border and so a slot of each. They are one place on the chip, so one
-    // wire crosses there and no more; the slots of a place share what records
-    // that.
-    std::map<std::pair<double, double>, std::size_t> places;
-    placeOfSlot.reserve(slotList.size());
-    for (const auto& slot : slotList) {
-      const auto [entry, added] =
-          places.try_emplace({slot.place.x, slot.place.y}, places.size());
-      placeOfSlot.push_back(entry->second);
-    }
-    placeTaken.assign(places.size(), false);
-    placeOwner.assign(places.size(), NO_OWNER);
-    placeHistory.assign(places.size(), 0.0);
+    findNearby(pitch);
+    slotOwner.assign(slotList.size(), NO_OWNER);
+    slotHistory.assign(slotList.size(), 0.0);
   }
 
   [[nodiscard]] const std::vector<Slot>& slots() const { return slotList; }
@@ -274,7 +263,7 @@ public:
   /// length of any route, the price makes the search take a free way wherever
   /// one exists and displace as few wires as it can where none does.
   ///
-  /// A route that crosses itself or comes back to a place it already used is
+  /// A route that crosses itself or comes back to a slot it already used is
   /// a short. That is a property of the whole route and not of one step, so
   /// the search cannot rule it out as it goes. The slots of such a way are
   /// set aside and the search runs again, so that a second-best way is found
@@ -300,8 +289,7 @@ public:
   /// Lays a route down: its slots are taken and its chords drawn.
   void commit(const Request& request, const Route& route) {
     for (const auto slot : route.slots) {
-      placeTaken[placeOfSlot[slot]] = true;
-      placeOwner[placeOfSlot[slot]] = request.connection;
+      slotOwner[slot] = request.connection;
     }
     walk(request, route,
          [&](const Chord& chord, const PartitionLabel partition) {
@@ -312,8 +300,7 @@ public:
   /// Takes a route back out.
   void withdraw(const Request& request, const Route& route) {
     for (const auto slot : route.slots) {
-      placeTaken[placeOfSlot[slot]] = false;
-      placeOwner[placeOfSlot[slot]] = NO_OWNER;
+      slotOwner[slot] = NO_OWNER;
     }
     for (const auto partition : route.partitions) {
       auto& chords = chordsByPartition[partition];
@@ -324,15 +311,15 @@ public:
   }
 
   /// The wires in the way of a route drawn as though the chip were empty:
-  /// the ones that hold a slot it wants, and the ones whose chords it would
-  /// have to cross.
+  /// the ones that hold a slot it wants or a slot within one pitch of it, and
+  /// the ones whose chords it would have to cross.
   [[nodiscard]] std::vector<std::size_t> blockersOf(const Request& request,
                                                     const Route& wanted) const {
     std::vector<std::size_t> owners;
     for (const auto slot : wanted.slots) {
-      if (placeOwner[placeOfSlot[slot]] != NO_OWNER) {
-        owners.push_back(placeOwner[placeOfSlot[slot]]);
-      }
+      forEachHolder(slot, request.connection, [&](const std::size_t holder) {
+        owners.push_back(slotOwner[holder]);
+      });
     }
     walk(request, wanted,
          [&](const Chord& mine, const PartitionLabel partition) {
@@ -353,8 +340,9 @@ public:
     return owners;
   }
 
-  /// Makes the slots a wire wanted, and could not have, dearer for whoever
-  /// stands on them.
+  /// Makes the slots that kept a wire from its route dearer for whoever
+  /// stands on them: the slots it wanted and the slots within one pitch of
+  /// them that another wire holds.
   ///
   /// Without this two wires trade one slot back and forth: each displaces
   /// the other, each round undoes the last, and neither settles. The price
@@ -362,12 +350,18 @@ public:
   /// in the end and gives the slot up. The charge is a fraction of one
   /// displacement, so a few rounds of wanting a slot add up to more than the
   /// detour around it.
-  void chargeFor(const Route& route) {
+  void chargeFor(const Request& request, const Route& route) {
     const auto amount = displacementPrice() / HISTORY_STEPS;
+    std::vector<std::size_t> held;
     for (const auto slot : route.slots) {
-      if (placeTaken[placeOfSlot[slot]]) {
-        placeHistory[placeOfSlot[slot]] += amount;
-      }
+      forEachHolder(slot, request.connection,
+                    [&](const std::size_t holder) { held.push_back(holder); });
+    }
+    std::ranges::sort(held);
+    const auto duplicates = std::ranges::unique(held);
+    held.erase(duplicates.begin(), duplicates.end());
+    for (const auto slot : held) {
+      slotHistory[slot] += amount;
     }
   }
 
@@ -375,7 +369,7 @@ public:
   /// and every chord clear of the ones already drawn.
   [[nodiscard]] bool fits(const Request& request, const Route& route) const {
     if (std::ranges::any_of(route.slots, [&](const std::size_t slot) {
-          return placeTaken[placeOfSlot[slot]];
+          return heldByAnother(slot, request.connection);
         })) {
       return false;
     }
@@ -403,6 +397,80 @@ private:
 
   static constexpr std::size_t NO_OWNER =
       std::numeric_limits<std::size_t>::max();
+
+  /// Finds, for each slot, the other slots that lie closer than one crossing
+  /// pitch.
+  ///
+  /// The slots of one border keep the pitch apart, but the slots of two
+  /// borders do not: where partitions meet, the borders end next to one
+  /// another, and each has a slot near the corner. Two wires that crossed
+  /// there would run closer than the pitch. One wire may cross at both, as it
+  /// does when it passes the corner from one partition into the next.
+  void findNearby(const double pitch) {
+    nearbySlots.assign(slotList.size(), {});
+    // The slots, in layout units, binned into squares one pitch wide, so that
+    // a slot is compared only with the slots of its own square and the eight
+    // around it.
+    const auto squareOf = [pitch](const double coordinate) {
+      return static_cast<std::int64_t>(std::floor(coordinate / pitch));
+    };
+    std::vector<fbg::Point> layout;
+    layout.reserve(slotList.size());
+    std::map<std::pair<std::int64_t, std::int64_t>, std::vector<std::size_t>>
+        squares;
+    for (std::size_t slot = 0; slot < slotList.size(); ++slot) {
+      layout.push_back(layoutOf(slot));
+      squares[{squareOf(layout.back().x()), squareOf(layout.back().y())}]
+          .push_back(slot);
+    }
+    for (std::size_t slot = 0; slot < slotList.size(); ++slot) {
+      const auto& here = layout[slot];
+      const auto column = squareOf(here.x());
+      const auto row = squareOf(here.y());
+      for (std::int64_t dy = -1; dy <= 1; ++dy) {
+        for (std::int64_t dx = -1; dx <= 1; ++dx) {
+          const auto found = squares.find({column + dx, row + dy});
+          if (found == squares.end()) {
+            continue;
+          }
+          for (const auto other : found->second) {
+            const auto& there = layout[other];
+            if (other != slot && std::hypot(here.x() - there.x(),
+                                            here.y() - there.y()) < pitch) {
+              nearbySlots[slot].push_back(other);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// Hands `visit` every slot that keeps a wire other than `connection` from
+  /// taking `slot`: the slot itself or a slot within one pitch of it, when
+  /// another wire holds it.
+  template <typename Visitor>
+  void forEachHolder(const std::size_t slot, const std::size_t connection,
+                     const Visitor& visit) const {
+    const auto check = [&](const std::size_t candidate) {
+      if (slotOwner[candidate] != NO_OWNER &&
+          slotOwner[candidate] != connection) {
+        visit(candidate);
+      }
+    };
+    check(slot);
+    for (const auto other : nearbySlots[slot]) {
+      check(other);
+    }
+  }
+
+  /// Whether a wire other than `connection` holds `slot` or a slot within
+  /// one pitch of it.
+  [[nodiscard]] bool heldByAnother(const std::size_t slot,
+                                   const std::size_t connection) const {
+    auto held = false;
+    forEachHolder(slot, connection, [&](std::size_t) { held = true; });
+    return held;
+  }
 
   [[nodiscard]] std::optional<Route>
   search(const Request& request, const double displacement,
@@ -435,7 +503,7 @@ private:
         if (aside[slot] || slotList[slot].beyond(partition) == behind) {
           continue;
         }
-        const auto blocked = placeTaken[placeOfSlot[slot]] ||
+        const auto blocked = heldByAnother(slot, request.connection) ||
                              !clear(Chord{.from = place,
                                           .to = slotList[slot].place,
                                           .owner = request.connection},
@@ -445,8 +513,7 @@ private:
         }
         const auto state = stateOf(slot, slotList[slot].beyond(partition));
         const auto step = cost + distance(place, slotList[slot].place) +
-                          placeHistory[placeOfSlot[slot]] +
-                          (blocked ? displacement : 0.0);
+                          slotHistory[slot] + (blocked ? displacement : 0.0);
         if (step < best[state]) {
           best[state] = step;
           from[state] = parent;
@@ -551,16 +618,12 @@ private:
   ///
   /// The search sees only what other wires committed, so a wire that enters a
   /// partition it already crossed can lay a chord over its own, or come back
-  /// to a place it already used. Either is a short, and the route is thrown
+  /// to a slot it already used. Either is a short, and the route is thrown
   /// away.
   [[nodiscard]] bool sound(const Request& request, const Route& route) const {
-    std::vector<std::size_t> places;
-    places.reserve(route.slots.size());
-    for (const auto slot : route.slots) {
-      places.push_back(placeOfSlot[slot]);
-    }
-    std::ranges::sort(places);
-    if (std::ranges::adjacent_find(places) != places.end()) {
+    auto slots = route.slots;
+    std::ranges::sort(slots);
+    if (std::ranges::adjacent_find(slots) != slots.end()) {
       return false;
     }
     return !selfCrossing(request, route);
@@ -610,11 +673,12 @@ private:
   std::vector<Slot> slotList;
   std::unordered_map<PartitionLabel, std::vector<std::size_t>> slotsByPartition;
   std::unordered_map<PartitionLabel, std::vector<Chord>> chordsByPartition;
-  /// The place each slot sits at, as an index shared by every slot on it.
-  std::vector<std::size_t> placeOfSlot;
-  std::vector<bool> placeTaken;
-  std::vector<std::size_t> placeOwner;
-  std::vector<double> placeHistory;
+  /// The wire that holds each slot, or NO_OWNER.
+  std::vector<std::size_t> slotOwner;
+  /// What wanting each slot has added to its price so far.
+  std::vector<double> slotHistory;
+  /// For each slot, the other slots that lie closer than one crossing pitch.
+  std::vector<std::vector<std::size_t>> nearbySlots;
 };
 
 /// The tuning the stage reads.
@@ -1069,7 +1133,7 @@ private:
       routes[other] = route;
     }
     if (wanted.has_value()) {
-      corridors.chargeFor(*wanted);
+      corridors.chargeFor(request, *wanted);
     }
 
     // Nothing worked, so the wire keeps the way it had if that still fits. It

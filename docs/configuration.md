@@ -99,11 +99,11 @@ assignment or corridor step, and name the grid that the configuration asks for.
 
 ## `[stages.capacity]`
 
-| Key                    | Default | Meaning                                                                                                                                                 |
-| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `planner`              | `""`    | The implementation of the step; empty takes `watershed`                                                                                                 |
-| `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive |
-| `crossing_pitch`       | `165.0` | The distance between two places where a wire may cross a partition border; it decides how many wires a border lets through; positive                    |
+| Key                    | Default | Meaning                                                                                                                                                                                                 |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `planner`              | `""`    | The implementation of the step; empty takes `watershed`                                                                                                                                                 |
+| `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive                                                 |
+| `crossing_pitch`       | `165.0` | The distance between two places on one partition border where a wire may cross it, and the least distance between the crossings of two wires; it decides how many wires a border lets through; positive |
 
 ## `[stages.global]`
 

@@ -61,7 +61,10 @@ struct Sites {
 };
 
 /// Whether a position is blocked. Everything outside the grid counts as
-/// blocked, so the border of the grid is a wall like any other.
+/// blocked for two reasons: an edge that leaves the grid is not free, and a
+/// blocked cell on the edge of the grid does not touch free space through the
+/// outside, so the outside makes no cell a site. The outside itself gives no
+/// site, so the edge of the grid is no wall.
 bool blockedAt(const BitGrid& blocked, const int64_t x, const int64_t y) {
   if (x < 0 || y < 0 || std::cmp_greater_equal(x, blocked.width()) ||
       std::cmp_greater_equal(y, blocked.height())) {

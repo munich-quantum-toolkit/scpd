@@ -93,13 +93,12 @@ std::pair<grid::GridMetrics, grid::GridMetrics> gridsOf(const ChipT& chip,
   return {capacity, capacity.refined(params.detail_factor)};
 }
 
-/// Whether a port gets a launcher slot: it is a launcher with a direction.
-bool hasSlot(const flatbuffers::design::PortT& port) {
+} // namespace
+
+bool hasLauncherSlot(const flatbuffers::design::PortT& port) {
   const auto step = grid::orientationStep(port.orientation);
   return port.role == UnassignedRole::Launcher && (step.x != 0 || step.y != 0);
 }
-
-} // namespace
 
 std::optional<std::string> detailGridProblem(const ChipT& chip,
                                              const ConfigT& config) {
@@ -145,7 +144,7 @@ std::vector<geometry::Point> launcherSlotPositions(const ChipT& chip,
   const auto detail = gridsOf(chip, config).second;
   std::vector<geometry::Point> positions;
   for (const auto& port : chip.ports) {
-    if (hasSlot(*port)) {
+    if (hasLauncherSlot(*port)) {
       const auto cell = detail.clampToCell(port->center);
       positions.push_back(detail.toLayout(cell.x(), cell.y()));
     }
@@ -285,7 +284,7 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
   // stand where it starts, and it is the only cell this loop touches.
   for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
     const auto& port = *chip.ports[index];
-    if (!hasSlot(port)) {
+    if (!hasLauncherSlot(port)) {
       continue;
     }
     const auto center = scene.detail.clampToCell(port.center);

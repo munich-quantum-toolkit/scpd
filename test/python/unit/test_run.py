@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -172,7 +173,12 @@ def test_a_step_writes_its_artifact_and_removes_the_later_ones(tmp_path: Path) -
 
     assert directory.artifact("capacity").is_file()
     assert not directory.artifact("global").exists()
-    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "01-capacity.fb", "config.toml"]
+    assert sorted(path.name for path in directory.path.iterdir()) == [
+        "00-chip.json",
+        "01-capacity.fb",
+        "01-capacity.inputs.json",
+        "config.toml",
+    ]
 
 
 def test_a_step_without_its_input_is_refused(tmp_path: Path) -> None:
@@ -198,6 +204,112 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path: Path) -> None:
 
     for stage, name in STAGE_FILES.items():
         assert (whole.path / name).read_bytes() == (resumed.path / name).read_bytes(), stage
+
+
+def edit_config(directory: RunDirectory, old: str, new: str) -> None:
+    """Replace one line of the configuration a run carries."""
+    text = directory.config.read_text(encoding="utf-8")
+    assert old in text
+    directory.config.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def artifacts_of(directory: RunDirectory) -> dict[str, bytes]:
+    """The artifacts and records of a run, by file name.
+
+    Returns:
+        The bytes of every file a step wrote.
+    """
+    return {path.name: path.read_bytes() for path in directory.path.glob("0[1-4]-*")}
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        (
+            "min_straight_length = 100.0",
+            "min_straight_length = 300.0",
+            (
+                r"\[design_rules\] in config\.toml changed after the capacity step wrote 01-capacity\.fb; "
+                r"run the capacity step again"
+            ),
+        ),
+        (
+            "capacity_cells_x = 12",
+            "capacity_cells_x = 13",
+            r"\[grid\] in config\.toml changed after the capacity step",
+        ),
+        (
+            "[stages.assignment]",
+            "[stages.solver]\nthreads = 1\n\n[stages.assignment]",
+            (
+                r"\[stages\.solver\] in config\.toml changed after the global step wrote 02-global\.fb; "
+                r"run the global step again"
+            ),
+        ),
+        (
+            "[stages.assignment]",
+            "[stages.capacity]\ncrossing_pitch = 170.0\n\n[stages.assignment]",
+            r"\[stages\.capacity\] in config\.toml changed after the capacity step",
+        ),
+    ],
+    ids=["design-rule", "grid", "solver", "pitch"],
+)
+def test_a_step_refuses_an_earlier_artifact_made_from_other_sections(
+    tmp_path: Path, old: str, new: str, message: str
+) -> None:
+    """A section an earlier step read and that has changed since stops the step, and the run stays as it was."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, list(STEPS))
+    before = artifacts_of(directory)
+    edit_config(directory, old, new)
+
+    with pytest.raises(RunError, match=message):
+        run_through(directory, ["corridor"])
+
+    assert artifacts_of(directory) == before
+
+
+def test_a_step_refuses_an_earlier_artifact_made_from_another_chip(tmp_path: Path) -> None:
+    """A chip copy edited after a step stops the steps after it."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, ["capacity"])
+    chip = json.loads(directory.chip.read_text(encoding="utf-8"))
+    chip["obstacles"].append(chip["obstacles"][0])
+    directory.chip.write_text(json.dumps(chip), encoding="utf-8")
+
+    with pytest.raises(RunError, match=r"00-chip\.json changed after the capacity step wrote 01-capacity\.fb"):
+        run_through(directory, ["global"])
+
+
+def test_a_step_reruns_after_its_own_section_changed(tmp_path: Path) -> None:
+    """A change to a section that only the resumed step reads is the reason to run that step again."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, list(STEPS))
+    edit_config(directory, "[stages.assignment]", "[stages.corridor]\nrounds = 2\n\n[stages.assignment]")
+
+    run_through(directory, ["corridor"])
+
+    assert directory.artifact("corridor").is_file()
+
+
+@pytest.mark.parametrize("record", [None, "not json", "{}"], ids=["missing", "unreadable", "incomplete"])
+def test_a_step_refuses_an_earlier_artifact_without_a_record(tmp_path: Path, record: str | None) -> None:
+    """An artifact whose record of inputs is missing or broken is no input of a later step."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, ["capacity"])
+    if record is None:
+        directory.record("capacity").unlink()
+    else:
+        directory.record("capacity").write_text(record, encoding="utf-8")
+
+    with pytest.raises(
+        RunError, match=r"01-capacity\.fb carries no record of the inputs it was made from; run the capacity step again"
+    ):
+        run_through(directory, ["global"])
 
 
 def test_a_step_that_fails_keeps_the_old_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

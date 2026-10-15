@@ -16,12 +16,14 @@ releases may include breaking changes.
   its default and meaning ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory:
   `--stop-after` and `[run] stop_after` end a run after a step, `--stage` runs
-  one step again on the copies the run carries, and `-v`, `-vv` and `-vvv` show
-  the steps, the items and the log of HiGHS. A run prints one block per stage
-  with a live progress line on a terminal, in the format of
-  `docs/terminal_output.md`. Add `list-algorithms`, and `plot` and `render` with
-  `--stage` and `--run-dir` for the planning stages; the assign and corridor
-  pictures show the feedline chains ([#140]) ([**@FeldmeierMichael**])
+  one step again on the copies the run carries and refuses it when the chip or a
+  configuration section that an earlier step read has changed since that step,
+  and `-v`, `-vv` and `-vvv` show the steps, the items and the log of HiGHS. A
+  run prints one block per stage with a live progress line on a terminal, in the
+  format of `docs/terminal_output.md`. Add `list-algorithms`, and `plot` and
+  `render` with `--stage` and `--run-dir` for the planning stages; the assign
+  and corridor pictures show the feedline chains ([#140])
+  ([**@FeldmeierMichael**])
 - 🎨 Draw `plot` pictures like a mask in a layout tool: hatched metal with an
   inner contour on a light substrate, a millimetre grid, rulers, corner marks, a
   scale bar and a caption. Every port is one red marker, feedlines run in
@@ -47,9 +49,10 @@ releases may include breaking changes.
   launchers and feedline chains with an integer program and feeds no two of them
   at one point, and the Corridor stage routes every connection through the
   partitions over the border slots inside the launcher ring, which are the slots
-  the Capacity stage budgets. They write the artifacts `01-capacity.fb` to
-  `04-corridor.fb`, and refuse a detail grid of more than 25,000,000 cells
-  ([#140]) ([**@FeldmeierMichael**])
+  the Capacity stage budgets, and keeps the crossings of two wires one crossing
+  pitch apart. They write the artifacts `01-capacity.fb` to `04-corridor.fb`,
+  and refuse a detail grid of more than 25,000,000 cells ([#140])
+  ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdMilp`: a linear model, the HiGHS backend with a progress and
   log observer, MPS output, and the choice of the backend through
   `[stages.solver] backend` or `SCPD_SOLVER`: HiGHS by default, and Gurobi
@@ -104,10 +107,10 @@ releases may include breaking changes.
 ### Changed
 
 - 🎨 Start the result line of `plot`, `render` and `inspect` with `✓` and an
-  error of every command except `doctor` with `✗`, show the `bridge_pair`
-  pattern and the reachable solvers in `doctor`, and check there, as `plan` does
-  before its first stage, what would stop a run of the configured steps ([#140])
-  ([**@FeldmeierMichael**])
+  input or stage error of every command except `doctor` with `✗`, show the
+  `bridge_pair` pattern and the reachable solvers in `doctor`, and check there,
+  as `plan` does before its first stage, what would stop a run of the configured
+  steps ([#140]) ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that

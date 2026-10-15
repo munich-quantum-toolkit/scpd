@@ -249,6 +249,33 @@ TEST(CapacityPlanner, GivesEveryPartitionALabelOfItsOwn) {
   }
 }
 
+TEST(CapacityPlanner, GivesASlotToEveryLauncherWithADirectionAndNoOtherPort) {
+  auto chip = test::miniChip();
+  const auto launcher = std::ranges::find_if(chip.ports, [](const auto& port) {
+    return port->role == flatbuffers::design::UnassignedRole::Launcher;
+  });
+  ASSERT_NE(launcher, chip.ports.end());
+  EXPECT_TRUE(hasLauncherSlot(**launcher));
+  // An orientation that is not a number gives no direction.
+  (*launcher)->orientation = std::nan("");
+  EXPECT_FALSE(hasLauncherSlot(**launcher));
+
+  std::vector<std::uint32_t> slotted;
+  for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
+    if (hasLauncherSlot(*chip.ports[index])) {
+      slotted.push_back(index);
+    }
+  }
+  const auto plan =
+      makeWatershedPlanner()->run(chip, test::miniConfig(), Report{});
+  std::vector<std::uint32_t> planned;
+  for (const auto& slot : plan.launchers) {
+    planned.push_back(slot->port.index());
+  }
+  EXPECT_EQ(slotted.size(), 3U);
+  EXPECT_EQ(planned, slotted);
+}
+
 TEST(CapacityScene, FreesTheCellOfEveryLauncher) {
   const auto scene = buildScene(test::miniChip(), test::miniConfig());
 

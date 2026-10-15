@@ -52,6 +52,12 @@ The detail grid, `[grid] capacity_cells_x` and `capacity_cells_y` times
 `detail_factor`, may have at most 25,000,000 cells. `plan` and `doctor` refuse a
 larger grid before the first stage; `docs/configuration.md` explains the limit.
 
+Every step writes a record of its inputs beside its artifact, for example
+`01-capacity.inputs.json`: a digest of the chip and of each configuration
+section the step reads. `plan --stage <step>` refuses a step when the chip or
+such a section has changed since an earlier step wrote its artifact, and names
+the section and the step to run again. The run directory then stays as it was.
+
 The planning stages solve with HiGHS unless `[stages.solver] backend` or the
 environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and
 licensed `gurobipy`. `plan` also refuses before its first stage a backend name
@@ -61,10 +67,12 @@ that `[run] stop_after` configures.
 
 ### Output of the commands
 
-`plot`, `render` and `inspect -o` end with a line that starts with `✓`, and
-every command except `doctor` reports an error on a line that starts with `✗`,
-both in the format of `docs/terminal_output.md`. A script that looked for
-`wrote` or `error:` looks for these instead. `doctor` reports each problem on a
+`plot`, `render` and `inspect -o` end with a line that starts with `✓`. Every
+command except `doctor` reports an error of an input or a stage (exit code 1) on
+a line that starts with `✗`. Both lines have the format of
+`docs/terminal_output.md`. A script that looked for `wrote` or `error:` looks
+for these lines instead. Wrong arguments still print the `argparse` usage
+message with `error:` and exit with code 2. `doctor` reports each problem on a
 line that starts with `PROBLEM:` and ends with `doctor: OK` or
 `doctor: <n> problem(s)`.
 

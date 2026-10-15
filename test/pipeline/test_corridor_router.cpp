@@ -199,6 +199,26 @@ void expectOneWirePerSlot(const CorridorRoutingT& routing) {
   }
 }
 
+/// Checks that the crossings of two wires lie at least one crossing pitch
+/// apart, on one border or on two. One wire may cross closer to itself, as it
+/// does where it passes a corner from one partition into the next.
+void expectThePitchBetweenWires(const CorridorRoutingT& routing,
+                                const double pitch) {
+  for (std::size_t first = 0; first < routing.corridors.size(); ++first) {
+    for (std::size_t second = first + 1; second < routing.corridors.size();
+         ++second) {
+      for (const auto& a : routing.corridors[first]->crossings) {
+        for (const auto& b : routing.corridors[second]->crossings) {
+          EXPECT_GE(std::hypot(a.x() - b.x(), a.y() - b.y()), pitch)
+              << "wires " << first << " and " << second << " cross at ("
+              << a.x() << ", " << a.y() << ") and (" << b.x() << ", " << b.y()
+              << ")";
+        }
+      }
+    }
+  }
+}
+
 /// Whether @p chord runs over @p end between its own two ends.
 bool runsOver(const Chord& chord, const Point& end) {
   const auto at = [&end](const Point& point) {
@@ -299,6 +319,59 @@ TEST(CorridorRouter, RoutesEveryConnectionOfTheFixture) {
 
 TEST(CorridorRouter, GivesEachSlotToOneWire) {
   expectOneWirePerSlot(routeMini(planMini()));
+}
+
+TEST(CorridorRouter, KeepsTheCrossingPitchBetweenWiresWhereBordersMeet) {
+  // Where partitions meet, the borders end next to one another, and the
+  // slots of two borders lie closer than the pitch. Two wires are fed at two
+  // such slots, one at each, so that both want to cross next to the corner.
+  const auto config = test::miniConfig();
+  const auto pitch = crossingPitch(config);
+  const auto fixture = planMini();
+  std::vector<std::pair<std::uint32_t, Point>> offered;
+  for (const auto& slots : routeMini(fixture).slots) {
+    for (const auto& position : slots->positions) {
+      offered.emplace_back(slots->border, position);
+    }
+  }
+  std::vector<std::pair<Point, Point>> close;
+  for (std::size_t i = 0; i < offered.size(); ++i) {
+    for (std::size_t j = i + 1; j < offered.size(); ++j) {
+      const auto& [firstBorder, a] = offered[i];
+      const auto& [secondBorder, b] = offered[j];
+      if (firstBorder != secondBorder &&
+          std::hypot(a.x() - b.x(), a.y() - b.y()) < pitch) {
+        close.emplace_back(a, b);
+      }
+    }
+  }
+  ASSERT_FALSE(close.empty())
+      << "no two borders of the fixture have slots closer than the pitch";
+
+  const auto& connections = fixture.assignment.connections;
+  auto planned = planMini();
+  std::size_t routed = 0;
+  for (const auto& [a, b] : close) {
+    for (std::size_t target = 0; target < connections.size(); ++target) {
+      SCOPED_TRACE(std::format("fed at ({}, {}) and ({}, {}), target {}", a.x(),
+                               a.y(), b.x(), b.y(), target));
+      planned.assignment.connections.clear();
+      planned.assignment.feeds.clear();
+      for (const auto& [feed, index] :
+           {std::pair{a, target}, {b, (target + 1) % connections.size()}}) {
+        planned.assignment.connections.push_back(
+            std::make_unique<flatbuffers::design::ConnectionT>(
+                *connections[index]));
+        planned.assignment.feeds.push_back(feed);
+      }
+
+      const auto routing = routeMini(planned, {}, config);
+
+      expectThePitchBetweenWires(routing, pitch);
+      routed += routing.corridors.size() - unroutedOf(routing);
+    }
+  }
+  EXPECT_GT(routed, 0U);
 }
 
 TEST(CorridorRouter, LeavesAPartitionOnlyIntoANeighbour) {
@@ -414,6 +487,7 @@ TEST(CorridorRouter, KeepsItsRulesWhenWiresCompete) {
 
     ASSERT_EQ(routing.corridors.size(), planned.assignment.connections.size());
     expectOneWirePerSlot(routing);
+    expectThePitchBetweenWires(routing, crossingPitch(test::miniConfig()));
     expectNoCrossingInsideAPartition(routing);
     EXPECT_GT(unroutedOf(routing), 0U);
     EXPECT_LT(unroutedOf(routing), routing.corridors.size());
@@ -731,6 +805,7 @@ void expectTheRulesHold(const Planned& planned, const CorridorRoutingT& routing,
     }
   }
   expectOneWirePerSlot(routing);
+  expectThePitchBetweenWires(routing, crossingPitch(test::miniConfig()));
   expectNoCrossingInsideAPartition(routing);
   expectNoShortInsideAWire(routing);
   EXPECT_EQ(received.fails, unroutedOf(routing));

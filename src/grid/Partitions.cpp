@@ -444,12 +444,9 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
   }
 
   // The samples come in the order the grid was scanned, which is not the order
-  // the border runs in. Walking it is what makes the spacing a distance along
-  // the border rather than a distance to everything taken so far: a border
-  // that bends back towards itself would otherwise lose the slots on its
-  // return leg, and those are the ones a wire coming from that side needs.
-  // Each piece is walked from one of its ends, so that the walk runs along it
-  // once instead of down one leg and then from the middle down the other.
+  // the border runs in. The walk along the border sets the order in which the
+  // samples are offered as slots. Each piece is walked from one of its ends, so
+  // that the slots follow the run once instead of starting from its middle.
   const auto count = border.samples.size();
   const auto adjacent = [&](const std::size_t a, const std::size_t b) {
     const auto dx = border.samples[a].x() - border.samples[b].x();
@@ -512,21 +509,30 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
     return grid.toLayout(border.samples[index].x(), border.samples[index].y());
   };
 
-  // The first sample of each piece is a slot; along one piece a sample becomes
-  // a slot once it is one spacing past the last.
+  // A sample becomes a slot when it lies at least one spacing from every slot
+  // taken so far. The walk sets the order in which the samples are offered,
+  // and the distance to every slot, not only to the last one, keeps the
+  // spacing where the walk ends a piece early and starts another next to it,
+  // or where the border bends back towards itself.
   std::vector<Point> slots;
+  std::vector<Point> taken;
+  const auto offer = [&](const std::size_t index) {
+    const auto here = layout(index);
+    if (std::ranges::all_of(taken, [&](const Point& slot) {
+          return std::hypot(here.x() - slot.x(), here.y() - slot.y()) >=
+                 spacing;
+        })) {
+      slots.push_back(border.samples[index]);
+      taken.push_back(here);
+    }
+  };
   for (auto current = startOfPiece(); current != count;
        current = startOfPiece()) {
     walk(current);
-    slots.push_back(border.samples[current]);
-    auto last = layout(current);
+    offer(current);
     for (auto next = step(current); next != count; next = step(current)) {
       walk(next);
-      const auto here = layout(next);
-      if (std::hypot(here.x() - last.x(), here.y() - last.y()) >= spacing) {
-        slots.push_back(border.samples[next]);
-        last = here;
-      }
+      offer(next);
       current = next;
     }
   }
