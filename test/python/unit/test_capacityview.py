@@ -105,6 +105,37 @@ def test_the_page_holds_the_graph_as_it_was_written(tmp_path: Path) -> None:
         assert f'data-view="{view}"' in text
 
 
+def test_the_page_offers_the_crossing_slots_as_a_layer(tmp_path: Path) -> None:
+    """A graph with crossing slots carries them to the page, which draws them on a layer of their own."""
+    corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+    data_graph = graph()
+    data_graph["crossSlots"] = {
+        "reach": 11.0,
+        "along": 19.0,
+        "edges": [
+            {
+                "name": "f1",
+                "length": 40.0,
+                "count": 1,
+                "check": 0,
+                "slots": [{"at": [1, 1], "corners": corners, "direction": [1.0, 0.0]}],
+                "rejected": [{"at": [2, 1], "why": "coupler pad", "corners": corners}],
+            }
+        ],
+    }
+    data = tmp_path / capacityview.DATA_NAME
+    data.write_text(json.dumps(data_graph), encoding="utf-8")
+    page = tmp_path / capacityview.PAGE_NAME
+    capacityview.build(data, page)
+
+    text = page.read_text(encoding="utf-8")
+    embedded = re.search(r'<script id="graph-data" type="application/json">(.*?)</script>', text, re.DOTALL)
+    assert embedded is not None
+    assert json.loads(embedded.group(1))["crossSlots"] == data_graph["crossSlots"]
+    assert '["xslots", "crossing slots of the feedline edges", true]' in text
+    assert '["xmiss", "places where no crossing slot fits", true]' in text
+
+
 def test_data_that_is_no_capacity_graph_is_refused(tmp_path: Path) -> None:
     """A file without the raster, the nodes, the edges or the wires is not laid out."""
     data = tmp_path / capacityview.DATA_NAME

@@ -343,7 +343,40 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
            "again. Returns JSON with what became of each edge.")
       .def("graph", &mqt::scpd::pipeline::CouplerSession::graph,
            "The capacity graph of the chip as it stands, as the JSON of "
-           "final-capacity-graph.json.");
+           "final-capacity-graph.json.")
+      .def("insertion_check",
+           &mqt::scpd::pipeline::CouplerSession::insertionCheck,
+           "The capacity check of the coupler insertion on the chip as it "
+           "stands, every chain standing. Returns JSON with verdict, lost and "
+           "graph.")
+      .def("route_feedlines",
+           &mqt::scpd::pipeline::CouplerSession::routeFeedlines,
+           "Run the feedline routing on the chip as it stands. Returns JSON "
+           "with the fails of every wire and every wire's way. The routing "
+           "changes the state for good.")
+      .def(
+          "set_debug",
+          [](mqt::scpd::pipeline::CouplerSession& self,
+             const nb::object& debug) {
+            // The session keeps the callable past this call, so it holds a
+            // copy of it and not the reference `drawTo` takes.
+            if (debug.is_none()) {
+              self.setDebug({});
+              return;
+            }
+            self.setDebug([debug](const std::string_view name,
+                                  const std::string_view content) {
+              const nb::object where =
+                  debug(nb::str(name.data(), name.size()),
+                        nb::str(content.data(), content.size()));
+              return where.is_none() ? std::string{}
+                                     : nb::cast<std::string>(where);
+            });
+          },
+          "debug"_a,
+          "Draw the stage's pictures from now on: debug is called with the "
+          "name and the text of every picture and returns where it put it, "
+          "as in a run with -d.");
 
   m.def(
       "check_final",

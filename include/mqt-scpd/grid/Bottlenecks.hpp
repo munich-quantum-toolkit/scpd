@@ -119,8 +119,8 @@ struct BottleneckOptions {
 /// @throws std::invalid_argument when the three do not describe one grid.
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<Bottleneck>
 findBottlenecks(const BitGrid& blocked, const MedialAxis& axis,
-                std::span<const std::uint32_t> squaredDistance, const GridMetrics& grid,
-                const BottleneckOptions& options = {});
+                std::span<const std::uint32_t> squaredDistance,
+                const GridMetrics& grid, const BottleneckOptions& options = {});
 
 /// How many wires fit through a bottleneck.
 ///
@@ -134,7 +134,28 @@ findBottlenecks(const BitGrid& blocked, const MedialAxis& axis,
 /// does when either end of the bottleneck sits on a cell reserved for a port
 /// rather than on chip artwork.
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::uint32_t
-bottleneckCapacity(const Bottleneck& bottleneck, const GridMetrics& grid, double wireSpacing,
-                   double obstacleSpacing, bool roundDown);
+bottleneckCapacity(const Bottleneck& bottleneck, const GridMetrics& grid,
+                   double wireSpacing, double obstacleSpacing, bool roundDown);
+
+/// Which bottlenecks stay when none may meet another in the middle of either
+/// (user, 2026-10-14). Two meet so when their lines cross more than `near`
+/// cells from the ends of both, or when one ends within `near` cells of the
+/// other's middle: on the raster they share cells or run a cell apart, and
+/// the chambers they cut lie beside both, so that a wire passes the one
+/// through the other unpaid. The one of the lower `rank` goes; of equal rank
+/// the longer, and of equal length the later. Each bottleneck is set against
+/// the ones that stay, in that order, so one that meets only a bottleneck
+/// that went itself stays.
+///
+/// @param rank One rank per bottleneck; the higher stays over the lower.
+/// @param width The width of the grid the cells index.
+/// @param near How many cells from an end the middle of a line begins.
+/// @return Per bottleneck, whether it stays.
+/// @throws std::invalid_argument when `rank` has not one entry per
+/// bottleneck.
+[[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<bool>
+uncrossedBottlenecks(const std::vector<Bottleneck>& bottlenecks,
+                     std::span<const std::uint32_t> rank, std::uint32_t width,
+                     double near = 1.5);
 
 } // namespace mqt::scpd::grid

@@ -1,4 +1,12 @@
 #!/bin/zsh
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 # Usage: run-arm.sh <arm> [ENV=VAL ...]  — runs all eight chips sequentially, one at a time.
 #   REPAIR_TRIALS=N ./run-arm.sh <arm> ...  — sets `repair_trials = N` in the run directory's
 #   copy of the config (what `plan --stage final` reads); the benchmark configs stay untouched.

@@ -316,27 +316,27 @@ a cell count through one function, and only through that function:
 
 That single rule replaces every clearance literal in the prototype:
 
-| Consumer                                          | Prototype        | Derived                                               |
-| ------------------------------------------------- | ---------------- | ----------------------------------------------------- |
-| Capacity: launcher keep-out, border budget, stubs | physical already | unchanged                                             |
-| Detail: cross-boundary blockade                   | computed         | `cells_for(min_wire_spacing, detail) - 1`             |
-| Detail: inner-routing blockade                    | literal `6`      | the **same** expression — the one real inconsistency  |
-| Final: inner and outer wire clearance             | literal `19`     | `cells_for(min_wire_spacing, final)`, which **is** 19 |
-| Final: refinement clearance                       | literal `19`     | the same call                                         |
-| Final: straight-start stubs                       | literal `9`      | `cells_for(min_straight_length, final)`               |
-| Final: coupler footprint                          | `20 × 3` cells   | `cells_for` of 200.0 × 26.0                           |
-| Final: bridge footprint                           | `6 × 6` cells    | `cells_for` of 60.0 × 60.0                            |
+| Consumer                                          | Prototype                  | Derived                                                |
+| ------------------------------------------------- | -------------------------- | ------------------------------------------------------ |
+| Capacity: launcher keep-out, border budget, stubs | physical already           | unchanged                                              |
+| Detail: cross-boundary blockade                   | computed                   | `cells_for(min_wire_spacing, detail) - 1`              |
+| Detail: inner-routing blockade                    | literal `6`                | the **same** expression — the one real inconsistency   |
+| Final: inner and outer wire clearance             | literal `19`               | `cells_for(min_wire_spacing, final)`, which **is** 19  |
+| Final: refinement clearance                       | literal `19`               | the same call                                          |
+| Final: straight-start stubs                       | literal `9`                | `cells_for(min_straight_length, final)`                |
+| Final: coupler footprint                          | `20 × 3` cells             | `cells_for` of 200.0 × 26.0                            |
+| Final: bridge footprint                           | `6 × 6` cells              | `cells_for` of 60.0 × 60.0                             |
 | Final: obstacle keepout                           | 25.0, plus an env override | `min_obstacle_spacing` through `RasterOptions.keepout` |
-| Final: corridor band                              | `200`/`800` cells | `corridor_spacings` × the wire clearance             |
-| Final: grid border                                | `40` cells       | the rectangle the launcher slots stand on             |
+| Final: corridor band                              | `200`/`800` cells          | `corridor_spacings` × the wire clearance               |
+| Final: grid border                                | `40` cells                 | the rectangle the launcher slots stand on              |
 
 The final grid's cell size is 9.91–10.00 layout units on every benchmark, so
 `ceil(185 / cell)` is 18.5–18.7 → **19** on all eight. The prototype's literal
 was right; nothing in the prototype recorded *why*, so nothing could have caught
 it drifting.
 
-The grid border is the row that stops being a distance at all. What it is for
-is to keep a wire off the edge of the chip, and where the edge of the routable
+The grid border is the row that stops being a distance at all. What it is for is
+to keep a wire off the edge of the chip, and where the edge of the routable
 space is, is not a length: it is the ring of launcher slots the wires are fed
 from. Everything between that rectangle and the chip outline is free space no
 wire has any business in — a wire that enters it comes back in somewhere else
@@ -350,8 +350,7 @@ and then lets `FG_OBSTACLE_INFLATE` override it, which is a calibration knob for
 one experiment and not a setting. It comes from `min_obstacle_spacing`, and it
 is measured exactly — the distance from the cell to the polygon edge in layout
 units, not a dilation of the finished raster. A dilation would carry the half
-cell the fill convention differs by and would widen the edge seam a second
-time.
+cell the fill convention differs by and would widen the edge seam a second time.
 
 Two of these are not constant across chips, and making them derived therefore
 changes behavior: the detail-grid blockade becomes 4–9 rather than a fixed 6,

@@ -7,31 +7,31 @@
 
 The Assignment stage lays the ring of outer ports onto the ring of launcher
 slots, and the artifact said which launcher each ring node was given. Drawn,
-that put every resonator on a launcher, including the ones that *end* a
-feedline run.
+that put every resonator on a launcher, including the ones that *end* a feedline
+run.
 
 That is not where a run actually starts. A feedline is a chain of ports between
 two ends. A node in the middle is reached from both sides. A node at an end is
 reached from one side only, and the wire that feeds it has to come past the
-other — from the stretch between its own launcher and the launcher its
-neighbour on that open side sits on. Drawing it on a launcher puts the feed at
-a point no wire runs through.
+other — from the stretch between its own launcher and the launcher its neighbour
+on that open side sits on. Drawing it on a launcher puts the feed at a point no
+wire runs through.
 
 The prototype makes this explicit. After solving,
 `OrderedAssignmentGraph::compute_min_overlap_assignment_physical_aware` walks
 the resonators with exactly one assigned edge and calls
 `CapacityGrid::add_coupler_launcher_ports(previous, own, 1, "first" | "second")`
-for each. That interpolates a new launcher slot between the two named ones —
-for one port, their midpoint — registers it as a launcher slot of its own and
-reassigns the resonator to it. Which neighbour is taken is the side the run
-does *not* continue on.
+for each. That interpolates a new launcher slot between the two named ones — for
+one port, their midpoint — registers it as a launcher slot of its own and
+reassigns the resonator to it. Which neighbour is taken is the side the run does
+*not* continue on.
 
 ## Decision
 
-The Assignment artifact carries, parallel to its ring, **where each node is
-actually fed from**:
+The Assignment artifact carries, parallel to its ring,
+**where each node is actually fed from**:
 
-```
+```text
 /// Where each ring node is actually fed from, parallel to `ring`.
 feeds: [geometry.Point] (required);
 ```
@@ -45,15 +45,14 @@ A point, not a port reference: the slot a feed starts at is not a port of the
 chip and inventing one would put a port into the chip that its input never
 declared. Everything the later stages need is the position.
 
-> **Amended 2026-09-09.** The interpolation is for **every** resonator, not
-> only for one that ends a feedline. A launcher feeds the conventional ports,
-> at most one each; every resonator the assignment gave that launcher moves
-> onto the segment that runs to the next launcher along, at
-> `1/(n+1) … n/(n+1)` of the way for the `n` of them, in ring order. The next
-> launcher along is the slot *below* by index, because the ordering potential
-> falls as the ring is walked. This is the prototype's `"zero"` pass
-> (`OrderedAssignmentGraph.cpp:792-843`), which the record above described
-> only in the special case `n == 1`.
+> **Amended 2026-09-09.** The interpolation is for **every** resonator, not only
+> for one that ends a feedline. A launcher feeds the conventional ports, at most
+> one each; every resonator the assignment gave that launcher moves onto the
+> segment that runs to the next launcher along, at `1/(n+1) … n/(n+1)` of the
+> way for the `n` of them, in ring order. The next launcher along is the slot
+> *below* by index, because the ordering potential falls as the ring is walked.
+> This is the prototype's `"zero"` pass (`OrderedAssignmentGraph.cpp:792-843`),
+> which the record above described only in the special case `n == 1`.
 >
 > The prototype's endpoint refinement that follows it, tagged `"first"` and
 > `"second"`, is **not** ported. It exists to move a feedline end off a
@@ -62,13 +61,14 @@ declared. Everything the later stages need is the position.
 
 ## Consequences
 
-Rendering follows the artifact, as [decision 0021](0021-debug-rendering-in-python.md)
-requires: the assignment chord is drawn to the feed point, and a feed that is
-not on a launcher slot is drawn as a launcher marker of its own, so both the SVG
-and the GDS show the derived slots. Every ring node of every benchmark chip has
-a feed point of its own: 12 on the 4-qubit chip and 230 on the 69-qubit one.
-Where a launcher and the next one along are the same point there is nothing to
-interpolate and the launcher stands.
+Rendering follows the artifact, as
+[decision 0021](0021-debug-rendering-in-python.md) requires: the assignment
+chord is drawn to the feed point, and a feed that is not on a launcher slot is
+drawn as a launcher marker of its own, so both the SVG and the GDS show the
+derived slots. Every ring node of every benchmark chip has a feed point of its
+own: 12 on the 4-qubit chip and 230 on the 69-qubit one. Where a launcher and
+the next one along are the same point there is nothing to interpolate and the
+launcher stands.
 
 `launchers` stays as it was. It still says which launcher a node belongs to,
 which is what the utilisation constraint counts and what the later stages route

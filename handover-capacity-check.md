@@ -35,7 +35,8 @@ Sections 7 and 8 below are the history and the details.
   - `test/pipeline/test_capacity_flow.cpp`,
     `test/pipeline/test_final_router.cpp`,
     `test/python/unit/test_capacityview.py`;
-  - `src/grid/DistanceTransform.cpp` (linear), `test/grid/test_distance_transform.cpp`;
+  - `src/grid/DistanceTransform.cpp` (linear),
+    `test/grid/test_distance_transform.cpp`;
   - `include/mqt-scpd/routing/CrossingConstraints.hpp`,
     `src/routing/CrossingConstraints.cpp` (`allowedArriving`),
     `src/drc/Rules.cpp`, `test/drc/test_rules.cpp`;
@@ -57,10 +58,10 @@ edge, a coupler pad or a resonator's lead (`couplerCuts`, after
 `findBottlenecks`). Every other bottleneck is left out, and the chambers on
 either side of it are one.
 
-- A lead is a port run with `Wall::lead` set: `markRun` sets it on the two
-  walls of a resonator's source run. In the log a lead is still a wall of the
-  kind `stub`, so `artwork–stub` and `stub–stub` cuts remain in the count; their
-  stub end is a lead.
+- A lead is a port run with `Wall::lead` set: `markRun` sets it on the two walls
+  of a resonator's source run. In the log a lead is still a wall of the kind
+  `stub`, so `artwork–stub` and `stub–stub` cuts remain in the count; their stub
+  end is a lead.
 - The `BOTTLENECKS` line says how many cuts were left out.
 - `SCPD_BOTTLENECK_ALL=1` keeps every cut.
 
@@ -75,26 +76,27 @@ the load on every edge:
 - Each wire takes its way with the fewest edges over the edges open to it that
   still take a wire. An edge takes as many wires as its capacity, less the ways
   routed before it that pass it.
-- A wire that finds no such way takes its way with the fewest edges whatever
-  the capacities. The edges it overfills have overflow.
+- A wire that finds no such way takes its way with the fewest edges whatever the
+  capacities. The edges it overfills have overflow.
 - A plain wire crosses exactly the feedline edges it is prescribed, each once,
   and no other (`FlowDemand::crossings`). Its prescribed edges are the drawn
   edges between two couplers that it bridges (`bridgers_`). The search carries
-  the prescribed edges crossed so far in its state; a step back into the
-  chamber an edge was entered from is no step. A prescribed edge with no
-  stretch leaves the wire no way. Resonators cross nothing.
-- The answer is a `FlowCheck`, so the page and the JSON show loads and
-  overflow as for the flow. The JSON names each wire's prescribed edges
-  (`crosses`), and the page shows them as "has to cross".
+  the prescribed edges crossed so far in its state; a step back into the chamber
+  an edge was entered from is no step. A prescribed edge with no stretch leaves
+  the wire no way. Resonators cross nothing.
+- The answer is a `FlowCheck`, so the page and the JSON show loads and overflow
+  as for the flow. The JSON names each wire's prescribed edges (`crosses`), and
+  the page shows them as "has to cross".
 
 The verdict is `SAT` when every wire has a way and no edge has overflow.
-Otherwise the line reads `UNSAT — … short by N wires on M edges, routed one
-after another in wire order` and names each overfilled edge with the wires
-through it; wires with no way at all are named apart.
+Otherwise the line reads
+`UNSAT — … short by N wires on M edges, routed one after another in wire order`
+and names each overfilled edge with the wires through it; wires with no way at
+all are named apart.
 
 - Overflow says only that this order does not fit. Another order may.
-- `SCPD_CAPACITY_FLOW=1` restores the integer flow `checkCapacity` (HiGHS).
-  The flow does not hold a wire to its prescribed edges.
+- `SCPD_CAPACITY_FLOW=1` restores the integer flow `checkCapacity` (HiGHS). The
+  flow does not hold a wire to its prescribed edges.
 
 17q, both margins 5, full run (`artifacts/logs/in-turn/17q.log`): UNSAT, short
 by 6 wires on 6 edges. Four are a wire leaving its own launcher stub through a
@@ -113,14 +115,14 @@ slot (`Walls::slots`); `SLOT_DEPTH` is gone. The outer edge of a run lies where
 it lay, so a gap between two runs has the same length as before.
 
 - The cuts in front of a terminal now end at the two wall ends, not on the
-  band's end face beside a 3-cell slot. All 76 cuts between a launcher run and
-  a feedline end within half a cell of a wall end; before, 43 ended on the face.
+  band's end face beside a 3-cell slot. All 76 cuts between a launcher run and a
+  feedline end within half a cell of a wall end; before, 43 ended on the face.
 - No cut joins the two walls of one run: its line would cross the slot, which
   `findBottlenecks` refuses. So `couplerCuts` needs no rule for it.
 - The end at the port must be closed. Open, the slot joined the room behind the
-  run through the row of free cells between each launcher run and the border:
-  85 cuts had a way round them, and a terminal lay in the chamber behind its
-  run rather than the one in front of it.
+  run through the row of free cells between each launcher run and the border: 85
+  cuts had a way round them, and a terminal lay in the chamber behind its run
+  rather than the one in front of it.
 
 17q, both margins 5 (`artifacts/logs/thin-stubs/17q.log`):
 
@@ -135,8 +137,8 @@ The own launcher-run gaps of 2, 9 and 38 are gone: the narrowest place in front
 of each is a slanted line from a wall end to the feedline, 19.7 to 22.6 cells
 long, which holds one wire. The face cut of the solid band ran from beside the
 slot to the feedline, 17 to 18.4 cells, and held none. 56 stays short: f17 lies
-17 to 17.5 cells from both wall ends (g84, g141). So do 31 and 32 in front of
-f8 and f9 (g90, g10).
+17 to 17.5 cells from both wall ends (g84, g141). So do 31 and 32 in front of f8
+and f9 (g90, g10).
 
 ## 2. What a check inside the insertion costs
 
@@ -410,32 +412,31 @@ step of the chain search that routed its edge, report only.
 
 - The chip is `stateOf` with a prefix: the chains settled before
   (`stepSettled_`, set by `optimizeChainsPrefix`), and the chain being searched
-  with its couplers up to the far end of this edge and its edges up to this
-  one. A coupler after the prefix does not stand, so its resonator is no
-  demand.
-- `capacityVerdictOf` gives the wires with no way (or a way over an
-  overfilled edge, routed in turn) and the shortfall; `lostWires` uses it too.
+  with its couplers up to the far end of this edge and its edges up to this one.
+  A coupler after the prefix does not stand, so its resonator is no demand.
+- `capacityVerdictOf` gives the wires with no way (or a way over an overfilled
+  edge, routed in turn) and the shortfall; `lostWires` uses it too.
 - Each step says, at `-v 1`:
   `[Capacity Step] chain 1 f7 (1->2) on options launcher 0 4: UNSAT — 1 wire without a way (27), short by 1; this edge closes 27; 0.107s`.
   "Closes" is against the prefix before it, or against the chip without the
   chain for a first edge.
-- Each searched chain says how many steps were checked and how long they
-  took, and each feedline edge of the run it settles on says what the check
-  said when the search laid it: `[Capacity Step] chain 3 f17: UNSAT — 1 wire
-  without a way (56), short by 1, closes 56`.
+- Each searched chain says how many steps were checked and how long they took,
+  and each feedline edge of the run it settles on says what the check said when
+  the search laid it:
+  `[Capacity Step] chain 3 f17: UNSAT — 1 wire without a way (56), short by 1, closes 56`.
 - The edges are named as the commit names them (`f<slot>`).
 
 **Cost.** One check is one whole analysis: about 0.105 s on 17q, after the
 distance transform became linear (64 ms → 17 ms; the 139 lines of the analysis
-are word for word the same). The rest is Voronoi 42 ms, chambers 21 ms, cuts
-21 ms, walls 8 ms. The checks spend the chain search's clock: on 17q chain 1
-routed 781 steps instead of 2157 before its 10 s ran out. Chains 0, 2 and 3
-settled on the same runs.
+are word for word the same). The rest is Voronoi 42 ms, chambers 21 ms, cuts 21
+ms, walls 8 ms. The checks spend the chain search's clock: on 17q chain 1 routed
+781 steps instead of 2157 before its 10 s ran out. Chains 0, 2 and 3 settled on
+the same runs.
 
 17q (margins 5, `artifacts/logs/cap-step/17q.log`): 234 steps checked in 25 s.
-Every edge of chains 0 and 2 is SAT. In chain 3, f17 closes wire 56 and f18,
-f19 keep it closed. Chain 1 ran out of time; 16 of its 116 checked steps close
-a wire, for example f7 on options 4 or 8 closes 27 or 26.
+Every edge of chains 0 and 2 is SAT. In chain 3, f17 closes wire 56 and f18, f19
+keep it closed. Chain 1 ran out of time; 16 of its 116 checked steps close a
+wire, for example f7 on options 4 or 8 closes 27 or 26.
 
 ## 8. The capacity rule replaces the squeeze rule (user, 2026-10-09)
 
@@ -443,39 +444,39 @@ The squeeze rule is gone (see *The squeeze rule* in
 handover-cpw-coupler-insertion.md). In its place the check of section 7 refuses:
 
 - `SCPD_CAPACITY_RULE`, off since 2026-10-10 (user; on before): a step whose
-  edge closes a wire (a wire with a
-  way through the graph the prefix leaves, and none with this edge) is refused
-  as an edge with no way; the A* takes another option. The step line ends
-  `— refused (SCPD_CAPACITY_RULE)`, and the chain line counts the refusals.
-- A chain that no run joins under the rule is searched once more without it,
-  and says so (`out of time before …` or `no run of options joins the chain
-  without closing a wire`). The second search checks steps only under
-  `SCPD_CAPACITY_STEP`.
-- The checks' time is added to the chain's budget (`problem.budget`, which
-  the A* reads on every round), so a checked chain prices as many steps as an
+  edge closes a wire (a wire with a way through the graph the prefix leaves, and
+  none with this edge) is refused as an edge with no way; the A* takes another
+  option. The step line ends `— refused (SCPD_CAPACITY_RULE)`, and the chain
+  line counts the refusals.
+- A chain that no run joins under the rule is searched once more without it, and
+  says so (`out of time before …` or
+  `no run of options joins the chain without closing a wire`). The second search
+  checks steps only under `SCPD_CAPACITY_STEP`.
+- The checks' time is added to the chain's budget (`problem.budget`, which the
+  A* reads on every round), so a checked chain prices as many steps as an
   unchecked one.
 - The rule acts in the chain search only. The commit, the targeted repair and
   the coupler session route edges without it.
 
-**The crossing count** (2026-10-09, user): 27, 33 and 56 were counted
-crossing on the last cell of the band (`CROSSING_REACH` 10), where they arrive
-straight and the next move starts turned. `CrossingConstraints::allowedArriving`
-judges a cell on the heading it arrives with as well; the Final stage's count,
+**The crossing count** (2026-10-09, user): 27, 33 and 56 were counted crossing
+on the last cell of the band (`CROSSING_REACH` 10), where they arrive straight
+and the next move starts turned. `CrossingConstraints::allowedArriving` judges a
+cell on the heading it arrives with as well; the Final stage's count,
 `whereItCrosses` and the DRC use it.
 
 17q (both margins at their defaults unless named, 10 s per chain,
 `artifacts/logs/caprule/*-x.log`):
 
-| Arm | Graph | Feedline routing |
-| --- | --- | --- |
-| box 5 | SAT | open 10, 11, f0; crossing – |
-| box 8 | SAT | open 10, 11, f0; crossing – |
+| Arm   | Graph | Feedline routing            |
+| ----- | ----- | --------------------------- |
+| box 5 | SAT   | open 10, 11, f0; crossing – |
+| box 8 | SAT   | open 10, 11, f0; crossing – |
 
 Chain 0 settles on `20 3 0 12 27`. The squeeze rule refused it (f1 leaves 21
-cells to the artwork beside wire 11); the graph routes 11 round another way,
-and the feedline pass then leaves 10, 11 and f0 open. The graph is a necessary
-condition only. Before the rule, with the squeeze rule and box 8, chain 0 sat
-on `0 0 0 12 27` at the same cost.
+cells to the artwork beside wire 11); the graph routes 11 round another way, and
+the feedline pass then leaves 10, 11 and f0 open. The graph is a necessary
+condition only. Before the rule, with the squeeze rule and box 8, chain 0 sat on
+`0 0 0 12 27` at the same cost.
 
 ### The resonator length rule (user, 2026-10-09)
 
@@ -483,27 +484,28 @@ Resonator 11 had a way through the graph round the whole chip (34 bottlenecks)
 where its coupler's lead stood on the far side of f1: legal in the graph, far
 longer than a resonator can be. Now:
 
-- `FlowDemand::longest` = target length − run to the port (`anchorGap`) −
-  length of the lead + tolerance (`longestWayOf`), for resonators only.
+- `FlowDemand::longest` = target length − run to the port (`anchorGap`) − length
+  of the lead + tolerance (`longestWayOf`), for resonators only.
 - `checkInTurn` routes such a demand on its shortest way by the least length
-  (`shortestWay`: Dijkstra over edge, chamber left into, crossings so far):
-  from the start terminal to the line of the first edge, from line to line
+  (`shortestWay`: Dijkstra over edge, chamber left into, crossings so far): from
+  the start terminal to the line of the first edge, from line to line
   (`betweenLines`), and from the last line to the end terminal. The lines are
   the bottleneck's line and a stretch from its first cell to its last
-  (`FlowEdge::from`/`to`). A first version measured through the middles of
-  the edges; on a wide bottleneck that is a detour, and resonators 18 and 20
-  were refused although they route.
-- A way longer than `longest` is no way; `FlowCheck::tooLong` says so, the
-  wire line reads `no way within its length: the shortest runs N cells, it
-  may run M`, and the verdict names the wire apart.
+  (`FlowEdge::from`/`to`). A first version measured through the middles of the
+  edges; on a wide bottleneck that is a detour, and resonators 18 and 20 were
+  refused although they route.
+- A way longer than `longest` is no way; `FlowCheck::tooLong` says so, the wire
+  line reads
+  `no way within its length: the shortest runs N cells, it may run M`, and the
+  verdict names the wire apart.
 
-17q, both margins as named, 10 s per chain (`artifacts/logs/caplen/*-2.log`,
-run directories `artifacts/dev/17q-len-b5`, `-b8`):
+17q, both margins as named, 10 s per chain (`artifacts/logs/caplen/*-2.log`, run
+directories `artifacts/dev/17q-len-b5`, `-b8`):
 
-| Arm | Chains | Graph | Feedline routing |
-| --- | --- | --- | --- |
-| box 5 | all four settle under the rule | SAT | unrouted –, open –, crossing – |
-| box 8 | all four settle under the rule | SAT | unrouted –, open –, crossing – |
+| Arm   | Chains                         | Graph | Feedline routing               |
+| ----- | ------------------------------ | ----- | ------------------------------ |
+| box 5 | all four settle under the rule | SAT   | unrouted –, open –, crossing – |
+| box 8 | all four settle under the rule | SAT   | unrouted –, open –, crossing – |
 
 Pictures: `artifacts/sat/17q-length-box5-final.svg` and
 `17q-length-box5-capacity-graph.svg`/`.html`.
@@ -785,6 +787,7 @@ skipped an edge back into the chamber they came from). The flow of
 Tests: `InTurn.AWireCrossesAFeedlineWithOneChamberOnBothSides`,
 `InTurn.AWireOfFixedLengthCrossesAFeedlineWithOneChamberOnBothSides` (both fail
 without the change). No test chip (4q, 9q) has a reflector.
+
 ## All switches of this work
 
 | Variable                    | Default | What it does                                                                                                              |
@@ -854,18 +857,18 @@ Last state:
 
 1. **The own stub.** Most predictions are 0-wire gaps at a wire's own port run,
    and most of those wires route. If the own wire may pass such a gap, the false
-   predictions go, and so do the true ones for 31 and 56. The user decides.
-   With the port runs as two thin walls, 56 is the only such gap left on 17q.
+   predictions go, and so do the true ones for 31 and 56. The user decides. With
+   the port runs as two thin walls, 56 is the only such gap left on 17q.
 2. **A prediction of the fails that do occur.** On 17q they are a terminal whose
    first cells lie within the clearance of a feedline (31, dead on arrival at
    f8) and bridged crossings with too little straight edge (14 on f2, 33 on f9).
    Neither is a capacity question.
 3. **The cost of a check on the large chips.** One check is one whole analysis
-   of the chip: 0.1 s on 17q, 0.5 s on 21q, about 1.5–2 s on 33q–69q. The
-   linear distance transform is in (`src/grid/DistanceTransform.cpp`); what is
-   left is the Voronoi, the axis, the cuts and the chambers of the whole chip.
-   A check that updates the graph only around the new edge is the next step
-   (§2 and `artifacts/logs/cap-fast/`).
+   of the chip: 0.1 s on 17q, 0.5 s on 21q, about 1.5–2 s on 33q–69q. The linear
+   distance transform is in (`src/grid/DistanceTransform.cpp`); what is left is
+   the Voronoi, the axis, the cuts and the chambers of the whole chip. A check
+   that updates the graph only around the new edge is the next step (§2 and
+   `artifacts/logs/cap-fast/`).
 4. **Wires that compete.** The wires routed in turn see them in one order only;
    PathFinder would try other orders, at under half a millisecond. Not built
    into the stage.

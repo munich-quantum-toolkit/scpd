@@ -1,8 +1,8 @@
 # Phase 4, step 1 — handover
 
-Written for whoever picks this up next. It says what the Corridor stage is,
-what was measured, what is deliberately different from the prototype, and what
-is still open.
+Written for whoever picks this up next. It says what the Corridor stage is, what
+was measured, what is deliberately different from the prototype, and what is
+still open.
 
 Step 2, the detail router, has its own briefing:
 [handover-detail-routing.md](handover-detail-routing.md).
@@ -13,11 +13,11 @@ Step 2, the detail router, has its own briefing:
 
 ## What this step delivers
 
-The **Corridor** stage: every connection of the assignment is routed through
-the partitions before any pixel is drawn. It is the prototype's own first
-routing pass — `CapacityGrid::run_capacity_routing_requests`, whose failures
-its benchmark table counts as `GlobalFail` — and it had no place in the
-six-stage pipeline, so it becomes a stage of its own
+The **Corridor** stage: every connection of the assignment is routed through the
+partitions before any pixel is drawn. It is the prototype's own first routing
+pass — `CapacityGrid::run_capacity_routing_requests`, whose failures its
+benchmark table counts as `GlobalFail` — and it had no place in the six-stage
+pipeline, so it becomes a stage of its own
 ([decision 0031](docs/design/decisions/0031-coarse-routing-is-its-own-stage.md)).
 
 The run directory therefore numbers seven artifacts, and everything after `03`
@@ -46,14 +46,14 @@ Six rules make the plan one the detail router can follow:
 
 1. One wire per slot. A place where three partitions meet is one slot of each
    border, and still one place: one wire crosses there and no more.
-2. Two wires may not **cross** inside a partition, and may not **run along** each
-   other there.
-3. A wire may not run over a point another wire is **pinned** to: the point it is
-   fed at, or the cell of its target port. Grazing a crossing slot at a point is
-   allowed — the chords are a schematic of which partitions a wire uses, and the
-   detail router crosses a border a little to either side of a slot as it sees
-   fit — but a pin cannot move, so a second wire drawn over one is two wires on
-   one point of the chip.
+2. Two wires may not **cross** inside a partition, and may not **run along**
+   each other there.
+3. A wire may not run over a point another wire is **pinned** to: the point it
+   is fed at, or the cell of its target port. Grazing a crossing slot at a point
+   is allowed — the chords are a schematic of which partitions a wire uses, and
+   the detail router crosses a border a little to either side of a slot as it
+   sees fit — but a pin cannot move, so a second wire drawn over one is two
+   wires on one point of the chip.
 4. A wire may not cross a border outside the **ring the ports feed from** — the
    rectangle the feed points span. On it is not inside either: such a place sits
    beside some port's own feed point, and a wire crossing there has slipped
@@ -65,10 +65,10 @@ Six rules make the plan one the detail router can follow:
 
 Every one of these was measured, and each is written up in `pipeline.md`.
 
-1. **The crossing pitch is not the wire spacing.** The prototype divides a border
-   at its wire spacing less twenty units and records no reason for the twenty.
-   Using the design rule instead left one 45-qubit wire without a way into a
-   chamber that then had three slots rather than four. The pitch is now
+1. **The crossing pitch is not the wire spacing.** The prototype divides a
+   border at its wire spacing less twenty units and records no reason for the
+   twenty. Using the design rule instead left one 45-qubit wire without a way
+   into a chamber that then had three slots rather than four. The pitch is now
    `[stages.capacity] crossing_pitch`, a planning figure and not a clearance
    rule: how far two wires actually keep apart is the detail router's answer.
 2. **The slots are placed by walking the border**, each a pitch past the last,
@@ -89,14 +89,14 @@ Every one of these was measured, and each is written up in `pipeline.md`.
    none.
 5. **A slot remembers being wanted**, without which two wires trade one slot for
    ever.
-6. **A route that is a short is not the end of the search.** Crossing itself is a
-   property of the whole route, so the search cannot rule it out as it goes;
+6. **A route that is a short is not the end of the search.** Crossing itself is
+   a property of the whole route, so the search cannot rule it out as it goes;
    throwing the search away with it left wires unrouted where a second-best way
    was there.
 7. **Two passes after the last sweep.** A wire the sweep ripped on its way past
    has no sweep after it, so every wire still without a way is offered the room
-   the others left; then each one left is offered a swap, undone unless it leaves
-   fewer wires over.
+   the others left; then each one left is offered a swap, undone unless it
+   leaves fewer wires over.
 8. **A wire stays inside the ring the ports feed from.** The prototype clamps
    every border pixel to the box its launcher slots span, and this stage had
    been leaving that out. Without it the eight chips route twenty-seven
@@ -114,15 +114,15 @@ At the shipped defaults (`rounds = 12`, `max_relaxation = 30`,
 `crossing_pitch = 165`), all eight chips:
 
 | chip | connections | routed | unrouted | crossings | longest | slot lists/slots | corridor |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 4q  |  12 |  12 | 0 |   10 |  2 |    48/194 |  0.3 s |
-| 9q  |  30 |  30 | 0 |   85 |  5 |   122/796 |  0.1 s |
-| 17q |  58 |  58 | 0 |  305 | 10 |  479/1892 |  0.2 s |
-| 21q |  70 |  70 | 0 |  414 |  9 |  476/2963 |  0.3 s |
-| 33q | 110 | 110 | 0 |  966 | 13 |  896/5358 |  0.7 s |
-| 45q | 150 | 150 | 0 | 1636 | 16 | 1407/8454 |  2.2 s |
-| 57q | 190 | 190 | 0 | 2885 | 22 | 2533/12794 | 4.2 s |
-| 69q | 230 | 230 | 0 | 4463 | 25 | 4008/23940 | 11.6 s |
+| ---- | ----------: | -----: | -------: | --------: | ------: | ---------------: | -------: |
+| 4q   |          12 |     12 |        0 |        10 |       2 |           48/194 |    0.3 s |
+| 9q   |          30 |     30 |        0 |        85 |       5 |          122/796 |    0.1 s |
+| 17q  |          58 |     58 |        0 |       305 |      10 |         479/1892 |    0.2 s |
+| 21q  |          70 |     70 |        0 |       414 |       9 |         476/2963 |    0.3 s |
+| 33q  |         110 |    110 |        0 |       966 |      13 |         896/5358 |    0.7 s |
+| 45q  |         150 |    150 |        0 |      1636 |      16 |        1407/8454 |    2.2 s |
+| 57q  |         190 |    190 |        0 |      2885 |      22 |       2533/12794 |    4.2 s |
+| 69q  |         230 |    230 |        0 |      4463 |      25 |       4008/23940 |   11.6 s |
 
 The slot lists are one per border that offers a crossing, plus one for the ways
 out of the pockets.
@@ -141,8 +141,8 @@ Runtime sits inside the prototype's own band for this pass, 0.35 s to 11.5 s.
 ## Deliberate deviations from the prototype
 
 - **Per-connection identity survives the stage.** The prototype keeps only the
-  union of the chords per partition and works out afterwards which wire is which,
-  which costs it a cell at each end of every wire.
+  union of the chords per partition and works out afterwards which wire is
+  which, which costs it a cell at each end of every wire.
 - **Two wires may not run along each other.** The prototype tests for a crossing
   only, and a wire that runs along a border passes through the slots of that
   border; a second wire crossing at one of them starts on top of it. A
@@ -156,12 +156,12 @@ Runtime sits inside the prototype's own band for this pass, 0.35 s to 11.5 s.
   crossing test cannot see the case at all, because a chord that stops on
   another one never reaches its far side. Measured: without the rule the eight
   chips carry eleven of these, on four of them, and three wires in a row run
-  down one line of feed points on the 69-qubit chip. The
-  prototype allows it: `check_edge_crossing` tests proper crossings, and the
-  occupancy it keeps beside that is a set of pixels, never the lines between
-  them. Ruling it out is also what routed the last two connections — the wire
-  that tunnelled had been taking a way it was not entitled to, and once it was
-  refused, both it and the wire it displaced found real ways.
+  down one line of feed points on the 69-qubit chip. The prototype allows it:
+  `check_edge_crossing` tests proper crossings, and the occupancy it keeps
+  beside that is a set of pixels, never the lines between them. Ruling it out is
+  also what routed the last two connections — the wire that tunnelled had been
+  taking a way it was not entitled to, and once it was refused, both it and the
+  wire it displaced found real ways.
 - **A wire keeps the way it had** when a re-route finds nothing and the old way
   still fits. The prototype drops it.
 - **The border budget is a wire count.** It was the length of the border in
@@ -189,8 +189,9 @@ Runtime sits inside the prototype's own band for this pass, 0.35 s to 11.5 s.
    pocket is added to the partition graph rather than dug into the mask, because
    the partitions come from the artifact. The detail router builds its own mask
    and should dig; the two ways of saying the same thing then want reconciling.
-4. **The stage has never been compared against the prototype's own output**, only
-   against its formulation as read and against its published failure counts.
+4. **The stage has never been compared against the prototype's own output**,
+   only against its formulation as read and against its published failure
+   counts.
 
 ## Verification
 
@@ -202,8 +203,8 @@ uvx nox -s stubs                                           # after any bindings 
 uvx nox -s lint                                            # see the trap below
 ```
 
-`uvx nox -s lint` **reformats 66 files this change never touched**, exactly as it
-did in phase 3: the hook revisions are pinned and the committed tree does not
+`uvx nox -s lint` **reformats 66 files this change never touched**, exactly as
+it did in phase 3: the hook revisions are pinned and the committed tree does not
 match them. Among them it rewrites every `# noqa: <code>` into
 `# ruff: ignore[<name>]`, which is a repository-wide migration and not this
 change. Revert everything the change does not own, and map those comments back
@@ -238,10 +239,10 @@ then meet and the search does not see it. The slots are snapped back onto the
 half-cell grid when they are read. It cost an hour, and the overlap test is what
 found it.
 
-**`uvx nox -s stubs` does not produce a usable stub.** It writes
-`global: bytes` for the `assign` binding, which is a Python keyword and
-therefore invalid syntax, and it drops the `Callable` type of `set_solver` for
-`object`. The session then fails at its own `ruff-check` before the fix-up pass
-that would have repaired the first of those. The committed stub is the repaired
-form, so `route_corridor` was added to it by hand rather than by regenerating
-over it. Whoever fixes the generator should regenerate the whole file then.
+**`uvx nox -s stubs` does not produce a usable stub.** It writes `global: bytes`
+for the `assign` binding, which is a Python keyword and therefore invalid
+syntax, and it drops the `Callable` type of `set_solver` for `object`. The
+session then fails at its own `ruff-check` before the fix-up pass that would
+have repaired the first of those. The committed stub is the repaired form, so
+`route_corridor` was added to it by hand rather than by regenerating over it.
+Whoever fixes the generator should regenerate the whole file then.

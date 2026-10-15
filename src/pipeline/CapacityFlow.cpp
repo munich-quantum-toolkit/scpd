@@ -212,42 +212,22 @@ fewestEdges(const std::uint32_t chambers, const std::vector<FlowEdge>& edges,
   return std::nullopt;
 }
 
-/// The distance from a point to the line of an edge.
-double toLine(const FlowPoint p, const FlowEdge& edge) {
-  const auto dx = edge.to.x - edge.from.x;
-  const auto dy = edge.to.y - edge.from.y;
-  const auto squared = (dx * dx) + (dy * dy);
-  const auto t = squared > 0.0 ? std::clamp((((p.x - edge.from.x) * dx) +
-                                             ((p.y - edge.from.y) * dy)) /
-                                                squared,
-                                            0.0, 1.0)
-                               : 0.0;
-  return std::hypot(p.x - (edge.from.x + (t * dx)),
-                    p.y - (edge.from.y + (t * dy)));
+/// The centre of an edge's line: the middle of a bottleneck, or of the
+/// stretch of a feedline a wire crosses.
+FlowPoint centreOf(const FlowEdge& edge) {
+  return {.x = 0.5 * (edge.from.x + edge.to.x),
+          .y = 0.5 * (edge.from.y + edge.to.y)};
 }
 
-/// The distance between the lines of two edges: none where they cross.
-double betweenLines(const FlowEdge& a, const FlowEdge& b) {
-  const auto side = [](const FlowPoint p, const FlowPoint q,
-                       const FlowPoint r) {
-    return ((q.x - p.x) * (r.y - p.y)) - ((q.y - p.y) * (r.x - p.x));
-  };
-  const auto d1 = side(a.from, a.to, b.from);
-  const auto d2 = side(a.from, a.to, b.to);
-  const auto d3 = side(b.from, b.to, a.from);
-  const auto d4 = side(b.from, b.to, a.to);
-  if (((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0)) &&
-      ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))) {
-    return 0.0;
-  }
-  return std::min(
-      {toLine(a.from, b), toLine(a.to, b), toLine(b.from, a), toLine(b.to, a)});
+/// The distance between two points.
+double apart(const FlowPoint a, const FlowPoint b) {
+  return std::hypot(a.x - b.x, a.y - b.y);
 }
 
-/// The way of one demand whose least length is shortest — from its start to
-/// the line of the first edge it passes, from line to line, and from the last
-/// line to its end — over the edges open to it that `usable` lets it take,
-/// and that length; nothing when there is none.
+/// The way of one demand whose length is shortest — from its start to the
+/// centre of the first edge it passes, from centre to centre, and from the
+/// last centre to its end (user, 2026-10-13) — over the edges open to it
+/// that `usable` lets it take, and that length; nothing when there is none.
 ///
 /// A state of the search is an edge, the chamber the way left it into, and
 /// the groups of edges to cross so far, as in `fewestEdges`: where a way
@@ -323,7 +303,8 @@ shortestWay(const std::vector<FlowEdge>& edges,
   };
   for (const auto chamber : wanted.from) {
     for (const auto index : around[chamber]) {
-      enter(index, chamber, 0, toLine(wanted.start, edges[index]), FINISH);
+      enter(index, chamber, 0, apart(wanted.start, centreOf(edges[index])),
+            FINISH);
     }
   }
   while (!pending.empty()) {
@@ -349,7 +330,7 @@ shortestWay(const std::vector<FlowEdge>& edges,
         std::ranges::upper_bound(first, slot) - first.begin() - 1);
     const auto chamber = edges[index].chambers[slot - first[index]];
     if (mask == all && ends(chamber)) {
-      const auto done = cost + toLine(wanted.end, edges[index]);
+      const auto done = cost + apart(wanted.end, centreOf(edges[index]));
       if (done < best[FINISH]) {
         best[FINISH] = done;
         before[FINISH] = state;
@@ -359,7 +340,8 @@ shortestWay(const std::vector<FlowEdge>& edges,
     for (const auto next : around[chamber]) {
       if (next != index) {
         enter(next, chamber, mask,
-              cost + betweenLines(edges[index], edges[next]), state);
+              cost + apart(centreOf(edges[index]), centreOf(edges[next])),
+              state);
       }
     }
   }
@@ -606,23 +588,35 @@ FlowCheck checkCapacity(const std::uint32_t chambers,
 
 FlowCheck checkInTurn(const std::uint32_t chambers,
                       const std::vector<FlowEdge>& edges,
-                      const std::vector<FlowDemand>& demands) {
+                      const std::vector<FlowDemand>& demands,
+                      const double detour, const InTurnRules rules) {
   checkNames(chambers, edges, demands);
   const auto around = edgesAround(chambers, edges);
   FlowCheck check;
   check.status = milp::SolveStatus::Optimal;
-  check.ways.reserve(demands.size());
+  check.ways.assign(demands.size(), std::nullopt);
   check.load.assign(edges.size(), 0);
   check.overflow.assign(edges.size(), 0);
   check.lengths.assign(demands.size(), 0.0);
   check.tooLong.assign(demands.size(), false);
+  // An edge that still takes a wire; `barred` is one closed besides, while
+  // a demand is routed off it.
+  constexpr auto NONE = std::numeric_limits<std::uint32_t>::max();
+  std::uint32_t barred = NONE;
   const auto free = [&](const std::uint32_t index) {
-    return check.load[index] < edges[index].capacity;
+    return index != barred && check.load[index] < edges[index].capacity;
   };
   const auto any = [](const std::uint32_t /*index*/) { return true; };
-  for (std::uint32_t demand = 0; demand < demands.size(); ++demand) {
+  // An edge that takes a wire at all, whatever its load.
+  const auto takes = [&](const std::uint32_t index) {
+    return edges[index].capacity > 0;
+  };
+  using Way = std::optional<std::vector<std::uint32_t>>;
+  // The way a demand takes by its rule over the edges as they are loaded;
+  // `within` says whether it keeps to the edges that still take a wire.
+  const auto routeOne = [&](const std::uint32_t demand, bool& within) -> Way {
     const auto& wanted = demands[demand];
-    std::optional<std::vector<std::uint32_t>> way;
+    within = false;
     if (wanted.longest.has_value()) {
       // The shortest way within the capacities, else the shortest at all;
       // either only when it is short enough.
@@ -635,23 +629,134 @@ FlowCheck checkInTurn(const std::uint32_t chambers,
         }
         check.lengths[demand] = found->second;
         if (found->second <= *wanted.longest) {
-          way = found->first;
-          break;
+          within = withinCapacity;
+          return found->first;
         }
         check.tooLong[demand] = !withinCapacity;
       }
-    } else {
-      way = fewestEdges(chambers, edges, around, wanted, demand, free);
-      if (!way.has_value()) {
-        way = fewestEdges(chambers, edges, around, wanted, demand, any);
-      }
+      return std::nullopt;
     }
+    if (detour > 0.0) {
+      // The shortest way within the capacities when it is no longer than
+      // `detour` times the shortest over the edges that take a wire at all
+      // (user, 2026-10-14: a gate that takes none is no way to measure by),
+      // else that shortest; and when every way passes such a gate, the
+      // shortest at all.
+      auto shortest = rules.detourOverTakers
+                          ? shortestWay(edges, around, wanted, demand, takes)
+                          : shortestWay(edges, around, wanted, demand, any);
+      if (!shortest.has_value()) {
+        shortest = shortestWay(edges, around, wanted, demand, any);
+      }
+      if (!shortest.has_value()) {
+        return std::nullopt;
+      }
+      const auto near = shortestWay(edges, around, wanted, demand, free);
+      if (near.has_value() &&
+          near->second <= (detour * shortest->second) + 1e-9) {
+        within = true;
+        check.lengths[demand] = near->second;
+        return near->first;
+      }
+      check.lengths[demand] = shortest->second;
+      return shortest->first;
+    }
+    auto way = fewestEdges(chambers, edges, around, wanted, demand, free);
+    if (way.has_value()) {
+      within = true;
+      return way;
+    }
+    return fewestEdges(chambers, edges, around, wanted, demand, any);
+  };
+  const auto put = [&](const std::uint32_t demand, Way way) {
     if (way.has_value()) {
       for (const auto index : *way) {
         ++check.load[index];
       }
     }
-    check.ways.push_back(std::move(way));
+    check.ways[demand] = std::move(way);
+  };
+  const auto take = [&](const std::uint32_t demand) {
+    Way way = std::move(check.ways[demand]);
+    check.ways[demand].reset();
+    if (way.has_value()) {
+      for (const auto index : *way) {
+        --check.load[index];
+      }
+    }
+    return way;
+  };
+  const auto overfills = [&](const std::uint32_t demand) {
+    const auto& way = check.ways[demand];
+    return way.has_value() &&
+           std::ranges::any_of(*way, [&](const std::uint32_t index) {
+             return check.load[index] > edges[index].capacity;
+           });
+  };
+
+  // The first sweep, in order.
+  for (std::uint32_t demand = 0; demand < demands.size(); ++demand) {
+    bool within = false;
+    put(demand, routeOne(demand, within));
+  }
+  // Rip up and reroute (user, 2026-10-14): a sweep backward, then forward,
+  // and so on, over the demands that overfill an edge. Each is taken off
+  // its way and routed again. When it keeps to no way within the
+  // capacities, every demand on an edge its way would overfill is taken
+  // off in turn and routed again within the capacities off that edge;
+  // then the demand once more.
+  while (check.sweeps < rules.mostSweeps) {
+    bool lost = false;
+    for (std::uint32_t demand = 0; demand < demands.size() && !lost; ++demand) {
+      lost = overfills(demand);
+    }
+    if (!lost) {
+      break;
+    }
+    ++check.sweeps;
+    const bool backward = (check.sweeps % 2) == 0;
+    bool moved = false;
+    for (std::uint32_t k = 0; k < demands.size(); ++k) {
+      const auto demand =
+          backward ? static_cast<std::uint32_t>(demands.size() - 1 - k) : k;
+      if (!overfills(demand)) {
+        continue;
+      }
+      take(demand);
+      bool within = false;
+      auto way = routeOne(demand, within);
+      if (!within && way.has_value()) {
+        for (const auto index : *way) {
+          for (std::uint32_t other = 0;
+               other < demands.size() &&
+               check.load[index] >= edges[index].capacity;
+               ++other) {
+            if (other == demand || !check.ways[other].has_value() ||
+                std::ranges::find(*check.ways[other], index) ==
+                    check.ways[other]->end()) {
+              continue;
+            }
+            auto kept = take(other);
+            barred = index;
+            bool otherWithin = false;
+            auto elsewhere = routeOne(other, otherWithin);
+            barred = NONE;
+            if (otherWithin && elsewhere.has_value()) {
+              put(other, std::move(elsewhere));
+              moved = true;
+            } else {
+              put(other, std::move(kept));
+            }
+          }
+        }
+        way = routeOne(demand, within);
+      }
+      moved = moved || within;
+      put(demand, std::move(way));
+    }
+    if (!moved) {
+      break;
+    }
   }
   for (std::uint32_t index = 0; index < edges.size(); ++index) {
     check.overflow[index] = check.load[index] > edges[index].capacity

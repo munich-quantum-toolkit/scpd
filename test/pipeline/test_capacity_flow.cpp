@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
@@ -123,6 +124,89 @@ TEST(InTurn, TheSecondWireTakesTheWayRoundAFullGate) {
   ASSERT_TRUE(check.ways[1].has_value());
   EXPECT_EQ(*check.ways[1], (std::vector<std::uint32_t>{1, 2}));
   EXPECT_EQ(check.shortBy, 0U);
+}
+
+/// A wire routed first takes the one gate a later wire has no way round;
+/// the sweep after takes the first off that gate and round the other way,
+/// as the feedline routing rips up and reroutes (user, 2026-10-14).
+TEST(InTurn, TakesAnEarlierWireOffAFullGateForOneWithNoOtherWay) {
+  const std::vector<FlowEdge> edges = {
+      {.chambers = {0, 2}, .capacity = 1},
+      {.chambers = {0, 1},
+       .capacity = 1,
+       .users = std::vector<std::uint32_t>{0}},
+      {.chambers = {1, 2},
+       .capacity = 1,
+       .users = std::vector<std::uint32_t>{0}}};
+  const auto check = checkInTurn(3, edges, {between(0, 2), between(0, 2)});
+
+  ASSERT_TRUE(check.ways[0].has_value());
+  EXPECT_EQ(*check.ways[0], (std::vector<std::uint32_t>{1, 2}));
+  ASSERT_TRUE(check.ways[1].has_value());
+  EXPECT_EQ(*check.ways[1], std::vector<std::uint32_t>{0});
+  EXPECT_EQ(check.shortBy, 0U);
+  EXPECT_GE(check.sweeps, 2U);
+}
+
+/// A wire's detour is measured against its shortest way over the edges
+/// that take a wire at all (user, 2026-10-14): a gate that takes none is
+/// no way to measure by, so the way round it, however long, is the way the
+/// wire takes, and the gate stays empty.
+TEST(InTurn, MeasuresTheDetourAgainstTheShortestWayOverGatesThatTakeAWire) {
+  // Straight from 0 to 3 through a gate for no wire, or round through 1
+  // and 2 at more than one and a half times the length.
+  const std::vector<FlowEdge> edges = {
+      {.chambers = {0, 3}, .capacity = 0, .from = {5, 0}, .to = {5, 1}},
+      {.chambers = {0, 1}, .capacity = 1, .from = {0, 10}, .to = {1, 10}},
+      {.chambers = {1, 2}, .capacity = 1, .from = {10, 20}, .to = {10, 21}},
+      {.chambers = {2, 3}, .capacity = 1, .from = {20, 10}, .to = {21, 10}}};
+  const FlowDemand wanted{
+      .from = {0}, .to = {3}, .start = {0, 0}, .end = {10, 0}};
+  const auto check = checkInTurn(4, edges, {wanted}, 1.5);
+
+  ASSERT_TRUE(check.ways[0].has_value());
+  EXPECT_EQ(*check.ways[0], (std::vector<std::uint32_t>{1, 2, 3}));
+  EXPECT_EQ(check.shortBy, 0U);
+}
+
+/// The rules of an earlier round, asked for by `InTurnRules`: with one
+/// sweep nothing is ripped up, so the first wire keeps the gate the second
+/// has no way round, and the second overfills it.
+TEST(InTurn, StopsAfterTheFirstSweepWhenAskedTo) {
+  const std::vector<FlowEdge> edges = {
+      {.chambers = {0, 2}, .capacity = 1},
+      {.chambers = {0, 1},
+       .capacity = 1,
+       .users = std::vector<std::uint32_t>{0}},
+      {.chambers = {1, 2},
+       .capacity = 1,
+       .users = std::vector<std::uint32_t>{0}}};
+  const auto check = checkInTurn(3, edges, {between(0, 2), between(0, 2)}, 0.0,
+                                 {.mostSweeps = 1, .detourOverTakers = true});
+
+  EXPECT_EQ(check.sweeps, 1U);
+  EXPECT_EQ(check.shortBy, 1U);
+  ASSERT_TRUE(check.ways[0].has_value());
+  EXPECT_EQ(*check.ways[0], std::vector<std::uint32_t>{0});
+}
+
+/// Measured against the shortest way over any gate, as before round 25,
+/// the way round a gate for no wire is too long a detour, and the wire
+/// takes the gate and overfills it.
+TEST(InTurn, MeasuresTheDetourAgainstAnyGateWhenAskedTo) {
+  const std::vector<FlowEdge> edges = {
+      {.chambers = {0, 3}, .capacity = 0, .from = {5, 0}, .to = {5, 1}},
+      {.chambers = {0, 1}, .capacity = 1, .from = {0, 10}, .to = {1, 10}},
+      {.chambers = {1, 2}, .capacity = 1, .from = {10, 20}, .to = {10, 21}},
+      {.chambers = {2, 3}, .capacity = 1, .from = {20, 10}, .to = {21, 10}}};
+  const FlowDemand wanted{
+      .from = {0}, .to = {3}, .start = {0, 0}, .end = {10, 0}};
+  const auto check = checkInTurn(4, edges, {wanted}, 1.5,
+                                 {.mostSweeps = 8, .detourOverTakers = false});
+
+  ASSERT_TRUE(check.ways[0].has_value());
+  EXPECT_EQ(*check.ways[0], std::vector<std::uint32_t>{0});
+  EXPECT_EQ(check.shortBy, 1U);
 }
 
 TEST(InTurn, AGateThatTakesNoWireIsOverfilledWhenNothingLeadsRound) {
@@ -300,6 +384,46 @@ TEST(InTurn, AWireOfFixedLengthOverfillsAShortWayRatherThanTakeALongOne) {
   EXPECT_EQ(*check.ways[0], (std::vector<std::uint32_t>{1, 2}));
   EXPECT_FALSE(check.tooLong[0]);
   EXPECT_EQ(check.shortBy, 2U);
+}
+
+TEST(InTurn, MeasuresAWayFromCentreToCentreOfTheEdgesItPasses) {
+  // One bottleneck from (10,0) to (10,100): its line touches the straight
+  // way from start to end, but its centre lies 50 off it.
+  const std::vector<FlowEdge> edges = {{.chambers = {0, 1},
+                                        .capacity = 1,
+                                        .users = std::nullopt,
+                                        .from = {.x = 10.0, .y = 0.0},
+                                        .to = {.x = 10.0, .y = 100.0}}};
+  const FlowDemand wanted{.from = {0},
+                          .to = {1},
+                          .crossings = {},
+                          .longest = 1000.0,
+                          .start = {.x = 0.0, .y = 0.0},
+                          .end = {.x = 20.0, .y = 0.0}};
+  const auto check = checkInTurn(2, edges, {wanted});
+
+  ASSERT_TRUE(check.ways[0].has_value());
+  EXPECT_DOUBLE_EQ(check.lengths[0], 2.0 * std::hypot(10.0, 50.0));
+}
+
+TEST(InTurn, AWireWhoseShortWayIsFullGoesNoFurtherThanItsDetour) {
+  // The short way through edges 1 and 2 is 30 long and takes one wire,
+  // which the first wire is; the way round through edge 0 is 2 x 101. With
+  // a detour of 1.5 the second wire takes the short way and overfills it;
+  // with one of 10 it goes round.
+  FlowDemand any = ofLength(0.0);
+  any.longest.reset();
+  const auto near = checkInTurn(3, nearAndFar(1), {any, any}, 1.5);
+  ASSERT_TRUE(near.ways[1].has_value());
+  EXPECT_EQ(*near.ways[1], (std::vector<std::uint32_t>{1, 2}));
+  EXPECT_EQ(near.shortBy, 2U);
+
+  const auto far = checkInTurn(3, nearAndFar(1), {any, any}, 10.0);
+  ASSERT_TRUE(far.ways[0].has_value());
+  EXPECT_EQ(*far.ways[0], (std::vector<std::uint32_t>{1, 2}));
+  ASSERT_TRUE(far.ways[1].has_value());
+  EXPECT_EQ(*far.ways[1], std::vector<std::uint32_t>{0});
+  EXPECT_EQ(far.shortBy, 0U);
 }
 
 TEST(InTurn, RefusesAChamberOutOfRange) {

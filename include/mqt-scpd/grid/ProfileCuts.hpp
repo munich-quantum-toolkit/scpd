@@ -99,6 +99,17 @@ struct ProfileOptions {
   double sameNarrowing = 20.0;
   /// A gap narrower than this is a contact, not a gap.
   double narrowest = 3.0;
+  /// The wire clearance, when a narrowing is to be cut at its two ends:
+  /// a narrowing then runs along the wall as far as the gap holds as few
+  /// wires as at its narrowest place (its width over the clearance), and a
+  /// cut closes each end of it. 0 cuts a narrowing once, at the middle of
+  /// its narrowest stretch.
+  double clearance = 0.0;
+  /// Whether of two cuts whose lines cross only the shorter is kept.
+  bool dropCrossing = false;
+  /// Whether a cut between two walls given as lines stays where the wedge
+  /// rule would drop it.
+  bool keepEdgeWedges = false;
 };
 
 /// The bottlenecks a dynamic wall takes part in, without a medial axis.

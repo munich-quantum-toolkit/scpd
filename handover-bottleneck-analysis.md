@@ -141,16 +141,16 @@ the terminal lay in the big chamber outside instead of the one in front of it.
 
 **The slot** (user, 2026-10-07). The free cells between the two walls are the
 slot the terminal lies in; they go into `Walls::slots`, less any cell a later
-obstacle takes. The terminal cell (`Walls::terminals`, per wire: source,
-target) is the cell on the line one cell short of the end, inside the slot.
+obstacle takes. The terminal cell (`Walls::terminals`, per wire: source, target)
+is the cell on the line one cell short of the end, inside the slot.
 
-Why the slot: the medial axis runs into the space between the two walls, and
-the narrowing in front of a terminal parts into one cut from the end of each
-wall. The two cuts close the room in front of the run's open end, with the slot,
-as the terminal's own partition. Without the slot rules, the clearance from a
-wall end to the fork in front of the open end often rises less than the minimum
-rise, and neither cut is kept (`ASlotBetweenTwoThinWallsIsCutAtBothWallEnds`).
-No cut crosses a slot cell, so no cut joins the two walls of one run.
+Why the slot: the medial axis runs into the space between the two walls, and the
+narrowing in front of a terminal parts into one cut from the end of each wall.
+The two cuts close the room in front of the run's open end, with the slot, as
+the terminal's own partition. Without the slot rules, the clearance from a wall
+end to the fork in front of the open end often rises less than the minimum rise,
+and neither cut is kept (`ASlotBetweenTwoThinWallsIsCutAtBothWallEnds`). No cut
+crosses a slot cell, so no cut joins the two walls of one run.
 
 ### 2. The medial axis
 

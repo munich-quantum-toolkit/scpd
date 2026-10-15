@@ -12,37 +12,60 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Keep the gates of the capacity check apart (`grid::uncrossedBottlenecks`):
+  of two whose lines cross in the middle of either, or where one ends on the
+  middle of the other, the slot's gate stays over the mouth's, the mouth's over
+  the cut, and the shorter of two cuts over the longer. A gate beside the
+  chambers on both sides of a line it crossed let a wire over that line unpaid.
+  The mouth between two chains takes the outer lines between the slots of their
+  runs at the couplers: two where the runs stand end to end, one between the two
+  nearest tips where they stand side by side, as the two lines there ran over
+  the slots and over each other.
+- ✨ Close the mouth between two chains on to the lead of the next coupler's
+  resonator where that lead stands between the two runs: a line from the one
+  run's tip ends on the lead, and the lead, the pad and the run's flanks carry
+  the mouth on to the slot. Only a gate between a run and its own lead is
+  refused. On 33q the mouth between f5 and f6 was left out, the room inside the
+  chains ran into the room outside, and five edges had no place to cross. The
+  check's summary now names every mouth it could not close and why.
+- ✨ Keep the rules of every round of the check's review reproducible:
+  `SCPD_CHECK_ROUND` (31, the rules as they stand) turns every rule on from the
+  round that brought it, so `SCPD_CHECK_ROUND=16` checks as the check did before
+  the two stages, the rip-up, the rectangles and the gate rules. New switches
+  for the rules that had none: `SCPD_RIP_UP`, `SCPD_DETOUR_TAKERS`,
+  `SCPD_CUT_GATES_AT_WALLS`, `SCPD_UNCROSSED_GATES`; `checkInTurn` takes
+  `InTurnRules` for the sweeps and the measure of the detour.
 - ✨ Find the bottlenecks of the capacity check in the coupler insertion without
-  a medial axis (`SCPD_CAPACITY_FAST=1`, the default). `grid::profileCuts`
-  walks along the walls the insertion moves (feedline edges, coupler pads,
-  leads) and takes every persistent minimum of the gap to another wall as a
-  bottleneck: the gap to the border, the artwork and the port runs of the plain
-  wires and the resonator targets is read off two feature transforms
-  (`grid::nearestBlocked`) built once per insertion, one for the walls inside
-  the feedline ring and one for those outside; the gap between two feedline
-  edges is the distance of their middle lines less both inflations; the mouth of
-  every port run's slot is closed by a cut from each flank's open end. No
-  distance transform and no Voronoi diagram of the chip is built per check.
-  `SCPD_CAPACITY_FAST=2` runs both and logs every step where they disagree. At 1
-  the report of `SCPD_BOTTLENECKS` draws the profile cuts as well. On 17q with
-  the capacity rule a check takes 0.017-0.057 s instead of 0.40-0.51 s, the
-  insertion 58 s instead of 227 s, the two refuse the same steps on 404 of 407
-  and the final routing is the same. `grid::chambersOf` labels the chambers by
-  runs of free cells with a union-find instead of a flood (45 to 6 ms on 17q),
-  with the same chambers in the same order; `bottleneckMoves` looks only at the
-  cells near a cut's line; the capacity check keeps the border and the artwork
-  and the cells of every port run from check to check. The medial axis gives
-  every step the verdict it gave before.
+  a medial axis (`SCPD_CAPACITY_FAST=1`, the default). `grid::profileCuts` walks
+  along the walls the insertion moves (feedline edges, coupler pads, leads) and
+  takes every persistent minimum of the gap to another wall as a bottleneck: the
+  gap to the border, the artwork and the port runs of the plain wires and the
+  resonator targets is read off two feature transforms (`grid::nearestBlocked`)
+  built once per insertion, one for the walls inside the feedline ring and one
+  for those outside; the gap between two feedline edges is the distance of their
+  middle lines less both inflations; the mouth of every port run's slot is
+  closed by a cut from each flank's open end. No distance transform and no
+  Voronoi diagram of the chip is built per check. `SCPD_CAPACITY_FAST=2` runs
+  both and logs every step where they disagree. At 1 the report of
+  `SCPD_BOTTLENECKS` draws the profile cuts as well. On 17q with the capacity
+  rule a check takes 0.017-0.057 s instead of 0.40-0.51 s, the insertion 58 s
+  instead of 227 s, the two refuse the same steps on 404 of 407 and the final
+  routing is the same. `grid::chambersOf` labels the chambers by runs of free
+  cells with a union-find instead of a flood (45 to 6 ms on 17q), with the same
+  chambers in the same order; `bottleneckMoves` looks only at the cells near a
+  cut's line; the capacity check keeps the border and the artwork and the cells
+  of every port run from check to check. The medial axis gives every step the
+  verdict it gave before.
 - ✨ Move a coupler option that leaves the coupler box into it, by at most
   `SCPD_COUPLER_SHIFT` cells along each axis (20 by default; `=0` places every
   option on its place). The option is moved by what its cell outside the box
-  lacks and built again until it fits. The resonator runs from the moved tip
-  of the lead in a straight line to the first cell of its way that lies at
-  least a bend radius in front of the tip; that line must stay off the
-  artwork, the ports' approaches and the coupler's own feedline run. On 4q all
-  four couplers now stand on offset 0 near their target length, and the chain
-  makes four quarter turns (angle cost 8 against 18); the other benchmarks
-  keep their angle cost.
+  lacks and built again until it fits. The resonator runs from the moved tip of
+  the lead in a straight line to the first cell of its way that lies at least a
+  bend radius in front of the tip; that line must stay off the artwork, the
+  ports' approaches and the coupler's own feedline run. On 4q all four couplers
+  now stand on offset 0 near their target length, and the chain makes four
+  quarter turns (angle cost 8 against 18); the other benchmarks keep their angle
+  cost.
 - ✨ Find the bottlenecks of the chip the coupler insertion leaves, build the
   capacity graph they make and check whether it carries every outer wire, report
   only (`SCPD_BOTTLENECKS`, on by default). The medial axis is built over the
@@ -123,197 +146,188 @@ releases may include breaking changes.
   `SCPD_SEARCH_PICTURES=0` keeps a debug run to the pictures of the whole chip.
   `BottleneckOptions::minimumRise` drops the minima that the steps of a raster
   wall make and keeps one cut of a stretch of even width.
-- ✨ Build the fifth phase of the Final stage, the refinement of the
-  feedline routing, and make every resonator its target length in it. The
-  phase draws every wire of the ring once more with a price on the room it
-  leaves, fences three pairs of ring neighbours, and keeps the way a wire
-  had when the new one is worse; a resonator is lengthened by the meander
-  there, under `SCPD_REFINE_MEANDER` (on) rather than the sweep's
-  `SCPD_FEEDLINE_MEANDER`, because the two passes ask different questions.
-  Where a meander finds no room the search is made once more with the room
-  price taken off and the hard corridor standing, for a resonator that has
-  never reached its length — the prototype's own fallback
-  (`SCPD_REFINE_FALLBACK`, measured to buy nothing and kept only because it
-  is the prototype's). Three pairs of ring neighbours rather than one is
-  the one figure here with a measured case for it: with one pair the
-  69-qubit benchmark ends with eight resonators off their length instead of
-  one. The room price is built after the feedline
-  constraints, so the chamfer to the middle of a channel sees the walls of
-  that channel (`SCPD_REFINE_PRICE_LAST`), and the four checks of the
-  coupler insertion are said again at the end of the phase, because the
-  refinement moves feedline edges and nothing looked at the result
-  (`SCPD_REFINE_CHECKS`). **The phase is the default**:
-  `feedline_refinement_rounds` is 2, `SCPD_FEEDLINE_MEANDER` is on, and the
-  eight benchmark configs run to `stop_after = "refined"`. Over those eight
-  the stage ends at `bad` 2 instead of 8 and 6 resonators off their target
-  length instead of 102, no long anywhere and five chips clean on both
-  figures, for about twice the runtime.
-- ✨ Make a resonator its length in the feedline sweep as well, within a
-  band five times `resonator_length_tolerance` wide
-  (`SCPD_SWEEP_LENGTH_BAND`), and leave what is left to the refinement:
-  the prototype aims roughly in its sweep (`meander_insertion_proximity`)
-  and exactly in its refinement (`meander_insertion_proximity_strict`). The
-  figure the stage is judged by is unchanged — short and long are counted
-  against the tolerance itself.
-- ✨ Say why a meander found no room rather than only how many placements
-  were tried: `MeanderResult::Refusals` counts each refusal by its reason —
-  the ends not facing each other, no pair far enough apart for the legs,
-  no depth, no room beside the way, a closed cell, a self-crossing, a
-  rendering off the tolerance — and the stage's line names them with the
-  budget the pairs were drawn from.
-- ✨ Mark the resonators the Final stage left off their target length in
-  the picture, on a layer of their own under the failing one:
-  `planning.off_length` from the `Short` and `Long` verdicts, amber and
-  dashed in `plot --stage final`, layer 31 `final.off-length` in `render`.
+- ✨ Build the fifth phase of the Final stage, the refinement of the feedline
+  routing, and make every resonator its target length in it. The phase draws
+  every wire of the ring once more with a price on the room it leaves, fences
+  three pairs of ring neighbours, and keeps the way a wire had when the new one
+  is worse; a resonator is lengthened by the meander there, under
+  `SCPD_REFINE_MEANDER` (on) rather than the sweep's `SCPD_FEEDLINE_MEANDER`,
+  because the two passes ask different questions. Where a meander finds no room
+  the search is made once more with the room price taken off and the hard
+  corridor standing, for a resonator that has never reached its length — the
+  prototype's own fallback (`SCPD_REFINE_FALLBACK`, measured to buy nothing and
+  kept only because it is the prototype's). Three pairs of ring neighbours
+  rather than one is the one figure here with a measured case for it: with one
+  pair the 69-qubit benchmark ends with eight resonators off their length
+  instead of one. The room price is built after the feedline constraints, so the
+  chamfer to the middle of a channel sees the walls of that channel
+  (`SCPD_REFINE_PRICE_LAST`), and the four checks of the coupler insertion are
+  said again at the end of the phase, because the refinement moves feedline
+  edges and nothing looked at the result (`SCPD_REFINE_CHECKS`).
+  **The phase is the default**: `feedline_refinement_rounds` is 2,
+  `SCPD_FEEDLINE_MEANDER` is on, and the eight benchmark configs run to
+  `stop_after = "refined"`. Over those eight the stage ends at `bad` 2 instead
+  of 8 and 6 resonators off their target length instead of 102, no long anywhere
+  and five chips clean on both figures, for about twice the runtime.
+- ✨ Make a resonator its length in the feedline sweep as well, within a band
+  five times `resonator_length_tolerance` wide (`SCPD_SWEEP_LENGTH_BAND`), and
+  leave what is left to the refinement: the prototype aims roughly in its sweep
+  (`meander_insertion_proximity`) and exactly in its refinement
+  (`meander_insertion_proximity_strict`). The figure the stage is judged by is
+  unchanged — short and long are counted against the tolerance itself.
+- ✨ Say why a meander found no room rather than only how many placements were
+  tried: `MeanderResult::Refusals` counts each refusal by its reason — the ends
+  not facing each other, no pair far enough apart for the legs, no depth, no
+  room beside the way, a closed cell, a self-crossing, a rendering off the
+  tolerance — and the stage's line names them with the budget the pairs were
+  drawn from.
+- ✨ Mark the resonators the Final stage left off their target length in the
+  picture, on a layer of their own under the failing one: `planning.off_length`
+  from the `Short` and `Long` verdicts, amber and dashed in
+  `plot --stage final`, layer 31 `final.off-length` in `render`.
 - 🔧 Make the place the coupler cuts a resonator's way a switch,
-  `SCPD_COUPLER_BIAS` (1.0): a way the coupler leaves longer than the
-  target is a `long` verdict nothing in the stage can mend, and cutting at
-  less than the target hands the difference to the meander.
-- ✨ Close the run a terminal feedline edge has to make at its coupler to
-  every other wire: the run into the first coupler of a chain and the run
-  out of its last, five cells beyond it, inflated by the wire clearance, in
-  every search of the feedline pass but the edge's own, and in the coupler
-  insertion for every chain already settled. The launcher end was walled by
-  the port band already; the coupler end was open to every wire that is not
-  a ring neighbour of the edge, and a wire drawn across it left the edge no
-  way. `SCPD_TERMINAL_STUB_GUARD` (on) and `SCPD_TERMINAL_STUB_EXTRA` (5).
-  On the 69-qubit benchmark the feedline routing ends with 10 failing wires
-  instead of 14, and the two terminal edges that ended open now hold.
-- ✨ Fence three pairs of ring neighbours in the feedline pass rather than
-  the prototype's two, in phase 1 and at every relaxation level, the wires
-  let go of never among them: `SCPD_FEEDLINE_FENCE_PAIRS` (3). With the
-  terminal runs closed the 69-qubit benchmark ends with 5 failing wires
-  instead of 10, and the pass is a third faster.
-- ✨ Measure, at the end of the coupler insertion, the room every feedline
-  edge leaves beside it for the wires that have to pass between it and the
-  nearest qubit or tunable coupler, and mark the edges that leave too
-  little: `FinalWire.verdict` carries `Squeezed`, `note` the figures and
-  `marks` the line measured; `plot --stage final --phase couplers` draws
-  them in magenta with the line and the note, `render` on layer 30
-  `final.squeezed` (`SCPD_SQUEEZE_REPORT`, `SCPD_SQUEEZE_STEP`,
-  `SCPD_SQUEEZE_REACH`). On the 17- and 69-qubit benchmarks every marked
-  edge carries a failing wire of the feedline routing and every open wire
-  lies on a marked edge.
-- ⚡️ Tell every edge search of the chain A* how many turns its way may
-  still make and leave its prefix able to beat the cheapest complete run
-  priced so far, and drop a prefix whose bound already reaches that run
-  without pricing it (`SCPD_CHAIN_STEP_BUDGET`; `DubinsRouter::setMaxTurns`).
-  Exact: the same runs of options chain for chain, a tenth off the
-  17-qubit insertion.
-- 🔧 Price a wire let go of in a relaxation of the feedline pass within one
-  wire clearance rather than three, `SCPD_HALO_REACH` 1: the prototype's
-  own disc. On the 69-qubit benchmark one more pair of wires closes.
-- ✨ Carry the Final stage's verdict against every wire in its artifact and
-  mark the failing wires in the picture. `FinalWire.verdict` holds the bits
-  of the new `FinalVerdict` — unrouted, open, crossing, short, long, meeting
-  itself — as the stage's own count sets them on the end state; the phase
-  snapshots are not judged and carry none. `mqt-scpd plot --stage final`
-  draws every unrouted, open or crossing wire in red over the picture, names
-  it and its verdicts in a tooltip and counts them in the legend, and
-  `render` writes them on a layer of their own (`final.failing`). The two
-  length verdicts are carried and named but do not mark a wire.
-
-- ✨ Insert a CPW coupler on every resonator of the Final stage and route
-  the feedline chains through them, the prototype's
-  `run_optimized_cpw_coupler_insertion`. A resonator's way is cut where the
-  way left to the qubit port is `target_resonator_length`, and the coupler
-  sits there: the way runs the coupling length straight from the anchor,
-  turns a quarter and joins what is left; the body spans that run and the
-  feedline runs along its far edge, along the ring. Every orientation,
-  mirrored or not, with the feedline either way along the body and with
-  or without a second dogleg is an option, and a greedy local search per
-  chain takes for each coupler the option whose two feedline edges to its
-  chain neighbours turn least; an edge already chosen or drawn stands in
-  the way of every edge routed after it, the edge into a coupler and
-  the edge out of it never cross, and every edge keeps the wire clearance
-  from every resonator but its own coupler's. The chains come from the assignment, which
-  now carries them (`Assignment.chains`); the coupler carries the
-  `ResonatorSource` port the assignment left absent, and the artifact
-  carries the edges (`FinalRouting.feedlines`, `feedline_edges`) and the
-  couplers, from the `couplers` phase on ([#118]) ([**@FeldmeierMichael**])
+  `SCPD_COUPLER_BIAS` (1.0): a way the coupler leaves longer than the target is
+  a `long` verdict nothing in the stage can mend, and cutting at less than the
+  target hands the difference to the meander.
+- ✨ Close the run a terminal feedline edge has to make at its coupler to every
+  other wire: the run into the first coupler of a chain and the run out of its
+  last, five cells beyond it, inflated by the wire clearance, in every search of
+  the feedline pass but the edge's own, and in the coupler insertion for every
+  chain already settled. The launcher end was walled by the port band already;
+  the coupler end was open to every wire that is not a ring neighbour of the
+  edge, and a wire drawn across it left the edge no way.
+  `SCPD_TERMINAL_STUB_GUARD` (on) and `SCPD_TERMINAL_STUB_EXTRA` (5). On the
+  69-qubit benchmark the feedline routing ends with 10 failing wires instead of
+  14, and the two terminal edges that ended open now hold.
+- ✨ Fence three pairs of ring neighbours in the feedline pass rather than the
+  prototype's two, in phase 1 and at every relaxation level, the wires let go of
+  never among them: `SCPD_FEEDLINE_FENCE_PAIRS` (3). With the terminal runs
+  closed the 69-qubit benchmark ends with 5 failing wires instead of 10, and the
+  pass is a third faster.
+- ✨ Measure, at the end of the coupler insertion, the room every feedline edge
+  leaves beside it for the wires that have to pass between it and the nearest
+  qubit or tunable coupler, and mark the edges that leave too little:
+  `FinalWire.verdict` carries `Squeezed`, `note` the figures and `marks` the
+  line measured; `plot --stage final --phase couplers` draws them in magenta
+  with the line and the note, `render` on layer 30 `final.squeezed`
+  (`SCPD_SQUEEZE_REPORT`, `SCPD_SQUEEZE_STEP`, `SCPD_SQUEEZE_REACH`). On the 17-
+  and 69-qubit benchmarks every marked edge carries a failing wire of the
+  feedline routing and every open wire lies on a marked edge.
+- ⚡️ Tell every edge search of the chain A* how many turns its way may still
+  make and leave its prefix able to beat the cheapest complete run priced so
+  far, and drop a prefix whose bound already reaches that run without pricing it
+  (`SCPD_CHAIN_STEP_BUDGET`; `DubinsRouter::setMaxTurns`). Exact: the same runs
+  of options chain for chain, a tenth off the 17-qubit insertion.
+- 🔧 Price a wire let go of in a relaxation of the feedline pass within one wire
+  clearance rather than three, `SCPD_HALO_REACH` 1: the prototype's own disc. On
+  the 69-qubit benchmark one more pair of wires closes.
+- ✨ Carry the Final stage's verdict against every wire in its artifact and mark
+  the failing wires in the picture. `FinalWire.verdict` holds the bits of the
+  new `FinalVerdict` — unrouted, open, crossing, short, long, meeting itself —
+  as the stage's own count sets them on the end state; the phase snapshots are
+  not judged and carry none. `mqt-scpd plot --stage final` draws every unrouted,
+  open or crossing wire in red over the picture, names it and its verdicts in a
+  tooltip and counts them in the legend, and `render` writes them on a layer of
+  their own (`final.failing`). The two length verdicts are carried and named but
+  do not mark a wire.
+- ✨ Insert a CPW coupler on every resonator of the Final stage and route the
+  feedline chains through them, the prototype's
+  `run_optimized_cpw_coupler_insertion`. A resonator's way is cut where the way
+  left to the qubit port is `target_resonator_length`, and the coupler sits
+  there: the way runs the coupling length straight from the anchor, turns a
+  quarter and joins what is left; the body spans that run and the feedline runs
+  along its far edge, along the ring. Every orientation, mirrored or not, with
+  the feedline either way along the body and with or without a second dogleg is
+  an option, and a greedy local search per chain takes for each coupler the
+  option whose two feedline edges to its chain neighbours turn least; an edge
+  already chosen or drawn stands in the way of every edge routed after it, the
+  edge into a coupler and the edge out of it never cross, and every edge keeps
+  the wire clearance from every resonator but its own coupler's. The chains come
+  from the assignment, which now carries them (`Assignment.chains`); the coupler
+  carries the `ResonatorSource` port the assignment left absent, and the
+  artifact carries the edges (`FinalRouting.feedlines`, `feedline_edges`) and
+  the couplers, from the `couplers` phase on ([#118]) ([**@FeldmeierMichael**])
 - ✨ Route every wire again under the feedline constraints, the prototype's
-  feedline routing: the edges of the chains are fenced, a wire crosses an
-  edge between two couplers at a right angle only and a conventional wire
-  crosses the one edge that spans its launcher, once; the edges at the
-  launchers are hard for every wire. A resonator is drawn again from its
-  coupler and made `target_resonator_length` exactly, within
-  `resonator_length_tolerance`, by the strict meander insertion
-  (`MeanderOptions.exact`). A wire whose way already holds every rule is
-  settled without a search ([#118]) ([**@FeldmeierMichael**])
+  feedline routing: the edges of the chains are fenced, a wire crosses an edge
+  between two couplers at a right angle only and a conventional wire crosses the
+  one edge that spans its launcher, once; the edges at the launchers are hard
+  for every wire. A resonator is drawn again from its coupler and made
+  `target_resonator_length` exactly, within `resonator_length_tolerance`, by the
+  strict meander insertion (`MeanderOptions.exact`). A wire whose way already
+  holds every rule is settled without a search ([#118])
+  ([**@FeldmeierMichael**])
 - ✨ Repair the feedline routing by turning couplers, the prototype's
   `run_final_routing_feedline_choices`: while fails are left, a coupler near
-  them is turned to another of its options, what that unsettles is drawn
-  again, and the turn is kept when it leaves strictly fewer fails, up to
+  them is turned to another of its options, what that unsettles is drawn again,
+  and the turn is kept when it leaves strictly fewer fails, up to
   `repair_trials` times ([#118]) ([**@FeldmeierMichael**])
-- ✨ Refine the feedline routing, the fifth phase of the Final stage: every
-  wire of the ring and every edge at a launcher is drawn again against the
-  centring price under the feedline constraints, for
-  `feedline_refinement_rounds` rounds, zero by default for now, the prototype's
+- ✨ Refine the feedline routing, the fifth phase of the Final stage: every wire
+  of the ring and every edge at a launcher is drawn again against the centring
+  price under the feedline constraints, for `feedline_refinement_rounds` rounds,
+  zero by default for now, the prototype's
   `run_final_routing_feedline_refinement_parallel` ([#118])
   ([**@FeldmeierMichael**])
 - ✨ Count a resonator too long, a wire crossing a feedline other than at a
-  right angle, a wire that meets itself and an edge of a chain without a
-  way as fails; every `Fails:`
-  line says so, `-v 1` names them, and `-v` says where every coupler sits
-  and how long every resonator is against the target ([#118])
+  right angle, a wire that meets itself and an edge of a chain without a way as
+  fails; every `Fails:` line says so, `-v 1` names them, and `-v` says where
+  every coupler sits and how long every resonator is against the target ([#118])
   ([**@FeldmeierMichael**])
 - ✨ Treat every edge of a feedline chain alike in the design-rule check: the
   conventional and inner wires cross any of them, at a launcher or between two
-  couplers, and rule 1 binds instead between an edge and a resonator and
-  between two edges, outside the reach of a coupler the two share. The edges
-  at the launchers used to be checked against every wire, which walled off the
-  plane from the chip edge to the first coupler; the prototype excludes them
+  couplers, and rule 1 binds instead between an edge and a resonator and between
+  two edges, outside the reach of a coupler the two share. The edges at the
+  launchers used to be checked against every wire, which walled off the plane
+  from the chip edge to the first coupler; the prototype excludes them
   everywhere (`is_first_last_feedline`) ([#118]) ([**@FeldmeierMichael**])
 - ✨ Check feedline orthogonality, rule 2 of the design-rule check, by the
   router's own crossing test (`routing::CrossingConstraints`, shared by the
-  search and the check, reading a straight run off the cells rather than
-  the moves, so that the straight lead of a move that bends counts as the
-  straight run it is), and leave a resonator and the edges of its own
-  chain alone near the coupler in rules 1 and 2, where they run beside each
-  other on purpose. `mqt-scpd drc` and the tests read one view of a final
-  routing (`drc::viewOfFinal`), the feedline edges and couplers included
-  ([#118]) ([**@FeldmeierMichael**])
+  search and the check, reading a straight run off the cells rather than the
+  moves, so that the straight lead of a move that bends counts as the straight
+  run it is), and leave a resonator and the edges of its own chain alone near
+  the coupler in rules 1 and 2, where they run beside each other on purpose.
+  `mqt-scpd drc` and the tests read one view of a final routing
+  (`drc::viewOfFinal`), the feedline edges and couplers included ([#118])
+  ([**@FeldmeierMichael**])
 - ✨ Stop the Final stage after one of its five phases with
-  `[stages.final] stop_after`, which takes the same five names `--phase`
-  takes; the phases after it are not run, and asking a stopped run for a
-  phase it does not hold is an error rather than a picture of the end state
-  ([#118]) ([**@FeldmeierMichael**])
+  `[stages.final] stop_after`, which takes the same five names `--phase` takes;
+  the phases after it are not run, and asking a stopped run for a phase it does
+  not hold is an error rather than a picture of the end state ([#118])
+  ([**@FeldmeierMichael**])
 - ✨ Draw the coupler bodies in the pictures of the Final stage ([#118])
   ([**@FeldmeierMichael**])
-- ✨ Lengthen every resonator of the Final stage to `meander_length`. After
-  a resonator's search has found a way, one meander is spliced into a
-  straight run of it: the two ends of the run are turned across it by one
-  or two moves of the primitives, and one rectangular loop is built between
-  them, as deep as the missing length makes it. The loop may enter what the
-  search could enter and nothing else, so it cannot cross a neighbour the
-  way itself could not. Phase 1 takes the first placement that fits; the
-  relaxation and the refinement take the cheapest by the search's own price
-  field, as the prototype's `meander_insertion` and
-  `meander_insertion_proximity` do. The smallest loop goes as near the qubit
-  as it fits, because the source end is where the coupler is spliced in and
-  the feedline runs. A way without room for its meander is no way, so the
-  relaxation goes on, and a resonator left short keeps the way it found and
-  is tried again in the next round ([#117]) ([**@FeldmeierMichael**])
-- ✨ Count a resonator too short as a fail. The `Fails:` line of every pass
-  and of the stage says `short` beside `unrouted` and `open`, `-v 1` names
-  the wires, and every search of a resonator says what its lengthening came
-  to: the length before and after, or that there was no room and how many
-  placements were tried. `-v` ends the stage on the length of every
-  resonator — the way, the run to the port, and the two together against
-  `meander_length` ([#117]) ([**@FeldmeierMichael**])
+- ✨ Lengthen every resonator of the Final stage to `meander_length`. After a
+  resonator's search has found a way, one meander is spliced into a straight run
+  of it: the two ends of the run are turned across it by one or two moves of the
+  primitives, and one rectangular loop is built between them, as deep as the
+  missing length makes it. The loop may enter what the search could enter and
+  nothing else, so it cannot cross a neighbour the way itself could not. Phase 1
+  takes the first placement that fits; the relaxation and the refinement take
+  the cheapest by the search's own price field, as the prototype's
+  `meander_insertion` and `meander_insertion_proximity` do. The smallest loop
+  goes as near the qubit as it fits, because the source end is where the coupler
+  is spliced in and the feedline runs. A way without room for its meander is no
+  way, so the relaxation goes on, and a resonator left short keeps the way it
+  found and is tried again in the next round ([#117]) ([**@FeldmeierMichael**])
+- ✨ Count a resonator too short as a fail. The `Fails:` line of every pass and
+  of the stage says `short` beside `unrouted` and `open`, `-v 1` names the
+  wires, and every search of a resonator says what its lengthening came to: the
+  length before and after, or that there was no room and how many placements
+  were tried. `-v` ends the stage on the length of every resonator — the way,
+  the run to the port, and the two together against `meander_length` ([#117])
+  ([**@FeldmeierMichael**])
 - ✨ Carry the length of every wire in the Final stage's artifact.
   `FinalWire.length` is the rendered length of the way in layout units, the
-  exact curves of its bends and not the cells they sweep, so that a reader
-  can check a resonator against `meander_length` without the primitives
-  ([#117]) ([**@FeldmeierMichael**])
+  exact curves of its bends and not the cells they sweep, so that a reader can
+  check a resonator against `meander_length` without the primitives ([#117])
+  ([**@FeldmeierMichael**])
 - ✨ Set `meander_length` per benchmark to the prototype's own figure: 2500
-  layout units on the 4-qubit chip, 4000 on the 21-qubit chip, 6000 from
-  the 33-qubit chip up, and the default of 3000 on the 9- and 17-qubit
-  chips ([#117]) ([**@FeldmeierMichael**])
+  layout units on the 4-qubit chip, 4000 on the 21-qubit chip, 6000 from the
+  33-qubit chip up, and the default of 3000 on the 9- and 17-qubit chips
+  ([#117]) ([**@FeldmeierMichael**])
 - ✨ Add the Final stage: every wire of the plan drawn again as
-  curvature-constrained copper over the Dubins primitives of one bend radius,
-  on a grid whose cell is about ten layout units. The stage runs five phases —
-  the inner circuit, the ring, the couplers, the feedline chains and their
+  curvature-constrained copper over the Dubins primitives of one bend radius, on
+  a grid whose cell is about ten layout units. The stage runs five phases — the
+  inner circuit, the ring, the couplers, the feedline chains and their
   refinement — and leaves a snapshot after each, so that one artifact carries
   what every phase drew ([#117]) ([**@FeldmeierMichael**])
 - ✨ Run every routing phase from one driver. The prototype writes the same
@@ -321,99 +335,94 @@ releases may include breaking changes.
   only in their parameters ([#117]) ([**@FeldmeierMichael**])
 - ✨ Count the wire spacing between **every** pair of wires the Final stage
   draws. A search is fenced in as the prototype's is — by the two ring
-  neighbours inflated by the clearance, and by nothing else — while the fails
-  of a pass are counted on a field that carries how many wires guard each
-  cell, so the count against two hundred wires costs what the count against
-  two cost ([#117]) ([**@FeldmeierMichael**])
+  neighbours inflated by the clearance, and by nothing else — while the fails of
+  a pass are counted on a field that carries how many wires guard each cell, so
+  the count against two hundred wires costs what the count against two cost
+  ([#117]) ([**@FeldmeierMichael**])
 - ✨ Block everything between the chip outline and the rectangle the launcher
-  slots stand on. A wire that enters that strip comes back in somewhere else
-  and has gone around the sources of the wires beside it, which is a crossing
-  the plan never allowed; where the edge of the routable space is, is derived
-  from the sources rather than given as a cell count ([#117])
+  slots stand on. A wire that enters that strip comes back in somewhere else and
+  has gone around the sources of the wires beside it, which is a crossing the
+  plan never allowed; where the edge of the routable space is, is derived from
+  the sources rather than given as a cell count ([#117])
   ([**@FeldmeierMichael**])
-- ✨ Bake the obstacle keepout into the router grid's mask, so that every cell
-  a search may enter satisfies `min_obstacle_spacing` by construction. The
+- ✨ Bake the obstacle keepout into the router grid's mask, so that every cell a
+  search may enter satisfies `min_obstacle_spacing` by construction. The
   distance is measured exactly, from the cell to the polygon edge in layout
-  units, and the prototype's `FG_OBSTACLE_INFLATE` override is not carried
-  over ([#117]) ([**@FeldmeierMichael**])
+  units, and the prototype's `FG_OBSTACLE_INFLATE` override is not carried over
+  ([#117]) ([**@FeldmeierMichael**])
 - ✨ Add the design-rule check in the cell view: wire clearance and wire loop,
-  each written once and called by the stage's own tests, so that what the
-  stage is judged by and what the checker reports cannot drift apart ([#117])
+  each written once and called by the stage's own tests, so that what the stage
+  is judged by and what the checker reports cannot drift apart ([#117])
   ([**@FeldmeierMichael**])
 - ✨ Report what a routing stage is doing while it runs: `mqt-scpd plan -v`
   prints one line per round of the Corridor, Detail and Final stages, with how
   many wires were tried, how many settled, how many are unrouted and how many
-  open. It is a callback and not a report, because on the largest chip the
-  Final stage is minutes of work and what it is doing is only useful live;
-  nothing is printed from the core ([#117]) ([**@FeldmeierMichael**])
-- ✨ End every routing stage on a `Fails:` line. A fail is a wire without a
-  way of its own or a wire whose way comes within the rule of another, counted
-  with every wire down and by the design-rule check's own test, so the last
-  line of a stage says what `mqt-scpd drc` will find ([#117])
-  ([**@FeldmeierMichael**])
+  open. It is a callback and not a report, because on the largest chip the Final
+  stage is minutes of work and what it is doing is only useful live; nothing is
+  printed from the core ([#117]) ([**@FeldmeierMichael**])
+- ✨ End every routing stage on a `Fails:` line. A fail is a wire without a way
+  of its own or a wire whose way comes within the rule of another, counted with
+  every wire down and by the design-rule check's own test, so the last line of a
+  stage says what `mqt-scpd drc` will find ([#117]) ([**@FeldmeierMichael**])
 - ♻️ Fence a search of the Final stage as the prototype's `run_final_routing`
-  does, and by nothing else: the band around the way the wire has, less the
-  two ring neighbours inflated by the clearance; then the relaxation along
-  the sweep, which lets go of one more wire ahead per level — a wire let go
-  of is no obstacle, because it is drawn again afterwards — fences with the
-  last wire let go of and the neighbour on the other side, prices everything
-  outside the lane between the two ring neighbours and the wires let go of at
-  growing distances, and takes the way it finds. The verdict against the
-  field, the relaxation against the sweep, the targeted rip and the rescue
-  are gone ([#117]) ([**@FeldmeierMichael**])
-- 🐛 Forgive a clearance encounter only where two wires actually meet. Two
-  wires that end on one component were forgiven near their ports by the
-  check, the count and the router's fence alike, on the assumption that a
-  component's ports sit closer together than the wire spacing; the two ports
-  of a qubit can sit nine hundred units apart, and a wire passed the other's
-  approach at 140 units unreported. A junction is now geometry alone, two
-  terminals within the clearance of each other ([#117])
+  does, and by nothing else: the band around the way the wire has, less the two
+  ring neighbours inflated by the clearance; then the relaxation along the
+  sweep, which lets go of one more wire ahead per level — a wire let go of is no
+  obstacle, because it is drawn again afterwards — fences with the last wire let
+  go of and the neighbour on the other side, prices everything outside the lane
+  between the two ring neighbours and the wires let go of at growing distances,
+  and takes the way it finds. The verdict against the field, the relaxation
+  against the sweep, the targeted rip and the rescue are gone ([#117])
   ([**@FeldmeierMichael**])
-- 🐛 Route a wire to the first cell the straight-length rule allows. The
-  target of a port sat two cells beyond the port's band, and the band ran to
-  the rule's length, so the straight run into a port exceeded
-  `min_straight_length` by twenty units along an axis and thirty along a
-  diagonal. The band now ends on the cell before the first cell whose centre
-  lies the rule's length from the port's own position, and the dig takes
-  that cell rather than the one after it, so the excess is less than one
-  step. With it the 17- and 21-qubit chips route with no fail ([#117])
+- 🐛 Forgive a clearance encounter only where two wires actually meet. Two wires
+  that end on one component were forgiven near their ports by the check, the
+  count and the router's fence alike, on the assumption that a component's ports
+  sit closer together than the wire spacing; the two ports of a qubit can sit
+  nine hundred units apart, and a wire passed the other's approach at 140 units
+  unreported. A junction is now geometry alone, two terminals within the
+  clearance of each other ([#117]) ([**@FeldmeierMichael**])
+- 🐛 Route a wire to the first cell the straight-length rule allows. The target
+  of a port sat two cells beyond the port's band, and the band ran to the rule's
+  length, so the straight run into a port exceeded `min_straight_length` by
+  twenty units along an axis and thirty along a diagonal. The band now ends on
+  the cell before the first cell whose centre lies the rule's length from the
+  port's own position, and the dig takes that cell rather than the one after it,
+  so the excess is less than one step. With it the 17- and 21-qubit chips route
+  with no fail ([#117]) ([**@FeldmeierMichael**])
+- ✨ Price the approaches of the wires around a relaxed search ten times over. A
+  wire let go of is crossable, but the straight run out of its source and the
+  run into its target are the two places it cannot be drawn anywhere else; a way
+  through either took them for good. Each is priced as a port band is shaped,
+  the straight length long and two wire clearances wide ([#117])
   ([**@FeldmeierMichael**])
-- ✨ Price the approaches of the wires around a relaxed search ten times over.
-  A wire let go of is crossable, but the straight run out of its source and
-  the run into its target are the two places it cannot be drawn anywhere
-  else; a way through either took them for good. Each is priced as a port
-  band is shaped, the straight length long and two wire clearances wide
-  ([#117]) ([**@FeldmeierMichael**])
 - ✨ Start every pass of the Final stage from the ways the Detail stage drew.
-  The sweep is a rip-up and re-route, and a rip-up needs something to rip:
-  every wire is put down on its Detail way, joined on the router grid with its
-  straight stub in front, before the first search, and a wire that finds no
-  way of its own keeps that seed. No wire is ever without a way; a wire still
-  on its seed when the rounds end is unrouted, and the artifact carries no
-  cells for it, as the prototype drops the path of a wire it could not route
+  The sweep is a rip-up and re-route, and a rip-up needs something to rip: every
+  wire is put down on its Detail way, joined on the router grid with its
+  straight stub in front, before the first search, and a wire that finds no way
+  of its own keeps that seed. No wire is ever without a way; a wire still on its
+  seed when the rounds end is unrouted, and the artifact carries no cells for
+  it, as the prototype drops the path of a wire it could not route ([#117])
+  ([**@FeldmeierMichael**])
+- 🐛 Count a committed way of the Final stage by the rule in layout units. The
+  figure was declared and never set, so the stage never counted a wire too close
+  to another and its "too close" count could not agree with `mqt-scpd drc`
   ([#117]) ([**@FeldmeierMichael**])
-- 🐛 Count a committed way of the Final stage by the rule in layout units.
-  The figure was declared and never set, so the stage never counted a wire
-  too close to another and its "too close" count could not agree with
-  `mqt-scpd drc` ([#117]) ([**@FeldmeierMichael**])
-- ✨ Say what every search of the Final stage came to: `mqt-scpd plan -v 1`
-  adds one line per wire and search — found in phase 1, or which neighbour
-  each relaxation level let go of and whether it helped — names the picture
-  of the search when `-d` is on, and ends every pass on which wires are
-  unrouted, which open, and what each round came to wire by wire ([#117])
+- ✨ Say what every search of the Final stage came to: `mqt-scpd plan -v 1` adds
+  one line per wire and search — found in phase 1, or which neighbour each
+  relaxation level let go of and whether it helped — names the picture of the
+  search when `-d` is on, and ends every pass on which wires are unrouted, which
+  open, and what each round came to wire by wire ([#117])
   ([**@FeldmeierMichael**])
 - ✨ Draw what the Final stage looks at: `mqt-scpd plan -d` writes the router
-  grid — artwork and keepout, the obstacle halo, every port as the chip
-  carries it, every seed, every source and target with its heading — and
-  then one picture per search into
-  `<run>/debug/`, named after the pass, the round, the wire and the kind of
-  search, showing the band, the fence, the prices, the neighbours, the wires
-  let go of and the way found. Like the progress it is a callback, so the
-  core writes no file ([#117]) ([**@FeldmeierMichael**])
+  grid — artwork and keepout, the obstacle halo, every port as the chip carries
+  it, every seed, every source and target with its heading — and then one
+  picture per search into `<run>/debug/`, named after the pass, the round, the
+  wire and the kind of search, showing the band, the fence, the prices, the
+  neighbours, the wires let go of and the way found. Like the progress it is a
+  callback, so the core writes no file ([#117]) ([**@FeldmeierMichael**])
 - ✨ Render the Final stage: `plot --stage final --phase <name>` draws one
   phase, and `render --stage final` writes all five on layers of their own, so
   one GDS shows every phase ([#117]) ([**@FeldmeierMichael**])
-
 - ✨ Add the Detail stage: every wire of the plan is drawn cell by cell on the
   detail grid, eight-connected, inside the partitions its corridor names, and no
   two wires share a cell ([#116]) ([**@FeldmeierMichael**])
@@ -434,8 +443,8 @@ releases may include breaking changes.
   polyline of its bends, and `render --stage detail` writes the same on layers
   of its own ([#116]) ([**@FeldmeierMichael**])
 - ✨ Draw the clearance a wire is entitled to: a band around every routed wire,
-  translucent in the SVG and a path on a layer of its own in the GDS, so that two
-  wires closer than the clearance are two bands that overlap. The band is
+  translucent in the SVG and a path on a layer of its own in the GDS, so that
+  two wires closer than the clearance are two bands that overlap. The band is
   `min_wire_spacing` as the router converts it to whole cells, not the rule
   itself, because a router that works in cells cannot keep a distance the cells
   do not divide ([#116]) ([**@FeldmeierMichael**])
@@ -469,10 +478,10 @@ releases may include breaking changes.
 - ✨ Relax the corridor a wire is re-routed in, letting go of the wire ahead of
   it one place further along each time and steering the search with the price of
   leaving the room between its two neighbours rather than forbidding it. Without
-  it the clearance around those two covers the way most wires have, and they keep
-  the corners their pieces met at ([#116]) ([**@FeldmeierMichael**])
-- ✅ Check, over every benchmark chip, that every connection is drawn and that no
-  two wires come within the design rule of each other — the inner circuit
+  it the clearance around those two covers the way most wires have, and they
+  keep the corners their pieces met at ([#116]) ([**@FeldmeierMichael**])
+- ✅ Check, over every benchmark chip, that every connection is drawn and that
+  no two wires come within the design rule of each other — the inner circuit
   included. A wire that runs too close counts exactly as a wire that was never
   drawn ([#116]) ([**@FeldmeierMichael**])
 - ✨ Add the Corridor stage: every assigned connection is routed through the
@@ -486,11 +495,11 @@ releases may include breaking changes.
 - 🐛 Refuse a wire that runs over a point where another wire's chord ends: the
   point it is fed at, the cell of its target port, or a crossing slot. A feed
   point or a port cell cannot be moved aside. A chord runs over a slot only
-  where it lies along that slot's border, so the wire crossing there crosses
-  the chord as well. The crossing test cannot see either case — a chord that
-  stops on another one never reaches its far side — so a wire could run down a
-  whole line of feed points, or along a border past another wire's slots, with
-  no crossing reported ([#115]) ([**@FeldmeierMichael**])
+  where it lies along that slot's border, so the wire crossing there crosses the
+  chord as well. The crossing test cannot see either case — a chord that stops
+  on another one never reaches its far side — so a wire could run down a whole
+  line of feed points, or along a border past another wire's slots, with no
+  crossing reported ([#115]) ([**@FeldmeierMichael**])
 - ✨ Render the Corridor stage: `plot --stage corridor` draws every wire's way
   through the partitions and every crossing slot, taken or free, and
   `render --stage corridor` writes the same on layers of its own ([#115])
@@ -503,8 +512,8 @@ releases may include breaking changes.
   comment already denied ([#115]) ([**@FeldmeierMichael**])
 - ✨ Let a target that no partition border reaches leave along its own port's
   approach. The capacity grid does not open the band it stamps, so a port the
-  band and the artwork close around sat in a pocket no wire could leave
-  ([#115]) ([**@FeldmeierMichael**])
+  band and the artwork close around sat in a pocket no wire could leave ([#115])
+  ([**@FeldmeierMichael**])
 - ✨ Add `[stages.capacity] crossing_pitch`: how finely a partition border is
   divided into places a wire may cross. It is a planning figure and not a
   clearance rule ([#115]) ([**@FeldmeierMichael**])
@@ -526,68 +535,65 @@ releases may include breaking changes.
   and on 57q its second edge f33 had no way.
 - 🐛 Keep the edges of one chain from crossing in the coupler insertion. The
   first and last edge of a chain fence every edge of it again
-  (`SCPD_TERMINAL_EDGES_FENCE_ALL`, on by default); on 69q chain 2's f15
-  had run over f13. The slots at an edge's two ends no longer open the
-  copper of an earlier edge of its chain, and `CHECK chain crossings` says
-  after the insertion and after the feedline pass how many pairs of one
-  chain cross.
-- 🐛 Test a remembered edge of the prefix search against the prefix that
-  stands and route it again when the prefix runs into it; the memo key
-  holds the pair of options but not the prefix, so a way found under one
-  prefix was priced under another. A step that may lay its end pair the
-  other way round gets no step budget, so a budget cut-off no longer starts
-  the reorder and marks the answer as not optimal.
-- 🐛 Refuse a coupler place whose way left over, with the lead, is longer
-  than the target length; the overshoot test left the lead out. Refuse an
-  option whose feedline run, as long as the edge search forces it, meets the
-  artwork or a port's approach. Break ties of the nearest launcher by port
-  number and of the places by their index, keep the greedy on the first of
-  equal options, put the fence flag back where it was after the commit's
-  test, and keep the bend penalty of an edge inside 16 bits.
-- 🐛 Let the meander reach the near end of a resonator's way again. The
-  cells it leaves alone at the start were `coupler_length` plus the
-  straight start plus four, where the straight start is the second run
-  after the coupler's lead that `SCPD_RESONATOR_STUB` took away on
-  2026-10-03 — the margin did not follow. On the 4-qubit benchmark that
-  reserved 35 of the 70 straight cells of a 111-cell way while a loop needs
-  35 cells of span between its two ends, so every one of the 4760
-  placements tried was refused for want of span and not one for want of
-  room. The margin is `coupler_length + 4` now
-  (`SCPD_MEANDER_MARGIN_STUB`, `SCPD_MEANDER_START_MARGIN`,
-  `SCPD_MEANDER_LEG_SPACING`), and the chip ends with no failing wire and
-  no resonator off its length.
+  (`SCPD_TERMINAL_EDGES_FENCE_ALL`, on by default); on 69q chain 2's f15 had run
+  over f13. The slots at an edge's two ends no longer open the copper of an
+  earlier edge of its chain, and `CHECK chain crossings` says after the
+  insertion and after the feedline pass how many pairs of one chain cross.
+- 🐛 Test a remembered edge of the prefix search against the prefix that stands
+  and route it again when the prefix runs into it; the memo key holds the pair
+  of options but not the prefix, so a way found under one prefix was priced
+  under another. A step that may lay its end pair the other way round gets no
+  step budget, so a budget cut-off no longer starts the reorder and marks the
+  answer as not optimal.
+- 🐛 Refuse a coupler place whose way left over, with the lead, is longer than
+  the target length; the overshoot test left the lead out. Refuse an option
+  whose feedline run, as long as the edge search forces it, meets the artwork or
+  a port's approach. Break ties of the nearest launcher by port number and of
+  the places by their index, keep the greedy on the first of equal options, put
+  the fence flag back where it was after the commit's test, and keep the bend
+  penalty of an edge inside 16 bits.
+- 🐛 Let the meander reach the near end of a resonator's way again. The cells it
+  leaves alone at the start were `coupler_length` plus the straight start plus
+  four, where the straight start is the second run after the coupler's lead that
+  `SCPD_RESONATOR_STUB` took away on 2026-10-03 — the margin did not follow. On
+  the 4-qubit benchmark that reserved 35 of the 70 straight cells of a 111-cell
+  way while a loop needs 35 cells of span between its two ends, so every one of
+  the 4760 placements tried was refused for want of span and not one for want of
+  room. The margin is `coupler_length + 4` now (`SCPD_MEANDER_MARGIN_STUB`,
+  `SCPD_MEANDER_START_MARGIN`, `SCPD_MEANDER_LEG_SPACING`), and the chip ends
+  with no failing wire and no resonator off its length.
 
 ### Changed
 
 - ⚡ Give the prefix search of the coupler insertion 20 s per chain by default
-  instead of 10 s (`SCPD_CHAIN_ASTAR_SECONDS`). In 10 s, chain 3 of 45q
-  reaches no complete run of options, and one of its feedline edges is not
-  drawn. With 20 s, every edge is drawn and 45q ends with no bad wire; 30, 60
-  and 120 s give the same run.
+  instead of 10 s (`SCPD_CHAIN_ASTAR_SECONDS`). In 10 s, chain 3 of 45q reaches
+  no complete run of options, and one of its feedline edges is not drawn. With
+  20 s, every edge is drawn and 45q ends with no bad wire; 30, 60 and 120 s give
+  the same run.
 - ⚡ Give both refinements of the Final stage a band of their own,
   `refinement_corridor_spacings` (6 wire spacings by default; `0` takes
   `corridor_spacings`). A refinement moves a way that already stands, and its
   search, its corridor and its room price grow with the band: with 6 instead of
-  the 42 most benchmarks set for the sweep, every benchmark ends with no bad
-  and no long wire, and the two refinements on 45q take 60 instead of 103 s.
+  the 42 most benchmarks set for the sweep, every benchmark ends with no bad and
+  no long wire, and the two refinements on 45q take 60 instead of 103 s.
 - ⚡ Make the searches of the Final stage cheaper with the same result.
-  `DubinsRouter::attachCorridor` packs again only the words of the corridor
-  that changed since the last packing; the room price of the refinement is
-  computed inside the box of the corridor's open cells; the free strip of a
-  meander along an axis reads the free depth of each cell once per insertion
-  (`DubinsRouter::FreeStripMemo`). The artifacts of all eight benchmarks are
-  the same byte for byte, and 69q runs to the end of the feedline refinement
-  in 623 instead of 774 s.
-- 🔧 Turn the capacity rule of the coupler insertion (`SCPD_CAPACITY_RULE`),
-  the profile cuts (`SCPD_CAPACITY_FAST=1`) and the bottleneck report
+  `DubinsRouter::attachCorridor` packs again only the words of the corridor that
+  changed since the last packing; the room price of the refinement is computed
+  inside the box of the corridor's open cells; the free strip of a meander along
+  an axis reads the free depth of each cell once per insertion
+  (`DubinsRouter::FreeStripMemo`). The artifacts of all eight benchmarks are the
+  same byte for byte, and 69q runs to the end of the feedline refinement in 623
+  instead of 774 s.
+- 🔧 Turn the capacity rule of the coupler insertion (`SCPD_CAPACITY_RULE`), the
+  profile cuts (`SCPD_CAPACITY_FAST=1`) and the bottleneck report
   (`SCPD_BOTTLENECKS`) on by default. With them every benchmark ends the
   feedline routing with no bad wire.
-- 🐛 Judge a cell of a wire by the crossing rule on the heading it arrives
-  with as well as its own (`CrossingConstraints::allowedArriving`), in the
-  Final stage's count and in the design-rule check: the search tests every
-  cell of a move on the heading the move starts on, so a wire that crossed a
-  feedline straight and turned on the last cell of the band was counted
-  crossing although it kept the right angle for the whole band.
+- 🐛 Judge a cell of a wire by the crossing rule on the heading it arrives with
+  as well as its own (`CrossingConstraints::allowedArriving`), in the Final
+  stage's count and in the design-rule check: the search tests every cell of a
+  move on the heading the move starts on, so a wire that crossed a feedline
+  straight and turned on the last cell of the band was counted crossing although
+  it kept the right angle for the whole band.
 - ⚡ Compute `grid::squaredDistanceTransform` in time linear in the cells, as
   the lower envelope of one parabola per row (Felzenszwalb and Huttenlocher).
   The values are the same; on the 17-qubit chip the bottleneck analysis spends

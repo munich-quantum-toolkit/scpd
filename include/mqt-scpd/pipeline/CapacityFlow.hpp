@@ -55,9 +55,9 @@ struct FlowDemand {
   /// for a wire that crosses no feedline edge.
   std::vector<std::vector<std::uint32_t>> crossings;
   /// How long its way may be, in cells, for a wire whose length is fixed (a
-  /// resonator), against the least a way can run: from `start` to the line
-  /// of the first edge it passes, from line to line, and from the last line
-  /// to `end`. Nothing for a wire of any length.
+  /// resonator), against the length of a way: from `start` to the centre of
+  /// the line of the first edge it passes, from centre to centre, and from
+  /// the last centre to `end`. Nothing for a wire of any length.
   std::optional<double> longest;
   FlowPoint start;
   FlowPoint end;
@@ -90,6 +90,10 @@ struct FlowCheck {
   /// Per demand from `checkInTurn`: whether it has no way only because
   /// every way it has is longer than `longest`.
   std::vector<bool> tooLong;
+  /// How many sweeps `checkInTurn` made over the demands: one in their
+  /// order, and one more each time a demand overfilled an edge and a sweep
+  /// could still move one.
+  std::uint32_t sweeps = 1;
 };
 
 /// How many wires a gap of `cells` holds: its length over the wire
@@ -127,6 +131,18 @@ wiresThroughGap(double cells, double clearance);
     std::uint32_t chambers, const std::vector<FlowEdge>& edges,
     const std::vector<FlowDemand>& demands, const milp::SolveOptions& options);
 
+/// How `checkInTurn` routes, where a rule has an earlier form: the rules of
+/// the rounds before the rip-up (round 22) and before the detour measured
+/// over the gates that take a wire (round 25).
+struct InTurnRules {
+  /// How many sweeps over the demands at most: one routes every demand once
+  /// and rips nothing up.
+  std::uint32_t mostSweeps = 8;
+  /// Whether a demand's detour is measured against its shortest way over
+  /// the gates that take a wire at all; else over any gate, as before.
+  bool detourOverTakers = true;
+};
+
 /// Whether a capacity graph carries every demand, routed one after another
 /// (user, 2026-10-08).
 ///
@@ -138,22 +154,47 @@ wiresThroughGap(double cells, double clearance);
 /// fewest edges whatever the capacities, and the edges it overfills have
 /// overflow. A demand with no way at all has no way in the answer.
 ///
-/// A demand with a `longest` takes its shortest way instead, measured as
-/// the least a wire on it can run: straight from line to line of the edges
-/// it passes (user, 2026-10-09). A way longer than `longest` is no way for
-/// it: when even its shortest way whatever the capacities is longer, it has
-/// no way and `tooLong` says so. A demand refused for its length cannot be
-/// routed through those edges at all.
+/// A demand with a `longest` takes its shortest way instead, measured
+/// straight from centre to centre of the lines of the edges it passes (user,
+/// 2026-10-13; from line to line before, 2026-10-09). A way longer than
+/// `longest` is no way for it: when even its shortest way whatever the
+/// capacities is longer, it has no way and `tooLong` says so. A demand
+/// refused for its length cannot be routed through those edges at all.
+///
+/// With a `detour` above zero, a demand without a `longest` takes its
+/// shortest way within the capacities instead, measured as above, and only
+/// when it is no longer than `detour` times its shortest way over the
+/// edges that take a wire at all, whatever their load (user, 2026-10-14);
+/// else it takes that shortest way and overfills its edges. A gate that
+/// takes no wire is no way to measure by; only a demand that cannot pass
+/// without one is measured against, and sent over, its shortest way at
+/// all. A wire whose short way is full does not go round the chip in the
+/// check, as no routing takes it round the chip either.
+///
+/// After the first sweep the demands that overfill an edge are ripped up
+/// and routed again, as the feedline routing does with its wires (user,
+/// 2026-10-14): a sweep backward over the demands, then forward, and so on,
+/// each taking every such demand off its way and routing it again within
+/// the capacities. When it has no way within them, every demand on an edge
+/// its way would overfill is taken off in turn and routed again within the
+/// capacities off that edge, and then the demand once more. The sweeps end
+/// when no demand overfills an edge, when a sweep moves nothing, or after
+/// `rules.mostSweeps`, eight by default. `sweeps` counts them.
 ///
 /// No overflow says that the graph carries every demand. Overflow says only
-/// that this order does not: another order of the demands may carry them.
+/// that these sweeps do not: another order of the demands may carry them.
 ///
 /// @param chambers How many chambers there are; they are numbered from zero.
+/// @param detour How many times its shortest way a demand's way within the
+/// capacities may run; 0 takes the way with the fewest edges, as before.
+/// @param rules The sweeps and the measure of the detour; the defaults are
+/// the rules as they stand.
 /// @throws std::invalid_argument when an edge or a demand names a chamber
 /// out of range, an edge a demand that does not exist, or a demand an edge
 /// to cross that does not exist or more than `MAX_CROSSINGS` groups.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT FlowCheck
 checkInTurn(std::uint32_t chambers, const std::vector<FlowEdge>& edges,
-            const std::vector<FlowDemand>& demands);
+            const std::vector<FlowDemand>& demands, double detour = 0.0,
+            InTurnRules rules = {});
 
 } // namespace mqt::scpd::pipeline

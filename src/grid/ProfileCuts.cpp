@@ -25,6 +25,7 @@
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -77,7 +78,14 @@ struct Profile {
 /// one width counts once, at its middle. A place without a gap ends a walk
 /// as a rise does, and so does a change of the wall across where the gap
 /// does not fall; the end of an open profile ends it without one.
-std::vector<std::size_t> narrowings(const Profile& profile, const double rise) {
+///
+/// With a `clearance`, a minimum is the narrowing it lies in instead: the
+/// places on both sides of it, to the same wall, whose gap holds as many
+/// wires as the minimum's, its width over the clearance. Both ends of the
+/// narrowing are found, so that a long channel no wire fits is closed at
+/// its mouths and not in its middle (user, 2026-10-13).
+std::vector<std::size_t> narrowings(const Profile& profile, const double rise,
+                                    const double clearance) {
   const auto& gap = profile.gap;
   const auto n = gap.size();
   std::vector<std::size_t> found;
@@ -197,7 +205,32 @@ std::vector<std::size_t> narrowings(const Profile& profile, const double rise) {
         !rises(last, true, width, partner)) {
       continue;
     }
-    found.push_back((first + ((length - 1) / 2)) % n);
+    if (clearance <= 0.0) {
+      found.push_back((first + ((length - 1) / 2)) % n);
+      continue;
+    }
+    const auto holds = [&](const double cells) {
+      return std::floor(std::max(0.0, cells) / clearance);
+    };
+    const auto fewest = holds(width);
+    const auto within = [&](const std::size_t other) {
+      return std::isfinite(gap[other]) && profile.partner[other] == partner &&
+             holds(gap[other]) <= fewest;
+    };
+    auto start = first;
+    auto end = last;
+    for (std::size_t next = 0, walked = length;
+         walked < n && step(start, false, next) && within(next); ++walked) {
+      start = next;
+    }
+    for (std::size_t next = 0, walked = length;
+         walked < n && step(end, true, next) && within(next); ++walked) {
+      end = next;
+    }
+    found.push_back(start);
+    if (end != start) {
+      found.push_back(end);
+    }
   }
   return found;
 }
@@ -519,7 +552,8 @@ private:
       profile.partner[at] = partner;
       site[at] = nearest;
     }
-    for (const auto at : narrowings(profile, options_.minimumRise)) {
+    for (const auto at :
+         narrowings(profile, options_.minimumRise, options_.clearance)) {
       const auto cell = outline[at];
       if (const auto cut =
               cutBetween(xOf(cell), yOf(cell), wall.wall, xOf(site[at]),
@@ -585,7 +619,8 @@ private:
     if (!any) {
       return;
     }
-    for (const auto at : narrowings(profile, options_.minimumRise)) {
+    for (const auto at :
+         narrowings(profile, options_.minimumRise, options_.clearance)) {
       const auto [px, py] = one.dense[at];
       const auto [qx, qy] = foot[at];
       if (const auto cut =
@@ -703,7 +738,9 @@ private:
   /// Where two walls touch, the gap between them only widens away from the
   /// contact, and a minimum in the wedge is no bottleneck; so too where
   /// both touch a third dynamic wall, as two edges of a chain do at their
-  /// coupler.
+  /// coupler. A flank of a port run is no side of a wedge: a resonator's
+  /// lead and an edge of its coupler touch at the pad, and the gap between
+  /// them is the one the resonator leaves its lead by (user, 2026-10-13).
   void dropWedges() {
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::vector<std::size_t>>
         contacts;
@@ -728,6 +765,61 @@ private:
         }
       }
     }
+    // Whether the gap between `a` and `b` rises between the cut and where
+    // `a` touches `third` (`b` itself, or a third wall both touch): then the
+    // cut is a neck of its own, not the narrow end of the wedge the walls
+    // make (user, 2026-10-13). Two edges of a chain that close in again
+    // near their coupler leave such a neck.
+    const auto neckBefore = [&](const std::uint32_t a, const std::uint32_t b,
+                                const std::uint32_t third, const Cut& cut) {
+      const auto found = contacts.find(std::minmax(a, third));
+      if (a >= indexOf_.size() || b >= indexOf_.size() ||
+          indexOf_[a] == NO_INDEX || indexOf_[b] == NO_INDEX ||
+          found == contacts.end()) {
+        return false;
+      }
+      const auto& one = walls_[indexOf_[a]];
+      const auto& other = walls_[indexOf_[b]];
+      if (one.dense.empty() || other.dense.empty()) {
+        return false;
+      }
+      const auto gapAt = [&](const Point& at) {
+        double best = INFINITE;
+        for (const auto& point : other.dense) {
+          best = std::min(best, std::hypot(at.first - point.first,
+                                           at.second - point.second));
+        }
+        return best - one.radius - other.radius;
+      };
+      const auto nearest = [&](const std::size_t cell) {
+        const auto x = static_cast<double>(xOf(cell));
+        const auto y = static_cast<double>(yOf(cell));
+        std::size_t best = 0;
+        for (std::size_t at = 1; at < one.dense.size(); ++at) {
+          if (std::hypot(one.dense[at].first - x, one.dense[at].second - y) <
+              std::hypot(one.dense[best].first - x,
+                         one.dense[best].second - y)) {
+            best = at;
+          }
+        }
+        return best;
+      };
+      const auto contact = *std::ranges::min_element(
+          found->second, {},
+          [&](const std::size_t cell) { return distance(cell, cut.first); });
+      const auto from = nearest(cut.first);
+      const auto to = nearest(contact);
+      const auto base = gapAt(one.dense[from]);
+      const auto step = from <= to ? std::ptrdiff_t{1} : std::ptrdiff_t{-1};
+      for (auto at = static_cast<std::ptrdiff_t>(from);
+           at != static_cast<std::ptrdiff_t>(to); at += step) {
+        if (gapAt(one.dense[static_cast<std::size_t>(at)]) >
+            base + options_.minimumRise) {
+          return true;
+        }
+      }
+      return false;
+    };
     std::map<std::uint32_t, std::vector<std::uint32_t>> touching;
     for (const auto& [pair, cells] : contacts) {
       touching[pair.first].push_back(pair.second);
@@ -744,15 +836,32 @@ private:
         return distance(cell, cut.first) <= reach;
       });
     };
+    const auto flank = [&](const std::uint32_t wall) {
+      return wall < scene_.runs.size() && scene_.runs[wall] != NO_WALL;
+    };
+    // The walls given as lines: the feedline edges.
+    std::unordered_set<std::uint32_t> lines;
+    for (const auto& line : scene_.lines) {
+      lines.insert(line.wall);
+    }
     std::erase_if(cuts_, [&](const Cut& cut) {
       const auto a = wallAt(cut.first);
       const auto b = wallAt(cut.second);
-      if (touchNear(a, b, cut)) {
+      if (flank(a) || flank(b)) {
+        return false;
+      }
+      // Between two feedline edges a wedge is a limit all the same: where
+      // two edges of a coupler close in on it, the narrow end holds fewer
+      // wires than come to cross there (user, 2026-10-14).
+      if (options_.keepEdgeWedges && lines.contains(a) && lines.contains(b)) {
+        return false;
+      }
+      if (touchNear(a, b, cut) && !neckBefore(a, b, b, cut)) {
         return true;
       }
       for (const auto third : touching[a]) {
         if (third != b && dynamic(third) && touchNear(a, third, cut) &&
-            touchNear(b, third, cut)) {
+            touchNear(b, third, cut) && !neckBefore(a, b, third, cut)) {
           return true;
         }
       }
@@ -783,6 +892,20 @@ private:
         kept.push_back(cut);
       }
     }
+    // A cut that crosses a shorter one is the same narrowing seen from
+    // another wall: the straight cut from a feedline to the flank of a lead
+    // and the slanted one to the tip of that flank cut the same room, and
+    // both kept cut it into slivers (user, 2026-10-14). The shorter stays.
+    if (options_.dropCrossing) {
+      std::vector<Cut> lone;
+      for (const auto& cut : kept) {
+        if (std::ranges::none_of(
+                lone, [&](const Cut& other) { return crossing(cut, other); })) {
+          lone.push_back(cut);
+        }
+      }
+      kept = std::move(lone);
+    }
     std::vector<Bottleneck> result;
     result.reserve(kept.size());
     for (const auto& cut : kept) {
@@ -792,6 +915,26 @@ private:
           {.first = cut.first, .second = cut.second, .saddle = cellAt(mx, my)});
     }
     return result;
+  }
+
+  /// Whether the lines of two cuts cross, through the centres of their end
+  /// cells. Lines that only meet at an end do not cross.
+  [[nodiscard]] bool crossing(const Cut& one, const Cut& two) const {
+    const auto at = [&](const std::size_t cell) {
+      return std::pair{static_cast<double>(xOf(cell)),
+                       static_cast<double>(yOf(cell))};
+    };
+    const auto [ax, ay] = at(one.first);
+    const auto [bx, by] = at(one.second);
+    const auto [cx, cy] = at(two.first);
+    const auto [dx, dy] = at(two.second);
+    const auto side = [](const double px, const double py, const double qx,
+                         const double qy, const double rx, const double ry) {
+      const auto v = ((qx - px) * (ry - py)) - ((qy - py) * (rx - px));
+      return (v > 0.0) - (v < 0.0);
+    };
+    return side(ax, ay, bx, by, cx, cy) * side(ax, ay, bx, by, dx, dy) < 0 &&
+           side(cx, cy, dx, dy, ax, ay) * side(cx, cy, dx, dy, bx, by) < 0;
   }
 
   static constexpr std::size_t NO_INDEX = static_cast<std::size_t>(-1);

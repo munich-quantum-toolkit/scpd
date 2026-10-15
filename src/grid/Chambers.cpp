@@ -350,12 +350,32 @@ void chambersOf(const BitGrid& blocked,
     std::fill(row + x, row + width, NO_CHAMBER);
   }
 
+  // The chambers beside each gate. A cell beside a gate's line that lies on
+  // the line of another gate is in no chamber; the chamber behind that line
+  // is the one the gate opens onto, a cell or two further away from it
+  // (user, 2026-10-13). Without the look through, two gates whose lines
+  // touch each see one side only: the one whose sides are then one chamber
+  // is no edge of the graph, and its line still parts the chambers beyond.
+  constexpr int LOOK_THROUGH = 3;
   chambers.beside.resize(moves.size());
   for (std::size_t gate = 0; gate < moves.size(); ++gate) {
     auto& beside = chambers.beside[gate];
     for (const auto& move : moves[gate]) {
-      if (chambers.of[move.cell] != NO_CHAMBER) {
-        beside.push_back(chambers.of[move.cell]);
+      auto x = static_cast<std::int64_t>(move.cell) % width;
+      auto y = static_cast<std::int64_t>(move.cell) / width;
+      auto at = move.cell;
+      for (int k = 0; k < LOOK_THROUGH && chambers.of[at] == NO_CHAMBER &&
+                      !blocked.test(at);
+           ++k) {
+        x -= STEP_DX[move.direction];
+        y -= STEP_DY[move.direction];
+        if (x < 0 || y < 0 || x >= width || y >= height) {
+          break;
+        }
+        at = static_cast<std::size_t>((y * width) + x);
+      }
+      if (chambers.of[at] != NO_CHAMBER) {
+        beside.push_back(chambers.of[at]);
       }
     }
     std::ranges::sort(beside);

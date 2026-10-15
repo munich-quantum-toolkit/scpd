@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 namespace mqt::scpd::grid {
@@ -35,7 +36,8 @@ constexpr std::uint32_t HEIGHT = 41;
 /// The side of the square grid the slotted stub is turned on.
 constexpr std::uint32_t SIDE = 61;
 
-GridMetrics unitGrid(const std::uint32_t width = WIDTH, const std::uint32_t height = HEIGHT) {
+GridMetrics unitGrid(const std::uint32_t width = WIDTH,
+                     const std::uint32_t height = HEIGHT) {
   return GridMetrics::fit({.minX = 0.0,
                            .minY = 0.0,
                            .maxX = static_cast<double>(width - 1),
@@ -53,7 +55,8 @@ BitGrid pinchedCorridor(const std::uint32_t pinchHalfHeight) {
   constexpr std::uint32_t PINCH_TO = 32;
 
   for (std::uint32_t x = 0; x < WIDTH; ++x) {
-    const auto half = (x >= PINCH_FROM && x <= PINCH_TO) ? pinchHalfHeight : OPEN_HALF;
+    const auto half =
+        (x >= PINCH_FROM && x <= PINCH_TO) ? pinchHalfHeight : OPEN_HALF;
     for (std::uint32_t y = 0; y < HEIGHT; ++y) {
       if (y + half < MIDDLE || y > MIDDLE + half) {
         mask.setCell(x, y);
@@ -80,7 +83,8 @@ Scene sceneOf(BitGrid mask) {
 
 TEST(Bottlenecks, FindsThePinchOfACorridorAndSpansIt) {
   const auto scene = sceneOf(pinchedCorridor(3));
-  const auto found = findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+  const auto found =
+      findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
   ASSERT_FALSE(found.empty());
 
   // Every bottleneck runs between two obstacle cells, and across the
@@ -106,14 +110,17 @@ TEST(Bottlenecks, FindsNothingWhereEveryPlaceIsWide) {
   // A corridor of constant width has no place narrower than the admission
   // threshold, so nothing is a bottleneck.
   const auto scene = sceneOf(pinchedCorridor(15));
-  const auto found = findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+  const auto found =
+      findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
   EXPECT_TRUE(found.empty());
 }
 
 TEST(Bottlenecks, IsTheSameOnASecondRun) {
   const auto scene = sceneOf(pinchedCorridor(3));
-  const auto first = findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
-  const auto second = findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+  const auto first =
+      findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+  const auto second =
+      findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
 
   ASSERT_EQ(first.size(), second.size());
   for (std::size_t index = 0; index < first.size(); ++index) {
@@ -195,7 +202,8 @@ TEST(Bottlenecks, KeepsOneCutOfAPinchOfEvenWidth) {
 
 TEST(Bottlenecks, DropsOneThatWouldRunOverATarget) {
   const auto scene = sceneOf(pinchedCorridor(3));
-  const auto without = findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+  const auto without =
+      findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
   ASSERT_FALSE(without.empty());
 
   // Putting a target on every cell of the first bottleneck's line removes
@@ -210,8 +218,8 @@ TEST(Bottlenecks, DropsOneThatWouldRunOverATarget) {
   targets.push_back(static_cast<std::size_t>(((y0 + y1) / 2) * WIDTH) +
                     static_cast<std::size_t>((x0 + x1) / 2));
 
-  const auto with = findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid,
-                                    {.targets = targets});
+  const auto with = findBottlenecks(scene.mask, scene.axis, scene.distance,
+                                    scene.grid, {.targets = targets});
   EXPECT_LT(with.size(), without.size());
 }
 
@@ -472,20 +480,20 @@ TEST(Bottlenecks, ASlotBetweenTwoThinWallsIsCutAtBothWallEnds) {
 
 TEST(Bottlenecks, RefusesInputsThatDoNotDescribeOneGrid) {
   const auto scene = sceneOf(pinchedCorridor(3));
-  EXPECT_THROW(static_cast<void>(
-                   findBottlenecks(scene.mask, scene.axis, scene.distance, unitGrid(10, 10))),
+  EXPECT_THROW(static_cast<void>(findBottlenecks(
+                   scene.mask, scene.axis, scene.distance, unitGrid(10, 10))),
                std::invalid_argument);
 
   const std::vector<std::uint32_t> shortDistance(4, 0);
-  EXPECT_THROW(
-      static_cast<void>(findBottlenecks(scene.mask, scene.axis, shortDistance, scene.grid)),
-      std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(findBottlenecks(scene.mask, scene.axis,
+                                                 shortDistance, scene.grid)),
+               std::invalid_argument);
 }
 
 TEST(BottleneckCapacity, CountsTheWiresThatFitTheGap) {
   // Ten cells apart on a grid of ten layout units per cell is a gap of 100.
-  const auto grid = GridMetrics::fit({.minX = 0.0, .minY = 0.0, .maxX = 990.0, .maxY = 990.0},
-                                     100, 100);
+  const auto grid = GridMetrics::fit(
+      {.minX = 0.0, .minY = 0.0, .maxX = 990.0, .maxY = 990.0}, 100, 100);
   ASSERT_DOUBLE_EQ(grid.cellWidth, 10.0);
 
   const Bottleneck across{.first = 0, .second = 10, .saddle = 5};
@@ -496,10 +504,72 @@ TEST(BottleneckCapacity, CountsTheWiresThatFitTheGap) {
 }
 
 TEST(BottleneckCapacity, CarriesNothingThroughAGapBelowTheObstacleClearance) {
-  const auto grid = GridMetrics::fit({.minX = 0.0, .minY = 0.0, .maxX = 990.0, .maxY = 990.0},
-                                     100, 100);
+  const auto grid = GridMetrics::fit(
+      {.minX = 0.0, .minY = 0.0, .maxX = 990.0, .maxY = 990.0}, 100, 100);
   const Bottleneck touching{.first = 0, .second = 1, .saddle = 0};
   EXPECT_EQ(bottleneckCapacity(touching, grid, 185.0, 25.0, false), 0U);
+}
+
+/// Of two bottlenecks whose lines meet in the middle of either, one has to
+/// go (user, 2026-10-14): a bottleneck beside the chambers on both sides of
+/// a line it crosses lets a wire over that line unpaid, and two that run a
+/// cell apart cut slivers that are chambers to the flow. The one of lower
+/// rank goes, of equal rank the longer, of equal length the later. Two that
+/// share an end, or meet nowhere, both stay; and a bottleneck that meets
+/// only one that went itself stays too.
+TEST(Bottlenecks, DropsTheLowerOfTwoThatMeetInTheMiddleOfEither) {
+  constexpr std::uint32_t W = 40;
+  const auto at = [](const std::uint32_t x, const std::uint32_t y) {
+    return static_cast<std::size_t>(y) * W + x;
+  };
+  const auto line = [&at](const std::uint32_t x0, const std::uint32_t y0,
+                          const std::uint32_t x1, const std::uint32_t y1) {
+    return Bottleneck{
+        .first = at(x0, y0), .second = at(x1, y1), .saddle = at(x0, y0)};
+  };
+  // A cut across the middle of a mouth: the mouth, of the higher rank, stays.
+  {
+    const std::vector<Bottleneck> gates{line(2, 10, 30, 10),
+                                        line(16, 2, 16, 18)};
+    const std::vector<std::uint32_t> rank{0, 1};
+    EXPECT_EQ(uncrossedBottlenecks(gates, rank, W),
+              (std::vector<bool>{false, true}));
+  }
+  // Two cuts across each other: the shorter stays.
+  {
+    const std::vector<Bottleneck> gates{line(2, 10, 30, 10),
+                                        line(16, 4, 16, 16)};
+    const std::vector<std::uint32_t> rank{0, 0};
+    EXPECT_EQ(uncrossedBottlenecks(gates, rank, W),
+              (std::vector<bool>{false, true}));
+  }
+  // A cut that ends a cell from the middle of a shorter cut: the shorter
+  // stays.
+  {
+    const std::vector<Bottleneck> gates{line(16, 0, 16, 9),
+                                        line(12, 10, 20, 10)};
+    const std::vector<std::uint32_t> rank{0, 0};
+    EXPECT_EQ(uncrossedBottlenecks(gates, rank, W),
+              (std::vector<bool>{false, true}));
+  }
+  // Two cuts from one end, and one apart from both: all stay.
+  {
+    const std::vector<Bottleneck> gates{line(2, 2, 20, 10), line(2, 2, 20, 14),
+                                        line(30, 30, 36, 30)};
+    const std::vector<std::uint32_t> rank{0, 0, 0};
+    EXPECT_EQ(uncrossedBottlenecks(gates, rank, W),
+              (std::vector<bool>{true, true, true}));
+  }
+  // A mouth across a slot goes; the cut across that mouth alone stays.
+  {
+    const std::vector<Bottleneck> gates{
+        line(20, 21, 20, 29), line(2, 25, 30, 25), line(10, 20, 10, 30)};
+    const std::vector<std::uint32_t> rank{0, 1, 2};
+    EXPECT_EQ(uncrossedBottlenecks(gates, rank, W),
+              (std::vector<bool>{true, false, true}));
+  }
+  EXPECT_THROW(std::ignore = uncrossedBottlenecks({line(0, 0, 1, 1)}, {}, W),
+               std::invalid_argument);
 }
 
 } // namespace

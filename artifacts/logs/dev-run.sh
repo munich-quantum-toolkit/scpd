@@ -1,4 +1,12 @@
 #!/bin/zsh
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 # Usage: [OVERLAY=py2] [REPAIR_TRIALS=N] dev-run.sh <arm> <chip> [ENV=VAL ...] — one chip on
 # the overlay binding (dev-sync.sh), in a run directory of its own under artifacts/dev/<chip>, so
 # an arm on the installed build is not disturbed. Logs into artifacts/logs/<arm>/<chip>.log like

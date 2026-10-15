@@ -24,6 +24,7 @@
 #include <numeric>
 #include <optional>
 #include <queue>
+#include <span>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -55,16 +56,26 @@ public:
   [[nodiscard]] std::int64_t y(const std::size_t cell) const {
     return static_cast<std::int64_t>(cell / blocked_.width());
   }
-  [[nodiscard]] bool inside(const std::int64_t px, const std::int64_t py) const {
-    return px >= 0 && py >= 0 && px < static_cast<std::int64_t>(blocked_.width()) &&
+  [[nodiscard]] bool inside(const std::int64_t px,
+                            const std::int64_t py) const {
+    return px >= 0 && py >= 0 &&
+           px < static_cast<std::int64_t>(blocked_.width()) &&
            py < static_cast<std::int64_t>(blocked_.height());
   }
-  [[nodiscard]] std::size_t index(const std::int64_t px, const std::int64_t py) const {
-    return (static_cast<std::size_t>(py) * blocked_.width()) + static_cast<std::size_t>(px);
+  [[nodiscard]] std::size_t index(const std::int64_t px,
+                                  const std::int64_t py) const {
+    return (static_cast<std::size_t>(py) * blocked_.width()) +
+           static_cast<std::size_t>(px);
   }
-  [[nodiscard]] bool isBlocked(const std::size_t cell) const { return blocked_.test(cell); }
-  [[nodiscard]] bool onAxis(const std::size_t cell) const { return axis_.onAxis(cell); }
-  [[nodiscard]] std::uint32_t clearance(const std::size_t cell) const { return distance_[cell]; }
+  [[nodiscard]] bool isBlocked(const std::size_t cell) const {
+    return blocked_.test(cell);
+  }
+  [[nodiscard]] bool onAxis(const std::size_t cell) const {
+    return axis_.onAxis(cell);
+  }
+  [[nodiscard]] std::uint32_t clearance(const std::size_t cell) const {
+    return distance_[cell];
+  }
 
   /// Whether a diagonal step would cut the corner between two walls, or slip
   /// between two cells of the axis. Both are artifacts of the raster rather
@@ -295,9 +306,10 @@ std::vector<std::vector<std::size_t>> shoresAround(const CellSpace& space,
 /// Walk downhill from a shore until a wall is reached, staying on that shore.
 ///
 /// @returns The obstacle cell the walk ended on, or nothing.
-std::optional<std::size_t> wallBelow(const CellSpace& space,
-                                     const std::unordered_map<std::size_t, Shore>& ownership,
-                                     const std::vector<std::size_t>& shore, const Shore mine) {
+std::optional<std::size_t>
+wallBelow(const CellSpace& space,
+          const std::unordered_map<std::size_t, Shore>& ownership,
+          const std::vector<std::size_t>& shore, const Shore mine) {
   if (shore.empty()) {
     return std::nullopt;
   }
@@ -368,13 +380,15 @@ std::optional<std::size_t> wallBelow(const CellSpace& space,
 
 /// Whether the line between two cells runs over a target, which would make it
 /// a division of the space around a port rather than a bottleneck.
-bool crossesATarget(const CellSpace& space, const std::unordered_set<std::size_t>& targets,
-                    const GridMetrics& grid, const std::size_t from, const std::size_t to) {
+bool crossesATarget(const CellSpace& space,
+                    const std::unordered_set<std::size_t>& targets,
+                    const GridMetrics& grid, const std::size_t from,
+                    const std::size_t to) {
   if (targets.empty()) {
     return false;
   }
-  for (const auto cell : lineCells(space.x(from), space.y(from), space.x(to), space.y(to),
-                                   grid.width, grid.height)) {
+  for (const auto cell : lineCells(space.x(from), space.y(from), space.x(to),
+                                   space.y(to), grid.width, grid.height)) {
     if (targets.contains(cell)) {
       return true;
     }
@@ -431,7 +445,8 @@ narrowestOfEveryPlateau(const std::vector<Bottleneck>& candidates,
            (wallOf.empty() || wallOf[one] == wallOf[other]);
   };
   /// Whether two cuts share a wall cell and end near each other.
-  const auto sameNarrowing = [&](const Bottleneck& left, const Bottleneck& right) {
+  const auto sameNarrowing = [&](const Bottleneck& left,
+                                 const Bottleneck& right) {
     if (left.first == right.first) {
       return near(left.second, right.second);
     }
@@ -461,14 +476,17 @@ narrowestOfEveryPlateau(const std::vector<Bottleneck>& candidates,
 
   for (std::size_t left = 0; left < count; ++left) {
     for (std::size_t right = left + 1; right < count; ++right) {
-      if (find(left) == find(right) || !sameNarrowing(candidates[left], candidates[right])) {
+      if (find(left) == find(right) ||
+          !sameNarrowing(candidates[left], candidates[right])) {
         continue;
       }
       group[find(right)] = find(left);
     }
   }
 
-  const auto span = [&](const Bottleneck& gate) { return apart(gate.first, gate.second); };
+  const auto span = [&](const Bottleneck& gate) {
+    return apart(gate.first, gate.second);
+  };
 
   // The narrowest of each group, by the first candidate of it where two are
   // the same width, so the choice does not depend on the order of a hash.
@@ -476,7 +494,8 @@ narrowestOfEveryPlateau(const std::vector<Bottleneck>& candidates,
   for (std::size_t at = 0; at < count; ++at) {
     const auto root = find(at);
     const auto found = narrowest.find(root);
-    if (found == narrowest.end() || span(candidates[at]) < span(candidates[found->second])) {
+    if (found == narrowest.end() ||
+        span(candidates[at]) < span(candidates[found->second])) {
       narrowest[root] = at;
     }
   }
@@ -491,19 +510,20 @@ narrowestOfEveryPlateau(const std::vector<Bottleneck>& candidates,
   return kept;
 }
 
-std::vector<Bottleneck> findBottlenecks(const BitGrid& blocked, const MedialAxis& axis,
-                                        const std::span<const std::uint32_t> squaredDistance,
-                                        const GridMetrics& grid,
-                                        const BottleneckOptions& options) {
+std::vector<Bottleneck>
+findBottlenecks(const BitGrid& blocked, const MedialAxis& axis,
+                const std::span<const std::uint32_t> squaredDistance,
+                const GridMetrics& grid, const BottleneckOptions& options) {
   if (blocked.width() != grid.width || blocked.height() != grid.height) {
-    throw std::invalid_argument(std::format("the mask is {}x{} cells and the grid {}x{}",
-                                            blocked.width(), blocked.height(), grid.width,
-                                            grid.height));
+    throw std::invalid_argument(std::format(
+        "the mask is {}x{} cells and the grid {}x{}", blocked.width(),
+        blocked.height(), grid.width, grid.height));
   }
-  if (axis.cells.size() != grid.cells() || squaredDistance.size() != grid.cells()) {
-    throw std::invalid_argument(
-        std::format("the axis has {} cells and the distance transform {}, on a grid of {}",
-                    axis.cells.size(), squaredDistance.size(), grid.cells()));
+  if (axis.cells.size() != grid.cells() ||
+      squaredDistance.size() != grid.cells()) {
+    throw std::invalid_argument(std::format(
+        "the axis has {} cells and the distance transform {}, on a grid of {}",
+        axis.cells.size(), squaredDistance.size(), grid.cells()));
   }
 
   if (!options.wallOf.empty() && options.wallOf.size() != grid.cells()) {
@@ -659,8 +679,10 @@ std::vector<Bottleneck> findBottlenecks(const BitGrid& blocked, const MedialAxis
                                  options.wallOf);
 }
 
-std::uint32_t bottleneckCapacity(const Bottleneck& bottleneck, const GridMetrics& grid,
-                                 const double wireSpacing, const double obstacleSpacing,
+std::uint32_t bottleneckCapacity(const Bottleneck& bottleneck,
+                                 const GridMetrics& grid,
+                                 const double wireSpacing,
+                                 const double obstacleSpacing,
                                  const bool roundDown) {
   const auto x0 = static_cast<double>(bottleneck.first % grid.width);
   const auto y0 = static_cast<double>(bottleneck.first / grid.width);
@@ -683,6 +705,87 @@ std::uint32_t bottleneckCapacity(const Bottleneck& bottleneck, const GridMetrics
   const auto exact = gap / pitch;
   const auto count = roundDown ? std::floor(exact) : std::ceil(exact);
   return static_cast<std::uint32_t>(std::max(0.0, count));
+}
+
+std::vector<bool>
+uncrossedBottlenecks(const std::vector<Bottleneck>& bottlenecks,
+                     const std::span<const std::uint32_t> rank,
+                     const std::uint32_t width, const double near) {
+  if (rank.size() != bottlenecks.size()) {
+    throw std::invalid_argument(
+        "uncrossedBottlenecks needs one rank per bottleneck");
+  }
+  struct Line {
+    double ax = 0.0;
+    double ay = 0.0;
+    double bx = 0.0;
+    double by = 0.0;
+    double length = 0.0;
+  };
+  std::vector<Line> lines;
+  lines.reserve(bottlenecks.size());
+  for (const auto& one : bottlenecks) {
+    Line line{.ax = static_cast<double>(one.first % width),
+              .ay = static_cast<double>(one.first / width),
+              .bx = static_cast<double>(one.second % width),
+              .by = static_cast<double>(one.second / width)};
+    line.length = std::hypot(line.bx - line.ax, line.by - line.ay);
+    lines.push_back(line);
+  }
+  // Whether `x, y` lies within `near` cells of the middle of the line.
+  const auto endsOn = [near](const Line& line, const double x, const double y) {
+    const double dx = line.bx - line.ax;
+    const double dy = line.by - line.ay;
+    const double squared = (dx * dx) + (dy * dy);
+    const double at = std::clamp(
+        (((x - line.ax) * dx) + ((y - line.ay) * dy)) / squared, 0.0, 1.0);
+    const double away =
+        std::hypot(x - (line.ax + (at * dx)), y - (line.ay + (at * dy)));
+    return away < near && at > near / line.length &&
+           at < 1.0 - (near / line.length);
+  };
+  const auto meet = [near, &endsOn](const Line& a, const Line& b) {
+    if (a.length < 1.0 || b.length < 1.0) {
+      return false;
+    }
+    const double rx = a.bx - a.ax;
+    const double ry = a.by - a.ay;
+    const double sx = b.bx - b.ax;
+    const double sy = b.by - b.ay;
+    const double den = (rx * sy) - (ry * sx);
+    if (std::abs(den) > 1e-9) {
+      const double t = (((b.ax - a.ax) * sy) - ((b.ay - a.ay) * sx)) / den;
+      const double u = (((b.ax - a.ax) * ry) - ((b.ay - a.ay) * rx)) / den;
+      if (t > near / a.length && t < 1.0 - (near / a.length) &&
+          u > near / b.length && u < 1.0 - (near / b.length)) {
+        return true;
+      }
+    }
+    return endsOn(b, a.ax, a.ay) || endsOn(b, a.bx, a.by) ||
+           endsOn(a, b.ax, b.ay) || endsOn(a, b.bx, b.by);
+  };
+  std::vector<std::size_t> order(bottlenecks.size());
+  std::iota(order.begin(), order.end(), std::size_t{0});
+  std::ranges::sort(order, [&](const std::size_t i, const std::size_t j) {
+    if (rank[i] != rank[j]) {
+      return rank[i] > rank[j];
+    }
+    if (lines[i].length != lines[j].length) {
+      return lines[i].length < lines[j].length;
+    }
+    return i < j;
+  });
+  std::vector<bool> stays(bottlenecks.size(), false);
+  std::vector<std::size_t> kept;
+  for (const auto i : order) {
+    if (std::ranges::none_of(kept, [&](const std::size_t k) {
+          return meet(lines[i], lines[k]);
+        })) {
+      stays[i] = true;
+      kept.push_back(i);
+    }
+  }
+  return stays;
 }
 
 } // namespace mqt::scpd::grid

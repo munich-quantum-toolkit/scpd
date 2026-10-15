@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 """A table of what every wire did in every round of a pass, and why.
 
 Reads a `plan --stage final -v 1 -d` log. Each attempt the sweep makes leaves
@@ -14,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import os
 import re
 from pathlib import Path
 
@@ -75,13 +84,12 @@ def parse(log: Path, want: str) -> tuple[dict, list[str], int, dict]:
         if m := re.search(r"the ring the .* sweeps: (.*)", line):
             for token in m.group(1).split():
                 name = re.sub(r"[\[(].*", "", token)
-                kinds[name] = ("feedline" if "[" in token else
-                               "resonator" if "(r)" in token else "plain")
+                kinds[name] = "feedline" if "[" in token else "resonator" if "(r)" in token else "plain"
             continue
         if m := re.search(r"final routing: unrouted: (.*)", line):
             for part in ("unrouted: " + m.group(1)).split(" · "):
                 key, _, value = part.partition(": ")
-                if value.strip() not in ("-", ""):
+                if value.strip() not in {"-", ""}:
                     for wire in (v.strip() for v in value.split(",")):
                         fails.setdefault(wire, []).append(key)
             inside = False
@@ -112,7 +120,7 @@ def parse(log: Path, want: str) -> tuple[dict, list[str], int, dict]:
             continue
         relax = RELAX.search(rest)
         slot = int(relax.group(1)) if relax else 0
-        cells[(wire, rnd, slot)] = {
+        cells[wire, rnd, slot] = {
             "state": classify(rest, bool(relax)),
             "text": line,
             "fig": fig,
@@ -156,20 +164,37 @@ document.getElementById('only').addEventListener('change', e => {{
 """
 
 
+def _beside(fig: str | None, out: Path) -> str | None:
+    """The link to a picture from the page `out`.
+
+    The log names a picture as the run saw it, relative to the directory the
+    run was started from; the page lies elsewhere, so the link is made
+    relative to the page.
+
+    Returns:
+        The link, or ``None`` for no picture.
+    """
+    if not fig:
+        return None
+    return Path(os.path.relpath(Path(fig).resolve(), out.parent.resolve())).as_posix()
+
+
 def build(log: Path, want: str, out: Path, viewers: Path) -> None:
     cells, order, rounds, extra = parse(log, want)
     if not cells:
-        raise SystemExit(f"no attempt of the {want} pass is in the log")
+        msg = f"no attempt of the {want} pass is in the log"
+        raise SystemExit(msg)
     kinds, fails = extra["kinds"], extra["fails"]
     slots = 1 + max((k[2] for k in cells), default=0)
 
-    # A viewer only for what failed: a picture is as big as its figure, and
-    # the ones worth opening are the ones that did not work.
+    # A viewer for every attempt with a picture: zoom and layers that switch
+    # off are what a picture is read with, the attempts that worked as much
+    # as the ones that did not.
     viewers.mkdir(parents=True, exist_ok=True)
     made: dict[str, str] = {}
     for cell in cells.values():
         fig = cell.get("fig")
-        if not fig or cell["state"] in ("found", "kept"):
+        if not fig:
             continue
         source = Path(fig)
         if not source.exists():
@@ -192,35 +217,42 @@ def build(log: Path, want: str, out: Path, viewers: Path) -> None:
     for wire in order:
         bad = fails.get(wire, [])
         body += f'<tr data-fail="{1 if bad else 0}">'
-        body += f'<td class="w {kinds.get(wire,"plain")}">{html.escape(wire)}</td>'
+        body += f'<td class="w {kinds.get(wire, "plain")}">{html.escape(wire)}</td>'
         for rnd in range(rounds):
             for slot in range(slots):
                 cell = cells.get((wire, rnd, slot))
                 if not cell:
-                    body += "<td><span class=\"c\"></span></td>"
+                    body += '<td><span class="c"></span></td>'
                     continue
                 colour = LOOK[cell["state"]][0]
                 tip = html.escape(cell["text"])
-                link = made.get(cell.get("fig") or "") or cell.get("fig")
-                tag = (f'<a class="c" style="background:{colour}" href="{link}" '
-                       f'target="_blank" title="{tip}"></a>') if link else (
-                       f'<span class="c" style="background:{colour}" title="{tip}"></span>')
+                link = made.get(cell.get("fig") or "") or _beside(cell.get("fig"), out)
+                tag = (
+                    (f'<a class="c" style="background:{colour}" href="{link}" target="_blank" title="{tip}"></a>')
+                    if link
+                    else (f'<span class="c" style="background:{colour}" title="{tip}"></span>')
+                )
                 body += f"<td>{tag}</td>"
             body += '<td class="sep"></td>'
         badges = "".join(
-            f'<span class="badge" style="background:{LOOK["gave-up"][0]}">{html.escape(b)}</span>'
-            for b in bad)
+            f'<span class="badge" style="background:{LOOK["gave-up"][0]}">{html.escape(b)}</span>' for b in bad
+        )
         body += f'<td class="sum">{badges}</td></tr>'
 
-    key = "".join(f'<span><i style="background:{c}"></i>{html.escape(t)}</span>'
-                  for c, t in LOOK.values())
-    out.write_text(PAGE.format(
-        title=f"{want} routing · {log.name}",
-        sub=(f"{len(order)} wires · {rounds} rounds · {len(cells)} attempts · "
-             f"{len(made)} failures to click. The '·' column is phase 1, "
-             f"1–{slots-1} the relaxation levels. Blue is a resonator, orange a feedline edge."),
-        key=key, table=f"<table>{head}{body}</table>"), encoding="utf-8")
-
+    key = "".join(f'<span><i style="background:{c}"></i>{html.escape(t)}</span>' for c, t in LOOK.values())
+    out.write_text(
+        PAGE.format(
+            title=f"{want} routing · {log.name}",
+            sub=(
+                f"{len(order)} wires · {rounds} rounds · {len(cells)} attempts · "
+                f"{len(made)} failures to click. The '·' column is phase 1, "
+                f"1–{slots - 1} the relaxation levels. Blue is a resonator, orange a feedline edge."
+            ),
+            key=key,
+            table=f"<table>{head}{body}</table>",
+        ),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

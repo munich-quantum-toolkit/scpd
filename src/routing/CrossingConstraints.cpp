@@ -30,7 +30,8 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
   masks_.assign(static_cast<std::size_t>(width) * height, 0);
   const auto w = static_cast<int64_t>(width);
   const auto h = static_cast<int64_t>(height);
-  const auto blockAround = [&](const int64_t cx, const int64_t cy, const int radius) {
+  const auto blockAround = [&](const int64_t cx, const int64_t cy,
+                               const int radius) {
     for (int64_t dy = -radius; dy <= radius; ++dy) {
       for (int64_t dx = -radius; dx <= radius; ++dx) {
         const int64_t nx = cx + dx;
@@ -38,7 +39,8 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
           continue;
         }
-        masks_[(static_cast<std::size_t>(ny) * width) + static_cast<std::size_t>(nx)] = CURVE_ZONE;
+        masks_[(static_cast<std::size_t>(ny) * width) +
+               static_cast<std::size_t>(nx)] = CURVE_ZONE;
       }
     }
   };
@@ -60,14 +62,22 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
       }
       const PathPoint& cell = wire[at];
       const auto bit = static_cast<uint8_t>(1U << (cell.heading & 7U));
+      // Within the radius, a disc: a square reaches a radius times the root
+      // of two along its diagonals, and binds a wire that keeps the
+      // clearance from the feedline there (user, 2026-10-13).
+      const auto reach = static_cast<int64_t>(expandRadius) * expandRadius;
       for (int64_t dy = -expandRadius; dy <= expandRadius; ++dy) {
         for (int64_t dx = -expandRadius; dx <= expandRadius; ++dx) {
+          if ((dx * dx) + (dy * dy) > reach) {
+            continue;
+          }
           const int64_t nx = static_cast<int64_t>(cell.x) + dx;
           const int64_t ny = static_cast<int64_t>(cell.y) + dy;
           if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
             continue;
           }
-          uint8_t& mask = masks_[(static_cast<std::size_t>(ny) * width) + static_cast<std::size_t>(nx)];
+          uint8_t& mask = masks_[(static_cast<std::size_t>(ny) * width) +
+                                 static_cast<std::size_t>(nx)];
           if (mask != CURVE_ZONE) {
             mask |= bit;
           }

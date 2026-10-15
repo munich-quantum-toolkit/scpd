@@ -75,6 +75,12 @@ class CouplerSession:
     def graph(self) -> str:
         """The capacity graph of the chip as it stands, as the JSON of final-capacity-graph.json."""
 
+    def insertion_check(self) -> str:
+        """The capacity check of the coupler insertion on the chip as it stands, every chain standing. Returns JSON with verdict, lost and graph."""
+
+    def route_feedlines(self) -> str:
+        """Run the feedline routing on the chip as it stands. Returns JSON with the fails of every wire and every wire's way. The routing changes the state for good."""
+
 def check_final(chip: bytes, global_: bytes, assignment: bytes, final: bytes, config: bytes) -> str:
     """Check a final routing against the design rules. Returns the text of drc.json."""
 

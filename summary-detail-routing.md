@@ -5,11 +5,12 @@ prototype, and what is still open. Step 1 is
 [summary-stage-4.md](summary-stage-4.md); the briefing this answers is
 [handover-detail-routing.md](handover-detail-routing.md), and the clearance
 requirement that followed it is
-[handover-detail-clearance.md](handover-detail-clearance.md) — **that
-requirement is now met.**
+[handover-detail-clearance.md](handover-detail-clearance.md) —
+**that requirement is now met.**
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch: `phase-4-routing-stages`, based on `8ef300a`. **Nothing is committed.**
+- Branch: `phase-4-routing-stages`, based on `8ef300a`.
+  **Nothing is committed.**
 - Prototype: `/Users/michaelfeldmeier/Documents/GitHub/FridgeCAD` (`0c5d6d9`)
 
 ## What this step delivers
@@ -30,16 +31,17 @@ it.
 
 ## The model
 
-Eight-connected A\* on the detail grid, costs `{10, 14}`, octile heuristic —
-the prototype's own figures. The prototype's four passes, in its order:
+Eight-connected A\* on the detail grid, costs `{10, 14}`, octile heuristic — the
+prototype's own figures. The prototype's four passes, in its order:
 
 1. **`detailed_pre_routing` — inside each partition.** A corridor cuts its wire
    into one piece per partition it names; every piece is searched for inside
    that partition alone, between the two crossings the plan gave it. The pieces
    of one partition are tried in up to `orderings` orders and the order that
-   draws the most of them is kept. **This is the only pass that knows about
-   partitions**, exactly as in the prototype: `astar_in_cell` takes the label
-   grid, `astar_in_corridor` does not.
+   draws the most of them is kept.
+   **This is the only pass that knows about partitions**, exactly as in the
+   prototype: `astar_in_cell` takes the label grid, `astar_in_corridor` does
+   not.
 2. **`reconstruct_wires` — joined by concatenation.** The corridor already says
    which piece belongs to which wire, so there is no reconstruction pass and no
    cell is lost at either end.
@@ -85,16 +87,16 @@ clearance question and not a short.
 
 At the shipped defaults, all eight chips:
 
-| chip | connections | drawn | inner | cells | bends | longest | detail | SVG | GDS |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 4q  |  12 |  12 |   0/0 |    550 |   41 |  64 |  0.38 s | 0.17 MB | 0.07 MB |
-| 9q  |  30 |  30 |   6/6 |   2644 |  116 |  98 |  0.09 s | 0.35 MB | 0.15 MB |
-| 17q |  58 |  58 | 14/14 |   7891 |  553 | 202 |  0.33 s | 1.06 MB | 0.43 MB |
-| 21q |  70 |  70 |   8/8 |  12454 |  717 | 221 |  0.60 s | 0.92 MB | 0.42 MB |
-| 33q | 110 | 110 |   8/8 |  25916 | 1346 | 308 |  1.63 s | 1.73 MB | 0.69 MB |
-| 45q | 150 | 150 |   7/7 |  42869 | 2744 | 396 |  4.58 s | 2.65 MB | 1.03 MB |
-| 57q | 190 | 190 | 11/11 |  71230 | 4555 | 575 |  9.66 s | 4.34 MB | 1.57 MB |
-| 69q | 230 | 230 | 11/11 | 111345 | 5478 | 700 | 15.50 s | 6.27 MB | 2.17 MB |
+| chip | connections | drawn | inner |  cells | bends | longest |  detail |     SVG |     GDS |
+| ---- | ----------: | ----: | ----: | -----: | ----: | ------: | ------: | ------: | ------: |
+| 4q   |          12 |    12 |   0/0 |    550 |    41 |      64 |  0.38 s | 0.17 MB | 0.07 MB |
+| 9q   |          30 |    30 |   6/6 |   2644 |   116 |      98 |  0.09 s | 0.35 MB | 0.15 MB |
+| 17q  |          58 |    58 | 14/14 |   7891 |   553 |     202 |  0.33 s | 1.06 MB | 0.43 MB |
+| 21q  |          70 |    70 |   8/8 |  12454 |   717 |     221 |  0.60 s | 0.92 MB | 0.42 MB |
+| 33q  |         110 |   110 |   8/8 |  25916 |  1346 |     308 |  1.63 s | 1.73 MB | 0.69 MB |
+| 45q  |         150 |   150 |   7/7 |  42869 |  2744 |     396 |  4.58 s | 2.65 MB | 1.03 MB |
+| 57q  |         190 |   190 | 11/11 |  71230 |  4555 |     575 |  9.66 s | 4.34 MB | 1.57 MB |
+| 69q  |         230 |   230 | 11/11 | 111345 |  5478 |     700 | 15.50 s | 6.27 MB | 2.17 MB |
 
 **All 968 connections are drawn, all 65 of the inner circuit, and no two wires
 anywhere on any of the eight chips come within the design rule of each other.**
@@ -115,10 +117,10 @@ the rule is converted, and the conversion is the prototype's own: the rule spans
 `ceil(spacing / cell)` cells and what is kept clear is one less. Two wires are
 far enough apart when the distance between their cells is more than that many.
 
-| chip | 4q | 9q | 17q | 21q | 33q | 45q | 57q | 69q |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| cells | 9 | 4 | 9 | 4 | 4 | 5 | 5 | 5 |
-| layout units | 173 | 158 | 171 | 160 | 154 | 182 | 158 | 180 |
+| chip         |   4q |   9q |  17q |  21q |  33q |  45q |  57q |  69q |
+| ------------ | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cells        |    9 |    4 |    9 |    4 |    4 |    5 |    5 |    5 |
+| layout units |  173 |  158 |  171 |  160 |  154 |  182 |  158 |  180 |
 
 The conversion is where the rule stops being 185, and it cannot be anything
 else: a cell is 19 layout units across on the 17-qubit chip and 40 on the
@@ -130,19 +132,19 @@ cannot pass is a check of the grid and not of the copper.
 
 Measured over the eight chips as places where the design rule does not hold:
 
-| | fails |
-| --- | ---: |
-| as shipped | **0** |
-| without letting go of the wires *behind* a wire as well as ahead of it | 3 |
-| at the prototype's own 8 sweeps and 10 relaxations instead of 30 and 30 | 46 |
-| holding the clearance to two ring neighbours, and to the plan's crossings | 457 |
+|                                                                           | fails |
+| ------------------------------------------------------------------------- | ----: |
+| as shipped                                                                | **0** |
+| without letting go of the wires *behind* a wire as well as ahead of it    |     3 |
+| at the prototype's own 8 sweeps and 10 relaxations instead of 30 and 30   |    46 |
+| holding the clearance to two ring neighbours, and to the plan's crossings |   457 |
 
 And as connections left undrawn, over 17q, 45q and 69q:
 
-| | undrawn |
-| --- | ---: |
-| as shipped | **0** |
-| without the seed's rescue passes (`placeWhatIsLeft`, `drawWhatIsLeftWhole`) | 6 |
+|                                                                             | undrawn |
+| --------------------------------------------------------------------------- | ------: |
+| as shipped                                                                  |   **0** |
+| without the seed's rescue passes (`placeWhatIsLeft`, `drawWhatIsLeftWhole`) |       6 |
 
 The obstacle penalty is on, as in the prototype. Measured with the clearance in
 force it is neither better nor worse on any chip; what it buys is a wire that
@@ -163,17 +165,17 @@ length or as a multiple of the wire spacing and converted through the grid.
 
 ## The files
 
-| file | what |
-| --- | --- |
-| `schemas/artifacts.fbs` | `DetailWire`, and `DetailRouting` with `grid`, `wires`, `inner` |
-| `schemas/config.fbs` | `DetailParams`, and `detail` in `StageParams` |
-| `include/mqt-scpd/pipeline/Stages.hpp` | `IDetailRouter` |
-| `include/mqt-scpd/pipeline/DetailRouter.hpp`, `src/pipeline/DetailRouter.cpp` | the stage, `makePixelAStarRouter()` |
-| `include/mqt-scpd/pipeline/Registry.hpp`, `src/pipeline/Registry.cpp` | `detailRouters()`, default `"pixel-astar"` |
-| `src/io/Artifacts.cpp` | a `case` in `validate`: a wire's cells step by at most one |
-| `bindings/bindings.cpp`, `python/mqt/scpd/pyscpd.pyi` | `route_detail(...)` |
-| `python/mqt/scpd/{run,planning,plot,artifacts,inspection,config}.py`, `export/klayout.py` | the stage, the read-back, the layers, the clearance band |
-| `test/pipeline/test_detail_router.cpp` | the invariants over all eight chips |
+| file                                                                                      | what                                                            |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `schemas/artifacts.fbs`                                                                   | `DetailWire`, and `DetailRouting` with `grid`, `wires`, `inner` |
+| `schemas/config.fbs`                                                                      | `DetailParams`, and `detail` in `StageParams`                   |
+| `include/mqt-scpd/pipeline/Stages.hpp`                                                    | `IDetailRouter`                                                 |
+| `include/mqt-scpd/pipeline/DetailRouter.hpp`, `src/pipeline/DetailRouter.cpp`             | the stage, `makePixelAStarRouter()`                             |
+| `include/mqt-scpd/pipeline/Registry.hpp`, `src/pipeline/Registry.cpp`                     | `detailRouters()`, default `"pixel-astar"`                      |
+| `src/io/Artifacts.cpp`                                                                    | a `case` in `validate`: a wire's cells step by at most one      |
+| `bindings/bindings.cpp`, `python/mqt/scpd/pyscpd.pyi`                                     | `route_detail(...)`                                             |
+| `python/mqt/scpd/{run,planning,plot,artifacts,inspection,config}.py`, `export/klayout.py` | the stage, the read-back, the layers, the clearance band        |
+| `test/pipeline/test_detail_router.cpp`                                                    | the invariants over all eight chips                             |
 
 `docs/design/pipeline.md` has the stage's write-up and `CHANGELOG.md` is under
 `[Unreleased]`.

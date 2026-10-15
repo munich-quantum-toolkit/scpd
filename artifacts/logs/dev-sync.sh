@@ -1,4 +1,12 @@
 #!/bin/zsh
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 # Usage: [OVERLAY=py2] dev-sync.sh — copies the binding the build tree holds into the overlay
 # package under artifacts/dev/$OVERLAY (default py), which dev-run.sh puts first on sys.path. The
 # installed binding in .venv is not touched, so an arm running on it is not disturbed. Never sync

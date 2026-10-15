@@ -77,6 +77,31 @@ TEST(Chambers, AGateAcrossACorridorCutsItInTwo) {
                                         std::max(left, right)}));
 }
 
+TEST(Chambers, TwoGatesWhoseLinesTouchEachOpenOntoBothSides) {
+  // Two gates across the corridor in the columns 30 and 31: no cell lies
+  // between their lines, and each sees the other's line on one side. Each
+  // opens all the same onto the chamber behind that line.
+  const auto mask = corridor();
+  const std::vector<Bottleneck> gates = {{.first = at(30, MIDDLE - 6),
+                                          .second = at(30, MIDDLE + 6),
+                                          .saddle = at(30, MIDDLE)},
+                                         {.first = at(31, MIDDLE - 6),
+                                          .second = at(31, MIDDLE + 6),
+                                          .saddle = at(31, MIDDLE)}};
+  const auto chambers = chambersOf(mask, gates, unitGrid());
+
+  const auto left = chambers.of[at(10, MIDDLE)];
+  const auto right = chambers.of[at(50, MIDDLE)];
+  ASSERT_NE(left, NO_CHAMBER);
+  ASSERT_NE(right, NO_CHAMBER);
+  ASSERT_NE(left, right);
+  const std::vector<std::uint32_t> both{std::min(left, right),
+                                        std::max(left, right)};
+  ASSERT_EQ(chambers.beside.size(), 2U);
+  EXPECT_EQ(chambers.beside[0], both);
+  EXPECT_EQ(chambers.beside[1], both);
+}
+
 TEST(Chambers, AGateWithAWayAroundItCutsNothing) {
   // An island in the middle of the corridor, and a gate from it to the
   // upper wall: the free space still runs around the island below.

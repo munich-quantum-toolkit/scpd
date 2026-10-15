@@ -22,6 +22,7 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/drc.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
+#include "mqt-scpd/grid/Rasterize.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/CouplerSession.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
@@ -30,6 +31,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -40,6 +42,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numbers>
 #include <regex>
 #include <set>
 #include <stdexcept>
@@ -245,7 +248,8 @@ TEST_P(Final, WiresRunFromFeedToTargetWithoutMeetingThemselves) {
 
   // A resonator begins at its coupler, whose port is at the anchor; every
   // other wire begins where the assignment feeds it.
-  std::vector<const flatbuffers::design::CpwCouplerT*> couplerOf(routing.wires.size(), nullptr);
+  std::vector<const flatbuffers::design::CpwCouplerT*> couplerOf(
+      routing.wires.size(), nullptr);
   for (const auto& coupler : routing.couplers) {
     if (coupler->connection.index() < couplerOf.size()) {
       couplerOf[coupler->connection.index()] = coupler.get();
@@ -355,9 +359,11 @@ TEST_P(Final, TheEdgesOfAChainMeetOnlyAtTheCoupler) {
       }
       const auto& one = *routing.feedline_edges[a];
       const auto& two = *routing.feedline_edges[b];
-      const bool consecutive = one.chain == two.chain && one.to.index() == two.from.index();
+      const bool consecutive =
+          one.chain == two.chain && one.to.index() == two.from.index();
       EXPECT_EQ(shared, consecutive ? 1U : 0U)
-          << "feedline edges " << a << " and " << b << " share " << shared << " cells";
+          << "feedline edges " << a << " and " << b << " share " << shared
+          << " cells";
     }
   }
 }
@@ -520,13 +526,15 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   // `Unrouted` and nothing else; a drawn one is not. The phase snapshots are
   // not judged and carry none.
   std::size_t held = 0;
-  for (const auto* list : {&routing.wires, &routing.inner, &routing.feedlines}) {
+  for (const auto* list :
+       {&routing.wires, &routing.inner, &routing.feedlines}) {
     for (const auto& wire : *list) {
       const auto verdict = static_cast<std::uint8_t>(wire->verdict);
       held += verdict != 0 ? 1 : 0;
       const bool unrouted =
-          (verdict & static_cast<std::uint8_t>(
-                         mqt::scpd::flatbuffers::artifacts::FinalVerdict::Unrouted)) != 0;
+          (verdict &
+           static_cast<std::uint8_t>(
+               mqt::scpd::flatbuffers::artifacts::FinalVerdict::Unrouted)) != 0;
       EXPECT_EQ(unrouted, wire->path.empty());
     }
   }
@@ -770,14 +778,15 @@ TEST(FinalRouter, TheStepCheckPrescribesNoCrossingOfAnOpenChain) {
   EXPECT_GT(prescribedWhole, 0U);
 }
 
-/// The feedline routing lays the edges from and to the launchers again, so
-/// such an edge is no limit in the capacity graph: a bottleneck with an end
-/// on one, and every stretch of one, takes every wire and is never over, and
-/// every wire may cross it.
-TEST(FinalRouter, ATerminalEdgeTakesEveryWire) {
+/// Under `SCPD_TERMINAL_CROSSABLE` an edge from or to a launcher is no limit
+/// in the capacity graph, since the feedline routing lays it again: a
+/// bottleneck with an end on one, and every stretch of one, takes every wire
+/// and is never over, and every wire may cross it.
+TEST(FinalRouter, ACrossableTerminalEdgeTakesEveryWire) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
   setenv("SCPD_BOTTLENECKS", "1", 1);
+  setenv("SCPD_TERMINAL_CROSSABLE", "1", 1);
   std::string written;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
@@ -789,6 +798,7 @@ TEST(FinalRouter, ATerminalEdgeTakesEveryWire) {
         return std::string(name);
       }));
   unsetenv("SCPD_BOTTLENECKS");
+  unsetenv("SCPD_TERMINAL_CROSSABLE");
   ASSERT_FALSE(written.empty());
 
   const auto data = nlohmann::json::parse(written);
@@ -909,6 +919,1036 @@ TEST(CouplerSession, MovesACouplerAndDrawsItsEdgesAgain) {
       static_cast<void>(session.setOption(
           index, static_cast<std::uint32_t>(picked->at("options").size()))),
       std::invalid_argument);
+}
+
+/// A coupler session runs the capacity check of the coupler insertion on
+/// the chip as it stands, and then the feedline routing, which counts its
+/// fails over wires the routing returns.
+TEST(CouplerSession, ChecksTheChipAndRoutesTheFeedlines) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto verdict = check.at("verdict").get<std::string>();
+  EXPECT_TRUE(verdict == "SAT" || verdict == "UNSAT") << verdict;
+  EXPECT_EQ(verdict == "SAT", check.at("lost").empty());
+  for (const auto* const key : {"raster", "nodes", "edges", "wires"}) {
+    EXPECT_TRUE(check.at("graph").contains(key)) << key;
+  }
+
+  const auto routed = nlohmann::json::parse(session.routeFeedlines());
+  std::set<std::string> names;
+  bool feedline = false;
+  for (const auto& wire : routed.at("wires")) {
+    names.insert(wire.at("name").get<std::string>());
+    feedline = feedline || wire.at("kind") == "feedline";
+    EXPECT_EQ(wire.at("drawn").get<bool>(), !wire.at("path").empty());
+  }
+  EXPECT_TRUE(feedline);
+  std::size_t bad = 0;
+  for (const auto* const kind :
+       {"unrouted", "open", "crossing", "short", "long", "loops"}) {
+    for (const auto& name : routed.at(kind)) {
+      EXPECT_TRUE(names.contains(name.get<std::string>())) << kind;
+    }
+  }
+  for (const auto* const kind : {"unrouted", "open", "crossing"}) {
+    bad += routed.at(kind).size();
+  }
+  EXPECT_EQ(routed.at("bad").get<std::size_t>(), bad);
+  // Every round of the feedline sweep, with the wires that failed in it.
+  ASSERT_FALSE(routed.at("rounds").empty());
+  for (const auto& round : routed.at("rounds")) {
+    for (const auto& name : round.at("failed")) {
+      EXPECT_TRUE(names.contains(name.get<std::string>()));
+    }
+  }
+}
+
+/// A terminal that a feedline edge covers lies in no chamber, so the
+/// capacity check of the insertion loses its wire. On 4q, couplers 0, 1 and
+/// 2 on options 16, 17 and 1 lay edge f3 over the port of resonator 0.
+TEST(CouplerSession, LosesAWireWhosePortAFeedlineCovers) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  // With the port runs fenced, the insertion never lays an edge over a port
+  // (`KeepsTheEdgesOffThePortStubs`), so they stand open here.
+  setenv("SCPD_EDGE_PORT_STUBS", "0", 1);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  for (const auto& [coupler, option] :
+       {std::pair{0U, 16U}, std::pair{1U, 17U}, std::pair{2U, 1U}}) {
+    static_cast<void>(session.setOption(coupler, option));
+  }
+  unsetenv("SCPD_EDGE_PORT_STUBS");
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  EXPECT_EQ(check.at("verdict"), "UNSAT");
+  bool walled = false;
+  for (const auto& line : check.at("graph").at("summary")) {
+    walled = walled || line.get<std::string>() == "a port in no chamber for 0";
+  }
+  EXPECT_TRUE(walled) << check.at("graph").at("summary").dump();
+}
+
+/// The insertion lays no edge over the run into a target port: the same
+/// moves as `LosesAWireWhosePortAFeedlineCovers` leave every port of 4q in
+/// a chamber.
+TEST(CouplerSession, KeepsTheEdgesOffThePortStubs) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  for (const auto& [coupler, option] :
+       {std::pair{0U, 16U}, std::pair{1U, 17U}, std::pair{2U, 1U}}) {
+    static_cast<void>(session.setOption(coupler, option));
+  }
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  for (const auto& line : check.at("graph").at("summary")) {
+    EXPECT_FALSE(line.get<std::string>().starts_with("a port in no chamber"))
+        << line;
+  }
+}
+
+/// No wire crosses a terminal feedline edge in the capacity graph: such an
+/// edge has no stretch.
+TEST(CouplerSession, GivesATerminalEdgeNoStretch) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto graph =
+      nlohmann::json::parse(session.insertionCheck()).at("graph");
+  std::size_t stretches = 0;
+  for (const auto& edge : graph.at("edges")) {
+    if (edge.at("kind") == "stretch") {
+      ++stretches;
+      EXPECT_FALSE(edge.value("terminal", false)) << edge.at("name");
+    }
+  }
+  EXPECT_GT(stretches, 0U);
+}
+
+/// Every cell a way from `CouplerSession::routeFeedlines` stands on, and
+/// every unit square it steps across diagonally with the way the step
+/// leans, from the corners the JSON keeps.
+struct Covered {
+  std::set<std::pair<std::int64_t, std::int64_t>> cells;
+  std::set<std::pair<std::pair<std::int64_t, std::int64_t>, bool>> diagonals;
+
+  /// Whether two ways cross: they share a cell, or two diagonal steps pass
+  /// through one unit square the other way round.
+  [[nodiscard]] bool crosses(const Covered& other) const {
+    return std::ranges::any_of(
+               cells,
+               [&](const auto& cell) { return other.cells.contains(cell); }) ||
+           std::ranges::any_of(diagonals, [&](const auto& step) {
+             return other.diagonals.contains({step.first, !step.second});
+           });
+  }
+};
+
+Covered coverOf(const nlohmann::json& path) {
+  Covered covered;
+  for (std::size_t k = 0; k + 1 < path.size(); ++k) {
+    auto x = path[k][0].get<std::int64_t>();
+    auto y = path[k][1].get<std::int64_t>();
+    const auto tx = path[k + 1][0].get<std::int64_t>();
+    const auto ty = path[k + 1][1].get<std::int64_t>();
+    const auto dx = (tx > x) - (tx < x);
+    const auto dy = (ty > y) - (ty < y);
+    while (x != tx || y != ty) {
+      covered.cells.insert({x, y});
+      if (dx != 0 && dy != 0) {
+        covered.diagonals.insert(
+            {{std::min(x, x + dx), std::min(y, y + dy)}, dx == dy});
+      }
+      x += dx;
+      y += dy;
+    }
+    covered.cells.insert({tx, ty});
+  }
+  return covered;
+}
+
+/// The moves of a random walk over the coupler options of 4q, replayed on
+/// a fresh session.
+void replay(CouplerSession& session,
+            const std::vector<std::pair<std::uint32_t, std::uint32_t>>& moves) {
+  for (const auto& [coupler, option] : moves) {
+    static_cast<void>(session.setOption(coupler, option));
+  }
+}
+
+/// Whether the feedline routing counts a wire as bad: unrouted, open or
+/// crossing.
+bool isBad(const nlohmann::json& routed, const std::string& name) {
+  return std::ranges::any_of(
+      std::array{"unrouted", "open", "crossing"}, [&](const char* kind) {
+        return std::ranges::any_of(routed.at(kind), [&](const auto& listed) {
+          return listed.template get<std::string>() == name;
+        });
+      });
+}
+
+/// A wire whose port a feedline edge leaves room for only by being crossed
+/// on the port run has no legal way: the capacity check loses it, and the
+/// feedline routing counts it as bad. On 4q this walk lays f1 across the
+/// run in front of the target of wire 5.
+TEST(CouplerSession, KeepsTheFeedlinesOffAWiresStubs) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  replay(session, {{1, 12},
+                   {1, 19},
+                   {1, 17},
+                   {3, 16},
+                   {3, 6},
+                   {3, 3},
+                   {3, 13},
+                   {3, 1},
+                   {1, 15}});
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto routed = nlohmann::json::parse(session.routeFeedlines());
+  const bool lost = std::ranges::any_of(check.at("lost"), [](const auto& wire) {
+    return wire.template get<std::string>() == "5";
+  });
+  EXPECT_EQ(lost, isBad(routed, "5"));
+}
+
+/// A resonator crosses no feedline edge between couplers after the feedline
+/// routing, the edges of its own coupler included, or the routing counts it
+/// as bad. On 4q this walk puts an edge of resonator 4's own coupler in
+/// front of its target.
+TEST(CouplerSession, KeepsAResonatorOffTheEdgesBetweenCouplers) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  replay(session,
+         {{1, 23}, {0, 2}, {2, 20}, {2, 14}, {2, 11}, {2, 2}, {2, 9}, {2, 1}});
+  // An edge between couplers is the edge out of one and into the next, so
+  // it is named twice; a terminal edge once.
+  std::map<std::string, std::uint32_t> named;
+  const auto listed = nlohmann::json::parse(session.couplers());
+  for (const auto& coupler : listed.at("couplers")) {
+    for (const auto* const side : {"edgeIn", "edgeOut"}) {
+      if (!coupler.at(side).is_null()) {
+        ++named[coupler.at(side).get<std::string>()];
+      }
+    }
+  }
+
+  const auto routed = nlohmann::json::parse(session.routeFeedlines());
+  std::map<std::string, Covered> between;
+  for (const auto& wire : routed.at("wires")) {
+    const auto name = wire.at("name").get<std::string>();
+    if (wire.at("kind") == "feedline" && named[name] == 2) {
+      between[name] = coverOf(wire.at("path"));
+    }
+  }
+  ASSERT_FALSE(between.empty());
+  for (const auto& wire : routed.at("wires")) {
+    const auto name = wire.at("name").get<std::string>();
+    if (wire.at("kind") != "resonator" || isBad(routed, name)) {
+      continue;
+    }
+    const auto way = coverOf(wire.at("path"));
+    for (const auto& [edge, covered] : between) {
+      EXPECT_FALSE(way.crosses(covered)) << name << " crosses " << edge;
+    }
+  }
+}
+
+/// The gaps between a resonator's lead and an edge of its own coupler are
+/// bottlenecks of the capacity graph, also where the edge is a terminal
+/// one, and they take what they measure. On 4q, coupler 1 on option 19
+/// leaves resonator 4 no way out between its lead and the terminal edge f0.
+TEST(CouplerSession, KeepsTheGapsBetweenALeadAndItsEdges) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  replay(session, {{1, 12}, {1, 19}});
+
+  // The terminal edges are wires of the check, not walls, so the gap is
+  // between the lead and the edge on from the coupler.
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  bool found = false;
+  for (const auto& edge : check.at("graph").at("edges")) {
+    const auto ends = edge.value("ends", nlohmann::json::array());
+    const bool lead = std::ranges::any_of(ends, [](const auto& end) {
+      return end.template get<std::string>().starts_with("lead of 4");
+    });
+    const bool ownEdge = std::ranges::any_of(ends, [](const auto& end) {
+      const auto name = end.template get<std::string>();
+      return name == "f0" || name == "f1";
+    });
+    if (lead && ownEdge) {
+      found = true;
+      EXPECT_LT(edge.at("capacity").get<std::size_t>(), 2U) << edge.at("name");
+    }
+  }
+  EXPECT_TRUE(found);
+}
+
+/// The crossings of a feedline edge are points a lane spacing apart, the
+/// wire clearance times √2: two wires that cross a clearance apart keep it
+/// only while both run straight, and past the band they turn, and after a
+/// common 45° turn their lanes lie a clearance over √2 apart. So a stretch
+/// takes at most one crossing per lane spacing of its length, plus one.
+TEST(CouplerSession, PacksTheCrossingsOfAnEdgeALaneSpacingApart) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto clearance = check.at("graph").at("clearance").get<double>();
+  const auto spacing = clearance * std::numbers::sqrt2;
+  bool tighter = false;
+  for (const auto& edge : check.at("graph").at("edges")) {
+    if (edge.at("kind") != "stretch" || edge.at("terminal").get<bool>()) {
+      continue;
+    }
+    const auto length = edge.at("length").get<double>();
+    const auto most =
+        static_cast<std::size_t>(std::floor(length / spacing)) + 1;
+    EXPECT_LE(edge.at("capacity").get<std::size_t>(), most) << edge.at("name");
+    tighter =
+        tighter ||
+        static_cast<std::size_t>(std::floor(length / clearance)) + 1 > most;
+  }
+  // The chip has a stretch that the clearance alone would pack tighter.
+  EXPECT_TRUE(tighter);
+}
+
+/// The insertion check judges every chain on its own first (user,
+/// 2026-10-14): `local` holds one verdict per chain, from the capacity graph
+/// of the chip with only that chain's edges standing, and names the edges
+/// it stood.
+TEST(CouplerSession, ChecksEveryChainOnItsOwnFirst) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  const auto listed = nlohmann::json::parse(session.couplers()).at("couplers");
+  std::map<std::uint32_t, std::set<std::string>> edgesOf;
+  for (const auto& coupler : listed) {
+    for (const auto* const side : {"edgeIn", "edgeOut"}) {
+      if (!coupler.at(side).is_null()) {
+        edgesOf[coupler.at("chain").get<std::uint32_t>()].insert(
+            coupler.at(side).get<std::string>());
+      }
+    }
+  }
+  ASSERT_GT(edgesOf.size(), 1U);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto& local = check.at("local");
+  ASSERT_EQ(local.size(), edgesOf.size());
+  for (const auto& entry : local) {
+    const auto chain = entry.at("chain").get<std::uint32_t>();
+    const auto verdict = entry.at("verdict").get<std::string>();
+    EXPECT_TRUE(verdict == "SAT" || verdict == "UNSAT") << verdict;
+    EXPECT_TRUE(entry.at("lost").is_array());
+    EXPECT_TRUE(entry.at("shortBy").is_number());
+    std::set<std::string> stood;
+    for (const auto& name : entry.at("edges")) {
+      stood.insert(name.get<std::string>());
+    }
+    EXPECT_EQ(stood, edgesOf.at(chain)) << "chain " << chain;
+  }
+}
+
+/// In the check of the whole chip the terminal edges, from a launcher to
+/// the first coupler of a chain and from its last to a launcher, are wires
+/// that have to find their way through the graph, not walls (user,
+/// 2026-10-14): the insertion lays each chain on its own, so two terminal
+/// edges may even cross, and as walls they would judge a chip that is not
+/// the one the feedline routing draws.
+TEST(CouplerSession, CarriesTheTerminalEdgesAsWiresInTheCheckOfTheChip) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto& graph = check.at("graph");
+  std::set<std::string> terminals;
+  for (const auto& wire : graph.at("wires")) {
+    if (wire.value("terminal", false)) {
+      terminals.insert(wire.at("name").get<std::string>());
+      EXPECT_TRUE(wire.at("crosses").empty()) << wire.at("name");
+      EXPECT_FALSE(wire.at("status").get<std::string>().empty());
+      EXPECT_FALSE(wire.at("source").at("chambers").empty()) << wire.at("name");
+      EXPECT_FALSE(wire.at("target").at("chambers").empty()) << wire.at("name");
+    }
+  }
+  // The chain of 4q runs from one launcher to another.
+  EXPECT_EQ(terminals.size(), 2U);
+  // Each keeps a port run at both ends: at the coupler the coupler's own
+  // run, longer than the rule's straight length the plain wires keep, and
+  // at the launcher the straight start (user, 2026-10-14).
+  const auto straight = graph.at("straightLength").get<double>();
+  std::size_t runs = 0;
+  std::map<std::string, double> couplerRuns;
+  for (const auto& stroke : graph.at("strokes")) {
+    const auto name = stroke.at("name").get<std::string>();
+    if (stroke.at("kind") == "feedline") {
+      EXPECT_FALSE(terminals.contains(name)) << name;
+      continue;
+    }
+    const auto at = name.find(" at its ");
+    if (at == std::string::npos || !terminals.contains(name.substr(0, at))) {
+      continue;
+    }
+    ++runs;
+    const auto& points = stroke.at("points");
+    const auto length = std::hypot(
+        points.back()[0].get<double>() - points.front()[0].get<double>(),
+        points.back()[1].get<double>() - points.front()[1].get<double>());
+    if (name.find("at its coupler") != std::string::npos) {
+      // The pad's run of 21 steps and the margin of 5, a diagonal step √2
+      // cells long: 26 cells axial, 28.3 diagonal.
+      EXPECT_GE(length, 25.0) << name;
+      couplerRuns[name] = length;
+    } else {
+      EXPECT_NEAR(length, straight, 1.5) << name;
+    }
+  }
+  EXPECT_EQ(runs, 2 * terminals.size());
+  // At the coupler the run goes on by `SCPD_TERMINAL_STUB_MARGIN` steps (5)
+  // past the pad's run, the room the edge needs to turn.
+  setenv("SCPD_TERMINAL_STUB_MARGIN", "0", 1);
+  CouplerSession bare(benchmark.chip, planned.global, planned.assignment,
+                      planned.detail, benchmark.config);
+  const auto unmargined = nlohmann::json::parse(bare.insertionCheck());
+  unsetenv("SCPD_TERMINAL_STUB_MARGIN");
+  std::size_t compared = 0;
+  for (const auto& stroke : unmargined.at("graph").at("strokes")) {
+    const auto name = stroke.at("name").get<std::string>();
+    const auto found = couplerRuns.find(name);
+    if (found == couplerRuns.end()) {
+      continue;
+    }
+    ++compared;
+    const auto& points = stroke.at("points");
+    const auto dx =
+        points.back()[0].get<double>() - points.front()[0].get<double>();
+    const auto dy =
+        points.back()[1].get<double>() - points.front()[1].get<double>();
+    const auto step = (dx != 0.0 && dy != 0.0) ? std::numbers::sqrt2 : 1.0;
+    EXPECT_NEAR(found->second - std::hypot(dx, dy), 5.0 * step, 0.5) << name;
+  }
+  EXPECT_EQ(compared, couplerRuns.size());
+  for (const auto& edge : graph.at("edges")) {
+    if (edge.at("kind") == "stretch") {
+      EXPECT_FALSE(terminals.contains(edge.at("feedline").get<std::string>()))
+          << edge.at("name");
+    }
+  }
+}
+
+/// With the terminal edges as wires the chains stand open at their ends,
+/// so the check closes every mouth between two chains (user, 2026-10-14):
+/// two bottlenecks, each from a flank of the run the ending terminal edge
+/// of one chain leaves its coupler on to the flank on the same side of the
+/// run the starting terminal edge of the next chain reaches its coupler on,
+/// each holding its length over the clearance. The two ends of one chain
+/// enclose its own pocket and close no mouth, so 4q with its one chain has
+/// none; 9q has one, from the end of its second chain to the start of its
+/// first.
+TEST(CouplerSession, ClosesTheMouthBetweenTwoChainsWithTwoLines) {
+  {
+    const auto benchmark = fourQubit();
+    const auto planned = plan(benchmark);
+    CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                           planned.detail, benchmark.config);
+    const auto check = nlohmann::json::parse(session.insertionCheck());
+    for (const auto& edge : check.at("graph").at("edges")) {
+      EXPECT_FALSE(edge.value("mouth", false)) << edge.at("name");
+    }
+  }
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto& graph = check.at("graph");
+  const auto clearance = graph.at("clearance").get<double>();
+  std::size_t mouths = 0;
+  std::size_t fromFlanks = 0;
+  for (const auto& edge : graph.at("edges")) {
+    if (!edge.value("mouth", false)) {
+      continue;
+    }
+    ++mouths;
+    EXPECT_EQ(edge.at("kind"), "bottleneck");
+    bool flank = false;
+    bool lead = false;
+    for (const auto& end : edge.at("ends")) {
+      const auto name = end.get<std::string>();
+      flank = flank || (name.starts_with("f") &&
+                        name.find(" at its coupler, ") != std::string::npos);
+      lead = lead || name.starts_with("lead of ");
+      fromFlanks += name.starts_with("f") &&
+                            name.find(" at its coupler, ") != std::string::npos
+                        ? 1
+                        : 0;
+    }
+    // No gate from a terminal edge's flank to a lead: the lead beside the
+    // run would cut the slot off from the mouth.
+    EXPECT_FALSE(flank && lead) << edge.at("ends");
+    // Its length over the clearance; one more where a gap too narrow for
+    // any wire is the own-run passage of the terminal edge at its flank.
+    const auto length = edge.at("length").get<double>();
+    const auto fits = static_cast<std::size_t>(std::floor(length / clearance));
+    EXPECT_GE(edge.at("capacity").get<std::size_t>(), fits) << edge.at("name");
+    EXPECT_LE(edge.at("capacity").get<std::size_t>(), fits + 1)
+        << edge.at("name");
+    EXPECT_GE(edge.at("chambers").size(), 2U) << edge.at("name");
+  }
+  // One mouth of two lines, each from a flank of the one chain's last
+  // coupler's run to a flank of the other chain's first coupler's run, in
+  // as many gates as walls it crosses.
+  EXPECT_GE(mouths, 2U);
+  EXPECT_GE(fromFlanks, 4U);
+  // A gate of a mouth line at the flank of a terminal edge's own run lets
+  // that edge into its slot however narrow it is, so no terminal edge is
+  // lost for want of a way into its slot.
+  for (const auto& name : check.at("lost")) {
+    EXPECT_FALSE(name.get<std::string>().starts_with("f")) << name;
+  }
+}
+
+/// The crossings of a feedline edge are points, and none lies within the
+/// wire clearance of the run a terminal edge keeps at its coupler or its
+/// launcher (user, 2026-10-14), as none lies within it of a resonator's
+/// lead: a wire crossing there would run into the terminal edge's straight.
+TEST(CouplerSession, KeepsTheCrossingPointsClearOfTheTerminalEdgesRuns) {
+  const auto benchmark = seventeenQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto& graph = check.at("graph");
+  const auto clearance = graph.at("clearance").get<double>();
+  std::vector<std::array<double, 4>> runs;
+  for (const auto& stroke : graph.at("strokes")) {
+    const auto name = stroke.at("name").get<std::string>();
+    if (!name.starts_with("f") || name.find(" at its ") == std::string::npos) {
+      continue;
+    }
+    const auto& points = stroke.at("points");
+    runs.push_back(
+        {points.front()[0].get<double>(), points.front()[1].get<double>(),
+         points.back()[0].get<double>(), points.back()[1].get<double>()});
+  }
+  ASSERT_FALSE(runs.empty());
+  const auto apart = [](const std::array<double, 4>& run, const double x,
+                        const double y) {
+    const auto dx = run[2] - run[0];
+    const auto dy = run[3] - run[1];
+    const auto along = std::clamp(((x - run[0]) * dx + (y - run[1]) * dy) /
+                                      ((dx * dx) + (dy * dy)),
+                                  0.0, 1.0);
+    return std::hypot(x - run[0] - (along * dx), y - run[1] - (along * dy));
+  };
+  std::size_t points = 0;
+  for (const auto& edge : graph.at("edges")) {
+    if (edge.at("kind") != "stretch" || edge.at("terminal").get<bool>()) {
+      continue;
+    }
+    EXPECT_EQ(edge.at("points").size(), edge.at("capacity").get<std::size_t>())
+        << edge.at("name");
+    for (const auto& point : edge.at("points")) {
+      ++points;
+      const auto x = point[0].get<double>();
+      const auto y = point[1].get<double>();
+      for (const auto& run : runs) {
+        EXPECT_GE(apart(run, x, y), clearance - 1e-9) << edge.at("name");
+      }
+    }
+  }
+  EXPECT_GT(points, 0U);
+}
+
+/// A crossing of a feedline edge takes a rectangle (user, 2026-10-14): the
+/// band's reach across the edge to either side and half a clearance along
+/// it either way, and it touches no other wall. So around every crossing
+/// point, past the edge's own inflated line, the cells of that rectangle
+/// are free or chamber cells.
+TEST(CouplerSession, KeepsARectangleClearAroundEveryCrossing) {
+  const auto benchmark = seventeenQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto& graph = check.at("graph");
+  const auto width = graph.at("width").get<std::int64_t>();
+  const auto height = graph.at("height").get<std::int64_t>();
+  const auto clearance = graph.at("clearance").get<double>();
+  const auto reach = graph.at("crossingReach").get<std::int64_t>();
+  const auto inflation = graph.at("inflation").get<double>();
+  // The raster, run-length coded: a code below 6 is a wall.
+  std::vector<std::uint8_t> code;
+  code.reserve(static_cast<std::size_t>(width * height));
+  const auto& raster = graph.at("raster");
+  for (std::size_t at = 0; at + 1 < raster.size(); at += 2) {
+    const auto value = static_cast<std::uint8_t>(
+        std::min<std::size_t>(raster[at].get<std::size_t>(), 255));
+    code.insert(code.end(), raster[at + 1].get<std::size_t>(), value);
+  }
+  ASSERT_EQ(code.size(), static_cast<std::size_t>(width * height));
+  const auto free = [&](const std::int64_t x, const std::int64_t y) {
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+      return false;
+    }
+    const auto c = code[static_cast<std::size_t>((y * width) + x)];
+    return c == 0 || c >= 6;
+  };
+  std::size_t points = 0;
+  for (const auto& edge : graph.at("edges")) {
+    if (edge.at("kind") != "stretch" || edge.at("terminal").get<bool>() ||
+        edge.at("points").empty()) {
+      continue;
+    }
+    const auto& line = edge.at("line");
+    const auto dx = line.back()[0].get<std::int64_t>() -
+                    line.front()[0].get<std::int64_t>();
+    const auto dy = line.back()[1].get<std::int64_t>() -
+                    line.front()[1].get<std::int64_t>();
+    if (dx == 0 && dy == 0) {
+      continue;
+    }
+    const std::int64_t ax = (dx > 0) - (dx < 0);
+    const std::int64_t ay = (dy > 0) - (dy < 0);
+    const auto norm =
+        std::hypot(static_cast<double>(ax), static_cast<double>(ay));
+    const auto half =
+        static_cast<std::int64_t>(std::ceil(clearance / 2.0 / norm));
+    const auto beyond = static_cast<std::int64_t>(std::ceil(inflation / norm));
+    for (const auto& point : edge.at("points")) {
+      ++points;
+      const auto px = point[0].get<std::int64_t>();
+      const auto py = point[1].get<std::int64_t>();
+      for (std::int64_t along = -half; along <= half; ++along) {
+        for (std::int64_t across = -reach; across <= reach; ++across) {
+          if (std::abs(across) <= beyond) {
+            continue;
+          }
+          // Across the edge: the step turned by a right angle.
+          EXPECT_TRUE(free(px + (along * ax) - (across * ay),
+                           py + (along * ay) + (across * ax)))
+              << edge.at("name") << " at " << px << "," << py << " along "
+              << along << " across " << across;
+        }
+      }
+    }
+  }
+  EXPECT_GT(points, 0U);
+}
+
+/// The slot of a terminal edge's run is closed at its mouth, at both ends
+/// of the edge (user, 2026-10-14): a gate from the tip of one flank to the
+/// tip of the other, for one wire, the edge's own. A wire that passed in
+/// front of the slot would cross the edge where it leaves the slot.
+TEST(CouplerSession, ClosesTheSlotOfEveryTerminalEdgesRunForTheEdgeAlone) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto& graph = check.at("graph");
+  std::set<std::string> terminals;
+  for (const auto& wire : graph.at("wires")) {
+    if (wire.value("terminal", false)) {
+      terminals.insert(wire.at("name").get<std::string>());
+    }
+  }
+  ASSERT_FALSE(terminals.empty());
+  std::set<std::string> closed;
+  for (const auto& edge : graph.at("edges")) {
+    if (!edge.value("slot", false)) {
+      continue;
+    }
+    const auto left = edge.at("ends")[0].get<std::string>();
+    const auto right = edge.at("ends")[1].get<std::string>();
+    const auto run = left.substr(0, left.rfind(", "));
+    EXPECT_EQ(run, right.substr(0, right.rfind(", "))) << edge.at("ends");
+    const auto name = run.substr(0, run.find(" at its "));
+    EXPECT_TRUE(terminals.contains(name)) << run;
+    EXPECT_EQ(edge.at("capacity").get<std::size_t>(), 1U) << run;
+    ASSERT_TRUE(edge.at("users").is_array()) << run;
+    EXPECT_EQ(edge.at("users").size(), 1U) << run;
+    EXPECT_EQ(edge.at("users")[0].get<std::string>(), name) << run;
+    closed.insert(run);
+  }
+  // Every terminal edge: its run at the launcher and at the coupler.
+  EXPECT_EQ(closed.size(), 2 * terminals.size());
+}
+
+/// A gate between the run of a terminal edge and the run of a plain wire
+/// is kept (user, 2026-10-14): the terminal edge's run moves with the
+/// coupler's option, as a pad or a lead does, so the gate is the
+/// insertion's to answer for. Every terminal edge leaves its launcher
+/// beside the launchers of plain wires, so 17q has such gates.
+TEST(CouplerSession, KeepsTheGatesAtTheRunsOfTheTerminalEdges) {
+  const auto benchmark = seventeenQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  std::size_t kept = 0;
+  for (const auto& edge : check.at("graph").at("edges")) {
+    if (edge.at("kind") != "bottleneck" || edge.value("mouth", false)) {
+      continue;
+    }
+    const auto a = edge.at("ends")[0].get<std::string>();
+    const auto b = edge.at("ends")[1].get<std::string>();
+    const auto terminalRun = [](const std::string& name) {
+      return name.starts_with("f") &&
+             (name.find(" at its launcher") != std::string::npos ||
+              name.find(" at its coupler") != std::string::npos);
+    };
+    const auto plainRun = [](const std::string& name) {
+      return !name.starts_with("f") && !name.starts_with("lead of") &&
+             name.find(" at its ") != std::string::npos;
+    };
+    kept += (terminalRun(a) && plainRun(b)) || (terminalRun(b) && plainRun(a))
+                ? 1
+                : 0;
+  }
+  EXPECT_GT(kept, 0U);
+}
+
+/// A gate's line runs free between its two ends (user, 2026-10-14): a cut
+/// that crossed a wall — the run of a terminal edge, say — is cut at that
+/// wall into the gates of its free stretches, so no gate joins chambers
+/// that a wall between them keeps apart.
+TEST(CouplerSession, CutsEveryGateAtTheWallsItCrosses) {
+  const auto benchmark = seventeenQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto& graph = check.at("graph");
+  const auto width = graph.at("width").get<std::int64_t>();
+  const auto height = graph.at("height").get<std::int64_t>();
+  std::vector<std::uint8_t> code;
+  const auto& raster = graph.at("raster");
+  for (std::size_t at = 0; at + 1 < raster.size(); at += 2) {
+    code.insert(code.end(), raster[at + 1].get<std::size_t>(),
+                static_cast<std::uint8_t>(
+                    std::min<std::size_t>(raster[at].get<std::size_t>(), 255)));
+  }
+  ASSERT_EQ(code.size(), static_cast<std::size_t>(width * height));
+  std::size_t gates = 0;
+  for (const auto& edge : graph.at("edges")) {
+    if (edge.at("kind") != "bottleneck") {
+      continue;
+    }
+    ++gates;
+    const auto& line = edge.at("line");
+    // Every cell strictly between the ends, on the line as the grid walks
+    // it, is free or a chamber cell.
+    const auto cells = grid::lineCells(
+        line[0][0].get<std::int64_t>(), line[0][1].get<std::int64_t>(),
+        line[1][0].get<std::int64_t>(), line[1][1].get<std::int64_t>(),
+        static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height));
+    for (std::size_t k = 1; k + 1 < cells.size(); ++k) {
+      const auto c = code[cells[k]];
+      EXPECT_TRUE(c == 0 || c >= 6)
+          << edge.at("name") << " " << edge.at("ends") << " " << edge.at("line")
+          << " crosses a wall at " << cells[k] % width << ","
+          << cells[k] / width << " code " << static_cast<int>(c) << " cell "
+          << k << " of " << cells.size();
+    }
+  }
+  EXPECT_GT(gates, 0U);
+}
+
+/// A line of the capacity graph, in cells.
+struct GateLine {
+  double ax = 0.0;
+  double ay = 0.0;
+  double bx = 0.0;
+  double by = 0.0;
+};
+
+GateLine gateLineOf(const nlohmann::json& edge) {
+  const auto& line = edge.at("line");
+  return {.ax = line[0][0].get<double>(),
+          .ay = line[0][1].get<double>(),
+          .bx = line[1][0].get<double>(),
+          .by = line[1][1].get<double>()};
+}
+
+double lengthOf(const GateLine& line) {
+  return std::hypot(line.bx - line.ax, line.by - line.ay);
+}
+
+/// How far `x, y` lies from the line, and where along it its foot is: 0 at
+/// the line's first end, 1 at its second.
+std::pair<double, double> awayFrom(const GateLine& line, const double x,
+                                   const double y) {
+  const double dx = line.bx - line.ax;
+  const double dy = line.by - line.ay;
+  const double squared = (dx * dx) + (dy * dy);
+  const double at =
+      squared > 0.0
+          ? std::clamp((((x - line.ax) * dx) + ((y - line.ay) * dy)) / squared,
+                       0.0, 1.0)
+          : 0.0;
+  return {std::hypot(x - (line.ax + (at * dx)), y - (line.ay + (at * dy))), at};
+}
+
+/// Whether the two lines cross more than `near` cells from the ends of
+/// both, or one ends within `near` cells of the other's middle.
+bool meetInTheMiddle(const GateLine& a, const GateLine& b,
+                     const double near = 1.5) {
+  const auto lengthA = lengthOf(a);
+  const auto lengthB = lengthOf(b);
+  if (lengthA < 1.0 || lengthB < 1.0) {
+    return false;
+  }
+  const double rx = a.bx - a.ax;
+  const double ry = a.by - a.ay;
+  const double sx = b.bx - b.ax;
+  const double sy = b.by - b.ay;
+  const double den = (rx * sy) - (ry * sx);
+  if (std::abs(den) > 1e-9) {
+    const double t = (((b.ax - a.ax) * sy) - ((b.ay - a.ay) * sx)) / den;
+    const double u = (((b.ax - a.ax) * ry) - ((b.ay - a.ay) * rx)) / den;
+    if (t > near / lengthA && t < 1.0 - (near / lengthA) &&
+        u > near / lengthB && u < 1.0 - (near / lengthB)) {
+      return true;
+    }
+  }
+  const auto endsOn = [near](const GateLine& line, const double x,
+                             const double y, const double length) {
+    const auto [away, at] = awayFrom(line, x, y);
+    return away < near && at > near / length && at < 1.0 - (near / length);
+  };
+  return endsOn(b, a.ax, a.ay, lengthB) || endsOn(b, a.bx, a.by, lengthB) ||
+         endsOn(a, b.ax, b.ay, lengthA) || endsOn(a, b.bx, b.by, lengthA);
+}
+
+/// No gate of the capacity graph crosses another in the middle of either,
+/// and none ends on the middle of another (user, 2026-10-14): a gate beside
+/// the chambers on both sides of a line it crosses lets a wire over that
+/// line unpaid, and two that run a cell apart cut slivers that are chambers
+/// to the flow.
+TEST(CouplerSession, LetsNoGateMeetAnotherInTheMiddle) {
+  const auto checkChip = [](const Benchmark& benchmark) {
+    const auto planned = plan(benchmark);
+    CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                           planned.detail, benchmark.config);
+    const auto check = nlohmann::json::parse(session.insertionCheck());
+    std::vector<std::pair<std::string, GateLine>> gates;
+    for (const auto& edge : check.at("graph").at("edges")) {
+      if (edge.at("kind") == "bottleneck") {
+        gates.emplace_back(edge.at("name").get<std::string>() + " " +
+                               edge.at("ends").dump(),
+                           gateLineOf(edge));
+      }
+    }
+    EXPECT_GT(gates.size(), 0U);
+    for (std::size_t i = 0; i < gates.size(); ++i) {
+      for (std::size_t j = i + 1; j < gates.size(); ++j) {
+        EXPECT_FALSE(meetInTheMiddle(gates[i].second, gates[j].second))
+            << gates[i].first << " x " << gates[j].first;
+      }
+    }
+  };
+  checkChip(fourQubit());
+  checkChip(nineQubit());
+  checkChip(seventeenQubit());
+}
+
+/// Where the tips of two runs at their couplers lie nearly on one line,
+/// the two lines of the mouth between them would run over the slots and
+/// over each other; one line between the two nearest tips closes that
+/// mouth (user, 2026-10-14). So no tip has more than one mouth gate ending
+/// on it, and no mouth gate runs within half a clearance of a tip of its
+/// own runs other than its ends.
+TEST(CouplerSession, ClosesAMouthWhoseLinesWouldRunOverTheSlotsWithOneLine) {
+  const auto checkChip = [](const Benchmark& benchmark) {
+    const auto planned = plan(benchmark);
+    CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                           planned.detail, benchmark.config);
+    const auto check = nlohmann::json::parse(session.insertionCheck());
+    const auto& graph = check.at("graph");
+    const auto clearance = graph.at("clearance").get<double>();
+    std::map<std::string, std::pair<double, double>> tips;
+    for (const auto& edge : graph.at("edges")) {
+      if (edge.value("slot", false)) {
+        const auto line = gateLineOf(edge);
+        tips[edge.at("ends")[0].get<std::string>()] = {line.ax, line.ay};
+        tips[edge.at("ends")[1].get<std::string>()] = {line.bx, line.by};
+      }
+    }
+    EXPECT_GT(tips.size(), 0U);
+    std::map<std::string, std::size_t> endingOn;
+    std::size_t mouths = 0;
+    for (const auto& edge : graph.at("edges")) {
+      if (!edge.value("mouth", false)) {
+        continue;
+      }
+      ++mouths;
+      const auto line = gateLineOf(edge);
+      for (const auto& [name, tip] : tips) {
+        if (std::hypot(tip.first - line.ax, tip.second - line.ay) <= 1.5 ||
+            std::hypot(tip.first - line.bx, tip.second - line.by) <= 1.5) {
+          ++endingOn[name];
+        }
+      }
+      for (const auto& end : edge.at("ends")) {
+        const auto name = end.get<std::string>();
+        const auto pos = name.find(" at its coupler, ");
+        if (pos == std::string::npos) {
+          continue;
+        }
+        const auto run = name.substr(0, pos + 17);
+        const auto side = name.substr(pos + 17);
+        const auto other = tips.find(run + (side == "left" ? "right" : "left"));
+        if (other == tips.end()) {
+          continue;
+        }
+        const auto [x, y] = other->second;
+        if (std::hypot(x - line.ax, y - line.ay) <= 1.5 ||
+            std::hypot(x - line.bx, y - line.by) <= 1.5) {
+          continue;
+        }
+        EXPECT_GE(awayFrom(line, x, y).first, clearance / 2.0)
+            << edge.at("name") << " " << edge.at("ends") << " runs by "
+            << other->first;
+      }
+    }
+    EXPECT_GT(mouths, 0U);
+    for (const auto& [name, count] : endingOn) {
+      EXPECT_LE(count, 1U) << name;
+    }
+  };
+  checkChip(nineQubit());
+  checkChip(seventeenQubit());
+}
+
+/// Every mouth between two chains closes, and the check's summary says so by
+/// saying nothing: a mouth left open joins the room inside the chains to the
+/// room outside, and every edge there loses its places to cross. On 33q the
+/// lead of the next coupler's resonator stands between the two runs, and the
+/// mouth line from the one run's tip meets it before the other run's tip
+/// (user, 2026-10-15): the line closes the mouth on to that lead, which the
+/// pad and the run's flanks carry on to the slot.
+TEST(CouplerSession, ClosesEveryMouthThoughALeadStandsBeforeTheTip) {
+  for (const auto& chip : {"17q", "33q"}) {
+    const auto benchmark = benchmarkOf(chip);
+    const auto planned = plan(benchmark);
+    CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                           planned.detail, benchmark.config);
+    const auto check = nlohmann::json::parse(session.insertionCheck());
+    std::size_t mouths = 0;
+    for (const auto& edge : check.at("graph").at("edges")) {
+      mouths += edge.value("mouth", false) ? 1 : 0;
+    }
+    EXPECT_GT(mouths, 0U) << chip;
+    for (const auto& line : check.at("graph").at("summary")) {
+      EXPECT_FALSE(line.get<std::string>().starts_with("no mouth"))
+          << chip << ": " << line;
+    }
+  }
+}
+
+/// `SCPD_CHECK_ROUND` sets every rule of the check to the state it had after
+/// that round of the review of 2026-10-13 (user, 2026-10-15): at 16 there is
+/// no check of each chain alone, no terminal edge as a wire and so no mouth
+/// and no slot, no rip-up, and no rectangle around a crossing.
+TEST(CouplerSession, ChecksAsItDidInRoundSixteenUnderTheRoundSwitch) {
+  setenv("SCPD_CHECK_ROUND", "16", 1);
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  const auto check = nlohmann::json::parse(session.insertionCheck());
+  unsetenv("SCPD_CHECK_ROUND");
+
+  EXPECT_TRUE(check.value("local", nlohmann::json::array()).empty());
+  for (const auto& edge : check.at("graph").at("edges")) {
+    EXPECT_FALSE(edge.value("mouth", false)) << edge.at("name");
+    EXPECT_FALSE(edge.value("slot", false)) << edge.at("name");
+  }
+  for (const auto& line : check.at("graph").at("summary")) {
+    const auto text = line.get<std::string>();
+    EXPECT_EQ(text.find("sweeps"), std::string::npos) << text;
+    EXPECT_EQ(text.find("terminal edges as wires"), std::string::npos) << text;
+  }
+}
+
+/// The chain search checks its steps against the chain alone, not against
+/// the chains settled before it (user, 2026-10-14), and says so.
+TEST(CouplerSession, SearchesEveryChainAgainstItselfAlone) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  std::vector<std::string> lines;
+  CouplerSession session(
+      benchmark.chip, planned.global, planned.assignment, planned.detail,
+      benchmark.config,
+      [&lines](const std::string_view line) { lines.emplace_back(line); }, 1);
+  EXPECT_TRUE(std::ranges::any_of(lines, [](const std::string& line) {
+    return line.find("each checked against itself alone") != std::string::npos;
+  }));
+}
+
+/// Two feedline edges of one chain never cross after the feedline routing,
+/// at the coupler they share either: not on a cell, and not as two diagonal
+/// steps through one unit square.
+TEST(CouplerSession, KeepsTheEdgesOfAChainApartInTheFeedlineRouting) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  const auto listed = nlohmann::json::parse(session.couplers()).at("couplers");
+  std::map<std::string, std::uint32_t> chainOf;
+  for (const auto& coupler : listed) {
+    for (const auto* const side : {"edgeIn", "edgeOut"}) {
+      if (!coupler.at(side).is_null()) {
+        chainOf[coupler.at(side).get<std::string>()] =
+            coupler.at("chain").get<std::uint32_t>();
+      }
+    }
+  }
+
+  const auto routed = nlohmann::json::parse(session.routeFeedlines());
+  std::map<std::string, Covered> edges;
+  for (const auto& wire : routed.at("wires")) {
+    const auto name = wire.at("name").get<std::string>();
+    if (wire.at("kind") == "feedline" && chainOf.contains(name)) {
+      edges[name] = coverOf(wire.at("path"));
+    }
+  }
+  ASSERT_FALSE(edges.empty());
+  for (const auto& [one, a] : edges) {
+    for (const auto& [two, b] : edges) {
+      if (one >= two || chainOf[one] != chainOf[two]) {
+        continue;
+      }
+      EXPECT_FALSE(a.crosses(b)) << one << " and " << two;
+    }
+  }
 }
 
 /// `SCPD_COUPLER_SHIFT` (20) moves an option that leaves the coupler box
@@ -1364,7 +2404,9 @@ TEST(FinalRouter, DrawsTheCapacityGraphAfterTheBottlenecks) {
             std::isdigit(static_cast<unsigned char>(end[1])) != 0);
   };
   for (const auto& edge : edges) {
-    if (edge.at("kind") != "bottleneck") {
+    // A mouth between two chains is closed by lines of the insertion's
+    // own, whatever walls they meet on the way.
+    if (edge.at("kind") != "bottleneck" || edge.value("mouth", false)) {
       continue;
     }
     const auto& ends = edge.at("ends");
@@ -1449,9 +2491,11 @@ TEST(FinalRouter, DrawsTheCapacityGraphAfterTheBottlenecks) {
     }
     return std::string();
   };
+  // The mouth of a terminal edge's slot is the one gate that joins the two
+  // walls of a run, for that edge alone.
   std::vector<nlohmann::json> cuts;
   for (const auto& edge : edges) {
-    if (edge.at("kind") == "bottleneck") {
+    if (edge.at("kind") == "bottleneck" && !edge.value("slot", false)) {
       cuts.push_back(edge);
     }
   }

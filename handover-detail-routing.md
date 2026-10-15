@@ -6,8 +6,9 @@ the hard way. Read [summary-stage-4.md](summary-stage-4.md) first for the stage
 you are building on; this file does not repeat it.
 
 - Checkout: `/Users/michaelfeldmeier/Documents/GitHub/scpd-phase-4`
-- Branch: `phase-4-routing-stages`, based on `8ef300a`. **Nothing is committed —
-  the user commits.** Leave your work in the tree and report what you verified.
+- Branch: `phase-4-routing-stages`, based on `8ef300a`.
+  **Nothing is committed — the user commits.** Leave your work in the tree and
+  report what you verified.
 - Prototype: `/Users/michaelfeldmeier/Documents/GitHub/FridgeCAD` (`0c5d6d9`),
   read only. It is the specification; it is also wrong in places (below).
 - The design plan for both steps is
@@ -28,17 +29,17 @@ empty placeholder `table DetailRouting {}`. Filling it is yours.
 `04-corridor.fb` carries, for every connection of `03-assign.fb`, in that same
 order and with no key to look up:
 
-| field | meaning |
-| --- | --- |
-| `Corridor.source` | the point the assignment feeds the wire at |
-| `Corridor.target` | the cell its target port is reached at |
-| `Corridor.partitions` | the partitions it runs through, in order |
-| `Corridor.crossings` | where it crosses from each partition to the next — one fewer than `partitions` |
+| field                   | meaning                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `Corridor.source`       | the point the assignment feeds the wire at                                                                    |
+| `Corridor.target`       | the cell its target port is reached at                                                                        |
+| `Corridor.partitions`   | the partitions it runs through, in order                                                                      |
+| `Corridor.crossings`    | where it crosses from each partition to the next — one fewer than `partitions`                                |
 | `CorridorRouting.slots` | every place a wire may cross, per border, plus one entry marked `pocket` for the ways out of the port pockets |
 
-A corridor with no partitions was not routed. On the eight benchmark chips
-every connection has one, so if you see an empty corridor, something upstream
-broke — check before you route around it.
+A corridor with no partitions was not routed. On the eight benchmark chips every
+connection has one, so if you see an empty corridor, something upstream broke —
+check before you route around it.
 
 **What the plan guarantees**, all of it checked in ctest and again against the
 written artifacts:
@@ -54,39 +55,39 @@ written artifacts:
 **What it does not guarantee, and you must not assume:**
 
 - **That two crossings on one border are far enough apart for your wires.** The
-  crossing pitch is a *planning* figure (`[stages.capacity] crossing_pitch`,
-  165 units, the prototype's `CON_MIN_WIRE_DIST − 20`). How far two wires end up
+  crossing pitch is a *planning* figure (`[stages.capacity] crossing_pitch`, 165
+  units, the prototype's `CON_MIN_WIRE_DIST − 20`). How far two wires end up
   apart is your answer and the DRC's verdict.
 - **That a chord fits.** A chord is a straight line between two places; the
   partition it crosses is not convex, and your path will be longer than it.
-- **That the inner connections are in there.** The connections of
-  `02-global.fb` never entered the corridor stage — they carry their capacity
-  story in the Hanan model (decision 0028) and come to you unrouted. The
-  prototype does the same.
+- **That the inner connections are in there.** The connections of `02-global.fb`
+  never entered the corridor stage — they carry their capacity story in the
+  Hanan model (decision 0028) and come to you unrouted. The prototype does the
+  same.
 - **That a partition is one connected blob.** It is what the watershed made of
   it.
 
 ## The job
 
 Three passes, as in `DetailedGrid::run`
-(`include/fiction/layout/DetailedGrid.cpp:2165`), minus its reconstruction
-step, which you do not need — the corridor already knows which wire is which.
+(`include/fiction/layout/DetailedGrid.cpp:2165`), minus its reconstruction step,
+which you do not need — the corridor already knows which wire is which.
 
 **0. Get the labels back.** The A\* is confined to one partition, and a label
 grid is derived state that is in no artifact. `grid::rasterizePartitions`
 ([include/mqt-scpd/grid/Partitions.hpp:137](include/mqt-scpd/grid/Partitions.hpp#L137))
 already fills the cells back in from the outlines; the corridor stage uses it
-(`labelsOf` in [src/pipeline/CorridorRouter.cpp](src/pipeline/CorridorRouter.cpp)).
-Do not run the watershed again — on 69Q it is most of the capacity stage's
-runtime.
+(`labelsOf` in
+[src/pipeline/CorridorRouter.cpp](src/pipeline/CorridorRouter.cpp)). Do not run
+the watershed again — on 69Q it is most of the capacity stage's runtime.
 
-**1. Route inside each partition** (`detailed_pre_routing`, `DetailedGrid.cpp:399`).
-Every corridor piece that crosses a partition, 8-connected A\* on the detail
-grid, costs `{10, 14}`, octile heuristic. Only the *inner* cells of a path are
-occupied, so two wires may share an endpoint on a border. Diagonal corners are
-not cut. Up to `MAX_VARS = 16` orderings are tried (`DetailedGrid.cpp:454`,
-sorted by start cell, then `std::next_permutation`); the ordering that routes
-the most pieces wins.
+**1. Route inside each partition** (`detailed_pre_routing`,
+`DetailedGrid.cpp:399`). Every corridor piece that crosses a partition,
+8-connected A\* on the detail grid, costs `{10, 14}`, octile heuristic. Only the
+*inner* cells of a path are occupied, so two wires may share an endpoint on a
+border. Diagonal corners are not cut. Up to `MAX_VARS = 16` orderings are tried
+(`DetailedGrid.cpp:454`, sorted by start cell, then `std::next_permutation`);
+the ordering that routes the most pieces wins.
 
 **2. Join them up.** A concatenation in corridor order — not a search. The
 prototype has to recover which fragment belongs to which wire by comparing
@@ -103,16 +104,16 @@ the paths of its two ring neighbours.
 
 ### Parameters, and which of them are real
 
-| name | value | where | note |
-| --- | --- | --- | --- |
-| `K` corridor half width | 40 | `DetailedGrid.hpp:53` | grid-dependent: 11 % of the 9Q grid width, 2.7 % of 69Q. Port it, measure it, and if a chip fails on it express it relative to the grid |
-| `J` blockade radius | derived | `DetailedGrid.cpp:1455` | `ceil(CON_MIN_WIRE_DIST × pixel_per_unit) − 1`. **Derive it. Never read the literal.** |
-| `J` again | `6` | `DetailedGrid.cpp:1770` | the same quantity read as a literal default in `run_inner_routing_requests` — this is the inconsistency `data-model.md` names |
-| `rounds` | 8 | `DetailedGrid.hpp:65` | |
-| `max_relaxation` | 10 | `DetailedGrid.hpp:67` | |
-| `orderings` | 16 | `DetailedGrid.cpp:454` | |
-| obstacle penalty | radius 6, value 10 | `DetailedGrid.hpp:61,63` | linear falloff |
-| `params.I` | — | `DetailedGrid.cpp:1772` | read, never used. Dead |
+| name                    | value              | where                    | note                                                                                                                                    |
+| ----------------------- | ------------------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `K` corridor half width | 40                 | `DetailedGrid.hpp:53`    | grid-dependent: 11 % of the 9Q grid width, 2.7 % of 69Q. Port it, measure it, and if a chip fails on it express it relative to the grid |
+| `J` blockade radius     | derived            | `DetailedGrid.cpp:1455`  | `ceil(CON_MIN_WIRE_DIST × pixel_per_unit) − 1`. **Derive it. Never read the literal.**                                                  |
+| `J` again               | `6`                | `DetailedGrid.cpp:1770`  | the same quantity read as a literal default in `run_inner_routing_requests` — this is the inconsistency `data-model.md` names           |
+| `rounds`                | 8                  | `DetailedGrid.hpp:65`    |                                                                                                                                         |
+| `max_relaxation`        | 10                 | `DetailedGrid.hpp:67`    |                                                                                                                                         |
+| `orderings`             | 16                 | `DetailedGrid.cpp:454`   |                                                                                                                                         |
+| obstacle penalty        | radius 6, value 10 | `DetailedGrid.hpp:61,63` | linear falloff                                                                                                                          |
+| `params.I`              | —                  | `DetailedGrid.cpp:1772`  | read, never used. Dead                                                                                                                  |
 
 Put them in `[stages.detail]` of `schemas/config.fbs` next to `CorridorParams`,
 and parse them in `python/mqt/scpd/config.py` — both stages' parameters are
@@ -140,7 +141,8 @@ beside that is a set of pixels — never the lines between them. So a wire may
 stop on top of another wire's endpoint and nothing objects. Step 1 added two
 rules the prototype does not have:
 
-- no wire over another wire's **pin** (11 such tunnels on four chips without it),
+- no wire over another wire's **pin** (11 such tunnels on four chips without
+  it),
 - no crossing outside the **ring** the ports feed from (27 without it — the
   prototype does clamp its border pixels to the launcher box,
   `CapacityGrid.cpp:7342`, and step 1 had simply not ported it).
@@ -175,10 +177,11 @@ change a mechanism, re-run the measurement behind every claim you inherit.
 **5. Rounding: snap to the grid you came from.** Border samples live in layout
 units; reading them back with `toCell` gives 937.4999999999999 for what was
 937.5, the determinant is then not exactly zero, and two collinear points look
-separate. `onGrid` in [src/pipeline/CorridorRouter.cpp](src/pipeline/CorridorRouter.cpp)
-snaps to half-cells; every geometric predicate downstream is exact only because
-of it. Your paths are whole cells, which is easier — but the corridor endpoints
-you read are half-cells.
+separate. `onGrid` in
+[src/pipeline/CorridorRouter.cpp](src/pipeline/CorridorRouter.cpp) snaps to
+half-cells; every geometric predicate downstream is exact only because of it.
+Your paths are whole cells, which is easier — but the corridor endpoints you
+read are half-cells.
 
 **6. Exclusivity is per *place*, not per entry.** Where three partitions meet,
 one point is a slot of each of the three borders and still one place on the
@@ -214,15 +217,15 @@ single-threaded; concurrency is phase 6.
 - `uvx nox -s lint` reformats ~66 files this branch never touched, and rewrites
   every `# noqa: <code>` into `# ruff: ignore[<name>]`. Revert everything you do
   not own; map those comments back in the files you do.
-- `uvx nox -s stubs` emits invalid Python for the `global` stage (`global: bytes`).
-  `python/mqt/scpd/pyscpd.pyi` is maintained by hand.
-- Long runs belong in the background; the 69Q corridor test alone is 74 s and the
-  whole corridor suite 260 s.
+- `uvx nox -s stubs` emits invalid Python for the `global` stage
+  (`global: bytes`). `python/mqt/scpd/pyscpd.pyi` is maintained by hand.
+- Long runs belong in the background; the 69Q corridor test alone is 74 s and
+  the whole corridor suite 260 s.
 
 **11. The picture is a deliverable, and it has a budget.** 10 MB per SVG
-(`pipeline.md`). A 69Q detail wire is a few thousand cells, so draw each polyline
-with its collinear runs collapsed — that pulls an 8-connected path down to its
-bends. Check the size of all eight before you report.
+(`pipeline.md`). A 69Q detail wire is a few thousand cells, so draw each
+polyline with its collinear runs collapsed — that pulls an 8-connected path down
+to its bends. Check the size of all eight before you report.
 
 **12. How this work is run.** Implement → test → generate SVG *and* GDS for all
 eight chips → report → wait for feedback. Reply to the user in German; write
@@ -230,23 +233,23 @@ everything in the repository in English. **Do not commit.**
 
 ## The files you will touch
 
-| file | what |
-| --- | --- |
-| `schemas/artifacts.fbs` | fill `DetailRouting`: `grid`, `wires`, `inner`; paths as `geometry.DCoord` |
-| `schemas/config.fbs` | `DetailParams`, and `detail` in `StageParams` |
-| `include/mqt-scpd/pipeline/Stages.hpp` | `IDetailRouter::run(chip, capacity, global, assignment, corridor, config)` |
-| `include/mqt-scpd/pipeline/DetailRouter.hpp`, `src/pipeline/DetailRouter.cpp` | the stage; `makePixelAStarRouter()` |
-| `src/pipeline/Registry.{hpp,cpp}` | `detailRouters()`, `selectedDetailRouter()`, default `"pixel-astar"` |
-| `src/io/Artifacts.cpp` | a `case` in `validate` |
-| `bindings/bindings.cpp` | `route_detail(...)`, an entry in `algorithms()` |
-| `python/mqt/scpd/{run,planning,plot,artifacts,inspection,config}.py`, `export/klayout.py` | the stage, the read-back, a layer, a colour |
-| `test/pipeline/test_detail_router.cpp` | the invariants above, over all eight chips |
+| file                                                                                      | what                                                                       |
+| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `schemas/artifacts.fbs`                                                                   | fill `DetailRouting`: `grid`, `wires`, `inner`; paths as `geometry.DCoord` |
+| `schemas/config.fbs`                                                                      | `DetailParams`, and `detail` in `StageParams`                              |
+| `include/mqt-scpd/pipeline/Stages.hpp`                                                    | `IDetailRouter::run(chip, capacity, global, assignment, corridor, config)` |
+| `include/mqt-scpd/pipeline/DetailRouter.hpp`, `src/pipeline/DetailRouter.cpp`             | the stage; `makePixelAStarRouter()`                                        |
+| `src/pipeline/Registry.{hpp,cpp}`                                                         | `detailRouters()`, `selectedDetailRouter()`, default `"pixel-astar"`       |
+| `src/io/Artifacts.cpp`                                                                    | a `case` in `validate`                                                     |
+| `bindings/bindings.cpp`                                                                   | `route_detail(...)`, an entry in `algorithms()`                            |
+| `python/mqt/scpd/{run,planning,plot,artifacts,inspection,config}.py`, `export/klayout.py` | the stage, the read-back, a layer, a colour                                |
+| `test/pipeline/test_detail_router.cpp`                                                    | the invariants above, over all eight chips                                 |
 
 Every one of these has a Corridor twin committed to the tree already — copy the
 shape rather than inventing one. `test/pipeline/Benchmarks.hpp` builds the
-fixtures; `include/mqt-scpd/pipeline/CapacityPlanner.hpp` has `buildScene`, which
-the routing stages are meant to rebuild from (its comment says so). No CMake
-change is needed — `AddMQTScpdLibrary.cmake` globs.
+fixtures; `include/mqt-scpd/pipeline/CapacityPlanner.hpp` has `buildScene`,
+which the routing stages are meant to rebuild from (its comment says so). No
+CMake change is needed — `AddMQTScpdLibrary.cmake` globs.
 
 Reusable, and already tested: `grid::BitGrid`, `routing::BucketQueue`,
 `routing::pathSelfIntersects`, `grid::GridMetrics::refined`/`cellsFor`,
@@ -286,12 +289,13 @@ at 0.08 s to 46.9 s. Step 1 met its half of that bar (968 of 968 corridors,
    number for every chip, on purpose. If detail routing turns out to want more
    room than the pitch leaves, that is the number to argue about — with a
    measurement, not a per-chip override.
-2. **`digTargetBeyondBand` is still called by nothing.** Step 1 adds a port's way
-   out of its own pocket to the partition graph instead. You build your own mask
-   and should dig it there; then the two ways of saying it want reconciling.
-3. **Nothing has been compared against the prototype's own output**, only against
-   its formulation as read and its published failure counts. A run of FridgeCAD
-   on 9Q, side by side, would be worth more than another test.
+2. **`digTargetBeyondBand` is still called by nothing.** Step 1 adds a port's
+   way out of its own pocket to the partition graph instead. You build your own
+   mask and should dig it there; then the two ways of saying it want
+   reconciling.
+3. **Nothing has been compared against the prototype's own output**, only
+   against its formulation as read and its published failure counts. A run of
+   FridgeCAD on 9Q, side by side, would be worth more than another test.
 4. **The obstacle keepout is not in these stages.** It lives in
    `FinalGrid::rasterize_obstacles` (`FinalGrid.cpp:316`), and
    `RasterOptions.keepout` in `include/mqt-scpd/grid/Rasterize.hpp` is ready for

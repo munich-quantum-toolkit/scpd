@@ -1,4 +1,12 @@
 #!/bin/zsh
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 # Usage: [CHIPS="…"] [MAX_RELAXATION=8] run-dev-arm.sh <arm> <overlay> [ENV=VAL ...]
 # The eight chips one at a time on the overlay binding artifacts/dev/<overlay> (dev-sync.sh),
 # each in a run directory of its own under artifacts/dev/<arm>/<chip>, so two arms on two

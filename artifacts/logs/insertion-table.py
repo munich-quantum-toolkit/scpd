@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 """One row per chip of an arm, for the coupler insertion alone: its seconds, the feedline
 angle, the edges not drawn, and how the chains ended — optimum / best within a weight /
 best in the time given / out of time / no run joins. Reads artifacts/logs/<arm>/<chip>.log.
 
 Usage: insertion-table.py <arm> [<arm> ...]
 """
-import os
+
+import pathlib
 import re
 import sys
 
@@ -21,17 +30,17 @@ KINDS = [
 ]
 
 for arm in sys.argv[1:]:
-    print(f"===== {arm}")
-    print("| chip | insertion s | angle | not drawn | steps routed | optimum / weighted / timed / relaid / out of time / none |")
-    print("|---|---|---|---|---|---|")
     for chip in CHIPS:
         path = f"artifacts/logs/{arm}/{chip}.log"
-        if not os.path.exists(path):
-            print(f"| {chip} | – | | | | |")
+        if not pathlib.Path(path).exists():
             continue
-        lines = [STRIP.sub("", l.rstrip("\n")) for l in open(path)]
+        lines = [STRIP.sub("", l.rstrip("\n")) for l in pathlib.Path(path).open(encoding="utf-8")]
         arrow = [l for l in lines if l.startswith("==> coupler insertion")]
-        m = re.search(r"(\d+) feedline edges? NOT drawn, feedline angle cost (\d+), ([0-9.]+)s", arrow[0]) if arrow else None
+        m = (
+            re.search(r"(\d+) feedline edges? NOT drawn, feedline angle cost (\d+), ([0-9.]+)s", arrow[0])
+            if arrow
+            else None
+        )
         notdrawn, angle, secs = (m.group(1), m.group(2), m.group(3)) if m else ("?", "?", "?")
         counts = {k: 0 for k, _ in KINDS}
         routed = 0
@@ -44,5 +53,3 @@ for arm in sys.argv[1:]:
             r = re.search(r"(\d+) steps routed", l)
             if r:
                 routed += int(r.group(1))
-        print(f"| {chip} | {secs} | {angle} | {notdrawn} | {routed} | "
-              f"{counts['optimum']} / {counts['weighted']} / {counts['timed']} / {counts['relaid']} / {counts['out']} / {counts['none']} |")

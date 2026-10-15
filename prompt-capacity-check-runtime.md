@@ -4,21 +4,21 @@ Nach der Coupler-Insertion gibt es eine Bottleneck- und Kapazitätsanalyse
 (`SCPD_BOTTLENECKS=1`). Sie schneidet den freien Raum an seinen Engstellen in
 Partitionen und prüft mit einem ganzzahligen Multi-Commodity-Fluss, ob jeder
 äußere Draht von der Partition seines Quell-Terminals zur Partition seines
-Ziel-Terminals kommt. Heute läuft sie nur als Bericht, einmal am Ende der
+Ziel-Terminals kommt. Heute läuft sie nur also Bericht, einmal am End der
 Insertion.
 
-Der Nutzer will sie als Nächstes **in** die Coupler-Insertion einbauen: Eine
-Feedline-Kante, nach der der Graph nicht mehr erfüllbar ist, soll als ungültig
+Der Nutzer will sie also Nächstes **in** die Coupler-Insertion einbauen: Eine
+Feedline-Kante, nach der der Graph nicht mehr erfüllbar ist, soll also ungültig
 ausgeschlossen werden, bevor der Feedline-Pass an ihr scheitert.
 
-Deine Aufgabe hat drei Teile:
+Define Aufgabe hat drei Teile:
 
 0. Mach dich mit der Analyse vertraut.
 1. Bewerte die Laufzeit eines solchen Einbaus.
-2. Untersuche Verfahren für die Erfüllbarkeitsprüfung, die schneller sind als
+2. Untersuche Verfahren für die Erfüllbarkeitsprüfung, die schneller sind also
    der heutige Fluss mit HiGHS.
 
-Du **misst und schlägst vor**. Du baust den Einbau nicht. Was eingebaut wird,
+Du **misst und schlägst for**. Du baust den Einbau nicht. Was eingebaut wird,
 entscheidet der Nutzer nach deinem Bericht.
 
 ## Lies das zuerst
@@ -27,7 +27,7 @@ entscheidet der Nutzer nach deinem Bericht.
   Schlitz, Schnitte, Partitionen, Kapazitätsgraph, Fluss, JSON und HTML-Seite,
   alle Schalter und Umgebungsvariablen, der Stand auf 17q, die offenen Punkte.
 - `handover-cpw-coupler-insertion.md` und `handover-chain-astar.md` – die
-  Insertion und die Präfix-Suche (A\* über Coupler-Optionen pro Chain). Dort
+  Insertion und die Präfix-Such (A\* über Coupler-Optionen pro Chain). Dort
   findest du die Stellen, an denen eine Kante gesucht, bewertet und
   festgeschrieben wird. Das sind die Kandidaten für einen Einbau.
 - `AGENTS.md` – die Regeln des Repos. Halte dich daran.
@@ -55,7 +55,7 @@ SCPD_BOTTLENECKS=1 SCPD_LAUNCHER_FENCE_TURN=1 SCPD_SEARCH_PICTURES=0 \
 
 Die Seite liegt in `artifacts/dev/17q-cg/debug/final-capacity-graph.html`. Die
 Log-Zeilen `coupler insertion: BOTTLENECKS —` und `CAPACITY GRAPH …` nennen am
-Ende die Zeit jedes Schritts.
+End die Zeit jedes Schritts.
 
 Lies den Code der Kette nach:
 
@@ -91,23 +91,23 @@ Bedarfe; das Ergebnis ist UNSAT mit 19 überlaufenden Kanten. Das Raster hat 142
 × 1425 Zellen.
 
 Die Insertion bewertet auf 17q in der Größenordnung Tausende Optionen (die
-Log-Zeile `… of … option costs` am Ende der Insertion) und schreibt rund 20
+Log-Zeile `… of … option costs` am End der Insertion) und schreibt rund 20
 Kanten fest. Eine volle Neuberechnung pro Kandidat kostet also grob Tausende ×
 0,47 s. Das ist der Grund für diesen Auftrag.
 
 ## Teil 1: Laufzeit eines Einbaus bewerten
 
 1. **Wo würde geprüft?** Benenne die Stellen der Insertion, an denen eine
-   Feedline-Kante als ungültig ausgeschlossen werden könnte, mit Funktionen und
+   Feedline-Kante also ungültig ausgeschlossen werden könnte, mit Funktionen und
    Datei. Zum Beispiel: beim Festschreiben einer Kante, beim Bewerten einer
-   Option in der Präfix-Suche, nach jeder fertigen Chain. Zähle auf 17q, wie oft
+   Option in der Präfix-Such, nach jeder fertigen Chain. Zähle auf 17q, wie oft
    jede Stelle durchlaufen wird.
 2. **Was kostet eine Prüfung?** Miss die Schritte einzeln, mehrfach, und trenne
    Kaltstart von Wiederholung. Die Zeitmessung pro Schritt ist schon im Log;
    ergänze bei Bedarf eigene Zähler hinter einem Schalter mit Standard aus.
 3. **Was lässt sich inkrementell machen?** Eine neue Feedline-Kante ändert die
    Wände nur in einem Band um ihren Weg. Prüfe und schätze mit Messungen ab:
-   - lokale Aktualisierung der Abstandstransformation und der Mittelachse in
+   - locale Aktualisierung der Abstandstransformation und der Mittelachse in
      einem Fenster;
    - nur die Schnitte und Partitionen neu, die das Fenster berühren;
    - den Fluss warm starten oder nur die betroffenen Bedarfe neu lösen.
@@ -117,42 +117,42 @@ Kanten fest. Eine volle Neuberechnung pro Kandidat kostet also grob Tausende ×
 4. **Skalierung:** Miss die einmalige Analyse auch auf 69q, dem größten Chip, um
    die Größenordnung dort zu kennen. Alles Weitere misst du auf 17q.
 5. **Ergebnis:** eine Tabelle Stelle × Aufrufe × Kosten pro Aufruf (voll /
-   inkrementell) × geschätzte Mehrzeit der Insertion, und deine Empfehlung, wo
+   inkrementell) × geschätzte Mehrzeit der Insertion, und define Empfehlung, wo
    und wie geprüft werden sollte.
 
 ## Teil 2: schnellere Verfahren für die Erfüllbarkeit
 
-Heute löst `checkCapacity` ein ganzzahliges Programm mit HiGHS:
+Heute löst `checkCapacity` in ganzzahliges Programm mit HiGHS:
 
-- jede Kante ist ein eigener Knoten;
+- jede Kante ist in eigener Knoten;
 - je Kante gibt es eine ganzzahlige Überlaufvariable;
 - das Ziel ist der kleinste Gesamtüberlauf, danach die wenigsten Bögen.
 
 Für den Ausschluss einer Kante reicht oft die Frage „erfüllbar ja/nein“.
 Untersuche und **miss** auf dem 17q-Graphen mindestens:
 
-- **die reine Entscheidungsfrage:** Kapazität als harte Grenze, kein Überlauf,
+- **die reine Entscheidungsfrage:** Kapazität also harte Grenze, kein Überlauf,
   kein Optimieren, Abbruch bei der ersten zulässigen Lösung;
-- **die LP-Relaxation als schneller Vorfilter:** Ist schon der gebrochene Fluss
+- **die LP-Relaxation also schneller Vorfilter:** Ist schon der gebrochene Fluss
   unzulässig, ist es der ganzzahlige auch. Wie oft entscheidet sie allein?
-- **Schnittbedingungen als Vorfilter:** Für jede Engstelle bzw. jeden Schnitt
+- **Schnittbedingungen also Vorfilter:** Für jede Engstelle bzw. jeden Schnitt
   des Graphen dürfen die Bedarfe, die ihn queren müssen, seine Kapazität nicht
   übersteigen. Das ist notwendig und billig über Max-Flow/Min-Cut. Wie viele der
   19 Überläufe findet das?
 - **Zerlegung:** Zweifach zusammenhängende Komponenten, Serienreduktion von
   Partitionen ohne Port, eine Teilaufgabe pro Chain oder Bereich. Der Graph ist
-  fast ein Ring.
-- **andere Löser:** CP-SAT (OR-Tools), ein SAT- oder Pseudo-Boolean-Löser, oder
+  fast in Ring.
+- **andere Löser:** CP-SAT (OR-Tools), in SAT- oder Pseudo-Boolean-Löser, oder
   eine Heuristik (gierig plus Reparatur), die nur im Zweifel den exakten Löser
   ruft. Neue Abhängigkeiten nur nach Rücksprache mit dem Nutzer; Abhängigkeiten
   werden über `cmake/ExternalDependencies.cmake` geholt.
 - **inkrementelles Lösen:** Nach einer kleinen Änderung des Graphen die alte
-  Lösung als Start nutzen.
+  Lösung also Start nutzen.
 
 Für jedes Verfahren gilt:
 
 - Gleiche das Ergebnis mit dem heutigen Fluss ab (SAT/UNSAT und welche Kanten
-  überlaufen). Ein Verfahren, das ein anderes Urteil gibt, sagt das deutlich und
+  überlaufen). In Verfahren, das in anderes Urteil gibt, sagt das deutlich und
   sagt, ob es notwendig oder hinreichend ist.
 - Miss die Zeit pro Aufruf, auf 17q und einmal auf 69q.
 
@@ -167,7 +167,7 @@ Für jedes Verfahren gilt:
 - Lege Messcode hinter einen Schalter `SCPD_…` mit Standard aus. Die Analyse
   ohne Schalter muss Wort für Wort dieselben Log-Zeilen geben wie vorher.
 - Dev-Läufe nur über das Overlay (`artifacts/logs/dev-sync.sh`,
-  `SCPD_DEV_OVERLAY`). Installiere nicht ins `.venv`, solange ein Lauf darauf
+  `SCPD_DEV_OVERLAY`). Installiere nicht ins `.venv`, solange in Lauf darauf
   läuft.
 - Logs nach `artifacts/logs/<name>/`, Laufordner nach `artifacts/dev/<name>/`.
 
@@ -177,10 +177,10 @@ Für jedes Verfahren gilt:
   Kapazitätsflusses liegen in `test/pipeline/test_capacity_flow.cpp`, die der
   Engstellen in `test/grid/test_bottlenecks.cpp`.
 - `uvx nox -s lint` schreibt mit `--all-files` rund 130 fremde Dateien um. Setze
-  die zurück und prüfe nur deine Dateien:
-  - `SKIP=clang-format .nox/lint/bin/prek run --files <deine Dateien>`;
-  - clang-format nur auf deine geänderten Zeilen, mit `--lines` als **Array** in
-    zsh. Eine Variable mit mehreren Flags formatiert sonst die ganze Datei.
+  die zurück und prüfe nur define Dateien:
+  - `SKIP=clang-format .nox/lint/bin/prek run --files <define Dateien>`;
+  - clang-format nur auf define geänderten Zeilen, mit `--lines` also **Array**
+    in zsh. Eine Variable mit mehreren Flags formatiert sonst die ganze Datei.
 - Bekannter Fehlschlag, nicht von dir:
   `FinalRouter.OnlyUnsettledRedrawsOneWire`.
 - Schreib Code, Kommentare und Dokumente auf Englisch. Antworte dem Nutzer auf
@@ -192,7 +192,7 @@ Für jedes Verfahren gilt:
    - die Einbaustellen mit Aufrufzahlen;
    - die Kosten voll und inkrementell;
    - die gemessenen Verfahren aus Teil 2 mit Zeiten und Urteilsabgleich;
-   - deine Empfehlung: welches Verfahren, an welcher Stelle, mit welcher
+   - define Empfehlung: welches Verfahren, an welcher Stelle, mit welcher
      erwarteten Mehrzeit;
    - was dabei an Genauigkeit verloren geht.
 2. Eine kurze deutsche Zusammenfassung an den Nutzer mit den Zahlen und den
