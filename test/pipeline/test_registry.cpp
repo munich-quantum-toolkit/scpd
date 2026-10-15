@@ -14,6 +14,7 @@
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
+#include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
@@ -219,6 +220,148 @@ TEST(PlanProblems, RefuseTooFewLaunchersForTheResonatorsWhenTheRunAssigns) {
                        "the chip has 2 launcher ports; feeding resonators"));
   EXPECT_TRUE(
       planProblems(chip, test::miniConfig(), {"capacity", "global"}).empty());
+}
+
+TEST(PlanProblems, RefuseARingThatTheGlobalStepRefusesWhenTheRunReachesIt) {
+  // The global step derives the inner circuit from the ring, and the ring
+  // names a port that the chip does not carry.
+  auto config = test::miniConfig();
+  config.ports->sequences->all_outer.emplace_back("Q9.port0");
+  const auto chip = test::miniChip();
+
+  EXPECT_EQ(planProblems(chip, config, {"capacity", "global"}),
+            std::vector<std::string>{
+                "the ring names 'Q9.port0', which the chip does not carry"});
+  EXPECT_TRUE(planProblems(chip, config, {"capacity"}).empty());
+}
+
+TEST(PlanProblems, RefuseARingThatCarriesBothEndsOfABridge) {
+  auto config = test::bridgedConfig();
+  config.ports->sequences->all_outer.emplace_back("C12.port1");
+  const auto chip = test::bridgedChip(config);
+
+  EXPECT_EQ(planProblems(chip, config, {"capacity", "global"}),
+            std::vector<std::string>{
+                "the ring carries both ends of the bridge 'C12.port1' - "
+                "'C12.port2'"});
+  EXPECT_TRUE(planProblems(chip, config, {"capacity"}).empty());
+}
+
+TEST(PlanProblems,
+     RefuseMoreLauncherEndsThanTheLaunchersTakeWhenTheRunAssigns) {
+  // The three conventional ports and five launcher ends need eight of the
+  // four launchers.
+  auto config = test::miniConfig();
+  config.stages->assignment->launcher_target = 5;
+
+  EXPECT_EQ(planProblems(test::miniChip(), config, allSteps()),
+            std::vector<std::string>{
+                "the ring carries at least 3 conventional ports and the "
+                "assignment places 5 launcher ends, which need at least 8 "
+                "launchers, but the chip has 4"});
+  EXPECT_TRUE(
+      planProblems(test::miniChip(), config, {"capacity", "global"}).empty());
+}
+
+TEST(PlanProblems, RefuseMoreTerminationsThanTheRingHasResonators) {
+  auto config = test::miniConfig();
+  config.rules->feedline_terminations = 3;
+
+  EXPECT_EQ(planProblems(test::miniChip(), config, allSteps()),
+            std::vector<std::string>{
+                "the ring carries at most 2 resonators, too few for "
+                "[stages.assignment] launcher_target 1 and [design_rules] "
+                "feedline_terminations 3; each resonator ends at most one "
+                "chain at a launcher and one at a termination"});
+}
+
+TEST(PlanProblems, RefuseMoreResonatorsThanTheChainsCarry) {
+  // One launcher end and one termination make one chain, which carries one
+  // of the two resonators.
+  auto config = test::miniConfig();
+  config.rules->max_feedline_utilization = 1;
+
+  EXPECT_EQ(planProblems(test::miniChip(), config, allSteps()),
+            std::vector<std::string>{
+                "the ring carries at least 2 resonators, but [design_rules] "
+                "max_feedline_utilization 1 lets 1 feedline chain carry at "
+                "most 1"});
+}
+
+TEST(PlanProblems, LeaveTheRingEndOfABridgeToTheGlobalStep) {
+  // The ring end C12.port2 is a resonator when the wire of Q2.port0 surfaces
+  // there, and it leaves the ring when no wire does. The ring then carries
+  // one or two resonators, and one chain of one resonator can be enough.
+  auto config = test::bridgedConfig();
+  config.rules->max_feedline_utilization = 1;
+  const auto chip = test::bridgedChip(config);
+
+  EXPECT_TRUE(planProblems(chip, config, allSteps()).empty());
+  // Two more launcher ends need more launchers than the four that the three
+  // conventional ports leave, whatever the bridge end becomes.
+  config.stages->assignment->launcher_target = 3;
+  config.rules->max_feedline_utilization = 4;
+  EXPECT_TRUE(mentions(planProblems(chip, config, allSteps()),
+                       "the ring carries at least 3 conventional ports and "
+                       "the assignment places 3 launcher ends"));
+}
+
+TEST(PlanProblems, RefuseADetailGridAboveTheLimit) {
+  // 100 capacity cells times 60 detail cells per axis make 6000 × 6000
+  // detail cells.
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 100;
+  config.grid->capacity_cells_y = 100;
+  config.grid->detail_factor = 60;
+
+  EXPECT_EQ(planProblems(test::miniChip(), config, allSteps()),
+            std::vector<std::string>{
+                "[grid] asks for a detail grid of 6000 × 6000 = 36000000 "
+                "cells, a capacity grid of 100 × 100 cells times "
+                "detail_factor 60; the limit is 25000000 cells"});
+  // The global step reads no grid.
+  EXPECT_TRUE(planProblems(test::miniChip(), config, {"global"}).empty());
+  EXPECT_EQ(planProblems(test::miniChip(), config, {"corridor"}).size(), 1U);
+}
+
+TEST(PlanProblems, AcceptADetailGridAtTheLimit) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 100;
+  config.grid->capacity_cells_y = 100;
+  config.grid->detail_factor = 50;
+  ASSERT_EQ(100U * 50U * 100U * 50U, MAX_DETAIL_CELLS);
+
+  EXPECT_TRUE(planProblems(test::miniChip(), config, allSteps()).empty());
+}
+
+TEST(PlanProblems, CountTheDetailCellsAlongYFromTheAspectRatio) {
+  // The check counts the capacity cells along y as the scene does.
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 600;
+  config.grid->detail_factor = 1;
+  const auto chip = test::miniChip();
+  ASSERT_EQ(buildScene(chip, config).capacity.height, 508U);
+
+  config.grid->detail_factor = 10;
+  EXPECT_EQ(planProblems(chip, config, {"capacity"}),
+            std::vector<std::string>{
+                "[grid] asks for a detail grid of 6000 × 5080 = 30480000 "
+                "cells, a capacity grid of 600 × 508 cells times "
+                "detail_factor 10; the limit is 25000000 cells"});
+}
+
+TEST(PlanProblems, RefuseADetailGridBeyondTheRangeOfAnAxis) {
+  // 2^32 detail cells along x do not fit the 32-bit cell coordinate.
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 65536;
+  config.grid->capacity_cells_y = 2;
+  config.grid->detail_factor = 65536;
+
+  const auto problems = planProblems(test::miniChip(), config, {"capacity"});
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_TRUE(problems[0].starts_with(
+      "[grid] asks for a detail grid of 4294967296 × 131072 = "))
+      << problems[0];
 }
 
 TEST(SolvingSteps, NameTheAssignmentAndNotAGlobalStepWithoutAnInnerCircuit) {

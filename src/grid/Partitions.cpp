@@ -15,7 +15,9 @@
 #include "mqt-scpd/grid/Watershed.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -24,7 +26,6 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -37,18 +38,17 @@ namespace {
 constexpr double ADJACENT_SAMPLE_SQUARED = 2.25;
 
 /// One edge of a cell, as the two corners it runs between. Corners are whole
-/// numbers in cell coordinates, so they key exactly.
+/// numbers in cell coordinates, so they key exactly. Corners order row by row,
+/// as the cells of the grid do.
 struct Corner {
   std::int32_t x = 0;
   std::int32_t y = 0;
   [[nodiscard]] bool operator==(const Corner&) const = default;
-};
-
-struct CornerHash {
-  [[nodiscard]] std::size_t operator()(const Corner& corner) const noexcept {
-    return (static_cast<std::size_t>(static_cast<std::uint32_t>(corner.x))
-            << 32U) ^
-           static_cast<std::uint32_t>(corner.y);
+  [[nodiscard]] auto operator<=>(const Corner& other) const {
+    if (const auto row = y <=> other.y; row != 0) {
+      return row;
+    }
+    return x <=> other.x;
   }
 };
 
@@ -187,19 +187,19 @@ Partitions extractPartitions(const BitGrid& blocked,
   }
 
   for (auto& [label, edges] : outlineEdges) {
-    std::unordered_map<Corner, std::vector<Corner>, CornerHash> outgoing;
-    outgoing.reserve(edges.size());
+    std::map<Corner, std::vector<Corner>> outgoing;
     for (const auto& [from, to] : edges) {
       outgoing[from].push_back(to);
     }
 
     // Each ring is walked by following one outgoing edge per corner and
     // consuming it. Where four cells meet at a corner, the corner has two
-    // outgoing edges, and the walk order decides whether the two rings
-    // through it come out as two or as one. The walk starts at the first
-    // corner of a hash map, so the start corner and that choice can differ
-    // between standard libraries. The cells that the rings enclose are the
-    // same either way.
+    // outgoing edges, and the walk takes the one the row-major scan above
+    // found last. That choice decides whether the two rings through the
+    // corner come out as two or as one; the cells that the rings enclose are
+    // the same either way. Each ring starts at the first corner left in row
+    // order. Both rules depend only on the labels, so the outlines are the
+    // same on every platform.
     while (!outgoing.empty()) {
       auto start = outgoing.begin()->first;
       auto current = outgoing.begin()->second.back();
@@ -240,6 +240,97 @@ Partitions extractPartitions(const BitGrid& blocked,
   }
 
   return partitions;
+}
+
+PartitionLabel separatePartitionPieces(const BitGrid& blocked,
+                                       const std::span<PartitionLabel> labels,
+                                       const GridMetrics& grid,
+                                       const PartitionLabel nextLabel) {
+  if (blocked.width() != grid.width || blocked.height() != grid.height ||
+      labels.size() != grid.cells()) {
+    throw std::invalid_argument(std::format(
+        "the mask is {}x{} cells and the labels {}, on a grid of {}x{}",
+        blocked.width(), blocked.height(), labels.size(), grid.width,
+        grid.height));
+  }
+
+  /// One four-connected piece of a label: its cells, the first of them in
+  /// row order.
+  struct Piece {
+    PartitionLabel label = LABEL_NONE;
+    std::vector<std::size_t> cells;
+  };
+
+  const auto counts = [&](const std::size_t cell) {
+    return !blocked.test(cell) && labels[cell] >= FIRST_PARTITION_LABEL;
+  };
+
+  // The pieces in the row order of their first cell, which is the order a
+  // scan of the grid finds them in.
+  std::vector<Piece> pieces;
+  std::vector<bool> seen(labels.size(), false);
+  std::vector<std::size_t> stack;
+  for (std::size_t start = 0; start < labels.size(); ++start) {
+    if (seen[start] || !counts(start)) {
+      continue;
+    }
+    Piece piece{.label = labels[start], .cells = {}};
+    seen[start] = true;
+    stack.push_back(start);
+    while (!stack.empty()) {
+      const auto cell = stack.back();
+      stack.pop_back();
+      piece.cells.push_back(cell);
+      const auto x = cell % grid.width;
+      const auto y = cell / grid.width;
+      const std::array<std::optional<std::size_t>, 4> neighbors = {
+          x > 0 ? std::optional{cell - 1} : std::nullopt,
+          x + 1 < grid.width ? std::optional{cell + 1} : std::nullopt,
+          y > 0 ? std::optional{cell - grid.width} : std::nullopt,
+          y + 1 < grid.height ? std::optional{cell + grid.width}
+                              : std::nullopt};
+      for (const auto& neighbor : neighbors) {
+        if (neighbor.has_value() && !seen[*neighbor] && counts(*neighbor) &&
+            labels[*neighbor] == piece.label) {
+          seen[*neighbor] = true;
+          stack.push_back(*neighbor);
+        }
+      }
+    }
+    pieces.push_back(std::move(piece));
+  }
+
+  // The piece of each label that keeps it: the largest, and of equal ones
+  // the first found.
+  std::map<PartitionLabel, std::size_t> keeper;
+  for (std::size_t index = 0; index < pieces.size(); ++index) {
+    const auto [entry, added] = keeper.try_emplace(pieces[index].label, index);
+    if (!added &&
+        pieces[index].cells.size() > pieces[entry->second].cells.size()) {
+      entry->second = index;
+    }
+  }
+
+  // Every label is checked before one changes, so a run that ran out of
+  // labels leaves the grid as it was.
+  const auto extra = pieces.size() - keeper.size();
+  if (extra >= static_cast<std::size_t>(
+                   std::numeric_limits<PartitionLabel>::max() - nextLabel) +
+                   1) {
+    throw std::length_error(std::format(
+        "{} pieces of partitions need labels from {} on", extra, nextLabel));
+  }
+  auto next = nextLabel;
+  for (std::size_t index = 0; index < pieces.size(); ++index) {
+    if (keeper.at(pieces[index].label) == index) {
+      continue;
+    }
+    for (const auto cell : pieces[index].cells) {
+      labels[cell] = next;
+    }
+    next = nextPartitionLabel(next);
+  }
+  return next;
 }
 
 std::vector<std::size_t> freeCellSeeds(const BitGrid& blocked,

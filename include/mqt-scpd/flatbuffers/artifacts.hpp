@@ -600,7 +600,8 @@ struct Partition FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetField<uint32_t>(VT_LABEL, 0);
   }
   /// Closed rings in layout units. More than one where the partition has a
-  /// hole or falls apart into pieces.
+  /// hole. The cells of a partition are four-connected, so a wire can cross
+  /// it from any of its borders to any other.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *outlines() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *>(VT_OUTLINES);
   }
@@ -1853,7 +1854,6 @@ struct BorderSlotsT : public ::flatbuffers::NativeTable {
   typedef BorderSlots TableType;
   uint32_t border = 0;
   std::vector<mqt::scpd::flatbuffers::geometry::Point> positions{};
-  bool pocket = false;
 };
 
 /// The crossing slots of one partition border.
@@ -1871,11 +1871,9 @@ struct BorderSlots FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_BORDER = 4,
-    VT_POSITIONS = 6,
-    VT_POCKET = 8
+    VT_POSITIONS = 6
   };
-  /// The border they belong to, as an index into CapacityPlan.borders, or
-  /// zero when `pocket` is set and they are on no border.
+  /// The border they belong to, as an index into CapacityPlan.borders.
   uint32_t border() const {
     return GetField<uint32_t>(VT_BORDER, 0);
   }
@@ -1883,24 +1881,12 @@ struct BorderSlots FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *positions() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_POSITIONS);
   }
-  /// Whether these are ways out of the pocket of a port rather than slots of
-  /// a border.
-  ///
-  /// The capacity grid places a target on the first cell beyond the band of
-  /// its port that was free before the bands, and does not open the band.
-  /// Where the band and the artwork close around a port, the free space left
-  /// is a pocket that no border reaches. The band is the approach of that
-  /// port, so it is a way out, and it carries the one wire.
-  bool pocket() const {
-    return GetField<uint8_t>(VT_POCKET, 0) != 0;
-  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_BORDER, 4) &&
            VerifyOffsetRequired(verifier, VT_POSITIONS) &&
            verifier.VerifyVector(positions()) &&
-           VerifyField<uint8_t>(verifier, VT_POCKET, 1) &&
            verifier.EndTable();
   }
   BorderSlotsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1918,9 +1904,6 @@ struct BorderSlotsBuilder {
   void add_positions(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions) {
     fbb_.AddOffset(BorderSlots::VT_POSITIONS, positions);
   }
-  void add_pocket(bool pocket) {
-    fbb_.AddElement<uint8_t>(BorderSlots::VT_POCKET, static_cast<uint8_t>(pocket), 0);
-  }
   explicit BorderSlotsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1936,12 +1919,10 @@ struct BorderSlotsBuilder {
 inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t border = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions = 0,
-    bool pocket = false) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions = 0) {
   BorderSlotsBuilder builder_(_fbb);
   builder_.add_positions(positions);
   builder_.add_border(border);
-  builder_.add_pocket(pocket);
   return builder_.Finish();
 }
 
@@ -1953,14 +1934,12 @@ struct BorderSlots::Traits {
 inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlotsDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t border = 0,
-    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *positions = nullptr,
-    bool pocket = false) {
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *positions = nullptr) {
   auto positions__ = positions ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*positions) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateBorderSlots(
       _fbb,
       border,
-      positions__,
-      pocket);
+      positions__);
 }
 
 ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -3361,8 +3340,7 @@ inline ::flatbuffers::Offset<GlobalRouting> GlobalRouting::Pack(::flatbuffers::F
 inline bool operator==(const BorderSlotsT &lhs, const BorderSlotsT &rhs) {
   return
       (lhs.border == rhs.border) &&
-      (lhs.positions == rhs.positions) &&
-      (lhs.pocket == rhs.pocket);
+      (lhs.positions == rhs.positions);
 }
 
 inline bool operator!=(const BorderSlotsT &lhs, const BorderSlotsT &rhs) {
@@ -3381,7 +3359,6 @@ inline void BorderSlots::UnPackTo(BorderSlotsT *_o, const ::flatbuffers::resolve
   (void)_resolver;
   { auto _e = border(); _o->border = _e; }
   { auto _e = positions(); if (_e) { _o->positions.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->positions[_i] = *_e->Get(_i); } } else { _o->positions.resize(0); } }
-  { auto _e = pocket(); _o->pocket = _e; }
 }
 
 inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -3394,12 +3371,10 @@ inline ::flatbuffers::Offset<BorderSlots> BorderSlots::Pack(::flatbuffers::FlatB
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const BorderSlotsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _border = _o->border;
   auto _positions = _fbb.CreateVectorOfStructs(_o->positions);
-  auto _pocket = _o->pocket;
   return mqt::scpd::flatbuffers::artifacts::CreateBorderSlots(
       _fbb,
       _border,
-      _positions,
-      _pocket);
+      _positions);
 }
 
 
@@ -4290,19 +4265,17 @@ inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable() {
 inline const ::flatbuffers::TypeTable *BorderSlotsTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UINT, 0, -1 },
-    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
-    { ::flatbuffers::ET_BOOL, 0, -1 }
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     mqt::scpd::flatbuffers::geometry::PointTypeTable
   };
   static const char * const names[] = {
     "border",
-    "positions",
-    "pocket"
+    "positions"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }

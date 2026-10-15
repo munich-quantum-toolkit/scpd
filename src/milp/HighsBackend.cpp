@@ -102,6 +102,31 @@ void prepareScheduler(const std::uint32_t threads) {
   }
 }
 
+/// How far a row may miss its bounds and still hold. It is the default primal
+/// feasibility tolerance of HiGHS.
+constexpr double FEASIBILITY_TOLERANCE = 1.0e-7;
+
+/// The answer to a model without variables. HiGHS calls such a model empty
+/// and solves nothing. A row of it has no terms, because the constant of its
+/// expression moved into its bounds, so the value of the row is zero. The
+/// model is feasible exactly when every row admits zero, and its objective is
+/// the offset.
+Solution solveWithoutVariables(const Model& model) {
+  Solution solution;
+  solution.backend = "highs";
+  const auto admitsZero = [](const Constraint& constraint) {
+    return constraint.lower <= FEASIBILITY_TOLERANCE &&
+           constraint.upper >= -FEASIBILITY_TOLERANCE;
+  };
+  if (!std::ranges::all_of(model.constraints(), admitsZero)) {
+    solution.status = SolveStatus::Infeasible;
+    return solution;
+  }
+  solution.status = SolveStatus::Optimal;
+  solution.objective = model.objectiveOffset();
+  return solution;
+}
+
 /// The variable type a HiGHS integrality flag stands for.
 HighsVarType integralityOf(const VarType type) {
   return type == VarType::Continuous ? HighsVarType::kContinuous
@@ -115,6 +140,10 @@ public:
 
   [[nodiscard]] Solution solve(const Model& model,
                                const SolveOptions& options) const override {
+    if (model.variableCount() == 0) {
+      return solveWithoutVariables(model);
+    }
+
     Solution solution;
     solution.backend = "highs";
 
@@ -255,7 +284,10 @@ public:
     }
     prepareScheduler(options.threads);
 
-    if (highs.passModel(highsModel) != HighsStatus::kOk) {
+    // HiGHS warns, for example, when it drops a coefficient below its own
+    // threshold of 1e-9, and then solves the model it kept. Only an error is
+    // a refusal.
+    if (highs.passModel(highsModel) == HighsStatus::kError) {
       solution.message = "HiGHS rejected the model";
       return solution;
     }

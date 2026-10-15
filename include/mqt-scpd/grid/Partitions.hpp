@@ -23,7 +23,8 @@
 namespace mqt::scpd::grid {
 
 /// One outline of a partition, in cell coordinates. A partition has more than
-/// one when it has a hole or falls apart into pieces.
+/// one when it has a hole, or when its cells are not four-connected (see
+/// separatePartitionPieces()).
 struct PartitionOutline {
   /// The label of the partition.
   PartitionLabel label = LABEL_NONE;
@@ -69,7 +70,8 @@ struct Partitions {
  * label, and a border sample wherever that neighbor carries another label of a
  * partition rather than an obstacle. The outline edges of a label are joined
  * into rings by walking them until they close, so a partition with a hole
- * gives two rings.
+ * gives two rings. Each ring starts at its first corner in row order, the
+ * least y and then the least x, so the outlines depend only on the labels.
  *
  * Coordinates are in cells, with the corner of cell (0, 0) at the origin: a
  * border sample at (4.5, 7.0) lies on the edge between the cells (4, 6) and
@@ -87,6 +89,35 @@ struct Partitions {
 [[nodiscard]] MQT_SCPD_GRID_EXPORT Partitions extractPartitions(
     const BitGrid& blocked, std::span<const PartitionLabel> labels,
     const GridMetrics& grid);
+
+/**
+ * @brief Gives every piece of a partition that does not touch the rest of it
+ * a label of its own.
+ *
+ * A wire passes from one cell to the next across a cell edge, so a partition
+ * is one region only when its cells are four-connected. Cells that meet at a
+ * corner only are two pieces. The largest piece of a label keeps the label;
+ * of two pieces with as many cells, the one whose first cell comes first in
+ * row order keeps it. Every other piece takes the next free label, in the row
+ * order of its first cell, so the result depends only on the labels.
+ *
+ * @param blocked The obstacle mask. A blocked cell counts as no label and
+ * keeps the label it has.
+ * @param labels The label of every cell, row-major. A label below
+ * FIRST_PARTITION_LABEL counts as no label and stays as it is.
+ * @param grid The metrics of the grid.
+ * @param nextLabel The label of the first piece that needs one.
+ * @pre Every label in @p labels is below @p nextLabel.
+ * @return The label after the last one this call gave out. It equals
+ * @p nextLabel when every partition is one piece.
+ * @throws std::invalid_argument When the mask or the labels do not have the
+ * size of the grid.
+ * @throws std::length_error When the pieces need more labels than
+ * PartitionLabel holds.
+ */
+[[nodiscard]] MQT_SCPD_GRID_EXPORT PartitionLabel separatePartitionPieces(
+    const BitGrid& blocked, std::span<PartitionLabel> labels,
+    const GridMetrics& grid, PartitionLabel nextLabel);
 
 /**
  * @brief Returns the seed cells of the watershed.

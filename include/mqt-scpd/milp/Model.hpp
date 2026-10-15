@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -284,8 +285,9 @@ public:
    * @param objective The objective coefficient.
    * @return The variable.
    * @throws std::invalid_argument When the name is empty or taken, when a
-   * bound is not a number, or when the lower bound is above the upper bound
-   * after the clipping.
+   * bound is not a number, when the objective coefficient is not a finite
+   * number, or when the lower bound is above the upper bound after the
+   * clipping.
    */
   Var addVariable(std::string_view name, double lower, double upper,
                   VarType type, double objective = 0.0);
@@ -295,7 +297,8 @@ public:
    * @param name The name, unique in the model.
    * @param objective The objective coefficient.
    * @return The variable.
-   * @throws std::invalid_argument When the name is empty or taken.
+   * @throws std::invalid_argument When the name is empty or taken, or when
+   * the objective coefficient is not a finite number.
    */
   Var addBinary(std::string_view name, double objective = 0.0);
 
@@ -306,8 +309,9 @@ public:
    * @param upper The upper bound.
    * @param objective The objective coefficient.
    * @return The variable.
-   * @throws std::invalid_argument When the name is empty or taken, or when
-   * @p lower is above @p upper.
+   * @throws std::invalid_argument When the name is empty or taken, when a
+   * bound is not a number, when the objective coefficient is not a finite
+   * number, or when @p lower is above @p upper.
    */
   Var addInteger(std::string_view name, double lower, double upper,
                  double objective = 0.0);
@@ -319,8 +323,9 @@ public:
    * @param upper The upper bound.
    * @param objective The objective coefficient.
    * @return The variable.
-   * @throws std::invalid_argument When the name is empty or taken, or when
-   * @p lower is above @p upper.
+   * @throws std::invalid_argument When the name is empty or taken, when a
+   * bound is not a number, when the objective coefficient is not a finite
+   * number, or when @p lower is above @p upper.
    */
   Var addContinuous(std::string_view name, double lower, double upper,
                     double objective = 0.0);
@@ -334,8 +339,10 @@ public:
    * @param name The name, unique in the model.
    * @param expression The left side.
    * @param bound The right side.
-   * @throws std::invalid_argument When the name is empty or taken, or when the
-   * expression names a variable the model does not have.
+   * @throws std::invalid_argument When the name is empty or taken, when the
+   * expression names a variable the model does not have, when a coefficient
+   * or the constant of the expression is not a finite number, or when the
+   * bound is not a number.
    */
   void addLessOrEqual(std::string_view name, const LinearExpr& expression,
                       double bound);
@@ -345,8 +352,10 @@ public:
    * @param name The name, unique in the model.
    * @param expression The left side.
    * @param bound The right side.
-   * @throws std::invalid_argument When the name is empty or taken, or when the
-   * expression names a variable the model does not have.
+   * @throws std::invalid_argument When the name is empty or taken, when the
+   * expression names a variable the model does not have, when a coefficient
+   * or the constant of the expression is not a finite number, or when the
+   * bound is not a number.
    */
   void addGreaterOrEqual(std::string_view name, const LinearExpr& expression,
                          double bound);
@@ -356,8 +365,10 @@ public:
    * @param name The name, unique in the model.
    * @param expression The left side.
    * @param bound The right side.
-   * @throws std::invalid_argument When the name is empty or taken, or when the
-   * expression names a variable the model does not have.
+   * @throws std::invalid_argument When the name is empty or taken, when the
+   * expression names a variable the model does not have, when a coefficient
+   * or the constant of the expression is not a finite number, or when the
+   * bound is not a number.
    */
   void addEqual(std::string_view name, const LinearExpr& expression,
                 double bound);
@@ -369,8 +380,9 @@ public:
    * @param lower The lower bound.
    * @param upper The upper bound.
    * @throws std::invalid_argument When the name is empty or taken, when the
-   * expression names a variable the model does not have, or when the bounds
-   * cross.
+   * expression names a variable the model does not have, when a coefficient
+   * or the constant of the expression is not a finite number, when a bound
+   * is not a number, or when the bounds cross.
    */
   void addRange(std::string_view name, const LinearExpr& expression,
                 double lower, double upper);
@@ -383,7 +395,9 @@ public:
    *
    * @param expression The expression to add.
    * @throws std::invalid_argument When the expression names a variable the
-   * model does not have.
+   * model does not have, or when a coefficient or the constant of the
+   * expression is not a finite number. A refused expression leaves the
+   * objective unchanged.
    */
   void addObjective(const LinearExpr& expression);
 
@@ -474,7 +488,11 @@ private:
 
 /// What a solver made of a model.
 enum class SolveStatus : std::uint8_t {
-  /// A solution proven optimal.
+  /// A solution that the backend proved optimal within its relative gap
+  /// tolerance. With SolveOptions::relativeGap at zero, the tolerance is the
+  /// default of the backend: 1e-4 for HiGHS (`mip_rel_gap`) and for Gurobi
+  /// (`MIPGap`). The objective and the proven bound then differ by at most
+  /// this fraction of the objective.
   Optimal,
   /// A feasible solution that was not proven optimal, usually because a limit
   /// was reached.
@@ -500,8 +518,9 @@ struct Solution {
   /// The relative gap between the objective and the bound, or NaN when the
   /// backend does not report one.
   double gap = std::numeric_limits<double>::quiet_NaN();
-  /// The branch-and-bound nodes the solver explored, zero for a linear model.
-  std::uint64_t nodes = 0;
+  /// The branch-and-bound nodes the solver explored, or none when the model
+  /// is linear or the backend does not report them.
+  std::optional<std::uint64_t> nodes;
   /// One value per variable of the model, in the order of the model. Empty
   /// unless the status is Optimal or Feasible.
   std::vector<double> values;

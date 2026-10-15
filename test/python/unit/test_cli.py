@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from mqt.scpd import pyscpd
-from mqt.scpd.artifacts import write_artifact
+from mqt.scpd.artifacts import read_artifact, write_artifact
 from mqt.scpd.cli import main
 from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
@@ -295,6 +295,22 @@ def test_plan_stops_after_the_step_it_is_told(tmp_path: Path, capsys: pytest.Cap
     assert untimed(capsys.readouterr().out, run)[-1] == "✓ 2 stages · stopped after global · fails 0"
 
 
+@pytest.mark.parametrize("name", ["config.toml", "./config.toml"])
+def test_the_header_names_the_chip_of_a_configuration_in_the_working_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """A config.toml named without its directory still names the chip after that directory."""
+    chip = tmp_path / "mini"
+    chip.mkdir()
+    for source in Path(CONFIG).parent.iterdir():
+        (chip / source.name).write_bytes(source.read_bytes())
+    monkeypatch.chdir(chip)
+
+    assert main(["plan", "-c", name, "-o", str(tmp_path / "run"), "--stop-after", "capacity", "--no-progress"]) == 0
+
+    assert capsys.readouterr().out.splitlines()[0].startswith("mqt-scpd plan mini → ")
+
+
 def test_the_configured_stop_holds_unless_the_command_says_otherwise(tmp_path: Path) -> None:
     """[run] stop_after sets where a run ends, and --stop-after overrides it."""
     config = stopping_after(tmp_path, "capacity")
@@ -336,22 +352,125 @@ def test_a_step_without_its_input_fails_in_its_block(tmp_path: Path, capsys: pyt
 
 def test_an_error_of_the_core_is_a_line_and_not_a_traceback(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A stage that the core refuses ends the run with the reason in its block."""
-    config = tmp_path / "config.toml"
+    run = tmp_path / "run"
+    assert plan(run, "--stop-after", "global") == 0
+    # Without its resonators, the ring carries five conventional ports, and the fixture has four
+    # launchers. Only the assignment sees the ring that the global step wrote.
+    artifact = read_artifact((run / "02-global.fb").read_bytes())
+    assert isinstance(artifact.output, GlobalRoutingT)
+    artifact.output.resonators = []
+    (run / "02-global.fb").write_bytes(write_artifact(artifact))
+    capsys.readouterr()
+
+    assert main(["plan", "-o", str(run), "--stage", "assign", "--no-progress"]) == 1
+
+    out = capsys.readouterr().out
+    assert "   ✗ the ring carries 5 conventional ports and the assignment places 0 launcher ends, which need 5" in out
+    assert "Traceback" not in out
+    assert not (run / "03-assign.fb").exists()
+
+
+def with_launcher_target(directory: Path, target: int) -> Path:
+    """Write the fixture configuration with another ``[stages.assignment] launcher_target``.
+
+    Returns:
+        The path of the configuration.
+    """
+    config = directory / "config.toml"
     text = Path(CONFIG).read_text(encoding="utf-8")
     text = text.replace(
         'input = "routing_config.json"', f'input = "{(Path(CONFIG).parent / "routing_config.json").as_posix()}"'
     )
-    # Five chain ends on launchers and one termination are three chains, more than the fixture's
-    # two resonators can start.
-    config.write_text(text.replace("launcher_target = 1", "launcher_target = 5"), encoding="utf-8")
+    config.write_text(text.replace("launcher_target = 1", f"launcher_target = {target}"), encoding="utf-8")
+    return config
+
+
+def test_doctor_and_plan_refuse_more_launcher_ends_than_the_chip_has_launchers(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Counts that every ring of the global step breaks stop the doctor and the run before any stage."""
+    # The three conventional ports and five launcher ends need eight launchers, and the fixture has four.
+    config = with_launcher_target(tmp_path, 5)
+    problem = (
+        "the ring carries at least 3 conventional ports and the assignment places 5 launcher ends, "
+        "which need at least 8 launchers, but the chip has 4"
+    )
+
+    assert main(["doctor", "-c", str(config)]) == 1
+    assert problem in capsys.readouterr().out
+
     run = tmp_path / "run"
-
+    assert plan(run) == 0
+    before = sorted(path.name for path in run.glob("*.fb"))
+    capsys.readouterr()
     assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
+    assert problem in capsys.readouterr().err
+    assert sorted(path.name for path in run.glob("*.fb")) == before
 
-    out = capsys.readouterr().out
-    assert "   ✗ the assignment did not solve: infeasible" in out
-    assert "Traceback" not in out
-    assert not (run / "03-assign.fb").exists()
+    # A run that ends before the assignment does not need the counts.
+    assert main(["plan", "-c", str(config), "-o", str(run), "--stop-after", "global", "--no-progress"]) == 0
+
+
+def test_doctor_and_plan_refuse_a_ring_that_carries_both_ends_of_a_bridge(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A bridge with both ends in the ring stops the doctor and a run that reaches the global step."""
+    chip = json.loads((Path(CONFIG).parent / "routing_config.json").read_text(encoding="utf-8"))
+    # Two ports on the coupler bar, which a bridge rule pairs.
+    chip["ports"]["C12.port1"] = {"center": [900.0, 270.0], "orientation": 90.0}
+    chip["ports"]["C12.port2"] = {"center": [900.0, 130.0], "orientation": 270.0}
+    (tmp_path / "chip.json").write_text(json.dumps(chip), encoding="utf-8")
+    text = Path(CONFIG).read_text(encoding="utf-8")
+    text = text.replace('input = "routing_config.json"', 'input = "chip.json"')
+    text = text.replace(
+        "[ports.sequences]",
+        "component = '^([^.]+)\\.port\\d+$'\n"
+        "bridge_pair = '^C\\d+\\.port[12]$'\n\n"
+        "[[ports.bridge_pairs]]\n"
+        "first = '^(C\\d+)\\.port1$'\n"
+        "second = '^(C\\d+)\\.port2$'\n\n"
+        "[ports.sequences]",
+    )
+    text = text.replace('"Q2.port1", "Q2.port0"]', '"Q2.port1", "Q2.port0", "C12.port1", "C12.port2"]')
+    config = tmp_path / "config.toml"
+    config.write_text(text, encoding="utf-8")
+    problem = "the ring carries both ends of the bridge 'C12.port1' - 'C12.port2'"
+
+    assert main(["doctor", "-c", str(config)]) == 1
+    assert problem in capsys.readouterr().out
+
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
+    assert problem in capsys.readouterr().err
+    assert not list(run.glob("*.fb"))
+
+    # A run that ends before the global step does not derive the inner circuit.
+    assert main(["plan", "-c", str(config), "-o", str(run), "--stop-after", "capacity", "--no-progress"]) == 0
+
+
+def test_doctor_and_plan_refuse_a_detail_grid_above_the_limit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A detail grid of more than 25,000,000 cells stops the doctor and a run before any stage."""
+    config = with_launcher_target(tmp_path, 1)
+    text = config.read_text(encoding="utf-8")
+    config.write_text(
+        text.replace("capacity_cells_x = 12", "capacity_cells_x = 100\ncapacity_cells_y = 100\ndetail_factor = 60"),
+        encoding="utf-8",
+    )
+    times = "\N{MULTIPLICATION SIGN}"
+    problem = (
+        f"[grid] asks for a detail grid of 6000 {times} 6000 = 36000000 cells, a capacity grid of 100 {times} 100 "
+        "cells times detail_factor 60; the limit is 25000000 cells"
+    )
+
+    assert main(["doctor", "-c", str(config)]) == 1
+    assert problem in capsys.readouterr().out
+
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
+    assert problem in capsys.readouterr().err
+    assert not list(run.glob("*.fb"))
 
 
 def test_launchers_listed_with_the_ring_are_refused_before_any_stage(
@@ -394,6 +513,17 @@ def test_a_refused_run_keeps_the_run_it_would_replace(tmp_path: Path, capsys: py
 
     assert "[stages.assignment] launcher_target is missing" in capsys.readouterr().err
     assert sorted(path.name for path in run.glob("*.fb")) == before == ["01-capacity.fb", "02-global.fb"]
+
+
+def test_plan_refuses_a_file_as_its_run_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A run directory that is a file is refused with a line that says so, and the file stays."""
+    afile = tmp_path / "afile"
+    afile.write_text("notes", encoding="utf-8")
+
+    assert plan(afile) == 1
+
+    assert f"{afile} is no run directory: it is a file" in capsys.readouterr().err
+    assert afile.read_text(encoding="utf-8") == "notes"
 
 
 def test_resuming_takes_neither_a_configuration_nor_a_chip(tmp_path: Path) -> None:

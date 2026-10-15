@@ -22,10 +22,14 @@
 #include "mqt-scpd/pipeline/Stages.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -66,16 +70,24 @@ grid::GridMetrics capacityGrid(const geometry::BoundingBox& box,
                                 params.capacity_cells_y);
 }
 
-/// The capacity grid and the detail grid a configuration asks for. A
-/// configuration leaves out [grid] when every value in it is a default, so an
-/// absent section is one of defaults.
+/// The grid section of a configuration. A configuration leaves out [grid]
+/// when every value in it is a default, so an absent section is one of
+/// defaults.
+const flatbuffers::config::GridParamsT& gridParamsOf(const ConfigT& config) {
+  static const flatbuffers::config::GridParamsT DEFAULTS;
+  return config.grid != nullptr ? *config.grid : DEFAULTS;
+}
+
+/// The capacity grid and the detail grid a configuration asks for.
 std::pair<grid::GridMetrics, grid::GridMetrics> gridsOf(const ChipT& chip,
                                                         const ConfigT& config) {
-  const flatbuffers::config::GridParamsT defaults;
-  const auto& params = config.grid != nullptr ? *config.grid : defaults;
+  const auto& params = gridParamsOf(config);
   if (params.detail_factor == 0) {
     throw std::invalid_argument(
         "a detail grid of zero cells per capacity cell has no cells");
+  }
+  if (auto problem = detailGridProblem(chip, config)) {
+    throw std::invalid_argument(*std::move(problem));
   }
   const auto capacity = capacityGrid(grid::chipBounds(chip), params);
   return {capacity, capacity.refined(params.detail_factor)};
@@ -88,6 +100,45 @@ bool hasSlot(const flatbuffers::design::PortT& port) {
 }
 
 } // namespace
+
+std::optional<std::string> detailGridProblem(const ChipT& chip,
+                                             const ConfigT& config) {
+  const auto& params = gridParamsOf(config);
+  if (params.capacity_cells_x == 0 || params.detail_factor == 0) {
+    return std::nullopt;
+  }
+  // The figures stay in floating point, so that no product of two 32-bit
+  // figures wraps around. They are whole numbers, and every one at or below
+  // the limit is exact.
+  const double capacityWidth = params.capacity_cells_x;
+  double capacityHeight = params.capacity_cells_y;
+  if (params.capacity_cells_y == 0) {
+    geometry::BoundingBox box;
+    try {
+      box = grid::chipBounds(chip);
+    } catch (const std::invalid_argument&) {
+      return std::nullopt;
+    }
+    const auto ratio = box.height() / box.width();
+    if (!std::isfinite(ratio) || !(ratio > 0.0)) {
+      return std::nullopt;
+    }
+    // GridMetrics::fitWidth() rounds the same way.
+    capacityHeight = std::max(std::round(capacityWidth * ratio), 2.0);
+  }
+  const double factor = params.detail_factor;
+  const auto width = capacityWidth * factor;
+  const auto height = capacityHeight * factor;
+  const auto cells = width * height;
+  if (cells <= static_cast<double>(MAX_DETAIL_CELLS)) {
+    return std::nullopt;
+  }
+  return std::format("[grid] asks for a detail grid of {:.0f} × {:.0f} = "
+                     "{:.0f} cells, a capacity grid of {:.0f} × {:.0f} cells "
+                     "times detail_factor {:.0f}; the limit is {} cells",
+                     width, height, cells, capacityWidth, capacityHeight,
+                     factor, MAX_DETAIL_CELLS);
+}
 
 std::vector<geometry::Point> launcherSlotPositions(const ChipT& chip,
                                                    const ConfigT& config) {

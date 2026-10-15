@@ -40,8 +40,8 @@ std::string outcomeOf(const milp::Solution& solution) {
     text +=
         std::format("{}gap {:.1f} %", FIGURE_SEPARATOR, solution.gap * 100.0);
   }
-  if (solution.hasValues()) {
-    text += std::string(FIGURE_SEPARATOR) + counted(solution.nodes, "node");
+  if (solution.nodes.has_value()) {
+    text += std::string(FIGURE_SEPARATOR) + counted(*solution.nodes, "node");
   }
   if (!solution.message.empty()) {
     text += std::string(FIGURE_SEPARATOR) + solution.message;
@@ -66,6 +66,7 @@ Backend backendOf(const ConfigT& config) {
     name = solver.backend;
     backend.options.timeLimit = solver.time_limit;
     backend.options.relativeGap = solver.relative_gap;
+    backend.options.threads = solver.threads;
   }
   if (const auto* fromEnvironment = std::getenv("SCPD_SOLVER");
       fromEnvironment != nullptr && *fromEnvironment != '\0') {

@@ -28,6 +28,8 @@ from mqt.scpd.solvers import SolverUnavailableError, available, register, solve_
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
 
+    from mqt.scpd.solvers.gurobipy_backend import SolveAnswer
+
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini" / "config.toml"
 
 
@@ -74,16 +76,33 @@ def test_solving_without_gurobipy_names_the_way_out() -> None:
 
 
 @pytest.mark.usefixtures("no_external_solver")
+def test_set_solver_refuses_an_object_that_cannot_be_called() -> None:
+    """A solver that cannot be called is refused when it is registered, not when a stage solves."""
+    with pytest.raises(TypeError):
+        pyscpd.set_solver("gurobi")  # ty: ignore[invalid-argument-type]
+
+    config = load_config(FIXTURE)
+    assert config.stages is not None
+    assert config.stages.solver is not None
+    config.stages.solver.backend = "gurobi"
+    packed = write_config(config)
+    chip = load_chip(config, FIXTURE)
+    capacity = pyscpd.plan_capacity(chip, packed, "test")
+    routing = pyscpd.route_global(chip, capacity, packed, "test")
+    # The refused object left no external solver behind.
+    with pytest.raises(RuntimeError, match="no external solver is registered"):
+        pyscpd.assign(chip, capacity, routing, packed, "test")
+
+
+@pytest.mark.usefixtures("no_external_solver")
 def test_a_registered_solver_receives_the_model_as_mps() -> None:
     """The external solver sees MPS text and the variable names, and its status reaches the stage."""
     seen: list[tuple[str, list[str]]] = []
 
-    def refuse(
-        mps: str, names: Sequence[str], time_limit: float, relative_gap: float
-    ) -> tuple[str, float, list[float]]:
-        del time_limit, relative_gap
+    def refuse(mps: str, names: Sequence[str], time_limit: float, relative_gap: float, threads: int) -> SolveAnswer:
+        del time_limit, relative_gap, threads
         seen.append((mps, list(names)))
-        return "infeasible", float("nan"), []
+        return "infeasible", float("nan"), [], float("nan"), float("nan"), None
 
     pyscpd.set_solver(refuse)
     config = load_config(FIXTURE)
@@ -103,6 +122,62 @@ def test_a_registered_solver_receives_the_model_as_mps() -> None:
     mps, names = seen[0]
     assert "COLUMNS" in mps
     assert "flow_0" in names
+
+
+class StepLines:
+    """A reporter that keeps the lines of the -v level, where a stage reports how a solve ended."""
+
+    def __init__(self) -> None:
+        """Start with no line."""
+        self.lines: list[str] = []
+
+    def line(self, level: int, text: str) -> None:
+        """Keep a line of the -v level."""
+        if level == 1:
+            self.lines.append(text)
+
+    @staticmethod
+    def entry(level: int, label: str, figures: object) -> None:
+        """Ignore an entry."""
+        del level, label, figures
+
+    @staticmethod
+    def result(figures: object, fails: int | None = None) -> None:
+        """Ignore the result."""
+        del figures, fails
+
+    @staticmethod
+    def progress(task: str, detail: str, done: int, total: int) -> None:
+        """Ignore the progress."""
+        del task, detail, done, total
+
+
+@pytest.mark.usefixtures("no_external_solver")
+def test_a_registered_solver_receives_the_threads_and_reports_its_search() -> None:
+    """The callable receives [stages.solver] threads, and the bound, gap and nodes it returns reach the solve line."""
+    threads_seen: list[int] = []
+
+    def refuse(mps: str, names: Sequence[str], time_limit: float, relative_gap: float, threads: int) -> SolveAnswer:
+        del mps, names, time_limit, relative_gap
+        threads_seen.append(threads)
+        return "infeasible", float("nan"), [], 4.0, 0.25, 9
+
+    pyscpd.set_solver(refuse)
+    config = load_config(FIXTURE)
+    assert config.stages is not None
+    assert config.stages.solver is not None
+    config.stages.solver.backend = "gurobi"
+    config.stages.solver.threads = 3
+    packed = write_config(config)
+    chip = load_chip(config, FIXTURE)
+    capacity = pyscpd.plan_capacity(chip, packed, "test")
+    routing = pyscpd.route_global(chip, capacity, packed, "test")
+    reporter = StepLines()
+    with pytest.raises(RuntimeError, match="the assignment did not solve: infeasible"):
+        pyscpd.assign(chip, capacity, routing, packed, "test", reporter, 1)
+
+    assert threads_seen == [3]
+    assert "gurobi infeasible · bound 4.00 · gap 25.0 % · 9 nodes" in reporter.lines
 
 
 def run_python(script: str, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -131,9 +206,9 @@ def test_a_solver_that_clears_itself_during_a_solve_ends_the_stage_cleanly() -> 
         from mqt.scpd.config import load_config, write_config
 
 
-        def clear_and_refuse(mps, names, time_limit, relative_gap):
+        def clear_and_refuse(mps, names, time_limit, relative_gap, threads):
             pyscpd.set_solver(None)
-            return "infeasible", 0.0, []
+            return "infeasible", 0.0, [], float("nan"), float("nan"), None
 
 
         pyscpd.set_solver(clear_and_refuse)
@@ -161,7 +236,7 @@ def test_a_solver_registered_until_exit_lets_the_interpreter_exit_cleanly() -> N
     script = """
         from mqt.scpd import pyscpd
 
-        pyscpd.set_solver(lambda mps, names, time_limit, relative_gap: ("infeasible", 0.0, []))
+        pyscpd.set_solver(lambda mps, names, time_limit, relative_gap, threads: ("infeasible", 0.0, [], 0.0, 0.0, None))
     """
 
     finished = run_python(script)
@@ -189,6 +264,25 @@ class FakeModel:
         self.SolCount = gurobi.solutions
         self.ObjVal = 7.0
         self.Runtime = gurobi.runtime
+        self.IsMIP = gurobi.integral
+        self.NodeCount = 12.0
+
+    @property
+    def ObjBound(self) -> float:  # ruff: ignore[invalid-function-name]
+        """The best bound, or the error of Gurobi when the fake has none to give.
+
+        Raises:
+            RuntimeError: If the fake has no bound to give, as Gurobi raises GurobiError.
+        """
+        if self.gurobi.bound is None:
+            msg = "Unable to retrieve attribute 'ObjBound'"
+            raise RuntimeError(msg)
+        return self.gurobi.bound
+
+    @property
+    def MIPGap(self) -> float:  # ruff: ignore[invalid-function-name]
+        """The relative gap."""
+        return self.gurobi.gap
 
     def setParam(self, name: str, value: float) -> None:  # ruff: ignore[invalid-function-name]
         """Record a parameter of the solve, and give the status that the solve without dual reductions ends with."""
@@ -253,6 +347,9 @@ class FakeGurobi:
         self.status_without_dual_reductions = status_without_dual_reductions
         self.solutions = solutions
         self.runtime = 0.0
+        self.integral = 1
+        self.bound: float | None = 6.5
+        self.gap = 0.07
         self.licensed = True
         self.parameters: dict[str, float] = {}
         self.solved: list[str] = []
@@ -300,23 +397,59 @@ def test_gurobi_returns_the_values_in_the_order_of_the_names(monkeypatch: pytest
     """Gurobi reads the MPS text, honours the limits and answers by variable name."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi())
 
-    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x", "y"], time_limit=5.0, relative_gap=0.01)
+    answer = solve_mps("NAME pair\nENDATA\n", ["x", "y"], time_limit=5.0, relative_gap=0.01, threads=4)
 
     assert gurobi.solved == ["NAME pair\nENDATA\n"]
-    assert gurobi.parameters == {"TimeLimit": 5.0, "MIPGap": 0.01}
-    assert (status, objective, values) == ("optimal", 7.0, [1.0, 2.0])
+    assert gurobi.parameters == {"TimeLimit": 5.0, "MIPGap": 0.01, "Threads": 4}
+    assert answer == ("optimal", 7.0, [1.0, 2.0], 6.5, 0.07, 12)
     assert gurobi.released == ["model", "environment"]
+
+
+def test_gurobi_leaves_the_threads_to_its_default_at_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero threads set no Threads parameter, so Gurobi picks the count itself."""
+    gurobi = with_gurobi(monkeypatch, FakeGurobi())
+
+    solve_mps("NAME pair\nENDATA\n", ["x", "y"])
+
+    assert "Threads" not in gurobi.parameters
+
+
+def test_gurobi_reports_no_search_figures_for_a_linear_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A linear program has no bound, gap or nodes, as with HiGHS."""
+    gurobi = with_gurobi(monkeypatch, FakeGurobi())
+    gurobi.integral = 0
+
+    _, _, values, bound, gap, nodes = solve_mps("NAME pair\nENDATA\n", ["x", "y"])
+
+    assert values == [1.0, 2.0]
+    assert math.isnan(bound)
+    assert math.isnan(gap)
+    assert nodes is None
+
+
+def test_gurobi_reports_a_figure_it_cannot_give_as_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bound that Gurobi refuses to give, and an infinite gap, are NaN; the solution stays."""
+    gurobi = with_gurobi(monkeypatch, FakeGurobi())
+    gurobi.bound = None
+    gurobi.gap = 1e100
+
+    status, objective, values, bound, gap, nodes = solve_mps("NAME pair\nENDATA\n", ["x", "y"])
+
+    assert (status, objective, values, nodes) == ("optimal", 7.0, [1.0, 2.0], 12)
+    assert math.isnan(bound)
+    assert math.isnan(gap)
 
 
 def test_gurobi_without_a_value_for_a_variable_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """A variable that Gurobi does not know makes the solve an error that names the variable."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi())
 
-    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x", "y", "z"])
+    status, objective, values, _, _, nodes = solve_mps("NAME pair\nENDATA\n", ["x", "y", "z"])
 
     assert status == "gurobi returned no value for 1 of 3 variables: z"
     assert math.isnan(objective)
     assert values == []
+    assert nodes is None
     assert gurobi.released == ["model", "environment"]
 
 
@@ -373,11 +506,13 @@ def test_gurobi_without_a_solution_returns_no_values(
     """A solve that ends without a solution returns its status and no values."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi(code, solutions))
 
-    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x"])
+    status, objective, values, bound, _, nodes = solve_mps("NAME pair\nENDATA\n", ["x"])
 
     assert status == expected
     assert math.isnan(objective)
     assert values == []
+    assert math.isnan(bound)
+    assert nodes is None
     assert not gurobi.parameters
     assert gurobi.released == ["model", "environment"]
 
@@ -387,9 +522,9 @@ def test_gurobi_stopped_at_a_limit_keeps_its_solution(monkeypatch: pytest.Monkey
     """A limit that stops the search with a solution in hand gives that solution, as with HiGHS."""
     with_gurobi(monkeypatch, FakeGurobi(code, 1))
 
-    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x", "y"])
+    answer = solve_mps("NAME pair\nENDATA\n", ["x", "y"])
 
-    assert (status, objective, values) == ("feasible", 7.0, [1.0, 2.0])
+    assert answer == ("feasible", 7.0, [1.0, 2.0], 6.5, 0.07, 12)
 
 
 @pytest.mark.parametrize(("resolved", "expected"), [(3, "infeasible"), (5, "unbounded")])
@@ -397,7 +532,7 @@ def test_gurobi_tells_infeasible_from_unbounded(monkeypatch: pytest.MonkeyPatch,
     """A solve that ends with "infeasible or unbounded" repeats without dual reductions and reports which."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi(4, 0, resolved))
 
-    status, objective, values = solve_mps("NAME pair\nENDATA\n", ["x"])
+    status, objective, values, _, _, _ = solve_mps("NAME pair\nENDATA\n", ["x"])
 
     assert status == expected
     assert math.isnan(objective)
@@ -411,7 +546,7 @@ def test_gurobi_keeps_to_the_time_limit_over_both_solves(monkeypatch: pytest.Mon
     gurobi = with_gurobi(monkeypatch, FakeGurobi(4, 0, 3))
     gurobi.runtime = 2.0
 
-    status, _, _ = solve_mps("NAME pair\nENDATA\n", ["x"], time_limit=5.0)
+    status, *_ = solve_mps("NAME pair\nENDATA\n", ["x"], time_limit=5.0)
 
     assert status == "infeasible"
     assert gurobi.parameters == {"TimeLimit": 3.0, "DualReductions": 0}

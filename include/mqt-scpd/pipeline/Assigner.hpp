@@ -52,8 +52,9 @@ struct MQT_SCPD_PIPELINE_EXPORT AssignmentInputs {
  * @param global The global routing, which carries the ring and the
  * resonators.
  * @return The inputs.
- * @throws std::invalid_argument When the plan carries no launcher or the ring
- * is empty.
+ * @throws std::invalid_argument When the plan carries no launcher, when the
+ * ring is empty, or when the plan or the routing names a port that the chip
+ * does not carry.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT AssignmentInputs
 assignmentInputs(const ChipT& chip, const CapacityPlanT& capacity,
@@ -102,6 +103,31 @@ launcherOrderProblem(const ChipT& chip, const ConfigT& config);
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
 launcherPlacesProblem(const ChipT& chip, const ConfigT& config);
+
+/**
+ * @brief Checks the counts of the ring against the launchers and the
+ * assignment figures, before the global step decides the ring.
+ *
+ * The Assignment stage refuses a ring whose counts leave its model no
+ * solution: the conventional ports and the launcher ends need more launchers
+ * than the chip has, `launcher_target` or `[design_rules]
+ * feedline_terminations` exceeds the resonators, or the resonators exceed the
+ * feedline chains times `[design_rules] max_feedline_utilization`. The global
+ * step decides only the ring ends of bridges: such a port leaves the ring when
+ * no inner wire surfaces there, and it is a resonator when the wire comes
+ * from one. Every other ring port keeps the role the chip gives it. The check
+ * bounds the counts by these ports and reports a condition only when every
+ * ring within the bounds breaks it, so the Assignment stage refuses every
+ * configuration this check refuses. planProblems() runs it before any stage.
+ *
+ * @param chip The classified chip.
+ * @param config The run configuration.
+ * @return What every possible ring breaks, or nothing. The check reports
+ * nothing when the configuration carries no design rules or no
+ * `launcher_target`, or when innerCircuitOf() refuses the ring.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
+ringCountProblem(const ChipT& chip, const ConfigT& config);
 
 /**
  * @brief Creates the assigner of the first release.

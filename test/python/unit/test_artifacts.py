@@ -297,6 +297,14 @@ INCOMPLETE_ARTIFACTS = [
         id="assignment-feeds",
     ),
     pytest.param(
+        wrap(
+            StageOutput.Assignment,
+            _assignment(ring=[PortRefT(index=1)], launchers=[PortRefT(index=0)], feeds=[]),
+        ),
+        r"0 feeds for 1 ring node(?!s)",
+        id="assignment-parallel",
+    ),
+    pytest.param(
         wrap(StageOutput.Assignment, _assignment(chains=[FeedlineChainT()])),
         r"chains\[0\]: nodes is missing",
         id="chain-nodes",
@@ -333,6 +341,14 @@ INCOMPLETE_ARTIFACTS = [
         ),
         r"corridors\[0\]: names 2 partitions and 0 crossings",
         id="corridor-count",
+    ),
+    pytest.param(
+        wrap(
+            StageOutput.CorridorRouting,
+            CorridorRoutingT(corridors=[CorridorT(partitions=[], crossings=[PointT(x=1.0, y=2.0)])], slots=[]),
+        ),
+        r"corridors\[0\]: names 0 partitions and 1 crossing(?!s)",
+        id="corridor-crossings-without-partitions",
     ),
     pytest.param(
         wrap(StageOutput.CorridorRouting, CorridorRoutingT(corridors=[], slots=[BorderSlotsT()])),

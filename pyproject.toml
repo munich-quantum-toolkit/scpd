@@ -330,7 +330,7 @@ log_level = "INFO"
 minversion = "9.0"
 strict = true
 testpaths = [ "test/python" ]
-usefixtures = [ "plain_terminal" ]
+usefixtures = [ "default_solver", "plain_terminal" ]
 
 
 [tool.coverage]

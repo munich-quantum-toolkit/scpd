@@ -74,6 +74,19 @@ innerCircuitOf(const ChipT& chip, const ConfigT& config);
  * The router solves a binary flow model on the Hanan lattice of each
  * capacity chain as one mixed-integer program.
  *
+ * Every inner wire comes from the inner end of a ring bridge and surfaces at
+ * the ring end of that bridge. With `[stages.global] internal_bridges`, the
+ * wire may cross internal bridges on the way, and is then several connections
+ * long. No ring port supplies an inner wire: the assignment gives every ring
+ * port a wire of its own, and a second wire there would reach neither a
+ * launcher nor a feedline. The ring keeps the ring end of a bridge only where
+ * a wire surfaces there, and the ring end is a resonator of the assignment
+ * when the wire comes from an inner resonator.
+ *
+ * A target counts as reached when one connection ends at it. A target that no
+ * wire through a ring bridge can reach stays unreached and counts as a fail,
+ * an inner resonator included: the assignment places no feed for it.
+ *
  * @return The router.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::unique_ptr<IGlobalRouter>

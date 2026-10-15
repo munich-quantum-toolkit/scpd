@@ -177,13 +177,18 @@ selectedCorridorRouter(const ConfigT& config);
  * it have run. The check reads only the chip and the configuration:
  *
  * - every step names an implementation this build registers;
+ * - a run through the capacity, assignment or corridor step asks for a detail
+ *   grid of at most MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
+ * - a run through the global step has a ring that innerCircuitOf() accepts;
  * - a run through the assignment sets `[stages.assignment] launcher_target`;
  * - `launcher_target` plus `[design_rules] feedline_terminations` is even,
  *   since every feedline chain has two ends;
  * - the chip input lists its launchers against the direction of the port
  *   ring, as launcherOrderProblem() checks;
  * - a chip with a resonator has at least three launchers that do not all lie
- *   on one line, as launcherPlacesProblem() checks.
+ *   on one line, as launcherPlacesProblem() checks;
+ * - every ring that the global step can leave has counts that the assignment
+ *   accepts, as ringCountProblem() checks.
  *
  * @param chip The classified chip.
  * @param config The run configuration.
@@ -209,8 +214,8 @@ planProblems(const ChipT& chip, const ConfigT& config,
  * has an inner circuit, as innerCircuitOf() derives it. A global step whose
  * capacity chains reach no inner target solves nothing either, but that is
  * known only once the capacity step has run, so the list keeps such a step.
- * A ring that innerCircuitOf() refuses stops the global step anyway, and the
- * list keeps that step too.
+ * A ring that innerCircuitOf() refuses stops the global step anyway, as
+ * planProblems() reports, and the list keeps that step too.
  *
  * @param chip The classified chip.
  * @param config The run configuration.

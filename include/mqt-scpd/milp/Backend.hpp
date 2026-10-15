@@ -58,12 +58,15 @@ struct SolveOptions {
   /// Seconds of wall clock, or zero for no limit.
   double timeLimit = 0.0;
   /// The relative gap at which a solve stops early, or zero for the default of
-  /// the backend.
+  /// the backend, which is 1e-4 for HiGHS and for Gurobi.
   double relativeGap = 0.0;
   /// The threads the backend may use, or zero for its own default, which for
   /// HiGHS is half the hardware threads. HiGHS keeps one pool of worker
   /// threads per calling thread and restarts that pool when a solve asks for
-  /// another count than the solve before on the same calling thread.
+  /// another count than the solve before on the same calling thread. The
+  /// planning stages take the count from `[stages.solver] threads`. The MPS
+  /// backend that the Python package registers for Gurobi passes it on as the
+  /// Gurobi parameter Threads.
   std::uint32_t threads = 0;
   /// Where the backend reports while it solves.
   SolveObserver observer;

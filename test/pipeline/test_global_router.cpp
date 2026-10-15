@@ -30,10 +30,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -252,32 +255,8 @@ ConfigT innerConfig() {
   return config;
 }
 
-/// The fixture with Q2.port0 off the ring, and two more ports on the coupler
-/// bar that a bridge rule pairs: C12.port1 on top, near the inner port, and
-/// C12.port2 below it, on the ring.
-ConfigT bridgedConfig() {
-  auto config = test::miniConfig();
-  config.ports->patterns->component = R"(^([^.]+)\.port\d+$)";
-  config.ports->patterns->bridge_pair = R"(^C\d+\.port[12]$)";
-  auto rule = std::make_unique<BridgeRuleT>();
-  rule->first = R"(^(C\d+)\.port1$)";
-  rule->second = R"(^(C\d+)\.port2$)";
-  config.ports->bridge_pairs.push_back(std::move(rule));
-  config.ports->sequences->all_outer = {"Q1.port0", "Q1.port1", "C12.port2",
-                                        "C12.port0", "Q2.port1"};
-  return config;
-}
-
-ChipT bridgedChip(const ConfigT& config = bridgedConfig()) {
-  auto text = test::miniChipText();
-  const std::string anchor = R"("ports": {)";
-  const auto at = text.find(anchor);
-  EXPECT_NE(at, std::string::npos);
-  text.insert(at + anchor.size(), R"(
-    "C12.port1": {"center": [900.0, 270.0], "orientation": 90.0},
-    "C12.port2": {"center": [900.0, 130.0], "orientation": 270.0},)");
-  return io::loadChip(text, config);
-}
+using test::bridgedChip;
+using test::bridgedConfig;
 
 /// The bridged fixture with both ends of the bridge off the ring, so that the
 /// bridge is an internal crossing.
@@ -365,26 +344,41 @@ ChipT handChip(const std::vector<HandPort>& ports,
   return chip;
 }
 
-/// The patterns of a hand chip without bridges: `R.port0` is a resonator, and
+/// The patterns of a hand chip. `R.port0`, `R1.port0` and so on are
+/// resonators. `S.port0` and `S.port1` are the two ends of a bridge, and
 /// every other port named `X.port0` is a conventional port of its own
 /// component.
 PortPatternsT handPatterns() {
   PortPatternsT patterns;
   patterns.launcher = R"(^Chip\.port\d+$)";
-  patterns.resonator = R"(^R\.port0$)";
-  patterns.conventional = R"(^[A-QS-Z]\.port0$)";
+  patterns.resonator = R"(^R\d*\.port0$)";
+  patterns.conventional = R"(^[A-QT-Z]\.port0$)";
+  patterns.bridge_pair = R"(^S\.port[01]$)";
   patterns.component = R"(^([^.]+)\.port\d+$)";
   return patterns;
 }
 
+/// The ring end of the bridge of a hand chip. S.port0 is the inner end, and
+/// every inner wire of a hand chip leaves the inner circuit there. The ring
+/// end lies on no chain, so no chain capacity limits the bridge.
+HandPort ringEnd() {
+  return {.label = "S.port1",
+          .center = Point(-1000.0, -1000.0),
+          .orientation = 180.0};
+}
+
 /// The configuration of a hand chip. Without design rules, the lattice lines
-/// of a port run through its center.
+/// of a port run through its center. A rule pairs S.port0 with S.port1.
 ConfigT handConfig(const std::vector<std::string>& ring) {
   ConfigT config;
   config.ports = std::make_unique<flatbuffers::config::PortConfigT>();
   config.ports->sequences =
       std::make_unique<flatbuffers::config::PortSequencesT>();
   config.ports->sequences->all_outer = ring;
+  auto rule = std::make_unique<BridgeRuleT>();
+  rule->first = R"(^(S)\.port0$)";
+  rule->second = R"(^(S)\.port1$)";
+  config.ports->bridge_pairs.push_back(std::move(rule));
   config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
   config.stages->global =
       std::make_unique<flatbuffers::config::GlobalParamsT>();
@@ -442,35 +436,101 @@ TEST(GlobalRouter, KeepsTheConfiguredRingWithoutAnInnerCircuit) {
   EXPECT_EQ(recorder.fails[0], 0U);
 }
 
-TEST(GlobalRouter, ReachesAnInnerPortAroundTheArtwork) {
-  const auto config = innerConfig();
-  const auto chip = test::miniChip(config);
+TEST(GlobalRouter, RunsAroundALatticeNodeOnArtwork) {
+  // The lattice of S and T is a square. Its corner at (100, 0) lies on
+  // artwork, so the node goes, and the wire runs over the other corner.
+  const auto chip =
+      handChip({ringEnd(),
+                {.label = "S.port0", .center = Point(0.0, 0.0)},
+                {.label = "T.port0",
+                 .center = Point(100.0, 100.0),
+                 .orientation = 180.0}},
+               handPatterns(), {{Point(90.0, -10.0), Point(110.0, 10.0)}});
+  const auto config = handConfig({"S.port1"});
   const auto plan = planOf(
-      {{.targets = indicesOf(chip, {"Q2.port1", "Q2.port0"}), .gate = {}}});
+      {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
 
   const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
 
   ASSERT_EQ(routing.connections.size(), 1U);
   ASSERT_NE(routing.connections[0]->source, nullptr);
-  EXPECT_EQ(routing.connections[0]->source->index(), indexOf(chip, "Q2.port0"));
-  EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "Q2.port1"));
-  // The lattice corner inside the pad of Q2 is gone, so the wire runs around
-  // the pad: 320 to the right and 320 down, from one anchor to the other.
-  EXPECT_NEAR(routing.objective, 640.0, 1.0e-9);
+  EXPECT_EQ(routing.connections[0]->source->index(), indexOf(chip, "S.port0"));
+  EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "T.port0"));
+  EXPECT_NEAR(routing.objective, 200.0, 1.0e-9);
   EXPECT_NEAR(routing.objective, selectedLength(routing), 1.0e-9);
-  // No bridge leads anywhere, so the ring is the configured one.
-  EXPECT_EQ(ringOf(routing),
-            indicesOf(chip, config.ports->sequences->all_outer));
+  ASSERT_EQ(routing.lattices.size(), 1U);
+  const auto& lattice = *routing.lattices[0];
+  EXPECT_TRUE(std::ranges::any_of(lattice.selected, [&](const auto edge) {
+    const auto first = static_cast<std::size_t>(edge) * 2;
+    return std::ranges::any_of(
+        std::array{lattice.edges[first], lattice.edges[first + 1]},
+        [&](const auto node) {
+          return geometry::distance(lattice.points[node], Point(0.0, 100.0)) <
+                 1.0e-9;
+        });
+  }));
+}
+
+TEST(GlobalRouter, RefusesAPlanThatDoesNotFitTheChip) {
+  const auto config = innerConfig();
+  const auto chip = test::miniChip(config);
+  const auto refusal = [&](const CapacityPlanT& plan) {
+    try {
+      static_cast<void>(makeHananMilpRouter()->run(chip, plan, config, {}));
+    } catch (const std::invalid_argument& error) {
+      return std::string(error.what());
+    }
+    return std::string();
+  };
+  const auto plan = [&chip] {
+    return planOf(
+        {{.targets = indicesOf(chip, {"Q2.port1", "Q2.port0"}), .gate = {}}});
+  };
+  // The plan holds the nodes 0, 1 and 2, in a line.
+  const auto ports = static_cast<std::uint32_t>(chip.ports.size());
+
+  auto unknownChain = plan();
+  unknownChain.chains.push_back(3);
+  EXPECT_EQ(refusal(unknownChain), "the capacity plan does not fit the chip: "
+                                   "a chain starts at node 3 of 3");
+
+  auto unknownLink = plan();
+  unknownLink.nodes[2]->next = {7};
+  EXPECT_EQ(refusal(unknownLink), "the capacity plan does not fit the chip: "
+                                  "node 2 leads to node 7 of 3");
+
+  auto unknownPort = plan();
+  unknownPort.nodes[0]->id = ports;
+  EXPECT_EQ(refusal(unknownPort),
+            std::format("the capacity plan does not fit the chip: node 0 "
+                        "names port {} of {}",
+                        ports, ports));
+
+  auto cycle = plan();
+  cycle.nodes[2]->next = {0};
+  EXPECT_EQ(refusal(cycle), "the capacity plan does not fit the chip: "
+                            "node 2 leads back to node 0");
+
+  // Two chains may share a link, and that is no cycle.
+  auto shared = plan();
+  shared.chains.push_back(1);
+  EXPECT_EQ(refusal(shared), "");
 }
 
 TEST(GlobalRouter, RunsNoLatticeEdgeAcrossArtwork) {
-  // The lattice of the two anchors is a rectangle. Its edges run through the
-  // pad of Q2, the coupler bar and the pad of Q1, and no node of it lies on
-  // artwork, so only the edges themselves can say that no wire fits.
-  const auto config = innerConfig();
-  const auto chip = test::miniChip(config);
+  // The lattice of S and T is a square, and a bar of artwork crosses it from
+  // the bottom side to the top side. No node of the square lies on the bar,
+  // so only the edges themselves can say that no wire fits.
+  const auto chip =
+      handChip({ringEnd(),
+                {.label = "S.port0", .center = Point(0.0, 0.0)},
+                {.label = "T.port0",
+                 .center = Point(100.0, 100.0),
+                 .orientation = 180.0}},
+               handPatterns(), {{Point(40.0, -10.0), Point(60.0, 110.0)}});
+  const auto config = handConfig({"S.port1"});
   const auto plan = planOf(
-      {{.targets = indicesOf(chip, {"Q2.port1", "Q1.port1"}), .gate = {}}});
+      {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
   Recorder recorder;
 
   const auto routing = makeHananMilpRouter()->run(
@@ -486,10 +546,11 @@ TEST(GlobalRouter, LeavesAPortWhoseAnchorLiesOnItsOwnArtwork) {
   // The anchor of S lies inside the square around it. The edge to T leaves
   // the square and crosses nothing else, so the wire runs.
   const auto chip = handChip(
-      {{.label = "S.port0", .center = Point(0.0, 0.0)},
+      {ringEnd(),
+       {.label = "S.port0", .center = Point(0.0, 0.0)},
        {.label = "T.port0", .center = Point(100.0, 0.0), .orientation = 180.0}},
       handPatterns(), {{Point(-10.0, -10.0), Point(10.0, 10.0)}});
-  const auto config = handConfig({"S.port0"});
+  const auto config = handConfig({"S.port1"});
   const auto plan = planOf(
       {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
 
@@ -505,10 +566,11 @@ TEST(GlobalRouter, LeavesAPortWhoseAnchorLiesOnItsOwnArtworkAtTheTarget) {
   // The same exit at the other end of the edge: the anchor of T lies inside
   // the square around it.
   const auto chip = handChip(
-      {{.label = "S.port0", .center = Point(0.0, 0.0)},
+      {ringEnd(),
+       {.label = "S.port0", .center = Point(0.0, 0.0)},
        {.label = "T.port0", .center = Point(100.0, 0.0), .orientation = 180.0}},
       handPatterns(), {{Point(90.0, -10.0), Point(110.0, 10.0)}});
-  const auto config = handConfig({"S.port0"});
+  const auto config = handConfig({"S.port1"});
   const auto plan = planOf(
       {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
 
@@ -523,10 +585,11 @@ TEST(GlobalRouter, LeavesAPortWhoseAnchorLiesOnItsOwnArtworkAtTheTarget) {
 bool runsAcross(const Point& source, const Point& target, const Point& low,
                 const Point& high) {
   const auto chip =
-      handChip({{.label = "S.port0", .center = source},
+      handChip({ringEnd(),
+                {.label = "S.port0", .center = source},
                 {.label = "T.port0", .center = target, .orientation = 180.0}},
                handPatterns(), {{low, high}});
-  const auto config = handConfig({"S.port0"});
+  const auto config = handConfig({"S.port1"});
   const auto plan = planOf(
       {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}}});
   const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
@@ -559,10 +622,11 @@ TEST(GlobalRouter, RunsNoWireThatStaysInsideTheArtwork) {
 bool runsWithReach(const Point& source, const Point& target, const Point& low,
                    const Point& high, const double reach) {
   const auto chip =
-      handChip({{.label = "S.port0", .center = source},
+      handChip({ringEnd(),
+                {.label = "S.port0", .center = source},
                 {.label = "T.port0", .center = target, .orientation = 180.0}},
                handPatterns(), {{low, high}});
-  auto config = handConfig({"S.port0"});
+  auto config = handConfig({"S.port1"});
   config.rules = std::make_unique<DesignRulesT>();
   config.rules->min_straight_length = reach;
   const auto plan = planOf(
@@ -601,12 +665,13 @@ TEST(GlobalRouter, RunsNoWireSidewaysOutOfTheArtworkOfThePort) {
         Case{.orientation = 180.0, .target = Point(0.0, 5000.0)},
         Case{.orientation = 270.0, .target = Point(-5000.0, 0.0)}}) {
     const auto chip = handChip(
-        {{.label = "S.port0",
+        {ringEnd(),
+         {.label = "S.port0",
           .center = Point(0.0, 0.0),
           .orientation = orientation},
          {.label = "T.port0", .center = target, .orientation = orientation}},
         handPatterns(), {{Point(-500.0, -500.0), Point(500.0, 500.0)}});
-    auto config = handConfig({"S.port0"});
+    auto config = handConfig({"S.port1"});
     config.rules = std::make_unique<DesignRulesT>();
     config.rules->min_straight_length = 100.0;
     const auto plan = planOf(
@@ -629,11 +694,12 @@ TEST(GlobalRouter, RunsOneWireFromAPortOnSeveralLattices) {
   // S borders two chains, so it is a node of two lattices. A port takes one
   // wire, so only one of A and B is reached.
   const auto chip =
-      handChip({{.label = "S.port0", .center = Point(0.0, 0.0)},
+      handChip({ringEnd(),
+                {.label = "S.port0", .center = Point(0.0, 0.0)},
                 {.label = "A.port0", .center = Point(100.0, 0.0)},
                 {.label = "B.port0", .center = Point(0.0, 100.0)}},
                handPatterns());
-  const auto config = handConfig({"S.port0"});
+  const auto config = handConfig({"S.port1"});
   const auto plan = planOf(
       {{.targets = indicesOf(chip, {"S.port0", "A.port0"}), .gate = {}},
        {.targets = indicesOf(chip, {"S.port0", "B.port0"}), .gate = {}}});
@@ -686,25 +752,31 @@ TEST(GlobalRouter, SurfacesThroughABridgeWhereTheRingCanCarryTheWire) {
   EXPECT_EQ(resonatorsOf(routing), resonators);
 }
 
-TEST(GlobalRouter, DropsTheRingPortOfABridgeThatCannotCarryTheWire) {
+TEST(GlobalRouter, CountsAResonatorAsAFailWhereNoRingBridgeCanCarryItsWire) {
   // A gate without room cuts the ring end of the bridge off from every
-  // launcher, so the wire has to come from Q2.port1 instead.
+  // launcher. Q2.port1 lies on the same lattice as the resonator Q2.port0,
+  // but it is a ring port and supplies no inner wire, so the resonator stays
+  // unreached.
   const auto config = bridgedConfig();
   const auto chip = bridgedChip();
+  Recorder recorder;
 
-  const auto routing =
-      makeHananMilpRouter()->run(chip, bridgedPlan(chip, 0U), config, {});
+  const auto routing = makeHananMilpRouter()->run(
+      chip, bridgedPlan(chip, 0U), config, recorder.report(Detail::Summary));
 
-  ASSERT_EQ(routing.connections.size(), 1U);
-  EXPECT_EQ(routing.connections[0]->source->index(), indexOf(chip, "Q2.port1"));
+  EXPECT_TRUE(routing.connections.empty());
   EXPECT_EQ(ringOf(routing),
             indicesOf(chip, {"Q1.port0", "Q1.port1", "C12.port0", "Q2.port1"}));
   EXPECT_EQ(resonatorsOf(routing), indicesOf(chip, {"Q1.port0", "Q2.port0"}));
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 1U);
 }
 
-TEST(GlobalRouter, ReachesAnInnerPortPastAnInternalBridge) {
-  // The bridge would not shorten the wire. Shut, its two ports carry no flow;
-  // open, they could. Either way the wire runs from Q2.port1 around the pad.
+TEST(GlobalRouter, CountsAResonatorAsAFailWithoutARingBridge) {
+  // Both ends of the bridge lie off the ring, so no wire can surface on the
+  // ring. Shut, the bridge carries no flow; open, it leads only to the other
+  // inner end. Q2.port1 is a ring port and supplies no inner wire. Either way
+  // the resonator Q2.port0 stays unreached.
   for (const bool allowed : {false, true}) {
     SCOPED_TRACE(allowed ? "internal bridges allowed"
                          : "internal bridges shut");
@@ -720,14 +792,104 @@ TEST(GlobalRouter, ReachesAnInnerPortPastAnInternalBridge) {
     const auto routing = makeHananMilpRouter()->run(
         chip, plan, config, recorder.report(Detail::Summary));
 
-    ASSERT_EQ(routing.connections.size(), 1U);
-    EXPECT_EQ(routing.connections[0]->source->index(),
-              indexOf(chip, "Q2.port1"));
-    EXPECT_EQ(routing.connections[0]->target.index(),
-              indexOf(chip, "Q2.port0"));
-    EXPECT_NEAR(routing.objective, 640.0, 1.0e-9);
+    EXPECT_TRUE(routing.connections.empty());
+    EXPECT_EQ(resonatorsOf(routing), indicesOf(chip, {"Q1.port0", "Q2.port0"}));
     ASSERT_EQ(recorder.fails.size(), 1U);
-    EXPECT_EQ(recorder.fails[0], 0U);
+    EXPECT_EQ(recorder.fails[0], 1U);
+  }
+}
+
+/// The ports of a hand chip whose inner target @p target lies 100 from the
+/// ring port @p ring and 1000 from S.port0, the inner end of the ring bridge.
+std::vector<HandPort> decoyedPorts(const std::string& target,
+                                   const std::string& ring) {
+  std::vector<HandPort> ports{
+      {.label = target, .center = Point(0.0, 0.0)},
+      {.label = "S.port0", .center = Point(0.0, 1000.0), .orientation = 270.0},
+      {.label = ring, .center = Point(100.0, 0.0), .orientation = 180.0}};
+  if (ring != "S.port1") {
+    ports.push_back(ringEnd());
+  }
+  return ports;
+}
+
+TEST(GlobalRouter, TakesEveryInnerWireFromTheInnerEndOfARingBridge) {
+  // A ring port has a wire of the assignment: to a launcher, to a feedline,
+  // or, at the ring end of a bridge, the wire that surfaces there. So no ring
+  // port supplies an inner wire, however close it lies. The wire of each
+  // target comes from S.port0 and surfaces at S.port1. For a resonator,
+  // S.port1 is then a resonator of the assignment.
+  for (const std::string target : {"R.port0", "T.port0"}) {
+    for (const std::string ring : {"A.port0", "R1.port0", "S.port1"}) {
+      SCOPED_TRACE(target + " beside the ring port " + ring);
+      const auto chip = handChip(decoyedPorts(target, ring), handPatterns());
+      auto labels = std::vector<std::string>{ring};
+      if (ring != "S.port1") {
+        labels.emplace_back("S.port1");
+      }
+      const auto config = handConfig(labels);
+      const auto plan =
+          planOf({{.targets = indicesOf(chip, {target, ring, "S.port0"}),
+                   .gate = {}}});
+      Recorder recorder;
+
+      const auto routing = makeHananMilpRouter()->run(
+          chip, plan, config, recorder.report(Detail::Summary));
+
+      ASSERT_EQ(routing.connections.size(), 1U);
+      ASSERT_NE(routing.connections[0]->source, nullptr);
+      EXPECT_EQ(routing.connections[0]->source->index(),
+                indexOf(chip, "S.port0"));
+      EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, target));
+      EXPECT_NEAR(routing.objective, 1000.0, 1.0e-9);
+      EXPECT_EQ(ringOf(routing), indicesOf(chip, labels));
+      std::vector<std::string> resonators;
+      if (target == "R.port0") {
+        resonators = {target, "S.port1"};
+      }
+      if (ring == "R1.port0") {
+        resonators.push_back(ring);
+      }
+      auto expected = indicesOf(chip, resonators);
+      std::ranges::sort(expected);
+      EXPECT_EQ(resonatorsOf(routing), expected);
+      ASSERT_EQ(recorder.fails.size(), 1U);
+      EXPECT_EQ(recorder.fails[0], 0U);
+    }
+  }
+}
+
+TEST(GlobalRouter, CountsAnInnerTargetAsAFailWhereOnlyARingPortReachesIt) {
+  // The lattice carries the target and a ring port, but no inner end of a
+  // bridge. The target stays unreached, and the ring end of the bridge
+  // leaves the ring. A resonator is not fed, and the routing says so.
+  for (const std::string target : {"R.port0", "T.port0"}) {
+    for (const std::string ring : {"A.port0", "R1.port0"}) {
+      SCOPED_TRACE(target + " beside the ring port " + ring);
+      const auto chip = handChip(decoyedPorts(target, ring), handPatterns());
+      const auto config = handConfig({ring, "S.port1"});
+      const auto plan =
+          planOf({{.targets = indicesOf(chip, {target, ring}), .gate = {}}});
+      Recorder recorder;
+
+      const auto routing = makeHananMilpRouter()->run(
+          chip, plan, config, recorder.report(Detail::Summary));
+
+      EXPECT_TRUE(routing.connections.empty());
+      EXPECT_EQ(ringOf(routing), indicesOf(chip, {ring}));
+      std::vector<std::string> resonators;
+      if (target == "R.port0") {
+        resonators.push_back(target);
+      }
+      if (ring == "R1.port0") {
+        resonators.push_back(ring);
+      }
+      auto expected = indicesOf(chip, resonators);
+      std::ranges::sort(expected);
+      EXPECT_EQ(resonatorsOf(routing), expected);
+      ASSERT_EQ(recorder.fails.size(), 1U);
+      EXPECT_EQ(recorder.fails[0], 1U);
+    }
   }
 }
 
@@ -735,42 +897,64 @@ TEST(GlobalRouter, MarksTheRingPortOfAResonatorWirePastAnInternalBridge) {
   // The resonator T is fed through two bridges. The wire runs from the inner
   // end X.port1 of the ring bridge to I.port1, crosses the internal bridge,
   // and runs on from I.port2 to T. It surfaces at X.port2, so the assignment
-  // has to see X.port2 as a resonator.
+  // has to see X.port2 as a resonator. The chip and its mirror image list
+  // the lattice nodes of each wire in opposite orders.
   PortPatternsT patterns;
   patterns.launcher = R"(^Chip\.port\d+$)";
   patterns.resonator = R"(^[RT]\.port0$)";
   patterns.conventional = R"(^C\.port0$)";
   patterns.bridge_pair = R"(^[XI]\.port[12]$)";
   patterns.component = R"(^([^.]+)\.port\d+$)";
-  const auto chip = handChip(
-      {{.label = "X.port1", .center = Point(0.0, 0.0)},
-       {.label = "X.port2", .center = Point(0.0, -50.0), .orientation = 270.0},
-       {.label = "I.port1", .center = Point(10.0, 0.0), .orientation = 180.0},
-       {.label = "I.port2", .center = Point(90.0, 0.0)},
-       {.label = "T.port0", .center = Point(100.0, 0.0), .orientation = 180.0},
-       {.label = "R.port0", .center = Point(500.0, 500.0)}},
-      patterns);
-  auto config = handConfig({"X.port2", "R.port0"});
-  config.stages->global->internal_bridges = true;
-  auto rule = std::make_unique<BridgeRuleT>();
-  rule->first = R"(^([XI])\.port1$)";
-  rule->second = R"(^([XI])\.port2$)";
-  config.ports->bridge_pairs.push_back(std::move(rule));
-  const auto plan =
-      planOf({{.targets = indicesOf(chip, {"X.port1", "I.port1", "T.port0"}),
-               .gate = std::nullopt},
-              {.targets = indicesOf(chip, {"I.port2", "T.port0"}),
-               .gate = std::nullopt},
-              {.targets = indicesOf(chip, {"X.port2"}), .gate = std::nullopt}});
+  for (const double side : {1.0, -1.0}) {
+    SCOPED_TRACE(side > 0.0 ? "the chip" : "its mirror image");
+    const auto facing = side > 0.0 ? 180.0 : 0.0;
+    const auto chip =
+        handChip({{.label = "X.port1", .center = Point(0.0, 0.0)},
+                  {.label = "X.port2",
+                   .center = Point(0.0, -50.0),
+                   .orientation = 270.0},
+                  {.label = "I.port1",
+                   .center = Point(side * 10.0, 0.0),
+                   .orientation = facing},
+                  {.label = "I.port2", .center = Point(side * 90.0, 0.0)},
+                  {.label = "T.port0",
+                   .center = Point(side * 100.0, 0.0),
+                   .orientation = facing},
+                  {.label = "R.port0", .center = Point(side * 500.0, 500.0)}},
+                 patterns);
+    auto config = handConfig({"X.port2", "R.port0"});
+    config.stages->global->internal_bridges = true;
+    auto rule = std::make_unique<BridgeRuleT>();
+    rule->first = R"(^([XI])\.port1$)";
+    rule->second = R"(^([XI])\.port2$)";
+    config.ports->bridge_pairs.push_back(std::move(rule));
+    const auto plan = planOf(
+        {{.targets = indicesOf(chip, {"X.port1", "I.port1", "T.port0"}),
+          .gate = std::nullopt},
+         {.targets = indicesOf(chip, {"I.port2", "T.port0"}),
+          .gate = std::nullopt},
+         {.targets = indicesOf(chip, {"X.port2"}), .gate = std::nullopt}});
 
-  const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+    const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
 
-  ASSERT_EQ(routing.connections.size(), 2U);
-  EXPECT_NEAR(routing.objective, 20.0, 1.0e-9);
-  EXPECT_EQ(ringOf(routing), indicesOf(chip, {"X.port2", "R.port0"}));
-  auto resonators = indicesOf(chip, {"X.port2", "T.port0", "R.port0"});
-  std::ranges::sort(resonators);
-  EXPECT_EQ(resonatorsOf(routing), resonators);
+    ASSERT_EQ(routing.connections.size(), 2U);
+    // Each connection runs the way the wire does, from X.port1 towards T.
+    std::set<std::pair<std::uint32_t, std::uint32_t>> connections;
+    for (const auto& connection : routing.connections) {
+      ASSERT_NE(connection->source, nullptr);
+      connections.emplace(connection->source->index(),
+                          connection->target.index());
+    }
+    EXPECT_EQ(connections,
+              (std::set<std::pair<std::uint32_t, std::uint32_t>>{
+                  {indexOf(chip, "X.port1"), indexOf(chip, "I.port1")},
+                  {indexOf(chip, "I.port2"), indexOf(chip, "T.port0")}}));
+    EXPECT_NEAR(routing.objective, 20.0, 1.0e-9);
+    EXPECT_EQ(ringOf(routing), indicesOf(chip, {"X.port2", "R.port0"}));
+    auto resonators = indicesOf(chip, {"X.port2", "T.port0", "R.port0"});
+    std::ranges::sort(resonators);
+    EXPECT_EQ(resonatorsOf(routing), resonators);
+  }
 }
 
 /// A backend that answers with the longest circuit instead of the shortest.
@@ -814,17 +998,19 @@ public:
 };
 
 TEST(GlobalRouter, NamesEveryReachedTargetInAFeasibleSolution) {
-  // One lattice carries the inner port and three ring ports. The longest
-  // circuit runs wires through every port it may: a wire that ran on through
-  // a ring port would join two wires into one component with three port ends,
-  // and the target of that component would get no connection.
-  auto config = innerConfig();
+  // One lattice carries the resonator, the inner end of the bridge and three
+  // ring ports. The longest circuit runs wires through every node it may. A
+  // ring port carries no inner wire, and a port that a wire ran on through
+  // would join two wires into one component with three port ends, whose
+  // target would get no connection.
+  auto config = bridgedConfig();
   config.stages->solver->backend = "gurobi";
-  const auto chip = test::miniChip(config);
+  const auto chip = bridgedChip(config);
   const auto plan =
-      planOf({{.targets = indicesOf(
-                   chip, {"Q2.port1", "Q2.port0", "C12.port0", "Q1.port1"}),
-               .gate = {}}});
+      planOf({{.targets = indicesOf(chip, {"Q2.port0", "C12.port1", "Q2.port1",
+                                           "C12.port0", "Q1.port1"}),
+               .gate = {}},
+              {.targets = indicesOf(chip, {"C12.port2"}), .gate = {}}});
   milp::setExternalBackend(std::make_shared<LongestCircuitBackend>());
   Recorder recorder;
 
@@ -834,9 +1020,11 @@ TEST(GlobalRouter, NamesEveryReachedTargetInAFeasibleSolution) {
 
   ASSERT_EQ(recorder.fails.size(), 1U);
   EXPECT_EQ(recorder.fails[0], 0U);
-  EXPECT_TRUE(std::ranges::any_of(routing.connections, [&](const auto& wire) {
-    return wire->target.index() == indexOf(chip, "Q2.port1");
-  }));
+  ASSERT_EQ(routing.connections.size(), 1U);
+  ASSERT_NE(routing.connections[0]->source, nullptr);
+  EXPECT_EQ(routing.connections[0]->source->index(),
+            indexOf(chip, "C12.port1"));
+  EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "Q2.port0"));
 }
 
 TEST(GlobalRouter, GivesTheSameAnswerTwice) {

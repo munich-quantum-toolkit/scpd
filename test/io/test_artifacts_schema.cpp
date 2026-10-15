@@ -169,9 +169,48 @@ TEST(ArtifactSchema, RefusesACorridorThatNamesTheWrongNumberOfPartitions) {
   EXPECT_EQ(problems[0], "corridor 0 names 2 partitions and 0 crossings");
 }
 
+/// A connection of the assignment to a resonator, with both of its roles.
+std::unique_ptr<ConnectionT> resonatorConnection() {
+  auto connection = std::make_unique<ConnectionT>();
+  connection->source_role = AssignedRole::ResonatorSource;
+  connection->target_role = AssignedRole::ResonatorTarget;
+  return connection;
+}
+
+TEST(ArtifactSchema, RefusesCrossingsOfACorridorWithoutPartitions) {
+  // A corridor without partitions is a connection without a way, so it
+  // crosses no border either.
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->crossings.emplace_back(1.0, 2.0);
+  routing.corridors.push_back(std::move(corridor));
+
+  const auto problems = validate(wrap(std::move(routing)));
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_EQ(problems[0], "corridor 0 names 0 partitions and 1 crossing");
+}
+
+TEST(ArtifactSchema, RefusesAnAssignmentWhoseListsDoNotFollowTheRing) {
+  // The connections, the launchers and the feeds hold one entry per ring
+  // node, and the Corridor stage reads them by the index of the node.
+  AssignmentT assignment;
+  assignment.ring = {PortRef(1), PortRef(2)};
+  assignment.connections.push_back(resonatorConnection());
+  assignment.launchers = {PortRef(0), PortRef(3)};
+  assignment.feeds.emplace_back(0.0, 0.0);
+  assignment.feeds.emplace_back(1.0, 0.0);
+  assignment.feeds.emplace_back(2.0, 0.0);
+
+  EXPECT_EQ(validate(wrap(std::move(assignment))),
+            (std::vector<std::string>{"1 connection for 2 ring nodes",
+                                      "3 feeds for 2 ring nodes"}));
+}
+
 TEST(ArtifactSchema, RefusesAFeedlineChainThatLeavesTheRing) {
   // A chain names ring nodes, so each of them has to be a node of the ring.
   AssignmentT assignment;
+  assignment.connections.push_back(resonatorConnection());
   assignment.ring.emplace_back(3);
   assignment.launchers.emplace_back(9);
   assignment.feeds.emplace_back(0.0, 0.0);
@@ -229,6 +268,14 @@ TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {
   EXPECT_EQ(validate(wrap(std::move(cycle))),
             (std::vector<std::string>{
                 "capacity nodes link in a cycle: 2 of 2 nodes lie on or "
+                "behind one"}));
+
+  CapacityPlanT loop = emptyPlan();
+  loop.nodes.push_back(node({0}));
+  loop.chains = {0};
+  EXPECT_EQ(validate(wrap(std::move(loop))),
+            (std::vector<std::string>{
+                "capacity nodes link in a cycle: 1 of 1 node lies on or "
                 "behind one"}));
 }
 
@@ -370,6 +417,9 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnUnsetRole) {
   AssignmentT assignment;
   assignment.connections.push_back(std::make_unique<ConnectionT>());
   assignment.connections.back()->target = PortRef(1);
+  assignment.ring = {PortRef(1)};
+  assignment.launchers = {PortRef(0)};
+  assignment.feeds.emplace_back(0.0, 0.0);
   const auto bytes = packUnchecked(wrap(assignment));
 
   EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);

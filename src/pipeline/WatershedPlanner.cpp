@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <queue>
@@ -113,6 +114,69 @@ bool segmentsCross(const fbg::Point& a0, const fbg::Point& a1,
   return d1 * d2 < 0 && d3 * d4 < 0;
 }
 
+/// Sets of grid cells that a walk starts afresh many times over.
+///
+/// Every set has a generation, and a cell is in the set whose generation it
+/// carries. A new set therefore costs one increment rather than a clear of
+/// the grid or of a hash set.
+class CellMarks {
+public:
+  explicit CellMarks(const std::size_t cells) : marks(cells, 0) {}
+
+  /// Starts a new, empty set and returns its generation.
+  [[nodiscard]] std::uint32_t next() {
+    if (++generation == 0) {
+      // The counter wrapped, so old marks could match again.
+      std::ranges::fill(marks, 0U);
+      generation = 1;
+    }
+    return generation;
+  }
+
+  [[nodiscard]] bool contains(const std::uint32_t set,
+                              const std::size_t cell) const {
+    return marks[cell] == set;
+  }
+
+  /// Puts a cell into a set.
+  ///
+  /// @return Whether the cell was not in it before.
+  bool insert(const std::uint32_t set, const std::size_t cell) {
+    if (marks[cell] == set) {
+      return false;
+    }
+    marks[cell] = set;
+    return true;
+  }
+
+private:
+  std::vector<std::uint32_t> marks;
+  std::uint32_t generation = 0;
+};
+
+/// One set of grid cells that is cleared often.
+class CellSet {
+public:
+  explicit CellSet(const std::size_t cells)
+      : marks(cells), current(marks.next()) {}
+
+  void clear() { current = marks.next(); }
+
+  [[nodiscard]] bool contains(const std::size_t cell) const {
+    return marks.contains(current, cell);
+  }
+
+  void insert(const std::vector<std::size_t>& cells) {
+    for (const auto cell : cells) {
+      static_cast<void>(marks.insert(current, cell));
+    }
+  }
+
+private:
+  CellMarks marks;
+  std::uint32_t current;
+};
+
 /// Builds the capacity chains: the trees of gates a launcher's wires pass on
 /// the way to the targets it feeds.
 class ChainBuilder {
@@ -125,7 +189,8 @@ public:
       : planScene(&scene), gateList(&bottlenecks),
         gateLines(bottleneckLines(bottlenecks, scene.detail)),
         gateMoves(grid::bottleneckMoves(bottlenecks, scene.detail)),
-        nodeList(&nodes), gateClosed(bottlenecks.size(), false) {
+        nodeList(&nodes), gateClosed(bottlenecks.size(), false),
+        visitedCells(scene.detail.cells()), floodMarks(scene.detail.cells()) {
     for (std::size_t index = 0; index < scene.targetCell.size(); ++index) {
       portOfTarget.emplace(scene.targetCell[index], scene.targetPort[index]);
     }
@@ -193,13 +258,9 @@ public:
     nextStampLabel = nextLabel;
     closeEveryGate();
 
-    // The target is the seed of the first chamber, and a chamber labels no
-    // seed, so the target takes the label of the first chamber here. A walk
-    // whose first chamber reaches a launcher labels nothing.
-    const auto first = nextStampLabel;
-    if (stamp({targetCell}, {})) {
-      labels[targetCell] = first;
-    }
+    // The target seeds the first chamber and takes its label. A walk whose
+    // first chamber reaches a launcher labels nothing.
+    static_cast<void>(stamp({targetCell}, {}));
 
     openEveryGate();
     nextLabel = nextStampLabel;
@@ -278,7 +339,7 @@ private:
   [[nodiscard]] Chamber flood(const std::vector<std::size_t>& seeds) const {
     const auto& grid = planScene->detail;
     Chamber chamber;
-    std::unordered_set<std::size_t> local;
+    const auto local = floodMarks.next();
     std::queue<std::size_t> pending;
 
     // A seed is taken even where an earlier chamber already claimed it. The
@@ -286,7 +347,7 @@ private:
     // chamber on this side ended at — and refusing them would leave every
     // chamber beyond a gate empty.
     for (const auto seed : seeds) {
-      if (planScene->blocked.test(seed) || !local.insert(seed).second) {
+      if (planScene->blocked.test(seed) || !floodMarks.insert(local, seed)) {
         continue;
       }
       pending.push(seed);
@@ -332,7 +393,7 @@ private:
             }
           }
         }
-        if (local.contains(cell) || visitedCells.contains(cell) ||
+        if (floodMarks.contains(local, cell) || visitedCells.contains(cell) ||
             planScene->blocked.test(cell)) {
           continue;
         }
@@ -351,7 +412,7 @@ private:
         if (crossesAGate(current, step)) {
           continue;
         }
-        local.insert(cell);
+        static_cast<void>(floodMarks.insert(local, cell));
         pending.push(cell);
       }
     }
@@ -463,7 +524,7 @@ private:
       (*nodeList)[parent]->next.push_back(launcher);
       return;
     }
-    visitedCells.insert(chamber.cells.begin(), chamber.cells.end());
+    visitedCells.insert(chamber.cells);
 
     for (const auto& [cell, port] : chamber.targets) {
       if (!servedInWalk.insert(cell).second) {
@@ -495,7 +556,13 @@ private:
 
   /// One chamber of a chain, labelled, then the chambers beyond its gates.
   ///
-  /// The seeds of the chamber keep their labels.
+  /// A cell that an earlier chamber of the walk holds keeps its label; only
+  /// the seeds beside the gate can be such cells. A reserved cell keeps its
+  /// label too: it belongs to the approach of a port and to no partition,
+  /// even where the stage took its band back and a wire may pass it. Every
+  /// other cell takes the label of this chamber, the free cells of the gate
+  /// line too: the chamber before the gate never reaches them while the gate
+  /// is closed, and without a label they would part the two chambers.
   ///
   /// @return Whether the chamber was labelled, which it is unless it reaches
   /// a launcher.
@@ -507,13 +574,13 @@ private:
       // particular, so it is left for the watershed rather than claimed.
       return false;
     }
-    visitedCells.insert(chamber.cells.begin(), chamber.cells.end());
 
     for (const auto cell : chamber.cells) {
-      if (std::ranges::find(seeds, cell) == seeds.end()) {
+      if (!visitedCells.contains(cell) && !planScene->reserved.test(cell)) {
         (*labelSink)[cell] = nextStampLabel;
       }
     }
+    visitedCells.insert(chamber.cells);
     for (const auto& [cell, port] : chamber.targets) {
       servedInWalk.insert(cell);
     }
@@ -528,7 +595,7 @@ private:
       setClosed(gate, false);
       // Every chamber beyond a gate is a partition of its own, which is what
       // makes a gate a border rather than a line drawn through one region.
-      ++nextStampLabel;
+      nextStampLabel = grid::nextPartitionLabel(nextStampLabel);
       static_cast<void>(stamp(seedsBeyond(gate, chamber), siblings));
       setClosed(gate, true);
     }
@@ -589,7 +656,11 @@ private:
   std::unordered_map<std::uint64_t, std::uint16_t> closedCount;
   std::unordered_map<std::size_t, std::uint32_t> portOfTarget;
   std::unordered_set<std::size_t> launcherCells;
-  std::unordered_set<std::size_t> visitedCells;
+  /// The cells the walk in progress has put into a chamber.
+  CellSet visitedCells;
+  /// The cells of the chamber a flood is collecting, one generation per
+  /// flood.
+  mutable CellMarks floodMarks;
   std::unordered_set<std::size_t> servedInWalk;
   std::unordered_set<std::size_t> openedInWalk;
   std::unordered_set<std::size_t> servedOverall;
@@ -779,18 +850,23 @@ public:
         report.progress("chambers", "", index, chains.size());
         stamper.stampChambers(chains[index].cell, chains[index].gates, labels,
                               nextLabel);
-        ++nextLabel;
+        nextLabel = grid::nextPartitionLabel(nextLabel);
       }
     }
 
     report.progress("watershed", "", 0, 0);
     const auto seeds =
         grid::freeCellSeeds(scene.blocked, scene.detail, scene.capacity);
-    static_cast<void>(
-        grid::runWatershed(scene.blocked, seeds, labels, nextLabel));
+    nextLabel = grid::runWatershed(scene.blocked, seeds, labels, nextLabel);
     grid::smoothPartitionBorders(scene.blocked, seeds, labels,
                                  grid::FIRST_PARTITION_LABEL, SMOOTHING_RADIUS,
                                  SMOOTHING_ROUNDS);
+    // A partition is one region that a wire can cross from any border to any
+    // other. The vote can cut a partition in two, and a later chamber can cut
+    // through an earlier one, so every piece that is cut off becomes a
+    // partition of its own.
+    static_cast<void>(grid::separatePartitionPieces(scene.blocked, labels,
+                                                    scene.detail, nextLabel));
 
     report.progress("partitions", "", 0, 0);
     const auto partitions =
@@ -844,8 +920,15 @@ private:
     // still count as narrow. Dividing by the cell step turns it into the
     // cells the distance transform counts, and squaring it into what the
     // transform actually holds.
+    // A clearance wider than the counter holds counts every place as narrow,
+    // which the largest count says as well.
     const auto radius = fraction * pitch / step;
-    return static_cast<std::uint32_t>(radius * radius);
+    const auto squared = radius * radius;
+    constexpr auto largest = std::numeric_limits<std::uint32_t>::max();
+    if (!(squared < static_cast<double>(largest))) {
+      return largest;
+    }
+    return static_cast<std::uint32_t>(squared);
   }
 
   /// The outline of what the ports' own approaches keep clear.

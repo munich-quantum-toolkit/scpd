@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -79,6 +80,35 @@ TEST(Partitions, TracesOneClosedOutlinePerLabel) {
     // A ring closes on the corner it started from.
     EXPECT_DOUBLE_EQ(outline.ring.front().x(), outline.ring.back().x());
     EXPECT_DOUBLE_EQ(outline.ring.front().y(), outline.ring.back().y());
+  }
+}
+
+TEST(Partitions, StartsEveryRingAtItsFirstCornerInRowOrder) {
+  // A partition with a hole, and two cells of another label that touch at a
+  // corner, so that some corners carry two rings.
+  const auto grid = unitGrid(7, 7);
+  const BitGrid free(7, 7);
+  std::vector<PartitionLabel> labels(grid.cells(), FIRST_PARTITION_LABEL);
+  const auto hole = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 1);
+  const auto touching = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 2);
+  for (const auto& [x, y] : {std::pair{2U, 2U}, {3U, 2U}, {2U, 3U}, {3U, 3U}}) {
+    labels[grid.index(x, y)] = hole;
+  }
+  labels[grid.index(5, 4)] = touching;
+  labels[grid.index(4, 5)] = touching;
+
+  const auto partitions = extractPartitions(free, labels, grid);
+  ASSERT_FALSE(partitions.outlines.empty());
+  for (const auto& outline : partitions.outlines) {
+    ASSERT_FALSE(outline.ring.empty());
+    const auto& start = outline.ring.front();
+    for (const auto& corner : outline.ring) {
+      EXPECT_TRUE(start.y() < corner.y() ||
+                  (start.y() == corner.y() && start.x() <= corner.x()))
+          << "label " << outline.label << " starts at (" << start.x() << ", "
+          << start.y() << ") before (" << corner.x() << ", " << corner.y()
+          << ")";
+    }
   }
 }
 
@@ -161,6 +191,85 @@ TEST(RasterizePartitions, KeepsAPartitionOfOneCell) {
   const auto partitions = extractPartitions(blocked, labels, grid);
 
   EXPECT_EQ(rasterizePartitions(partitions.outlines, grid), labels);
+}
+
+TEST(SeparatePartitionPieces, GivesAPieceCutOffByAnObstacleItsOwnLabel) {
+  // One label on both sides of a wall: the larger piece on the left keeps
+  // it, and the smaller one on the right takes the next free label.
+  const auto grid = unitGrid(7, 3);
+  BitGrid blocked(7, 3);
+  for (std::uint32_t y = 0; y < 3; ++y) {
+    blocked.set(grid.index(4, y), true);
+  }
+  std::vector<PartitionLabel> labels(grid.cells(), FIRST_PARTITION_LABEL);
+  const auto next = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 5);
+
+  EXPECT_EQ(separatePartitionPieces(blocked, labels, grid, next),
+            static_cast<PartitionLabel>(next + 1));
+
+  for (std::uint32_t y = 0; y < 3; ++y) {
+    for (std::uint32_t x = 0; x < 7; ++x) {
+      const auto expected = x < 4    ? FIRST_PARTITION_LABEL
+                            : x == 4 ? FIRST_PARTITION_LABEL
+                                     : next;
+      EXPECT_EQ(labels[grid.index(x, y)], expected) << x << "," << y;
+    }
+  }
+}
+
+TEST(SeparatePartitionPieces, SplitsCellsThatMeetOnlyAtACorner) {
+  // A wire crosses from cell to cell over an edge, never over a corner.
+  const auto grid = unitGrid(2, 2);
+  const BitGrid free(2, 2);
+  std::vector<PartitionLabel> labels = {FIRST_PARTITION_LABEL, LABEL_RESERVED,
+                                        LABEL_RESERVED, FIRST_PARTITION_LABEL};
+  const auto next = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 1);
+
+  EXPECT_EQ(separatePartitionPieces(free, labels, grid, next),
+            static_cast<PartitionLabel>(next + 1));
+
+  // Of two pieces of one cell each, the first in row order keeps the label.
+  EXPECT_EQ(labels,
+            (std::vector<PartitionLabel>{FIRST_PARTITION_LABEL, LABEL_RESERVED,
+                                         LABEL_RESERVED, next}));
+}
+
+TEST(SeparatePartitionPieces, LeavesPartitionsInOnePieceAsTheyAre) {
+  const auto grid = unitGrid(10, 6);
+  const BitGrid free(10, 6);
+  auto labels = splitLeftAndRight(grid, 4);
+  const auto before = labels;
+  const auto next = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 2);
+
+  EXPECT_EQ(separatePartitionPieces(free, labels, grid, next), next);
+  EXPECT_EQ(labels, before);
+}
+
+TEST(SeparatePartitionPieces, ChangesNothingWhenTheLabelsRunOut) {
+  const auto grid = unitGrid(3, 2);
+  const BitGrid free(3, 2);
+  std::vector<PartitionLabel> labels = {FIRST_PARTITION_LABEL,
+                                        LABEL_NONE,
+                                        FIRST_PARTITION_LABEL,
+                                        LABEL_NONE,
+                                        LABEL_NONE,
+                                        LABEL_NONE};
+  const auto before = labels;
+
+  EXPECT_THROW(
+      static_cast<void>(separatePartitionPieces(
+          free, labels, grid, std::numeric_limits<PartitionLabel>::max())),
+      std::length_error);
+  EXPECT_EQ(labels, before);
+}
+
+TEST(SeparatePartitionPieces, RefusesLabelsThatDoNotFitTheGrid) {
+  const auto grid = unitGrid(3, 3);
+  const BitGrid free(3, 3);
+  std::vector<PartitionLabel> labels(4, FIRST_PARTITION_LABEL);
+  EXPECT_THROW(static_cast<void>(separatePartitionPieces(
+                   free, labels, grid, FIRST_PARTITION_LABEL + 1)),
+               std::invalid_argument);
 }
 
 TEST(BorderSlots, PutsTheSlotsOneWireSpacingApart) {

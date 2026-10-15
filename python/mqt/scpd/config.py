@@ -79,7 +79,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
     "capacity": {"planner": "", "bottleneck_clearance": 1.5, "crossing_pitch": 165.0},
     "global": {"router": "", "internal_bridges": False},
     "assignment": {"assigner": "", "launcher_target": 0},
-    "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0},
+    "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0, "threads": 0},
     "corridor": {"router": "", "rounds": 12, "max_relaxation": 30},
 }
 
@@ -293,6 +293,7 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     stages.solver.backend = take(solver, "backend", str)
     stages.solver.timeLimit = take(solver, "time_limit", float)
     stages.solver.relativeGap = take(solver, "relative_gap", float)
+    stages.solver.threads = take(solver, "threads", int)
     solver.finish()
 
     corridor = part("corridor")

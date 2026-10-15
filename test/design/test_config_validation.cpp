@@ -323,4 +323,17 @@ TEST(ConfigValidation, StageParametersMustBeUsable) {
   EXPECT_EQ(validate(config).size(), 5U);
 }
 
+TEST(ConfigValidation, SolverThreadsStayWithinTheLimitOfGurobi) {
+  ConfigT config = manualConfig();
+  config.stages = std::make_unique<StageParamsT>();
+  config.stages->solver = std::make_unique<SolverParamsT>();
+  config.stages->solver->threads = 1024;
+  EXPECT_TRUE(validate(config).empty());
+
+  config.stages->solver->threads = 1025;
+  EXPECT_EQ(
+      validate(config),
+      (Problems{"stages.solver: threads must be at most 1024, not 1025"}));
+}
+
 } // namespace

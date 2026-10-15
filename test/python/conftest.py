@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+from typing import TYPE_CHECKING
 
 import pytest
 
 import mqt.scpd.flatbuffers
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 #: The variables through which rich forces colour or a terminal. CI runners set ``FORCE_COLOR``, and
 #: the tests compare the plain text that a file receives. ``pyproject.toml`` names the fixture in
@@ -28,6 +32,20 @@ def plain_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run every test without the variables that change the terminal output."""
     for name in _TERMINAL_VARIABLES:
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(scope="session")
+def default_solver() -> Generator[None]:
+    """Run every test with the solver backend that its configuration names.
+
+    ``SCPD_SOLVER`` overrides the configured backend, so a value in the shell would change what the
+    tests check. ``pyproject.toml`` names the fixture in ``usefixtures``. The fixture has session
+    scope, so it also comes before the module fixtures that plan a run. A test that sets the
+    variable itself does so after this fixture.
+    """
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.delenv("SCPD_SOLVER", raising=False)
+        yield
 
 
 @pytest.fixture(params=["list", "numpy"])

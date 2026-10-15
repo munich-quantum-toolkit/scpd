@@ -65,6 +65,67 @@ std::unordered_map<std::string, std::uint32_t> portsByLabel(const ChipT& chip) {
   return byLabel;
 }
 
+/// Refuses a capacity plan whose chains the stage cannot walk: a chain or a
+/// link that names a node the plan does not carry, a target that names a port
+/// the chip does not carry, or a chain that leads back into itself. The
+/// Capacity stage writes no such plan, so the plan is from another chip or
+/// was edited.
+void checkCapacityPlan(const ChipT& chip, const CapacityPlanT& capacity) {
+  const auto nodes = capacity.nodes.size();
+  const auto refuse = [](const std::string& what) {
+    throw std::invalid_argument(
+        std::format("the capacity plan does not fit the chip: {}", what));
+  };
+  for (const auto root : capacity.chains) {
+    if (root >= nodes) {
+      refuse(std::format("a chain starts at node {} of {}", root, nodes));
+    }
+  }
+  for (std::size_t index = 0; index < nodes; ++index) {
+    const auto& node = *capacity.nodes[index];
+    if (node.kind == fba::CapacityElement::Target &&
+        node.id >= chip.ports.size()) {
+      refuse(std::format("node {} names port {} of {}", index, node.id,
+                         chip.ports.size()));
+    }
+    for (const auto next : node.next) {
+      if (next >= nodes) {
+        refuse(
+            std::format("node {} leads to node {} of {}", index, next, nodes));
+      }
+    }
+  }
+  // A depth-first walk that meets a node it is still inside has found a
+  // cycle. Chains may share a subtree, so a node it has left is no cycle.
+  enum class Visit : std::uint8_t { Unseen, Inside, Left };
+  std::vector<Visit> visits(nodes, Visit::Unseen);
+  for (const auto root : capacity.chains) {
+    if (visits[root] != Visit::Unseen) {
+      continue;
+    }
+    // Each entry is a node and how many of its links the walk has taken.
+    std::vector<std::pair<std::uint32_t, std::size_t>> path{{root, 0}};
+    visits[root] = Visit::Inside;
+    while (!path.empty()) {
+      auto& [node, taken] = path.back();
+      const auto& next = capacity.nodes[node]->next;
+      if (taken == next.size()) {
+        visits[node] = Visit::Left;
+        path.pop_back();
+        continue;
+      }
+      const auto child = next[taken++];
+      if (visits[child] == Visit::Inside) {
+        refuse(std::format("node {} leads back to node {}", node, child));
+      }
+      if (visits[child] == Visit::Unseen) {
+        visits[child] = Visit::Inside;
+        path.emplace_back(child, 0);
+      }
+    }
+  }
+}
+
 /// One Hanan lattice: the rectilinear grid that a set of ports induces.
 struct Lattice {
   /// One crossing of the lattice.
@@ -387,6 +448,7 @@ public:
                                    const ConfigT& config,
                                    const Report& report) const override {
     const auto circuit = innerCircuitOf(chip, config);
+    checkCapacityPlan(chip, capacity);
     if (report.wants(Detail::Steps)) {
       report.line(
           Detail::Steps,
@@ -569,9 +631,6 @@ private:
                              const std::uint32_t node,
                              std::vector<std::uint32_t>& ports,
                              std::unordered_set<std::uint32_t>& seen) {
-    if (node >= capacity.nodes.size()) {
-      return;
-    }
     const auto& entry = *capacity.nodes[node];
     if (entry.kind == fba::CapacityElement::Target &&
         seen.insert(entry.id).second) {
@@ -694,6 +753,26 @@ private:
     for (const auto port : ends) {
       model.addLessOrEqual(std::format("port_{}", port),
                            portFlow(port, false) + portFlow(port, true), 1.0);
+    }
+
+    // A ring port already has its wire: the assignment runs it to a launcher
+    // or a feedline, and at the ring end of a bridge, that wire is the one
+    // that surfaces through the bridge. An inner wire from a ring port would
+    // give the port a second wire, and the target at its other end would
+    // reach neither a launcher nor a feedline. So no inner wire starts, ends
+    // or runs at a ring port, and every inner wire leaves the inner circuit
+    // through the inner end of a ring bridge, perhaps after internal bridges.
+    // The nodes stay in the lattice, so the picture still shows the ports.
+    const std::unordered_set<std::uint32_t> inner(circuit.innerPorts.begin(),
+                                                  circuit.innerPorts.end());
+    for (const auto port : ends) {
+      if (inner.contains(port)) {
+        continue;
+      }
+      model.addEqual(std::format("ring_shut_in_{}", port),
+                     portFlow(port, false), 0.0);
+      model.addEqual(std::format("ring_shut_out_{}", port),
+                     portFlow(port, true), 0.0);
     }
 
     // A target is where a wire ends: everything that arrives stays, and a
@@ -1108,7 +1187,13 @@ private:
           continue;
         }
         // The target end is where the wire ends; the other end is its source.
-        const auto targetFirst = targets.contains(ends[0]);
+        // A wire between two bridges has no target end. The flow leaves its
+        // source, and a port that is no target carries one wire, so the end
+        // with an outgoing arc is the source.
+        const auto targetFirst =
+            targets.contains(ends[0]) ||
+            (!targets.contains(ends[1]) && !solved.sources.contains(ends[0]) &&
+             solved.sources.contains(ends[1]));
         auto connection = std::make_unique<fbd::ConnectionT>();
         connection->source =
             std::make_unique<fbd::PortRef>(targetFirst ? ends[1] : ends[0]);

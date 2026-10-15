@@ -8,7 +8,7 @@
 
 """Internal bindings of the MQT SCPD core. The command-line interface is the supported product."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 def load_chip(chip_json: str, config: bytes) -> bytes:
     """Read the chip input, classify its ports from the configuration's patterns and check the configured port sequences against the chip. Returns the classified chip as bytes of the design schema. Raises ValueError naming every problem."""
@@ -57,8 +57,8 @@ def route_corridor(
 def algorithms() -> list[tuple[str, list[str]]]:
     """The implementations this build ships, as (stage, names) pairs in pipeline order."""
 
-def set_solver(solve: object | None) -> None:
-    """Register the external solver of the process, or clear it with None. The callable receives the MPS text, the variable names in model order, a time limit and a relative gap, and returns (status, objective, values). The module clears the solver at interpreter exit."""
+def set_solver(solve: Callable | None) -> None:
+    """Register the external solver of the process, or clear it with None. The callable receives the MPS text, the variable names in model order, a time limit, a relative gap and a thread count, and returns (status, objective, values, bound, gap, nodes): bound and gap are NaN and nodes is None where the solver reports none. Raises TypeError when solve is neither callable nor None. The module clears the solver at interpreter exit."""
 
 def solver_info(config: bytes) -> str:
     """The backend a solve with this configuration uses: HiGHS and its version, or the name of the external backend."""

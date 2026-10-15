@@ -417,8 +417,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
 
   m.def(
       "set_solver",
-      [](const nb::object& solve) {
-        if (solve.is_none()) {
+      [](const std::optional<nb::callable>& solve) {
+        if (!solve.has_value()) {
           mqt::scpd::milp::setExternalBackend(nullptr);
           return;
         }
@@ -426,17 +426,20 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
         // else, which is what makes the two backends interchangeable. The
         // function holds the callable through a shared owner, so that copies
         // of the function never touch the reference count without the GIL.
-        auto callable = std::make_shared<const PythonCallable>(solve);
+        auto callable = std::make_shared<const PythonCallable>(*solve);
         mqt::scpd::milp::setExternalBackend(mqt::scpd::milp::makeMpsBackend(
             "gurobi", [callable](const std::string_view mps,
                                  const std::vector<std::string>& names,
                                  const mqt::scpd::milp::SolveOptions& options) {
               const nb::gil_scoped_acquire gil;
               const auto answer = nb::cast<
-                  std::tuple<std::string, double, std::vector<double>>>(
+                  std::tuple<std::string, double, std::vector<double>, double,
+                             double, std::optional<std::uint64_t>>>(
                   callable->get()(nb::str(mps.data(), mps.size()), names,
-                                  options.timeLimit, options.relativeGap));
-              const auto& [status, objective, values] = answer;
+                                  options.timeLimit, options.relativeGap,
+                                  options.threads));
+              const auto& [status, objective, values, bound, gap, nodes] =
+                  answer;
               mqt::scpd::milp::Solution solution;
               solution.backend = "gurobi";
               if (status == "optimal") {
@@ -452,6 +455,9 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                 solution.message = status;
               }
               solution.objective = objective;
+              solution.bound = bound;
+              solution.gap = gap;
+              solution.nodes = nodes;
               if (solution.hasValues()) {
                 solution.values = values;
               }
@@ -461,9 +467,11 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "solve"_a.none(),
       "Register the external solver of the process, or clear it with None. "
       "The callable receives the MPS text, the variable names in model "
-      "order, a time limit and a relative gap, and returns (status, "
-      "objective, values). The module clears the solver at interpreter "
-      "exit.");
+      "order, a time limit, a relative gap and a thread count, and returns "
+      "(status, objective, values, bound, gap, nodes): bound and gap are NaN "
+      "and nodes is None where the solver reports none. Raises TypeError "
+      "when solve is neither callable nor None. The module clears the solver "
+      "at interpreter exit.");
   // The core keeps the solver in process state, which outlives the
   // interpreter. Clearing it at exit releases the callable while Python can
   // still run its destructor.

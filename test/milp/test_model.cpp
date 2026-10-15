@@ -21,6 +21,9 @@
 namespace mqt::scpd::milp {
 namespace {
 
+constexpr auto NOT_A_NUMBER = std::numeric_limits<double>::quiet_NaN();
+constexpr auto INFINITE = std::numeric_limits<double>::infinity();
+
 TEST(MilpModel, CombinesRepeatedTermsAndDropsZeroes) {
   Model model("terms");
   const auto x = model.addBinary("x");
@@ -88,6 +91,61 @@ TEST(MilpModel, RefusesCrossedBoundsAndAnEmptyName) {
   const auto x = model.addContinuous("x", 0.0, 1.0);
   EXPECT_THROW(model.addRange("crossed", 1.0 * x, 4.0, 2.0),
                std::invalid_argument);
+}
+
+TEST(MilpModel, RefusesARowBoundThatIsNotANumber) {
+  // HiGHS refuses a bound that is not a number, and the MPS text cannot carry
+  // one, so the model refuses it before either backend sees it.
+  Model model("rows");
+  const auto x = model.addContinuous("x", 0.0, 10.0);
+
+  EXPECT_THROW(model.addLessOrEqual("upper", 1.0 * x, NOT_A_NUMBER),
+               std::invalid_argument);
+  EXPECT_THROW(model.addGreaterOrEqual("lower", 1.0 * x, NOT_A_NUMBER),
+               std::invalid_argument);
+  EXPECT_THROW(model.addEqual("equal", 1.0 * x, NOT_A_NUMBER),
+               std::invalid_argument);
+  EXPECT_THROW(model.addRange("range", 1.0 * x, 0.0, NOT_A_NUMBER),
+               std::invalid_argument);
+  EXPECT_EQ(model.constraintCount(), 0U);
+
+  // An infinite bound is a free side.
+  model.addLessOrEqual("free", 1.0 * x, INFINITE);
+  EXPECT_EQ(model.constraintCount(), 1U);
+}
+
+TEST(MilpModel, RefusesACoefficientOrConstantThatIsNotFinite) {
+  Model model("terms");
+  const auto x = model.addContinuous("x", 0.0, 10.0);
+
+  EXPECT_THROW(model.addLessOrEqual("nan", NOT_A_NUMBER * x, 1.0),
+               std::invalid_argument);
+  EXPECT_THROW(model.addLessOrEqual("inf", INFINITE * x, 1.0),
+               std::invalid_argument);
+  EXPECT_THROW(model.addLessOrEqual("constant", (1.0 * x) + INFINITE, 1.0),
+               std::invalid_argument);
+  EXPECT_EQ(model.constraintCount(), 0U);
+}
+
+TEST(MilpModel, RefusesAnObjectiveThatIsNotFinite) {
+  Model model("objective");
+  EXPECT_THROW(
+      static_cast<void>(model.addContinuous("nan", 0.0, 1.0, NOT_A_NUMBER)),
+      std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(model.addBinary("inf", INFINITE)),
+               std::invalid_argument);
+
+  const auto y = model.addBinary("y");
+  const auto x = model.addBinary("x", 1.0);
+  // The term on y comes first in the model, and must not stay behind when the
+  // term on x is refused.
+  EXPECT_THROW(model.addObjective((2.0 * y) + (NOT_A_NUMBER * x)),
+               std::invalid_argument);
+  EXPECT_THROW(model.addObjective((2.0 * y) + NOT_A_NUMBER),
+               std::invalid_argument);
+  EXPECT_DOUBLE_EQ(model.variables()[x.index].objective, 1.0);
+  EXPECT_DOUBLE_EQ(model.variables()[y.index].objective, 0.0);
+  EXPECT_DOUBLE_EQ(model.objectiveOffset(), 0.0);
 }
 
 TEST(MilpModel, RefusesAVariableOfAnotherModel) {

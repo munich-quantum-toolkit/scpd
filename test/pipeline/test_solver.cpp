@@ -24,6 +24,7 @@
 // knows no header for these functions outside the C++ standard.
 #include <cstdlib> // NOLINT(misc-include-cleaner)
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -52,21 +53,25 @@ ConfigT configWithBackend(const std::string& backend) {
   return config;
 }
 
-/// Sets an environment variable while it lives, and clears it after.
+/// Sets an environment variable while it lives, and restores the value it had
+/// before.
 class ScopedVariable {
 public:
   ScopedVariable(const char* name, const char* value) : variable(name) {
-#ifdef _WIN32
-    _putenv_s(variable, value);
-#else
-    setenv(variable, value, 1); // NOLINT(misc-include-cleaner)
-#endif
+    if (const auto* before = std::getenv(variable); before != nullptr) {
+      previous = before;
+    }
+    set(value);
   }
   ScopedVariable(const ScopedVariable&) = delete;
   ScopedVariable& operator=(const ScopedVariable&) = delete;
   ScopedVariable(ScopedVariable&&) = delete;
   ScopedVariable& operator=(ScopedVariable&&) = delete;
   ~ScopedVariable() {
+    if (previous.has_value()) {
+      set(previous->c_str());
+      return;
+    }
 #ifdef _WIN32
     _putenv_s(variable, "");
 #else
@@ -75,7 +80,16 @@ public:
   }
 
 private:
+  void set(const char* value) const {
+#ifdef _WIN32
+    _putenv_s(variable, value);
+#else
+    setenv(variable, value, 1); // NOLINT(misc-include-cleaner)
+#endif
+  }
+
   const char* variable;
+  std::optional<std::string> previous;
 };
 
 TEST(SolveWith, SolvesWithTheConfiguredBackend) {
@@ -118,6 +132,93 @@ TEST(SolveWith, ReportsTheModelAndHowTheSolveEnded) {
   EXPECT_EQ(steps[0], "model pair · 2 variables · 1 constraint");
   EXPECT_TRUE(steps[1].starts_with("highs optimal · objective 1.00 · "))
       << steps[1];
+}
+
+TEST(SolveWith, CountsNodesOnlyWhenTheBackendReportsThem) {
+  std::vector<std::string> steps;
+  const Report report(
+      Detail::Steps,
+      {.line = [&steps](const Detail detail, const std::string_view text) {
+        if (detail == Detail::Steps) {
+          steps.emplace_back(text);
+        }
+      }});
+  // An external backend that reports a solution and no search figures.
+  milp::setExternalBackend(milp::makeMpsBackend(
+      "stub", [](auto, const auto& names, const auto& /*options*/) {
+        milp::Solution solution;
+        solution.status = milp::SolveStatus::Optimal;
+        solution.objective = 1.0;
+        solution.values.assign(names.size(), 0.0);
+        return solution;
+      }));
+
+  static_cast<void>(
+      solveWith(pairModel(), configWithBackend("highs"), report, "solving"));
+  static_cast<void>(
+      solveWith(pairModel(), configWithBackend("gurobi"), report, "solving"));
+  milp::setExternalBackend(nullptr);
+
+  ASSERT_EQ(steps.size(), 4U);
+  EXPECT_NE(steps[1].find(" node"), std::string::npos) << steps[1];
+  // The pair model is a maximization, so the MPS backend negates the
+  // objective that the stub states for the minimization of the MPS text.
+  EXPECT_EQ(steps[3], "stub optimal · objective -1.00");
+}
+
+TEST(SolveWith, HandsTheConfiguredLimitsToTheBackend) {
+  milp::SolveOptions seen;
+  milp::setExternalBackend(milp::makeMpsBackend(
+      "stub", [&seen](auto, const auto& names, const auto& options) {
+        seen = options;
+        milp::Solution solution;
+        solution.status = milp::SolveStatus::Optimal;
+        solution.values.assign(names.size(), 0.0);
+        return solution;
+      }));
+  auto config = configWithBackend("gurobi");
+  config.stages->solver->time_limit = 7.0;
+  config.stages->solver->relative_gap = 0.01;
+  config.stages->solver->threads = 3;
+
+  static_cast<void>(solveWith(pairModel(), config, {}, "solving"));
+  milp::setExternalBackend(nullptr);
+
+  EXPECT_DOUBLE_EQ(seen.timeLimit, 7.0);
+  EXPECT_DOUBLE_EQ(seen.relativeGap, 0.01);
+  EXPECT_EQ(seen.threads, 3U);
+}
+
+TEST(SolveWith, ReportsTheSearchFiguresOfAnExternalBackend) {
+  std::vector<std::string> steps;
+  const Report report(
+      Detail::Steps,
+      {.line = [&steps](const Detail detail, const std::string_view text) {
+        if (detail == Detail::Steps) {
+          steps.emplace_back(text);
+        }
+      }});
+  milp::setExternalBackend(milp::makeMpsBackend(
+      "stub", [](auto, const auto& names, const auto& /*options*/) {
+        milp::Solution solution;
+        solution.status = milp::SolveStatus::Feasible;
+        solution.objective = -1.0;
+        solution.bound = -2.0;
+        solution.gap = 0.5;
+        solution.nodes = 12;
+        solution.values.assign(names.size(), 0.0);
+        return solution;
+      }));
+
+  static_cast<void>(
+      solveWith(pairModel(), configWithBackend("gurobi"), report, "solving"));
+  milp::setExternalBackend(nullptr);
+
+  ASSERT_EQ(steps.size(), 2U);
+  // The pair model is a maximization, so the MPS backend negates the
+  // objective and the bound that the stub states for the minimization.
+  EXPECT_EQ(steps[1], "stub feasible · objective 1.00 · bound 2.00 · gap "
+                      "50.0 % · 12 nodes");
 }
 
 TEST(SolveWith, SaysNothingAtTheSummaryLevel) {

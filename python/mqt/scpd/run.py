@@ -181,12 +181,15 @@ class RunDirectory:
             The configuration and the chip input.
 
         Raises:
-            RunError: If the directory holds a config.toml of its own and no chip copy, so that it
-                is no run directory.
+            RunError: If the path is a file, or if the directory holds a config.toml of its own and
+                no chip copy, so that it is no run directory.
             ChipError: If the chip input is no file.
         """
         config = load_config(config_path)
         chip = chip_input_path(config, config_path, chip_path)
+        if self.path.exists() and not self.path.is_dir():
+            msg = f"{self.path} is no run directory: it is a file"
+            raise RunError(msg)
         if self.config.exists() and not self.chip.exists():
             msg = f"{self.path} is no run directory: it holds a config.toml of its own and no 00-chip.json"
             raise RunError(msg)

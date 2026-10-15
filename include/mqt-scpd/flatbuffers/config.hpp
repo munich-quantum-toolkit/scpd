@@ -986,6 +986,7 @@ struct SolverParamsT : public ::flatbuffers::NativeTable {
   std::string backend{};
   double time_limit = 0.0;
   double relative_gap = 0.0;
+  uint32_t threads = 0;
 };
 
 /// How the mixed-integer programs of the planning stages are solved.
@@ -999,7 +1000,8 @@ struct SolverParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_BACKEND = 4,
     VT_TIME_LIMIT = 6,
-    VT_RELATIVE_GAP = 8
+    VT_RELATIVE_GAP = 8,
+    VT_THREADS = 10
   };
   /// "highs" or "gurobi". Empty means "highs". The environment variable
   /// SCPD_SOLVER overrides it for one run.
@@ -1014,6 +1016,11 @@ struct SolverParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   double relative_gap() const {
     return GetField<double>(VT_RELATIVE_GAP, 0.0);
   }
+  /// The threads one solve may use, or zero for the backend's own default.
+  /// At most 1024, the upper limit of the Gurobi parameter Threads.
+  uint32_t threads() const {
+    return GetField<uint32_t>(VT_THREADS, 0);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1021,6 +1028,7 @@ struct SolverParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyString(backend()) &&
            VerifyField<double>(verifier, VT_TIME_LIMIT, 8) &&
            VerifyField<double>(verifier, VT_RELATIVE_GAP, 8) &&
+           VerifyField<uint32_t>(verifier, VT_THREADS, 4) &&
            verifier.EndTable();
   }
   SolverParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1041,6 +1049,9 @@ struct SolverParamsBuilder {
   void add_relative_gap(double relative_gap) {
     fbb_.AddElement<double>(SolverParams::VT_RELATIVE_GAP, relative_gap, 0.0);
   }
+  void add_threads(uint32_t threads) {
+    fbb_.AddElement<uint32_t>(SolverParams::VT_THREADS, threads, 0);
+  }
   explicit SolverParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1056,10 +1067,12 @@ inline ::flatbuffers::Offset<SolverParams> CreateSolverParams(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<::flatbuffers::String> backend = 0,
     double time_limit = 0.0,
-    double relative_gap = 0.0) {
+    double relative_gap = 0.0,
+    uint32_t threads = 0) {
   SolverParamsBuilder builder_(_fbb);
   builder_.add_relative_gap(relative_gap);
   builder_.add_time_limit(time_limit);
+  builder_.add_threads(threads);
   builder_.add_backend(backend);
   return builder_.Finish();
 }
@@ -1073,13 +1086,15 @@ inline ::flatbuffers::Offset<SolverParams> CreateSolverParamsDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const char *backend = nullptr,
     double time_limit = 0.0,
-    double relative_gap = 0.0) {
+    double relative_gap = 0.0,
+    uint32_t threads = 0) {
   auto backend__ = backend ? _fbb.CreateString(backend) : 0;
   return mqt::scpd::flatbuffers::config::CreateSolverParams(
       _fbb,
       backend__,
       time_limit,
-      relative_gap);
+      relative_gap,
+      threads);
 }
 
 ::flatbuffers::Offset<SolverParams> CreateSolverParams(::flatbuffers::FlatBufferBuilder &_fbb, const SolverParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -1914,7 +1929,8 @@ inline bool operator==(const SolverParamsT &lhs, const SolverParamsT &rhs) {
   return
       (lhs.backend == rhs.backend) &&
       (lhs.time_limit == rhs.time_limit) &&
-      (lhs.relative_gap == rhs.relative_gap);
+      (lhs.relative_gap == rhs.relative_gap) &&
+      (lhs.threads == rhs.threads);
 }
 
 inline bool operator!=(const SolverParamsT &lhs, const SolverParamsT &rhs) {
@@ -1934,6 +1950,7 @@ inline void SolverParams::UnPackTo(SolverParamsT *_o, const ::flatbuffers::resol
   { auto _e = backend(); if (_e) _o->backend = _e->str(); }
   { auto _e = time_limit(); _o->time_limit = _e; }
   { auto _e = relative_gap(); _o->relative_gap = _e; }
+  { auto _e = threads(); _o->threads = _e; }
 }
 
 inline ::flatbuffers::Offset<SolverParams> CreateSolverParams(::flatbuffers::FlatBufferBuilder &_fbb, const SolverParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1947,11 +1964,13 @@ inline ::flatbuffers::Offset<SolverParams> SolverParams::Pack(::flatbuffers::Fla
   auto _backend = _o->backend.empty() ? 0 : _fbb.CreateString(_o->backend);
   auto _time_limit = _o->time_limit;
   auto _relative_gap = _o->relative_gap;
+  auto _threads = _o->threads;
   return mqt::scpd::flatbuffers::config::CreateSolverParams(
       _fbb,
       _backend,
       _time_limit,
-      _relative_gap);
+      _relative_gap,
+      _threads);
 }
 
 
@@ -2327,15 +2346,17 @@ inline const ::flatbuffers::TypeTable *SolverParamsTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_STRING, 0, -1 },
     { ::flatbuffers::ET_DOUBLE, 0, -1 },
-    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
   };
   static const char * const names[] = {
     "backend",
     "time_limit",
-    "relative_gap"
+    "relative_gap",
+    "threads"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 3, type_codes, nullptr, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 4, type_codes, nullptr, nullptr, nullptr, names
   };
   return &tt;
 }

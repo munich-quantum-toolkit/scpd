@@ -88,6 +88,15 @@ cell into a finer detail grid.
 A launcher that sits on the edge of the chip needs `launcher_offset_x` and
 `launcher_offset_y` small enough that the blocked border does not cover it.
 
+The detail grid has `capacity_cells_x` × `detail_factor` cells across and
+`capacity_cells_y` × `detail_factor` cells down; with `capacity_cells_y` at `0`,
+the aspect ratio of the chip sets the capacity cells down. The detail grid may
+have at most 25,000,000 cells, for example 5000 × 5000. The capacity step holds
+about 120 bytes per detail cell, so the limit stands for about 3 GB of memory.
+The finest benchmark chip, 69q, plans on 1500 × 1500 cells. `plan` and `doctor`
+refuse a larger grid before the first stage of a run through the capacity,
+assignment or corridor step, and name the grid that the configuration asks for.
+
 ## `[stages.capacity]`
 
 | Key                    | Default | Meaning                                                                                                                                                 |
@@ -103,6 +112,13 @@ A launcher that sits on the edge of the chip needs `launcher_offset_x` and
 | `router`           | `""`    | The implementation of the step; empty takes `hanan-milp`                                                   |
 | `internal_bridges` | `false` | Whether an inner wire may cross a component that the outer ring does not reach, through its own bridges    |
 
+Every inner wire starts at the inner end of a bridge whose other end is on the
+ring, and surfaces at that ring end. With `internal_bridges`, the wire may cross
+internal bridges on the way. No ring port supplies an inner wire, because the
+assignment gives every ring port a wire of its own. An inner port that no such
+wire can reach is a fail of the global step. An inner resonator that is a fail
+gets no feed.
+
 ## `[stages.assignment]`
 
 | Key               | Default | Meaning                                                                                                                    |
@@ -111,7 +127,20 @@ A launcher that sits on the edge of the chip needs `launcher_offset_x` and
 | `launcher_target` | `0`     | How many feedline chain ends stop at a launcher; `0` leaves it unset, and `plan` refuses a run that reaches the assignment |
 
 `launcher_target` plus `[design_rules] feedline_terminations` must be even,
-since every feedline chain has two ends.
+since every feedline chain has two ends. A ring with resonators sets three more
+limits, which the assignment refuses to break:
+
+- the conventional ports of the ring plus `launcher_target` are at most the
+  launcher ports of the chip;
+- `launcher_target` and `feedline_terminations` are each at most the resonators
+  of the ring;
+- the resonators of the ring are at most the feedline chains,
+  (`launcher_target` + `feedline_terminations`) / 2, times
+  `[design_rules] max_feedline_utilization`.
+
+The global step decides whether a ring port at a bridge stays in the ring and
+whether it is a resonator. `plan` and `doctor` refuse before the first stage a
+configuration that breaks a limit for every such decision.
 
 ## `[stages.solver]`
 
@@ -120,6 +149,23 @@ since every feedline chain has two ends.
 | `backend`      | `""`    | `highs` or `gurobi`; empty takes `highs`. The environment variable `SCPD_SOLVER` overrides it |
 | `time_limit`   | `0.0`   | The seconds one solve may take; `0.0` sets no limit; not negative                             |
 | `relative_gap` | `0.0`   | The relative gap at which a solve may stop; `0.0` keeps the gap of the backend; not negative  |
+| `threads`      | `0`     | The threads one solve may use; `0` keeps the default of the backend; at most `1024`           |
+
+A solve that the report calls `optimal` is optimal within the relative gap: its
+objective and the best bound the solver proved differ by at most that fraction
+of the objective. With `relative_gap` at `0.0`, the gap is the default of the
+backend, which is `1e-4` for HiGHS (`mip_rel_gap`) and for Gurobi (`MIPGap`).
+
+A solve that stops at `time_limit` keeps the best solution it has found by then.
+That solution depends on the speed of the machine, so the same inputs can give
+different artifacts. Leave `time_limit` at `0.0` where a run has to repeat.
+
+With `threads` at `0`, HiGHS uses half the hardware threads of the machine, and
+Gurobi chooses the count itself (its parameter `Threads`). The count changes the
+order of the search, so the time of a solve, its node count and, between optimal
+solutions of equal objective, its answer can differ from one machine to the
+next. A fixed `threads` makes runs on different machines comparable. The limit
+of `1024` is the largest value that Gurobi accepts.
 
 ## `[stages.corridor]`
 

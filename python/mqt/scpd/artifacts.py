@@ -12,8 +12,9 @@ The generated FlatBuffers code neither enforces the required fields when Python 
 verifies a buffer when Python reads one; a buffer without a producer or an output passes through it
 silently. The functions here check the identifier and every field the schema marks as required, so
 an artifact that Python writes is one that the core accepts, and an artifact that Python reads is
-complete. Checking the values themselves, such as a role left unset or a dimension of zero, is the
-core's job.
+complete. They also check that the lists of an assignment hold one entry per ring node and that a
+corridor names one more partition than it has crossings. Checking the other values, such as a role
+left unset or a dimension of zero, is the core's job.
 """
 
 from __future__ import annotations
@@ -158,6 +159,7 @@ def _problems(artifact: ArtifactT) -> list[str]:
         _require(output.launchers, "launchers", problems)
         _require(output.feeds, "feeds", problems)
         _check_list(output.chains, "chains", _chain_problems, problems)
+        problems.extend(_parallel_problems(output))
     elif isinstance(output, CorridorRoutingT):
         _check_list(output.corridors, "corridors", _corridor_problems, problems)
         _check_list(output.slots, "slots", _border_slots_problems, problems)
@@ -216,6 +218,36 @@ def _lattice_problems(lattice: LatticeT) -> list[str]:
     return _missing(lattice, (("points", "points"), ("edges", "edges"), ("selected", "selected")))
 
 
+def _counted(count: int, noun: str) -> str:
+    """A count and its noun, singular only for a count of one.
+
+    Returns:
+        The count and the noun, such as ``1 crossing`` or ``2 crossings``.
+    """
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _parallel_problems(assignment: AssignmentT) -> list[str]:
+    """The lists of an assignment that do not hold one entry per ring node.
+
+    Returns:
+        One message per list whose length differs from that of the ring.
+    """
+    if assignment.ring is None:
+        return []
+    ring = len(assignment.ring)
+    lists = (
+        (assignment.connections, "connection"),
+        (assignment.launchers, "launcher"),
+        (assignment.feeds, "feed"),
+    )
+    return [
+        f"{_counted(len(items), name)} for {_counted(ring, 'ring node')}"
+        for items, name in lists
+        if items is not None and len(items) != ring
+    ]
+
+
 def _chain_problems(chain: FeedlineChainT) -> list[str]:
     return _missing(chain, (("nodes", "nodes"),))
 
@@ -230,7 +262,7 @@ def _corridor_problems(corridor: CorridorT) -> list[str]:
     # A wire crosses one border fewer than it runs through partitions, and a wire without a way
     # names neither.
     if partitions != crossings + 1 and (partitions, crossings) != (0, 0):
-        return [f"names {partitions} partitions and {crossings} crossings"]
+        return [f"names {_counted(partitions, 'partition')} and {_counted(crossings, 'crossing')}"]
     return []
 
 

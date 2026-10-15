@@ -23,9 +23,35 @@
 namespace mqt::scpd::milp {
 namespace {
 
-/// A coefficient below this is not a term. It is the scale at which a
-/// solver's own tolerances start, so a smaller one carries no information.
+/// A coefficient below this is not a term. A coefficient this small carries
+/// no information at the tolerances of a solver. HiGHS drops coefficients up
+/// to 1e-9 itself when it receives a model, and reports that as a warning.
 constexpr double COEFFICIENT_EPSILON = 1.0e-12;
+
+/// Refuses an expression with a term or a constant that is not a finite
+/// number. A solver cannot read such a number, and the MPS text cannot carry
+/// it. @p row names the constraint of the expression, and is empty for the
+/// objective.
+void requireFinite(
+    const std::vector<std::pair<std::size_t, double>>& coefficients,
+    const double constant, const std::string_view row) {
+  const auto where = [row] {
+    return row.empty() ? std::string("the objective")
+                       : std::format("constraint '{}'", row);
+  };
+  for (const auto& [index, coefficient] : coefficients) {
+    if (!std::isfinite(coefficient)) {
+      throw std::invalid_argument(
+          std::format("the coefficient of variable {} in {} is not a finite "
+                      "number",
+                      index, where()));
+    }
+  }
+  if (!std::isfinite(constant)) {
+    throw std::invalid_argument(
+        std::format("the constant of {} is not a finite number", where()));
+  }
+}
 
 } // namespace
 
@@ -126,6 +152,12 @@ Var Model::addVariable(const std::string_view name, const double lower,
     throw std::invalid_argument(
         std::format("variable '{}' has a bound that is not a number", name));
   }
+  if (!std::isfinite(objective)) {
+    throw std::invalid_argument(std::format(
+        "variable '{}' has an objective coefficient that is not a finite "
+        "number",
+        name));
+  }
   auto low = lower;
   auto high = upper;
   if (type == VarType::Binary) {
@@ -183,6 +215,13 @@ void Model::addRow(const std::string_view name, const LinearExpr& expression,
           name, index, modelName));
     }
   }
+  requireFinite(coefficients, expression.constant(), name);
+  // An infinite bound is a free side. A bound that is not a number is no side
+  // at all, and the backends would read it in different ways.
+  if (std::isnan(lower) || std::isnan(upper)) {
+    throw std::invalid_argument(
+        std::format("constraint '{}' has a bound that is not a number", name));
+  }
 
   // The constant of the expression moves to the other side, which is what
   // makes `x + 3 <= 5` mean `x <= 2` rather than a row with a constant in it.
@@ -230,12 +269,18 @@ void Model::addRange(const std::string_view name, const LinearExpr& expression,
 }
 
 void Model::addObjective(const LinearExpr& expression) {
-  for (const auto& [index, coefficient] : expression.combined()) {
+  const auto coefficients = expression.combined();
+  for (const auto& [index, _] : coefficients) {
     if (index >= variableList.size()) {
       throw std::invalid_argument(std::format(
           "the objective names variable {}, which model '{}' does not have",
           index, modelName));
     }
+  }
+  requireFinite(coefficients, expression.constant(), {});
+  // The checks come first, so that a refused expression leaves the objective
+  // as it was.
+  for (const auto& [index, coefficient] : coefficients) {
     variableList[index].objective += coefficient;
   }
   offset += expression.constant();

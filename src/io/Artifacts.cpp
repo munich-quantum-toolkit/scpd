@@ -34,6 +34,12 @@ namespace mqt::scpd::io {
 
 namespace {
 
+/// A count and its noun, singular only for a count of one: "1 crossing",
+/// "2 crossings".
+std::string counted(const std::size_t count, const std::string_view noun) {
+  return std::format("{} {}{}", count, noun, count == 1 ? "" : "s");
+}
+
 using flatbuffers::artifacts::ArtifactT;
 using flatbuffers::artifacts::StageOutput;
 using flatbuffers::geometry::SegmentShape;
@@ -155,8 +161,9 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
   }
   if (ordered != count) {
     problems.push_back(std::format(
-        "capacity nodes link in a cycle: {} of {} nodes lie on or behind one",
-        count - ordered, count));
+        "capacity nodes link in a cycle: {} of {} {} on or behind one",
+        count - ordered, counted(count, "node"),
+        count - ordered == 1 ? "lies" : "lie"));
     return;
   }
   // A chain is a tree. Two chains may share a subtree, but one chain that
@@ -204,6 +211,19 @@ Problems validate(const ArtifactT& artifact) {
   case StageOutput::Assignment: {
     const auto& assignment = *artifact.output.AsAssignment();
     validateEach(assignment.connections, "connection", problems);
+    // The connections, the launchers and the feeds are each one per ring
+    // node, in the order of the ring.
+    const auto parallel = [&](const std::size_t size,
+                              const std::string_view what) {
+      if (size != assignment.ring.size()) {
+        problems.push_back(
+            std::format("{} for {}", counted(size, what),
+                        counted(assignment.ring.size(), "ring node")));
+      }
+    };
+    parallel(assignment.connections.size(), "connection");
+    parallel(assignment.launchers.size(), "launcher");
+    parallel(assignment.feeds.size(), "feed");
     // A chain names ring nodes, and each of them has to be a node of the ring.
     for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
       if (assignment.chains[index] == nullptr) {
@@ -243,11 +263,12 @@ Problems validate(const ArtifactT& artifact) {
         continue;
       }
       const auto& corridor = *routing.corridors[index];
-      if (!corridor.partitions.empty() &&
+      if ((!corridor.partitions.empty() || !corridor.crossings.empty()) &&
           corridor.crossings.size() + 1 != corridor.partitions.size()) {
-        problems.push_back(std::format(
-            "corridor {} names {} partitions and {} crossings", index,
-            corridor.partitions.size(), corridor.crossings.size()));
+        problems.push_back(
+            std::format("corridor {} names {} and {}", index,
+                        counted(corridor.partitions.size(), "partition"),
+                        counted(corridor.crossings.size(), "crossing")));
       }
     }
     break;

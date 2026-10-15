@@ -151,6 +151,7 @@ TEST(HighsBackend, ReportsTheBoundTheGapAndTheNodesOfAMixedIntegerSolve) {
   ASSERT_EQ(solution.status, SolveStatus::Optimal);
   EXPECT_NEAR(solution.bound, 7.0, 1.0e-6);
   EXPECT_NEAR(solution.gap, 0.0, 1.0e-9);
+  EXPECT_TRUE(solution.nodes.has_value());
 }
 
 TEST(HighsBackend, LeavesTheBoundOfALinearModelOpen) {
@@ -162,7 +163,48 @@ TEST(HighsBackend, LeavesTheBoundOfALinearModelOpen) {
   ASSERT_EQ(solution.status, SolveStatus::Optimal);
   EXPECT_TRUE(std::isnan(solution.bound));
   EXPECT_TRUE(std::isnan(solution.gap));
-  EXPECT_EQ(solution.nodes, 0U);
+  EXPECT_FALSE(solution.nodes.has_value());
+}
+
+TEST(HighsBackend, SolvesAModelWithoutVariablesToItsOffset) {
+  Model model("empty");
+  model.addObjective(LinearExpr(2.5));
+  // Rows without terms hold when their bounds admit zero.
+  model.addLessOrEqual("holds", LinearExpr(3.0), 5.0);
+  model.addRange("free", LinearExpr(), -INFINITE_BOUND, INFINITE_BOUND);
+
+  for (const auto sense : {Sense::Minimize, Sense::Maximize}) {
+    model.setSense(sense);
+    const auto solution = makeHighsBackend()->solve(model, {});
+    ASSERT_EQ(solution.status, SolveStatus::Optimal) << solution.message;
+    EXPECT_DOUBLE_EQ(solution.objective, 2.5);
+    EXPECT_TRUE(solution.values.empty());
+    EXPECT_EQ(solution.backend, "highs");
+  }
+}
+
+TEST(HighsBackend, FindsAModelWithoutVariablesInfeasibleWhenARowFails) {
+  Model model("empty");
+  // 3 <= 2 holds for no assignment.
+  model.addLessOrEqual("fails", LinearExpr(3.0), 2.0);
+
+  const auto solution = makeHighsBackend()->solve(model, {});
+  EXPECT_EQ(solution.status, SolveStatus::Infeasible);
+  EXPECT_TRUE(solution.values.empty());
+}
+
+TEST(HighsBackend, SolvesAModelWithACoefficientThatHighsDrops) {
+  // HiGHS drops a coefficient of 1e-10 with a warning. The model it keeps is
+  // still the model to solve: x <= 5, so the maximum of x is 5.
+  Model model("tiny");
+  const auto x = model.addContinuous("x", 0.0, 10.0, 1.0);
+  const auto y = model.addContinuous("y", 0.0, 10.0);
+  model.setSense(Sense::Maximize);
+  model.addLessOrEqual("row", (1.0 * x) + (1.0e-10 * y), 5.0);
+
+  const auto solution = makeHighsBackend()->solve(model, {});
+  ASSERT_EQ(solution.status, SolveStatus::Optimal) << solution.message;
+  EXPECT_NEAR(solution.objective, 5.0, 1.0e-6);
 }
 
 TEST(HighsBackend, WritesItsLogOnlyToAnObserverThatAsksForIt) {

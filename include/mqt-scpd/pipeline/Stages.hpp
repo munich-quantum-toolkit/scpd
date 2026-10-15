@@ -30,7 +30,9 @@ using flatbuffers::design::ChipT;
 // neither change its own state between runs nor reach into the state of
 // another. It returns a new value rather than writing into a shared design
 // database. Given the same inputs it produces the same output, which is what
-// makes a resumed run equal to an uninterrupted one. A stage reports what it
+// makes a resumed run equal to an uninterrupted one. A solve that stops at
+// `[stages.solver] time_limit` is an exception: what it has found by
+// then depends on the speed of the machine. A stage reports what it
 // does through the Report it is given and never prints.
 
 /**
@@ -156,6 +158,10 @@ public:
    * @param config The run configuration.
    * @param report Where the stage reports what it does.
    * @return One corridor per connection.
+   * @throws std::invalid_argument When the capacity plan does not fit the
+   * configuration: it was made on another detail grid, a border offers
+   * another number of slots than its budget, or a partition falls apart into
+   * pieces that do not touch.
    */
   [[nodiscard]] virtual CorridorRoutingT run(const ChipT& chip,
                                              const CapacityPlanT& capacity,

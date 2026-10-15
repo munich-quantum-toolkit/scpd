@@ -36,6 +36,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -308,23 +309,9 @@ TEST(CorridorRouter, LeavesAPartitionOnlyIntoANeighbour) {
   for (const auto& border : planned.capacity.borders) {
     borders.insert(std::minmax(border->first, border->second));
   }
-  // A way out of a port's own pocket is on no border, and the artifact marks
-  // those slots.
-  std::set<std::pair<double, double>> pockets;
-  for (const auto& slots : routing.slots) {
-    if (slots->pocket) {
-      for (const auto& position : slots->positions) {
-        pockets.emplace(position.x(), position.y());
-      }
-    }
-  }
   for (const auto& corridor : routing.corridors) {
     for (std::size_t index = 0; index + 1 < corridor->partitions.size();
          ++index) {
-      const auto& crossing = corridor->crossings[index];
-      if (pockets.contains({crossing.x(), crossing.y()})) {
-        continue;
-      }
       EXPECT_TRUE(borders.contains(std::minmax(
           corridor->partitions[index], corridor->partitions[index + 1])));
     }
@@ -485,10 +472,8 @@ TEST(CorridorRouter, OffersEveryBorderAsManySlotsAsItsBudget) {
 
   std::vector<std::size_t> offered(planned.capacity.borders.size(), 0);
   for (const auto& slots : routing.slots) {
-    if (!slots->pocket) {
-      ASSERT_LT(slots->border, offered.size());
-      offered[slots->border] += slots->positions.size();
-    }
+    ASSERT_LT(slots->border, offered.size());
+    offered[slots->border] += slots->positions.size();
   }
   for (std::size_t border = 0; border < offered.size(); ++border) {
     EXPECT_EQ(offered[border], planned.capacity.borders[border]->budget)
@@ -552,26 +537,109 @@ TEST(CorridorRouter, LeavesAWireFedDeepInsideTheArtworkUnrouted) {
   }
 }
 
-TEST(CorridorRouter, OpensAWayOutOfAPocketThatNoBorderReaches) {
-  // Without borders, the only ways between partitions are the approaches of
-  // the target ports.
+TEST(CorridorRouter, CrossesOnlyAtTheSlotsOfTheBordersOfThePlan) {
+  // Without borders no wire leaves the partition it is fed in. A target port
+  // with a partition of its own stays out of reach, even where its band runs
+  // on through the artwork to a partition beyond.
   auto planned = planMini();
   planned.capacity.borders.clear();
+  Received received;
 
-  const auto routing = routeMini(planned);
+  const auto routing = routeMini(planned, receiving(received, Detail::Summary));
 
-  ASSERT_EQ(routing.slots.size(), 1U);
-  EXPECT_TRUE(routing.slots[0]->pocket);
-  std::set<std::pair<double, double>> pockets;
-  for (const auto& position : routing.slots[0]->positions) {
-    pockets.emplace(position.x(), position.y());
-  }
-  EXPECT_LT(unroutedOf(routing), routing.corridors.size());
+  EXPECT_TRUE(routing.slots.empty());
   for (const auto& corridor : routing.corridors) {
-    for (const auto& crossing : corridor->crossings) {
-      EXPECT_TRUE(pockets.contains({crossing.x(), crossing.y()}));
+    EXPECT_TRUE(corridor->crossings.empty());
+    EXPECT_LE(corridor->partitions.size(), 1U);
+  }
+  EXPECT_EQ(received.fails, unroutedOf(routing));
+  EXPECT_GT(unroutedOf(routing), 0U);
+}
+
+/// The message the stage refuses a plan with, or an empty one when it routes
+/// the plan.
+std::string refusalOf(const Planned& planned,
+                      const ConfigT& config = test::miniConfig()) {
+  try {
+    static_cast<void>(routeMini(planned, {}, config));
+  } catch (const std::invalid_argument& error) {
+    return error.what();
+  }
+  return {};
+}
+
+TEST(CorridorRouter, RefusesAPlanMadeOnAnotherDetailGrid) {
+  // The configuration is read again for the stage, so a plan made with
+  // other grid settings would lay its outlines across cell edges.
+  auto planned = planMini();
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x += 1;
+
+  EXPECT_NE(refusalOf(planned, config).find("detail grid"), std::string::npos);
+}
+
+TEST(CorridorRouter, RefusesAPlanMadeWithAnotherCrossingPitch) {
+  // A border then offers another number of slots than its budget, and the
+  // corridors would no longer keep to what the plan promised.
+  auto planned = planMini();
+  auto config = test::miniConfig();
+  config.stages->capacity->crossing_pitch = crossingPitch(config) / 2.0;
+
+  EXPECT_NE(refusalOf(planned, config).find("crossing pitch"),
+            std::string::npos);
+}
+
+TEST(CorridorRouter, RefusesAPartitionThatFallsApartIntoPieces) {
+  // The search treats a partition as one region. Two pieces under one label
+  // would let a wire enter one piece and leave from the other, over a gap
+  // that no wire can cross.
+  auto planned = planMini();
+  auto& partitions = planned.capacity.partitions;
+  std::set<std::pair<std::uint32_t, std::uint32_t>> borders;
+  for (const auto& border : planned.capacity.borders) {
+    borders.insert(std::minmax(border->first, border->second));
+  }
+  // Two partitions without a border between them do not touch, so the rings
+  // of both under the first label are two pieces.
+  std::optional<std::pair<std::size_t, std::size_t>> apart;
+  for (std::size_t first = 0; first < partitions.size() && !apart; ++first) {
+    for (std::size_t second = first + 1; second < partitions.size(); ++second) {
+      if (!borders.contains(std::minmax(partitions[first]->label,
+                                        partitions[second]->label))) {
+        apart.emplace(first, second);
+        break;
+      }
     }
   }
+  ASSERT_TRUE(apart.has_value());
+  for (auto& ring : partitions[apart->second]->outlines) {
+    partitions[apart->first]->outlines.push_back(std::move(ring));
+  }
+  partitions.erase(partitions.begin() +
+                   static_cast<std::ptrdiff_t>(apart->second));
+
+  EXPECT_EQ(refusalOf(planned),
+            std::format("partition {} of the capacity plan falls apart into "
+                        "pieces that do not touch",
+                        partitions[apart->first]->label));
+}
+
+TEST(CorridorRouter, CompletesTheProgressOfEveryRound) {
+  std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> last;
+  const Report report(Detail::Summary,
+                      {.progress = [&last](const std::string_view task,
+                                           const std::string_view /*detail*/,
+                                           const std::uint64_t done,
+                                           const std::uint64_t total) {
+                        last[std::string(task)] = {done, total};
+                      }});
+
+  static_cast<void>(routeMini(planMini(), report));
+
+  const auto first = last.find("round 1 forward");
+  ASSERT_NE(first, last.end());
+  EXPECT_GT(first->second.second, 0U);
+  EXPECT_EQ(first->second.first, first->second.second);
 }
 
 TEST(CorridorRouter, SweepsTwelveRoundsWithoutACorridorSection) {
@@ -632,13 +700,9 @@ void expectTheRulesHold(const Planned& planned, const CorridorRoutingT& routing,
     borders.insert(std::minmax(border->first, border->second));
   }
   std::vector<Point> offered;
-  std::vector<Point> pockets;
   for (const auto& slots : routing.slots) {
     for (const auto& position : slots->positions) {
       offered.push_back(position);
-      if (slots->pocket) {
-        pockets.push_back(position);
-      }
     }
   }
   const auto among = [](const std::vector<Point>& points, const Point& point) {
@@ -660,12 +724,10 @@ void expectTheRulesHold(const Planned& planned, const CorridorRoutingT& routing,
       const auto& crossing = corridor.crossings[index];
       EXPECT_TRUE(among(offered, crossing))
           << "wire " << wire << " crosses where no slot is offered";
-      if (!among(pockets, crossing)) {
-        EXPECT_TRUE(borders.contains(std::minmax(
-            corridor.partitions[index], corridor.partitions[index + 1])))
-            << "wire " << wire << " leaves partition "
-            << corridor.partitions[index] << " into one that is no neighbour";
-      }
+      EXPECT_TRUE(borders.contains(std::minmax(corridor.partitions[index],
+                                               corridor.partitions[index + 1])))
+          << "wire " << wire << " leaves partition "
+          << corridor.partitions[index] << " into one that is no neighbour";
     }
   }
   expectOneWirePerSlot(routing);

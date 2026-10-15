@@ -37,8 +37,7 @@ class BorderSlots(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # The border they belong to, as an index into CapacityPlan.borders, or
-    # zero when `pocket` is set and they are on no border.
+    # The border they belong to, as an index into CapacityPlan.borders.
     # BorderSlots
     def Border(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -70,23 +69,8 @@ class BorderSlots(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         return o == 0
 
-    # Whether these are ways out of the pocket of a port rather than slots of
-    # a border.
-    #
-    # The capacity grid places a target on the first cell beyond the band of
-    # its port that was free before the bands, and does not open the band.
-    # Where the band and the artwork close around a port, the free space left
-    # is a pocket that no border reaches. The band is the approach of that
-    # port, so it is a way out, and it carries the one wire.
-    # BorderSlots
-    def Pocket(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
-        return False
-
 def BorderSlotsStart(builder: flatbuffers.Builder):
-    builder.StartObject(3)
+    builder.StartObject(2)
 
 def Start(builder: flatbuffers.Builder):
     BorderSlotsStart(builder)
@@ -109,12 +93,6 @@ def BorderSlotsStartPositionsVector(builder, numElems: int) -> int:
 def StartPositionsVector(builder, numElems: int) -> int:
     return BorderSlotsStartPositionsVector(builder, numElems)
 
-def BorderSlotsAddPocket(builder: flatbuffers.Builder, pocket: bool):
-    builder.PrependBoolSlot(2, pocket, 0)
-
-def AddPocket(builder: flatbuffers.Builder, pocket: bool):
-    BorderSlotsAddPocket(builder, pocket)
-
 def BorderSlotsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -134,11 +112,9 @@ class BorderSlotsT(object):
         self,
         border = 0,
         positions = None,
-        pocket = False,
     ):
         self.border = border  # type: int
         self.positions = positions  # type: Optional[List[mqt.scpd.flatbuffers.geometry.Point.PointT]]
-        self.pocket = pocket  # type: bool
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -170,7 +146,6 @@ class BorderSlotsT(object):
                 else:
                     point_ = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(borderSlots.Positions(i))
                     self.positions.append(point_)
-        self.pocket = borderSlots.Pocket()
 
     # BorderSlotsT
     def Pack(self, builder):
@@ -183,6 +158,5 @@ class BorderSlotsT(object):
         BorderSlotsAddBorder(builder, self.border)
         if self.positions is not None:
             BorderSlotsAddPositions(builder, positions)
-        BorderSlotsAddPocket(builder, self.pocket)
         borderSlots = BorderSlotsEnd(builder)
         return borderSlots

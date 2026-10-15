@@ -16,6 +16,7 @@
 #include "mqt-scpd/grid/PortBands.hpp"
 #include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
+#include "mqt-scpd/pipeline/GlobalRouter.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/Solver.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
@@ -229,6 +230,91 @@ placesProblem(const std::vector<geometry::Point>& launchers) {
   return std::nullopt;
 }
 
+/// What the ring counts tell about the ring that the assignment consumes.
+///
+/// The Assignment stage knows the counts exactly. Before any stage runs, only
+/// bounds are known: the global step decides which ring ports at a bridge
+/// carry an inner wire, and so which of them stay in the ring and which of
+/// them are resonators.
+struct RingCounts {
+  /// The conventional ports in the ring, or a lower bound on them.
+  std::size_t conventional = 0;
+  /// The resonators in the ring, or a lower bound on them.
+  std::size_t fewestResonators = 0;
+  /// The resonators in the ring, or an upper bound on them.
+  std::size_t mostResonators = 0;
+  /// Whether the counts are exact and not bounds.
+  bool exact = true;
+};
+
+/// What the counts of the ring leave the model no solution for, or nothing.
+///
+/// Each condition is necessary, so a ring that breaks one has no assignment,
+/// and the stage can say why before it solves:
+///
+/// - the flow falls by one at every conventional port and at every resonator
+///   that takes a launcher, within one turn of the launcher ring, so the
+///   conventional ports and the launcher ends together need at most as many
+///   launchers as the chip has;
+/// - every resonator takes at most one launcher and one termination;
+/// - every chain has two ends, so the launcher ends and the terminations add
+///   up to an even number;
+/// - a chain carries at most `max_feedline_utilization` resonators.
+///
+/// A ring without a resonator takes no launcher end and meets the last three
+/// conditions. Where @p counts holds bounds, the function reports a condition
+/// only when every ring within the bounds breaks it, and it leaves the even
+/// sum to planProblems(), which checks it on its own. A ring that meets all
+/// of them can still have no solution.
+std::optional<std::string> countProblem(const RingCounts& counts,
+                                        const std::size_t launchers,
+                                        const std::uint32_t target,
+                                        const fbd::DesignRulesT& rules) {
+  const std::string_view atLeast = counts.exact ? "" : "at least ";
+  const std::size_t ends = counts.fewestResonators == 0 ? 0U : target;
+  if (counts.conventional + ends > launchers) {
+    return std::format(
+        "the ring carries {}{} and the assignment places {}, which need {}{} "
+        "launchers, but the chip has {}",
+        atLeast, counted(counts.conventional, "conventional port"),
+        counted(ends, "launcher end"), atLeast, counts.conventional + ends,
+        launchers);
+  }
+  if (counts.fewestResonators == 0) {
+    return std::nullopt;
+  }
+  const std::size_t terminations = rules.feedline_terminations;
+  if (target > counts.mostResonators || terminations > counts.mostResonators) {
+    return std::format(
+        "the ring carries {}{}, too few for [stages.assignment] "
+        "launcher_target {} and [design_rules] feedline_terminations {}; each "
+        "resonator ends at most one chain at a launcher and one at a "
+        "termination",
+        counts.exact ? "" : "at most ",
+        counted(counts.mostResonators, "resonator"), target, terminations);
+  }
+  if ((target + terminations) % 2 != 0) {
+    if (!counts.exact) {
+      return std::nullopt;
+    }
+    return std::format(
+        "[stages.assignment] launcher_target {} plus [design_rules] "
+        "feedline_terminations {} is odd; every feedline chain has two ends, "
+        "so the sum has to be even",
+        target, terminations);
+  }
+  const auto chains = (target + terminations) / 2;
+  if (counts.fewestResonators > chains * rules.max_feedline_utilization) {
+    return std::format(
+        "the ring carries {}{}, but [design_rules] max_feedline_utilization {} "
+        "lets {} carry at most {}",
+        atLeast, counted(counts.fewestResonators, "resonator"),
+        rules.max_feedline_utilization, counted(chains, "feedline chain"),
+        chains * rules.max_feedline_utilization);
+  }
+  return std::nullopt;
+}
+
 /// The centers of the launchers that the capacity stage gives a slot: every
 /// launcher with a direction, in port order.
 std::vector<geometry::Point> slottedLaunchers(const ChipT& chip) {
@@ -271,9 +357,17 @@ public:
         throw std::invalid_argument(*problem);
       }
     }
-    const auto ring = ringEdgesOf(inputs);
+    const auto target = launcherTarget(config);
     const auto resonators =
         static_cast<std::size_t>(std::ranges::count(inputs.isResonator, true));
+    const RingCounts counts{.conventional = inputs.ring.size() - resonators,
+                            .fewestResonators = resonators,
+                            .mostResonators = resonators};
+    if (const auto problem = countProblem(counts, inputs.launchers.size(),
+                                          target, *config.rules)) {
+      throw std::invalid_argument(*problem);
+    }
+    const auto ring = ringEdgesOf(inputs);
     if (report.wants(Detail::Steps)) {
       report.line(
           Detail::Steps,
@@ -291,7 +385,6 @@ public:
     for (const auto port : inputs.ring) {
       assignment.ring.emplace_back(port);
     }
-    const auto target = launcherTarget(config);
     if (report.wants(Detail::Steps)) {
       const auto& rules = *config.rules;
       report.line(Detail::Steps,
@@ -882,6 +975,26 @@ AssignmentInputs assignmentInputs(const ChipT& chip,
     throw std::invalid_argument("the global routing carries no outer ring");
   }
 
+  // The stages before wrote these indices for this chip. Indices past its
+  // ports come from another chip or from an edited artifact.
+  const auto checkPort = [&chip](const std::uint32_t port,
+                                 const std::string_view artifact) {
+    if (port >= chip.ports.size()) {
+      throw std::invalid_argument(
+          std::format("the {} names port {}, but the chip has {} ports",
+                      artifact, port, chip.ports.size()));
+    }
+  };
+  for (const auto& port : global.outer_ring) {
+    checkPort(port.index(), "global routing");
+  }
+  for (const auto& port : global.resonators) {
+    checkPort(port.index(), "global routing");
+  }
+  for (const auto& slot : capacity.launchers) {
+    checkPort(slot->port.index(), "capacity plan");
+  }
+
   AssignmentInputs inputs;
   inputs.ring.reserve(global.outer_ring.size());
   for (const auto& port : global.outer_ring) {
@@ -956,7 +1069,55 @@ std::optional<std::string> launcherPlacesProblem(const ChipT& chip,
     // it.
     return std::nullopt;
   }
+  if (detailGridProblem(chip, config).has_value()) {
+    // planProblems() reports a grid above the limit.
+    return std::nullopt;
+  }
   return placesProblem(launcherSlotPositions(chip, config));
+}
+
+std::optional<std::string> ringCountProblem(const ChipT& chip,
+                                            const ConfigT& config) {
+  if (config.rules == nullptr || config.stages == nullptr ||
+      config.stages->assignment == nullptr ||
+      config.stages->assignment->launcher_target == 0) {
+    // planProblems() and the configuration check report these.
+    return std::nullopt;
+  }
+  InnerCircuit circuit;
+  try {
+    circuit = innerCircuitOf(chip, config);
+  } catch (const std::invalid_argument&) {
+    // planProblems() reports a ring that the global step refuses.
+    return std::nullopt;
+  }
+  // The ring end of a bridge is the one port whose part the global step
+  // decides: it leaves the ring when no inner wire surfaces there, and it is
+  // a resonator when the wire that surfaces comes from one. Every other ring
+  // port stays in the ring with the role the chip gives it.
+  std::unordered_set<std::uint32_t> decided;
+  for (const auto& bridge : circuit.outerBridges) {
+    decided.insert(bridge.to);
+  }
+  std::unordered_map<std::string_view, std::uint32_t> byLabel;
+  for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
+    byLabel.emplace(chip.ports[index]->label, index);
+  }
+  RingCounts counts{.exact = false};
+  for (const auto& label : config.ports->sequences->all_outer) {
+    const auto port = byLabel.at(label);
+    if (decided.contains(port)) {
+      ++counts.mostResonators;
+    } else if (chip.ports[port]->role == fbd::UnassignedRole::Resonator) {
+      ++counts.fewestResonators;
+      ++counts.mostResonators;
+    } else {
+      ++counts.conventional;
+    }
+  }
+  return countProblem(counts, slottedLaunchers(chip).size(),
+                      config.stages->assignment->launcher_target,
+                      *config.rules);
 }
 
 std::unique_ptr<IAssigner> makeOrderedMilpAssigner() {

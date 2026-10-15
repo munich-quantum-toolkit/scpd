@@ -20,10 +20,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <format>
+#include <iterator>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -194,6 +196,87 @@ TEST(Bottlenecks, IsTheSameOnASecondRun) {
     EXPECT_EQ(first[index].second, second[index].second);
     EXPECT_EQ(first[index].saddle, second[index].saddle);
   }
+}
+
+/// A wide corridor with a spike that hangs from its upper wall down to one
+/// cell, column 30 and row 30, five rows above the lower wall.
+BitGrid spike() {
+  BitGrid mask(WIDTH, HEIGHT);
+  constexpr int middle = HEIGHT / 2;
+  for (std::uint32_t x = 0; x < WIDTH; ++x) {
+    const auto offset = std::abs(static_cast<int>(x) - 30);
+    for (std::uint32_t y = 0; y < HEIGHT; ++y) {
+      const auto row = static_cast<int>(y);
+      if (row + 15 < middle || row > middle + 15 ||
+          row <= middle + 10 - (2 * offset)) {
+        mask.setCell(x, y);
+      }
+    }
+  }
+  return mask;
+}
+
+/// A corridor with a pillar of one cell in its middle, at column 30 and row
+/// 20, and an opening of six cells above and below it.
+BitGrid pillar() {
+  BitGrid mask(WIDTH, HEIGHT);
+  constexpr std::uint32_t middle = HEIGHT / 2;
+  for (std::uint32_t x = 0; x < WIDTH; ++x) {
+    for (std::uint32_t y = 0; y < HEIGHT; ++y) {
+      if (y + 6 < middle || y > middle + 6 || (x == 30 && y == middle)) {
+        mask.setCell(x, y);
+      }
+    }
+  }
+  return mask;
+}
+
+/// The bottlenecks that end on one cell.
+std::vector<Bottleneck> endingOn(const std::vector<Bottleneck>& found,
+                                 const std::size_t cell) {
+  std::vector<Bottleneck> ending;
+  std::ranges::copy_if(
+      found, std::back_inserter(ending), [cell](const Bottleneck& bottleneck) {
+        return bottleneck.first == cell || bottleneck.second == cell;
+      });
+  return ending;
+}
+
+TEST(Bottlenecks, KeepsTheShortestCutOfANarrowingThatTheRasterSplits) {
+  // The raster gives two cuts from the tip of the spike to the lower wall,
+  // three cells apart there. With a reach of six cells they are one narrowing,
+  // and the shorter cut stands for it.
+  const auto scene = sceneOf(spike());
+  const auto tip = scene.grid.index(30, 30);
+
+  const auto apart =
+      findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
+  ASSERT_EQ(endingOn(apart, tip).size(), 2U);
+
+  const auto merged =
+      endingOn(findBottlenecks(scene.mask, scene.axis, scene.distance,
+                               scene.grid, {.sameNarrowing = 6.0}),
+               tip);
+  ASSERT_EQ(merged.size(), 1U);
+  const auto length = [&scene](const Bottleneck& cut) {
+    const auto dx = static_cast<double>(scene.grid.cell(cut.first).x()) -
+                    static_cast<double>(scene.grid.cell(cut.second).x());
+    const auto dy = static_cast<double>(scene.grid.cell(cut.first).y()) -
+                    static_cast<double>(scene.grid.cell(cut.second).y());
+    return std::hypot(dx, dy);
+  };
+  for (const auto& cut : endingOn(apart, tip)) {
+    EXPECT_LE(length(merged.front()), length(cut));
+  }
+}
+
+TEST(Bottlenecks, KeepsTheTwoOpeningsBesideAPillarApart) {
+  // Both openings end on the pillar, but their other ends lie fourteen cells
+  // apart, so they are two narrowings under a reach of six cells.
+  const auto scene = sceneOf(pillar());
+  const auto found = findBottlenecks(scene.mask, scene.axis, scene.distance,
+                                     scene.grid, {.sameNarrowing = 6.0});
+  EXPECT_EQ(endingOn(found, scene.grid.index(30, 20)).size(), 2U);
 }
 
 TEST(Bottlenecks, DropsOneThatWouldRunOverATarget) {

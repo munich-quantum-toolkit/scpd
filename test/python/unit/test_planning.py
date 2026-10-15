@@ -34,6 +34,7 @@ from mqt.scpd.flatbuffers.artifacts.Lattice import LatticeT
 from mqt.scpd.flatbuffers.artifacts.Partition import PartitionT
 from mqt.scpd.flatbuffers.artifacts.PartitionBorder import PartitionBorderT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
+from mqt.scpd.flatbuffers.design.Connection import ConnectionT
 from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
@@ -287,7 +288,7 @@ def assignment_of(ring: list[int], feeds: list[PointT], chain: FeedlineChainT) -
             producer="test",
             outputType=StageOutput.Assignment,
             output=AssignmentT(
-                connections=[],
+                connections=[ConnectionT(target=PortRefT(index)) for index in ring],
                 ring=[PortRefT(index) for index in ring],
                 launchers=[PortRefT(index) for index in ring],
                 feeds=feeds,

@@ -60,7 +60,7 @@ def _subject(config_path: Path) -> str:
     Returns:
         The name.
     """
-    return config_path.parent.name if config_path.name == "config.toml" else config_path.stem
+    return config_path.resolve().parent.name if config_path.name == "config.toml" else config_path.stem
 
 
 def _validated(config: ConfigT, config_path: Path) -> ConfigT:

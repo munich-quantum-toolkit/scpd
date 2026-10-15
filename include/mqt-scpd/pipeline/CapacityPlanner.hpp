@@ -19,6 +19,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
@@ -41,7 +43,9 @@ struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
   grid::BitGrid blocked;
   /// The cells a port band blocked that were free before. They are obstacles
   /// but not chip artwork, and a bottleneck that ends on one is budgeted
-  /// differently.
+  /// differently. Where the stage took a band back to place the target of its
+  /// port beyond artwork, the cells of the band are free again but stay
+  /// reserved: they belong to no partition.
   grid::BitGrid reserved;
   /// Every cell the approaches of the ports took from the free space: the
   /// bands of the routable ports, before the targets were dug back out. It
@@ -108,10 +112,41 @@ crossingSlots(const grid::PartitionBorder& border, const CapacityScene& scene,
  * @param config The run configuration, whose grid section places the cells.
  * @return The slot positions in layout units, in port order.
  * @throws std::invalid_argument When the detail grid of the configuration has
- * no cells.
+ * no cells or more than MAX_DETAIL_CELLS.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<geometry::Point>
 launcherSlotPositions(const ChipT& chip, const ConfigT& config);
+
+/**
+ * @brief The most cells a detail grid may have.
+ *
+ * The Capacity stage holds about 120 bytes per detail cell at its peak, so the
+ * limit stands for about 3 GB. The finest benchmark chip, 69q, plans on 1500 ×
+ * 1500 cells, less than a tenth of the limit. A typo that adds a digit to
+ * `detail_factor`, or to `capacity_cells_x` where the aspect ratio sets the
+ * cells along y, multiplies the cells by a hundred. On every benchmark chip
+ * from 17q up, that goes past the limit. The limit also keeps every axis far
+ * below the 32-bit range of a cell coordinate.
+ */
+inline constexpr std::uint64_t MAX_DETAIL_CELLS = 25'000'000;
+
+/**
+ * @brief Checks the size of the detail grid that a configuration asks for.
+ *
+ * The detail grid has `capacity_cells_x` times `detail_factor` cells along x,
+ * and `capacity_cells_y` times `detail_factor` along y. With
+ * `capacity_cells_y` at zero, the aspect ratio of the chip sets the capacity
+ * cells along y, as buildScene() sets them. A configuration without a grid
+ * section takes the grid defaults of the schema.
+ *
+ * @param chip The classified chip, whose box sets the aspect ratio.
+ * @param config The run configuration.
+ * @return The problem when the detail grid has more than MAX_DETAIL_CELLS
+ * cells. None when it has fewer, and none when the configuration or the chip
+ * gives no grid at all; buildScene() refuses those.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
+detailGridProblem(const ChipT& chip, const ConfigT& config);
 
 /**
  * @brief Builds the grids and masks of a run.
@@ -123,7 +158,8 @@ launcherSlotPositions(const ChipT& chip, const ConfigT& config);
  * @param config The run configuration.
  * @return The scene.
  * @throws std::invalid_argument When the configuration carries no design
- * rules, when its detail grid has no cells, or when the chip has no launcher.
+ * rules, when its detail grid has no cells or more than MAX_DETAIL_CELLS, or
+ * when the chip has no launcher.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT CapacityScene
 buildScene(const ChipT& chip, const ConfigT& config);

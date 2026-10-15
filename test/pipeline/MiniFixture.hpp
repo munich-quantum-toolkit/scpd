@@ -24,6 +24,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace mqt::scpd::pipeline::test {
 
@@ -82,5 +83,34 @@ miniChip(const flatbuffers::config::ConfigT& config) {
 
 /// The chip of the fixture, classified with its own configuration.
 inline flatbuffers::design::ChipT miniChip() { return miniChip(miniConfig()); }
+
+/// The fixture with Q2.port0 off the ring, and two more ports on the coupler
+/// bar that a bridge rule pairs: C12.port1 on top, near the inner port, and
+/// C12.port2 below it, on the ring.
+inline flatbuffers::config::ConfigT bridgedConfig() {
+  auto config = miniConfig();
+  config.ports->patterns->component = R"(^([^.]+)\.port\d+$)";
+  config.ports->patterns->bridge_pair = R"(^C\d+\.port[12]$)";
+  auto rule = std::make_unique<flatbuffers::config::BridgeRuleT>();
+  rule->first = R"(^(C\d+)\.port1$)";
+  rule->second = R"(^(C\d+)\.port2$)";
+  config.ports->bridge_pairs.push_back(std::move(rule));
+  config.ports->sequences->all_outer = {"Q1.port0", "Q1.port1", "C12.port2",
+                                        "C12.port0", "Q2.port1"};
+  return config;
+}
+
+/// The chip of the bridged fixture, classified with a configuration.
+inline flatbuffers::design::ChipT
+bridgedChip(const flatbuffers::config::ConfigT& config = bridgedConfig()) {
+  auto text = miniChipText();
+  const std::string anchor = R"("ports": {)";
+  const auto at = text.find(anchor);
+  EXPECT_NE(at, std::string::npos);
+  text.insert(at + anchor.size(), R"(
+    "C12.port1": {"center": [900.0, 270.0], "orientation": 90.0},
+    "C12.port2": {"center": [900.0, 130.0], "orientation": 270.0},)");
+  return io::loadChip(text, config);
+}
 
 } // namespace mqt::scpd::pipeline::test

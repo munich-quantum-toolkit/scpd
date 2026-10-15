@@ -36,6 +36,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -67,6 +68,20 @@ TEST(CapacityPlanner, PlansTheMiniChip) {
     EXPECT_GE(border->budget, 1U);
     EXPECT_FALSE(border->samples.empty());
   }
+}
+
+TEST(CapacityPlanner, TreatsEveryClearanceBeyondTheWidestPlaceAlike) {
+  // Both clearances are wider than any free place of the fixture, so every
+  // place counts as narrow under either. The larger one squares to more than
+  // the cell counter holds.
+  auto wide = test::miniConfig();
+  wide.stages->capacity->bottleneck_clearance = 1.0e4;
+  auto wider = test::miniConfig();
+  wider.stages->capacity->bottleneck_clearance = 1.0e9;
+
+  const auto first = makeWatershedPlanner()->run(test::miniChip(), wide, {});
+  const auto second = makeWatershedPlanner()->run(test::miniChip(), wider, {});
+  EXPECT_EQ(first, second);
 }
 
 TEST(CapacityPlanner, KeepsOnlyTheBottlenecksItsChainsName) {
@@ -185,6 +200,13 @@ TEST(CapacityScene, RefusesAConfigurationItCannotBuildAGridFrom) {
   noDetail.grid->detail_factor = 0;
   EXPECT_THROW(static_cast<void>(buildScene(chip, noDetail)),
                std::invalid_argument);
+
+  auto tooFine = test::miniConfig();
+  tooFine.grid->detail_factor = 1000;
+  EXPECT_THROW(static_cast<void>(buildScene(chip, tooFine)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(launcherSlotPositions(chip, tooFine)),
+               std::invalid_argument);
 }
 
 TEST(CapacityScene, RefusesAChipWithoutALauncher) {
@@ -268,8 +290,10 @@ std::optional<std::uint32_t> partitionAt(const CapacityPlanT& plan,
 
 /// A corridor from Q1 on the left to the launcher on the right, pinched twice.
 /// Q2 sits between the pinches, so the chain of Q1 keeps both gates: the near
-/// one has a target and the far one beyond it.
-ChipT pinchedCorridorChip(const ConfigT& config) {
+/// one has a target and the far one beyond it. A block of artwork in front of
+/// Q2 is optional.
+ChipT pinchedCorridorChip(const ConfigT& config,
+                          const bool blockInFrontOfQ2 = false) {
   const auto rect = [](const double x0, const double y0, const double x1,
                        const double y1) {
     return std::format(
@@ -280,15 +304,17 @@ ChipT pinchedCorridorChip(const ConfigT& config) {
     return rect(x, 0.0, x + 10.0, 55.0 - (gap / 2.0)) + ", " +
            rect(x, 55.0 + (gap / 2.0), x + 10.0, 110.0);
   };
+  const auto block =
+      blockInFrontOfQ2 ? ", " + rect(140.0, 30.0, 160.0, 45.0) : std::string{};
   const auto text = std::format(
       R"({{"sampleSpacing": 1.0, "nets": [],
-  "obstacles": [{}, {}, {}, {}],
+  "obstacles": [{}, {}, {}, {}{}],
   "ports": {{
     "Chip.port0": {{"center": [310.0, 55.0], "orientation": 180.0}},
     "Q1.port0": {{"center": [40.0, 55.0], "orientation": 0.0}},
     "Q2.port0": {{"center": [150.0, 20.0], "orientation": 90.0}}}}}})",
       rect(0.0, 45.0, 40.0, 65.0), rect(145.0, 0.0, 155.0, 20.0),
-      pinch(100.0, 20.0), pinch(200.0, 30.0));
+      pinch(100.0, 20.0), pinch(200.0, 30.0), block);
   return io::loadChip(text, config);
 }
 
@@ -335,6 +361,218 @@ TEST(CapacityPlanner, PutsATargetInThePartitionAroundIt) {
     }
     EXPECT_GT(neighbours, 0U);
   }
+}
+
+/// Whether every partition of a plan is one four-connected piece on the
+/// detail grid of its scene.
+bool everyPartitionIsOnePiece(const CapacityPlanT& plan,
+                              const CapacityScene& scene) {
+  std::vector<grid::PartitionOutline> outlines;
+  auto highest = grid::FIRST_PARTITION_LABEL;
+  for (const auto& partition : plan.partitions) {
+    const auto label = static_cast<grid::PartitionLabel>(partition->label);
+    highest = std::max(highest, label);
+    for (const auto& ring : partition->outlines) {
+      grid::PartitionOutline outline{.label = label, .ring = {}};
+      for (const auto& vertex : ring->vertices) {
+        outline.ring.push_back(scene.detail.toCell(vertex));
+      }
+      outlines.push_back(std::move(outline));
+    }
+  }
+  auto labels = grid::rasterizePartitions(outlines, scene.detail);
+  const auto next = grid::nextPartitionLabel(highest);
+  return grid::separatePartitionPieces(scene.blocked, labels, scene.detail,
+                                       next) == next;
+}
+
+TEST(CapacityPlanner, KeepsEveryPartitionInOnePiece) {
+  // A wire crosses a partition from any of its borders to any other, which
+  // it can only do when the cells of the partition touch along their edges.
+  const auto mini = test::miniChip();
+  EXPECT_TRUE(everyPartitionIsOnePiece(planMini(),
+                                       buildScene(mini, test::miniConfig())));
+
+  const auto blocked = blockedApproachChip();
+  EXPECT_TRUE(everyPartitionIsOnePiece(
+      makeWatershedPlanner()->run(blocked, test::miniConfig(), {}),
+      buildScene(blocked, test::miniConfig())));
+
+  const auto config = pinchedCorridorConfig();
+  const auto pinched = pinchedCorridorChip(config);
+  EXPECT_TRUE(
+      everyPartitionIsOnePiece(makeWatershedPlanner()->run(pinched, config, {}),
+                               buildScene(pinched, config)));
+}
+
+TEST(CapacityPlanner, JoinsThePartitionsOnBothSidesOfEveryGate) {
+  // With several detail cells per capacity cell, a gate line runs through
+  // cells of its own. Those cells belong to the chamber beyond the gate, so
+  // the partitions on the two sides of the gate share a border.
+  auto config = pinchedCorridorConfig();
+  config.grid->capacity_cells_x = 21;
+  config.grid->detail_factor = 3;
+  const auto plan =
+      makeWatershedPlanner()->run(pinchedCorridorChip(config), config, {});
+  ASSERT_EQ(plan.bottlenecks.size(), 2U);
+
+  std::set<std::pair<std::uint32_t, std::uint32_t>> borders;
+  for (const auto& border : plan.borders) {
+    borders.emplace(border->first, border->second);
+  }
+  for (const auto& gate : plan.bottlenecks) {
+    const auto& from = gate->from;
+    const auto& to = gate->to;
+    const auto length = std::hypot(to.x() - from.x(), to.y() - from.y());
+    ASSERT_GT(length, 0.0);
+    const auto normalX = -(to.y() - from.y()) / length;
+    const auto normalY = (to.x() - from.x()) / length;
+    const auto middleX = (from.x() + to.x()) / 2.0;
+    const auto middleY = (from.y() + to.y()) / 2.0;
+    // The first partition met when walking away from the gate on one side.
+    const auto sideOf = [&](const double sign) -> std::optional<std::uint32_t> {
+      for (int units = 1; units <= 20; ++units) {
+        const auto step = sign * static_cast<double>(units);
+        if (const auto label = partitionAt(plan, middleX + (step * normalX),
+                                           middleY + (step * normalY))) {
+          return label;
+        }
+      }
+      return std::nullopt;
+    };
+    const auto before = sideOf(-1.0);
+    const auto after = sideOf(1.0);
+    ASSERT_TRUE(before.has_value());
+    ASSERT_TRUE(after.has_value());
+    ASSERT_NE(*before, *after);
+    EXPECT_TRUE(borders.contains(std::minmax(*before, *after)))
+        << "no border between partitions " << *before << " and " << *after;
+  }
+}
+
+TEST(CapacityPlanner, LeavesTheBandItTookBackOutOfEveryPartition) {
+  // The band in front of Q2 runs into the block, so the stage takes it back
+  // and leaves its cells free. They stay reserved for the approach of the
+  // port, so no partition holds them, although the chain of Q1 walks past.
+  const auto config = pinchedCorridorConfig();
+  const auto chip = pinchedCorridorChip(config, true);
+  const auto scene = buildScene(chip, config);
+  const auto plan = makeWatershedPlanner()->run(chip, config, {});
+
+  std::size_t freeReserved = 0;
+  for (std::size_t cell = 0; cell < scene.detail.cells(); ++cell) {
+    if (!scene.reserved.test(cell) || scene.blocked.test(cell)) {
+      continue;
+    }
+    ++freeReserved;
+    const auto at = scene.detail.cell(cell);
+    const auto centre = scene.detail.toLayout(at.x(), at.y());
+    EXPECT_FALSE(partitionAt(plan, centre.x(), centre.y()).has_value())
+        << "reserved cell (" << at.x() << ", " << at.y() << ")";
+  }
+  EXPECT_GT(freeReserved, 0U);
+}
+
+/// What lies in the alcove of twoPinchChip.
+enum class Alcove : std::uint8_t { None, Empty, WithTarget };
+
+/// A corridor from Q1 on the left to the launcher on the right with two
+/// pinches in a row and nothing between them. An alcove can open off the
+/// corridor between the pinches through a narrow mouth, empty or with Q2 in
+/// it.
+ChipT twoPinchChip(const ConfigT& config, const double nearGap,
+                   const double farGap, const Alcove alcove = Alcove::None) {
+  const auto rect = [](const double x0, const double y0, const double x1,
+                       const double y1) {
+    return std::format(
+        R"({{"polygon": [[{}, {}], [{}, {}], [{}, {}], [{}, {}]]}})", x0, y0,
+        x1, y0, x1, y1, x0, y1);
+  };
+  const auto pinch = [&rect](const double x, const double gap) {
+    return rect(x, 0.0, x + 10.0, 55.0 - (gap / 2.0)) + ", " +
+           rect(x, 55.0 + (gap / 2.0), x + 10.0, 110.0);
+  };
+  // The alcove is a room beside the corridor, from 130 to 180 along it and
+  // from 130 to 170 across, entered through a mouth 20 wide and 20 deep at
+  // its middle.
+  const auto room = alcove == Alcove::None
+                        ? std::string{}
+                        : ", " + rect(0.0, 110.0, 130.0, 170.0) + ", " +
+                              rect(180.0, 110.0, 310.0, 170.0) + ", " +
+                              rect(130.0, 110.0, 145.0, 130.0) + ", " +
+                              rect(165.0, 110.0, 180.0, 130.0) + ", " +
+                              rect(0.0, 170.0, 310.0, 180.0);
+  const auto q2 = alcove == Alcove::WithTarget ? std::string{R"(,
+    "Q2.port0": {"center": [155.0, 160.0], "orientation": 270.0})"}
+                                               : std::string{};
+  const auto text = std::format(
+      R"({{"sampleSpacing": 1.0, "nets": [],
+  "obstacles": [{}, {}, {}{}],
+  "ports": {{
+    "Chip.port0": {{"center": [310.0, 55.0], "orientation": 180.0}},
+    "Q1.port0": {{"center": [40.0, 55.0], "orientation": 0.0}}{}}}}})",
+      rect(0.0, 45.0, 40.0, 65.0), pinch(100.0, nearGap), pinch(200.0, farGap),
+      room, q2);
+  return io::loadChip(text, config);
+}
+
+/// The configuration of twoPinchChip, with Q2 in the ring when it is there.
+ConfigT twoPinchConfig(const bool withQ2 = false) {
+  auto config = pinchedCorridorConfig();
+  config.ports->sequences->all_outer = {"Q1.port0"};
+  if (withQ2) {
+    config.ports->sequences->all_outer.emplace_back("Q2.port0");
+  }
+  return config;
+}
+
+/// The x coordinate of the middle of each bottleneck of a plan.
+std::vector<double> bottleneckColumns(const CapacityPlanT& plan) {
+  std::vector<double> columns;
+  columns.reserve(plan.bottlenecks.size());
+  for (const auto& gate : plan.bottlenecks) {
+    columns.push_back((gate->from.x() + gate->to.x()) / 2.0);
+  }
+  return columns;
+}
+
+/// Whether a plan keeps a bottleneck at the mouth of the alcove.
+bool keepsTheMouth(const CapacityPlanT& plan) {
+  return std::ranges::any_of(plan.bottlenecks, [](const auto& gate) {
+    return std::max(gate->from.y(), gate->to.y()) > 105.0;
+  });
+}
+
+TEST(CapacityPlanner, KeepsOnlyTheTighterOfTwoGatesInARow) {
+  // The wires that pass one pinch are the wires that reach the other, so the
+  // chain keeps the pinch that carries fewer wires, near or far.
+  const auto config = twoPinchConfig();
+  for (const auto& [nearGap, farGap, column] :
+       {std::tuple{20.0, 40.0, 105.0}, std::tuple{40.0, 20.0, 205.0}}) {
+    SCOPED_TRACE(std::format("gaps {} and {}", nearGap, farGap));
+    const auto plan = makeWatershedPlanner()->run(
+        twoPinchChip(config, nearGap, farGap), config, {});
+    ASSERT_EQ(plan.chains.size(), 1U);
+    const auto columns = bottleneckColumns(plan);
+    ASSERT_EQ(columns.size(), 1U);
+    EXPECT_NEAR(columns.front(), column, 10.0);
+  }
+}
+
+TEST(CapacityPlanner, DropsAGateThatLeadsNowhere) {
+  // With Q2 in the alcove, wires pass its mouth and a chain keeps it. With
+  // the alcove empty, nothing beyond the mouth is a target or a launcher, so
+  // no chain keeps it.
+  const auto ring = twoPinchConfig(true);
+  const auto served = makeWatershedPlanner()->run(
+      twoPinchChip(ring, 20.0, 40.0, Alcove::WithTarget), ring, {});
+  EXPECT_TRUE(keepsTheMouth(served));
+
+  const auto config = twoPinchConfig();
+  const auto empty = makeWatershedPlanner()->run(
+      twoPinchChip(config, 20.0, 40.0, Alcove::Empty), config, {});
+  EXPECT_FALSE(keepsTheMouth(empty));
+  EXPECT_EQ(bottleneckColumns(empty).size(), 1U);
 }
 
 /// A border along the middle row of the detail grid, from one edge of the

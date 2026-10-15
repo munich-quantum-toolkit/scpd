@@ -32,7 +32,8 @@ table GridExtent {
 table Partition {
   label: uint32;
   /// Closed rings in layout units. More than one where the partition has a
-  /// hole or falls apart into pieces.
+  /// hole. The cells of a partition are four-connected, so a wire can cross
+  /// it from any of its borders to any other.
   outlines: [geometry.Polygon] (required);
 }
 
@@ -191,20 +192,10 @@ table GlobalRouting {
 /// border, so their count is what the border can carry, which is what
 /// PartitionBorder.budget reports.
 table BorderSlots {
-  /// The border they belong to, as an index into CapacityPlan.borders, or
-  /// zero when `pocket` is set and they are on no border.
+  /// The border they belong to, as an index into CapacityPlan.borders.
   border: uint32;
   /// The slots in layout units, in the order the border runs.
   positions: [geometry.Point] (required);
-  /// Whether these are ways out of the pocket of a port rather than slots of
-  /// a border.
-  ///
-  /// The capacity grid places a target on the first cell beyond the band of
-  /// its port that was free before the bands, and does not open the band.
-  /// Where the band and the artwork close around a port, the free space left
-  /// is a pocket that no border reaches. The band is the approach of that
-  /// port, so it is a way out, and it carries the one wire.
-  pocket: bool = false;
 }
 
 /// The coarse route of one connection: which partitions it passes through,

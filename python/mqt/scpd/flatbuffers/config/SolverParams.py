@@ -52,8 +52,17 @@ class SolverParams(object):
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.0
 
+    # The threads one solve may use, or zero for the backend's own default.
+    # At most 1024, the upper limit of the Gurobi parameter Threads.
+    # SolverParams
+    def Threads(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
 def SolverParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(3)
+    builder.StartObject(4)
 
 def Start(builder: flatbuffers.Builder):
     SolverParamsStart(builder)
@@ -76,6 +85,12 @@ def SolverParamsAddRelativeGap(builder: flatbuffers.Builder, relativeGap: float)
 def AddRelativeGap(builder: flatbuffers.Builder, relativeGap: float):
     SolverParamsAddRelativeGap(builder, relativeGap)
 
+def SolverParamsAddThreads(builder: flatbuffers.Builder, threads: int):
+    builder.PrependUint32Slot(3, threads, 0)
+
+def AddThreads(builder: flatbuffers.Builder, threads: int):
+    SolverParamsAddThreads(builder, threads)
+
 def SolverParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -91,10 +106,12 @@ class SolverParamsT(object):
         backend = None,
         timeLimit = 0.0,
         relativeGap = 0.0,
+        threads = 0,
     ):
         self.backend = backend  # type: Optional[str]
         self.timeLimit = timeLimit  # type: float
         self.relativeGap = relativeGap  # type: float
+        self.threads = threads  # type: int
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -122,6 +139,7 @@ class SolverParamsT(object):
             self.backend = self.backend.decode('utf-8')
         self.timeLimit = solverParams.TimeLimit()
         self.relativeGap = solverParams.RelativeGap()
+        self.threads = solverParams.Threads()
 
     # SolverParamsT
     def Pack(self, builder):
@@ -132,5 +150,6 @@ class SolverParamsT(object):
             SolverParamsAddBackend(builder, backend)
         SolverParamsAddTimeLimit(builder, self.timeLimit)
         SolverParamsAddRelativeGap(builder, self.relativeGap)
+        SolverParamsAddThreads(builder, self.threads)
         solverParams = SolverParamsEnd(builder)
         return solverParams

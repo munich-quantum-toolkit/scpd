@@ -19,6 +19,7 @@ The package never imports ``gurobipy`` when it is imported, so an installation w
 
 from __future__ import annotations
 
+import math
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,7 +27,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-__all__ = ["GUROBI_STATUS", "SolverUnavailableError", "available", "register", "solve_mps"]
+__all__ = ["GUROBI_STATUS", "SolveAnswer", "SolverUnavailableError", "available", "register", "solve_mps"]
+
+#: What a solve returns to the core: the status, the objective, one value per variable, the best
+#: bound, the relative gap and the branch-and-bound nodes. The bound and the gap are NaN and the
+#: nodes are None where Gurobi reports none.
+SolveAnswer = tuple[str, float, list[float], float, float, int | None]
 
 #: What each Gurobi status code means in the terms of the core. Every other code is an error, which
 #: the core reports and does not raise. Code 4 says "infeasible or unbounded"; the solve repeats
@@ -55,6 +61,12 @@ INFEASIBLE_OR_UNBOUNDED = 4
 #: solves, so Python raises no KeyboardInterrupt of its own.
 INTERRUPTED = 11
 
+#: The value Gurobi gives for an infinite figure, such as the gap of a zero objective.
+GUROBI_INFINITY = 1e100
+
+#: The search figures of a solve that has none: no bound, no gap and no nodes.
+NO_FIGURES: tuple[float, float, int | None] = (float("nan"), float("nan"), None)
+
 
 class SolverUnavailableError(RuntimeError):
     """Gurobi was asked for, but gurobipy is not installed."""
@@ -80,12 +92,55 @@ def available() -> tuple[bool, str]:
     return True, ""
 
 
+def _figure(model: object, name: str, gurobi_error: type[Exception]) -> float:
+    """Read one figure of a solved model.
+
+    Args:
+        model: The Gurobi model.
+        name: The name of the attribute.
+        gurobi_error: The error that Gurobi raises for an attribute it cannot give.
+
+    Returns:
+        The figure, or NaN when Gurobi gives none or an infinite one.
+    """
+    try:
+        value = float(getattr(model, name))
+    except (AttributeError, gurobi_error):
+        return float("nan")
+    return value if math.isfinite(value) and abs(value) < GUROBI_INFINITY else float("nan")
+
+
+def _search_figures(model: object, gurobi_error: type[Exception]) -> tuple[float, float, int | None]:
+    """The best bound, the relative gap and the nodes of a solved mixed-integer program.
+
+    A linear program has no search, so it has no such figures, as with HiGHS.
+
+    Args:
+        model: The solved Gurobi model.
+        gurobi_error: The error that Gurobi raises for an attribute it cannot give.
+
+    Returns:
+        The bound and the gap, or NaN for each figure that Gurobi does not give, and the nodes, or
+        None when Gurobi does not give them.
+    """
+    integral = _figure(model, "IsMIP", gurobi_error)
+    if math.isnan(integral) or integral < 1.0:
+        return NO_FIGURES
+    nodes = _figure(model, "NodeCount", gurobi_error)
+    return (
+        _figure(model, "ObjBound", gurobi_error),
+        _figure(model, "MIPGap", gurobi_error),
+        None if math.isnan(nodes) else int(nodes),
+    )
+
+
 def solve_mps(
     mps: str,
     names: Sequence[str],
     time_limit: float = 0.0,
     relative_gap: float = 0.0,
-) -> tuple[str, float, list[float]]:
+    threads: int = 0,
+) -> SolveAnswer:
     """Solve a model that the core wrote as MPS text.
 
     Args:
@@ -93,9 +148,12 @@ def solve_mps(
         names: The variable names in the order of the model, which is the order of the values.
         time_limit: The seconds the solve may take, or zero for no limit.
         relative_gap: The gap at which the solve may stop, or zero for the default of Gurobi.
+        threads: The threads the solve may use, or zero for the default of Gurobi.
 
     Returns:
-        The status, the objective and one value per name of ``names``.
+        The status, the objective, one value per name of ``names``, the best bound, the relative
+        gap and the branch-and-bound nodes. A solve without a solution, and a linear program, give
+        a NaN bound and gap and no nodes.
 
     Raises:
         SolverUnavailableError: If ``gurobipy`` cannot be imported.
@@ -125,6 +183,8 @@ def solve_mps(
                     model.setParam("TimeLimit", time_limit)
                 if relative_gap > 0.0:
                     model.setParam("MIPGap", relative_gap)
+                if threads > 0:
+                    model.setParam("Threads", threads)
                 model.optimize()
                 if model.Status == INFEASIBLE_OR_UNBOUNDED:
                     # Presolve stops at this code when it proves that no optimum exists. Without dual
@@ -143,7 +203,7 @@ def solve_mps(
                 if status not in {"optimal", "feasible"} or model.SolCount == 0:
                     if status in {"optimal", "feasible"}:
                         status = "gurobi stopped without a solution"
-                    return status, float("nan"), []
+                    return status, float("nan"), [], *NO_FIGURES
 
                 # MPS keeps names and nothing else, so the values are matched by name and not by the
                 # order in which Gurobi holds the variables.
@@ -153,11 +213,12 @@ def solve_mps(
                 if missing := [name for name in names if name not in by_name]:
                     shown = ", ".join(missing[:3]) + (", ..." if len(missing) > 3 else "")
                     message = f"gurobi returned no value for {len(missing)} of {len(names)} variables: {shown}"
-                    return message, float("nan"), []
+                    return message, float("nan"), [], *NO_FIGURES
                 # MPS states a minimization. The core writes a maximization with its objective
-                # negated and negates the value it gets back, so the value is returned as the text
-                # states it.
-                return status, float(model.ObjVal), [by_name[name] for name in names]
+                # negated and negates the objective and the bound it gets back, so both are returned
+                # as the text states them.
+                values = [by_name[name] for name in names]
+                return status, float(model.ObjVal), values, *_search_figures(model, gurobipy.GurobiError)
             finally:
                 model.dispose()
         finally:

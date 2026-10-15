@@ -16,7 +16,6 @@
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/Partitions.hpp"
-#include "mqt-scpd/grid/PortBands.hpp"
 #include "mqt-scpd/grid/Watershed.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
@@ -35,6 +34,7 @@
 #include <queue>
 #include <ranges>
 #include <span>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -59,17 +59,12 @@ struct Place {
   double y = 0.0;
 };
 
-/// The border of a slot that lies on the approach of a port and on no border
-/// of the plan.
-constexpr std::uint32_t NO_BORDER = std::numeric_limits<std::uint32_t>::max();
-
 /// One crossing slot: where it is, and the two partitions it joins.
 struct Slot {
   Place place;
   PartitionLabel first = LABEL_NONE;
   PartitionLabel second = LABEL_NONE;
-  /// The border the slot is on, as an index into the borders of the plan, or
-  /// NO_BORDER for the way out of the pocket of a port.
+  /// The border the slot is on, as an index into the borders of the plan.
   std::uint32_t border = 0;
 
   /// The partition on the far side of the one a wire arrives from.
@@ -208,8 +203,13 @@ struct Chord {
 /// The partition graph of one run, with the wires committed to it.
 class Corridors {
 public:
+  /// Builds the graph of a plan.
+  ///
+  /// @throws std::invalid_argument When a border of the plan offers another
+  /// number of slots than its budget, which a plan made with another
+  /// crossing pitch does.
   Corridors(const CapacityPlanT& plan, const CapacityScene& scene,
-            const double wireSpacing)
+            const double pitch)
       : detailGrid(scene.detail) {
     const auto& detail = scene.detail;
     for (std::uint32_t index = 0; index < plan.borders.size(); ++index) {
@@ -223,7 +223,15 @@ public:
         const auto cell = detail.toCell(sample);
         geometry.samples.emplace_back(onGrid(cell.x()), onGrid(cell.y()));
       }
-      for (const auto& slot : crossingSlots(geometry, scene, wireSpacing)) {
+      const auto slots = crossingSlots(geometry, scene, pitch);
+      if (slots.size() != border.budget) {
+        throw std::invalid_argument(std::format(
+            "border {} between partitions {} and {} offers {} crossing slots "
+            "and the plan gives it a budget of {}; the plan was made with "
+            "another crossing pitch",
+            index, border.first, border.second, slots.size(), border.budget));
+      }
+      for (const auto& slot : slots) {
         slotsByPartition[geometry.first].push_back(slotList.size());
         slotsByPartition[geometry.second].push_back(slotList.size());
         slotList.push_back({.place = {.x = slot.x(), .y = slot.y()},
@@ -249,35 +257,6 @@ public:
   }
 
   [[nodiscard]] const std::vector<Slot>& slots() const { return slotList; }
-
-  /// The slots of a partition, empty for a pocket that no border reaches.
-  [[nodiscard]] std::span<const std::size_t>
-  slotsOfPartition(const PartitionLabel partition) const {
-    return slotsOf(partition);
-  }
-
-  /// Adds the way out of the pocket of a port.
-  ///
-  /// The capacity grid places a target on the first cell beyond the band of
-  /// its port that was free before the bands were stamped. It does not open
-  /// the band itself, because nothing searches on that grid. Where the band
-  /// and the artwork close around the port, the free space left is a pocket
-  /// that no border reaches, and a wire could never leave it.
-  ///
-  /// The band is not artwork. It is the strip that the wire of the port
-  /// leaves along, so it is a way out, and it carries one wire: the wire of
-  /// that port. This adds it as a slot of its own, on no border of the plan.
-  void addChannel(const Place& place, const PartitionLabel from,
-                  const PartitionLabel to) {
-    slotsByPartition[from].push_back(slotList.size());
-    slotsByPartition[to].push_back(slotList.size());
-    slotList.push_back(
-        {.place = place, .first = from, .second = to, .border = NO_BORDER});
-    placeOfSlot.push_back(placeTaken.size());
-    placeTaken.push_back(false);
-    placeOwner.push_back(NO_OWNER);
-    placeHistory.push_back(0.0);
-  }
 
   /// What displacing one wire costs the search: more than the longest route
   /// the chip can hold, so length never buys a displacement.
@@ -652,9 +631,40 @@ struct Sweeps {
   return {};
 }
 
+/// Checks that a plan was made on the detail grid that the stage rebuilds from
+/// the chip and the configuration.
+///
+/// The plan carries its geometry in layout units, so a plan from another grid
+/// still reads, but its outlines and borders no longer fall on cell edges.
+///
+/// @throws std::invalid_argument When the two grids differ.
+void requireSameGrid(const CapacityPlanT& plan,
+                     const grid::GridMetrics& detail) {
+  const auto* extent = plan.detail_grid.get();
+  if (extent == nullptr) {
+    throw std::invalid_argument("the capacity plan has no detail grid");
+  }
+  if (extent->width != detail.width || extent->height != detail.height ||
+      extent->origin != detail.origin ||
+      extent->cell_width != detail.cellWidth ||
+      extent->cell_height != detail.cellHeight) {
+    throw std::invalid_argument(std::format(
+        "the capacity plan was made on a detail grid of {}x{} cells of "
+        "{:.6g}x{:.6g} and the configuration asks for {}x{} cells of "
+        "{:.6g}x{:.6g}",
+        extent->width, extent->height, extent->cell_width, extent->cell_height,
+        detail.width, detail.height, detail.cellWidth, detail.cellHeight));
+  }
+}
+
 /// The labels of the partitions of the plan, back on the detail grid.
-[[nodiscard]] std::vector<PartitionLabel>
-labelsOf(const CapacityPlanT& plan, const grid::GridMetrics& detail) {
+///
+/// @throws std::invalid_argument When a partition falls apart into pieces
+/// that do not touch. The search treats a partition as one region, and would
+/// otherwise draw a chord from one piece to the other.
+[[nodiscard]] std::vector<PartitionLabel> labelsOf(const CapacityPlanT& plan,
+                                                   const CapacityScene& scene) {
+  const auto& detail = scene.detail;
   std::vector<grid::PartitionOutline> outlines;
   for (const auto& partition : plan.partitions) {
     for (const auto& ring : partition->outlines) {
@@ -667,7 +677,23 @@ labelsOf(const CapacityPlanT& plan, const grid::GridMetrics& detail) {
       outlines.push_back(std::move(outline));
     }
   }
-  return grid::rasterizePartitions(outlines, detail);
+  auto labels = grid::rasterizePartitions(outlines, detail);
+
+  auto highest = grid::FIRST_PARTITION_LABEL;
+  for (const auto label : labels) {
+    highest = std::max(highest, label);
+  }
+  auto pieces = labels;
+  if (grid::separatePartitionPieces(scene.blocked, pieces, detail,
+                                    grid::nextPartitionLabel(highest)) !=
+      grid::nextPartitionLabel(highest)) {
+    const auto cell = std::ranges::mismatch(labels, pieces).in1;
+    throw std::invalid_argument(
+        std::format("partition {} of the capacity plan falls apart into "
+                    "pieces that do not touch",
+                    *cell));
+  }
+  return labels;
 }
 
 /// The partition a cell lies in, or the nearest one when the cell itself
@@ -741,12 +767,12 @@ public:
     report.progress("rasterizing the chip", "", 0, 0);
     const auto scene = buildScene(chip, config);
     report.progress("rasterizing the partitions", "", 0, 0);
-    const auto labels = labelsOf(capacity, scene.detail);
+    requireSameGrid(capacity, scene.detail);
+    const auto labels = labelsOf(capacity, scene);
 
     const auto requests = requestsOf(scene, assignment, labels);
 
     Corridors corridors(capacity, scene, crossingPitch(config));
-    openPockets(corridors, chip, scene, labels);
 
     const auto sweeps = sweepsOf(config);
     if (report.wants(Detail::Steps)) {
@@ -773,6 +799,7 @@ public:
         const auto index = forward ? step : requests.size() - 1 - step;
         reroute(corridors, requests, routes, index, forward, sweeps);
       }
+      report.progress(name, "", requests.size(), requests.size());
       ++rounds;
       const auto left = unrouted(routes);
       report.entry(
@@ -851,11 +878,6 @@ private:
   /// How far from its own cell a feed or a target may look for a partition.
   static constexpr std::uint32_t LABEL_REACH = 8;
 
-  /// How far along its own approach a target may look for a way out of the
-  /// pocket that the band of its port closed around it, in cells of the
-  /// detail grid.
-  static constexpr std::uint32_t POCKET_REACH = 64;
-
   /// Puts the plan back exactly as it was.
   static void restore(Corridors& corridors,
                       const std::vector<Request>& requests,
@@ -912,47 +934,6 @@ private:
       }
       if (unrouted(routes) >= unrouted(before)) {
         restore(corridors, requests, routes, before);
-      }
-    }
-  }
-
-  /// Gives every target that no border reaches a way out along the approach
-  /// of its own port.
-  ///
-  /// The walk goes forward from the target the way the port faces, over the
-  /// cells the band took, until it reaches a cell that another partition
-  /// holds. That cell is the far side, and the last cell of the band before
-  /// it is where the wire crosses. A target that the walk does not get out of
-  /// stays unreachable, which is then a matter of geometry.
-  static void openPockets(Corridors& corridors, const ChipT& chip,
-                          const CapacityScene& scene,
-                          const std::vector<PartitionLabel>& labels) {
-    for (std::size_t index = 0; index < scene.targetCell.size(); ++index) {
-      const auto inside = labels[scene.targetCell[index]];
-      if (inside == LABEL_NONE || !corridors.slotsOfPartition(inside).empty()) {
-        continue;
-      }
-      const auto& port = *chip.ports[scene.targetPort[index]];
-      const auto step = grid::orientationStep(port.orientation);
-      const auto cell = scene.detail.cell(scene.targetCell[index]);
-      auto x = static_cast<std::int64_t>(cell.x());
-      auto y = static_cast<std::int64_t>(cell.y());
-      for (std::uint32_t reach = 0; reach < POCKET_REACH; ++reach) {
-        x += step.x;
-        y += step.y;
-        if (!scene.detail.contains(x, y)) {
-          break;
-        }
-        const auto at = scene.detail.index(static_cast<std::uint32_t>(x),
-                                           static_cast<std::uint32_t>(y));
-        if (const auto beyond = labels[at];
-            beyond != LABEL_NONE && beyond != inside) {
-          // The wire crosses on the last cell of the band, one step back.
-          corridors.addChannel({.x = static_cast<double>(x - step.x) + 0.5,
-                                .y = static_cast<double>(y - step.y) + 0.5},
-                               inside, beyond);
-          break;
-        }
       }
     }
   }
@@ -1132,17 +1113,8 @@ private:
 
     std::vector<std::unique_ptr<fba::BorderSlotsT>> perBorder(
         capacity.borders.size());
-    // The ways out of the pockets are on no border of the plan, so they are
-    // listed together and marked, and not filed under a border they do not
-    // belong to.
-    auto pockets = std::make_unique<fba::BorderSlotsT>();
-    pockets->pocket = true;
     for (std::size_t id = 0; id < corridors.slots().size(); ++id) {
       const auto border = corridors.slots()[id].border;
-      if (border == NO_BORDER) {
-        pockets->positions.push_back(corridors.layoutOf(id));
-        continue;
-      }
       if (perBorder[border] == nullptr) {
         perBorder[border] = std::make_unique<fba::BorderSlotsT>();
         perBorder[border]->border = border;
@@ -1153,9 +1125,6 @@ private:
       if (slots != nullptr) {
         routing.slots.push_back(std::move(slots));
       }
-    }
-    if (!pockets->positions.empty()) {
-      routing.slots.push_back(std::move(pockets));
     }
     return routing;
   }

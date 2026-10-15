@@ -135,6 +135,9 @@ table SolverParams {
   time_limit: double = 0.0;
   /// The relative gap a solve may stop at, or zero for the backend's own.
   relative_gap: double = 0.0;
+  /// The threads one solve may use, or zero for the backend's own default.
+  /// At most 1024, the upper limit of the Gurobi parameter Threads.
+  threads: uint32 = 0;
 }
 
 /// What the Corridor stage may do.

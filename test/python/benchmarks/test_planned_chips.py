@@ -233,19 +233,12 @@ def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT) -> None:
     assert len(set(taken)) == len(taken), "two wires cross at one slot"
 
     borders = {tuple(sorted((border.first, border.second))) for border in entries(plan.borders)}
-    pockets = {
-        (position.x, position.y)
-        for slots in entries(routing.slots)
-        if slots.pocket
-        for position in entries(slots.positions)
-    }
     for corridor in corridors:
         partitions = indices(corridor.partitions)
         crossings = entries(corridor.crossings)
         assert len(crossings) + 1 == len(partitions)
-        for index, crossing in enumerate(crossings):
-            if (crossing.x, crossing.y) not in pockets:
-                assert tuple(sorted(partitions[index : index + 2])) in borders, "a wire leaves into no neighbour"
+        for index in range(len(crossings)):
+            assert tuple(sorted(partitions[index : index + 2])) in borders, "a wire leaves into no neighbour"
 
     launchers = [(slot.position.x, slot.position.y) for slot in entries(plan.launchers)]
     low_x, high_x = min(x for x, _ in launchers), max(x for x, _ in launchers)
@@ -254,8 +247,7 @@ def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT) -> None:
 
     offered = [0] * len(entries(plan.borders))
     for slots in entries(routing.slots):
-        if not slots.pocket:
-            offered[slots.border] += len(entries(slots.positions))
+        offered[slots.border] += len(entries(slots.positions))
     assert offered == [border.budget for border in entries(plan.borders)], (
         "a budget differs from the slots of its border"
     )

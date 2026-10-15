@@ -116,6 +116,28 @@ TEST(AssignmentInputs, RefuseAPlanWithoutALauncherOrARingWithoutAPort) {
                std::invalid_argument);
 }
 
+TEST(AssignmentInputs, RefuseAPortThatTheChipDoesNotCarry) {
+  // The chip has four ports, so index 4 names none.
+  const auto chip = lineOfPorts();
+  const auto refusal = [&chip](const CapacityPlanT& plan,
+                               const GlobalRoutingT& routing) {
+    try {
+      static_cast<void>(assignmentInputs(chip, plan, routing));
+    } catch (const std::invalid_argument& error) {
+      return std::string(error.what());
+    }
+    return std::string();
+  };
+  const auto plan = planWithLaunchersAt({0.0});
+  EXPECT_EQ(refusal(plan, routingWithRing({1, 4}, {1})),
+            "the global routing names port 4, but the chip has 4 ports");
+  EXPECT_EQ(refusal(plan, routingWithRing({1}, {4})),
+            "the global routing names port 4, but the chip has 4 ports");
+  EXPECT_EQ(refusal(planWithLaunchersAt({0.0, 1.0, 2.0, 3.0, 4.0}),
+                    routingWithRing({1}, {1})),
+            "the capacity plan names port 4, but the chip has 4 ports");
+}
+
 // The launcher order, on a chip whose four ring ports sit clockwise on the
 // corners of a square and whose four launchers sit on the middle of its sides.
 
@@ -478,16 +500,70 @@ TEST(Assigner, RefusesAConfigurationWithoutALauncherTarget) {
   }
 }
 
-TEST(Assigner, SaysWhyAnAssignmentHasNoSolution) {
-  // Without a termination, the three conventional ports and both ends of the
-  // feedline chain need five of the four launchers.
-  auto config = test::miniConfig();
-  config.rules->feedline_terminations = 0;
+/// The message with which the stage refuses the fixture under @p config, or
+/// an empty string when it does not refuse it.
+std::string refusalOfMini(const ConfigT& config) {
   try {
     static_cast<void>(assignMini(config));
-    FAIL() << "an assignment without a solution has to be refused";
-  } catch (const std::runtime_error& error) {
-    EXPECT_NE(std::string(error.what()).find("infeasible"), std::string::npos)
+  } catch (const std::invalid_argument& error) {
+    return error.what();
+  }
+  return {};
+}
+
+TEST(Assigner, SaysWhenTheRingNeedsMoreLaunchersThanTheChipHas) {
+  // The three conventional ports and two launcher ends need five of the four
+  // launchers.
+  auto config = test::miniConfig();
+  config.rules->feedline_terminations = 0;
+  config.stages->assignment->launcher_target = 2;
+  const auto refusal = refusalOfMini(config);
+  EXPECT_NE(refusal.find("need 5 launchers, but the chip has 4"),
+            std::string::npos)
+      << refusal;
+}
+
+TEST(Assigner, SaysWhenTheChainsHaveAnOddNumberOfEnds) {
+  // One launcher end and no termination leave a chain with one end.
+  auto config = test::miniConfig();
+  config.rules->feedline_terminations = 0;
+  const auto refusal = refusalOfMini(config);
+  EXPECT_NE(refusal.find("is odd"), std::string::npos) << refusal;
+}
+
+TEST(Assigner, SaysWhenTheChainsCannotCarryEveryResonator) {
+  // One chain of at most one resonator cannot carry the two of the fixture.
+  auto config = test::miniConfig();
+  config.rules->max_feedline_utilization = 1;
+  const auto refusal = refusalOfMini(config);
+  EXPECT_NE(refusal.find("the ring carries 2 resonators, but [design_rules] "
+                         "max_feedline_utilization 1 lets 1 feedline chain "
+                         "carry at most 1"),
+            std::string::npos)
+      << refusal;
+}
+
+TEST(Assigner, SaysWhenTheRingHasFewerResonatorsThanChainEnds) {
+  // Four launcher ends need four resonators, and the ring carries two.
+  const auto chip =
+      squareChip({{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}});
+  auto config = squareConfig();
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  config.rules->max_feedline_utilization = 4;
+  config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  config.stages->assignment =
+      std::make_unique<flatbuffers::config::AssignmentParamsT>();
+  config.stages->assignment->launcher_target = 4;
+  try {
+    static_cast<void>(makeOrderedMilpAssigner()->run(
+        chip, planWithLaunchersOf(chip), routingWithRing({0, 1}, {0, 1}),
+        config, {}));
+    FAIL() << "more launcher ends than resonators have to be refused";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_NE(std::string(error.what())
+                  .find("the ring carries 2 resonators, too few for "
+                        "[stages.assignment] launcher_target 4"),
+              std::string::npos)
         << error.what();
   }
 }

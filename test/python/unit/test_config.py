@@ -94,6 +94,7 @@ launcher_target = 7
 [stages.solver]
 backend = "highs"
 time_limit = 30
+threads = 4
 
 [stages.corridor]
 rounds = 6
@@ -214,6 +215,7 @@ def test_the_stage_and_run_sections_default_when_the_file_leaves_them_out() -> N
     assert stages.solver is not None
     assert (stages.solver.backend,) == ("",)
     assert stages.solver.timeLimit == pytest.approx(0.0)
+    assert stages.solver.threads == 0
     assert stages.corridor is not None
     assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (12, 30)
     assert config.run is not None
@@ -235,6 +237,7 @@ def test_a_stage_section_sets_what_it_names() -> None:
     assert stages.assignment.launcherTarget == 7
     assert stages.solver is not None
     assert (stages.solver.backend, stages.solver.timeLimit) == ("highs", pytest.approx(30.0))
+    assert stages.solver.threads == 4
     assert stages.corridor is not None
     assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (6, 30)
     assert config.run is not None
@@ -273,6 +276,8 @@ def test_the_grid_reads_the_detail_factor() -> None:
         (MANUAL + "\n[stages.detail]\nrounds = 3\n", "[stages] has the unknown key 'detail'"),
         (MANUAL + "\n[stages.global]\ninternal_bridges = 1\n", "internal_bridges must be true or false"),
         (MANUAL + "\n[stages.assignment]\nlauncher_target = -1\n", "between 0 and 4294967295"),
+        (MANUAL + "\n[stages.solver]\nthreads = -2\n", "[stages.solver] threads must be between 0 and 4294967295"),
+        (MANUAL + "\n[stages.solver]\nthreads = 2.5\n", "[stages.solver] threads must be an integer"),
         (
             MANUAL.replace("[ports.patterns]", "[ports]\nbridge_pairs = 3\n\n[ports.patterns]"),
             "[ports] bridge_pairs must be an array of tables",
@@ -292,6 +297,8 @@ def test_the_grid_reads_the_detail_factor() -> None:
         "unknown-stage",
         "flag-not-boolean",
         "negative-count",
+        "negative-threads",
+        "fractional-threads",
         "bridge-pairs-not-tables",
         "bridge-rule-without-second",
         "unknown-step",
@@ -343,6 +350,7 @@ def test_the_stage_and_bridge_sections_round_trip_through_the_core_bytes() -> No
     assert back.stages.assignment.launcherTarget == 7
     assert back.stages.solver is not None
     assert back.stages.solver.backend == "highs"
+    assert back.stages.solver.threads == 4
     assert back.run is not None
     assert back.run.stopAfter == "assign"
 

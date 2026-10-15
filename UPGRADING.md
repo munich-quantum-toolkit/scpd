@@ -34,13 +34,23 @@ With fewer, two resonators could share one feed point, and the assignment
 refuses the chip. The assignment also refuses a solution that puts two feeds, or
 a feed and its launcher, closer together than `[design_rules] min_wire_spacing`.
 `launcher_target` plus `[design_rules] feedline_terminations` has to be even,
-since every feedline chain has two ends. `plan` checks these figures and the
+since every feedline chain has two ends. The counts of the ring set more limits:
+the conventional ports of the ring plus `launcher_target` need at most as many
+launchers as the chip has, `launcher_target` and `feedline_terminations` are
+each at most the resonators of the ring, and the resonators are at most the
+feedline chains times `[design_rules] max_feedline_utilization`
+(`docs/configuration.md` lists them). The global step refuses a ring that
+carries both ends of a bridge. `plan` checks these figures, the ring and the
 implementation names of the stages before its first stage, and refuses a run
 whose steps they would stop; the run directory then stays as it was. `doctor`
 reports the same problems for the steps that `[run] stop_after` configures.
 
 An inner routable port that the `component` pattern does not match ends a wire
 of the inner circuit, as a port of an inner qubit does.
+
+The detail grid, `[grid] capacity_cells_x` and `capacity_cells_y` times
+`detail_factor`, may have at most 25,000,000 cells. `plan` and `doctor` refuse a
+larger grid before the first stage; `docs/configuration.md` explains the limit.
 
 The planning stages solve with HiGHS unless `[stages.solver] backend` or the
 environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and
