@@ -363,15 +363,25 @@ TEST(HighsBackend, ReportsAFeasibleSolveOnlyWithValuesThatHoldEveryRow) {
 }
 
 TEST(HighsBackend, ReportsTheIncumbentOfASearchThatALimitStops) {
-  // A cover of 3000 binaries has a feasible point within moments, and its
-  // optimum lies far beyond the limit. The search stops at the limit with an
+  // A cover of 3000 binaries has a feasible point once presolve is done, and
+  // its optimum lies far beyond every limit below: after 30 seconds the root
+  // relaxation is not solved. The search stops at the limit with an
   // incumbent, which the backend reports as feasible, with a value for each
   // variable that holds every row.
+  //
+  // HiGHS checks the limit before its first heuristics, so on a slow machine,
+  // such as a coverage build, a limit can stop the search before it has an
+  // incumbent. The test then raises the limit.
   const auto model = largeCover(true);
-  SolveOptions options;
-  options.timeLimit = 1.0;
-
-  const auto solution = makeHighsBackend()->solve(model, options);
+  Solution solution;
+  for (const double limit : {1.0, 4.0, 16.0, 64.0}) {
+    SolveOptions options;
+    options.timeLimit = limit;
+    solution = makeHighsBackend()->solve(model, options);
+    if (solution.status != SolveStatus::Error) {
+      break;
+    }
+  }
 
   ASSERT_EQ(solution.status, SolveStatus::Feasible) << solution.message;
   ASSERT_EQ(solution.values.size(), model.variableCount());
