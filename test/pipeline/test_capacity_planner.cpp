@@ -681,27 +681,51 @@ chainsPerTarget(const CapacityPlanT& plan) {
 
 TEST(CapacityPlanner, PutsEveryTargetOnOneChain) {
   // The Global stage asks one wire of each target over its chain, so a
-  // target on two chains would ask for its wire twice.
+  // target on two chains would ask for its wire twice, and a target on no
+  // chain would ask for none.
   const auto pinched = pinchedCorridorConfig();
   const auto alcove = twoPinchConfig(true);
-  for (const auto& [name, plan] :
-       std::vector<std::pair<std::string, CapacityPlanT>>{
-           {"mini", planMini()},
-           {"blocked approach",
-            makeWatershedPlanner()->run(blockedApproachChip(),
-                                        test::miniConfig(), {})},
-           {"pinched corridor", makeWatershedPlanner()->run(
-                                    pinchedCorridorChip(pinched), pinched, {})},
+  for (const auto& [name, chip, config] :
+       std::vector<std::tuple<std::string, ChipT, ConfigT>>{
+           {"mini", test::miniChip(), test::miniConfig()},
+           {"blocked approach", blockedApproachChip(), test::miniConfig()},
+           {"pinched corridor", pinchedCorridorChip(pinched), pinched},
            {"alcove with a target",
-            makeWatershedPlanner()->run(
-                twoPinchChip(alcove, 20.0, 40.0, Alcove::WithTarget), alcove,
-                {})}}) {
+            twoPinchChip(alcove, 20.0, 40.0, Alcove::WithTarget), alcove}}) {
     SCOPED_TRACE(name);
-    const auto chains = chainsPerTarget(plan);
-    EXPECT_FALSE(chains.empty());
-    for (const auto& [port, count] : chains) {
-      EXPECT_EQ(count, 1U) << "port " << port;
+    const auto chains =
+        chainsPerTarget(makeWatershedPlanner()->run(chip, config, {}));
+    const auto scene = buildScene(chip, config);
+    ASSERT_FALSE(scene.targetPort.empty());
+    for (const auto port : scene.targetPort) {
+      const auto found = chains.find(port);
+      EXPECT_NE(found, chains.end()) << "port " << port;
+      if (found != chains.end()) {
+        EXPECT_EQ(found->second, 1U) << "port " << port;
+      }
     }
+  }
+}
+
+TEST(CapacityScene, RefusesTwoTargetsOnOneCell) {
+  // A chain puts the port of a target cell on it. Of two ports whose targets
+  // share a cell, one would be on no chain, so the stage refuses the chip.
+  auto chip = test::miniChip();
+  const auto original = std::ranges::find_if(
+      chip.ports, [](const auto& port) { return port->label == "Q1.port0"; });
+  ASSERT_NE(original, chip.ports.end());
+  auto twin = std::make_unique<flatbuffers::design::PortT>(**original);
+  twin->label = "Q1.twin";
+  chip.ports.push_back(std::move(twin));
+
+  try {
+    static_cast<void>(buildScene(chip, test::miniConfig()));
+    FAIL() << "two targets on one cell were accepted";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_STREQ(error.what(),
+                 "the targets of the ports Q1.port0 and Q1.twin lie on one "
+                 "cell of the detail grid; a larger [grid] detail_factor "
+                 "makes the cells smaller");
   }
 }
 

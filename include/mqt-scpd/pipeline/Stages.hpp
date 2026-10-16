@@ -99,8 +99,9 @@ public:
    * @return The global routing.
    * @throws std::invalid_argument When the ring of the configuration does not
    * fit the chip, or when the capacity plan does not fit the chip: an index
-   * names no node or no port, a chain leads back into itself, or a target
-   * lies on two chains or twice on one.
+   * names no node or no port, a chain leads back into itself or reaches a
+   * node twice, or a target lies on two chains or twice on one; or when two
+   * ports of one lattice meet it at one node.
    */
   [[nodiscard]] virtual GlobalRoutingT run(const ChipT& chip,
                                            const CapacityPlanT& capacity,

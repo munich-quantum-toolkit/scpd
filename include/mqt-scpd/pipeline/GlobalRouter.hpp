@@ -88,10 +88,12 @@ innerCircuitOf(const ChipT& chip, const ConfigT& config);
  * an inner resonator included: the assignment places no feed for it.
  *
  * The wires to a launcher pass the gates of the capacity chains: the wires of
- * the ring ports behind a gate and the inner wires that surface there. When
- * the gates have no room for all of them, the model has no solution. The
- * router then solves a second model, in which a ring port may go without room
- * at a penalty, and counts each ring port without room as a fail. A port lies
+ * the ring ports behind a gate and the inner wires that surface there. The
+ * ring ports take the room of a gate first. Where the inner wires find no room
+ * left, their targets stay unreached and count as fails. Where the gates have
+ * no room for the ring ports alone, the model has no solution. The router then
+ * solves a second model, in which a ring port may go without room at a
+ * penalty, and counts each ring port without room as a fail. A port lies
  * on one chain, and a gate on several chains holds the wires of all of them.
  * Only the model checks a gate with some room: a chip without an inner
  * circuit, or without a lattice to solve it on, has no model, and the model
@@ -102,7 +104,10 @@ innerCircuitOf(const ChipT& chip, const ConfigT& config);
  * Where its chain has no launcher, or a gate without room between the port
  * and the launcher, the port counts as a fail, also on a chip without an inner
  * circuit. The ring end of a bridge may be cut off: it needs a way only where
- * an inner wire surfaces there.
+ * an inner wire surfaces there. The router checks only the ring ports that a
+ * chain carries. The Capacity stage leaves a port off every chain only where
+ * it finds no free cell for the target of the port, and the Corridor stage
+ * then counts the wire of the port as unrouted.
  *
  * @return The router.
  */

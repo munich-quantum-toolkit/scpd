@@ -183,7 +183,7 @@ def _square(label: int, x0: float, y0: float, x1: float, y1: float) -> Partition
 
 
 def test_the_blocked_cells_leave_out_what_is_too_thin_to_block(run: RunDirectory) -> None:
-    """A strip of one cell between two partitions is no blockage; a block of four cells is."""
+    """A strip of one cell between two partitions is not a blockage; a block of four cells is."""
     grid = GridExtentT(width=12, height=12, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
     # Columns 0 to 4 and 6 to 11 are free, except a block of four by four cells at 7 to 10 and 4 to 7.
     partitions = [
@@ -375,6 +375,12 @@ def test_a_feedline_alone_is_something_to_draw() -> None:
     assert not PlanningGeometry(feedlines=[Feedline(points=[(0.0, 0.0), (1.0, 0.0)])]).is_empty()
 
 
+def test_blocked_cells_alone_are_something_to_draw() -> None:
+    """A global step without an inner circuit still has a picture: the cells the grid blocked."""
+    square = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)]
+    assert not PlanningGeometry(blocked=[square]).is_empty()
+
+
 def test_the_corridor_picture_draws_the_feedlines_of_its_assignment(run: RunDirectory) -> None:
     """The wires of the resonators start at the feeds the feedlines pass, so both are drawn together."""
     chip = chip_of(run)
@@ -467,7 +473,7 @@ def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:
     """The artifact has to be the one of the stage it is drawn as."""
     with pytest.raises(PlanningError, match="not a global routing"):
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "global")
-    with pytest.raises(PlanningError, match="no planning stage"):
+    with pytest.raises(PlanningError, match="not a planning stage"):
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "detail")
 
 

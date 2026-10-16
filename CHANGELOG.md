@@ -14,17 +14,21 @@ releases may include breaking changes.
 
 - 📝 Add a configuration reference that lists every key of `config.toml` with
   its default and meaning ([#140]) ([**@FeldmeierMichael**])
-- ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory:
-  `--stop-after` and `[run] stop_after` end a run after a step, `--stage` runs
-  one step again on the copies the run carries and refuses it when the chip or a
-  configuration section that an earlier step read has changed since that step,
-  and `-v`, `-vv` and `-vvv` show the steps, the items and the log of HiGHS. A
-  run prints one block per stage with a live progress line on a terminal, which
-  `--no-progress` turns off, in the format of `docs/terminal_output.md`. Add
-  `list-algorithms`, and `plot` and `render` with `--stage` and `--run-dir` for
-  the planning stages, which refuse an artifact whose inputs have changed since;
-  the assign and corridor pictures show the feedline chains ([#140])
-  ([**@FeldmeierMichael**])
+- ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory
+  ([#140]) ([**@FeldmeierMichael**]):
+  - `--stop-after` and `[run] stop_after` end a run after a step.
+  - `--stage` runs one step again on the copies that the run carries. It refuses
+    the step when the chip or a configuration section that an earlier step read
+    has changed since that step.
+  - `-v`, `-vv` and `-vvv` show the steps, the items and the log of HiGHS.
+  - A run prints one block per stage in the format of `docs/terminal_output.md`.
+    On a terminal, each block has a live progress line, which `--no-progress`
+    turns off.
+- ✨ Add `list-algorithms`, and `--stage` and `--run-dir` of `plot` and `render`
+  for the planning stages ([#140]) ([**@FeldmeierMichael**]):
+  - `plot` and `render` refuse an artifact whose inputs have changed since its
+    step, and `inspect` prints such an artifact after a warning.
+  - The assign and corridor pictures show the feedline chains.
 - 🎨 Draw `plot` pictures like a mask in a layout tool ([#140])
   ([**@FeldmeierMichael**]):
   - Metal is hatched and has an inner contour on a light substrate. A picture
@@ -58,8 +62,9 @@ releases may include breaking changes.
   through the partitions over the border slots inside the launcher ring, which
   are the slots that the Capacity stage budgets. It keeps the crossings of two
   wires one crossing pitch apart. The stages write the artifacts
-  `01-capacity.fb` to `04-corridor.fb`, and refuse a detail grid of more than
-  25,000,000 cells ([#140]) ([**@FeldmeierMichael**])
+  `01-capacity.fb` to `04-corridor.fb`. They refuse a detail grid of more than
+  25,000,000 cells, and a chip on which the targets of two ports lie on one
+  detail cell ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdMilp`: a linear model, the HiGHS backend with a progress and
   log observer, MPS output, and the choice of the backend through
   `[stages.solver] backend` or `SCPD_SOLVER`: HiGHS by default, and Gurobi
@@ -67,9 +72,9 @@ releases may include breaking changes.
   `[stages.solver] threads` sets the threads of a solve, and both backends
   report the bound, the gap and the node count of a solve ([#140])
   ([**@FeldmeierMichael**])
-- ➕ Add the C++ dependencies HiGHS 1.11.0 and Boost.Polygon 1.89.0, both
-  fetched at configure time and linked static, and the Python dependency `rich`
-  ([#140]) ([**@FeldmeierMichael**])
+- ➕ Add the C++ dependencies HiGHS 1.11.0, linked static, and the header-only
+  Boost.Polygon and Boost.Config of Boost 1.89.0, all fetched at configure time,
+  and the Python dependency `rich` ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add bridge pairs and components to the configuration: the `bridge_pair` and
   `component` patterns, the `[[ports.bridge_pairs]]` rules, the stage sections
   and `[run]` ([#140]) ([**@FeldmeierMichael**])
@@ -117,13 +122,15 @@ releases may include breaking changes.
   capacity step blocks no border of its grid, so the launchers on the edge stay
   free. A configuration that sets them still loads, and `doctor` and `plan` warn
   about each key ([#140]) ([**@FeldmeierMichael**])
-- 🎨 Start the result line of `plot`, `render` and `inspect` with `✓` and an
-  input or stage error of every command except `doctor` with `✗`, show the
-  `bridge_pair` pattern and the reachable solvers in `doctor`, and check there,
-  as `plan` does before its first stage, what would stop a run of the steps up
-  to `[run] stop_after`; without that key `doctor` checks all four steps and
-  fails a configuration without `launcher_target` ([#140])
-  ([**@FeldmeierMichael**])
+- 🎨 Change the output of the commands ([#140]) ([**@FeldmeierMichael**]):
+  - `plot`, `render` and `inspect` start their result line with `✓`.
+  - Every command except `doctor` starts the line of an input or stage error
+    with `✗`.
+  - `doctor` shows the `bridge_pair` pattern and the solvers it can reach.
+  - `doctor` checks what would stop a run of the steps up to `[run] stop_after`,
+    as `plan` does before its first stage. Without that key, `doctor` checks all
+    four steps and fails a configuration without `launcher_target`.
+  - `doctor` warns about each removed key on a line that starts with `WARNING:`.
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that

@@ -54,7 +54,7 @@ std::optional<std::string> unknownName(const Registry<Interface>& registry,
     known += known.empty() ? "" : ", ";
     known += registered;
   }
-  return std::format("{} '{}' is no known implementation; the registered "
+  return std::format("{} '{}' is not a known implementation; the registered "
                      "ones are {}",
                      key, name, known.empty() ? "none" : known);
 }

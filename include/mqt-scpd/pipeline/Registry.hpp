@@ -74,8 +74,8 @@ public:
         known += registered;
       }
       throw std::invalid_argument(std::format(
-          "'{}' is no known implementation; the registered ones are {}", name,
-          known.empty() ? "none" : known));
+          "'{}' is not a known implementation; the registered ones are {}",
+          name, known.empty() ? "none" : known));
     }
     return found->second();
   }

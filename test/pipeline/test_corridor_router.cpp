@@ -692,6 +692,24 @@ TEST(CorridorRouter, RipsUpFewerThanHalfTheWires) {
   EXPECT_EQ(received.fails, 0U);
 }
 
+TEST(CorridorRouter, MovesOneOfTwoWiresAside) {
+  // Two wires fed at slots of the fixture, found by a search over random
+  // feeds. The first wire takes the room that the second one needs. Half of
+  // two connections leaves no wire to rip up, but the stage still lets each
+  // move the other aside, and routes both.
+  const auto planned = fedAtSlots({{57, "Q2.port1"}, {210, "C12.port0"}});
+  Received received;
+
+  const auto routing = routeMini(planned, receiving(received, Detail::Steps));
+
+  EXPECT_NE(std::ranges::find(received.steps,
+                              std::format("rounds 12{}max relaxation 1 of 4",
+                                          FIGURE_SEPARATOR)),
+            received.steps.end());
+  EXPECT_EQ(unroutedOf(routing), 0U);
+  EXPECT_EQ(received.fails, 0U);
+}
+
 TEST(CorridorRouter, RoutesAWireThatCrossesBordersOnItsOwn) {
   // Which slots exist does not depend on which wires are routed, so a wire
   // that crosses borders among all the others still has its way alone.
@@ -1000,7 +1018,7 @@ void expectTheRulesHold(const Planned& planned, const CorridorRoutingT& routing,
       EXPECT_TRUE(borders.contains(std::minmax(corridor.partitions[index],
                                                corridor.partitions[index + 1])))
           << "wire " << wire << " leaves partition "
-          << corridor.partitions[index] << " into one that is no neighbour";
+          << corridor.partitions[index] << " into one that is not a neighbour";
     }
   }
   expectOneWirePerSlot(routing);

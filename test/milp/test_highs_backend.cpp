@@ -106,11 +106,11 @@ TEST(HighsBackend, CountsABoundAboveTheInfiniteBoundAsNone) {
 }
 
 TEST(HighsBackend, RethrowsWhatTheObserverThrowsWhileHighsRejectsTheModel) {
-  // HiGHS rejects a matrix value from 1e15 on and logs why. The observer of
-  // that log throws, and the exception leaves the backend.
+  // HiGHS rejects a matrix value from INFINITE_BOUND on and logs why. The
+  // observer of that log throws, and the exception leaves the backend.
   Model model("rejected");
   const auto x = model.addContinuous("x", 0.0, 1.0, 1.0);
-  model.addLessOrEqual("huge", 1.0e16 * x, 1.0);
+  model.addLessOrEqual("huge", 1.0e21 * x, 1.0);
   SolveOptions options;
   options.observer.log = [](const std::string_view) {
     throw std::runtime_error("stopped by the observer");
@@ -227,18 +227,45 @@ TEST(HighsBackend, FindsAModelWithoutVariablesInfeasibleWhenARowFails) {
   EXPECT_TRUE(solution.values.empty());
 }
 
-TEST(HighsBackend, SolvesAModelWithACoefficientThatHighsDrops) {
-  // HiGHS drops a coefficient of 1e-10 with a warning. The model it keeps is
-  // still the model to solve: x <= 5, so the maximum of x is 5.
+TEST(HighsBackend, SolvesTheModelWithoutTheCoefficientsItDrops) {
+  // The model drops a coefficient of 1e-10, so the row is x = 0 for HiGHS as
+  // for the MPS text of every other backend. With the coefficient, x = 1e-10
+  // y with y up to 1e10 would let x reach 1.
   Model model("tiny");
   const auto x = model.addContinuous("x", 0.0, 10.0, 1.0);
-  const auto y = model.addContinuous("y", 0.0, 10.0);
+  const auto y = model.addContinuous("y", 0.0, 1.0e10);
   model.setSense(Sense::Maximize);
-  model.addLessOrEqual("row", (1.0 * x) + (1.0e-10 * y), 5.0);
+  model.addEqual("row", (1.0 * x) - (1.0e-10 * y), 0.0);
 
   const auto solution = makeHighsBackend()->solve(model, {});
   ASSERT_EQ(solution.status, SolveStatus::Optimal) << solution.message;
-  EXPECT_NEAR(solution.objective, 5.0, 1.0e-6);
+  EXPECT_NEAR(solution.objective, 0.0, 1.0e-9);
+}
+
+TEST(HighsBackend, KeepsACoefficientThatHighsRefusesByDefault) {
+  // HiGHS refuses a coefficient of 1e16 by default. The model keeps it:
+  // 1e16 x <= 1e16, so the maximum of x is 1.
+  Model model("huge");
+  const auto x = model.addContinuous("x", 0.0, 10.0, 1.0);
+  model.setSense(Sense::Maximize);
+  model.addLessOrEqual("row", 1.0e16 * x, 1.0e16);
+
+  const auto solution = makeHighsBackend()->solve(model, {});
+  ASSERT_EQ(solution.status, SolveStatus::Optimal) << solution.message;
+  EXPECT_NEAR(solution.objective, 1.0, 1.0e-6);
+}
+
+TEST(HighsBackend, RefusesThreadsThatHighsCannotCount) {
+  // HiGHS counts threads in a 32-bit integer, so more than it can count are
+  // no count of threads at all.
+  Model model("threads");
+  static_cast<void>(model.addInteger("x", 0.0, 3.0, 1.0));
+  SolveOptions options;
+  options.threads = 3'000'000'000U;
+
+  const auto solution = makeHighsBackend()->solve(model, options);
+  EXPECT_EQ(solution.status, SolveStatus::Error);
+  EXPECT_EQ(solution.message, "HiGHS refused 3000000000 threads");
 }
 
 TEST(HighsBackend, WritesItsLogOnlyToAnObserverThatAsksForIt) {

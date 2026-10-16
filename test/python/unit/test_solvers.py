@@ -393,6 +393,17 @@ def test_gurobi_is_available_when_a_licence_can_be_acquired(monkeypatch: pytest.
     assert gurobi.disposed == 1
 
 
+def test_gurobi_is_unavailable_without_a_licence_and_releases_its_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a licence the backend is unavailable, says why, and still releases the environment."""
+    gurobi = with_gurobi(monkeypatch, FakeGurobi())
+    gurobi.licensed = False
+
+    assert available() == (False, "gurobipy has no usable licence (no Gurobi license found)")
+    assert gurobi.released == ["environment"]
+
+
 def test_gurobi_returns_the_values_in_the_order_of_the_names(monkeypatch: pytest.MonkeyPatch) -> None:
     """Gurobi reads the MPS text, honours the limits and answers by variable name."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi())

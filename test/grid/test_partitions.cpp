@@ -144,7 +144,7 @@ TEST(Partitions, TreatsAnObstacleAsNoLabelAtAll) {
 
 TEST(Partitions, NeverTracesAReservedCellAsAPartition) {
   // A reserved cell belongs to the approach of a port. Even where it is free,
-  // it is no partition and borders none.
+  // it is not a partition and borders none.
   const auto grid = unitGrid(10, 6);
   const BitGrid free(10, 6);
   auto labels = splitLeftAndRight(grid, 4);

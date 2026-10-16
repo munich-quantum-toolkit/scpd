@@ -29,6 +29,12 @@ namespace mqt::scpd::milp {
 /// them, so every backend reads the same model.
 inline constexpr double INFINITE_BOUND = 1.0e20;
 
+/// The largest coefficient that is not a term. A coefficient this small
+/// carries no information at the tolerances of a solver, so the model drops
+/// it, and every backend reads the model without it. The value is the one
+/// up to which HiGHS drops a coefficient by default.
+inline constexpr double COEFFICIENT_EPSILON = 1.0e-9;
+
 /// Whether a variable ranges over the reals or the integers.
 enum class VarType : std::uint8_t {
   /// A real number between its bounds.
@@ -489,11 +495,14 @@ private:
 
 /// What a solver made of a model.
 enum class SolveStatus : std::uint8_t {
-  /// A solution that the backend proved optimal within its relative gap
-  /// tolerance. With SolveOptions::relativeGap at zero, the tolerance is the
+  /// A solution that the backend proved optimal within its gap tolerances.
+  /// With SolveOptions::relativeGap at zero, the relative tolerance is the
   /// default of the backend: 1e-4 for HiGHS (`mip_rel_gap`) and for Gurobi
   /// (`MIPGap`). The objective and the proven bound then differ by at most
-  /// this fraction of the objective.
+  /// this fraction of the objective. A backend also stops when the two differ
+  /// by less than its absolute tolerance: 1e-6 for HiGHS (`mip_abs_gap`) and
+  /// 1e-10 for Gurobi (`MIPGapAbs`). Near an objective of zero, the absolute
+  /// tolerance decides.
   Optimal,
   /// A feasible solution that was not proven optimal, usually because a limit
   /// was reached.

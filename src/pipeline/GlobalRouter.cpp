@@ -67,9 +67,10 @@ std::unordered_map<std::string, std::uint32_t> portsByLabel(const ChipT& chip) {
 
 /// Refuses a capacity plan whose chains the stage cannot walk: a chain or a
 /// link that names a node the plan does not carry, a target that names a port
-/// the chip does not carry, a chain that leads back into itself, or a target
-/// on two chains or twice on one. The Capacity stage writes no such plan, so
-/// the plan is from another chip or was edited.
+/// the chip does not carry, a chain that leads back into itself or reaches a
+/// node twice, or a target on two chains or twice on one. The Capacity stage
+/// writes no such
+/// plan, so the plan is from another chip or was edited.
 void checkCapacityPlan(const ChipT& chip, const CapacityPlanT& capacity) {
   const auto nodes = capacity.nodes.size();
   const auto refuse = [](const std::string& what) {
@@ -96,7 +97,7 @@ void checkCapacityPlan(const ChipT& chip, const CapacityPlanT& capacity) {
     }
   }
   // A depth-first walk that meets a node it is still inside has found a
-  // cycle. Chains may share a subtree, so a node it has left is no cycle.
+  // cycle. Chains may share a subtree, so a node it has left is not on a cycle.
   enum class Visit : std::uint8_t { Unseen, Inside, Left };
   std::vector<Visit> visits(nodes, Visit::Unseen);
   for (const auto root : capacity.chains) {
@@ -124,11 +125,14 @@ void checkCapacityPlan(const ChipT& chip, const CapacityPlanT& capacity) {
       }
     }
   }
-  // The stage asks one wire of each target over its chain, so a target on
-  // two chains would ask for its wire twice.
+  // A chain is a tree: one that reaches a node over two paths would count
+  // the gates behind it twice. The stage asks one wire of each target over
+  // its chain, so a target on two chains would ask for its wire twice.
   std::unordered_map<std::uint32_t, std::size_t> chainOfTarget;
   for (std::size_t chain = 0; chain < capacity.chains.size(); ++chain) {
+    std::vector<bool> reached(nodes, false);
     std::vector<std::uint32_t> pending{capacity.chains[chain]};
+    reached[capacity.chains[chain]] = true;
     while (!pending.empty()) {
       const auto& node = *capacity.nodes[pending.back()];
       pending.pop_back();
@@ -143,7 +147,13 @@ void checkCapacityPlan(const ChipT& chip, const CapacityPlanT& capacity) {
                                 first->second, chain, label));
         }
       }
-      pending.insert(pending.end(), node.next.begin(), node.next.end());
+      for (const auto next : node.next) {
+        if (reached[next]) {
+          refuse(std::format("chain {} reaches node {} twice", chain, next));
+        }
+        reached[next] = true;
+        pending.push_back(next);
+      }
     }
   }
 }
@@ -279,7 +289,7 @@ bool throughArtwork(const ChipT& chip, const fbg::Point& from,
       }
     }
     // A cut through a vertex is found on both of its sides. The empty piece
-    // between the two would be tested at the vertex, which is no test.
+    // between the two would be tested at the vertex, which is not a test.
     std::ranges::sort(cuts);
     cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
     const auto pieces = cuts.size() - 1;
@@ -407,6 +417,14 @@ Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
                                  anchors[index].y() - COORDINATE_EPSILON) -
         rows.begin());
     const auto node = at(column, row);
+    // Each port needs a node of its own: the circuit names a connection by
+    // the port of its end node, and two ports on one node would give a wire
+    // to one of them that the model gave to the other.
+    if (const auto held = lattice.nodes[node].port; held.has_value()) {
+      throw std::invalid_argument(std::format(
+          "the ports {} and {} meet the lattice at one node",
+          chip.ports[*held]->label, chip.ports[ports[index]]->label));
+    }
     lattice.nodes[node].port = ports[index];
     lattice.nodeOfPort.emplace(ports[index], node);
   }
@@ -538,7 +556,9 @@ public:
     // The first model asks the chains for room for every ring port behind
     // their gates. Only where the gates have no room for all of them does a
     // second model let ring ports go short, so that a chip with room keeps
-    // the circuit of the first.
+    // the circuit of the first. Every variable of the model is bounded, so a
+    // backend that finds no solution reports the model infeasible and never
+    // only "infeasible or unbounded".
     std::vector<milp::Var> unreached;
     std::vector<Shortfall> crowded;
     double penalty = 0.0;
@@ -698,7 +718,7 @@ private:
         continue;
       }
       auto lattice = buildLattice(chip, ports, reach);
-      // A single node has no edge, so it is no lattice. Everything else
+      // A single node has no edge, so it is not a lattice. Everything else
       // stays, a chain whose ports are all targets included: that is a demand
       // without supply, and the artifact shows it as a lattice on which
       // nothing is selected.
@@ -726,18 +746,21 @@ private:
     return lattices;
   }
 
-  /// Collects the target ports of a chain, from @p node down.
+  /// Collects the target ports of a chain, from @p node down, each node
+  /// before the nodes it leads to.
   static void collectTargets(const CapacityPlanT& capacity,
                              const std::uint32_t node,
                              std::vector<std::uint32_t>& ports,
                              std::unordered_set<std::uint32_t>& seen) {
-    const auto& entry = *capacity.nodes[node];
-    if (entry.kind == fba::CapacityElement::Target &&
-        seen.insert(entry.id).second) {
-      ports.push_back(entry.id);
-    }
-    for (const auto next : entry.next) {
-      collectTargets(capacity, next, ports, seen);
+    std::vector<std::uint32_t> pending{node};
+    while (!pending.empty()) {
+      const auto& entry = *capacity.nodes[pending.back()];
+      pending.pop_back();
+      if (entry.kind == fba::CapacityElement::Target &&
+          seen.insert(entry.id).second) {
+        ports.push_back(entry.id);
+      }
+      pending.insert(pending.end(), entry.next.rbegin(), entry.next.rend());
     }
   }
 
@@ -881,9 +904,10 @@ private:
     // partitioning, and the stage has to say which target that was; a hard
     // constraint would only say "infeasible" and lose the rest of the
     // circuit. The penalty is above the cost of all edges together, so the
-    // model leaves a target unreached only when no wire can reach it, and
-    // the objective of a circuit that reaches every target is the one the
-    // hard constraint would give.
+    // model leaves a target unreached only when no wire can reach it, or when
+    // the gates on the way have no room for its wire after the ring ports
+    // took theirs, and the objective of a circuit that reaches every target
+    // is the one the hard constraint would give.
     for (const auto target : circuit.targets) {
       const auto carried =
           std::ranges::any_of(lattices, [&](const Lattice& lattice) {
@@ -1382,7 +1406,7 @@ private:
         }
         // The target end is where the wire ends; the other end is its source.
         // A wire between two bridges has no target end. The flow leaves its
-        // source, and a port that is no target carries one wire, so the end
+        // source, and a port that is not a target carries one wire, so the end
         // with an outgoing arc is the source.
         const auto targetFirst =
             targets.contains(ends[0]) ||

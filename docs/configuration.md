@@ -177,7 +177,10 @@ cell narrower than about 0.7 wire spacings rules this out.
 A solve that the report calls `optimal` is optimal within the relative gap: its
 objective and the best bound the solver proved differ by at most that fraction
 of the objective. With `relative_gap` at `0.0`, the gap is the default of the
-backend, which is `1e-4` for HiGHS (`mip_rel_gap`) and for Gurobi (`MIPGap`).
+backend, which is `1e-4` for HiGHS (`mip_rel_gap`) and for Gurobi (`MIPGap`). A
+solve also stops when the objective and the bound differ by less than the
+absolute gap of the backend: `1e-6` for HiGHS (`mip_abs_gap`) and `1e-10` for
+Gurobi (`MIPGapAbs`). For an objective near zero, the absolute gap decides.
 
 HiGHS and Gurobi can report different optimal solutions: their objectives can
 differ by up to the relative gap, and between solutions of equal objective each
@@ -197,11 +200,11 @@ of `1024` is the largest value that Gurobi accepts.
 
 ## `[stages.corridor]`
 
-| Key              | Default | Meaning                                                                                                                                                                                |
-| ---------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                                                          |
-| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward; at least `1`                                                                                                       |
-| `max_relaxation` | `4`     | How many neighbouring connections along a sweep a connection without a way may rip up, and how many wires in its way it may move aside; the stage uses fewer than half the connections |
+| Key              | Default | Meaning                                                                                                                                                                 |
+| ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                                           |
+| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward; at least `1`                                                                                        |
+| `max_relaxation` | `4`     | How many neighbouring connections along a sweep a connection without a way may rip up, and how many wires in its way it may move aside; the stage limits it (see below) |
 
 The later sweeps let a connection without a way take room that another
 connection has not claimed yet. A sweep can take a way from a connection that
@@ -210,16 +213,18 @@ the plan of the round with the fewest fails, and goes back to it when the last
 round ends with more. The fails of a round count every connection without a way
 at its end, also one that the round ripped up near its end and had no sweep left
 to place again; the stage takes the plan of the best round as it is. Within a
-sweep, a connection without a way also raises the price of the slots it wanted,
-so that the next sweeps leave them to it. The pass that moves wires aside does
-this, so with `max_relaxation` at `0`, no price rises.
+sweep, a connection without a way also raises the price of the slots in its way
+that another wire holds, so that the next sweeps leave them to it. The pass that
+moves wires aside does this, so with `max_relaxation` at `0`, no price rises.
 
-The stage uses a `max_relaxation` of fewer than half the connections. A
-connection that may rip up all the others takes their room, they find no way
-back, and every round repeats this. With the default of `4`, the eight benchmark
-chips route every wire within two rounds. `2` is the smallest value that routes
-every wire there, in up to four rounds. A value above `4` routes them in two
-rounds as well, but each round takes longer.
+The stage limits `max_relaxation` to a value below half the number of
+connections. A connection that may rip up all the others takes their room, they
+find no way back, and every round repeats this. With two or more connections,
+the limit is at least `1`, so that two connections that want one slot can still
+move each other aside. With the default of `4`, the eight benchmark chips route
+every wire within two rounds. `2` is the smallest value that routes every wire
+there, in up to four rounds. A value above `4` routes them in two rounds as
+well, but each round takes longer.
 
 ## `[run]`
 

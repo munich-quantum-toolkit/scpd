@@ -28,6 +28,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::milp {
@@ -226,12 +227,21 @@ public:
       solution.message = "HiGHS refused its own output option";
       return solution;
     }
-    // HiGHS counts a bound as infinite from its own option on. The option
-    // follows the model, so a change to INFINITE_BOUND reaches HiGHS too.
-    if (highs.setOptionValue("infinite_bound", INFINITE_BOUND) !=
-        HighsStatus::kOk) {
-      solution.message = "HiGHS refused its infinite bound option";
-      return solution;
+    // HiGHS counts a bound as infinite from its own option on, drops a
+    // coefficient up to its smallest matrix value, and refuses one from its
+    // largest. The options follow the model, so HiGHS reads the model that
+    // the MPS text carries to every other backend: by default, it would
+    // refuse coefficients from 1e15. The smallest matrix value stays at the
+    // default of HiGHS: a smaller one changes the assignments of the benchmark
+    // chips.
+    for (const auto& [option, value] :
+         {std::pair{"infinite_bound", INFINITE_BOUND},
+          std::pair{"small_matrix_value", COEFFICIENT_EPSILON},
+          std::pair{"large_matrix_value", INFINITE_BOUND}}) {
+      if (highs.setOptionValue(option, value) != HighsStatus::kOk) {
+        solution.message = std::format("HiGHS refused its option {}", option);
+        return solution;
+      }
     }
 
     // An exception from an observer must not unwind through HiGHS. It is kept,
@@ -278,22 +288,37 @@ public:
       static_cast<void>(highs.startCallback(kCallbackIpmInterrupt));
       static_cast<void>(highs.startCallback(kCallbackMipInterrupt));
     }
-    if (options.timeLimit > 0.0) {
-      static_cast<void>(highs.setOptionValue("time_limit", options.timeLimit));
+    // HiGHS refuses a value outside the range of an option, and a solve
+    // without the limit, the gap or the threads it was asked for is not the
+    // solve that was asked for.
+    if (options.timeLimit > 0.0 &&
+        highs.setOptionValue("time_limit", options.timeLimit) !=
+            HighsStatus::kOk) {
+      solution.message =
+          std::format("HiGHS refused a time limit of {}s", options.timeLimit);
+      return solution;
     }
-    if (options.relativeGap > 0.0) {
-      static_cast<void>(
-          highs.setOptionValue("mip_rel_gap", options.relativeGap));
+    if (options.relativeGap > 0.0 &&
+        highs.setOptionValue("mip_rel_gap", options.relativeGap) !=
+            HighsStatus::kOk) {
+      solution.message = std::format("HiGHS refused a relative gap of {}",
+                                     options.relativeGap);
+      return solution;
     }
-    if (options.threads > 0) {
-      static_cast<void>(highs.setOptionValue(
-          "threads", static_cast<HighsInt>(options.threads)));
+    if (options.threads > 0 &&
+        (options.threads >
+             static_cast<std::uint32_t>(std::numeric_limits<HighsInt>::max()) ||
+         highs.setOptionValue("threads",
+                              static_cast<HighsInt>(options.threads)) !=
+             HighsStatus::kOk)) {
+      solution.message =
+          std::format("HiGHS refused {} threads", options.threads);
+      return solution;
     }
     prepareScheduler(options.threads);
 
-    // HiGHS warns, for example, when it drops a coefficient below its own
-    // threshold of 1e-9, and then solves the model it kept. Only an error is
-    // a refusal.
+    // HiGHS warns about a model it accepts, for example about the range of
+    // its coefficients, and then solves it. Only an error is a refusal.
     if (highs.passModel(highsModel) == HighsStatus::kError) {
       // HiGHS logs why it rejects the model, and the observer of that log
       // may have thrown.
@@ -331,7 +356,7 @@ public:
          highs.getInfo().primal_solution_status != kSolutionStatusFeasible)) {
       // A limit was reached before a feasible point was found. HiGHS may still
       // hand back values, such as the start of a simplex solve, but they break
-      // rows, so they are no feasible answer however the status reads.
+      // rows, so they are not a feasible answer however the status reads.
       solution.status = SolveStatus::Error;
       solution.message = "HiGHS stopped at a limit without a feasible solution";
       return solution;

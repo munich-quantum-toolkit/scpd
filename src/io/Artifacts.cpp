@@ -118,11 +118,22 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
         linked = false;
       }
     }
-    if (node.kind == flatbuffers::artifacts::CapacityElement::Bottleneck &&
-        node.id >= plan.bottlenecks.size()) {
-      problems.push_back(
-          std::format("capacity node {} names bottleneck {} of {}", index,
-                      node.id, plan.bottlenecks.size()));
+    if (node.kind == flatbuffers::artifacts::CapacityElement::Bottleneck) {
+      // The Global stage reads the capacity of a gate from its node, and a
+      // gate on several chains has a node on each, so every node of a
+      // bottleneck has to say what the bottleneck says.
+      if (node.id >= plan.bottlenecks.size()) {
+        problems.push_back(
+            std::format("capacity node {} names bottleneck {} of {}", index,
+                        node.id, plan.bottlenecks.size()));
+      } else if (plan.bottlenecks[node.id] != nullptr &&
+                 node.capacity != plan.bottlenecks[node.id]->capacity) {
+        problems.push_back(std::format(
+            "capacity node {} lets {} through bottleneck {}, which lets {} "
+            "through",
+            index, counted(node.capacity, "wire"), node.id,
+            counted(plan.bottlenecks[node.id]->capacity, "wire")));
+      }
     }
   }
   for (std::size_t index = 0; index < plan.chains.size(); ++index) {

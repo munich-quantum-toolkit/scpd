@@ -82,13 +82,14 @@ def available() -> tuple[bool, str]:
         import gurobipy  # ruff: ignore[import-outside-top-level]  # ty: ignore[unresolved-import]
     except ImportError as error:
         return False, f"gurobipy is not installed ({error})"
+    environment = gurobipy.Env(empty=True)
     try:
-        environment = gurobipy.Env(empty=True)
         environment.setParam("OutputFlag", 0)
         environment.start()
-    except gurobipy.GurobiError as error:  # pragma: no cover - depends on the licence at hand
+    except gurobipy.GurobiError as error:
         return False, f"gurobipy has no usable licence ({error})"
-    environment.dispose()
+    finally:
+        environment.dispose()
     return True, ""
 
 

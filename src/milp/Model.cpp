@@ -23,11 +23,6 @@
 namespace mqt::scpd::milp {
 namespace {
 
-/// A coefficient below this is not a term. A coefficient this small carries
-/// no information at the tolerances of a solver. HiGHS drops coefficients up
-/// to 1e-9 itself when it receives a model, and reports that as a warning.
-constexpr double COEFFICIENT_EPSILON = 1.0e-12;
-
 /// Refuses an expression with a term or a constant that is not a finite
 /// number. A solver cannot read such a number, and the MPS text cannot carry
 /// it. @p row names the constraint of the expression, and is empty for the
@@ -103,7 +98,7 @@ std::vector<std::pair<std::size_t, double>> LinearExpr::combined() const {
     }
   }
   std::erase_if(result, [](const auto& term) {
-    return std::abs(term.second) < COEFFICIENT_EPSILON;
+    return std::abs(term.second) <= COEFFICIENT_EPSILON;
   });
   return result;
 }
@@ -225,8 +220,8 @@ void Model::addRow(const std::string_view name, const LinearExpr& expression,
     }
   }
   requireFinite(coefficients, expression.constant(), name);
-  // An infinite bound is a free side. A bound that is not a number is no side
-  // at all, and the backends would read it in different ways.
+  // An infinite bound is a free side. A bound that is not a number is not a
+  // side at all, and the backends would read it in different ways.
   if (std::isnan(lower) || std::isnan(upper)) {
     throw std::invalid_argument(
         std::format("constraint '{}' has a bound that is not a number", name));

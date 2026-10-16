@@ -156,7 +156,7 @@ TEST(MedialAxis, RefusesAMaskOfTheWrongSize) {
 
 TEST(MedialAxis, JoinsNoCellsAcrossABlockedCell) {
   // A single blocked cell on an edge splits it: the free cells on either side
-  // are no neighbors.
+  // are not neighbors.
   BitGrid mask(10, 3);
   mask.setCell(5, 1);
   const auto grid = squareGrid(10, 3);

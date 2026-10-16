@@ -205,7 +205,7 @@ def test_inspect_prints_an_artifact_as_json(tmp_path: Path, capsys: pytest.Captu
 def test_inspect_stops_quietly_when_the_reader_goes_away(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A reader such as ``head`` that closes the pipe early is no error to report."""
+    """A reader such as ``head`` that closes the pipe early is not an error to report."""
     artifact = tmp_path / "03-global.fb"
     artifact.write_bytes(
         write_artifact(
@@ -262,7 +262,7 @@ def _global_artifact(tmp_path: Path) -> Path:
 def test_a_command_stops_quietly_when_the_reader_goes_away_on_windows(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, command: str
 ) -> None:
-    """Windows reports a pipe without a reader as an invalid argument, which is no error to report either."""
+    """Windows reports a pipe without a reader as an invalid argument, which is not an error to report either."""
     arguments = {
         "inspect": ["inspect", str(_global_artifact(tmp_path))],
         "list-algorithms": ["list-algorithms"],
@@ -290,7 +290,7 @@ def test_an_invalid_argument_elsewhere_than_windows_is_an_error(
 
 
 def test_problems_exit_with_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """A missing configuration and bytes that are no artifact end with exit code 1 and a message."""
+    """A missing configuration and bytes that do not hold an artifact end with exit code 1 and a message."""
     assert main(["plot", "-c", str(tmp_path / "absent.toml"), "-o", str(tmp_path / "x.svg")]) == 1
     assert capsys.readouterr().err.startswith("✗ cannot read")
 
@@ -709,7 +709,7 @@ def test_plan_refuses_a_file_as_its_run_directory(tmp_path: Path, capsys: pytest
 
     assert plan(afile) == 1
 
-    assert f"{afile} is no run directory: it is a file" in capsys.readouterr().err
+    assert f"{afile} is not a run directory: it is a file" in capsys.readouterr().err
     assert afile.read_text(encoding="utf-8") == "notes"
 
 
@@ -827,11 +827,18 @@ def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
     assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 1
     assert "03-assign.fb carries no record of the inputs it was made from" in capsys.readouterr().err
     assert not output.exists()
+    # inspect still prints the artifact, after a warning.
+    assert main(["inspect", str(run / "03-assign.fb")]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["output_type"] == "Assignment"
+    assert "⚠ 03-assign.fb carries no record of the inputs it was made from" in captured.err
 
     assert main(["plan", "-o", str(run), "--stage", "assign", "--no-progress"]) == 0
     capsys.readouterr()
     assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 0
     capsys.readouterr()
+    assert main(["inspect", str(run / "03-assign.fb")]) == 0
+    assert not capsys.readouterr().err
 
     config = run / "config.toml"
     config.write_text(
@@ -910,7 +917,7 @@ def test_doctor_and_plan_refuse_an_unknown_solver_for_a_run_that_solves_nothing(
     """An unknown backend name is a mistake for every run, so the doctor and the run refuse it alike."""
     config = stopping_after(tmp_path, "capacity")
     monkeypatch.setenv("SCPD_SOLVER", "cplex")
-    problem = "SCPD_SOLVER: 'cplex' is no solver backend; use 'highs' or 'gurobi'"
+    problem = "SCPD_SOLVER: 'cplex' is not a solver backend; use 'highs' or 'gurobi'"
 
     assert main(["doctor", "-c", str(config)]) == 1
     assert problem in capsys.readouterr().out

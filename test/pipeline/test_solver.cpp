@@ -128,11 +128,11 @@ std::string refusalOf(const ConfigT& config) {
 
 TEST(SolveWith, RefusesABackendItDoesNotKnowAndSaysWhoNamedIt) {
   EXPECT_EQ(refusalOf(configWithBackend("cplex")),
-            "[stages.solver] backend: 'cplex' is no solver backend; use "
+            "[stages.solver] backend: 'cplex' is not a solver backend; use "
             "'highs' or 'gurobi'");
   const ScopedVariable solver("SCPD_SOLVER", "cplex");
   EXPECT_EQ(refusalOf(configWithBackend("highs")),
-            "SCPD_SOLVER: 'cplex' is no solver backend; use 'highs' or "
+            "SCPD_SOLVER: 'cplex' is not a solver backend; use 'highs' or "
             "'gurobi'");
 }
 

@@ -83,7 +83,7 @@ struct BottleneckOptions {
  * The shores are kept apart during the walk, so the two ends lie on different
  * sides of the corridor.
  *
- * Cells outside the grid are no wall. A passage between the artwork and an
+ * Cells outside the grid are not a wall. A passage between the artwork and an
  * open edge of the grid is therefore not found, and the caller blocks a border
  * of cells where the edge has to act as a wall.
  *

@@ -77,13 +77,14 @@ Warnings and failures show at every level.
 A result, an entry and most lines of `-v` are figures, joined by ` · `. A figure
 has one of these forms:
 
-| Form      | Example             | Rule                                                                                      |
-| --------- | ------------------- | ----------------------------------------------------------------------------------------- |
-| Count     | `363 partitions`    | The number, then the noun; singular only for a count of one                               |
-| Quantity  | `objective 27.84`   | The name, then the value; two decimals for a length or an objective, one for a percentage |
-| Ratio     | `routed 56/58`      | The name, then the part and the whole                                                     |
-| Verdict   | `fails 2`           | A count that should be zero: green at zero, red otherwise                                 |
-| Parameter | `max relaxation 4`  | The configuration key with spaces for underscores, then its value                         |
+| Form      | Example                 | Rule                                                                                      |
+| --------- | ----------------------- | ----------------------------------------------------------------------------------------- |
+| Count     | `363 partitions`        | The number, then the noun; singular only for a count of one                               |
+| Quantity  | `objective 27.84`       | The name, then the value; two decimals for a length or an objective, one for a percentage |
+| Ratio     | `routed 56/58`          | The name, then the part and the whole                                                     |
+| Verdict   | `fails 2`               | A count that should be zero: green at zero, red otherwise                                 |
+| Parameter | `max relaxation 4`      | The configuration key with spaces for underscores, then its value                         |
+| Limit     | `max relaxation 1 of 4` | A parameter that the stage limits: the value it uses, then `of` and the configured value  |
 
 Figures are lower case and end without a full stop. Times are seconds below a
 minute (`0.38s`), minutes and seconds below an hour (`53m 10s`), and hours and
@@ -134,8 +135,8 @@ the name of the stage, its time, what it is doing and how far it has got. A
 solve shows its objective, its gap and its node count. The live line goes away
 when the stage ends, so a log or a pipe receives the lasting lines only.
 
-The live line is off when the output is no terminal, with `--no-progress`, and
-with `TERM=dumb`. `NO_COLOR` turns colour off.
+The live line is off when the output is not a terminal, with `--no-progress`,
+and with `TERM=dumb`. `NO_COLOR` turns colour off.
 
 ## Exit Codes
 

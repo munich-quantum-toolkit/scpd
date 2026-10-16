@@ -53,7 +53,7 @@ struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
   /// decides nothing and exists so that a picture can show what the ports
   /// block.
   grid::BitGrid keepout;
-  /// The detail cell each target is reached at.
+  /// The detail cell each target is reached at. No two targets share a cell.
   std::vector<std::size_t> targetCell;
   /// The port of each target cell, parallel to targetCell.
   std::vector<std::uint32_t> targetPort;
@@ -174,8 +174,9 @@ detailGridProblem(const ChipT& chip, const ConfigT& config);
  * @param config The run configuration.
  * @return The scene.
  * @throws std::invalid_argument When the configuration carries no design
- * rules, when its detail grid has no cells or more than MAX_DETAIL_CELLS, or
- * when the chip has no launcher.
+ * rules, when its detail grid has no cells or more than MAX_DETAIL_CELLS,
+ * when the targets of two ports lie on one detail cell, or when the chip has
+ * no launcher.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT CapacityScene
 buildScene(const ChipT& chip, const ConfigT& config);

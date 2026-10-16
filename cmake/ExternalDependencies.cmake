@@ -66,7 +66,9 @@ list(APPEND FETCH_PACKAGES nlohmann_json)
 # installation without a commercial solver licence works in full. Gurobi is reached at run time
 # through gurobipy and an MPS round trip, and is never a build dependency. A different HiGHS version
 # can return a different optimum among equal ones, so the version is pinned. Only the library is
-# built: EXCLUDE_FROM_ALL leaves out the solver executable and the examples.
+# built: EXCLUDE_FROM_ALL leaves out the solver executable and the examples. HiGHS compiles with
+# -mpopcnt on x86-64 Linux, so the Linux x86-64 wheels need a processor with the POPCNT instruction,
+# which every x86-64 processor since about 2008 has.
 set(HIGHS_VERSION
     1.11.0
     CACHE STRING "HiGHS version")
@@ -74,16 +76,21 @@ set(HIGHS_URL https://github.com/ERGO-Code/HiGHS/archive/refs/tags/v${HIGHS_VERS
 FetchContent_Declare(highs URL ${HIGHS_URL} EXCLUDE_FROM_ALL)
 list(APPEND FETCH_PACKAGES highs)
 
-# Boost.Polygon supplies the Voronoi diagram of the capacity stage. Only that library is configured,
-# and a Boost installed on the system is never used.
+# Boost.Polygon supplies the Voronoi diagram of the capacity stage. It is header-only and needs only
+# Boost.Config, so the build fetches these two libraries of one Boost release, about 5 MB, and not
+# the whole distribution of about 100 MB. Neither is configured: SOURCE_SUBDIR names a directory
+# without a CMakeLists.txt, so FetchContent only unpacks them. A Boost installed on the system is
+# never used.
 set(BOOST_VERSION
     1.89.0
     CACHE STRING "Boost version")
-set(BOOST_URL
-    https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-cmake.tar.xz
-)
-FetchContent_Declare(Boost URL ${BOOST_URL} EXCLUDE_FROM_ALL)
-list(APPEND FETCH_PACKAGES Boost)
+foreach(library IN ITEMS polygon config)
+  FetchContent_Declare(
+    boost_${library}
+    URL https://github.com/boostorg/${library}/archive/refs/tags/boost-${BOOST_VERSION}.tar.gz
+        SOURCE_SUBDIR include EXCLUDE_FROM_ALL)
+  list(APPEND FETCH_PACKAGES boost_${library})
+endforeach()
 
 if(BUILD_MQT_SCPD_TESTS)
   set(gtest_force_shared_crt
@@ -97,13 +104,20 @@ if(BUILD_MQT_SCPD_TESTS)
   list(APPEND FETCH_PACKAGES googletest)
 endif()
 
-# Make all declared dependencies available. The options of HiGHS and Boost are normal variables that
-# exist only inside the block, so these options neither write the cache nor change a value that the
-# user or a parent project set. CMP0077 makes option() honor a normal variable, and CMP0126 keeps
-# set(CACHE) from removing one; the policy versions of Boost leave both unset. HiGHS and Boost still
-# include CPack, which writes CPACK_* entries to the cache and CPackConfig.cmake to the build tree.
-# The project builds no CPack package, so nothing reads them.
-block(SCOPE_FOR VARIABLES PROPAGATE flatbuffers_SOURCE_DIR nlohmann_json_SOURCE_DIR)
+# Make all declared dependencies available. The options of HiGHS are normal variables that exist
+# only inside the block, so these options neither write the cache nor change a value that the user
+# or a parent project set. CMP0077 makes option() honor a normal variable, and CMP0126 keeps
+# set(CACHE) from removing one. HiGHS still includes CPack, which writes CPACK_* entries to the
+# cache and CPackConfig.cmake to the build tree. The project builds no CPack package, so nothing
+# reads them.
+block(
+  SCOPE_FOR
+  VARIABLES
+  PROPAGATE
+  flatbuffers_SOURCE_DIR
+  nlohmann_json_SOURCE_DIR
+  boost_polygon_SOURCE_DIR
+  boost_config_SOURCE_DIR)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
 # The tests of the dependencies: HiGHS would otherwise add its test tree and the CTest dashboard
@@ -116,11 +130,8 @@ set(BUILD_CXX_EXE OFF)
 set(HIGHSINT64 OFF)
 set(ZLIB OFF)
 # HiGHS defaults BUILD_SHARED_LIBS to ON, and a shared library would be one more file for the wheel
-# to ship, so both dependencies are built static.
+# to ship, so it is built static.
 set(BUILD_SHARED_LIBS OFF)
-# Boost: Boost.Polygon only.
-set(BOOST_INCLUDE_LIBRARIES polygon)
-set(BOOST_ENABLE_CMAKE ON)
 FetchContent_MakeAvailable(${FETCH_PACKAGES})
 endblock()
 
@@ -165,12 +176,10 @@ if(NOT TARGET mqt-scpd-highs)
   endif()
 endif()
 
-# Boost.Polygon, likewise as a system include. The block above does not propagate
-# boost_polygon_SOURCE_DIR: the project() call of Boost.Polygon writes it to the cache, and the
-# cache entry is visible here.
+# Boost.Polygon and Boost.Config, likewise as system includes.
 if(NOT TARGET mqt-scpd-polygon)
   add_library(mqt-scpd-polygon INTERFACE)
-  target_include_directories(mqt-scpd-polygon SYSTEM
-                             INTERFACE $<BUILD_INTERFACE:${boost_polygon_SOURCE_DIR}/include>)
-  target_link_libraries(mqt-scpd-polygon INTERFACE Boost::polygon)
+  target_include_directories(
+    mqt-scpd-polygon SYSTEM INTERFACE $<BUILD_INTERFACE:${boost_polygon_SOURCE_DIR}/include>
+                                      $<BUILD_INTERFACE:${boost_config_SOURCE_DIR}/include>)
 endif()

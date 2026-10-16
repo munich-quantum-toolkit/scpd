@@ -40,7 +40,7 @@ PORT_LAYER = 10
 #: at 20, so the artwork and the port labels keep theirs and the overlay can be switched off as a
 #: block.
 #:
-#: The planning shapes are no geometry to manufacture. They are in the file because KLayout is
+#: The planning shapes are not geometry to manufacture. They are in the file because KLayout is
 #: where a partition border is measured against the artwork it has to respect.
 PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "keepout": (20, 0, "plan.port-keepout"),

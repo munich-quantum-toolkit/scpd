@@ -63,17 +63,20 @@ The detail grid, `[grid] capacity_cells_x` and `capacity_cells_y` times
 `detail_factor`, may have at most 25,000,000 cells. `plan` and `doctor` refuse a
 larger grid before the first stage; `docs/configuration.md` explains the limit.
 `capacity_cells_x` has to be at least two, and `capacity_cells_y` either `0` or
-at least two, since a grid needs two cells along each axis.
+at least two, since a grid needs two cells along each axis. The capacity step
+refuses a chip on which the targets of two ports lie on one cell of the detail
+grid; a larger `detail_factor` makes the cells smaller.
 
 Every step writes a record of its inputs beside its artifact, for example
 `01-capacity.inputs.json`: a digest of the chip and of each configuration
-section the step reads. `SCPD_SOLVER` is no input: it chooses the backend of one
-invocation, and a step that resumes under another backend can give another
+section the step reads. `SCPD_SOLVER` is not an input: it chooses the backend of
+one invocation, and a step that resumes under another backend can give another
 artifact. `plan --stage <step>` refuses a step when the chip or such a section
 has changed since an earlier step wrote its artifact, and names the section and
 the step to run again. The run directory then stays as it was. `plot` and
 `render` with `--run-dir` refuse a stage in the same way, and also an artifact
-without a record, which a step that failed leaves behind.
+without a record, which a step that failed leaves behind. `inspect` prints such
+an artifact of a run directory after a warning on stderr.
 
 The planning stages solve with HiGHS unless `[stages.solver] backend` or the
 environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and
@@ -90,8 +93,9 @@ a line that starts with `✗`. Both lines have the format of
 `docs/terminal_output.md`. A script that looked for `wrote` or `error:` looks
 for these lines instead. Wrong arguments still print the `argparse` usage
 message with `error:` and exit with code 2. `doctor` reports each problem on a
-line that starts with `PROBLEM:` and ends with `doctor: OK` or
-`doctor: <n> problem(s)`.
+line that starts with `PROBLEM:`, and each warning, such as a removed key, on a
+line that starts with `WARNING:`. It ends with `doctor: OK` or
+`doctor: <n> problem(s)`; a warning is not a problem.
 
 <!-- Version links -->
 

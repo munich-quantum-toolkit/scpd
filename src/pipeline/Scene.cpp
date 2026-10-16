@@ -32,6 +32,7 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -293,6 +294,22 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
       scene.reserved.set(*target, false);
       scene.targetCell.push_back(*target);
       scene.targetPort.push_back(index);
+    }
+  }
+
+  // A chain reaches a target through its cell and puts the port of that cell
+  // on the chain. Two targets on one cell would leave one of the two ports on
+  // no chain, and the Global stage would never count its wire.
+  std::unordered_map<std::size_t, std::uint32_t> portAtCell;
+  for (std::size_t index = 0; index < scene.targetCell.size(); ++index) {
+    const auto [held, added] =
+        portAtCell.emplace(scene.targetCell[index], scene.targetPort[index]);
+    if (!added) {
+      throw std::invalid_argument(std::format(
+          "the targets of the ports {} and {} lie on one cell of the detail "
+          "grid; a larger [grid] detail_factor makes the cells smaller",
+          chip.ports[held->second]->label,
+          chip.ports[scene.targetPort[index]]->label));
     }
   }
 

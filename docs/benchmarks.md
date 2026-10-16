@@ -88,13 +88,14 @@ mqt-scpd plan -o runs/33q --stage corridor
 
 Beside each artifact a step writes a record of its inputs, for example
 `01-capacity.inputs.json`. The record holds a digest of the chip copy and of
-each section of `config.toml` that the step reads. `SCPD_SOLVER` is no input: it
-chooses the backend of one invocation, and a step that resumes under another
-backend can give another artifact. `--stage` refuses a step when the chip copy
-or such a section has changed since an earlier step wrote its artifact, because
-the step would read an artifact that the current configuration does not make.
-The message names the section and the step to run again, in the block of the
-refused step; running that step deletes the artifacts of every later step:
+each section of `config.toml` that the step reads. `SCPD_SOLVER` is not an
+input: it chooses the backend of one invocation, and a step that resumes under
+another backend can give another artifact. `--stage` refuses a step when the
+chip copy or such a section has changed since an earlier step wrote its
+artifact, because the step would read an artifact that the current configuration
+does not make. The message names the section and the step to run again, in the
+block of the refused step; running that step deletes the artifacts of every
+later step:
 
 ```console
 🧭 corridor
@@ -127,14 +128,14 @@ edges that the inner circuit selected. The capacity picture shows the partition
 borders. The assign picture shows each ring port joined to its feed by a black
 dashed chord, and the corridor picture the corridors as dark lines, both over
 light borders and with the green inner wires of the global step. All four show
-the cells the grid blocked, in dark grey under the artwork: the border of the
-grid, the clearance around the artwork and the approach of every port. No
-picture shows the gates. The capacity, assign and corridor pictures leave out
-the borders of partitions that the artwork closes in on every side, such as the
-free space inside a ring of qubits. Every other partition is shaded in a light
-grey that differs from its neighbours. Opened on its own in a browser, the
-picture has a **Layers** panel in its top left corner that shows and hides each
-layer, and it leaves out the finest detail when zoomed out.
+the cells the grid blocked, in dark grey under the artwork: the artwork as the
+grid rasterizes it, and the approach of every port. No picture shows the gates.
+The capacity, assign and corridor pictures leave out the borders of partitions
+that the artwork closes in on every side, such as the free space inside a ring
+of qubits. Every other partition is shaded in a light grey that differs from its
+neighbours. Opened on its own in a browser, the picture has a **Layers** panel
+in its top left corner that shows and hides each layer, and it leaves out the
+finest detail when zoomed out.
 
 {doc}`terminal_output` describes what a run prints and what `-v`, `-vv` and
 `-vvv` add.

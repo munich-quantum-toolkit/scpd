@@ -85,9 +85,9 @@ class PlanningGeometry:
     #: A tone for each partition of ``partitions``, so that two partitions that share a border never
     #: share a tone: a small number from zero up. None for a partition the artwork closes in.
     partition_tones: list[int | None] = field(default_factory=list)
-    #: The blocked cells of the grid the partitions were cut on, as rectangles: artwork, the
-    #: clearance around it, and the approach of every port. A strip of free cells that no partition
-    #: reached, narrower than three cells, is no blockage and is left out.
+    #: The blocked cells of the grid the partitions were cut on, as rectangles: the artwork as the
+    #: grid rasterizes it, and the approach of every port. A strip of free cells that no partition
+    #: reached, narrower than three cells, is not a blockage and is left out.
     blocked: list[list[Point]] = field(default_factory=list)
     #: What the approaches of the ports keep clear, as closed rings.
     keepout: list[list[Point]] = field(default_factory=list)
@@ -130,6 +130,7 @@ class PlanningGeometry:
         """
         return not any((
             self.partitions,
+            self.blocked,
             self.keepout,
             self.borders,
             self.enclosed_borders,
@@ -247,7 +248,7 @@ def _border_runs(samples: list[Point], grid: GridExtentT | None) -> list[list[Po
     """The cell edges of one border, joined into runs.
 
     A plan stores a border as the midpoints of its cell edges, in the order the grid was scanned
-    rather than along the border, so they are no polyline. A midpoint on a whole cell coordinate
+    rather than along the border, so they do not form a polyline. A midpoint on a whole cell coordinate
     across x lies on a vertical edge, and any other on a horizontal one; each edge spans one cell.
     Edges that share an end form one run, and a run ends where the border forks or stops.
 
@@ -338,7 +339,7 @@ def _blocked(plan: CapacityPlanT) -> list[list[Point]]:
     partition outline runs along the cell corners, cell k from corner k to corner k + 1. A row is a
     bit mask, and the outlines fill it under the even-odd rule. An opening by three by three cells
     then removes what is narrower than three cells: free cells that touch only at their corners,
-    which no partition grows into, and the clearance is never that thin.
+    which no partition grows into, and no artwork or port approach is that thin.
 
     Returns:
         The rectangles, as closed rings of four corners.
@@ -569,7 +570,7 @@ def _routing_of(routing: bytes) -> GlobalRoutingT:
         The global routing.
 
     Raises:
-        PlanningError: If the bytes are no global routing.
+        PlanningError: If the bytes do not hold a global routing.
     """
     solved = read_artifact(routing).output
     if not isinstance(solved, GlobalRoutingT):
@@ -696,7 +697,7 @@ def _plan_of(capacity: bytes) -> CapacityPlanT:
         The plan.
 
     Raises:
-        PlanningError: If the bytes are no capacity plan.
+        PlanningError: If the bytes do not hold a capacity plan.
     """
     plan = read_artifact(capacity).output
     if not isinstance(plan, CapacityPlanT):
@@ -712,7 +713,7 @@ def _assignment_of(assignment: bytes) -> AssignmentT:
         The assignment.
 
     Raises:
-        PlanningError: If the bytes are no assignment.
+        PlanningError: If the bytes do not hold an assignment.
     """
     chosen = read_artifact(assignment).output
     if not isinstance(chosen, AssignmentT):
@@ -748,10 +749,10 @@ def planning_geometry(
         The geometry, in layout units.
 
     Raises:
-        PlanningError: If the stage is no planning stage, or the artifact is not its output.
+        PlanningError: If the stage is not a planning stage, or the artifact is not its output.
     """
     if stage not in PLANNING_STAGES:
-        msg = f"'{stage}' is no planning stage; the planning stages are {', '.join(PLANNING_STAGES)}"
+        msg = f"'{stage}' is not a planning stage; the planning stages are {', '.join(PLANNING_STAGES)}"
         raise PlanningError(msg)
     output = read_artifact(data).output
     geometry = PlanningGeometry()

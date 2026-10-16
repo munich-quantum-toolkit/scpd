@@ -129,7 +129,7 @@ def test_a_solver_backend_the_run_cannot_reach_is_a_problem(monkeypatch: pytest.
     """An unknown backend, or Gurobi without gurobipy, would stop the run, so the doctor refuses both."""
     monkeypatch.setenv("SCPD_SOLVER", "cplex")
     report = run_doctor(FIXTURE / "config.toml")
-    assert report.problems == ["SCPD_SOLVER: 'cplex' is no solver backend; use 'highs' or 'gurobi'"]
+    assert report.problems == ["SCPD_SOLVER: 'cplex' is not a solver backend; use 'highs' or 'gurobi'"]
 
     monkeypatch.setenv("SCPD_SOLVER", "gurobi")
     monkeypatch.setitem(sys.modules, "gurobipy", None)
@@ -175,4 +175,4 @@ def test_a_run_that_solves_nothing_needs_no_solver(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setenv("SCPD_SOLVER", "cplex")
     report = run_doctor(stopped)
-    assert report.problems == ["SCPD_SOLVER: 'cplex' is no solver backend; use 'highs' or 'gurobi'"]
+    assert report.problems == ["SCPD_SOLVER: 'cplex' is not a solver backend; use 'highs' or 'gurobi'"]

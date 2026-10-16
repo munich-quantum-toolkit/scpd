@@ -351,6 +351,27 @@ TEST(ArtifactSchema, RefusesATargetOnTwoCapacityChains) {
       (std::vector<std::string>{"capacity chain 0 reaches port 0 twice"}));
 }
 
+TEST(ArtifactSchema, RefusesAGateNodeThatDisagreesWithItsBottleneck) {
+  // The Global stage reads the capacity of a gate from each of its nodes, so
+  // a node that says more than the bottleneck would let more wires through.
+  CapacityPlanT plan = emptyPlan();
+  auto bottleneck = std::make_unique<BottleneckT>();
+  bottleneck->capacity = 2;
+  plan.bottlenecks.push_back(std::move(bottleneck));
+  for (const std::uint32_t capacity : {2U, 3U}) {
+    auto gate = std::make_unique<CapacityNodeT>();
+    gate->kind = CapacityElement::Bottleneck;
+    gate->id = 0;
+    gate->capacity = capacity;
+    plan.nodes.push_back(std::move(gate));
+    plan.chains.push_back(static_cast<std::uint32_t>(plan.nodes.size() - 1));
+  }
+  EXPECT_EQ(validate(wrap(std::move(plan))),
+            (std::vector<std::string>{"capacity node 1 lets 3 wires through "
+                                      "bottleneck 0, which lets 2 wires "
+                                      "through"}));
+}
+
 TEST(ArtifactSchema, RefusesAPortTheChipDoesNotHave) {
   // An artifact names ports by index, so one made from another chip can name
   // a port past the end of this chip's port list.

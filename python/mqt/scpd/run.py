@@ -108,7 +108,7 @@ def _plain(value: object) -> object:
 def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
     """The SHA-256 digest of every input a step can read.
 
-    ``SCPD_SOLVER`` is no input: it chooses the backend of one invocation, and the run directory
+    ``SCPD_SOLVER`` is not an input: it chooses the backend of one invocation, and the run directory
     records only the files of the run. A step that resumes under another backend can therefore give
     another artifact, as ``docs/benchmarks.md`` says.
 
@@ -150,12 +150,12 @@ def steps_until(stop_after: str | None) -> list[str]:
         The steps, in order.
 
     Raises:
-        RunError: If the name is no step of this release.
+        RunError: If the name is not a step of this release.
     """
     if not stop_after:
         return list(STEPS)
     if stop_after not in STEPS:
-        msg = f"'{stop_after}' is no step of this release; the steps are {', '.join(STEPS)}"
+        msg = f"'{stop_after}' is not a step of this release; the steps are {', '.join(STEPS)}"
         raise RunError(msg)
     return list(STEPS[: STEPS.index(stop_after) + 1])
 
@@ -238,10 +238,10 @@ class RunDirectory:
             The path, whether or not the file exists.
 
         Raises:
-            RunError: If the name is no step of this release.
+            RunError: If the name is not a step of this release.
         """
         if stage not in STAGE_FILES:
-            msg = f"'{stage}' is no step of this release; the steps are {', '.join(STEPS)}"
+            msg = f"'{stage}' is not a step of this release; the steps are {', '.join(STEPS)}"
             raise RunError(msg)
         return self.path / STAGE_FILES[stage]
 
@@ -281,16 +281,16 @@ class RunDirectory:
 
         Raises:
             RunError: If the path is a file, or if the directory holds a config.toml of its own and
-                no chip copy, so that it is no run directory.
-            ChipError: If the chip input is no file.
+                no chip copy, so that it is not a run directory.
+            ChipError: If the chip input is not a file.
         """
         config = load_config(config_path)
         chip = chip_input_path(config, config_path, chip_path)
         if self.path.exists() and not self.path.is_dir():
-            msg = f"{self.path} is no run directory: it is a file"
+            msg = f"{self.path} is not a run directory: it is a file"
             raise RunError(msg)
         if self.config.exists() and not self.chip.exists():
-            msg = f"{self.path} is no run directory: it holds a config.toml of its own and no 00-chip.json"
+            msg = f"{self.path} is not a run directory: it holds a config.toml of its own and no 00-chip.json"
             raise RunError(msg)
         if not chip.is_file():
             msg = f"cannot read the chip input {chip}: there is no such file"
@@ -370,7 +370,7 @@ class RunDirectory:
             What the step wrote.
 
         Raises:
-            RunError: If the name is no step of this release, if an input of the step is missing, or
+            RunError: If the name is not a step of this release, if an input of the step is missing, or
                 if an input of an earlier step has changed since that step wrote its artifact. A
                 refused step leaves the directory as it was.
         """

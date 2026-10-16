@@ -107,8 +107,8 @@ BackendChoice backendChoiceFromName(const std::string_view name) {
   if (name == "gurobi") {
     return BackendChoice::External;
   }
-  throw std::invalid_argument(
-      std::format("'{}' is no solver backend; use 'highs' or 'gurobi'", name));
+  throw std::invalid_argument(std::format(
+      "'{}' is not a solver backend; use 'highs' or 'gurobi'", name));
 }
 
 void setExternalBackend(std::shared_ptr<ISolverBackend> backend) {

@@ -53,7 +53,7 @@ namespace fbd = flatbuffers::design;
 /// slots. When that sum can pass 1, the model may accept one more crossing
 /// to bring the launchers nearer. On every benchmark chip the model finds as
 /// few crossings as a model with a weight of 0.00001, which keeps the sum
-/// below 1. A smaller weight is no fix: with it, the default relative gap of
+/// below 1. A smaller weight is not a fix: with it, the default relative gap of
 /// the solver ends the search before the distances are minimized.
 constexpr double PROXIMITY_WEIGHT = 0.01;
 

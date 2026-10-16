@@ -32,7 +32,7 @@ from .export import HAS_KLAYOUT
 from .inspection import InspectionError, artifact_to_json
 from .planning import PLANNING_STAGES, PlanningError, PlanningGeometry, planning_geometry
 from .plot import STAGES, PlotError, layout_svg
-from .run import BlockReporter, RunDirectory, RunError, input_digests, steps_until
+from .run import STAGE_FILES, BlockReporter, RunDirectory, RunError, input_digests, steps_until
 from .solvers import register as register_external_solver
 from .steps import STEPS
 
@@ -265,12 +265,38 @@ def command_list_algorithms(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stale_reason(artifact: Path) -> str | None:
+    """Why an artifact of a run directory no longer matches the inputs of the run.
+
+    A step that failed keeps its old artifact without a record, and an input of the run can change
+    after a step wrote its artifact. An artifact outside a run directory has no record to check.
+
+    Returns:
+        The reason, or None when the artifact is current or lies outside a run directory.
+    """
+    stage = next((step for step, name in STAGE_FILES.items() if name == artifact.name), None)
+    directory = RunDirectory(artifact.parent)
+    if stage is None or not directory.config.is_file() or not directory.chip.is_file():
+        return None
+    try:
+        config = directory.load()
+        directory.check_current(stage, input_digests(config, directory.classified_chip(config)))
+    except (RunError, ConfigError, ChipError) as error:
+        return str(error)
+    return None
+
+
 def command_inspect(args: argparse.Namespace) -> int:
     """Print a stage artifact as JSON.
+
+    An artifact of a run directory that no longer matches the inputs of the run still prints, after a
+    warning on stderr.
 
     Returns:
         The exit code.
     """
+    if (reason := _stale_reason(args.artifact)) is not None:
+        Console(file=sys.stderr).warning(reason)
     text = artifact_to_json(args.artifact.read_bytes())
     if args.output is None:
         write_out(text)

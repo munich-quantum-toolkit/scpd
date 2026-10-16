@@ -64,7 +64,7 @@ struct Sites {
 /// blocked for two reasons: an edge that leaves the grid is not free, and a
 /// blocked cell on the edge of the grid does not touch free space through the
 /// outside, so the outside makes no cell a site. The outside itself gives no
-/// site, so the edge of the grid is no wall.
+/// site, so the edge of the grid is not a wall.
 bool blockedAt(const BitGrid& blocked, const int64_t x, const int64_t y) {
   if (x < 0 || y < 0 || std::cmp_greater_equal(x, blocked.width()) ||
       std::cmp_greater_equal(y, blocked.height())) {
@@ -249,7 +249,7 @@ MedialAxis rasterizeMedialAxis(const BitGrid& blocked, const GridMetrics& grid,
     std::size_t previous = grid.cells();
     for (const auto cell : cells) {
       if (blocked.test(cell)) {
-        // The cells on either side of a blocked cell are no neighbors.
+        // The cells on either side of a blocked cell are not neighbors.
         previous = grid.cells();
         continue;
       }

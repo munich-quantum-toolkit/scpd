@@ -162,9 +162,10 @@ TEST(PlanProblems, NameAnImplementationThatIsNotRegistered) {
 
   const auto problems = planProblems(test::miniChip(), config, allSteps());
   EXPECT_EQ(problems.size(), 2U);
-  EXPECT_TRUE(mentions(problems, "[stages.global] router 'other-router' is no "
-                                 "known implementation; the registered ones "
-                                 "are hanan-milp"));
+  EXPECT_TRUE(mentions(problems,
+                       "[stages.global] router 'other-router' is not a "
+                       "known implementation; the registered ones "
+                       "are hanan-milp"));
   EXPECT_TRUE(mentions(problems, "[stages.corridor] router 'other-corridors'"));
   // A run that ends before the corridor does not build its router.
   EXPECT_EQ(

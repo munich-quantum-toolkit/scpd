@@ -157,16 +157,16 @@ def test_a_run_started_from_its_own_configuration_keeps_its_chip_copy(tmp_path: 
 
 
 def test_preparing_refuses_a_directory_that_holds_a_configuration_of_its_own(tmp_path: Path) -> None:
-    """A directory with a config.toml but without the chip copy of a run is no run, and stays as it was."""
+    """A directory with a config.toml but without the chip copy of a run is not a run, and stays as it was."""
     foreign = tmp_path / "chip"
     foreign.mkdir()
     (foreign / "config.toml").write_text("# a configuration of its own\n", encoding="utf-8")
 
-    with pytest.raises(RunError, match="is no run directory"):
+    with pytest.raises(RunError, match="is not a run directory"):
         RunDirectory(foreign).prepare(CONFIG)
 
     assert (foreign / "config.toml").read_text(encoding="utf-8") == "# a configuration of its own\n"
-    with pytest.raises(RunError, match="is no run directory"):
+    with pytest.raises(RunError, match="is not a run directory"):
         RunDirectory(FIXTURE).prepare(CONFIG)
 
 
@@ -341,7 +341,7 @@ def test_a_step_reruns_after_its_own_section_changed(tmp_path: Path) -> None:
 
 
 def test_a_step_resumes_under_another_solver_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``SCPD_SOLVER`` chooses the backend of one invocation and is no input that a record holds."""
+    """``SCPD_SOLVER`` chooses the backend of one invocation and is not an input that a record holds."""
     monkeypatch.delenv("SCPD_SOLVER", raising=False)
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
@@ -358,7 +358,7 @@ def test_a_step_resumes_under_another_solver_backend(tmp_path: Path, monkeypatch
 
 @pytest.mark.parametrize("record", [None, "not json", "{}"], ids=["missing", "unreadable", "incomplete"])
 def test_a_step_refuses_an_earlier_artifact_without_a_record(tmp_path: Path, record: str | None) -> None:
-    """An artifact whose record of inputs is missing or broken is no input of a later step."""
+    """An artifact whose record of inputs is missing or broken is not an input of a later step."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
     run_through(directory, ["capacity"])

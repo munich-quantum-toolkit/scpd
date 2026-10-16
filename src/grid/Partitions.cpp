@@ -347,10 +347,10 @@ std::vector<std::size_t> freeCellSeeds(const BitGrid& blocked,
                                        const GridMetrics& coarse) {
   const auto factors = refinement(detail, coarse);
   if (!factors.has_value()) {
-    throw std::invalid_argument(
-        std::format("a detail grid of {}x{} cells is no whole refinement of a "
-                    "coarse grid of {}x{}",
-                    detail.width, detail.height, coarse.width, coarse.height));
+    throw std::invalid_argument(std::format(
+        "a detail grid of {}x{} cells is not a whole refinement of a "
+        "coarse grid of {}x{}",
+        detail.width, detail.height, coarse.width, coarse.height));
   }
   if (blocked.width() != detail.width || blocked.height() != detail.height) {
     throw std::invalid_argument(std::format(
@@ -446,7 +446,7 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
                                const GridMetrics& grid, const double spacing) {
   if (spacing <= 0.0) {
     throw std::invalid_argument(
-        std::format("a wire spacing of {} is no distance", spacing));
+        std::format("a wire spacing of {} is not a distance", spacing));
   }
   if (border.samples.empty()) {
     return {};

@@ -690,17 +690,19 @@ struct Sweeps {
   /// The relaxation that the configuration asks for.
   std::uint32_t askedRelaxation = 4;
   /// The relaxation that the sweeps use: the asked one, but fewer than half
-  /// the connections.
+  /// the connections, and at least one where two or more connections compete.
   std::uint32_t maxRelaxation = 4;
 };
 
 /// Reads the tuning and limits the relaxation to fewer than half of the
-/// `connections`.
+/// `connections`, but to at least one when there are two or more.
 ///
 /// A wire without a way rips up neighbours until it fits. When it may rip up
 /// all the others, it takes their room, they find no way back, and every
 /// round repeats this. Fewer than half leaves at least as many wires in place
-/// as the sweep takes out.
+/// as the sweep takes out. Two connections still get one: otherwise neither
+/// could ever move the other aside, and a wire that takes the slot of the
+/// other would keep it in every round.
 [[nodiscard]] Sweeps sweepsOf(const ConfigT& config,
                               const std::size_t connections) {
   Sweeps sweeps;
@@ -709,7 +711,8 @@ struct Sweeps {
     sweeps.rounds = params.rounds;
     sweeps.askedRelaxation = params.max_relaxation;
   }
-  const auto limit = connections == 0 ? 0 : (connections - 1) / 2;
+  const auto limit =
+      connections < 2 ? 0 : std::max<std::size_t>(1, (connections - 1) / 2);
   sweeps.maxRelaxation = static_cast<std::uint32_t>(
       std::min<std::size_t>(sweeps.askedRelaxation, limit));
   return sweeps;
@@ -1055,7 +1058,8 @@ private:
     // settled them yet, so it gives each of them a new way before the round
     // is over. Near the end of the sweep the count runs on past the last wire
     // to the first ones, which this round has passed; those wait for the
-    // next round.
+    // next round. The relaxation stays below the number of connections, so
+    // the count never comes back to this wire.
     std::vector<std::pair<std::size_t, Route>> ripped;
     const auto total = static_cast<std::int64_t>(requests.size());
     for (std::uint32_t relax = 1; relax <= sweeps.maxRelaxation; ++relax) {
@@ -1063,9 +1067,6 @@ private:
       const auto neighbour = static_cast<std::size_t>(
           (((static_cast<std::int64_t>(index) + offset) % total) + total) %
           total);
-      if (neighbour == index) {
-        break;
-      }
       if (routes[neighbour].has_value()) {
         corridors.withdraw(requests[neighbour], *routes[neighbour]);
         ripped.emplace_back(neighbour, *routes[neighbour]);

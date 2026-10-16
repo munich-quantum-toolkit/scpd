@@ -218,6 +218,8 @@ struct HandChain {
   /// The bottleneck of the gate. Without one, each gate of the plan is a
   /// bottleneck of its own.
   std::optional<std::uint32_t> bottleneck;
+  /// Whether the chain ends at a launcher.
+  bool launcher = true;
 };
 
 CapacityPlanT planOf(const std::vector<HandChain>& chains) {
@@ -241,9 +243,13 @@ CapacityPlanT planOf(const std::vector<HandChain>& chains) {
     }
     if (chain.gate.has_value()) {
       link(CapacityElement::Bottleneck, chain.bottleneck.value_or(index),
-           *chain.gate, false);
+           *chain.gate, !chain.launcher);
     }
-    link(CapacityElement::Launcher, 0, 0, true);
+    if (chain.launcher) {
+      link(CapacityElement::Launcher, 0, 0, true);
+    } else if (!chain.gate.has_value() && !plan.nodes.empty()) {
+      plan.nodes.back()->next.clear();
+    }
   }
   return plan;
 }
@@ -515,7 +521,7 @@ TEST(GlobalRouter, RefusesAPlanThatDoesNotFitTheChip) {
   EXPECT_EQ(refusal(cycle), "the capacity plan does not fit the chip: "
                             "node 2 leads back to node 0");
 
-  // Two chains may share a link without a target, and that is no cycle.
+  // Two chains may share a link without a target, and that is not a cycle.
   auto shared = plan();
   shared.chains.push_back(2);
   EXPECT_EQ(refusal(shared), "");
@@ -530,6 +536,12 @@ TEST(GlobalRouter, RefusesAPlanThatDoesNotFitTheChip) {
   twice.nodes[1]->id = twice.nodes[0]->id;
   EXPECT_EQ(refusal(twice), "the capacity plan does not fit the chip: "
                             "chain 0 reaches port Q2.port1 twice");
+
+  // A chain is a tree, so it reaches no node over two paths.
+  auto diamond = plan();
+  diamond.nodes[0]->next.push_back(2);
+  EXPECT_EQ(refusal(diamond), "the capacity plan does not fit the chip: "
+                              "chain 0 reaches node 2 twice");
 }
 
 TEST(GlobalRouter, RunsNoLatticeEdgeAcrossArtwork) {
@@ -730,7 +742,7 @@ TEST(GlobalRouter, DrawsOneLatticeLineThroughAnchorsThatDifferInTheLastBits) {
 }
 
 TEST(GlobalRouter, CountsATargetThatNoLatticeCarriesAsAFail) {
-  // A chain of one port is a single lattice node, which is no lattice.
+  // A chain of one port is a single lattice node, which is not a lattice.
   const auto config = innerConfig();
   const auto chip = test::miniChip(config);
   const auto plan =
@@ -859,6 +871,71 @@ TEST(GlobalRouter, CountsARingPortBehindAGateWithoutRoomWithoutAnInnerCircuit) {
   EXPECT_TRUE(recorder.said(Detail::Items, "Q2.port0 has no room"));
 }
 
+TEST(GlobalRouter, CountsARingPortOnAChainWithoutALauncherAsAFail) {
+  // No launcher lies beyond the artwork around Q2.port0, so its chain ends
+  // without one. Its wire has no way to a launcher, and it is a fail.
+  const auto config = test::miniConfig();
+  const auto chip = test::miniChip();
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"Q1.port0", "Q1.port1", "C12.port0"}),
+        .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"Q2.port0"}),
+        .gate = std::nullopt,
+        .launcher = false}});
+  Recorder recorder;
+
+  static_cast<void>(makeHananMilpRouter()->run(chip, plan, config,
+                                               recorder.report(Detail::Items)));
+
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 1U);
+  EXPECT_TRUE(recorder.said(Detail::Items, "Q2.port0 has no room"));
+}
+
+TEST(GlobalRouter, ChecksOnlyTheRingPortsThatAChainCarries) {
+  // The Capacity stage leaves a port off every chain only where it finds no
+  // free cell for its target, and the Corridor stage counts that wire. So
+  // Q2.port0 and Q2.port1, which no chain carries, do not count as fails here.
+  const auto config = test::miniConfig();
+  const auto chip = test::miniChip();
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"Q1.port0", "Q1.port1", "C12.port0"}),
+        .gate = std::nullopt}});
+  Recorder recorder;
+
+  static_cast<void>(makeHananMilpRouter()->run(chip, plan, config,
+                                               recorder.report(Detail::Items)));
+
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 0U);
+}
+
+TEST(GlobalRouter, RefusesTwoPortsThatMeetTheLatticeAtOneNode) {
+  // The circuit names a connection by the port of its end node, so two
+  // ports on one node would give the wire of one to the other.
+  const auto chip = handChip({ringEnd(),
+                              {.label = "S.port0", .center = Point(0.0, 0.0)},
+                              {.label = "T.port0",
+                               .center = Point(100.0, 100.0),
+                               .orientation = 180.0},
+                              {.label = "U.port0",
+                               .center = Point(100.0, 100.0),
+                               .orientation = 180.0}},
+                             handPatterns());
+  const auto config = handConfig({"S.port1"});
+  const auto plan =
+      planOf({{.targets = indicesOf(chip, {"T.port0", "U.port0", "S.port0"}),
+               .gate = {}}});
+
+  try {
+    static_cast<void>(makeHananMilpRouter()->run(chip, plan, config, {}));
+    FAIL() << "two ports on one node were accepted";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_STREQ(error.what(),
+                 "the ports T.port0 and U.port0 meet the lattice at one node");
+  }
+}
+
 TEST(GlobalRouter, CountsNoInnerPortAsARingPortWithoutRoom) {
   // A gate without room cuts off the inner port Q2.port0 and the ring port
   // Q2.port1. The inner wire reaches Q2.port0 through the lattice and
@@ -883,7 +960,7 @@ TEST(GlobalRouter, CountsNoInnerPortAsARingPortWithoutRoom) {
 }
 
 TEST(GlobalRouter, CountsACutOffRingPortAsAFailWhereNoLatticeCarriesATarget) {
-  // A chain of one port is a single lattice node, which is no lattice, so
+  // A chain of one port is a single lattice node, which is not a lattice, so
   // the inner port Q2.port1 is a fail. Q2.port0 lies behind a gate without
   // room on its only chain, so it is a fail too.
   const auto config = innerConfig();
