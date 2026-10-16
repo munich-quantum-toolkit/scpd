@@ -35,8 +35,8 @@ namespace mqt::scpd::milp::test {
 /// Going through a file rather than a string is the point: it is the same
 /// path `gurobipy` takes, so a syntax the reader would reject shows up here.
 inline Solution solveMpsText(const std::string_view mps,
-                                  const std::vector<std::string>& names,
-                                  const SolveOptions& /*options*/) {
+                             const std::vector<std::string>& names,
+                             const SolveOptions& /*options*/) {
   // CTest runs every test in a process of its own, and parallel runs share
   // the temporary directory, so the name carries the test, a counter for
   // the solves within it, and a random part against other processes.
