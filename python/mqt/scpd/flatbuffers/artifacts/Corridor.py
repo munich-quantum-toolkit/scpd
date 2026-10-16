@@ -89,7 +89,8 @@ class Corridor(object):
         return o == 0
 
     # Where the wire starts: the cell the feed of the assignment was placed
-    # at. Absent when the connection has no feed that the grid can reach.
+    # at. Absent when the connection has no feed, when the feed lies off the
+    # grid, or when no partition lies within 8 detail cells of it.
     # Corridor
     def Source(self) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
@@ -101,7 +102,8 @@ class Corridor(object):
         return None
 
     # Where it ends: the cell its target port is reached at. Absent when the
-    # chip has no such cell.
+    # port has no target cell, or when no partition lies within 8 detail
+    # cells of it.
     # Corridor
     def Target(self) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))

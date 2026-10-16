@@ -51,8 +51,11 @@ class CorridorParams(object):
         return 12
 
     # How many neighbouring connections a failed one may rip up in a sweep,
-    # counted along the sweep direction. The exchange pass moves every wire in
-    # the way of a failed connection, without this limit.
+    # counted along the sweep direction, and how many wires in its way it may
+    # move aside. The pass that moves them also raises the price of the slots
+    # the failed connection wanted, so with zero no price rises. The exchange
+    # pass moves every wire in the way of a failed connection, without this
+    # limit.
     # CorridorParams
     def MaxRelaxation(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))

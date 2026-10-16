@@ -41,20 +41,20 @@ releases may include breaking changes.
   differs from its neighbours. The assign picture lies over the same plan, draws
   its chords as thick black dashes and leaves out the ring of its ports ([#140])
   ([**@FeldmeierMichael**])
-- ✨ Add the planning stages: the Capacity stage partitions the free space at
+- ✨ Add the planning stages. The Capacity stage partitions the free space at
   its bottlenecks, one at the narrowest stretch of each corridor along a grid
-  axis or a diagonal, and budgets the wires of every capacity chain, the Global
-  stage solves the inner circuit as a mixed-integer program on Hanan lattices,
-  with every inner wire leaving through a bridge to the ring, and counts as a
-  fail a ring port that the gates behind it have no room for or that a gate
-  without room cuts off from every launcher, the Assignment stage assigns the
-  ring ports to launchers and feedline chains with an integer program and feeds
-  no two of them at one point, and the Corridor stage routes every connection
-  through the partitions over the border slots inside the launcher ring, which
-  are the slots the Capacity stage budgets, and keeps the crossings of two wires
-  one crossing pitch apart. They write the artifacts `01-capacity.fb` to
-  `04-corridor.fb`, and refuse a detail grid of more than 25,000,000 cells
-  ([#140]) ([**@FeldmeierMichael**])
+  axis or a diagonal, and budgets the wires of every capacity chain. The Global
+  stage solves the inner circuit as a mixed-integer program on Hanan lattices.
+  Every inner wire leaves through a bridge to the ring. The Global stage counts
+  a ring port as a fail when the gates behind it have no room for it, or when a
+  gate without room cuts it off from every launcher. The Assignment stage
+  assigns the ring ports to launchers and feedline chains with an integer
+  program, and feeds no two of them at one point. The Corridor stage routes
+  every connection through the partitions over the border slots inside the
+  launcher ring, which are the slots that the Capacity stage budgets. It keeps
+  the crossings of two wires one crossing pitch apart. The stages write the
+  artifacts `01-capacity.fb` to `04-corridor.fb`, and refuse a detail grid of
+  more than 25,000,000 cells ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdMilp`: a linear model, the HiGHS backend with a progress and
   log observer, MPS output, and the choice of the backend through
   `[stages.solver] backend` or `SCPD_SOLVER`: HiGHS by default, and Gurobi

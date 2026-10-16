@@ -40,11 +40,8 @@ class CapacityParams(object):
     # around it is below this many wire pitches. A pitch is one wire spacing
     # plus one obstacle spacing.
     #
-    # The prototype used a fixed count of grid cells here, which is not a
-    # length: the same count admitted a radius of 235 layout units on the
-    # 4-qubit grid and 484 on the 9-qubit one. The default is the middle of
-    # that range as a length, and gives the prototype's bottleneck count on
-    # both chips.
+    # The default gives the bottleneck count of the research prototype on the
+    # 4-qubit and the 9-qubit chip.
     # CapacityParams
     def BottleneckClearance(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -63,8 +60,8 @@ class CapacityParams(object):
     # another wire. Where a wire runs inside a partition, and the clearance of
     # the drawn wire, the later routing stages decide.
     #
-    # The default is the prototype's own figure: its wire spacing less twenty
-    # units, with no reason given for the twenty.
+    # The default is the figure of the research prototype: its wire spacing
+    # less 20 layout units.
     # CapacityParams
     def CrossingPitch(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))

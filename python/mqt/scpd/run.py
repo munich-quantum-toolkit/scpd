@@ -98,8 +98,9 @@ def _plain(value: object) -> object:
 def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
     """The SHA-256 digest of every input a step can read.
 
-    ``SCPD_SOLVER`` is no input: it chooses the backend of one run without a change to the files
-    the run is judged on, and both backends reach the same optimum.
+    ``SCPD_SOLVER`` is no input: it chooses the backend of one invocation, and the run directory
+    records only the files of the run. A step that resumes under another backend can therefore give
+    another artifact, as ``docs/configuration.md`` says.
 
     Args:
         config: The configuration of the run.
@@ -362,7 +363,7 @@ class RunDirectory:
             RunError: If the name is no step of this release, if an input of the step is missing, or
                 if an input of an earlier step has changed since that step wrote its artifact. A
                 changed input leaves the directory as it was.
-        """  # artifact(), _read() and _check_unchanged() raise it
+        """
         path = self.artifact(stage)
         digests = input_digests(config, chip)
         self._check_unchanged(stage, digests)

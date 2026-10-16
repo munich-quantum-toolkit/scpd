@@ -102,12 +102,18 @@ findBottlenecks(const BitGrid& blocked, const MedialAxis& axis,
                 const GridMetrics& grid, const BottleneckOptions& options = {});
 
 /**
- * @brief Counts the wires that fit through a bottleneck.
+ * @brief Counts the wires that a bottleneck lets through.
  *
  * The gap is the length of the bottleneck in layout units, with each axis
  * counted in its own cell step. Every wire takes one pitch: a wire spacing
  * plus an obstacle spacing. A gap no longer than the obstacle spacing carries
  * nothing, and a gap shorter than a wire spacing carries no whole wire either.
+ *
+ * Between two ends on chip artwork, the count is the gap in pitches rounded
+ * up, as in the research prototype, so it can be one wire more than the gap
+ * holds. Where an end sits on a cell reserved for a port, the count rounds
+ * down. The crossing slots of the Corridor stage, not this count, decide how
+ * many wires cross a partition border.
  *
  * @param bottleneck The bottleneck.
  * @param grid The metrics of the grid it was found on.

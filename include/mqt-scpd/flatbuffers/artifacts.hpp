@@ -1993,12 +1993,14 @@ struct Corridor FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_CROSSINGS);
   }
   /// Where the wire starts: the cell the feed of the assignment was placed
-  /// at. Absent when the connection has no feed that the grid can reach.
+  /// at. Absent when the connection has no feed, when the feed lies off the
+  /// grid, or when no partition lies within 8 detail cells of it.
   const mqt::scpd::flatbuffers::geometry::Point *source() const {
     return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_SOURCE);
   }
   /// Where it ends: the cell its target port is reached at. Absent when the
-  /// chip has no such cell.
+  /// port has no target cell, or when no partition lies within 8 detail
+  /// cells of it.
   const mqt::scpd::flatbuffers::geometry::Point *target() const {
     return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_TARGET);
   }
@@ -2115,8 +2117,8 @@ struct CorridorRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> *>(VT_CORRIDORS);
   }
   /// The slots of every border a wire could cross, so that a picture can
-  /// show which of them are taken. A border with no free space on either
-  /// side has no entry.
+  /// show which of them are taken. A border without a crossing slot, whose
+  /// budget is zero, has no entry.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *slots() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *>(VT_SLOTS);
   }

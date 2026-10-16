@@ -23,8 +23,9 @@
 namespace mqt::scpd::grid {
 
 /// One outline of a partition, in cell coordinates. A partition has more than
-/// one when it has a hole, or when its cells are not four-connected (see
-/// separatePartitionPieces()).
+/// one when it has a hole. A partition whose cells are not four-connected may
+/// have more than one: pieces that touch only at a corner can share one
+/// outline (see extractPartitions() and separatePartitionPieces()).
 struct PartitionOutline {
   /// The label of the partition.
   PartitionLabel label = LABEL_NONE;

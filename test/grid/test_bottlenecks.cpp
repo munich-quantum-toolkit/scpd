@@ -316,15 +316,15 @@ TEST(Bottlenecks, RefusesInputsThatDoNotDescribeOneGrid) {
                std::invalid_argument);
 }
 
-TEST(BottleneckCapacity, CountsTheWiresThatFitTheGap) {
+TEST(BottleneckCapacity, RoundsUpBesideArtworkAndDownBesideAPort) {
   // Ten cells apart on a grid of ten layout units per cell is a gap of 100.
   const auto grid = GridMetrics::fit(
       {.minX = 0.0, .minY = 0.0, .maxX = 990.0, .maxY = 990.0}, 100, 100);
   ASSERT_DOUBLE_EQ(grid.cellWidth, 10.0);
 
   const Bottleneck across{.first = 0, .second = 10, .saddle = 5};
-  // A gap of 100 against a pitch of 30 holds three wires, rounded up to four
-  // where neither end sits on a reserved cell.
+  // A gap of 100 against a pitch of 30 is 3.3 pitches: four wires where
+  // neither end sits on a reserved cell, and three where one does.
   EXPECT_EQ(bottleneckCapacity(across, grid, 25.0, 5.0, false), 4U);
   EXPECT_EQ(bottleneckCapacity(across, grid, 25.0, 5.0, true), 3U);
 }

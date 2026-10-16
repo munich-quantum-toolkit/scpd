@@ -30,9 +30,12 @@ using flatbuffers::design::ChipT;
 // neither change its own state between runs nor reach into the state of
 // another. It returns a new value rather than writing into a shared design
 // database. Given the same inputs it produces the same output, which is what
-// makes a resumed run equal to an uninterrupted one. A solve that stops at
-// `[stages.solver] time_limit` is an exception: what it has found by
-// then depends on the speed of the machine. A stage reports what it
+// makes a resumed run equal to an uninterrupted one. There are two
+// exceptions. A solve that stops at `[stages.solver] time_limit` gives what it
+// has found by then, which depends on the speed of the machine. And with
+// `[stages.solver] threads` at 0, the thread count depends on the machine, so
+// between optimal solutions of equal objective the answer can differ from one
+// machine to the next. A stage reports what it
 // does through the Report it is given and never prints.
 
 /**

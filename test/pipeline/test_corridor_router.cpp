@@ -516,6 +516,26 @@ TEST(CorridorRouter, CountsAConnectionWithoutAWayAsAFail) {
   EXPECT_EQ(fails, 1U);
 }
 
+TEST(CorridorRouter, KeepsTheFeedOfAConnectionWithoutATargetCell) {
+  // A launcher has no target cell. A connection to one still starts at the
+  // feed the assignment placed, so a picture can show where it starts.
+  auto planned = planMini();
+  const auto feed = planned.assignment.feeds.front();
+  auto connection = std::make_unique<flatbuffers::design::ConnectionT>();
+  connection->target = flatbuffers::design::PortRef(0);
+  planned.assignment.connections.push_back(std::move(connection));
+  planned.assignment.feeds.push_back(feed);
+
+  const auto routing = routeMini(planned);
+
+  ASSERT_EQ(routing.corridors.size(), planned.assignment.connections.size());
+  const auto& corridor = *routing.corridors.back();
+  EXPECT_TRUE(corridor.partitions.empty());
+  EXPECT_EQ(corridor.target, nullptr);
+  ASSERT_NE(corridor.source, nullptr);
+  EXPECT_EQ(*corridor.source, *routing.corridors.front()->source);
+}
+
 TEST(CorridorRouter, GivesTheSameAnswerTwice) {
   const auto planned = planMini();
   const auto bytes = [&planned] {
@@ -601,7 +621,8 @@ TEST(CorridorRouter, MovesAWireThatHoldsASlotNearTheOneAnotherWants) {
   // Q1.port0 without a way, so the exchange pass is the only one that moves
   // a wire. The way of the wire to Q1.port0 needs a slot next to one that
   // another wire holds, so the exchange pass has to see the holder of that
-  // slot as a wire in the way, or the wire stays without a way.
+  // slot as a wire in the way, or the wire stays without a way. The stage
+  // reports what the exchange pass placed.
   const auto fixture = planMini();
   std::vector<Point> offered;
   for (const auto& slots : routeMini(fixture).slots) {
@@ -632,9 +653,21 @@ TEST(CorridorRouter, MovesAWireThatHoldsASlotNearTheOneAnotherWants) {
     planned.assignment.feeds.push_back(offered[slot]);
   }
 
-  const auto routing = routeMini(planned, {}, sweepConfig(1, 0));
+  Received received;
+
+  const auto routing = routeMini(planned, receiving(received, Detail::Summary),
+                                 sweepConfig(1, 0));
 
   EXPECT_EQ(unroutedOf(routing), 0U);
+  const auto exchange =
+      std::ranges::find_if(received.summary, [](const auto& entry) {
+        return entry.first == "exchange";
+      });
+  ASSERT_NE(exchange, received.summary.end());
+  ASSERT_EQ(exchange->second.size(), 2U);
+  EXPECT_EQ(exchange->second[0].text, "placed 1");
+  EXPECT_EQ(exchange->second[1].text, "fails 0");
+  EXPECT_EQ(received.fails, 0U);
   expectOneWirePerSlot(routing);
   expectThePitchBetweenWires(routing, crossingPitch(test::miniConfig()));
   expectNoCrossingInsideAPartition(routing);

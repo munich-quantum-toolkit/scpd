@@ -680,11 +680,8 @@ struct CapacityParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// around it is below this many wire pitches. A pitch is one wire spacing
   /// plus one obstacle spacing.
   ///
-  /// The prototype used a fixed count of grid cells here, which is not a
-  /// length: the same count admitted a radius of 235 layout units on the
-  /// 4-qubit grid and 484 on the 9-qubit one. The default is the middle of
-  /// that range as a length, and gives the prototype's bottleneck count on
-  /// both chips.
+  /// The default gives the bottleneck count of the research prototype on the
+  /// 4-qubit and the 9-qubit chip.
   double bottleneck_clearance() const {
     return GetField<double>(VT_BOTTLENECK_CLEARANCE, 1.5);
   }
@@ -699,8 +696,8 @@ struct CapacityParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// another wire. Where a wire runs inside a partition, and the clearance of
   /// the drawn wire, the later routing stages decide.
   ///
-  /// The default is the prototype's own figure: its wire spacing less twenty
-  /// units, with no reason given for the twenty.
+  /// The default is the figure of the research prototype: its wire spacing
+  /// less 20 layout units.
   double crossing_pitch() const {
     return GetField<double>(VT_CROSSING_PITCH, 165.0);
   }
@@ -1113,8 +1110,11 @@ struct CorridorParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetField<uint32_t>(VT_ROUNDS, 12);
   }
   /// How many neighbouring connections a failed one may rip up in a sweep,
-  /// counted along the sweep direction. The exchange pass moves every wire in
-  /// the way of a failed connection, without this limit.
+  /// counted along the sweep direction, and how many wires in its way it may
+  /// move aside. The pass that moves them also raises the price of the slots
+  /// the failed connection wanted, so with zero no price rises. The exchange
+  /// pass moves every wire in the way of a failed connection, without this
+  /// limit.
   uint32_t max_relaxation() const {
     return GetField<uint32_t>(VT_MAX_RELAXATION, 30);
   }

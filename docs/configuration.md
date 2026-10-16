@@ -116,7 +116,7 @@ than one pitch to the target cell or the feed of another wire.
 
 Every inner wire starts at the inner end of a bridge whose other end is on the
 ring, and surfaces at that ring end. With `internal_bridges`, the wire may cross
-internal bridges on the way. No ring port supplies an inner wire, because the
+internal bridges on the way. No ring port starts an inner wire, because the
 assignment gives every ring port a wire of its own. An inner port that no such
 wire can reach is a fail of the global step. An inner resonator that is a fail
 gets no feed.
@@ -125,9 +125,10 @@ The wires of the ring ports behind a gate of a capacity chain pass that gate on
 their way to a launcher, and so do the inner wires that surface there. When the
 gates have no room for all of them, the step solves the circuit again and lets
 ring ports go without room. Each such ring port is a fail of the global step,
-and `-vv` names it. A ring port that several chains supply takes its wire
-through one of them. The step checks a gate with some room only where it solves
-an inner circuit, and only on the chains without inner ports. Elsewhere, a gate
+and `-vv` names it. A ring port that the launchers reach over several chains
+takes its wire through one of them, and a gate on several chains holds the wires
+of all of them. The step checks a gate with some room only where it solves an
+inner circuit, and only on the chains without inner ports. Elsewhere, a gate
 that has room for some of its ring ports but not for all gives no fail. A ring
 port that no bridge joins always needs a way to a launcher: where a gate without
 room cuts it off on every chain that carries it, it is a fail too, also on a
@@ -190,11 +191,11 @@ of `1024` is the largest value that Gurobi accepts.
 
 ## `[stages.corridor]`
 
-| Key              | Default | Meaning                                                                                                                                                 |
-| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                           |
-| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward                                                                                      |
-| `max_relaxation` | `30`    | How many neighbouring connections along a sweep a connection without a way may rip up; the exchange pass moves every wire in its way without this limit |
+| Key              | Default | Meaning                                                                                                                                                                                                  |
+| ---------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                                                                            |
+| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward                                                                                                                                       |
+| `max_relaxation` | `30`    | How many neighbouring connections along a sweep a connection without a way may rip up, and how many wires in its way it may move aside; the exchange pass moves every wire in its way without this limit |
 
 The later sweeps let a connection without a way take room that another
 connection has not claimed yet. A sweep can take a way from a connection that
@@ -205,7 +206,10 @@ at its end, also one that the round ripped up near its end and had no sweep left
 to place again; the stage takes the plan of the best round as it is. After the
 sweeps, also with `rounds` at `0`, the exchange pass lets each connection
 without a way move the wires in its way, and keeps the change only when fewer
-connections are left without a way.
+connections are left without a way. Within a sweep, a connection without a way
+also raises the price of the slots it wanted, so that the next sweeps leave them
+to it. The pass that moves wires aside does this, so with `max_relaxation` at
+`0`, no price rises.
 
 ## `[run]`
 

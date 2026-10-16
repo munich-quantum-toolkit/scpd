@@ -63,8 +63,8 @@ class CorridorRouting(object):
         return o == 0
 
     # The slots of every border a wire could cross, so that a picture can
-    # show which of them are taken. A border with no free space on either
-    # side has no entry.
+    # show which of them are taken. A border without a crossing slot, whose
+    # budget is zero, has no entry.
     # CorridorRouting
     def Slots(self, j: int) -> Optional[BorderSlots]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))

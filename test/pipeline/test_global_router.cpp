@@ -216,6 +216,9 @@ struct HandChain {
   /// The capacity of a gate between the last target and the launcher, or
   /// none for a chain without a gate.
   std::optional<std::uint32_t> gate;
+  /// The bottleneck of the gate. Without one, each gate of the plan is a
+  /// bottleneck of its own.
+  std::optional<std::uint32_t> bottleneck;
 };
 
 CapacityPlanT planOf(const std::vector<HandChain>& chains) {
@@ -231,13 +234,15 @@ CapacityPlanT planOf(const std::vector<HandChain>& chains) {
     }
     plan.nodes.push_back(std::move(node));
   };
-  for (const auto& chain : chains) {
+  for (std::uint32_t index = 0; index < chains.size(); ++index) {
+    const auto& chain = chains[index];
     plan.chains.push_back(static_cast<std::uint32_t>(plan.nodes.size()));
     for (const auto port : chain.targets) {
       link(CapacityElement::Target, port, 0, false);
     }
     if (chain.gate.has_value()) {
-      link(CapacityElement::Bottleneck, 0, *chain.gate, false);
+      link(CapacityElement::Bottleneck, chain.bottleneck.value_or(index),
+           *chain.gate, false);
     }
     link(CapacityElement::Launcher, 0, 0, true);
   }
@@ -973,26 +978,6 @@ TEST(GlobalRouter, CountsACutOffRingPortAsAFailWhereNoLatticeCarriesATarget) {
   EXPECT_TRUE(recorder.said(Detail::Items, "Q2.port0 has no room"));
 }
 
-TEST(GlobalRouter, ChecksAGateWithSomeRoomOnlyWhereItSolvesACircuit) {
-  // The fixture has no inner circuit, so the stage solves no model. Q1.port0
-  // and Q1.port1 lie behind a gate that passes one wire, and no fail counts
-  // the second of them, as the documentation of the stage says.
-  const auto config = test::miniConfig();
-  const auto chip = test::miniChip();
-  const auto plan = planOf(
-      {{.targets = indicesOf(chip, {"Q1.port0", "Q1.port1"}), .gate = 1U},
-       {.targets = indicesOf(chip, {"C12.port0", "Q2.port0"}),
-        .gate = std::nullopt}});
-  Recorder recorder;
-
-  static_cast<void>(makeHananMilpRouter()->run(
-      chip, plan, config, recorder.report(Detail::Summary)));
-
-  ASSERT_EQ(recorder.results.size(), 1U);
-  EXPECT_EQ(recorder.results[0][0].text, "no inner circuit");
-  EXPECT_EQ(recorder.fails[0], 0U);
-}
-
 TEST(GlobalRouter, DrawsTheWireOfARingPortThroughOneOfTheChainsThatSupplyIt) {
   // Q1.port0 has a chain of its own without a gate, and it also lies on the
   // chain of Q1.port1 and C12.port0, behind their gate. Its wire takes its
@@ -1052,6 +1037,61 @@ TEST(GlobalRouter, SurfacesAtARingBridgeOnAChainWithAnInnerPortOnlyWithRoom) {
   }
 }
 
+TEST(GlobalRouter, SurfacesAtARingBridgeThatAChainWithAnInnerPortSupplies) {
+  // The chain of the inner port Q2.port0 carries the ring end of the bridge
+  // to a launcher. A second chain cuts the ring end off with a gate without
+  // room, and the wire still surfaces there, as it does without that chain.
+  const auto config = bridgedConfig();
+  const auto chip = bridgedChip();
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"Q2.port0", "C12.port1", "Q2.port1"}),
+        .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"Q2.port0", "C12.port2"}),
+        .gate = std::nullopt},
+       {.targets = indicesOf(chip, {"C12.port2"}), .gate = 0U}});
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Summary));
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  EXPECT_EQ(routing.connections[0]->source->index(),
+            indexOf(chip, "C12.port1"));
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 0U);
+}
+
+TEST(GlobalRouter, CountsTheWiresOfEveryChainThroughAGateTheyShare) {
+  // Q1.port0 and Q1.port1 lie on two chains that pass one gate. A gate with
+  // room for one wire leaves one of the two ports without room, and a gate
+  // with room for two leaves none.
+  const auto config = bridgedConfig();
+  const auto chip = bridgedChip();
+  for (const auto& [gate, fails] :
+       std::vector<std::pair<std::uint32_t, std::uint64_t>>{{1U, 1U},
+                                                            {2U, 0U}}) {
+    SCOPED_TRACE(std::format("gate {}", gate));
+    const auto plan = planOf(
+        {{.targets = indicesOf(chip, {"Q2.port0", "C12.port1", "Q2.port1"}),
+          .gate = std::nullopt},
+         {.targets = indicesOf(chip, {"C12.port2"}), .gate = std::nullopt},
+         {.targets = indicesOf(chip, {"Q1.port0"}),
+          .gate = gate,
+          .bottleneck = 7U},
+         {.targets = indicesOf(chip, {"Q1.port1"}),
+          .gate = gate,
+          .bottleneck = 7U}});
+    Recorder recorder;
+
+    const auto routing = makeHananMilpRouter()->run(
+        chip, plan, config, recorder.report(Detail::Items));
+
+    ASSERT_EQ(routing.connections.size(), 1U);
+    ASSERT_EQ(recorder.fails.size(), 1U);
+    EXPECT_EQ(recorder.fails[0], fails);
+  }
+}
+
 TEST(GlobalRouter, CountsAResonatorAsAFailWithoutARingBridge) {
   // Both ends of the bridge lie off the ring, so no wire can surface on the
   // ring. Shut, the bridge carries no flow; open, it leads only to the other
@@ -1096,7 +1136,7 @@ std::vector<HandPort> decoyedPorts(const std::string& target,
 TEST(GlobalRouter, TakesEveryInnerWireFromTheInnerEndOfARingBridge) {
   // A ring port has a wire of the assignment: to a launcher, to a feedline,
   // or, at the ring end of a bridge, the wire that surfaces there. So no ring
-  // port supplies an inner wire, however close it lies. The wire of each
+  // port starts an inner wire, however close it lies. The wire of each
   // target comes from S.port0 and surfaces at S.port1. For a resonator,
   // S.port1 is then a resonator of the assignment.
   for (const std::string target : {"R.port0", "T.port0"}) {

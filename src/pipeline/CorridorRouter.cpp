@@ -1019,14 +1019,11 @@ private:
       request.connection = index;
       const auto target =
           cellOfPort.find(assignment.connections[index]->target.index());
-      if (target == cellOfPort.end()) {
-        requests.push_back(request);
-        continue;
+      if (target != cellOfPort.end()) {
+        request.target = placeOf(scene.detail, target->second);
+        request.targetPartition =
+            partitionAt(labels, scene.detail, target->second, LABEL_REACH);
       }
-      request.target = placeOf(scene.detail, target->second);
-      request.targetPartition =
-          partitionAt(labels, scene.detail, target->second, LABEL_REACH);
-
       if (index < assignment.feeds.size()) {
         if (const auto feed = scene.detail.roundToCell(assignment.feeds[index]);
             feed.has_value()) {

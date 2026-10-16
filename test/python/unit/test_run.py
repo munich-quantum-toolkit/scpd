@@ -301,6 +301,22 @@ def test_a_step_reruns_after_its_own_section_changed(tmp_path: Path) -> None:
     assert directory.artifact("corridor").is_file()
 
 
+def test_a_step_resumes_under_another_solver_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``SCPD_SOLVER`` chooses the backend of one invocation and is no input that a record holds."""
+    monkeypatch.delenv("SCPD_SOLVER", raising=False)
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, ["capacity", "global"])
+    recorded = directory.record("global").read_bytes()
+    monkeypatch.setenv("SCPD_SOLVER", "highs")
+
+    run_through(directory, ["assign"])
+
+    assert directory.record("global").read_bytes() == recorded
+    record = json.loads(directory.record("assign").read_text(encoding="utf-8"))
+    assert sorted(record) == sorted(STEP_INPUTS["assign"])
+
+
 @pytest.mark.parametrize("record", [None, "not json", "{}"], ids=["missing", "unreadable", "incomplete"])
 def test_a_step_refuses_an_earlier_artifact_without_a_record(tmp_path: Path, record: str | None) -> None:
     """An artifact whose record of inputs is missing or broken is no input of a later step."""

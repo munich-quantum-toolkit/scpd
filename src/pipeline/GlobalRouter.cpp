@@ -755,11 +755,12 @@ private:
     };
 
     // What the circuit sends through a port, over every lattice that carries
-    // the port. A port is a node of every chain whose chamber it borders, so
-    // a constraint on a port is a constraint on this sum and not on one
-    // lattice. Per lattice, a bridge whose two ends lie in different chambers
-    // would go unconstrained, and a wire could start at one of them from
-    // nothing.
+    // the port. The stage accepts a plan in which a port lies on several
+    // chains, although the Capacity stage writes none on the benchmark chips.
+    // A constraint on a port is therefore a constraint on this sum and not on
+    // one lattice. Per lattice, a bridge whose two ends lie on different
+    // lattices would go unconstrained, and a wire could start at one of them
+    // from nothing.
     const auto portFlow = [&](const std::uint32_t port, const bool out) {
       milp::LinearExpr expression;
       for (std::size_t index = 0; index < lattices.size(); ++index) {
@@ -842,10 +843,10 @@ private:
 
     // A target is where a wire ends: everything that arrives stays, and a
     // port takes one wire. The demand is on the port and not on a lattice
-    // node. A chamber border runs between two chains, so a target beside one
-    // is a node of both, and a demand per lattice would ask for a second wire
-    // to a port that has one. That second wire takes supply the chip has, and
-    // the target it was taken from is then reported unreached.
+    // node. A port that lies on two chains is a node of both lattices, and a
+    // demand per lattice would ask for a second wire to a port that has one.
+    // That second wire takes supply the chip has, and the target it was taken
+    // from is then reported unreached.
     //
     // Whether a target is reached is a variable and not a constraint. A chip
     // that cannot serve one of its targets is a fact about the chip and its
@@ -1059,6 +1060,20 @@ private:
         }
       }
     }
+    // A gate that several chains pass holds the wires of all of them, so it
+    // has one more row over all of those chains, with the last of them.
+    std::unordered_map<std::uint32_t, std::size_t> passes;
+    std::unordered_map<std::uint32_t, std::size_t> lastPass;
+    for (std::size_t index = 0; index < walked.size(); ++index) {
+      for (const auto& link : walked[index].links) {
+        const auto& element = *capacity.nodes[link.node];
+        if (element.kind == fba::CapacityElement::Bottleneck) {
+          ++passes[element.id];
+          lastPass[element.id] = index;
+        }
+      }
+    }
+    std::unordered_map<std::uint32_t, milp::LinearExpr> through;
     std::unordered_map<std::uint32_t, milp::LinearExpr> drawn;
     std::unordered_set<std::uint32_t> sealed;
 
@@ -1119,6 +1134,15 @@ private:
                                around(at, true, true), element.capacity);
           model.addLessOrEqual(std::format("chain_{}_gate_in_{}", chain, at),
                                around(at, false, true), element.capacity);
+          if (passes.at(element.id) > 1) {
+            auto& total = through[element.id];
+            total.add(around(at, true, true));
+            total.add(around(at, false, true));
+            if (lastPass.at(element.id) == index) {
+              model.addLessOrEqual(std::format("gate_{}", element.id), total,
+                                   element.capacity);
+            }
+          }
           break;
         case fba::CapacityElement::Target: {
           const auto inside = insideOf.find(element.id);
@@ -1129,7 +1153,11 @@ private:
                            0.0);
             model.addEqual(std::format("chain_{}_cut_out_{}", chain, at), out,
                            0.0);
+            // A ring end that some chain supplies keeps its way out, whether
+            // the model checks that chain or leaves it out.
+            const auto unwalked = unwalkedEnds.find(element.id);
             if (inside != insideOf.end() && !suppliers.contains(element.id) &&
+                (unwalked == unwalkedEnds.end() || !unwalked->second) &&
                 sealed.insert(element.id).second) {
               model.addEqual(std::format("chain_{}_sealed_{}", chain, at),
                              portFlow(inside->second, true), 0.0);

@@ -379,6 +379,32 @@ TEST(HighsBackend, ReportsAFeasibleSolveOnlyWithValuesThatHoldEveryRow) {
   }
 }
 
+TEST(HighsBackend, ReportsTheIncumbentOfASearchThatALimitStops) {
+  // A cover of 3000 binaries has a feasible point within moments, and its
+  // optimum lies far beyond the limit. The search stops at the limit with an
+  // incumbent, which the backend reports as feasible, with a value for each
+  // variable that holds every row.
+  const auto model = largeCover(true);
+  SolveOptions options;
+  options.timeLimit = 1.0;
+
+  const auto solution = makeHighsBackend()->solve(model, options);
+
+  ASSERT_EQ(solution.status, SolveStatus::Feasible) << solution.message;
+  ASSERT_EQ(solution.values.size(), model.variableCount());
+  std::size_t violated = 0;
+  for (const auto& constraint : model.constraints()) {
+    double activity = 0.0;
+    for (const auto& [column, coefficient] : constraint.coefficients) {
+      activity += coefficient * solution.values[column];
+    }
+    violated += activity < constraint.lower - 1.0e-6 ? 1U : 0U;
+  }
+  EXPECT_EQ(violated, 0U) << "of " << model.constraintCount() << " rows";
+  EXPECT_FALSE(std::isnan(solution.bound));
+  EXPECT_LE(solution.bound, solution.objective + 1.0e-6);
+}
+
 TEST(HighsBackend, SolvesWithAnotherThreadCountEachTime) {
   // HiGHS keeps one task scheduler per calling thread. A solve that asks for
   // a thread count other than the one of the solve before still solves.
