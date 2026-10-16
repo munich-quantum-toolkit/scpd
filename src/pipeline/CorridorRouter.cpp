@@ -248,8 +248,8 @@ public:
 
   [[nodiscard]] const std::vector<Slot>& slots() const { return slotList; }
 
-  /// What displacing one wire costs the search: more than the longest route
-  /// the chip can hold, so length never buys a displacement.
+  /// What one blocked step costs the search: the diagonal of the detail grid,
+  /// which is longer than most routes, so length rarely buys a displacement.
   [[nodiscard]] double displacementPrice() const {
     const auto box = detailGrid.box();
     return std::hypot(box.maxX - box.minX, box.maxY - box.minY);
@@ -260,9 +260,11 @@ public:
   ///
   /// With no `displacement` the search uses only what is free. Given one, it
   /// may take a slot that another wire holds or cross a chord that another
-  /// wire drew, and pays that price per wire it displaces. Set well above the
-  /// length of any route, the price makes the search take a free way wherever
-  /// one exists and displace as few wires as it can where none does.
+  /// wire drew, and pays that price once per step that does so, however many
+  /// wires the step displaces. The search therefore takes as few blocked
+  /// steps as it can. The callers ask for a displacing route only for a wire
+  /// that the free search did not place, so the price never trades a free
+  /// way for a shorter blocked one.
   ///
   /// A route that crosses itself or comes back to a slot it already used is
   /// a short. That is a property of the whole route and not of one step, so
@@ -634,23 +636,21 @@ private:
 
   /// Whether a wire lays a chord over one of its own.
   ///
-  /// Two chords that follow one another share the slot between them, which
-  /// is a corner and not a short; any other meeting is one.
+  /// Only chords in one partition are compared. Two chords that follow one
+  /// another share the slot between them, but they lie in the two partitions
+  /// on either side of its border, so any meeting of two chords in one
+  /// partition is a short.
   [[nodiscard]] bool selfCrossing(const Request& request,
                                   const Route& route) const {
-    std::unordered_map<PartitionLabel,
-                       std::vector<std::pair<std::size_t, Chord>>>
-        own;
-    std::size_t step = 0;
+    std::unordered_map<PartitionLabel, std::vector<Chord>> own;
     auto found = false;
     walk(
         request, route, [&](const Chord& mine, const PartitionLabel partition) {
           auto& chords = own[partition];
-          found = found || std::ranges::any_of(chords, [&](const auto& drawn) {
-                    return drawn.first + 1 != step && meets(mine, drawn.second);
+          found = found || std::ranges::any_of(chords, [&](const Chord& drawn) {
+                    return meets(mine, drawn);
                   });
-          chords.emplace_back(step, mine);
-          ++step;
+          chords.push_back(mine);
         });
     return found;
   }

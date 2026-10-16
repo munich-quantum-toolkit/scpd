@@ -35,8 +35,8 @@ using flatbuffers::design::ChipT;
 // has found by then, which depends on the speed of the machine. And with
 // `[stages.solver] threads` at 0, the thread count depends on the machine, so
 // between optimal solutions of equal objective the answer can differ from one
-// machine to the next. A stage reports what it
-// does through the Report it is given and never prints.
+// machine to the next. A stage reports what it does through the Report it is
+// given and never prints.
 
 /**
  * @brief Partitions the free space of the chip and budgets how many wires may
@@ -60,6 +60,11 @@ public:
    * @param config The run configuration.
    * @param report Where the stage reports what it does.
    * @return The capacity plan.
+   * @throws std::invalid_argument When the configuration carries no design
+   * rules, asks for a detail grid above MAX_DETAIL_CELLS, or when the chip
+   * carries no launcher.
+   * @throws std::length_error When the partitions need more labels than a
+   * plan holds.
    */
   [[nodiscard]] virtual CapacityPlanT
   run(const ChipT& chip, const ConfigT& config, const Report& report) const = 0;
@@ -127,6 +132,14 @@ public:
    * @param config The run configuration.
    * @param report Where the stage reports what it does.
    * @return The assignment.
+   * @throws std::invalid_argument When the configuration or the chip cannot
+   * give an assignment: no design rules or no `launcher_target`, launchers
+   * listed in the direction of the ring, too few launchers off one line,
+   * counts of the ring that no assignment meets, feeds closer than
+   * `[design_rules] min_wire_spacing`, or two feeds on one cell of the detail
+   * grid; or when the capacity plan or the global routing does not fit the
+   * chip.
+   * @throws std::runtime_error When the solver gives no solution.
    */
   [[nodiscard]] virtual AssignmentT run(const ChipT& chip,
                                         const CapacityPlanT& capacity,

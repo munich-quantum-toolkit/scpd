@@ -299,6 +299,22 @@ def test_every_step_has_an_artifact_and_a_record_of_its_inputs() -> None:
     assert list(ARTIFACT_INPUTS) == list(STEPS)
 
 
+def test_a_step_without_a_core_call_deletes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A step that the run directory knows but no core call runs is refused before any artifact goes."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, list(STEPS))
+    before = artifacts_of(directory)
+    monkeypatch.setitem(STAGE_FILES, "later", "05-later.fb")
+    monkeypatch.setitem(STEP_INPUTS, "later", STEP_INPUTS["corridor"])
+    monkeypatch.setitem(ARTIFACT_INPUTS, "later", ARTIFACT_INPUTS["corridor"])
+
+    with pytest.raises(RunError, match="no core call runs the later step"):
+        run_through(directory, ["later"])
+
+    assert artifacts_of(directory) == before
+
+
 def test_a_step_refuses_an_earlier_artifact_made_from_another_chip(tmp_path: Path) -> None:
     """A chip copy edited after a step stops the steps after it."""
     directory = RunDirectory(tmp_path / "run")

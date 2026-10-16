@@ -275,10 +275,12 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       },
       "chip"_a, "config"_a, "steps"_a,
       "What would stop a run of the given steps on a classified chip, before "
-      "any stage runs: an unknown implementation name, a missing or odd "
+      "any stage runs: an unknown implementation name, a detail grid above "
+      "the cell limit, a ring that the global step refuses, a missing or odd "
       "launcher_target, launchers listed in the direction of the port ring, "
-      "or fewer than three launchers off one line on a chip with resonators. "
-      "Empty when there is nothing.");
+      "fewer than three launchers off one line on a chip with resonators, or "
+      "ring counts that the assignment refuses. Empty when there is "
+      "nothing.");
 
   m.def(
       "solving_steps",

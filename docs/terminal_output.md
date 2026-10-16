@@ -169,6 +169,8 @@ A stage reports through the `Report` it is given and never prints.
    longer than a second.
 6. Add the step to `STEPS` in `python/mqt/scpd/steps.py` and its mark to
    `STAGE_STYLES` in `python/mqt/scpd/console.py`. In `python/mqt/scpd/run.py`,
-   add its artifact to `STAGE_FILES`, the inputs it reads to `STEP_INPUTS`, and
-   its core call to `RunDirectory.run_stage`.
+   add its artifact to `STAGE_FILES`, the configuration sections it reads to
+   `STEP_INPUTS`, the artifacts it reads to `ARTIFACT_INPUTS`, and its core call
+   to `RunDirectory.run_stage`. In `python/mqt/scpd/plot.py`, add the stage to
+   `STAGES` if `plot` and `render` draw it.
 7. Extend the expected run in `test/python/unit/test_cli.py`.

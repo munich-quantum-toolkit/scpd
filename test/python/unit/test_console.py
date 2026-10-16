@@ -148,10 +148,21 @@ def test_a_long_line_keeps_its_time_after_two_spaces() -> None:
 
 @pytest.mark.parametrize(
     ("seconds", "shown"),
-    [(0.0, "0.00s"), (1.234, "1.23s"), (59.994, "59.99s"), (61.0, "1m 01s"), (3190.0, "53m 10s"), (7322.0, "2h 02m")],
+    [
+        (0.0, "0.00s"),
+        (1.234, "1.23s"),
+        (59.994, "59.99s"),
+        (59.996, "1m 00s"),
+        (61.0, "1m 01s"),
+        (3190.0, "53m 10s"),
+        (7322.0, "2h 02m"),
+    ],
 )
 def test_a_duration_reads_at_a_glance(seconds: float, shown: str) -> None:
-    """Seconds below a minute, minutes and seconds below an hour, hours and minutes above."""
+    """Seconds below a minute, minutes and seconds below an hour, hours and minutes above.
+
+    The unit follows the rounded figure, so a duration that rounds to a minute reads in minutes.
+    """
     console, out, clock = make()
     with console.stage("capacity") as stage:
         clock.now += seconds
@@ -159,9 +170,12 @@ def test_a_duration_reads_at_a_glance(seconds: float, shown: str) -> None:
     assert out.getvalue().splitlines()[1].endswith(shown)
 
 
-@pytest.mark.parametrize(("size", "shown"), [(840, "840 B"), (2_840, "2.8 kB"), (1_341_000, "1.3 MB")])
+@pytest.mark.parametrize(
+    ("size", "shown"),
+    [(840, "840 B"), (2_840, "2.8 kB"), (999_949, "999.9 kB"), (999_950, "1.0 MB"), (1_341_000, "1.3 MB")],
+)
 def test_an_artifact_size_reads_at_a_glance(size: int, shown: str) -> None:
-    """Sizes are decimal units with one decimal."""
+    """Sizes are decimal units with one decimal, and the unit follows the rounded figure."""
     console, out, _ = make()
     with console.stage("capacity") as stage:
         stage.artifact("01-capacity.fb", size)

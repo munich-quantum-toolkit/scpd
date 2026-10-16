@@ -98,11 +98,12 @@ _PLANNING_WIDTHS: dict[str, float] = {
 }
 
 #: The planning layers each stage leaves out of its picture. The keep-out of the port approaches
-#: and the capacity chains are left out everywhere. The capacity, assign and corridor pictures show
-#: the partitions by their borders alone: an outline traces the keep-out around every port as well.
-#: They leave the gates out too, and the assign picture the ring of its ports, which the chords to
-#: the feeds already show.
+#: and the capacity chains are left out everywhere, and so are the gates. The capacity, assign and
+#: corridor pictures show the partitions by their borders alone: an outline traces the keep-out
+#: around every port as well. The assign picture leaves out the ring of its ports, which the chords
+#: to the feeds already show.
 _HIDDEN: dict[str, frozenset[str]] = {
+    "global": frozenset({"bottlenecks"}),
     "capacity": frozenset({"bottlenecks", "partitions"}),
     "assign": frozenset({"bottlenecks", "partitions", "ring"}),
     "corridor": frozenset({"bottlenecks", "partitions"}),

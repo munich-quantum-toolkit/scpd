@@ -288,8 +288,14 @@ Problems validate(const ConfigT& config) {
   } else {
     append(problems, validate(*config.rules), "rules: ");
   }
-  if (config.grid != nullptr && config.grid->capacity_cells_x == 0) {
-    problems.emplace_back("grid: capacity_cells_x must be at least one");
+  // A grid needs two cells per axis to span the chip from edge to edge.
+  if (config.grid != nullptr && config.grid->capacity_cells_x < 2) {
+    problems.emplace_back("grid: capacity_cells_x must be at least two");
+  }
+  if (config.grid != nullptr && config.grid->capacity_cells_y == 1) {
+    problems.emplace_back(
+        "grid: capacity_cells_y must be 0, which takes the aspect ratio, or at "
+        "least two");
   }
   if (config.grid != nullptr && config.grid->detail_factor == 0) {
     problems.emplace_back("grid: detail_factor must be at least one");

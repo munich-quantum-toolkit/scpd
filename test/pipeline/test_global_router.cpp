@@ -1288,6 +1288,13 @@ TEST(GlobalRouter, ReportsTheCircuitAndHowItWasSolved) {
   EXPECT_EQ(figures[2].text, "length 450.00");
   EXPECT_EQ(recorder.fails[0], 0U);
 
+  // The ring count and the count of resonator ports differ, so the second
+  // figure names ports and not the resonators of the ring.
+  EXPECT_TRUE(recorder.said(
+      Detail::Steps,
+      std::format("{}{}{}", counted(routing.outer_ring.size(), "ring port"),
+                  FIGURE_SEPARATOR,
+                  counted(routing.resonators.size(), "resonator port"))));
   EXPECT_TRUE(recorder.said(Detail::Steps, "model inner-circuit"));
   EXPECT_TRUE(recorder.said(Detail::Steps, "highs optimal"));
   EXPECT_TRUE(recorder.said(Detail::Items, std::string("C12.port1 ") +

@@ -115,7 +115,22 @@ TEST(ConfigValidation, AConfigurationNeedsEverySection) {
   EXPECT_EQ(validate(config),
             (Problems{"chip_input is empty", "ports section is missing",
                       "design rules are missing",
-                      "grid: capacity_cells_x must be at least one"}));
+                      "grid: capacity_cells_x must be at least two"}));
+
+  // A grid of one cell along an axis cannot span the chip.
+  ConfigT narrow = manualConfig();
+  narrow.grid = std::make_unique<GridParamsT>();
+  narrow.grid->capacity_cells_x = 1;
+  narrow.grid->capacity_cells_y = 1;
+  EXPECT_EQ(validate(narrow),
+            (Problems{"grid: capacity_cells_x must be at least two",
+                      "grid: capacity_cells_y must be 0, which takes the "
+                      "aspect ratio, or at least two"}));
+  narrow.grid->capacity_cells_x = 2;
+  narrow.grid->capacity_cells_y = 0;
+  EXPECT_TRUE(validate(narrow).empty());
+  narrow.grid->capacity_cells_y = 2;
+  EXPECT_TRUE(validate(narrow).empty());
 
   ConfigT nested = manualConfig();
   nested.rules->min_bend_radius = 0.0;

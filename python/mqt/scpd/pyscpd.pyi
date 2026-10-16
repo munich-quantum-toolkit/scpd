@@ -17,7 +17,7 @@ def validate_config(config: bytes) -> list[str]:
     """The problems of a configuration that can be seen without the chip, empty when there are none."""
 
 def plan_problems(chip: bytes, config: bytes, steps: Sequence[str]) -> list[str]:
-    """What would stop a run of the given steps on a classified chip, before any stage runs: an unknown implementation name, a missing or odd launcher_target, launchers listed in the direction of the port ring, or fewer than three launchers off one line on a chip with resonators. Empty when there is nothing."""
+    """What would stop a run of the given steps on a classified chip, before any stage runs: an unknown implementation name, a detail grid above the cell limit, a ring that the global step refuses, a missing or odd launcher_target, launchers listed in the direction of the port ring, fewer than three launchers off one line on a chip with resonators, or ring counts that the assignment refuses. Empty when there is nothing."""
 
 def solving_steps(chip: bytes, config: bytes, steps: Sequence[str]) -> list[str]:
     """The steps of a run that solve a mixed-integer program, and so need the solver backend: the assignment, and the global step where the chip has an inner circuit. The list keeps a global step whose port ring the core refuses, since that step stops the run anyway."""

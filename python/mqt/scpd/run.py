@@ -39,7 +39,7 @@ from .flatbuffers.config.GridParams import GridParamsT
 from .steps import STEPS
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from .flatbuffers.config.Config import ConfigT
@@ -386,18 +386,20 @@ class RunDirectory:
         packed = write_config(config)
         producer = f"mqt-scpd {__version__}"
         level = min(max(verbosity, 0), 3)
+        calls: dict[str, Callable[[], bytes]] = {
+            "capacity": lambda: pyscpd.plan_capacity(chip, packed, producer, reporter, level),
+            "global": lambda: pyscpd.route_global(chip, inputs[0], packed, producer, reporter, level),
+            "assign": lambda: pyscpd.assign(chip, inputs[0], inputs[1], packed, producer, reporter, level),
+            "corridor": lambda: pyscpd.route_corridor(chip, inputs[0], inputs[1], packed, producer, reporter, level),
+        }
+        if stage not in calls:
+            msg = f"no core call runs the {stage} step"
+            raise RunError(msg)
         # The artifacts of the later steps go before the core runs, so that a step that fails leaves
         # none of them beside an input they were not made from.
         self.invalidate_after(stage)
         self.record(stage).unlink(missing_ok=True)
-        if stage == "capacity":
-            data = pyscpd.plan_capacity(chip, packed, producer, reporter, level)
-        elif stage == "global":
-            data = pyscpd.route_global(chip, inputs[0], packed, producer, reporter, level)
-        elif stage == "assign":
-            data = pyscpd.assign(chip, inputs[0], inputs[1], packed, producer, reporter, level)
-        else:
-            data = pyscpd.route_corridor(chip, inputs[0], inputs[1], packed, producer, reporter, level)
+        data = calls[stage]()
         _write_whole(path, data)
         # The record comes after the artifact, so an artifact never carries the record of other inputs.
         record = {name: digests[name] for name in STEP_INPUTS[stage]}

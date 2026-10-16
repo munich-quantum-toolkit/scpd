@@ -606,11 +606,11 @@ private:
                      const std::vector<double>& lengths, const Report& report,
                      const std::vector<std::uint32_t>& withoutRoom = {}) {
     if (report.wants(Detail::Steps)) {
-      report.line(Detail::Steps,
-                  std::format("{}{}{}",
-                              counted(routing.outer_ring.size(), "ring port"),
-                              FIGURE_SEPARATOR,
-                              counted(routing.resonators.size(), "resonator")));
+      report.line(
+          Detail::Steps,
+          std::format("{}{}{}", counted(routing.outer_ring.size(), "ring port"),
+                      FIGURE_SEPARATOR,
+                      counted(routing.resonators.size(), "resonator port")));
       if (!withoutRoom.empty()) {
         report.line(Detail::Steps,
                     std::format("{} without room to a launcher",

@@ -18,6 +18,9 @@ how far it has got; in a file or a pipe only the lines that last are written.
 
 from __future__ import annotations
 
+import errno
+import os
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -74,6 +77,39 @@ _TERMINAL_WIDTH = 100
 _STEPS, _SOLVER = 1, 3
 
 
+@contextmanager
+def reader_gone_as_broken_pipe() -> Generator[None]:
+    """Raise a write to a pipe without a reader as a broken pipe on every platform.
+
+    Windows reports such a write as an invalid argument, not as a broken pipe. Windows also reports
+    an invalid file name with that error, so only writes to an open stream belong inside.
+
+    Yields:
+        Nothing; the writes run inside.
+
+    Raises:
+        BrokenPipeError: If the reader of the stream went away.
+        OSError: If the stream cannot be written for another reason.
+    """
+    try:
+        yield
+    except OSError as error:
+        if sys.platform == "win32" and error.errno == errno.EINVAL:
+            raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE)) from error
+        raise
+
+
+def write_out(text: str) -> None:
+    """Write text to standard output at once.
+
+    A reader that went away is noticed here, where ``main()`` handles it as a broken pipe, also on
+    Windows, and not at exit.
+    """
+    with reader_gone_as_broken_pipe():
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+
 @dataclass(frozen=True)
 class Figure:
     """One figure of a result or an entry, such as ``363 partitions`` or ``fails 2``."""
@@ -89,7 +125,8 @@ def duration(seconds: float) -> str:
         Seconds with two decimals below a minute, minutes and seconds below an hour, and hours and
         minutes above.
     """
-    if seconds < 60.0:
+    # The unit follows the rounded figure, so that 59.996 s reads 1m 00s and not 60.00s.
+    if round(seconds, 2) < 60.0:
         return f"{seconds:.2f}s"
     whole = round(seconds)
     if whole < 3600:
@@ -105,7 +142,8 @@ def size(count: int) -> str:
     """
     if count < 1000:
         return f"{count} B"
-    if count < 1_000_000:
+    # The unit follows the rounded figure, so that 999,950 B reads 1.0 MB and not 1000.0 kB.
+    if round(count / 1000, 1) < 1000:
         return f"{count / 1000:.1f} kB"
     return f"{count / 1_000_000:.1f} MB"
 
@@ -340,7 +378,8 @@ class Console:
 
     def write(self, text: Text) -> None:
         """Write one lasting line, above the live line when there is one."""
-        self._rich.print(text)
+        with reader_gone_as_broken_pipe():
+            self._rich.print(text)
 
     def success(self, text: str) -> None:
         """Write the line of a command that did what it was asked: a green tick and what it made."""

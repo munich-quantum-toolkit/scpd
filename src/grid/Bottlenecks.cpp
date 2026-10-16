@@ -287,25 +287,9 @@ wallBelow(const CellSpace& space,
     }
 
     if (best == current) {
-      // The descent has flattened out. A wall directly beside it is still the
-      // wall this shore faces.
-      for (std::size_t step = 0; step < STEP_X.size(); ++step) {
-        const auto nx = space.x(current) + STEP_X[step];
-        const auto ny = space.y(current) + STEP_Y[step];
-        if (!space.inside(nx, ny)) {
-          continue;
-        }
-        const auto cell = space.index(nx, ny);
-        if (space.onAxis(cell)) {
-          continue;
-        }
-        if (step >= FIRST_DIAGONAL_STEP && space.cutsACorner(current, nx, ny)) {
-          continue;
-        }
-        if (space.isBlocked(cell)) {
-          return cell;
-        }
-      }
+      // The descent has flattened out. A blocked neighbour that the walk may
+      // step to has clearance 0 and would have been the lowest step, so no
+      // wall of this shore lies beside it.
       return std::nullopt;
     }
     current = best;

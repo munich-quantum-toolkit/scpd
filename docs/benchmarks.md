@@ -51,9 +51,12 @@ together, it names the offending port or key and exits with a nonzero status.
 ## Planning a Chip
 
 `mqt-scpd plan` runs the planning steps on a chip. The steps need a few keys
-beyond those of the other commands: the `launcher_target` of the assignment, the
-`component` pattern, and the bridge rules of the couplers. The configuration of
-every benchmark chip carries them:
+beyond those of `plot` and `render`: the `launcher_target` of the assignment,
+the `component` pattern, and the bridge rules of the couplers. The configuration
+of every benchmark chip carries them. `doctor` checks the configuration for the
+steps up to `[run] stop_after`, which are all four steps when the key is
+missing, so a configuration without `launcher_target` passes `doctor` only with
+`stop_after = "global"` or an earlier step:
 
 ```console
 mqt-scpd plan -c inputs/33q/config.toml -o runs/33q
@@ -119,16 +122,19 @@ at the feed of its resonator there, with a square mark.
 
 An SVG shows the chip like a layout tool shows a mask: hatched metal on a light
 substrate, a millimetre grid, rulers and a scale bar. Every port is a red
-marker. The capacity picture shows the partition borders. The assign picture
-shows each ring port joined to its feed by a black dashed chord, and the
-corridor picture the corridors as dark lines, both over light borders. All three
-show the cells the grid blocked, in dark grey under the artwork: the border of
-the grid, the clearance around the artwork and the approach of every port. The
-borders of partitions that the artwork closes in on every side, such as the free
-space inside a ring of qubits, are left out. Every other partition is shaded in
-a light grey that differs from its neighbours. Opened on its own in a browser,
-the picture has a **Layers** panel in its top left corner that shows and hides
-each layer, and it leaves out the finest detail when zoomed out.
+marker. The global picture shows the Hanan lattices and, in green, the lattice
+edges that the inner circuit selected. The capacity picture shows the partition
+borders. The assign picture shows each ring port joined to its feed by a black
+dashed chord, and the corridor picture the corridors as dark lines, both over
+light borders and with the green inner wires of the global step. All four show
+the cells the grid blocked, in dark grey under the artwork: the border of the
+grid, the clearance around the artwork and the approach of every port. No
+picture shows the gates. The capacity, assign and corridor pictures leave out
+the borders of partitions that the artwork closes in on every side, such as the
+free space inside a ring of qubits. Every other partition is shaded in a light
+grey that differs from its neighbours. Opened on its own in a browser, the
+picture has a **Layers** panel in its top left corner that shows and hides each
+layer, and it leaves out the finest detail when zoomed out.
 
 {doc}`terminal_output` describes what a run prints and what `-v`, `-vv` and
 `-vvv` add.

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import errno
 import os
 import sys
 from pathlib import Path
@@ -27,7 +26,7 @@ from . import pyscpd
 from .artifacts import ArtifactError
 from .chip import ChipError, decode_chip, load_chip
 from .config import ConfigError, load_config, removed_keys_in, write_config
-from .console import Console, size
+from .console import Console, size, write_out
 from .doctor import run_doctor, solver_problem
 from .export import HAS_KLAYOUT
 from .inspection import InspectionError, artifact_to_json
@@ -92,7 +91,7 @@ def command_doctor(args: argparse.Namespace) -> int:
         The exit code.
     """
     report = run_doctor(args.config, list_ports=args.ports, chip_path=args.chip)
-    print(report.text())
+    write_out(report.text() + "\n")
     return 0 if report.ok else 1
 
 
@@ -193,14 +192,18 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         msg = f"{artifact} is missing; run `mqt-scpd plan` up to the {args.stage} step first"
         raise RunError(msg)
     directory.check_current(args.stage, input_digests(config, chip_bytes))
-    # The global picture is drawn over the gates the circuit paid for, and the assign and corridor
-    # pictures over the partitions their chords and wires run through, the corridor picture with the
-    # feedlines its resonator wires start at.
+    # The global picture is drawn over the cells the grid blocked, and the assign and corridor
+    # pictures over the partitions their chords and wires run through, with the inner circuit of the
+    # global step. The corridor picture also shows the feedlines its resonator wires start at.
     plan = directory.artifact("capacity")
     capacity = plan.read_bytes() if args.stage in {"global", "assign", "corridor"} and plan.is_file() else None
     chosen = directory.artifact("assign")
     assignment = chosen.read_bytes() if args.stage == "corridor" and chosen.is_file() else None
-    geometry = planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, assignment)
+    solved = directory.artifact("global")
+    routing = solved.read_bytes() if args.stage in {"assign", "corridor"} and solved.is_file() else None
+    geometry = planning_geometry(
+        artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, assignment, routing
+    )
     return chip_bytes, title, geometry
 
 
@@ -258,8 +261,7 @@ def command_list_algorithms(args: argparse.Namespace) -> int:
         The exit code.
     """
     del args
-    for stage, names in pyscpd.algorithms():
-        print(f"{stage:<18} {', '.join(names)}")
+    write_out("".join(f"{stage:<18} {', '.join(names)}\n" for stage, names in pyscpd.algorithms()))
     return 0
 
 
@@ -268,23 +270,10 @@ def command_inspect(args: argparse.Namespace) -> int:
 
     Returns:
         The exit code.
-
-    Raises:
-        BrokenPipeError: If the reader of standard output went away, also where Windows reports
-            that as an invalid argument.
-        OSError: If standard output cannot be written for another reason.
     """
     text = artifact_to_json(args.artifact.read_bytes())
     if args.output is None:
-        try:
-            sys.stdout.write(text)
-            # A reader that went away is noticed here, where main() handles it, and not at exit.
-            sys.stdout.flush()
-        except OSError as error:
-            # Windows reports a pipe without a reader as an invalid argument, not as a broken pipe.
-            if sys.platform == "win32" and error.errno == errno.EINVAL:
-                raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE)) from error
-            raise
+        write_out(text)
     else:
         args.output.write_text(text, encoding="utf-8")
         Console().success(f"{args.output}  {size(len(text.encode('utf-8')))}")

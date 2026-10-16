@@ -21,17 +21,21 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.scpd import pyscpd
+from mqt.scpd import cli, pyscpd
 from mqt.scpd.artifacts import read_artifact, write_artifact
 from mqt.scpd.cli import main
 from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
+from mqt.scpd.planning import PlanningGeometry
+from mqt.scpd.planning import planning_geometry as drawing
 from mqt.scpd.run import RunDirectory
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from mqt.scpd.flatbuffers.design.Chip import ChipT
 
 CONFIG = str(Path(__file__).resolve().parents[2] / "fixtures" / "mini" / "config.toml")
 
@@ -235,10 +239,12 @@ class _PipeWithoutReaderOnWindows(io.StringIO):
         raise OSError(errno.EINVAL, "Invalid argument")
 
 
-def test_inspect_stops_quietly_when_the_reader_goes_away_on_windows(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Windows reports a pipe without a reader as an invalid argument, which is no error to report either."""
+def _global_artifact(tmp_path: Path) -> Path:
+    """An artifact of the global step without wires.
+
+    Returns:
+        Its path.
+    """
     artifact = tmp_path / "03-global.fb"
     artifact.write_bytes(
         write_artifact(
@@ -249,12 +255,38 @@ def test_inspect_stops_quietly_when_the_reader_goes_away_on_windows(
             )
         )
     )
+    return artifact
+
+
+@pytest.mark.parametrize("command", ["inspect", "list-algorithms", "doctor"])
+def test_a_command_stops_quietly_when_the_reader_goes_away_on_windows(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    """Windows reports a pipe without a reader as an invalid argument, which is no error to report either."""
+    arguments = {
+        "inspect": ["inspect", str(_global_artifact(tmp_path))],
+        "list-algorithms": ["list-algorithms"],
+        "doctor": ["doctor", "-c", CONFIG],
+    }[command]
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "stdout", _PipeWithoutReaderOnWindows())
+
+    assert main(arguments) == 1
+    monkeypatch.undo()
+    assert not capsys.readouterr().err
+
+
+def test_an_invalid_argument_elsewhere_than_windows_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only Windows reports a pipe without a reader as an invalid argument; elsewhere it is an error to report."""
+    artifact = _global_artifact(tmp_path)
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(sys, "stdout", _PipeWithoutReaderOnWindows())
 
     assert main(["inspect", str(artifact)]) == 1
     monkeypatch.undo()
-    assert not capsys.readouterr().err
+    assert capsys.readouterr().err.startswith("✗ ")
 
 
 def test_problems_exit_with_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -723,6 +755,38 @@ def test_plot_draws_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.Cap
 
     assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 0
     assert '<g class="l-feedline">' in output.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("stage", "drawn"), [("global", None), ("assign", "global"), ("corridor", "global")])
+def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, stage: str, drawn: str | None
+) -> None:
+    """The global picture lies over the blocked cells; the assign and corridor pictures show the inner circuit."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    capsys.readouterr()
+    handed: list[bytes | None] = []
+
+    def planning_geometry(
+        data: bytes,
+        chip: ChipT,
+        stage: str,
+        capacity: bytes | None = None,
+        assignment: bytes | None = None,
+        global_routing: bytes | None = None,
+    ) -> PlanningGeometry:
+        handed.append(global_routing)
+        return drawing(data, chip, stage, capacity, assignment, global_routing)
+
+    monkeypatch.setattr(cli, "planning_geometry", planning_geometry)
+    output = tmp_path / f"{stage}.svg"
+
+    assert main(["plot", "--run-dir", str(run), "--stage", stage, "-o", str(output)]) == 0
+
+    expected = None if drawn is None else (run / "02-global.fb").read_bytes()
+    assert handed == [expected]
+    if stage == "global":
+        assert '<g class="l-raster">' in output.read_text(encoding="utf-8")
 
 
 def test_a_planning_stage_needs_a_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

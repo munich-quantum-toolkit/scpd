@@ -453,10 +453,11 @@ private:
       const fbg::Point middle{(from.x() + to.x()) / 2.0,
                               (from.y() + to.y()) / 2.0};
 
-      // A gate's own cells are blocked while it is closed, so the chamber
-      // never contains them. It sees the gate from the cells beside it. A
-      // gate with no such cell is one the chamber does not border at all,
-      // which is exactly the gate this test exists to drop.
+      // A closed gate refuses the moves across its line, so the chamber
+      // holds at most the cells on its own side of the line. It sees the gate
+      // from the cells on or beside the line that it holds. A gate with no
+      // such cell is one the chamber does not border at all, which is exactly
+      // the gate this test exists to drop.
       bool seenFromSomewhere = false;
       for (const auto eye : observersOf(candidate, chamber)) {
         const auto seenFrom = layoutOf(grid, eye);
@@ -567,8 +568,9 @@ private:
   /// label too: it belongs to the approach of a port and to no partition,
   /// even where the stage took its band back and a wire may pass it. Every
   /// other cell takes the label of this chamber, the free cells of the gate
-  /// line too: the chamber before the gate never reaches them while the gate
-  /// is closed, and without a label they would part the two chambers.
+  /// line too: a closed gate refuses the moves across its line, so the
+  /// chamber before the gate may not reach every cell of the line, and
+  /// without a label such a cell would part the two chambers.
   ///
   /// @return Whether the chamber was labelled, which it is unless it reaches
   /// a launcher.
@@ -838,8 +840,13 @@ public:
                 counted(candidates.size(), "candidate bottleneck"));
 
     // The chains come first: which gates matter is decided by walking them,
-    // and a gate that no chain crosses constrains nothing and is dropped.
-    const auto chains = buildChains(plan, candidates, scene, rules, report);
+    // and a gate that no chain crosses constrains nothing and is dropped. The
+    // same builder walks the chains again to stamp their chambers; every walk
+    // starts from a clean state.
+    const auto capacities = capacitiesOf(candidates, scene, rules);
+    ChainBuilder builder(scene, candidates, plan.nodes);
+    builder.budgets = capacities;
+    const auto chains = buildChains(plan, builder, candidates, scene, report);
 
     // The partitioning is what the gates carve out. Every chamber a chain
     // walks through is one partition, and the watershed over the clear
@@ -851,48 +858,46 @@ public:
         labels[cell] = grid::LABEL_RESERVED;
       }
     }
-    auto nextLabel = grid::FIRST_PARTITION_LABEL;
-    {
-      ChainBuilder stamper(scene, candidates, plan.nodes);
-      stamper.budgets = capacitiesOf(candidates, scene, rules);
+    const auto seeds =
+        grid::freeCellSeeds(scene.blocked, scene.detail, scene.capacity);
+    // The chambers, the watershed and the pieces of a cut partition each take
+    // labels, and any of them can take the last one.
+    try {
+      auto nextLabel = grid::FIRST_PARTITION_LABEL;
       for (std::size_t index = 0; index < chains.size(); ++index) {
         report.progress("chambers", "", index, chains.size());
-        stamper.stampChambers(chains[index].cell, chains[index].gates, labels,
+        builder.stampChambers(chains[index].cell, chains[index].gates, labels,
                               nextLabel);
         nextLabel = grid::nextPartitionLabel(nextLabel);
       }
-    }
 
-    report.progress("watershed", "", 0, 0);
-    const auto seeds =
-        grid::freeCellSeeds(scene.blocked, scene.detail, scene.capacity);
-    try {
+      report.progress("watershed", "", 0, 0);
       nextLabel = grid::runWatershed(scene.blocked, seeds, labels, nextLabel);
+      grid::smoothPartitionBorders(scene.blocked, seeds, labels,
+                                   grid::FIRST_PARTITION_LABEL,
+                                   SMOOTHING_RADIUS, SMOOTHING_ROUNDS);
+      // A partition is one region that a wire can cross from any border to
+      // any other. The vote can cut a partition in two, and a later chamber
+      // can cut through an earlier one, so every piece that is cut off becomes
+      // a partition of its own.
+      static_cast<void>(grid::separatePartitionPieces(scene.blocked, labels,
+                                                      scene.detail, nextLabel));
     } catch (const std::length_error&) {
       // Every free capacity cell seeds a partition of its own.
       throw std::length_error(std::format(
-          "the capacity grid has {} free cells, and with the chambers they "
-          "need more than the {} partition labels a plan holds; lower [grid] "
-          "capacity_cells_x",
+          "the capacity grid has {} free cells, and with the chambers and the "
+          "pieces of cut partitions they need more than the {} partition "
+          "labels a plan holds; lower [grid] capacity_cells_x",
           seeds.size(),
           std::numeric_limits<grid::PartitionLabel>::max() -
               grid::FIRST_PARTITION_LABEL));
     }
-    grid::smoothPartitionBorders(scene.blocked, seeds, labels,
-                                 grid::FIRST_PARTITION_LABEL, SMOOTHING_RADIUS,
-                                 SMOOTHING_ROUNDS);
-    // A partition is one region that a wire can cross from any border to any
-    // other. The vote can cut a partition in two, and a later chamber can cut
-    // through an earlier one, so every piece that is cut off becomes a
-    // partition of its own.
-    static_cast<void>(grid::separatePartitionPieces(scene.blocked, labels,
-                                                    scene.detail, nextLabel));
 
     report.progress("partitions", "", 0, 0);
     const auto partitions =
         grid::extractPartitions(scene.blocked, labels, scene.detail);
     fillPartitions(plan, partitions, scene, crossingPitch(config));
-    fillBottlenecks(plan, candidates, chains, scene, rules);
+    fillBottlenecks(plan, candidates, chains, scene, capacities);
     fillLaunchers(plan, scene);
     fillPortKeepout(plan, scene);
     report.line(
@@ -1033,7 +1038,7 @@ private:
                               const std::vector<grid::Bottleneck>& candidates,
                               const std::vector<Chain>& chains,
                               const CapacityScene& scene,
-                              const flatbuffers::design::DesignRulesT& rules) {
+                              const std::vector<std::uint32_t>& capacities) {
     std::vector<std::size_t> kept;
     for (const auto& chain : chains) {
       kept.insert(kept.end(), chain.gates.begin(), chain.gates.end());
@@ -1043,7 +1048,6 @@ private:
     kept.erase(duplicates.begin(), duplicates.end());
 
     std::unordered_map<std::size_t, std::uint32_t> renumbered;
-    const auto capacities = capacitiesOf(candidates, scene, rules);
     plan.bottlenecks.reserve(kept.size());
     for (const auto candidate : kept) {
       renumbered.emplace(candidate,
@@ -1103,13 +1107,10 @@ private:
 
   /// Build one chain per target that no other chain already serves, then
   /// reduce each to the gates that bind.
-  [[nodiscard]] static std::vector<Chain> buildChains(
-      CapacityPlanT& plan, const std::vector<grid::Bottleneck>& candidates,
-      const CapacityScene& scene,
-      const flatbuffers::design::DesignRulesT& rules, const Report& report) {
-    ChainBuilder builder(scene, candidates, plan.nodes);
-    builder.budgets = capacitiesOf(candidates, scene, rules);
-
+  [[nodiscard]] static std::vector<Chain>
+  buildChains(CapacityPlanT& plan, ChainBuilder& builder,
+              const std::vector<grid::Bottleneck>& candidates,
+              const CapacityScene& scene, const Report& report) {
     std::vector<Chain> chains;
     for (std::size_t index = 0; index < scene.targetCell.size(); ++index) {
       report.progress("chains", "", index, scene.targetCell.size());

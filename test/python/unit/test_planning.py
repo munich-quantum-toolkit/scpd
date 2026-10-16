@@ -258,20 +258,7 @@ def test_the_borders_of_closed_in_partitions_are_kept_apart(run: RunDirectory) -
 
 def test_the_global_picture_draws_the_lattice_and_the_selected_edges(run: RunDirectory) -> None:
     """Every lattice edge is drawn, and the edges the circuit selected once more on their own layer."""
-    lattice = LatticeT(
-        points=[PointT(0.0, 0.0), PointT(100.0, 0.0), PointT(100.0, 50.0)],
-        edges=[0, 1, 1, 2],
-        selected=[1],
-    )
-    data = write_artifact(
-        ArtifactT(
-            producer="test",
-            outputType=StageOutput.GlobalRouting,
-            output=GlobalRoutingT(lattices=[lattice], connections=[], outerRing=[], resonators=[]),
-        )
-    )
-
-    geometry = planning_geometry(data, chip_of(run), "global")
+    geometry = planning_geometry(solved_routing(), chip_of(run), "global")
 
     assert geometry.lattice == [((0.0, 0.0), (100.0, 0.0)), ((100.0, 0.0), (100.0, 50.0))]
     assert geometry.inner == [((100.0, 0.0), (100.0, 50.0))]
@@ -545,12 +532,51 @@ def test_a_cyclic_capacity_chain_is_drawn_once(run: RunDirectory) -> None:
     assert geometry.chains == [((50.0, 0.0), (300.0, 1600.0)), ((300.0, 1600.0), (50.0, 0.0))]
 
 
-def test_the_global_picture_draws_the_gates_of_its_capacity_plan(run: RunDirectory) -> None:
-    """The global stage is drawn over the gates and the keep-out of the capacity plan of its run."""
-    geometry = planning_geometry(run.artifact("global").read_bytes(), chip_of(run), "global", capacity=capacity_plan())
+def test_the_global_picture_lies_over_the_blocked_cells_of_its_capacity_plan(run: RunDirectory) -> None:
+    """The global stage is drawn over the cells its grid blocked, and keeps the gates and the keep-out."""
+    plan = capacity_plan()
+    geometry = planning_geometry(run.artifact("global").read_bytes(), chip_of(run), "global", capacity=plan)
 
+    assert geometry.blocked
+    assert geometry.blocked == planning_geometry(plan, chip_of(run), "capacity").blocked
     assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
     assert geometry.keepout == [[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]]
+
+
+def solved_routing() -> bytes:
+    """A global routing with one lattice of two edges, of which the circuit selected the second.
+
+    Returns:
+        The bytes of the artifact.
+    """
+    lattice = LatticeT(
+        points=[PointT(0.0, 0.0), PointT(100.0, 0.0), PointT(100.0, 50.0)],
+        edges=[0, 1, 1, 2],
+        selected=[1],
+    )
+    return write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.GlobalRouting,
+            output=GlobalRoutingT(lattices=[lattice], connections=[], outerRing=[], resonators=[]),
+        )
+    )
+
+
+@pytest.mark.parametrize("stage", ["assign", "corridor"])
+def test_the_assign_and_corridor_pictures_draw_the_selected_edges_of_the_inner_circuit(
+    run: RunDirectory, stage: str
+) -> None:
+    """The inner wires show on the lattice edges the circuit selected; the rest of the lattice does not."""
+    data = run.artifact(stage).read_bytes()
+
+    geometry = planning_geometry(data, chip_of(run), stage, global_routing=solved_routing())
+
+    assert geometry.inner == [((100.0, 0.0), (100.0, 50.0))]
+    assert not geometry.lattice
+    assert not planning_geometry(data, chip_of(run), stage).inner
+    with pytest.raises(PlanningError, match="the global artifact is not a global routing"):
+        planning_geometry(data, chip_of(run), stage, global_routing=run.artifact("capacity").read_bytes())
 
 
 @pytest.mark.parametrize(

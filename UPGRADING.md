@@ -8,8 +8,11 @@ of changes including minor and patch releases, please refer to the
 
 ### Planning a chip
 
-`mqt-scpd plan` needs a few keys that a configuration for `doctor`, `plot` and
-`render` does not:
+`mqt-scpd plan` needs a few keys that a configuration for `plot` and `render`
+does not. `doctor` checks the configuration for the steps up to
+`[run] stop_after`, which are all four steps when the key is missing. A
+configuration without `launcher_target` therefore passes `doctor` only with
+`stop_after = "global"` or an earlier step. The keys are:
 
 - `[stages.assignment] launcher_target`: how many feedline chain ends the
   assignment puts on a launcher; every other chain end is a termination. It is a
@@ -32,14 +35,15 @@ chip, against the direction of the port ring, as on the benchmark chips. A chip
 with resonators needs at least three launchers that do not all lie on one line.
 With fewer, two resonators could share one feed point, and the assignment
 refuses the chip. The assignment also refuses a solution that puts two feeds, or
-a feed and its launcher, closer together than `[design_rules] min_wire_spacing`.
-`launcher_target` plus `[design_rules] feedline_terminations` has to be even,
-since every feedline chain has two ends. The counts of the ring set more limits:
-the conventional ports of the ring plus `launcher_target` need at most as many
-launchers as the chip has, `launcher_target` and `feedline_terminations` are
-each at most the resonators of the ring, `feedline_terminations` is at most
-`launcher_target`, since every feedline chain has a launcher at one end at
-least, and the resonators are at most the feedline chains times
+a feed and its launcher, closer together than `[design_rules] min_wire_spacing`,
+or two feeds on one cell of the detail grid. `launcher_target` plus
+`[design_rules] feedline_terminations` has to be even, since every feedline
+chain has two ends. The counts of the ring set more limits: the conventional
+ports of the ring plus `launcher_target` need at most as many launchers as the
+chip has, `launcher_target` and `feedline_terminations` are each at most the
+resonators of the ring, `feedline_terminations` is at most `launcher_target`,
+since every feedline chain has a launcher at one end at least, and the
+resonators are at most the feedline chains times
 `[design_rules] max_feedline_utilization` (`docs/configuration.md` lists them).
 The global step refuses a ring that carries both ends of a bridge. `plan` checks
 these figures, the ring and the implementation names of the stages before its
@@ -58,6 +62,8 @@ warn about each key. Remove them; a later version refuses them.
 The detail grid, `[grid] capacity_cells_x` and `capacity_cells_y` times
 `detail_factor`, may have at most 25,000,000 cells. `plan` and `doctor` refuse a
 larger grid before the first stage; `docs/configuration.md` explains the limit.
+`capacity_cells_x` has to be at least two, and `capacity_cells_y` either `0` or
+at least two, since a grid needs two cells along each axis.
 
 Every step writes a record of its inputs beside its artifact, for example
 `01-capacity.inputs.json`: a digest of the chip and of each configuration

@@ -137,7 +137,8 @@ ringCountProblem(const ChipT& chip, const ConfigT& config);
  * feedlines from crossing, as one mixed-integer program. It refuses a
  * solution in which two feeds lie closer than `[design_rules]
  * min_wire_spacing`, such as two conventional ports at launcher slots in one
- * cell.
+ * cell, and a solution in which two feeds round onto one cell of the detail
+ * grid of the capacity plan.
  *
  * @return The assigner.
  */

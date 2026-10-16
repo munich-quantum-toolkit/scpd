@@ -40,6 +40,23 @@ TEST(MilpModel, CombinesRepeatedTermsAndDropsZeroes) {
   EXPECT_DOUBLE_EQ(combined.front().second, 1.5);
 }
 
+TEST(MilpModel, AddsTheTermsOfAVariableInTheOrderTheyCame) {
+  Model model("order");
+  const auto x = model.addContinuous("x", 0.0, 1.0);
+  const auto y = model.addContinuous("y", 0.0, 1.0);
+
+  // 1e16 + 1 rounds back to 1e16, so the terms of x sum to 0 in the order
+  // they came and to 1 in any order that takes -1e16 before 1. The terms of
+  // y between them make the sort move the terms of x.
+  LinearExpr expression;
+  expression.add(x, 1.0e16).add(y, 1.0).add(x, 1.0).add(y, 1.0).add(x, -1.0e16);
+
+  const auto combined = expression.combined();
+  ASSERT_EQ(combined.size(), 1U);
+  EXPECT_EQ(combined.front().first, y.index);
+  EXPECT_DOUBLE_EQ(combined.front().second, 2.0);
+}
+
 TEST(MilpModel, MovesTheConstantOfAnExpressionToTheBound) {
   Model model("shift");
   const auto x = model.addContinuous("x", 0.0, 10.0);

@@ -89,7 +89,9 @@ LinearExpr& LinearExpr::operator*=(const double factor) {
 
 std::vector<std::pair<std::size_t, double>> LinearExpr::combined() const {
   auto sorted = termList;
-  std::ranges::sort(sorted, {}, &std::pair<std::size_t, double>::first);
+  // A stable sort adds the terms of one variable in the order they were added,
+  // so the sum rounds the same with every standard library.
+  std::ranges::stable_sort(sorted, {}, &std::pair<std::size_t, double>::first);
 
   std::vector<std::pair<std::size_t, double>> result;
   result.reserve(sorted.size());

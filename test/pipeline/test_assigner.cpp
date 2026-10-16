@@ -420,6 +420,87 @@ TEST(Assigner, RefusesFeedsCloserThanTheWireSpacing) {
       {})));
 }
 
+TEST(Assigner, RefusesTwoFeedsCloseOnTheTwoSidesOfASharpCorner) {
+  // The launcher l0 lies far to the left, so the corner at it is about 17
+  // degrees. r1 is fed in the middle of the segment from l0 to l2, and r3 a
+  // third along the segment from l0 to l1. Each feed lies more than 85 from
+  // every launcher and from the other feed on its segment, but the two lie
+  // 84.7 apart across the corner.
+  const auto chip =
+      squareChip({{-300.0, 50.0}, {110.0, -10.0}, {110.0, 110.0}});
+  auto config = squareConfig();
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  config.rules->max_feedline_utilization = 2;
+  config.rules->feedline_terminations = 2;
+  config.rules->min_wire_spacing = 85.0;
+  config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  config.stages->assignment =
+      std::make_unique<flatbuffers::config::AssignmentParamsT>();
+  config.stages->assignment->launcher_target = 2;
+  const auto routing = routingWithRing({1, 2, 3}, {1, 2, 3});
+
+  try {
+    static_cast<void>(makeOrderedMilpAssigner()->run(
+        chip, planWithLaunchersOf(chip), routing, config, {}));
+    FAIL() << "the stage has to refuse two feeds close across a corner";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_EQ(std::string(error.what()),
+              "the feeds of r1 and r3 lie 84.7 apart, closer than the wire "
+              "spacing of 85");
+  }
+
+  config.rules->min_wire_spacing = 84.0;
+  const auto assignment = makeOrderedMilpAssigner()->run(
+      chip, planWithLaunchersOf(chip), routing, config, {});
+  ASSERT_EQ(assignment.feeds.size(), 3U);
+  EXPECT_NEAR(geometry::distance(assignment.feeds[0], assignment.feeds[2]),
+              84.7, 0.05);
+}
+
+TEST(Assigner, RefusesTwoFeedsOnOneCellOfTheDetailGrid) {
+  // The two resonators are fed about 85 units apart, more than the wire
+  // spacing of 40. A detail grid of 2 by 2 cells, 200 units each, rounds both
+  // feeds onto one cell, where the Corridor stage would start both wires.
+  const auto chip =
+      squareChip({{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}});
+  auto config = squareConfig();
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  config.rules->max_feedline_utilization = 4;
+  config.rules->feedline_terminations = 2;
+  config.rules->min_wire_spacing = 40.0;
+  config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  config.stages->assignment =
+      std::make_unique<flatbuffers::config::AssignmentParamsT>();
+  config.stages->assignment->launcher_target = 2;
+  auto plan = planWithLaunchersOf(chip);
+  plan.detail_grid = std::make_unique<fba::GridExtentT>();
+  plan.detail_grid->width = 2;
+  plan.detail_grid->height = 2;
+  plan.detail_grid->origin = {-10.0, -10.0};
+  plan.detail_grid->cell_width = 200.0;
+  plan.detail_grid->cell_height = 200.0;
+
+  try {
+    static_cast<void>(makeOrderedMilpAssigner()->run(
+        chip, plan, routingWithRing({0, 1}, {0, 1}), config, {}));
+    FAIL() << "the stage has to refuse two feeds on one cell";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_NE(std::string(error.what())
+                  .find("fall on one cell of the detail grid, whose cells are "
+                        "200.0 by 200.0; raise [grid] detail_factor"),
+              std::string::npos)
+        << error.what();
+  }
+
+  // On cells of one unit the feeds round onto two cells.
+  plan.detail_grid->width = 121;
+  plan.detail_grid->height = 121;
+  plan.detail_grid->cell_width = 1.0;
+  plan.detail_grid->cell_height = 1.0;
+  EXPECT_NO_THROW(static_cast<void>(makeOrderedMilpAssigner()->run(
+      chip, plan, routingWithRing({0, 1}, {0, 1}), config, {})));
+}
+
 // The stage on the two-qubit fixture.
 
 /// The inputs of the stage on the fixture, and its assignment.

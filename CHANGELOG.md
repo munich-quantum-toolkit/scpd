@@ -19,11 +19,12 @@ releases may include breaking changes.
   one step again on the copies the run carries and refuses it when the chip or a
   configuration section that an earlier step read has changed since that step,
   and `-v`, `-vv` and `-vvv` show the steps, the items and the log of HiGHS. A
-  run prints one block per stage with a live progress line on a terminal, in the
-  format of `docs/terminal_output.md`. Add `list-algorithms`, and `plot` and
-  `render` with `--stage` and `--run-dir` for the planning stages, which refuse
-  an artifact whose inputs have changed since; the assign and corridor pictures
-  show the feedline chains ([#140]) ([**@FeldmeierMichael**])
+  run prints one block per stage with a live progress line on a terminal, which
+  `--no-progress` turns off, in the format of `docs/terminal_output.md`. Add
+  `list-algorithms`, and `plot` and `render` with `--stage` and `--run-dir` for
+  the planning stages, which refuse an artifact whose inputs have changed since;
+  the assign and corridor pictures show the feedline chains ([#140])
+  ([**@FeldmeierMichael**])
 - 🎨 Draw `plot` pictures like a mask in a layout tool ([#140])
   ([**@FeldmeierMichael**]):
   - Metal is hatched and has an inner contour on a light substrate. A picture
@@ -32,15 +33,17 @@ releases may include breaking changes.
     in one color. Corridors are solid dark lines that run on into their target
     port along its direction, with rounded turns.
   - A picture opened on its own has a panel that shows and hides each layer.
-  - The capacity picture shows the partition borders without the gates. No
-    picture shows the port keep-out or the capacity chains.
+  - The capacity picture shows the partition borders. No picture shows the
+    gates, the port keep-out or the capacity chains.
   - `plot` and `render` draw a partition border along its cell edges. `plot`
     straightens the staircase of a slanted border.
-  - The capacity, assign and corridor pictures show the blocked cells of the
-    grid in dark grey under the artwork, without strips of free cells too thin
-    to block. They leave out the borders of the partitions that the artwork
-    closes in, and shade every partition in a light grey that differs from its
-    neighbours.
+  - Every planning picture shows the blocked cells of the grid in dark grey
+    under the artwork, without strips of free cells too thin to block. The
+    capacity, assign and corridor pictures leave out the borders of the
+    partitions that the artwork closes in, and shade every partition in a light
+    grey that differs from its neighbours.
+  - The assign and corridor pictures show the inner wires on the lattice edges
+    that the global step selected.
   - The assign picture draws its chords as thick black dashes and leaves out the
     ring of its ports.
 - ✨ Add the planning stages. The Capacity stage partitions the free space at
@@ -117,8 +120,10 @@ releases may include breaking changes.
 - 🎨 Start the result line of `plot`, `render` and `inspect` with `✓` and an
   input or stage error of every command except `doctor` with `✗`, show the
   `bridge_pair` pattern and the reachable solvers in `doctor`, and check there,
-  as `plan` does before its first stage, what would stop a run of the configured
-  steps ([#140]) ([**@FeldmeierMichael**])
+  as `plan` does before its first stage, what would stop a run of the steps up
+  to `[run] stop_after`; without that key `doctor` checks all four steps and
+  fails a configuration without `launcher_target` ([#140])
+  ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that

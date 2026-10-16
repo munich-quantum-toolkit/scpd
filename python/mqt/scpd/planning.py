@@ -539,20 +539,43 @@ def _chains(plan: CapacityPlanT, chip: ChipT, geometry: PlanningGeometry) -> Non
             walk(root)
 
 
-def _global(routing: GlobalRoutingT, geometry: PlanningGeometry) -> None:
-    """Fill the layers a global routing carries."""
-    for lattice in _entries(routing.lattices):
-        points = [_point(point) for point in _entries(lattice.points)]
-        edges = _indices(lattice.edges)
-        selected = set(_indices(lattice.selected))
+def _global(routing: GlobalRoutingT, geometry: PlanningGeometry, *, lattice: bool = True) -> None:
+    """Fill the layers a global routing carries.
+
+    Args:
+        routing: The global routing.
+        geometry: The shapes to fill.
+        lattice: Whether to draw every edge of the lattices, or only the edges the circuit selected.
+    """
+    for drawn in _entries(routing.lattices):
+        points = [_point(point) for point in _entries(drawn.points)]
+        edges = _indices(drawn.edges)
+        selected = set(_indices(drawn.selected))
         for index in range(0, len(edges) - 1, 2):
             first, second = edges[index], edges[index + 1]
             if first >= len(points) or second >= len(points):
                 continue
             segment = (points[first], points[second])
-            geometry.lattice.append(segment)
+            if lattice:
+                geometry.lattice.append(segment)
             if index // 2 in selected:
                 geometry.inner.append(segment)
+
+
+def _routing_of(routing: bytes) -> GlobalRoutingT:
+    """The global routing of a run, for a stage that is drawn with the inner circuit.
+
+    Returns:
+        The global routing.
+
+    Raises:
+        PlanningError: If the bytes are no global routing.
+    """
+    solved = read_artifact(routing).output
+    if not isinstance(solved, GlobalRoutingT):
+        msg = "the global artifact is not a global routing"
+        raise PlanningError(msg)
+    return solved
 
 
 def _assignment(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry) -> None:
@@ -704,6 +727,7 @@ def planning_geometry(
     stage: str,
     capacity: bytes | None = None,
     assignment: bytes | None = None,
+    global_routing: bytes | None = None,
 ) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
@@ -712,11 +736,13 @@ def planning_geometry(
         chip: The chip of the run, for the positions of the ports an artifact names.
         stage: The stage the artifact is drawn as.
         capacity: The capacity artifact of the same run, for the stages that are drawn over the
-            free space they had to fit into: the global stage over the gates it paid for, and the
-            assign and corridor stages over the partitions their chords and wires run through.
+            free space they had to fit into: the global stage over the cells the grid blocked, and
+            the assign and corridor stages over the partitions their chords and wires run through.
         assignment: The assignment artifact of the same run, for the corridor stage, which is drawn
             with the feedlines that its resonator wires start at and the approach of every wire to
             its target port.
+        global_routing: The global artifact of the same run, for the assign and corridor stages,
+            which are drawn with the lattice edges that the inner circuit selected.
 
     Returns:
         The geometry, in layout units.
@@ -741,10 +767,11 @@ def planning_geometry(
             msg = "the artifact is not a global routing"
             raise PlanningError(msg)
         _global(output, geometry)
-        # The free space behind a port decides where a wire may surface, so the gates that measure
-        # it belong in the picture of the circuit that had to pay for them.
+        # The lattice lines run between the cells the grid blocked. The gates and the keep-out are
+        # layers of the GDS; the SVG leaves them out, as it does in the other pictures.
         if capacity is not None:
             plan = _plan_of(capacity)
+            geometry.blocked = _blocked(plan)
             _bottlenecks(plan, geometry)
             _keepout(plan, geometry)
     elif stage == "assign":
@@ -755,6 +782,9 @@ def planning_geometry(
         if capacity is not None:
             _capacity(_plan_of(capacity), geometry)
         _assignment(output, chip, geometry)
+        # The inner circuit decided which ports joined the ring, so its wires belong in the picture.
+        if global_routing is not None:
+            _global(_routing_of(global_routing), geometry, lattice=False)
     else:
         if not isinstance(output, CorridorRoutingT):
             msg = "the artifact is not a corridor routing"
@@ -767,4 +797,7 @@ def planning_geometry(
         # The wire of a resonator starts at its feed, which its feedline passes.
         if chosen is not None:
             _feedlines(chosen, chip, geometry)
+        # The corridors route the outer wires; the inner circuit is the rest of the wiring.
+        if global_routing is not None:
+            _global(_routing_of(global_routing), geometry, lattice=False)
     return geometry

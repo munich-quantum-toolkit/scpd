@@ -371,14 +371,17 @@ TEST(HighsBackend, ReportsTheIncumbentOfASearchThatALimitStops) {
   //
   // HiGHS checks the limit before its first heuristics, so on a slow machine,
   // such as a coverage build, a limit can stop the search before it has an
-  // incumbent. The test then raises the limit.
+  // incumbent. The test then raises the limit. Any other error ends the test
+  // at once.
   const auto model = largeCover(true);
   Solution solution;
   for (const double limit : {1.0, 4.0, 16.0, 64.0}) {
     SolveOptions options;
     options.timeLimit = limit;
     solution = makeHighsBackend()->solve(model, options);
-    if (solution.status != SolveStatus::Error) {
+    if (solution.status != SolveStatus::Error ||
+        solution.message !=
+            "HiGHS stopped at a limit without a feasible solution") {
       break;
     }
   }

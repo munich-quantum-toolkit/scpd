@@ -13,6 +13,7 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
+#include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/GlobalRouter.hpp"
@@ -422,7 +423,7 @@ public:
     }
     assignment.objective = solution.objective;
     readBack(assignment, chip, inputs, ring, variables, solution,
-             config.rules->min_wire_spacing);
+             config.rules->min_wire_spacing, capacity.detail_grid.get());
 
     if (report.wants(Detail::Items)) {
       for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
@@ -455,7 +456,8 @@ private:
     std::vector<milp::Var> termination;
     /// Whether each ring edge is used.
     std::vector<milp::Var> edge;
-    /// How many wires the corridor at each anchor carries.
+    /// How many resonators the feedline chain of each anchor feeds from that
+    /// anchor to its end.
     std::vector<milp::Var> utilization;
     /// The rotation of the whole flow assignment.
     milp::Var offset;
@@ -613,12 +615,14 @@ private:
                            0.0);
     }
 
-    // The utilization of a corridor counts up from every launcher and resets
-    // at the next one, which bounds how many wires one corridor carries. A
-    // big-M pair per anchor switches between the two.
+    // The utilization at an anchor counts the resonators from it to the end
+    // of its feedline chain: one at the last anchor, where the chain ends and
+    // the chord that leaves it is unused, and one more than at the next anchor
+    // everywhere else. Its upper bound limits how many resonators one chain
+    // feeds. A big-M pair per anchor switches between the two.
     const auto bigM = static_cast<double>(ring.anchors.size()) + 2.0;
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
-      const auto previous =
+      const auto next =
           variables.utilization[(index + 1) % ring.anchors.size()];
       // A single resonator has no chord to leave it.
       const auto leaving =
@@ -657,11 +661,11 @@ private:
                               here - (bigM * milp::LinearExpr(starts)),
                               1.0 - bigM);
       model.addLessOrEqual(std::format("util_step_up_{}", index),
-                           here - previous - (bigM * milp::LinearExpr(starts)),
+                           here - next - (bigM * milp::LinearExpr(starts)),
                            1.0);
-      model.addGreaterOrEqual(
-          std::format("util_step_low_{}", index),
-          here - previous + (bigM * milp::LinearExpr(starts)), 1.0);
+      model.addGreaterOrEqual(std::format("util_step_low_{}", index),
+                              here - next + (bigM * milp::LinearExpr(starts)),
+                              1.0);
     }
 
     milp::LinearExpr activeLaunchers;
@@ -778,11 +782,12 @@ private:
 
   /// Reads the solution into the assignment and places the feeds.
   /// @throws std::invalid_argument When two feeds would lie closer than
-  /// @p spacing.
+  /// @p spacing, or would round onto one cell of @p detail.
   static void readBack(AssignmentT& assignment, const ChipT& chip,
                        const AssignmentInputs& inputs, const RingEdges& ring,
                        const Variables& variables,
-                       const milp::Solution& solution, const double spacing) {
+                       const milp::Solution& solution, const double spacing,
+                       const fba::GridExtentT* detail) {
     const auto launchers = inputs.launchers.size();
     const auto offset = static_cast<std::int64_t>(
         std::llround(solution.valueOf(variables.offset)));
@@ -935,6 +940,35 @@ private:
               "spacing of {}",
               chip.ports[inputs.ring[first]]->label,
               chip.ports[inputs.ring[second]]->label, apart, spacing));
+        }
+      }
+    }
+
+    // The Corridor stage starts each wire at the detail cell nearest its
+    // feed. Where a detail cell is wider than about 0.7 wire spacings, two
+    // feeds one spacing apart can round onto one cell, and the second wire
+    // would start on the first.
+    if (detail != nullptr) {
+      const grid::GridMetrics grid{.width = detail->width,
+                                   .height = detail->height,
+                                   .origin = detail->origin,
+                                   .cellWidth = detail->cell_width,
+                                   .cellHeight = detail->cell_height};
+      std::unordered_map<std::size_t, std::size_t> fedAt;
+      for (std::size_t index = 0; index < assignment.feeds.size(); ++index) {
+        const auto cell = grid.roundToCell(assignment.feeds[index]);
+        if (!cell.has_value()) {
+          continue;
+        }
+        const auto [first, fresh] =
+            fedAt.emplace(grid.index(cell->x(), cell->y()), index);
+        if (!fresh) {
+          throw std::invalid_argument(std::format(
+              "the feeds of {} and {} fall on one cell of the detail grid, "
+              "whose cells are {:.1f} by {:.1f}; raise [grid] detail_factor",
+              chip.ports[inputs.ring[first->second]]->label,
+              chip.ports[inputs.ring[index]]->label, grid.cellWidth,
+              grid.cellHeight));
         }
       }
     }

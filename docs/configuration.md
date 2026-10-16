@@ -77,11 +77,11 @@ of a later release read them.
 The capacity step cuts the chip into a coarse capacity grid, and each capacity
 cell into a finer detail grid.
 
-| Key                 | Default | Meaning                                                                                    |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `capacity_cells_x`  | `50`    | The cells of the capacity grid across the width of the chip; at least one                  |
-| `capacity_cells_y`  | `0`     | The cells of the capacity grid across the height of the chip; `0` takes the aspect ratio   |
-| `detail_factor`     | `30`    | The detail cells per capacity cell along each axis; at least one                           |
+| Key                | Default | Meaning                                                                                                                   |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `capacity_cells_x` | `50`    | The cells of the capacity grid across the width of the chip; at least two                                                 |
+| `capacity_cells_y` | `0`     | The cells of the capacity grid across the height of the chip; `0` takes the aspect ratio, any other value is at least two |
+| `detail_factor`    | `30`    | The detail cells per capacity cell along each axis; at least one                                                          |
 
 No stage reads `launcher_offset_x` and `launcher_offset_y` any more. The loader
 still accepts them, and `doctor` and `plan` warn about each one; a later version
@@ -161,7 +161,9 @@ configuration that breaks a limit for every such decision.
 
 The assignment also refuses a solution in which two feeds lie closer than
 `[design_rules] min_wire_spacing`, such as two conventional ports at launcher
-slots in one cell.
+slots in one cell. It refuses two feeds that round onto one cell of the detail
+grid as well, since the Corridor step starts each wire at that cell; a detail
+cell narrower than about 0.7 wire spacings rules this out.
 
 ## `[stages.solver]`
 

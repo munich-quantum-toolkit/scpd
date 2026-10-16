@@ -242,7 +242,7 @@ def _groups(svg: str) -> set[str | None]:
 
 
 def test_a_stage_leaves_out_what_its_picture_does_not_need() -> None:
-    """The capacity picture shows borders, not outlines and gates; keep-out and chains never show."""
+    """The capacity picture shows borders, not outlines; gates, keep-out and chains never show."""
     geometry = PlanningGeometry(
         partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
         borders=[[(0.0, 50.0), (100.0, 50.0)]],
@@ -256,8 +256,8 @@ def test_a_stage_leaves_out_what_its_picture_does_not_need() -> None:
     assert capacity.isdisjoint({"l-partition", "l-bottleneck", "l-keepout", "l-chain"})
 
     other = _groups(layout_svg(_mini(), stage="global", planning=geometry))
-    assert {"l-partition", "l-bottleneck"} <= other
-    assert other.isdisjoint({"l-keepout", "l-chain"})
+    assert "l-partition" in other
+    assert other.isdisjoint({"l-bottleneck", "l-keepout", "l-chain"})
 
 
 def test_the_corridors_are_solid_and_the_ground_under_them_light() -> None:
