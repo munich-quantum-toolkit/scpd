@@ -358,8 +358,13 @@ std::vector<double> linesThrough(const std::set<double>& values) {
 /// ends may lie on either side of it. Without that the inner circuit routes
 /// through the couplers and the qubits it routes between, and its objective
 /// is the length of paths that nobody can build.
+///
+/// Only the ports in @p carrying carry flow in the model. Every other port
+/// draws its lattice lines like any port, but it gives up its node to a port
+/// that meets the lattice there too.
 Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
-                     const double reach) {
+                     const double reach,
+                     const std::unordered_set<std::uint32_t>& carrying) {
   Lattice lattice;
   if (ports.empty()) {
     return lattice;
@@ -417,13 +422,23 @@ Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
                                  anchors[index].y() - COORDINATE_EPSILON) -
         rows.begin());
     const auto node = at(column, row);
-    // Each port needs a node of its own: the circuit names a connection by
-    // the port of its end node, and two ports on one node would give a wire
-    // to one of them that the model gave to the other.
+    // Each port that carries flow needs a node of its own: the circuit names
+    // a connection by the port of its end node, and two such ports on one
+    // node would give a wire to one of them that the model gave to the
+    // other. A port without flow needs no node. Its rows hold the flow at its
+    // node at zero, so on a shared node it would shut the other port too.
     if (const auto held = lattice.nodes[node].port; held.has_value()) {
-      throw std::invalid_argument(std::format(
-          "the ports {} and {} meet the lattice at one node",
-          chip.ports[*held]->label, chip.ports[ports[index]]->label));
+      if (!carrying.contains(ports[index])) {
+        continue;
+      }
+      if (carrying.contains(*held)) {
+        throw std::invalid_argument(std::format(
+            "the ports {} and {} meet the lattice at one node: the points "
+            "[design_rules] min_straight_length in front of them coincide; "
+            "change min_straight_length or move one of the ports",
+            chip.ports[*held]->label, chip.ports[ports[index]]->label));
+      }
+      lattice.nodeOfPort.erase(*held);
     }
     lattice.nodes[node].port = ports[index];
     lattice.nodeOfPort.emplace(ports[index], node);
@@ -699,6 +714,7 @@ private:
         }
       }
     }
+    const auto carrying = carryingPorts(circuit, internal);
     std::vector<Lattice> lattices;
     for (std::size_t chain = 0; chain < capacity.chains.size(); ++chain) {
       report.progress("building the lattices", "", chain,
@@ -717,7 +733,7 @@ private:
           })) {
         continue;
       }
-      auto lattice = buildLattice(chip, ports, reach);
+      auto lattice = buildLattice(chip, ports, reach, carrying);
       // A single node has no edge, so it is not a lattice. Everything else
       // stays, a chain whose ports are all targets included: that is a demand
       // without supply, and the artifact shows it as a lattice on which
@@ -744,6 +760,29 @@ private:
                               FIGURE_SEPARATOR, counted(edges / 2, "edge")));
     }
     return lattices;
+  }
+
+  /// The ports that may carry flow in the model: the inner ports, without
+  /// the ends of the internal bridges unless @p internal allows them. build()
+  /// holds the flow of every other port at zero.
+  [[nodiscard]] static std::unordered_set<std::uint32_t>
+  carryingPorts(const InnerCircuit& circuit, const bool internal) {
+    std::unordered_set<std::uint32_t> carrying(circuit.innerPorts.begin(),
+                                               circuit.innerPorts.end());
+    if (internal) {
+      return carrying;
+    }
+    std::unordered_set<std::uint32_t> surfaces;
+    for (const auto& bridge : circuit.outerBridges) {
+      surfaces.insert(bridge.to);
+    }
+    for (const auto& bridge : circuit.bridges) {
+      if (!surfaces.contains(bridge.to) && !surfaces.contains(bridge.from)) {
+        carrying.erase(bridge.from);
+        carrying.erase(bridge.to);
+      }
+    }
+    return carrying;
   }
 
   /// Collects the target ports of a chain, from @p node down, each node

@@ -121,6 +121,11 @@ assignment gives every ring port a wire of its own. An inner port that no such
 wire can reach is a fail of the global step. An inner resonator that is a fail
 gets no feed.
 
+The lattice lines of a port run through the point
+`[design_rules] min_straight_length` in front of it. The step refuses two ports
+that can carry an inner wire when these points coincide. A port without an inner
+wire, such as a ring port, may share its point with any port.
+
 The wires of the ring ports behind a gate of a capacity chain pass that gate on
 their way to a launcher, and so do the inner wires that surface there. When the
 gates have no room for all of them, the step solves the circuit again and lets
@@ -212,10 +217,12 @@ had one, so the fails of the rounds can go up as well as down. The stage keeps
 the plan of the round with the fewest fails, and goes back to it when the last
 round ends with more. The fails of a round count every connection without a way
 at its end, also one that the round ripped up near its end and had no sweep left
-to place again; the stage takes the plan of the best round as it is. Within a
-sweep, a connection without a way also raises the price of the slots in its way
-that another wire holds, so that the next sweeps leave them to it. The pass that
-moves wires aside does this, so with `max_relaxation` at `0`, no price rises.
+to place again. After the rounds, one last pass offers every connection without
+a way the free slots of that plan, and rips up nothing; the stage block shows it
+as `free slots` when it places a connection. Within a sweep, a connection
+without a way also raises the price of the slots in its way that another wire
+holds, so that the next sweeps leave them to it. The pass that moves wires aside
+does this, so with `max_relaxation` at `0`, no price rises.
 
 The stage limits `max_relaxation` to a value below half the number of
 connections. A connection that may rip up all the others takes their room, they

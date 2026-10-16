@@ -905,8 +905,7 @@ public:
     // the rounds go up and down, and on a crowded chip two rounds can undo
     // each other until the last. The plan of the round with the fewest fails
     // is kept, the latest of them on a tie. Its fails include the wires that
-    // the round ripped near its end and had no sweep left to place again;
-    // the stage takes that plan as it is.
+    // the round ripped near its end and had no sweep left to place again.
     auto best = routes;
     auto bestLeft = requests.size();
     std::uint32_t bestRound = 0;
@@ -944,6 +943,29 @@ public:
       report.entry(Detail::Summary, std::format("back to round {}", bestRound),
                    {routedFigure(bestLeft, requests.size()),
                     verdict("fails", bestLeft)});
+    }
+
+    // A wire that a sweep ripped up after it had passed the wire can find
+    // free slots in the plan that the stage keeps, for example where the wire
+    // that took its way moved on later in the round. One last pass offers
+    // every wire without a way the free slots only. It rips up nothing, so it
+    // can only lower the fails.
+    std::size_t placed = 0;
+    for (std::size_t index = 0; index < requests.size(); ++index) {
+      if (routes[index].has_value()) {
+        continue;
+      }
+      if (auto found = corridors.route(requests[index]); found.has_value()) {
+        corridors.commit(requests[index], *found);
+        routes[index] = std::move(found);
+        ++placed;
+      }
+    }
+    if (placed > 0) {
+      const auto after = unrouted(routes);
+      report.entry(
+          Detail::Summary, "free slots",
+          {routedFigure(after, requests.size()), verdict("fails", after)});
     }
 
     // A corridor has no clearance to break, so the fails of the stage are the

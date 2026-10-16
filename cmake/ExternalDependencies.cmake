@@ -116,6 +116,7 @@ block(
   PROPAGATE
   flatbuffers_SOURCE_DIR
   nlohmann_json_SOURCE_DIR
+  highs_SOURCE_DIR
   boost_polygon_SOURCE_DIR
   boost_config_SOURCE_DIR)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)

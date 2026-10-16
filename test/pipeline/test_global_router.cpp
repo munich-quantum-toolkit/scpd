@@ -11,6 +11,7 @@
 // The Global stage: which ports form the inner circuit, how the circuit
 // reaches them, the ring it leaves for the assignment, and what it reports.
 
+#include "../MpsSolver.hpp"
 #include "MiniFixture.hpp"
 #include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
@@ -779,6 +780,31 @@ TEST(GlobalRouter, SurfacesThroughABridgeWhereTheRingCanCarryTheWire) {
   EXPECT_EQ(resonatorsOf(routing), resonators);
 }
 
+TEST(GlobalRouter, FindsTheSameCircuitThroughMpsText) {
+  // An external backend sees the model only as MPS text. Read back by HiGHS,
+  // that text has to give the optimum that HiGHS finds on the model itself.
+  // The lattice carries the resonator, the inner end of the bridge and three
+  // ring ports.
+  auto config = bridgedConfig();
+  const auto chip = bridgedChip(config);
+  const auto plan =
+      planOf({{.targets = indicesOf(chip, {"Q2.port0", "C12.port1", "Q2.port1",
+                                           "C12.port0", "Q1.port1"}),
+               .gate = {}},
+              {.targets = indicesOf(chip, {"C12.port2"}), .gate = {}}});
+  const auto direct = makeHananMilpRouter()->run(chip, plan, config, {});
+  config.stages->solver->backend = "gurobi";
+  milp::setExternalBackend(
+      milp::makeMpsBackend("mps", milp::test::solveMpsText));
+
+  const auto throughMps = makeHananMilpRouter()->run(chip, plan, config, {});
+  milp::setExternalBackend(nullptr);
+
+  ASSERT_EQ(direct.connections.size(), 1U);
+  EXPECT_EQ(throughMps.connections.size(), direct.connections.size());
+  EXPECT_NEAR(throughMps.objective, direct.objective, 1.0e-9);
+}
+
 TEST(GlobalRouter, CountsAResonatorAsAFailWhereNoRingBridgeCanCarryItsWire) {
   // A gate without room cuts the ring end of the bridge off from every
   // launcher. Q2.port1 lies on the same lattice as the resonator Q2.port0,
@@ -932,7 +958,75 @@ TEST(GlobalRouter, RefusesTwoPortsThatMeetTheLatticeAtOneNode) {
     FAIL() << "two ports on one node were accepted";
   } catch (const std::invalid_argument& error) {
     EXPECT_STREQ(error.what(),
-                 "the ports T.port0 and U.port0 meet the lattice at one node");
+                 "the ports T.port0 and U.port0 meet the lattice at one node: "
+                 "the points [design_rules] min_straight_length in front of "
+                 "them coincide; change min_straight_length or move one of "
+                 "the ports");
+  }
+}
+
+TEST(GlobalRouter, LetsTwoRingPortsThatFaceEachOtherShareANode) {
+  // A and B face each other twice min_straight_length apart, so the points
+  // in front of them meet. Both are ring ports, which carry no inner wire,
+  // so the shared node changes nothing.
+  const auto chip = handChip(
+      {ringEnd(),
+       {.label = "S.port0", .center = Point(0.0, 300.0)},
+       {.label = "T.port0",
+        .center = Point(300.0, 300.0),
+        .orientation = 180.0},
+       {.label = "A.port0", .center = Point(0.0, 0.0)},
+       {.label = "B.port0", .center = Point(200.0, 0.0), .orientation = 180.0}},
+      handPatterns());
+  auto config = handConfig({"S.port1", "A.port0", "B.port0"});
+  config.rules = std::make_unique<DesignRulesT>();
+  config.rules->min_straight_length = 100.0;
+  const auto plan = planOf({{.targets = indicesOf(chip, {"T.port0", "S.port0",
+                                                         "A.port0", "B.port0"}),
+                             .gate = {}}});
+
+  const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  ASSERT_NE(routing.connections[0]->source, nullptr);
+  EXPECT_EQ(routing.connections[0]->source->index(), indexOf(chip, "S.port0"));
+  EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "T.port0"));
+  EXPECT_NEAR(routing.objective, 100.0, 1.0e-9);
+}
+
+TEST(GlobalRouter, GivesANodeThatARingPortSharesToTheTarget) {
+  // The points in front of the ring port A and the target T meet. The
+  // model holds the flow of A at zero; on the shared node that would also
+  // shut T out. T keeps the node in either order of the chain.
+  const auto chip = handChip(
+      {ringEnd(),
+       {.label = "S.port0",
+        .center = Point(100.0, 300.0),
+        .orientation = 270.0},
+       {.label = "T.port0", .center = Point(200.0, 0.0), .orientation = 180.0},
+       {.label = "A.port0", .center = Point(0.0, 0.0)}},
+      handPatterns());
+  auto config = handConfig({"S.port1", "A.port0"});
+  config.rules = std::make_unique<DesignRulesT>();
+  config.rules->min_straight_length = 100.0;
+
+  for (const auto& order :
+       {std::vector<std::string>{"A.port0", "T.port0", "S.port0"},
+        std::vector<std::string>{"T.port0", "A.port0", "S.port0"}}) {
+    const auto plan = planOf({{.targets = indicesOf(chip, order), .gate = {}}});
+    Recorder recorder;
+
+    const auto routing = makeHananMilpRouter()->run(
+        chip, plan, config, recorder.report(Detail::Summary));
+
+    ASSERT_EQ(routing.connections.size(), 1U) << order[0];
+    ASSERT_NE(routing.connections[0]->source, nullptr);
+    EXPECT_EQ(routing.connections[0]->source->index(),
+              indexOf(chip, "S.port0"));
+    EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "T.port0"));
+    EXPECT_NEAR(routing.objective, 200.0, 1.0e-9);
+    ASSERT_EQ(recorder.fails.size(), 1U);
+    EXPECT_EQ(recorder.fails[0], 0U);
   }
 }
 

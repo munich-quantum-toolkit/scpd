@@ -1224,5 +1224,42 @@ TEST(CorridorRouter, EndsNoWorseThanItsBestRound) {
   }
 }
 
+TEST(CorridorRouter, PlacesARippedWireOnFreeSlotsAfterTheRounds) {
+  // A sweep can rip up a wire that it has passed, and the plan that the stage
+  // keeps can leave free slots for that wire. The last pass places such a
+  // wire, so the stage ends with fewer fails than its best round had.
+  SplitMix random(5);
+  const auto fixture = planMini();
+  auto planned = planMini();
+  std::size_t passes = 0;
+  for (int draw = 0; draw < 100; ++draw) {
+    planned.assignment = randomAssignment(fixture, random);
+    for (const std::uint32_t rounds : {11U, 12U}) {
+      SCOPED_TRACE(std::format("assignment {}, {} rounds", draw, rounds));
+      Received received;
+      const auto routing =
+          routeMini(planned, receiving(received, Detail::Summary),
+                    sweepConfig(rounds, 30));
+
+      std::optional<std::size_t> before;
+      for (const auto& [label, figures] : received.summary) {
+        const auto failsOf = [&figures] {
+          return std::stoul(figures[1].text.substr(std::strlen("fails ")));
+        };
+        if (label != "free slots") {
+          before = failsOf();
+          continue;
+        }
+        ++passes;
+        ASSERT_TRUE(before.has_value());
+        EXPECT_LT(failsOf(), *before);
+        EXPECT_EQ(failsOf(), unroutedOf(routing));
+      }
+    }
+  }
+  // The draws reach the pass.
+  EXPECT_GT(passes, 0U);
+}
+
 } // namespace
 } // namespace mqt::scpd::pipeline

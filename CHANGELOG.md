@@ -74,7 +74,9 @@ releases may include breaking changes.
   ([**@FeldmeierMichael**])
 - ➕ Add the C++ dependencies HiGHS 1.11.0, linked static, and the header-only
   Boost.Polygon and Boost.Config of Boost 1.89.0, all fetched at configure time,
-  and the Python dependency `rich` ([#140]) ([**@FeldmeierMichael**])
+  and the Python dependency `rich`. The wheel carries the licences of HiGHS,
+  FlatBuffers and nlohmann/json, which its extension links in ([#140])
+  ([**@FeldmeierMichael**])
 - ✨ Add bridge pairs and components to the configuration: the `bridge_pair` and
   `component` patterns, the `[[ports.bridge_pairs]]` rules, the stage sections
   and `[run]` ([#140]) ([**@FeldmeierMichael**])

@@ -49,7 +49,9 @@ The global step refuses a ring that carries both ends of a bridge. `plan` checks
 these figures, the ring and the implementation names of the stages before its
 first stage, and refuses a run whose steps they would stop; the run directory
 then stays as it was. `doctor` reports the same problems for the steps that
-`[run] stop_after` configures.
+`[run] stop_after` configures. The global step also refuses two ports that can
+carry an inner wire when the points `[design_rules] min_straight_length` in
+front of them coincide, since both would meet its lattice at one node.
 
 An inner routable port that the `component` pattern does not match ends a wire
 of the inner circuit, as a port of an inner qubit does.

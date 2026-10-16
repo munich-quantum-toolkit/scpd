@@ -11,12 +11,14 @@
 // The Assignment stage: the inputs it works out before the model exists, what
 // its assignment holds on the two-qubit fixture, and what it reports.
 
+#include "../MpsSolver.hpp"
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
+#include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/GlobalRouter.hpp"
@@ -548,6 +550,23 @@ TEST(Assigner, ConnectsEveryRingPortInRingOrder) {
     EXPECT_EQ(connection.source_role, fbd::AssignedRole::FeedlineSource);
     EXPECT_TRUE(conventionalSlots.insert(connection.source->index()).second);
   }
+}
+
+TEST(Assigner, FindsTheSameAssignmentCostThroughMpsText) {
+  // An external backend sees the model only as MPS text. Read back by HiGHS,
+  // that text has to give the optimum that HiGHS finds on the model itself.
+  auto config = test::miniConfig();
+  const auto direct = assignMini(config).assignment;
+  config.stages->solver->backend = "gurobi";
+  milp::setExternalBackend(
+      milp::makeMpsBackend("mps", milp::test::solveMpsText));
+
+  const auto throughMps = assignMini(config).assignment;
+  milp::setExternalBackend(nullptr);
+
+  EXPECT_GT(direct.objective, 0.0);
+  EXPECT_EQ(throughMps.connections.size(), direct.connections.size());
+  EXPECT_NEAR(throughMps.objective, direct.objective, 1.0e-9);
 }
 
 TEST(Assigner, GivesNoTwoRingNodesOneFeedPoint) {

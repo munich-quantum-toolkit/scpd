@@ -101,7 +101,7 @@ public:
    * fit the chip, or when the capacity plan does not fit the chip: an index
    * names no node or no port, a chain leads back into itself or reaches a
    * node twice, or a target lies on two chains or twice on one; or when two
-   * ports of one lattice meet it at one node.
+   * ports of one lattice that can carry an inner wire meet it at one node.
    */
   [[nodiscard]] virtual GlobalRoutingT run(const ChipT& chip,
                                            const CapacityPlanT& capacity,
