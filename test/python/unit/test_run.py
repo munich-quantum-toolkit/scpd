@@ -19,7 +19,7 @@ import pytest
 
 from mqt.scpd import pyscpd
 from mqt.scpd.console import Figure
-from mqt.scpd.run import STAGE_FILES, BlockReporter, RunDirectory, RunError, steps_until
+from mqt.scpd.run import STAGE_FILES, STEP_INPUTS, BlockReporter, RunDirectory, RunError, steps_until
 from mqt.scpd.steps import STEPS
 
 if TYPE_CHECKING:
@@ -268,6 +268,12 @@ def test_a_step_refuses_an_earlier_artifact_made_from_other_sections(
         run_through(directory, ["corridor"])
 
     assert artifacts_of(directory) == before
+
+
+def test_every_step_has_an_artifact_and_a_record_of_its_inputs() -> None:
+    """A step of the release that the run directory does not know could not run or be resumed."""
+    assert list(STAGE_FILES) == list(STEPS)
+    assert list(STEP_INPUTS) == list(STEPS)
 
 
 def test_a_step_refuses_an_earlier_artifact_made_from_another_chip(tmp_path: Path) -> None:

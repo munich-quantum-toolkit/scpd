@@ -50,8 +50,9 @@ class CorridorParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 12
 
-    # How many neighbouring connections a failed one may rip up, counted along
-    # the sweep direction.
+    # How many neighbouring connections a failed one may rip up in a sweep,
+    # counted along the sweep direction. The exchange pass moves every wire in
+    # the way of a failed connection, without this limit.
     # CorridorParams
     def MaxRelaxation(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))

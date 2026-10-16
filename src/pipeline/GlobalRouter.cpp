@@ -1018,14 +1018,22 @@ private:
       std::vector<bool> supplied;
     };
     std::vector<Walked> walked;
+    // The ring ends of bridges on the chains that the model leaves out, and
+    // whether one of those chains supplies each of them.
+    std::map<std::uint32_t, bool> unwalkedEnds;
     for (std::size_t chain = 0; chain < capacity.chains.size(); ++chain) {
       auto links = chainLinks(capacity, capacity.chains[chain]);
+      auto supplied = suppliedLinks(capacity, links);
       if (std::ranges::any_of(links, [&](const ChainLink& link) {
             return isTarget(link) && claimed.contains(portOf(link));
           })) {
+        for (std::size_t at = 0; at < links.size(); ++at) {
+          if (isTarget(links[at]) && insideOf.contains(portOf(links[at]))) {
+            unwalkedEnds[portOf(links[at])] |= supplied[at];
+          }
+        }
         continue;
       }
-      auto supplied = suppliedLinks(capacity, links);
       walked.push_back({.chain = chain,
                         .links = std::move(links),
                         .supplied = std::move(supplied)});
@@ -1037,13 +1045,15 @@ private:
     // them. Only where no chain supplies the ring end does nothing surface
     // there, because a wire that came out there would have no free space to
     // leave through.
+    //
+    // A plain ring port has one wire, whichever chain carries it, so its
+    // demand sums over the chains that supply it in the same way.
     std::unordered_map<std::uint32_t, std::size_t> suppliers;
     std::unordered_map<std::uint32_t, std::size_t> lastSupplier;
     for (std::size_t index = 0; index < walked.size(); ++index) {
       const auto& [chain, links, supplied] = walked[index];
       for (std::size_t at = 0; at < links.size(); ++at) {
-        if (isTarget(links[at]) && supplied[at] &&
-            insideOf.contains(portOf(links[at]))) {
+        if (isTarget(links[at]) && supplied[at]) {
           ++suppliers[portOf(links[at])];
           lastSupplier[portOf(links[at])] = index;
         }
@@ -1126,25 +1136,34 @@ private:
             }
             break;
           }
+          auto& total = drawn[element.id];
+          total.add(in - out);
           if (inside == insideOf.end()) {
-            // A plain outer target draws the one wire it is there for, unless
+            // A plain ring port draws the one wire it is there for, unless
             // the gates on the way have no room for it.
-            auto drawnHere = in - out;
+            if (suppliers.at(element.id) > 1) {
+              // No chain hands a wire on to another one through the port.
+              model.addGreaterOrEqual(
+                  std::format("chain_{}_target_draw_{}", chain, at), in - out,
+                  0.0);
+            }
+            if (lastSupplier.at(element.id) != index) {
+              break;
+            }
+            auto demanded = total;
             if (penalty.has_value()) {
               const auto missing = model.addBinary(
                   std::format("chain_{}_short_{}", chain, at), *penalty);
               crowded.push_back({.marker = missing, .port = element.id});
-              drawnHere.add(missing, 1.0);
+              demanded.add(missing, 1.0);
             }
             model.addEqual(std::format("chain_{}_target_{}", chain, at),
-                           drawnHere, 1.0);
+                           demanded, 1.0);
             break;
           }
           // A target where the inner circuit can surface draws exactly what
           // the circuit sends out through the bridge, and never the reverse:
           // the wire leaves the inner region there and does not enter it.
-          auto& total = drawn[element.id];
-          total.add(in - out);
           if (suppliers.at(element.id) > 1) {
             // No chain hands a wire on to another one through the port.
             model.addGreaterOrEqual(
@@ -1166,6 +1185,17 @@ private:
         default:
           break;
         }
+      }
+    }
+
+    // A ring end of a bridge that lies only on chains with inner ports has
+    // no rows above. Where none of those chains supplies it either, a gate
+    // without room cuts it off, and nothing surfaces there. A ring end on no
+    // chain at all has no capacity to limit it.
+    for (const auto& [port, supplied] : unwalkedEnds) {
+      if (!supplied && !suppliers.contains(port) && !sealed.contains(port)) {
+        model.addEqual(std::format("sealed_{}", port),
+                       portFlow(insideOf.at(port), true), 0.0);
       }
     }
   }

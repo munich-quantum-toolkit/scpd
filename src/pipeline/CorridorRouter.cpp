@@ -1069,7 +1069,7 @@ private:
     // settled them yet, so it gives each of them a new way before the round
     // is over. Near the end of the sweep the count runs on past the last wire
     // to the first ones, which this round has passed; those wait for the
-    // next round, or for the passes after the last one.
+    // next round, or for the exchange pass after the last one.
     std::vector<std::pair<std::size_t, Route>> ripped;
     const auto total = static_cast<std::int64_t>(requests.size());
     for (std::uint32_t relax = 1; relax <= sweeps.maxRelaxation; ++relax) {

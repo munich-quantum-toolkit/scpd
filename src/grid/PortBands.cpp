@@ -223,8 +223,8 @@ std::optional<std::size_t> placeTargetBeyondBand(BitGrid& mask,
   const auto idealX = static_cast<int64_t>(band.lastForwardCenter.x()) + step.x;
   const auto idealY = static_cast<int64_t>(band.lastForwardCenter.y()) + step.y;
   const std::size_t ideal = clampedIndex(width, height, idealX, idealY);
-  // A band that runs off the grid has no cell beyond it: the clamped cell
-  // would be one of the band's own.
+  // A band that runs off the grid has no cell beyond it: the clamped cell is
+  // one of the band's own, so the band is undone before the walk takes it.
   if (band.lastForwardOnGrid && onGrid(width, height, idealX, idealY) &&
       !before.test(ideal)) {
     mask.set(ideal, false);

@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
@@ -90,6 +91,20 @@ private:
 
   const char* variable;
   std::optional<std::string> previous;
+};
+
+/// Registers an external backend while it lives, and clears the registration
+/// again, also when the test fails on the way.
+class ScopedBackend {
+public:
+  explicit ScopedBackend(std::shared_ptr<milp::ISolverBackend> backend) {
+    milp::setExternalBackend(std::move(backend));
+  }
+  ScopedBackend(const ScopedBackend&) = delete;
+  ScopedBackend& operator=(const ScopedBackend&) = delete;
+  ScopedBackend(ScopedBackend&&) = delete;
+  ScopedBackend& operator=(ScopedBackend&&) = delete;
+  ~ScopedBackend() { milp::setExternalBackend(nullptr); }
 };
 
 TEST(SolveWith, SolvesWithTheConfiguredBackend) {
@@ -158,7 +173,7 @@ TEST(SolveWith, CountsNodesOnlyWhenTheBackendReportsThem) {
         }
       }});
   // An external backend that reports a solution and no search figures.
-  milp::setExternalBackend(milp::makeMpsBackend(
+  const ScopedBackend backend(milp::makeMpsBackend(
       "stub", [](auto, const auto& names, const auto& /*options*/) {
         milp::Solution solution;
         solution.status = milp::SolveStatus::Optimal;
@@ -171,7 +186,6 @@ TEST(SolveWith, CountsNodesOnlyWhenTheBackendReportsThem) {
       solveWith(pairModel(), configWithBackend("highs"), report, "solving"));
   static_cast<void>(
       solveWith(pairModel(), configWithBackend("gurobi"), report, "solving"));
-  milp::setExternalBackend(nullptr);
 
   ASSERT_EQ(steps.size(), 4U);
   EXPECT_NE(steps[1].find(" node"), std::string::npos) << steps[1];
@@ -182,7 +196,7 @@ TEST(SolveWith, CountsNodesOnlyWhenTheBackendReportsThem) {
 
 TEST(SolveWith, HandsTheConfiguredLimitsToTheBackend) {
   milp::SolveOptions seen;
-  milp::setExternalBackend(milp::makeMpsBackend(
+  const ScopedBackend backend(milp::makeMpsBackend(
       "stub", [&seen](auto, const auto& names, const auto& options) {
         seen = options;
         milp::Solution solution;
@@ -196,7 +210,6 @@ TEST(SolveWith, HandsTheConfiguredLimitsToTheBackend) {
   config.stages->solver->threads = 3;
 
   static_cast<void>(solveWith(pairModel(), config, {}, "solving"));
-  milp::setExternalBackend(nullptr);
 
   EXPECT_DOUBLE_EQ(seen.timeLimit, 7.0);
   EXPECT_DOUBLE_EQ(seen.relativeGap, 0.01);
@@ -212,7 +225,7 @@ TEST(SolveWith, ReportsTheSearchFiguresOfAnExternalBackend) {
           steps.emplace_back(text);
         }
       }});
-  milp::setExternalBackend(milp::makeMpsBackend(
+  const ScopedBackend backend(milp::makeMpsBackend(
       "stub", [](auto, const auto& names, const auto& /*options*/) {
         milp::Solution solution;
         solution.status = milp::SolveStatus::Feasible;
@@ -226,7 +239,6 @@ TEST(SolveWith, ReportsTheSearchFiguresOfAnExternalBackend) {
 
   static_cast<void>(
       solveWith(pairModel(), configWithBackend("gurobi"), report, "solving"));
-  milp::setExternalBackend(nullptr);
 
   ASSERT_EQ(steps.size(), 2U);
   // The pair model is a maximization, so the MPS backend negates the
@@ -258,7 +270,7 @@ TEST(SolverName, NamesHighsWithItsVersion) {
 TEST(SolverName, KeepsHighsWhenAnExternalBackendIsRegistered) {
   // A registered backend is used only when the configuration asks for it, so
   // a licence on the machine does not change the result of a run.
-  milp::setExternalBackend(milp::makeMpsBackend(
+  const ScopedBackend backend(milp::makeMpsBackend(
       "stub", [](auto, const auto& names, const auto& /*options*/) {
         milp::Solution solution;
         solution.status = milp::SolveStatus::Optimal;
@@ -267,7 +279,6 @@ TEST(SolverName, KeepsHighsWhenAnExternalBackendIsRegistered) {
       }));
   EXPECT_EQ(solverName(ConfigT{}), "HiGHS " + milp::highsVersion());
   EXPECT_EQ(solverName(configWithBackend("gurobi")), "stub");
-  milp::setExternalBackend(nullptr);
 }
 
 TEST(SolverName, FollowsTheEnvironmentLikeTheSolve) {

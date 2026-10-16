@@ -61,11 +61,13 @@ larger grid before the first stage; `docs/configuration.md` explains the limit.
 
 Every step writes a record of its inputs beside its artifact, for example
 `01-capacity.inputs.json`: a digest of the chip and of each configuration
-section the step reads. `plan --stage <step>` refuses a step when the chip or
-such a section has changed since an earlier step wrote its artifact, and names
-the section and the step to run again. The run directory then stays as it was.
-`plot` and `render` with `--run-dir` refuse a stage in the same way, and also an
-artifact without a record, which a step that failed leaves behind.
+section the step reads. `SCPD_SOLVER` is no input: it chooses the backend of one
+run without a change to the files the run is judged on. `plan --stage <step>`
+refuses a step when the chip or such a section has changed since an earlier step
+wrote its artifact, and names the section and the step to run again. The run
+directory then stays as it was. `plot` and `render` with `--run-dir` refuse a
+stage in the same way, and also an artifact without a record, which a step that
+failed leaves behind.
 
 The planning stages solve with HiGHS unless `[stages.solver] backend` or the
 environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and

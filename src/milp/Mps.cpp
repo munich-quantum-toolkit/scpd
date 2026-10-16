@@ -206,6 +206,10 @@ std::string toMps(const Model& model) {
     if (!defaultUpper) {
       text += std::format(" UP BND  {}  {}\n", variable.name,
                           number(variable.upper));
+    } else if (variable.type != VarType::Continuous) {
+      // A reader may apply the bound of one per side, so an integer variable
+      // with only a lower bound states its open upper side as well.
+      text += std::format(" PL BND  {}\n", variable.name);
     }
   }
 

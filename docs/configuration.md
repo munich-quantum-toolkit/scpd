@@ -125,10 +125,14 @@ The wires of the ring ports behind a gate of a capacity chain pass that gate on
 their way to a launcher, and so do the inner wires that surface there. When the
 gates have no room for all of them, the step solves the circuit again and lets
 ring ports go without room. Each such ring port is a fail of the global step,
-and `-vv` names it. A ring port that no bridge joins always needs a way to a
-launcher: where a gate without room cuts it off on every chain that carries it,
-it is a fail too, also on a chip without inner ports. The ring end of a bridge
-may be cut off, because it needs a way only where an inner wire surfaces there.
+and `-vv` names it. A ring port that several chains supply takes its wire
+through one of them. The step checks a gate with some room only where it solves
+an inner circuit, and only on the chains without inner ports. Elsewhere, a gate
+that has room for some of its ring ports but not for all gives no fail. A ring
+port that no bridge joins always needs a way to a launcher: where a gate without
+room cuts it off on every chain that carries it, it is a fail too, also on a
+chip without inner ports. The ring end of a bridge may be cut off, because it
+needs a way only where an inner wire surfaces there.
 
 ## `[stages.assignment]`
 
@@ -186,11 +190,11 @@ of `1024` is the largest value that Gurobi accepts.
 
 ## `[stages.corridor]`
 
-| Key              | Default | Meaning                                                                                                                                 |
-| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                           |
-| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward                                                                      |
-| `max_relaxation` | `30`    | How many neighbouring connections along the sweep a connection without a way may rip up, and then how many wires in its way it may move |
+| Key              | Default | Meaning                                                                                                                                                 |
+| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                           |
+| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward                                                                                      |
+| `max_relaxation` | `30`    | How many neighbouring connections along a sweep a connection without a way may rip up; the exchange pass moves every wire in its way without this limit |
 
 The later sweeps let a connection without a way take room that another
 connection has not claimed yet. A sweep can take a way from a connection that

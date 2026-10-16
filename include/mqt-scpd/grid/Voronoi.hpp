@@ -63,7 +63,8 @@ medialAxis(const BitGrid& blocked);
 enum class AxisCell : std::uint8_t {
   /// The cell is not on the axis.
   None = 0,
-  /// The cell is on the axis and has one or two neighbors there.
+  /// The cell is on the axis and has two neighbors there, or none where an
+  /// edge of the axis shrinks to this one cell.
   Path = 1,
   /// The cell is on the axis where three or more arms meet.
   Junction = 2,
@@ -103,9 +104,8 @@ struct MedialAxis {
  * coordinates, and the axis then lies off the middle of a corridor by up to
  * one cell. Beside a rectangular obstacle that can give an opening more than
  * one bottleneck, and two mirrored openings different ones. The rasterization
- * keeps the truncation of the development branch, because rounding changes
- * the bottlenecks, the Global circuit and the assignment of the benchmark
- * chips.
+ * keeps the truncation, because rounding changes the bottlenecks, the Global
+ * circuit and the assignment of the benchmark chips.
  *
  * @param blocked The obstacle mask the edges were computed from.
  * @param grid The metrics of the grid of the mask.

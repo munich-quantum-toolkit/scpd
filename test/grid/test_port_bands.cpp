@@ -207,10 +207,10 @@ TEST(PortBands, PlacingFallsBackWhenTheWalkLeavesTheGrid) {
   EXPECT_FALSE(mask.test(*target));
 }
 
-TEST(PortBands, PlacingBeyondABandThatRunsOffTheGridTakesNoCellOfTheBand) {
-  // The band reaches past the right edge, so no cell lies beyond it. The
-  // target is the nearest free cell once the band is undone, and not a cell
-  // of the band at the edge.
+TEST(PortBands, PlacingBeyondABandThatRunsOffTheGridUndoesTheBand) {
+  // The band reaches past the right edge, so no cell lies beyond it. The band
+  // is undone, and the walk takes the cell at the edge where the band left
+  // the grid, which was free before the bands.
   const BitGrid before(20, 20);
   BitGrid mask = before;
   const PortBand band{.center = DCoord(17, 10),
@@ -222,6 +222,7 @@ TEST(PortBands, PlacingBeyondABandThatRunsOffTheGridTakesNoCellOfTheBand) {
   EXPECT_FALSE(stamped.lastForwardOnGrid);
   const auto target = placeTargetBeyondBand(mask, before, stamped, band.step);
   ASSERT_TRUE(target.has_value());
+  EXPECT_EQ(*target, (10U * 20U) + 19U);
   EXPECT_FALSE(mask.test(*target));
   // The band was undone, so only the target changed the mask.
   for (std::size_t cell = 0; cell < 400; ++cell) {

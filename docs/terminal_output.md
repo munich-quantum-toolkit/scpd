@@ -13,21 +13,21 @@ Without `-v`, a run on the 17-qubit benchmark chip prints this:
 mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.11.0
 
 🧩 capacity
-   361 partitions · 62 bottlenecks · 69 chains                     1.88s
+   356 partitions · 55 bottlenecks · 72 chains                     0.75s
    ✓ 01-capacity.fb  1.3 MB
 🔳 global
-   14 inner wires · 8 lattices · length 23419.67                   0.04s
-   ✓ 02-global.fb  14.1 kB · fails 0
+   14 inner wires · 8 lattices · length 23419.67                   0.03s
+   ✓ 02-global.fb  13.7 kB · fails 0
 📌 assign
-   58 ports · 7 launcher ends · objective 27.84 · optimal          0.29s
+   58 ports · 7 launcher ends · objective 27.84 · optimal          0.28s
    ✓ 03-assign.fb  2.8 kB · fails 0
 🧭 corridor
-   round 1 forward    routed 56/58 · fails 2                       0.07s
-   round 2 backward   routed 58/58 · fails 0                       0.08s
-   routed 58/58 · 2 rounds                                         0.08s
-   ✓ 04-corridor.fb  60.5 kB · fails 0
+   round 1 forward    routed 53/58 · fails 5                       0.09s
+   round 2 backward   routed 58/58 · fails 0                       0.09s
+   routed 58/58 · 2 rounds                                         0.09s
+   ✓ 04-corridor.fb  58.7 kB · fails 0
 
-✓ 4 stages · 2.29s · stopped after corridor · fails 0
+✓ 4 stages · 1.14s · stopped after corridor · fails 0
 ```
 
 The run has four parts:
@@ -93,11 +93,11 @@ A stage that can fail on part of its work reports how many parts failed. The
 artifact line shows that count, and the closing line adds the counts of every
 stage. A run that ends with fails exits with code 1.
 
-| Stage    | A fail is                                                                                                 |
-| -------- | --------------------------------------------------------------------------------------------------------- |
-| global   | An inner port that no wire of the circuit reaches, or a ring port that its capacity chain has no room for |
-| assign   | None: the stage gives every ring port a launcher, or it stops with an error                               |
-| corridor | A connection without a way through the partitions                                                         |
+| Stage    | A fail is                                                                                                                                                                                          |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| global   | An inner port that no wire of the circuit reaches, a ring port that the gates of its chain have no room for, or a ring port without a bridge that a gate without room cuts off from every launcher |
+| assign   | None: the stage gives every ring port a launcher, or it stops with an error                                                                                                                        |
+| corridor | A connection without a way through the partitions                                                                                                                                                  |
 
 ## Stage Marks
 
@@ -165,7 +165,8 @@ A stage reports through the `Report` it is given and never prints.
    that takes time to build.
 5. Report progress through `Report::progress` in every loop that can run for
    longer than a second.
-6. Add the step to `STEPS` in `python/mqt/scpd/steps.py`, its mark to
-   `STAGE_STYLES` in `python/mqt/scpd/console.py`, and its artifact to
-   `STAGE_FILES` in `python/mqt/scpd/run.py`.
+6. Add the step to `STEPS` in `python/mqt/scpd/steps.py` and its mark to
+   `STAGE_STYLES` in `python/mqt/scpd/console.py`. In `python/mqt/scpd/run.py`,
+   add its artifact to `STAGE_FILES`, the inputs it reads to `STEP_INPUTS`, and
+   its core call to `RunDirectory.run_stage`.
 7. Extend the expected run in `test/python/unit/test_cli.py`.

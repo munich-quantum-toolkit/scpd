@@ -1112,8 +1112,9 @@ struct CorridorParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t rounds() const {
     return GetField<uint32_t>(VT_ROUNDS, 12);
   }
-  /// How many neighbouring connections a failed one may rip up, counted along
-  /// the sweep direction.
+  /// How many neighbouring connections a failed one may rip up in a sweep,
+  /// counted along the sweep direction. The exchange pass moves every wire in
+  /// the way of a failed connection, without this limit.
   uint32_t max_relaxation() const {
     return GetField<uint32_t>(VT_MAX_RELAXATION, 30);
   }

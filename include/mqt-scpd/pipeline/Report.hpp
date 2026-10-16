@@ -102,7 +102,7 @@ public:
   struct Sinks {
     /// Receives a line of free text and its level.
     std::function<void(Detail, std::string_view)> line;
-    /// Receives an entry: a label, such as "round 1  forward", and its
+    /// Receives an entry: a label, such as "round 1 forward", and its
     /// figures, which a renderer aligns with those of the other entries.
     std::function<void(Detail, std::string_view, const std::vector<Figure>&)>
         entry;

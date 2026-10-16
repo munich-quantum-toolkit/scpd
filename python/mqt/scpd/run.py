@@ -98,6 +98,9 @@ def _plain(value: object) -> object:
 def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
     """The SHA-256 digest of every input a step can read.
 
+    ``SCPD_SOLVER`` is no input: it chooses the backend of one run without a change to the files
+    the run is judged on, and both backends reach the same optimum.
+
     Args:
         config: The configuration of the run.
         chip: The classified chip.
@@ -359,7 +362,7 @@ class RunDirectory:
             RunError: If the name is no step of this release, if an input of the step is missing, or
                 if an input of an earlier step has changed since that step wrote its artifact. A
                 changed input leaves the directory as it was.
-        """  # ruff: ignore[docstring-extraneous-exception]  # artifact(), _read() and _check_unchanged() raise it
+        """  # artifact(), _read() and _check_unchanged() raise it
         path = self.artifact(stage)
         digests = input_digests(config, chip)
         self._check_unchanged(stage, digests)
@@ -379,9 +382,12 @@ class RunDirectory:
         elif stage == "assign":
             capacity, routing = self._read("capacity"), self._read("global")
             data = pyscpd.assign(chip, capacity, routing, packed, producer, reporter, level)
-        else:
+        elif stage == "corridor":
             capacity, assignment = self._read("capacity"), self._read("assign")
             data = pyscpd.route_corridor(chip, capacity, assignment, packed, producer, reporter, level)
+        else:
+            msg = f"no core call runs the {stage} step"
+            raise RunError(msg)
         _write_whole(path, data)
         # The record comes after the artifact, so an artifact never carries the record of other inputs.
         record = {name: digests[name] for name in STEP_INPUTS[stage]}

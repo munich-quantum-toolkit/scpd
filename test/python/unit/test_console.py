@@ -57,9 +57,9 @@ def corridor_run(console: Console, clock: Clock) -> None:
         stage.artifact("01-capacity.fb", 1_341_000)
     with console.stage("corridor") as stage:
         clock.now += 0.11
-        stage.entry(0, "round 1  forward", [Figure("routed 56/58"), Figure("fails 2", "bad")])
+        stage.entry(0, "round 1 forward", [Figure("routed 56/58"), Figure("fails 2", "bad")])
         clock.now += 0.08
-        stage.entry(0, "round 2  backward", [Figure("routed 58/58"), Figure("fails 0", "good")])
+        stage.entry(0, "round 2 backward", [Figure("routed 58/58"), Figure("fails 0", "good")])
         stage.result([], fails=0)
         stage.artifact("04-corridor.fb", 60_768)
     console.closing(stopped_after="corridor")
@@ -77,8 +77,8 @@ def test_a_run_prints_one_block_per_stage() -> None:
         "   363 partitions · 62 bottlenecks · 69 chains                     1.02s",
         "   ✓ 01-capacity.fb  1.3 MB",
         "🧭 corridor",
-        "   round 1  forward   routed 56/58 · fails 2                       0.11s",
-        "   round 2  backward  routed 58/58 · fails 0                       0.19s",
+        "   round 1 forward    routed 56/58 · fails 2                       0.11s",
+        "   round 2 backward   routed 58/58 · fails 0                       0.19s",
         "   ✓ 04-corridor.fb  60.8 kB · fails 0",
         "",
         "✓ 2 stages · 1.21s · stopped after corridor · fails 0",
@@ -219,7 +219,7 @@ def test_progress_never_reaches_a_file() -> None:
     console, out, _ = make()
     with console.stage("corridor") as stage:
         for done in range(1, 59):
-            stage.progress("round 1  forward", "", done, 58)
+            stage.progress("round 1 forward", "", done, 58)
         stage.result([], fails=0)
     assert out.getvalue().splitlines() == ["🧭 corridor"]
 
@@ -255,9 +255,9 @@ def test_colour_marks_a_verdict_and_dims_a_step() -> None:
         out, verbosity=1, live=False, width=72, encoding="utf-8", clock=itertools.count().__next__, color=True
     )
     with console.stage("corridor") as stage:
-        stage.entry(0, "round 1  forward", [Figure("fails 2", "bad")])
-        stage.entry(0, "round 2  backward", [Figure("fails 0", "good")])
-        stage.line(1, "the rescue placed 1 more")
+        stage.entry(0, "round 1 forward", [Figure("fails 2", "bad")])
+        stage.entry(0, "round 2 backward", [Figure("fails 0", "good")])
+        stage.line(1, "rounds 2 · max relaxation 30")
     text = out.getvalue()
     assert "\x1b[31mfails 2" in text
     assert "\x1b[32mfails 0" in text

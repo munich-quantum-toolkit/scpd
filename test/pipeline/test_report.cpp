@@ -95,12 +95,12 @@ TEST(Report, HandsOverEntriesAndTheResultWithItsFails) {
   Recorder recorder;
   const auto report = recorder.report(Detail::Summary);
 
-  report.entry(Detail::Summary, "round 1  forward",
+  report.entry(Detail::Summary, "round 1 forward",
                {{.text = "routed 56/58"}, verdict("fails", 2)});
   report.result({{.text = "363 partitions"}}, 0U);
 
   ASSERT_EQ(recorder.entries.size(), 1U);
-  EXPECT_EQ(recorder.entries[0].first, "round 1  forward");
+  EXPECT_EQ(recorder.entries[0].first, "round 1 forward");
   ASSERT_EQ(recorder.entries[0].second.size(), 2U);
   EXPECT_EQ(recorder.entries[0].second[1].text, "fails 2");
   EXPECT_EQ(recorder.entries[0].second[1].tone, Tone::Bad);

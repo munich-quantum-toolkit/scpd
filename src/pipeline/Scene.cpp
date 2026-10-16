@@ -330,12 +330,6 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
       scene.reserved.set(cell, false);
     }
   }
-  for (const auto cell : scene.launcherCell) {
-    if (scene.reserved.test(cell)) {
-      scene.blocked.set(cell, false);
-      scene.reserved.set(cell, false);
-    }
-  }
   return scene;
 }
 

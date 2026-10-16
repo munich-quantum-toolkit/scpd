@@ -39,8 +39,8 @@ struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
   grid::GridMetrics capacity;
   /// The fine grid the partitioning runs on.
   grid::GridMetrics detail;
-  /// The obstacle mask on the detail grid, with the border and the port bands
-  /// in it.
+  /// The obstacle mask on the detail grid, with the port bands in it. No
+  /// border of the grid is blocked.
   grid::BitGrid blocked;
   /// The cells a port band blocked that were free before. They are obstacles
   /// but not chip artwork, and a bottleneck that ends on one is budgeted

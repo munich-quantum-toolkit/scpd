@@ -156,6 +156,22 @@ TEST(Mps, CarriesAnUnboundedIntegerVariable) {
   expectAgreement(model);
 }
 
+TEST(Mps, CarriesAnIntegerVariableWithOnlyALowerBound) {
+  // A reader that gives an integer column the bound of one on each side it
+  // finds no bound for would read [2, 1] without the open upper side.
+  Model model("lower");
+  const auto x = model.addInteger("x", 2.0, INFINITE_BOUND, 1.0);
+  const auto y = model.addInteger("y", -INFINITE_BOUND, INFINITE_BOUND, -1.0);
+  model.addLessOrEqual("cap", 1.0 * x, 7.0);
+  model.addGreaterOrEqual("floor", 1.0 * y, -3.0);
+  model.setSense(Sense::Maximize);
+  expectAgreement(model);
+
+  const auto text = toMps(model);
+  EXPECT_NE(text.find(" LO BND  x  2\n PL BND  x\n"), std::string::npos)
+      << text;
+}
+
 TEST(Mps, CarriesAFreeContinuousVariable) {
   Model model("free");
   const auto x = model.addContinuous("x", -INFINITE_BOUND, INFINITE_BOUND, 1.0);

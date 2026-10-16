@@ -314,7 +314,7 @@ TEST(HighsBackend, GivesValuesToEverySolveThatALimitStops) {
   const auto solution = makeHighsBackend()->solve(model, options);
 
   if (solution.status == SolveStatus::Feasible) {
-    EXPECT_TRUE(solution.hasValues());
+    EXPECT_EQ(solution.values.size(), model.variableCount());
   } else if (solution.status == SolveStatus::Error) {
     EXPECT_FALSE(solution.message.empty());
   }
