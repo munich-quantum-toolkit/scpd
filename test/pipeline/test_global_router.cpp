@@ -19,7 +19,6 @@
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
-#include "mqt-scpd/io/Chip.hpp"
 #include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
@@ -673,7 +672,7 @@ TEST(GlobalRouter, RunsNoWireSidewaysOutOfTheArtworkOfThePort) {
   // S faces. In each case, the cosine of the angle between the edge and the
   // way S faces is a positive rounding error instead of zero.
   struct Case {
-    double orientation;
+    double orientation = 0.0;
     Point target;
   };
   for (const auto& [orientation, target] :
@@ -1052,7 +1051,7 @@ TEST(GlobalRouter, TakesEveryInnerWireFromTheInnerEndOfARingBridge) {
   // S.port1 is then a resonator of the assignment.
   for (const std::string target : {"R.port0", "T.port0"}) {
     for (const std::string ring : {"A.port0", "R1.port0", "S.port1"}) {
-      SCOPED_TRACE(target + " beside the ring port " + ring);
+      SCOPED_TRACE(std::format("{} beside the ring port {}", target, ring));
       const auto chip = handChip(decoyedPorts(target, ring), handPatterns());
       auto labels = std::vector<std::string>{ring};
       if (ring != "S.port1") {
@@ -1096,7 +1095,7 @@ TEST(GlobalRouter, CountsAnInnerTargetAsAFailWhereOnlyARingPortReachesIt) {
   // leaves the ring. A resonator is not fed, and the routing says so.
   for (const std::string target : {"R.port0", "T.port0"}) {
     for (const std::string ring : {"A.port0", "R1.port0"}) {
-      SCOPED_TRACE(target + " beside the ring port " + ring);
+      SCOPED_TRACE(std::format("{} beside the ring port {}", target, ring));
       const auto chip = handChip(decoyedPorts(target, ring), handPatterns());
       const auto config = handConfig({ring, "S.port1"});
       const auto plan =

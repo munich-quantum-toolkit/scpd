@@ -225,9 +225,7 @@ TEST(SeparatePartitionPieces, GivesAPieceCutOffByAnObstacleItsOwnLabel) {
 
   for (std::uint32_t y = 0; y < 3; ++y) {
     for (std::uint32_t x = 0; x < 7; ++x) {
-      const auto expected = x < 4    ? FIRST_PARTITION_LABEL
-                            : x == 4 ? FIRST_PARTITION_LABEL
-                                     : next;
+      const auto expected = x <= 4 ? FIRST_PARTITION_LABEL : next;
       EXPECT_EQ(labels[grid.index(x, y)], expected) << x << "," << y;
     }
   }

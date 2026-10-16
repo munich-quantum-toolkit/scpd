@@ -73,6 +73,7 @@ public:
     if (solution.hasValues() &&
         solution.values.size() != model.variableCount()) {
       return {.status = SolveStatus::Error,
+              .nodes = {},
               .values = {},
               .backend = backendName,
               .message =

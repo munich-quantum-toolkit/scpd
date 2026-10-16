@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import errno
+import io
 import json
 import os
 import re
@@ -216,6 +218,42 @@ def test_inspect_stops_quietly_when_the_reader_goes_away(
         monkeypatch.setattr(sys, "stdout", closed)
         assert main(["inspect", str(artifact)]) == 1
         monkeypatch.undo()
+    assert not capsys.readouterr().err
+
+
+class _PipeWithoutReaderOnWindows(io.StringIO):
+    """Standard output as Windows gives it once the reader of the pipe went away."""
+
+    @staticmethod
+    def write(text: str) -> int:
+        """Refuse the text as Windows does.
+
+        Raises:
+            OSError: Always, with the error number that Windows gives.
+        """
+        del text
+        raise OSError(errno.EINVAL, "Invalid argument")
+
+
+def test_inspect_stops_quietly_when_the_reader_goes_away_on_windows(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows reports a pipe without a reader as an invalid argument, which is no error to report either."""
+    artifact = tmp_path / "03-global.fb"
+    artifact.write_bytes(
+        write_artifact(
+            ArtifactT(
+                producer="test",
+                outputType=StageOutput.GlobalRouting,
+                output=GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[]),
+            )
+        )
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "stdout", _PipeWithoutReaderOnWindows())
+
+    assert main(["inspect", str(artifact)]) == 1
+    monkeypatch.undo()
     assert not capsys.readouterr().err
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import os
 import sys
 from pathlib import Path
@@ -267,12 +268,23 @@ def command_inspect(args: argparse.Namespace) -> int:
 
     Returns:
         The exit code.
+
+    Raises:
+        BrokenPipeError: If the reader of standard output went away, also where Windows reports
+            that as an invalid argument.
+        OSError: If standard output cannot be written for another reason.
     """
     text = artifact_to_json(args.artifact.read_bytes())
     if args.output is None:
-        sys.stdout.write(text)
-        # A reader that went away is noticed here, where main() handles it, and not at exit.
-        sys.stdout.flush()
+        try:
+            sys.stdout.write(text)
+            # A reader that went away is noticed here, where main() handles it, and not at exit.
+            sys.stdout.flush()
+        except OSError as error:
+            # Windows reports a pipe without a reader as an invalid argument, not as a broken pipe.
+            if sys.platform == "win32" and error.errno == errno.EINVAL:
+                raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE)) from error
+            raise
     else:
         args.output.write_text(text, encoding="utf-8")
         Console().success(f"{args.output}  {size(len(text.encode('utf-8')))}")

@@ -129,8 +129,14 @@ endblock()
 # it and a later configure, which finds the setting in the cache, builds HiGHS with it. The two
 # builds round some floating-point results differently, so a solve could depend on how often the
 # build directory was configured.
+#
+# HiGHS is also always built without its assertions, as its own build does for Release. In a Debug
+# build an assertion of its bookkeeping, which compares two bounds to 1e-12, stops a solve on a
+# rounding difference that it leaves without effect otherwise. No HiGHS header changes the layout of
+# a type with NDEBUG, so the project's own code may still be built with assertions.
 if(TARGET highs)
   set_target_properties(highs PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+  target_compile_definitions(highs PRIVATE NDEBUG)
 endif()
 
 # The header-only FlatBuffers runtime, as a system include so that the project's warnings do not

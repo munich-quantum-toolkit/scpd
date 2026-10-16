@@ -13,8 +13,6 @@
 // shell that runs the tests would change what they test. This file clears the
 // variable once, before the first test of the binary.
 
-#include <gtest/gtest.h>
-
 // <cstdlib> declares unsetenv and _putenv_s, but include-cleaner knows no
 // header for these functions outside the C++ standard.
 #include <cstdlib> // NOLINT(misc-include-cleaner)
@@ -22,10 +20,10 @@
 namespace mqt::scpd::pipeline {
 namespace {
 
-/// Clears SCPD_SOLVER before the tests run.
-class DefaultSolver final : public testing::Environment {
-public:
-  void SetUp() override {
+/// Clears SCPD_SOLVER when the test binary starts, before the first test.
+/// Neither call throws, so the object may live in static storage.
+struct DefaultSolver {
+  DefaultSolver() noexcept {
 #ifdef _WIN32
     _putenv_s("SCPD_SOLVER", "");
 #else
@@ -34,11 +32,7 @@ public:
   }
 };
 
-// GoogleTest takes ownership of the environment and deletes it at the end of
-// the run.
-[[maybe_unused]] const testing::Environment* const DEFAULT_SOLVER =
-    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-    testing::AddGlobalTestEnvironment(new DefaultSolver);
+[[maybe_unused]] const DefaultSolver DEFAULT_SOLVER;
 
 } // namespace
 } // namespace mqt::scpd::pipeline

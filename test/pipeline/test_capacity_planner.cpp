@@ -321,6 +321,7 @@ TEST(CapacityPlanner, GivesASlotToEveryLauncherWithADirectionAndNoOtherPort) {
   const auto plan =
       makeWatershedPlanner()->run(chip, test::miniConfig(), Report{});
   std::vector<std::uint32_t> planned;
+  planned.reserve(plan.launchers.size());
   for (const auto& slot : plan.launchers) {
     planned.push_back(slot->port.index());
   }
