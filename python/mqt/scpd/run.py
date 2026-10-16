@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from .flatbuffers.config.Config import ConfigT
 
 __all__ = [
+    "ARTIFACT_INPUTS",
     "STAGE_FILES",
     "STEP_INPUTS",
     "BlockReporter",
@@ -80,6 +81,15 @@ STEP_INPUTS: dict[str, tuple[str, ...]] = {
 }
 
 
+#: The artifacts each step reads, in the order the core takes them.
+ARTIFACT_INPUTS: dict[str, tuple[str, ...]] = {
+    "capacity": (),
+    "global": ("capacity",),
+    "assign": ("capacity", "global"),
+    "corridor": ("capacity", "assign"),
+}
+
+
 def _plain(value: object) -> object:
     """A value of the configuration schema as JSON data, with its fields in a fixed order.
 
@@ -100,7 +110,7 @@ def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
 
     ``SCPD_SOLVER`` is no input: it chooses the backend of one invocation, and the run directory
     records only the files of the run. A step that resumes under another backend can therefore give
-    another artifact, as ``docs/configuration.md`` says.
+    another artifact, as ``docs/benchmarks.md`` says.
 
     Args:
         config: The configuration of the run.
@@ -362,11 +372,17 @@ class RunDirectory:
         Raises:
             RunError: If the name is no step of this release, if an input of the step is missing, or
                 if an input of an earlier step has changed since that step wrote its artifact. A
-                changed input leaves the directory as it was.
+                refused step leaves the directory as it was.
         """
         path = self.artifact(stage)
+        if stage not in ARTIFACT_INPUTS:
+            msg = f"no core call runs the {stage} step"
+            raise RunError(msg)
         digests = input_digests(config, chip)
         self._check_unchanged(stage, digests)
+        # Each step reads the artifacts of the steps before it, and a missing one stops the step
+        # before anything is deleted.
+        inputs = [self._read(earlier) for earlier in ARTIFACT_INPUTS[stage]]
         packed = write_config(config)
         producer = f"mqt-scpd {__version__}"
         level = min(max(verbosity, 0), 3)
@@ -374,21 +390,14 @@ class RunDirectory:
         # none of them beside an input they were not made from.
         self.invalidate_after(stage)
         self.record(stage).unlink(missing_ok=True)
-        # Each step reads the artifacts of the steps before it, and a missing one stops the step
-        # before the core runs.
         if stage == "capacity":
             data = pyscpd.plan_capacity(chip, packed, producer, reporter, level)
         elif stage == "global":
-            data = pyscpd.route_global(chip, self._read("capacity"), packed, producer, reporter, level)
+            data = pyscpd.route_global(chip, inputs[0], packed, producer, reporter, level)
         elif stage == "assign":
-            capacity, routing = self._read("capacity"), self._read("global")
-            data = pyscpd.assign(chip, capacity, routing, packed, producer, reporter, level)
-        elif stage == "corridor":
-            capacity, assignment = self._read("capacity"), self._read("assign")
-            data = pyscpd.route_corridor(chip, capacity, assignment, packed, producer, reporter, level)
+            data = pyscpd.assign(chip, inputs[0], inputs[1], packed, producer, reporter, level)
         else:
-            msg = f"no core call runs the {stage} step"
-            raise RunError(msg)
+            data = pyscpd.route_corridor(chip, inputs[0], inputs[1], packed, producer, reporter, level)
         _write_whole(path, data)
         # The record comes after the artifact, so an artifact never carries the record of other inputs.
         record = {name: digests[name] for name in STEP_INPUTS[stage]}

@@ -76,9 +76,10 @@ struct SolveOptions {
  * @brief A solver behind the model abstraction.
  *
  * The interface is what MPS carries. A backend that solves in the process and
- * one that hands the model to another program see the same model and reach
- * the same optimum. Between optimal solutions of equal objective, two
- * backends can choose differently. For a MIP that has no optimum, Gurobi says
+ * one that hands the model to another program see the same model. Two
+ * backends can report optimal solutions whose objectives differ by up to the
+ * relative gap, and between solutions of equal objective they can choose
+ * differently. For a MIP that has no optimum, Gurobi says
  * whether it is infeasible or unbounded, while HiGHS can end with an error
  * that names both.
  */

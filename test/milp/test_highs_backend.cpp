@@ -303,23 +303,6 @@ TEST(HighsBackend, SolvesToTheSameOptimumUnderALimitAndAGap) {
   EXPECT_DOUBLE_EQ(limited.objective, free.objective);
 }
 
-TEST(HighsBackend, GivesValuesToEverySolveThatALimitStops) {
-  // A limit that is over before the search starts may leave no solution.
-  // Such a solve is an error, and a solve that a limit stops is feasible only
-  // with values.
-  const auto model = hardKnapsack();
-  SolveOptions options;
-  options.timeLimit = 1.0e-9;
-
-  const auto solution = makeHighsBackend()->solve(model, options);
-
-  if (solution.status == SolveStatus::Feasible) {
-    EXPECT_EQ(solution.values.size(), model.variableCount());
-  } else if (solution.status == SolveStatus::Error) {
-    EXPECT_FALSE(solution.message.empty());
-  }
-}
-
 /// A covering program too large to solve within a millisecond: each of 3000
 /// rows asks that 30 of 3000 variables in [0, 1] add up to at least 10. With
 /// @p integral the variables are binary.

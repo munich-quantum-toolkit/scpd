@@ -64,11 +64,13 @@ Warnings and failures show at every level.
 - An entry, such as a round, has a label and figures. The label fills a column
   of 18 characters, and the figures start after it.
 - The artifact line is `✓ <file>  <size>`, followed by `· fails <n>` for a stage
-  that can fail on part of its work.
+  that reports fails. The assign stage reports them too, and its count is always
+  zero.
 - A warning starts with `⚠` and is yellow. A failure starts with `✗` and is red.
   A failure ends the run.
 - The closing line starts with `✓` when nothing failed and with `✗` when a stage
-  failed or a stage reported fails.
+  failed or a stage reported fails. After a failure, the closing line is
+  `✗ stopped at <stage> after <time>`.
 
 ## Figures
 
@@ -93,11 +95,11 @@ A stage that can fail on part of its work reports how many parts failed. The
 artifact line shows that count, and the closing line adds the counts of every
 stage. A run that ends with fails exits with code 1.
 
-| Stage    | A fail is                                                                                                                                                                                          |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| global   | An inner port that no wire of the circuit reaches, a ring port that the gates of its chain have no room for, or a ring port without a bridge that a gate without room cuts off from every launcher |
-| assign   | None: the stage gives every ring port a launcher, or it stops with an error                                                                                                                        |
-| corridor | A connection without a way through the partitions                                                                                                                                                  |
+| Stage    | A fail is                                                                                                                                                                                |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| global   | An inner port that no wire of the circuit reaches, a ring port that the gates of its chain have no room for, or a ring port without a bridge that its chain does not carry to a launcher |
+| assign   | None: the stage gives every ring port a launcher, or it stops with an error. Its artifact line shows `fails 0`                                                                           |
+| corridor | A connection without a way through the partitions                                                                                                                                        |
 
 ## Stage Marks
 

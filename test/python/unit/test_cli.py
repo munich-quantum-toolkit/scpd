@@ -323,6 +323,20 @@ def test_every_line_of_a_run_follows_the_format(tmp_path: Path, capfd: pytest.Ca
     assert "HiGHS" in out.split("📌 assign")[1]
 
 
+@pytest.mark.parametrize("level", [0, 1, 2, 3], ids=["none", "-v", "-vv", "-vvv"])
+def test_each_level_shows_its_lines_and_hides_the_ones_above(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str], level: int
+) -> None:
+    """-v adds the steps, -vv the items and -vvv the HiGHS log, as docs/terminal_output.md says."""
+    run = tmp_path / "run"
+    assert plan(run, *(["-" + "v" * level] if level else [])) == 0
+
+    out = capfd.readouterr().out
+    assert bool(re.search(r"^     model assignment · ", out, re.MULTILINE)) == (level >= 1)
+    assert bool(re.search(r"^     chain 1 ", out, re.MULTILINE)) == (level >= 2)
+    assert ("HiGHS" in out.split("📌 assign")[1]) == (level >= 3)
+
+
 def test_plan_stops_after_the_step_it_is_told(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """--stop-after ends the run after that step and says so."""
     run = tmp_path / "run"

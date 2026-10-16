@@ -517,8 +517,9 @@ TEST(CorridorRouter, CountsAConnectionWithoutAWayAsAFail) {
 }
 
 TEST(CorridorRouter, KeepsTheFeedOfAConnectionWithoutATargetCell) {
-  // A launcher has no target cell. A connection to one still starts at the
-  // feed the assignment placed, so a picture can show where it starts.
+  // A launcher has no target cell. The corridor of a connection to one still
+  // records the feed that the assignment placed as its source, as the schema
+  // says, although it has no way and no target.
   auto planned = planMini();
   const auto feed = planned.assignment.feeds.front();
   auto connection = std::make_unique<flatbuffers::design::ConnectionT>();
@@ -826,6 +827,21 @@ TEST(CorridorRouter, RefusesAPlanMadeWithAnotherCrossingPitch) {
       << refusal;
   EXPECT_NE(refusal.find("run the capacity step again"), std::string::npos)
       << refusal;
+}
+
+TEST(CorridorRouter, RefusesAnAssignmentThatNamesAPortTheChipDoesNotCarry) {
+  // The stage names each connection by its target port, so an assignment
+  // made for another chip would read past the ports of this one.
+  auto planned = planMini();
+  ASSERT_FALSE(planned.assignment.connections.empty());
+  const auto ports = static_cast<std::uint32_t>(planned.chip.ports.size());
+  planned.assignment.connections[0]->target =
+      flatbuffers::design::PortRef(ports);
+
+  EXPECT_EQ(refusalOf(planned),
+            std::format("the assignment does not fit the chip: connection 0 "
+                        "names port {} of {}",
+                        ports, ports));
 }
 
 TEST(CorridorRouter, RefusesAPartitionThatFallsApartIntoPieces) {

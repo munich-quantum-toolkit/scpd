@@ -213,6 +213,7 @@ public:
     servedInWalk.clear();
     openedInWalk.clear();
     servedInWalk.insert(targetCell);
+    heldCells.insert(targetCell);
     closeEveryGate();
 
     const auto root = addNode(fba::CapacityElement::Target, targetPort, 0);
@@ -527,10 +528,14 @@ private:
     }
     visitedCells.insert(chamber.cells);
 
+    // A target lies on one chain only: the Global stage asks one wire of
+    // each target over its chain, so a target on two chains would ask for
+    // its wire twice.
     for (const auto& [cell, port] : chamber.targets) {
-      if (!servedInWalk.insert(cell).second) {
+      if (heldCells.contains(cell) || !servedInWalk.insert(cell).second) {
         continue;
       }
+      heldCells.insert(cell);
       servedOverall.insert(cell);
       const auto target = addNode(fba::CapacityElement::Target, port, 0);
       (*nodeList)[parent]->next.push_back(target);
@@ -664,7 +669,10 @@ private:
   mutable CellMarks floodMarks;
   std::unordered_set<std::size_t> servedInWalk;
   std::unordered_set<std::size_t> openedInWalk;
+  /// The targets that a chain holds below its root.
   std::unordered_set<std::size_t> servedOverall;
+  /// The targets of every chain built so far, the roots included.
+  std::unordered_set<std::size_t> heldCells;
   /// The gates of the walk in progress, when it is a chain's own rather than
   /// the search over every candidate.
   std::optional<std::unordered_set<std::size_t>> ownGates;

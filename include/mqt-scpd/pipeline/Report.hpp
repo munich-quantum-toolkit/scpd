@@ -131,13 +131,14 @@ public:
   Report(Detail level, Sinks receivers);
 
   /**
-   * @brief Checks whether a line of a level would reach its sink.
+   * @brief Checks whether a line or an entry of a level would reach its sink.
    *
-   * A stage asks before it builds a line that costs time to build.
+   * A stage asks before it builds a line or an entry that costs time to
+   * build.
    *
-   * @param detail The level of the line.
-   * @return @c true when a line sink is set and @p detail is not above the
-   * level of the report.
+   * @param detail The level of the line or the entry.
+   * @return @c true when a line sink or an entry sink is set and @p detail is
+   * not above the level of the report.
    */
   [[nodiscard]] bool wants(Detail detail) const;
 

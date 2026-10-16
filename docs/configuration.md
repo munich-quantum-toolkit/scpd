@@ -125,13 +125,12 @@ The wires of the ring ports behind a gate of a capacity chain pass that gate on
 their way to a launcher, and so do the inner wires that surface there. When the
 gates have no room for all of them, the step solves the circuit again and lets
 ring ports go without room. Each such ring port is a fail of the global step,
-and `-vv` names it. A ring port that the launchers reach over several chains
-takes its wire through one of them, and a gate on several chains holds the wires
-of all of them. The step checks a gate with some room only where it solves an
-inner circuit, and only on the chains without inner ports. Elsewhere, a gate
-that has room for some of its ring ports but not for all gives no fail. A ring
-port that no bridge joins always needs a way to a launcher: where a gate without
-room cuts it off on every chain that carries it, it is a fail too, also on a
+and `-vv` names it. A port lies on one chain, and a gate on several chains holds
+the wires of all of them. The step checks a gate with some room only where it
+solves an inner circuit, and only on the chains without inner ports. Elsewhere,
+a gate that has room for some of its ring ports but not for all gives no fail. A
+ring port that no bridge joins always needs a way to a launcher: where its chain
+has no launcher, or a gate without room cuts it off, it is a fail too, also on a
 chip without inner ports. The ring end of a bridge may be cut off, because it
 needs a way only where an inner wire surfaces there.
 
@@ -160,6 +159,10 @@ The global step decides whether a ring port at a bridge stays in the ring and
 whether it is a resonator. `plan` and `doctor` refuse before the first stage a
 configuration that breaks a limit for every such decision.
 
+The assignment also refuses a solution in which two feeds lie closer than
+`[design_rules] min_wire_spacing`, such as two conventional ports at launcher
+slots in one cell.
+
 ## `[stages.solver]`
 
 | Key            | Default | Meaning                                                                                       |
@@ -174,9 +177,10 @@ objective and the best bound the solver proved differ by at most that fraction
 of the objective. With `relative_gap` at `0.0`, the gap is the default of the
 backend, which is `1e-4` for HiGHS (`mip_rel_gap`) and for Gurobi (`MIPGap`).
 
-HiGHS and Gurobi reach the same optimum, but between optimal solutions of equal
-objective each can choose another one. A later stage then works on another input
-and can reach another objective.
+HiGHS and Gurobi can report different optimal solutions: their objectives can
+differ by up to the relative gap, and between solutions of equal objective each
+backend can choose another one. A later stage then works on another input and
+can reach another objective.
 
 A solve that stops at `time_limit` keeps the best solution it has found by then.
 That solution depends on the speed of the machine, so the same inputs can give

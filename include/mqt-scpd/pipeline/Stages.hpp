@@ -92,6 +92,10 @@ public:
    * @param config The run configuration.
    * @param report Where the stage reports what it does.
    * @return The global routing.
+   * @throws std::invalid_argument When the ring of the configuration does not
+   * fit the chip, or when the capacity plan does not fit the chip: an index
+   * names no node or no port, a chain leads back into itself, or a target
+   * lies on two chains or twice on one.
    */
   [[nodiscard]] virtual GlobalRoutingT run(const ChipT& chip,
                                            const CapacityPlanT& capacity,
@@ -165,7 +169,8 @@ public:
    * @throws std::invalid_argument When the capacity plan does not fit the
    * configuration in a way the router can see: it was made on another detail
    * grid, a border offers another number of slots than its budget, or a
-   * partition falls apart into pieces that do not touch.
+   * partition falls apart into pieces that do not touch; or when a connection
+   * of the assignment names a port the chip does not carry.
    *
    * The router takes the targets from the configuration and the partitions
    * from the plan, and the plan does not record the design rules or the port

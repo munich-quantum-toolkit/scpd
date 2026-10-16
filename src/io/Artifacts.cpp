@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace mqt::scpd::io {
@@ -97,7 +98,8 @@ void validateWires(
 
 /// The capacity chains are trees stored flat, and the later stages walk them
 /// by index. Every index has to name a node, and no walk may come back to a
-/// node it left, or the walk would not end.
+/// node it left, or the walk would not end. A target lies on one chain only,
+/// because the Global stage asks one wire of each target over its chain.
 void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
                           Problems& problems) {
   const auto count = plan.nodes.size();
@@ -166,8 +168,10 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
         count - ordered == 1 ? "lies" : "lie"));
     return;
   }
-  // A chain is a tree. Two chains may share a subtree, but one chain that
-  // reaches a node over two paths would count the subtree behind it twice.
+  // A chain is a tree. Two chains may share a subtree without a target, but
+  // one chain that reaches a node over two paths would count the subtree
+  // behind it twice.
+  std::unordered_map<std::uint32_t, std::size_t> chainOfTarget;
   for (std::size_t chain = 0; chain < plan.chains.size(); ++chain) {
     std::vector<bool> reached(count, false);
     std::vector<std::size_t> pending{plan.chains[chain]};
@@ -175,7 +179,20 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
     while (!pending.empty()) {
       const auto index = pending.back();
       pending.pop_back();
-      for (const auto next : plan.nodes[index]->next) {
+      const auto& node = *plan.nodes[index];
+      if (node.kind == flatbuffers::artifacts::CapacityElement::Target) {
+        const auto [first, fresh] = chainOfTarget.emplace(node.id, chain);
+        if (!fresh) {
+          problems.push_back(
+              first->second == chain
+                  ? std::format("capacity chain {} reaches port {} twice",
+                                chain, node.id)
+                  : std::format("capacity chains {} and {} both reach port {}",
+                                first->second, chain, node.id));
+          return;
+        }
+      }
+      for (const auto next : node.next) {
         if (reached[next]) {
           problems.push_back(std::format(
               "capacity chain {} reaches node {} twice", chain, next));
@@ -276,7 +293,40 @@ Problems validate(const ArtifactT& artifact) {
   case StageOutput::CapacityPlan:
     validateCapacityPlan(*artifact.output.AsCapacityPlan(), problems);
     break;
-  case StageOutput::GlobalRouting:
+  case StageOutput::GlobalRouting: {
+    const auto& routing = *artifact.output.AsGlobalRouting();
+    validateEach(routing.connections, "connection", problems);
+    // A picture draws a lattice by index, so every edge has two points of its
+    // lattice and every selected edge is one of its edges.
+    for (std::size_t index = 0; index < routing.lattices.size(); ++index) {
+      if (routing.lattices[index] == nullptr) {
+        problems.push_back(std::format("lattice {}: missing", index));
+        continue;
+      }
+      const auto& lattice = *routing.lattices[index];
+      if (lattice.edges.size() % 2 != 0) {
+        problems.push_back(
+            std::format("lattice {} holds {} edge indices, not two per edge",
+                        index, lattice.edges.size()));
+      }
+      for (const auto point : lattice.edges) {
+        if (point >= lattice.points.size()) {
+          problems.push_back(std::format("lattice {} names point {} of {}",
+                                         index, point, lattice.points.size()));
+          break;
+        }
+      }
+      const auto edges = lattice.edges.size() / 2;
+      for (const auto edge : lattice.selected) {
+        if (edge >= edges) {
+          problems.push_back(std::format("lattice {} selects edge {} of {}",
+                                         index, edge, edges));
+          break;
+        }
+      }
+    }
+    break;
+  }
   case StageOutput::DetailRouting:
     break;
   }

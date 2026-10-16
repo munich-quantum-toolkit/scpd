@@ -224,29 +224,63 @@ TEST(ArtifactSchema, RefusesAFeedlineChainThatLeavesTheRing) {
   EXPECT_EQ(problems[0], "chain 0 names ring node 1 of 1");
 }
 
+TEST(ArtifactSchema, RefusesAGlobalRoutingThatAPictureCannotDraw) {
+  // A picture draws a lattice by index, and the Assignment stage reads the
+  // role of each connection.
+  GlobalRoutingT routing;
+  routing.connections.push_back(resonatorConnection());
+  routing.connections.push_back(std::make_unique<ConnectionT>());
+  routing.connections.back()->target = PortRef(1);
+  auto odd = std::make_unique<LatticeT>();
+  odd->points = {Point(0.0, 0.0), Point(1.0, 0.0)};
+  odd->edges = {0, 1, 0};
+  routing.lattices.push_back(std::move(odd));
+  auto outside = std::make_unique<LatticeT>();
+  outside->points = {Point(0.0, 0.0), Point(1.0, 0.0)};
+  outside->edges = {0, 2};
+  outside->selected = {1};
+  routing.lattices.push_back(std::move(outside));
+
+  EXPECT_EQ(
+      validate(wrap(std::move(routing))),
+      (std::vector<std::string>{
+          "connection 1: source role is unset",
+          "connection 1: target role is unset",
+          "lattice 0 holds 3 edge indices, not two per edge",
+          "lattice 1 names point 2 of 2", "lattice 1 selects edge 1 of 1"}));
+}
+
 TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {
   // The later stages walk a chain by index, so an index outside the nodes, a
   // link back to an earlier node or a second path to one node would make the
   // walk read past the end, never stop or count a subtree twice.
-  const auto node = [](const std::vector<std::uint32_t>& next) {
+  // Each target node names a port of its own.
+  std::uint32_t port = 0;
+  const auto node = [&port](const std::vector<std::uint32_t>& next) {
     auto entry = std::make_unique<CapacityNodeT>();
     entry->kind = CapacityElement::Target;
+    entry->id = port++;
     entry->next = next;
+    return entry;
+  };
+  const auto launcher = [] {
+    auto entry = std::make_unique<CapacityNodeT>();
+    entry->kind = CapacityElement::Launcher;
     return entry;
   };
 
   CapacityPlanT shared = emptyPlan();
   shared.nodes.push_back(node({2}));
   shared.nodes.push_back(node({2}));
-  shared.nodes.push_back(node({}));
+  shared.nodes.push_back(launcher());
   shared.chains = {0, 1};
-  // Two chains may share a subtree.
+  // Two chains may share a subtree without a target.
   EXPECT_TRUE(validate(wrap(std::move(shared))).empty());
 
   CapacityPlanT diamond = emptyPlan();
   diamond.nodes.push_back(node({1, 2}));
   diamond.nodes.push_back(node({2}));
-  diamond.nodes.push_back(node({}));
+  diamond.nodes.push_back(launcher());
   diamond.chains = {0};
   // One chain may not reach a node twice: the walk would count it twice.
   EXPECT_EQ(
@@ -277,6 +311,44 @@ TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {
             (std::vector<std::string>{
                 "capacity nodes link in a cycle: 1 of 1 node lies on or "
                 "behind one"}));
+}
+
+TEST(ArtifactSchema, RefusesATargetOnTwoCapacityChains) {
+  // The Global stage asks one wire of each target over its chain, so a
+  // target on two chains, or twice on one, would ask for its wire twice.
+  const auto target = [](const std::uint32_t port,
+                         const std::vector<std::uint32_t>& next) {
+    auto entry = std::make_unique<CapacityNodeT>();
+    entry->kind = CapacityElement::Target;
+    entry->id = port;
+    entry->next = next;
+    return entry;
+  };
+
+  CapacityPlanT sharedTarget = emptyPlan();
+  sharedTarget.nodes.push_back(target(0, {2}));
+  sharedTarget.nodes.push_back(target(1, {2}));
+  sharedTarget.nodes.push_back(target(2, {}));
+  sharedTarget.chains = {0, 1};
+  EXPECT_EQ(
+      validate(wrap(std::move(sharedTarget))),
+      (std::vector<std::string>{"capacity chains 0 and 1 both reach port 2"}));
+
+  CapacityPlanT twoNodes = emptyPlan();
+  twoNodes.nodes.push_back(target(0, {}));
+  twoNodes.nodes.push_back(target(0, {}));
+  twoNodes.chains = {0, 1};
+  EXPECT_EQ(
+      validate(wrap(std::move(twoNodes))),
+      (std::vector<std::string>{"capacity chains 0 and 1 both reach port 0"}));
+
+  CapacityPlanT twice = emptyPlan();
+  twice.nodes.push_back(target(0, {1}));
+  twice.nodes.push_back(target(0, {}));
+  twice.chains = {0};
+  EXPECT_EQ(
+      validate(wrap(std::move(twice))),
+      (std::vector<std::string>{"capacity chain 0 reaches port 0 twice"}));
 }
 
 TEST(ArtifactSchema, RefusesAPortTheChipDoesNotHave) {

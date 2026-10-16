@@ -973,7 +973,8 @@ struct CapacityNodeT : public ::flatbuffers::NativeTable {
 ///
 /// A chain is a tree and FlatBuffers has no recursive table, so the nodes are
 /// stored flat and a link names its branches by index. Two chains can then
-/// share a subtree without storing it twice.
+/// share a subtree without storing it twice. A target lies on one chain only,
+/// so a shared subtree holds no target.
 struct CapacityNode FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CapacityNodeT NativeTableType;
   typedef CapacityNodeBuilder Builder;
@@ -1353,12 +1354,12 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   /// Where each ring node is fed from, parallel to `ring`.
   ///
-  /// A conventional port is fed at the launcher slot that `launchers` names,
-  /// and no two of them share one. A resonator is fed at no launcher: the
-  /// wire that reaches it comes past the slot, so its feed sits on the
-  /// segment between its own launcher and a neighbouring one. The resonators
-  /// fed on one segment divide it evenly, in ring order, so no two of them
-  /// share a feed point.
+  /// A conventional port is fed at the launcher slot that `launchers` names.
+  /// A resonator is fed at no launcher: the wire that reaches it comes past
+  /// the slot, so its feed sits on the segment between its own launcher and a
+  /// neighbouring one. The resonators fed on one segment divide it evenly, in
+  /// the order the walk of the ring reaches them. No two feeds lie closer than
+  /// the wire spacing.
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *feeds() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_FEEDS);
   }

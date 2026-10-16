@@ -11,7 +11,8 @@ np = import_numpy()
 #
 # A chain is a tree and FlatBuffers has no recursive table, so the nodes are
 # stored flat and a link names its branches by index. Two chains can then
-# share a subtree without storing it twice.
+# share a subtree without storing it twice. A target lies on one chain only,
+# so a shared subtree holds no target.
 class CapacityNode(object):
     __slots__ = ['_tab']
 

@@ -91,6 +91,29 @@ TEST(Report, PassesALineOnlyUpToItsLevel) {
   EXPECT_TRUE(recorder.entries.empty());
 }
 
+TEST(Report, WantsWhatEitherTheLineOrTheEntrySinkReceives) {
+  // A stage asks before it builds an item entry, so an entry sink alone
+  // has to be enough.
+  std::vector<std::string> entries;
+  const Report entriesOnly(
+      Detail::Items,
+      {.entry = [&entries](const Detail /*detail*/,
+                           const std::string_view label,
+                           const std::vector<Figure>& /*figures*/) {
+        entries.emplace_back(label);
+      }});
+
+  EXPECT_TRUE(entriesOnly.wants(Detail::Items));
+  entriesOnly.line(Detail::Items, "no line sink hears this");
+  entriesOnly.entry(Detail::Items, "an item entry", {});
+  EXPECT_EQ(entries, std::vector<std::string>{"an item entry"});
+
+  const Report linesOnly(
+      Detail::Items, {.line = [](const Detail /*detail*/, const std::string_view
+                                 /*text*/) {}});
+  EXPECT_TRUE(linesOnly.wants(Detail::Items));
+}
+
 TEST(Report, HandsOverEntriesAndTheResultWithItsFails) {
   Recorder recorder;
   const auto report = recorder.report(Detail::Summary);

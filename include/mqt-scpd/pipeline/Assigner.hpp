@@ -134,7 +134,10 @@ ringCountProblem(const ChipT& chip, const ConfigT& config);
  * @brief Creates the assigner of the first release.
  *
  * The assigner solves a model of the ring of outer ports that keeps the
- * feedlines from crossing, as one mixed-integer program.
+ * feedlines from crossing, as one mixed-integer program. It refuses a
+ * solution in which two feeds lie closer than `[design_rules]
+ * min_wire_spacing`, such as two conventional ports at launcher slots in one
+ * cell.
  *
  * @return The assigner.
  */

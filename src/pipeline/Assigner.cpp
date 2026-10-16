@@ -777,8 +777,8 @@ private:
   }
 
   /// Reads the solution into the assignment and places the feeds.
-  /// @throws std::invalid_argument When neighbouring feeds would lie closer
-  /// than @p spacing.
+  /// @throws std::invalid_argument When two feeds would lie closer than
+  /// @p spacing.
   static void readBack(AssignmentT& assignment, const ChipT& chip,
                        const AssignmentInputs& inputs, const RingEdges& ring,
                        const Variables& variables,
@@ -917,6 +917,24 @@ private:
         walked.insert(walked.end(), arriving.begin(), arriving.end());
         for (std::size_t taken = 0; taken < count; ++taken) {
           place(walked[taken], from, to, ratioOf(taken + 1));
+        }
+      }
+    }
+
+    // Two launcher slots may fall on one cell, and two feeds on the two
+    // segments of a sharp corner may lie closer than one part of either. The
+    // wires that reach two feeds that close break the wire spacing.
+    for (std::size_t first = 0; first < assignment.feeds.size(); ++first) {
+      for (std::size_t second = first + 1; second < assignment.feeds.size();
+           ++second) {
+        const auto apart = geometry::distance(assignment.feeds[first],
+                                              assignment.feeds[second]);
+        if (apart <= 0.0 || apart < spacing) {
+          throw std::invalid_argument(std::format(
+              "the feeds of {} and {} lie {:.1f} apart, closer than the wire "
+              "spacing of {}",
+              chip.ports[inputs.ring[first]]->label,
+              chip.ports[inputs.ring[second]]->label, apart, spacing));
         }
       }
     }

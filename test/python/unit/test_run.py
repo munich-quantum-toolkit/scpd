@@ -19,7 +19,15 @@ import pytest
 
 from mqt.scpd import pyscpd
 from mqt.scpd.console import Figure
-from mqt.scpd.run import STAGE_FILES, STEP_INPUTS, BlockReporter, RunDirectory, RunError, steps_until
+from mqt.scpd.run import (
+    ARTIFACT_INPUTS,
+    STAGE_FILES,
+    STEP_INPUTS,
+    BlockReporter,
+    RunDirectory,
+    RunError,
+    steps_until,
+)
 from mqt.scpd.steps import STEPS
 
 if TYPE_CHECKING:
@@ -190,6 +198,20 @@ def test_a_step_without_its_input_is_refused(tmp_path: Path) -> None:
         run_through(directory, ["capacity", "assign"])
 
 
+def test_a_step_without_its_input_leaves_the_directory_as_it_was(tmp_path: Path) -> None:
+    """A refused step deletes no artifact of a later step and no record."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, ["capacity", "global", "assign", "corridor"])
+    directory.artifact("capacity").unlink()
+    before = artifacts_of(directory)
+
+    with pytest.raises(RunError, match=r"01-capacity\.fb is missing; run the capacity step first"):
+        run_through(directory, ["global"])
+
+    assert artifacts_of(directory) == before
+
+
 def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path: Path) -> None:
     """A run continued step by step from its own directory writes the same bytes."""
     whole = RunDirectory(tmp_path / "whole")
@@ -274,6 +296,7 @@ def test_every_step_has_an_artifact_and_a_record_of_its_inputs() -> None:
     """A step of the release that the run directory does not know could not run or be resumed."""
     assert list(STAGE_FILES) == list(STEPS)
     assert list(STEP_INPUTS) == list(STEPS)
+    assert list(ARTIFACT_INPUTS) == list(STEPS)
 
 
 def test_a_step_refuses_an_earlier_artifact_made_from_another_chip(tmp_path: Path) -> None:

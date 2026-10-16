@@ -121,12 +121,12 @@ class Assignment(object):
 
     # Where each ring node is fed from, parallel to `ring`.
     #
-    # A conventional port is fed at the launcher slot that `launchers` names,
-    # and no two of them share one. A resonator is fed at no launcher: the
-    # wire that reaches it comes past the slot, so its feed sits on the
-    # segment between its own launcher and a neighbouring one. The resonators
-    # fed on one segment divide it evenly, in ring order, so no two of them
-    # share a feed point.
+    # A conventional port is fed at the launcher slot that `launchers` names.
+    # A resonator is fed at no launcher: the wire that reaches it comes past
+    # the slot, so its feed sits on the segment between its own launcher and a
+    # neighbouring one. The resonators fed on one segment divide it evenly, in
+    # the order the walk of the ring reaches them. No two feeds lie closer than
+    # the wire spacing.
     # Assignment
     def Feeds(self, j: int) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))

@@ -1153,7 +1153,6 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-sugar" },
     { name = "pytest-xdist" },
-    { name = "rich" },
     { name = "scikit-build-core" },
     { name = "vcs-versioning" },
 ]
@@ -1179,7 +1178,6 @@ test = [
     { name = "pytest-cov" },
     { name = "pytest-sugar" },
     { name = "pytest-xdist" },
-    { name = "rich" },
 ]
 
 [package.metadata]
@@ -1208,7 +1206,6 @@ dev = [
     { name = "pytest-cov", specifier = ">=7.1" },
     { name = "pytest-sugar", specifier = ">=1.1.1" },
     { name = "pytest-xdist", specifier = ">=3.8" },
-    { name = "rich", specifier = ">=14" },
     { name = "scikit-build-core", specifier = ">=1.1" },
     { name = "vcs-versioning", specifier = ">=2.3" },
 ]
@@ -1232,7 +1229,6 @@ test = [
     { name = "pytest-cov", specifier = ">=7.1" },
     { name = "pytest-sugar", specifier = ">=1.1.1" },
     { name = "pytest-xdist", specifier = ">=3.8" },
-    { name = "rich", specifier = ">=14" },
 ]
 
 [[package]]

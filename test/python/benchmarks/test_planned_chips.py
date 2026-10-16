@@ -329,9 +329,14 @@ def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_pat
         assert assignment.objective == pytest.approx(OBJECTIVES[chip], abs=1e-9)
 
     capacity = directory.artifact("capacity").read_bytes()
+    assigned = directory.artifact("assign").read_bytes()
     for stage in PLANNING_STAGES:
-        geometry = planning_geometry(directory.artifact(stage).read_bytes(), model, stage, capacity)
+        # The corridor picture draws the feedlines of the assignment, as `plot` draws it.
+        chosen = assigned if stage == "corridor" else None
+        geometry = planning_geometry(directory.artifact(stage).read_bytes(), model, stage, capacity, chosen)
         assert not geometry.is_empty(), stage
+        if chosen is not None:
+            assert geometry.feedlines, stage
         assert len(layout_svg(model, planning=geometry).encode("utf-8")) < SVG_LIMIT, stage
         if HAS_KLAYOUT:
             from mqt.scpd.export import write_layout  # ruff: ignore[import-outside-top-level]  # needs the optional dependency

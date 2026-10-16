@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <format>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -656,6 +657,51 @@ TEST(CapacityPlanner, DropsAGateThatLeadsNowhere) {
       twoPinchChip(config, 20.0, 40.0, Alcove::Empty), config, {});
   EXPECT_FALSE(keepsTheMouth(empty));
   EXPECT_EQ(bottleneckColumns(empty).size(), 1U);
+}
+
+/// How many chains reach each target port of a plan, counting a target twice
+/// on one chain twice.
+std::map<std::uint32_t, std::size_t>
+chainsPerTarget(const CapacityPlanT& plan) {
+  std::map<std::uint32_t, std::size_t> chains;
+  for (const auto root : plan.chains) {
+    std::vector<std::uint32_t> pending{root};
+    while (!pending.empty()) {
+      const auto& node = *plan.nodes[pending.back()];
+      pending.pop_back();
+      if (node.kind == CapacityElement::Target) {
+        ++chains[node.id];
+      }
+      pending.insert(pending.end(), node.next.begin(), node.next.end());
+    }
+  }
+  return chains;
+}
+
+TEST(CapacityPlanner, PutsEveryTargetOnOneChain) {
+  // The Global stage asks one wire of each target over its chain, so a
+  // target on two chains would ask for its wire twice.
+  const auto pinched = pinchedCorridorConfig();
+  const auto alcove = twoPinchConfig(true);
+  for (const auto& [name, plan] :
+       std::vector<std::pair<std::string, CapacityPlanT>>{
+           {"mini", planMini()},
+           {"blocked approach",
+            makeWatershedPlanner()->run(blockedApproachChip(),
+                                        test::miniConfig(), {})},
+           {"pinched corridor", makeWatershedPlanner()->run(
+                                    pinchedCorridorChip(pinched), pinched, {})},
+           {"alcove with a target",
+            makeWatershedPlanner()->run(
+                twoPinchChip(alcove, 20.0, 40.0, Alcove::WithTarget), alcove,
+                {})}}) {
+    SCOPED_TRACE(name);
+    const auto chains = chainsPerTarget(plan);
+    EXPECT_FALSE(chains.empty());
+    for (const auto& [port, count] : chains) {
+      EXPECT_EQ(count, 1U) << "port " << port;
+    }
+  }
 }
 
 /// A border along the middle row of the detail grid, from one edge of the

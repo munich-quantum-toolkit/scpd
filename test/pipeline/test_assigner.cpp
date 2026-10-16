@@ -330,6 +330,30 @@ TEST(Assigner, GivesEveryPortOfARingWithoutResonatorsOneOfTwoLaunchers) {
   EXPECT_EQ(launchers.size(), 2U);
 }
 
+TEST(Assigner, RefusesTwoConventionalPortsFedAtOnePoint) {
+  // The two launchers share a center, so their slots share a cell, and the
+  // two conventional ports fed from them would share a feed point.
+  const auto chip = squareChip({{-10.0, 50.0}, {-10.0, 50.0}});
+  auto config = squareConfig();
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  config.rules->max_feedline_utilization = 4;
+  config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  config.stages->assignment =
+      std::make_unique<flatbuffers::config::AssignmentParamsT>();
+  config.stages->assignment->launcher_target = 2;
+
+  try {
+    static_cast<void>(makeOrderedMilpAssigner()->run(
+        chip, planWithLaunchersOf(chip), routingWithRing({0, 1}, {}), config,
+        {}));
+    FAIL() << "the stage has to refuse two ports fed at one point";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_EQ(std::string(error.what()),
+              "the feeds of r0 and r1 lie 0.0 apart, closer than the wire "
+              "spacing of 0");
+  }
+}
+
 TEST(Assigner, GivesEachOfTwoResonatorsAChainOfItsOwn) {
   // Two launcher ends and two terminations on two resonators leave no chord
   // to use: each resonator is a chain of one, from a launcher to a

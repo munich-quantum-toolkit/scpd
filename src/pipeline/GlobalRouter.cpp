@@ -26,7 +26,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <iterator>
 #include <map>
 #include <memory>
 #include <numbers>
@@ -68,9 +67,9 @@ std::unordered_map<std::string, std::uint32_t> portsByLabel(const ChipT& chip) {
 
 /// Refuses a capacity plan whose chains the stage cannot walk: a chain or a
 /// link that names a node the plan does not carry, a target that names a port
-/// the chip does not carry, or a chain that leads back into itself. The
-/// Capacity stage writes no such plan, so the plan is from another chip or
-/// was edited.
+/// the chip does not carry, a chain that leads back into itself, or a target
+/// on two chains or twice on one. The Capacity stage writes no such plan, so
+/// the plan is from another chip or was edited.
 void checkCapacityPlan(const ChipT& chip, const CapacityPlanT& capacity) {
   const auto nodes = capacity.nodes.size();
   const auto refuse = [](const std::string& what) {
@@ -123,6 +122,28 @@ void checkCapacityPlan(const ChipT& chip, const CapacityPlanT& capacity) {
         visits[child] = Visit::Inside;
         path.emplace_back(child, 0);
       }
+    }
+  }
+  // The stage asks one wire of each target over its chain, so a target on
+  // two chains would ask for its wire twice.
+  std::unordered_map<std::uint32_t, std::size_t> chainOfTarget;
+  for (std::size_t chain = 0; chain < capacity.chains.size(); ++chain) {
+    std::vector<std::uint32_t> pending{capacity.chains[chain]};
+    while (!pending.empty()) {
+      const auto& node = *capacity.nodes[pending.back()];
+      pending.pop_back();
+      if (node.kind == fba::CapacityElement::Target) {
+        const auto [first, fresh] = chainOfTarget.emplace(node.id, chain);
+        if (!fresh) {
+          const auto& label = chip.ports[node.id]->label;
+          refuse(
+              first->second == chain
+                  ? std::format("chain {} reaches port {} twice", chain, label)
+                  : std::format("chains {} and {} both reach port {}",
+                                first->second, chain, label));
+        }
+      }
+      pending.insert(pending.end(), node.next.begin(), node.next.end());
     }
   }
 }
@@ -502,7 +523,8 @@ public:
       return routing;
     }
 
-    const auto lattices = latticesOf(chip, capacity, circuit, reach, report);
+    const auto lattices = latticesOf(chip, capacity, circuit, reach,
+                                     internalBridgesAllowed(config), report);
     if (lattices.empty()) {
       // The chip has inner targets, but no capacity chain offers a lattice
       // that could reach one: every chain is either all targets, so nothing
@@ -634,13 +656,29 @@ private:
   }
 
   /// The lattices the model is built over: one per capacity chain that has an
-  /// inner target to serve.
+  /// inner target to serve or, with @p internal, an end of an internal bridge
+  /// that a wire may cross.
   [[nodiscard]] static std::vector<Lattice>
   latticesOf(const ChipT& chip, const CapacityPlanT& capacity,
              const InnerCircuit& circuit, const double reach,
-             const Report& report) {
-    const std::unordered_set<std::uint32_t> targets(circuit.targets.begin(),
-                                                    circuit.targets.end());
+             const bool internal, const Report& report) {
+    std::unordered_set<std::uint32_t> wanted(circuit.targets.begin(),
+                                             circuit.targets.end());
+    if (internal) {
+      // A target lies on one chain only, so the wire to a target past an
+      // internal bridge runs on the lattice of the chain that holds the
+      // bridge end. That chain need not hold a target.
+      std::unordered_set<std::uint32_t> outerSide;
+      for (const auto& bridge : circuit.outerBridges) {
+        outerSide.insert(bridge.to);
+      }
+      for (const auto& bridge : circuit.bridges) {
+        if (!outerSide.contains(bridge.to)) {
+          wanted.insert(bridge.from);
+          wanted.insert(bridge.to);
+        }
+      }
+    }
     std::vector<Lattice> lattices;
     for (std::size_t chain = 0; chain < capacity.chains.size(); ++chain) {
       report.progress("building the lattices", "", chain,
@@ -655,7 +693,7 @@ private:
       // surfaces at out of this stage. A lattice of the inner ports alone
       // could never surface anywhere.
       if (std::ranges::none_of(ports, [&](const std::uint32_t port) {
-            return targets.contains(port);
+            return wanted.contains(port);
           })) {
         continue;
       }
@@ -754,13 +792,9 @@ private:
       return expression;
     };
 
-    // What the circuit sends through a port, over every lattice that carries
-    // the port. The stage accepts a plan in which a port lies on several
-    // chains, although the Capacity stage writes none on the benchmark chips.
-    // A constraint on a port is therefore a constraint on this sum and not on
-    // one lattice. Per lattice, a bridge whose two ends lie on different
-    // lattices would go unconstrained, and a wire could start at one of them
-    // from nothing.
+    // What the circuit sends through a port, on the lattice of its chain. A
+    // constraint names the port and not a lattice, because the two ends of a
+    // bridge usually lie on different lattices.
     const auto portFlow = [&](const std::uint32_t port, const bool out) {
       milp::LinearExpr expression;
       for (std::size_t index = 0; index < lattices.size(); ++index) {
@@ -777,7 +811,7 @@ private:
       for (std::size_t node = 0; node < lattice.nodes.size(); ++node) {
         const auto port = lattice.nodes[node].port;
         if (port.has_value()) {
-          // A port is constrained over every lattice at once, below.
+          // A port is constrained by its port index, below.
           continue;
         }
         // A plain crossing passes on what it takes, and carries at most one
@@ -805,9 +839,7 @@ private:
 
     // Any port other than a target is where one wire starts or ends, and no
     // wire runs on through it. A wire that did would join two connections
-    // into one component with three port ends, which names no connection. A
-    // port that borders several chambers is a node of several lattices, and
-    // it is still one port: it takes one wire over all of them.
+    // into one component with three port ends, which names no connection.
     std::set<std::uint32_t> ends;
     for (const auto& lattice : lattices) {
       for (const auto& entry : lattice.nodeOfPort) {
@@ -842,11 +874,7 @@ private:
     }
 
     // A target is where a wire ends: everything that arrives stays, and a
-    // port takes one wire. The demand is on the port and not on a lattice
-    // node. A port that lies on two chains is a node of both lattices, and a
-    // demand per lattice would ask for a second wire to a port that has one.
-    // That second wire takes supply the chip has, and the target it was taken
-    // from is then reported unreached.
+    // port takes one wire.
     //
     // Whether a target is reached is a variable and not a constraint. A chip
     // that cannot serve one of its targets is a fact about the chip and its
@@ -963,10 +991,10 @@ private:
   /// Each chain of outer space carries an integer flow of its own: its
   /// launcher supplies it, each of its gates passes at most its capacity, and
   /// each of its targets draws one wire. Where a target is the outer end of a
-  /// bridge, the chains that border it and that a launcher supplies together
-  /// draw exactly what the inner circuit sends out through that bridge. An
-  /// inner wire may therefore surface at an outer port only where a chain
-  /// behind that port can carry it to a launcher.
+  /// bridge and a launcher supplies its chain, the chain draws exactly what
+  /// the inner circuit sends out through that bridge. An inner wire may
+  /// therefore surface at an outer port only where the chain behind that port
+  /// can carry it to a launcher.
   ///
   /// A chain that belongs to the inner circuit is left out. Its targets are
   /// what the circuit has to reach, or the ports it reaches them through,
@@ -1019,9 +1047,9 @@ private:
       std::vector<bool> supplied;
     };
     std::vector<Walked> walked;
-    // The ring ends of bridges on the chains that the model leaves out, and
-    // whether one of those chains supplies each of them.
-    std::map<std::uint32_t, bool> unwalkedEnds;
+    // The ring ends of bridges that a chain left out of the model cuts off
+    // from every launcher.
+    std::set<std::uint32_t> cutOffEnds;
     for (std::size_t chain = 0; chain < capacity.chains.size(); ++chain) {
       auto links = chainLinks(capacity, capacity.chains[chain]);
       auto supplied = suppliedLinks(capacity, links);
@@ -1029,8 +1057,9 @@ private:
             return isTarget(link) && claimed.contains(portOf(link));
           })) {
         for (std::size_t at = 0; at < links.size(); ++at) {
-          if (isTarget(links[at]) && insideOf.contains(portOf(links[at]))) {
-            unwalkedEnds[portOf(links[at])] |= supplied[at];
+          if (isTarget(links[at]) && insideOf.contains(portOf(links[at])) &&
+              !supplied[at]) {
+            cutOffEnds.insert(portOf(links[at]));
           }
         }
         continue;
@@ -1040,42 +1069,20 @@ private:
                         .supplied = std::move(supplied)});
     }
 
-    // A ring end of a bridge may border several chains. The wire that
-    // surfaces there leaves through any of them that a launcher supplies, so
-    // the rows of the bridge sum over those chains and come with the last of
-    // them. Only where no chain supplies the ring end does nothing surface
-    // there, because a wire that came out there would have no free space to
-    // leave through.
-    //
-    // A plain ring port has one wire, whichever chain carries it, so its
-    // demand sums over the chains that supply it in the same way.
-    std::unordered_map<std::uint32_t, std::size_t> suppliers;
-    std::unordered_map<std::uint32_t, std::size_t> lastSupplier;
-    for (std::size_t index = 0; index < walked.size(); ++index) {
-      const auto& [chain, links, supplied] = walked[index];
-      for (std::size_t at = 0; at < links.size(); ++at) {
-        if (isTarget(links[at]) && supplied[at]) {
-          ++suppliers[portOf(links[at])];
-          lastSupplier[portOf(links[at])] = index;
-        }
-      }
-    }
-    // A gate that several chains pass holds the wires of all of them, so it
-    // has one more row over all of those chains, with the last of them.
+    // A gate that several links pass, on several chains or on one, holds the
+    // wires of all of them, so it has one more row over all of those links,
+    // with the last of them.
     std::unordered_map<std::uint32_t, std::size_t> passes;
-    std::unordered_map<std::uint32_t, std::size_t> lastPass;
-    for (std::size_t index = 0; index < walked.size(); ++index) {
-      for (const auto& link : walked[index].links) {
+    for (const auto& chain : walked) {
+      for (const auto& link : chain.links) {
         const auto& element = *capacity.nodes[link.node];
         if (element.kind == fba::CapacityElement::Bottleneck) {
           ++passes[element.id];
-          lastPass[element.id] = index;
         }
       }
     }
+    std::unordered_map<std::uint32_t, std::size_t> passesLeft = passes;
     std::unordered_map<std::uint32_t, milp::LinearExpr> through;
-    std::unordered_map<std::uint32_t, milp::LinearExpr> drawn;
-    std::unordered_set<std::uint32_t> sealed;
 
     for (std::size_t index = 0; index < walked.size(); ++index) {
       const auto& [chain, links, supplied] = walked[index];
@@ -1138,7 +1145,7 @@ private:
             auto& total = through[element.id];
             total.add(around(at, true, true));
             total.add(around(at, false, true));
-            if (lastPass.at(element.id) == index) {
+            if (--passesLeft.at(element.id) == 0) {
               model.addLessOrEqual(std::format("gate_{}", element.id), total,
                                    element.capacity);
             }
@@ -1153,32 +1160,19 @@ private:
                            0.0);
             model.addEqual(std::format("chain_{}_cut_out_{}", chain, at), out,
                            0.0);
-            // A ring end that some chain supplies keeps its way out, whether
-            // the model checks that chain or leaves it out.
-            const auto unwalked = unwalkedEnds.find(element.id);
-            if (inside != insideOf.end() && !suppliers.contains(element.id) &&
-                (unwalked == unwalkedEnds.end() || !unwalked->second) &&
-                sealed.insert(element.id).second) {
+            // A wire that surfaced at a cut-off ring end would have no free
+            // space to leave through, so nothing surfaces there.
+            if (inside != insideOf.end()) {
               model.addEqual(std::format("chain_{}_sealed_{}", chain, at),
                              portFlow(inside->second, true), 0.0);
             }
             break;
           }
-          auto& total = drawn[element.id];
-          total.add(in - out);
+          const auto drawn = in - out;
           if (inside == insideOf.end()) {
             // A plain ring port draws the one wire it is there for, unless
             // the gates on the way have no room for it.
-            if (suppliers.at(element.id) > 1) {
-              // No chain hands a wire on to another one through the port.
-              model.addGreaterOrEqual(
-                  std::format("chain_{}_target_draw_{}", chain, at), in - out,
-                  0.0);
-            }
-            if (lastSupplier.at(element.id) != index) {
-              break;
-            }
-            auto demanded = total;
+            auto demanded = drawn;
             if (penalty.has_value()) {
               const auto missing = model.addBinary(
                   std::format("chain_{}_short_{}", chain, at), *penalty);
@@ -1192,19 +1186,10 @@ private:
           // A target where the inner circuit can surface draws exactly what
           // the circuit sends out through the bridge, and never the reverse:
           // the wire leaves the inner region there and does not enter it.
-          if (suppliers.at(element.id) > 1) {
-            // No chain hands a wire on to another one through the port.
-            model.addGreaterOrEqual(
-                std::format("chain_{}_bridge_draw_{}", chain, at), in - out,
-                0.0);
-          }
-          if (lastSupplier.at(element.id) != index) {
-            break;
-          }
           model.addEqual(std::format("chain_{}_bridge_{}", chain, at),
-                         total - portFlow(inside->second, true), 0.0);
+                         drawn - portFlow(inside->second, true), 0.0);
           model.addLessOrEqual(std::format("chain_{}_bridge_cap_{}", chain, at),
-                               total, 1.0);
+                               drawn, 1.0);
           model.addEqual(std::format("chain_{}_bridge_back_{}", chain, at),
                          portFlow(inside->second, false), 0.0);
           break;
@@ -1216,15 +1201,12 @@ private:
       }
     }
 
-    // A ring end of a bridge that lies only on chains with inner ports has
-    // no rows above. Where none of those chains supplies it either, a gate
-    // without room cuts it off, and nothing surfaces there. A ring end on no
-    // chain at all has no capacity to limit it.
-    for (const auto& [port, supplied] : unwalkedEnds) {
-      if (!supplied && !suppliers.contains(port) && !sealed.contains(port)) {
-        model.addEqual(std::format("sealed_{}", port),
-                       portFlow(insideOf.at(port), true), 0.0);
-      }
+    // A ring end of a bridge on a chain with an inner port has no rows above.
+    // Where a gate without room cuts it off, nothing surfaces there either. A
+    // ring end on no chain has no capacity to limit it.
+    for (const auto port : cutOffEnds) {
+      model.addEqual(std::format("sealed_{}", port),
+                     portFlow(insideOf.at(port), true), 0.0);
     }
   }
 
@@ -1265,12 +1247,12 @@ private:
     return supplied;
   }
 
-  /// The ring ports that no bridge joins and that no chain carries to a
-  /// launcher, ascending.
+  /// The ring ports that no bridge joins and that their chain does not carry
+  /// to a launcher, ascending.
   ///
-  /// Such a port lies behind a gate without room on every chain that carries
-  /// it. Its wire then has no way to a launcher, while the ring end of a
-  /// bridge needs one only where an inner wire surfaces there.
+  /// Such a port lies behind a gate without room on its chain, or on a chain
+  /// without a launcher. Its wire then has no way to a launcher, while the
+  /// ring end of a bridge needs one only where an inner wire surfaces there.
   [[nodiscard]] static std::vector<std::uint32_t>
   cutOffPorts(const CapacityPlanT& capacity, const InnerCircuit& circuit) {
     std::unordered_set<std::uint32_t> notPlain(circuit.innerPorts.begin(),
@@ -1278,27 +1260,19 @@ private:
     for (const auto& bridge : circuit.outerBridges) {
       notPlain.insert(bridge.to);
     }
-    std::set<std::uint32_t> carried;
-    std::unordered_set<std::uint32_t> reached;
+    std::vector<std::uint32_t> cutOff;
     for (const auto root : capacity.chains) {
       const auto links = chainLinks(capacity, root);
       const auto supplied = suppliedLinks(capacity, links);
       for (std::size_t at = 0; at < links.size(); ++at) {
         const auto& element = *capacity.nodes[links[at].node];
-        if (element.kind != fba::CapacityElement::Target ||
-            notPlain.contains(element.id)) {
-          continue;
-        }
-        carried.insert(element.id);
-        if (supplied[at]) {
-          reached.insert(element.id);
+        if (element.kind == fba::CapacityElement::Target && !supplied[at] &&
+            !notPlain.contains(element.id)) {
+          cutOff.push_back(element.id);
         }
       }
     }
-    std::vector<std::uint32_t> cutOff;
-    std::ranges::copy_if(
-        carried, std::back_inserter(cutOff),
-        [&](const std::uint32_t port) { return !reached.contains(port); });
+    std::ranges::sort(cutOff);
     return cutOff;
   }
 

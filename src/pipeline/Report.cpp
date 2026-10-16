@@ -55,11 +55,12 @@ Report::Report(const Detail level, Sinks receivers)
       state(std::make_shared<State>()) {}
 
 bool Report::wants(const Detail detail) const {
-  return sinks != nullptr && sinks->line && detail <= reportLevel;
+  return sinks != nullptr && (sinks->line || sinks->entry) &&
+         detail <= reportLevel;
 }
 
 void Report::line(const Detail detail, const std::string_view text) const {
-  if (wants(detail)) {
+  if (sinks != nullptr && sinks->line && detail <= reportLevel) {
     sinks->line(detail, text);
   }
 }
@@ -98,7 +99,7 @@ void Report::progress(const std::string_view task,
 
 milp::SolveObserver Report::solveObserver(const std::string_view task) const {
   milp::SolveObserver observer;
-  if (wants(Detail::Solver)) {
+  if (sinks != nullptr && sinks->line && Detail::Solver <= reportLevel) {
     observer.log = [report = *this](const std::string_view text) {
       report.line(Detail::Solver, text);
     };

@@ -24,37 +24,39 @@ releases may include breaking changes.
   `render` with `--stage` and `--run-dir` for the planning stages, which refuse
   an artifact whose inputs have changed since; the assign and corridor pictures
   show the feedline chains ([#140]) ([**@FeldmeierMichael**])
-- 🎨 Draw `plot` pictures like a mask in a layout tool: hatched metal with an
-  inner contour on a light substrate, a millimetre grid, rulers, corner marks, a
-  scale bar and a caption. Every port is one red marker, feedlines run in
-  horizontal and vertical steps in one color, and corridors are solid dark
-  lines. The capacity picture shows the partition borders without the gates, and
-  no picture shows the port keep-out or the capacity chains. A picture opened on
-  its own has a panel that shows and hides each layer. `plot` and `render` draw
-  a partition border along its cell edges instead of through them in the order
-  the grid was scanned, and `plot` straightens the staircase of a slanted
-  border. The capacity and corridor pictures show the blocked cells of the grid
-  in dark grey under the artwork, without strips of free cells too thin to
-  block, and leave out the borders of the partitions that the artwork closes in.
-  A corridor runs on into its target port along the direction of the port, with
-  rounded turns. Both pictures shade every partition in a light grey that
-  differs from its neighbours. The assign picture lies over the same plan, draws
-  its chords as thick black dashes and leaves out the ring of its ports ([#140])
-  ([**@FeldmeierMichael**])
+- 🎨 Draw `plot` pictures like a mask in a layout tool ([#140])
+  ([**@FeldmeierMichael**]):
+  - Metal is hatched and has an inner contour on a light substrate. A picture
+    has a millimetre grid, rulers, corner marks, a scale bar and a caption.
+  - Every port is one red marker. Feedlines run in horizontal and vertical steps
+    in one color. Corridors are solid dark lines that run on into their target
+    port along its direction, with rounded turns.
+  - A picture opened on its own has a panel that shows and hides each layer.
+  - The capacity picture shows the partition borders without the gates. No
+    picture shows the port keep-out or the capacity chains.
+  - `plot` and `render` draw a partition border along its cell edges. `plot`
+    straightens the staircase of a slanted border.
+  - The capacity, assign and corridor pictures show the blocked cells of the
+    grid in dark grey under the artwork, without strips of free cells too thin
+    to block. They leave out the borders of the partitions that the artwork
+    closes in, and shade every partition in a light grey that differs from its
+    neighbours.
+  - The assign picture draws its chords as thick black dashes and leaves out the
+    ring of its ports.
 - ✨ Add the planning stages. The Capacity stage partitions the free space at
   its bottlenecks, one at the narrowest stretch of each corridor along a grid
   axis or a diagonal, and budgets the wires of every capacity chain. The Global
   stage solves the inner circuit as a mixed-integer program on Hanan lattices.
   Every inner wire leaves through a bridge to the ring. The Global stage counts
-  a ring port as a fail when the gates behind it have no room for it, or when a
-  gate without room cuts it off from every launcher. The Assignment stage
-  assigns the ring ports to launchers and feedline chains with an integer
-  program, and feeds no two of them at one point. The Corridor stage routes
-  every connection through the partitions over the border slots inside the
-  launcher ring, which are the slots that the Capacity stage budgets. It keeps
-  the crossings of two wires one crossing pitch apart. The stages write the
-  artifacts `01-capacity.fb` to `04-corridor.fb`, and refuse a detail grid of
-  more than 25,000,000 cells ([#140]) ([**@FeldmeierMichael**])
+  a ring port as a fail when the gates behind it have no room for it, or when
+  its chain does not carry it to a launcher. The Assignment stage assigns the
+  ring ports to launchers and feedline chains with an integer program, and feeds
+  no two of them at one point. The Corridor stage routes every connection
+  through the partitions over the border slots inside the launcher ring, which
+  are the slots that the Capacity stage budgets. It keeps the crossings of two
+  wires one crossing pitch apart. The stages write the artifacts
+  `01-capacity.fb` to `04-corridor.fb`, and refuse a detail grid of more than
+  25,000,000 cells ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdMilp`: a linear model, the HiGHS backend with a progress and
   log observer, MPS output, and the choice of the backend through
   `[stages.solver] backend` or `SCPD_SOLVER`: HiGHS by default, and Gurobi

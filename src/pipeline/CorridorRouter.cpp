@@ -698,6 +698,26 @@ struct Sweeps {
   return {};
 }
 
+/// Checks that every connection of an assignment names a port of the chip.
+///
+/// @throws std::invalid_argument When a connection is missing or names a port
+/// the chip does not carry.
+void requirePortsOfChip(const AssignmentT& assignment, const ChipT& chip) {
+  for (std::size_t index = 0; index < assignment.connections.size(); ++index) {
+    const auto* connection = assignment.connections[index].get();
+    if (connection == nullptr) {
+      throw std::invalid_argument(
+          std::format("the assignment has no connection {}", index));
+    }
+    if (connection->target.index() >= chip.ports.size()) {
+      throw std::invalid_argument(std::format(
+          "the assignment does not fit the chip: connection {} names port {} "
+          "of {}",
+          index, connection->target.index(), chip.ports.size()));
+    }
+  }
+}
+
 /// Checks that a plan was made on the detail grid that the stage rebuilds from
 /// the chip and the configuration.
 ///
@@ -835,6 +855,7 @@ public:
     const auto scene = buildScene(chip, config);
     report.progress("rasterizing the partitions", "", 0, 0);
     requireSameGrid(capacity, scene.detail);
+    requirePortsOfChip(assignment, chip);
     const auto labels = labelsOf(capacity, scene);
 
     const auto requests = requestsOf(scene, assignment, labels);

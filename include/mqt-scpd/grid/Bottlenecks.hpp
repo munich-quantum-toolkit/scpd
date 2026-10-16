@@ -112,8 +112,10 @@ findBottlenecks(const BitGrid& blocked, const MedialAxis& axis,
  * Between two ends on chip artwork, the count is the gap in pitches rounded
  * up, as in the research prototype, so it can be one wire more than the gap
  * holds. Where an end sits on a cell reserved for a port, the count rounds
- * down. The crossing slots of the Corridor stage, not this count, decide how
- * many wires cross a partition border.
+ * down. The count is the capacity of the gate that the Global stage checks,
+ * so a gate rounded up can pass one ring port more than fits. The crossing
+ * slots of the Corridor stage, not this count, decide how many wires cross a
+ * partition border.
  *
  * @param bottleneck The bottleneck.
  * @param grid The metrics of the grid it was found on.
