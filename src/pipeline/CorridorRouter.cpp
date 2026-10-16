@@ -262,7 +262,7 @@ public:
   /// may take a slot that another wire holds or cross a chord that another
   /// wire drew, and pays that price once per step that does so, however many
   /// wires the step displaces. The search therefore takes as few blocked
-  /// steps as it can. The callers ask for a displacing route only for a wire
+  /// steps as it can. A sweep asks for a displacing route only for a wire
   /// that the free search did not place, so the price never trades a free
   /// way for a shorter blocked one.
   ///
@@ -687,15 +687,32 @@ private:
 /// The tuning the stage reads.
 struct Sweeps {
   std::uint32_t rounds = 12;
-  std::uint32_t maxRelaxation = 30;
+  /// The relaxation that the configuration asks for.
+  std::uint32_t askedRelaxation = 4;
+  /// The relaxation that the sweeps use: the asked one, but fewer than half
+  /// the connections.
+  std::uint32_t maxRelaxation = 4;
 };
 
-[[nodiscard]] Sweeps sweepsOf(const ConfigT& config) {
+/// Reads the tuning and limits the relaxation to fewer than half of the
+/// `connections`.
+///
+/// A wire without a way rips up neighbours until it fits. When it may rip up
+/// all the others, it takes their room, they find no way back, and every
+/// round repeats this. Fewer than half leaves at least as many wires in place
+/// as the sweep takes out.
+[[nodiscard]] Sweeps sweepsOf(const ConfigT& config,
+                              const std::size_t connections) {
+  Sweeps sweeps;
   if (config.stages != nullptr && config.stages->corridor != nullptr) {
     const auto& params = *config.stages->corridor;
-    return {.rounds = params.rounds, .maxRelaxation = params.max_relaxation};
+    sweeps.rounds = params.rounds;
+    sweeps.askedRelaxation = params.max_relaxation;
   }
-  return {};
+  const auto limit = connections == 0 ? 0 : (connections - 1) / 2;
+  sweeps.maxRelaxation = static_cast<std::uint32_t>(
+      std::min<std::size_t>(sweeps.askedRelaxation, limit));
+  return sweeps;
 }
 
 /// Checks that every connection of an assignment names a port of the chip.
@@ -862,7 +879,7 @@ public:
 
     Corridors corridors(capacity, scene, crossingPitch(config));
 
-    const auto sweeps = sweepsOf(config);
+    const auto sweeps = sweepsOf(config, requests.size());
     if (report.wants(Detail::Steps)) {
       report.line(
           Detail::Steps,
@@ -871,9 +888,13 @@ public:
                       counted(capacity.partitions.size(), "partition"),
                       FIGURE_SEPARATOR,
                       counted(corridors.slots().size(), "crossing slot")));
-      report.line(Detail::Steps,
-                  std::format("rounds {}{}max relaxation {}", sweeps.rounds,
-                              FIGURE_SEPARATOR, sweeps.maxRelaxation));
+      report.line(
+          Detail::Steps,
+          std::format("rounds {}{}max relaxation {}{}", sweeps.rounds,
+                      FIGURE_SEPARATOR, sweeps.maxRelaxation,
+                      sweeps.maxRelaxation < sweeps.askedRelaxation
+                          ? std::format(" of {}", sweeps.askedRelaxation)
+                          : ""));
     }
 
     std::vector<std::optional<Route>> routes(requests.size());
@@ -922,16 +943,9 @@ public:
                     verdict("fails", bestLeft)});
     }
 
-    const auto beforeExchange = unrouted(routes);
-    exchange(corridors, requests, routes, sweeps, report);
     // A corridor has no clearance to break, so the fails of the stage are the
     // connections without a way.
     const auto left = unrouted(routes);
-    if (left != beforeExchange) {
-      report.entry(Detail::Summary, "exchange",
-                   {{.text = std::format("placed {}", beforeExchange - left)},
-                    verdict("fails", left)});
-    }
 
     if (report.wants(Detail::Items)) {
       for (std::size_t index = 0; index < requests.size(); ++index) {
@@ -975,52 +989,6 @@ private:
         routes[index] = before[index];
       }
     }
-  }
-
-  /// Offers every wire still without a way a swap with the wires in its way,
-  /// and keeps the swap only when fewer wires are left without one.
-  ///
-  /// The pass reports each wire it comes to, because on a crowded chip it can
-  /// run for minutes, and a report is where the run can stop.
-  static void exchange(Corridors& corridors,
-                       const std::vector<Request>& requests,
-                       std::vector<std::optional<Route>>& routes,
-                       const Sweeps& sweeps, const Report& report) {
-    for (std::size_t index = 0; index < requests.size(); ++index) {
-      report.progress("exchanging wires", "", index, requests.size());
-      if (routes[index].has_value()) {
-        continue;
-      }
-      const auto wanted =
-          corridors.route(requests[index], corridors.displacementPrice());
-      if (!wanted.has_value()) {
-        continue;
-      }
-      const auto before = routes;
-      for (const auto blocker :
-           corridors.blockersOf(requests[index], *wanted)) {
-        if (routes[blocker].has_value()) {
-          corridors.withdraw(requests[blocker], *routes[blocker]);
-          routes[blocker].reset();
-        }
-      }
-      if (auto found = corridors.route(requests[index]); found.has_value()) {
-        corridors.commit(requests[index], *found);
-        routes[index] = std::move(found);
-      }
-      for (auto left = unrouted(routes) + 1; unrouted(routes) < left;) {
-        left = unrouted(routes);
-        for (std::size_t other = 0; other < requests.size(); ++other) {
-          if (!routes[other].has_value()) {
-            reroute(corridors, requests, routes, other, true, sweeps);
-          }
-        }
-      }
-      if (unrouted(routes) >= unrouted(before)) {
-        restore(corridors, requests, routes, before);
-      }
-    }
-    report.progress("exchanging wires", "", requests.size(), requests.size());
   }
 
   /// One request per connection of the assignment, in its order.
@@ -1087,7 +1055,7 @@ private:
     // settled them yet, so it gives each of them a new way before the round
     // is over. Near the end of the sweep the count runs on past the last wire
     // to the first ones, which this round has passed; those wait for the
-    // next round, or for the exchange pass after the last one.
+    // next round.
     std::vector<std::pair<std::size_t, Route>> ripped;
     const auto total = static_cast<std::int64_t>(requests.size());
     for (std::uint32_t relax = 1; relax <= sweeps.maxRelaxation; ++relax) {

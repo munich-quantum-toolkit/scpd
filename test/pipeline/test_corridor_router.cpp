@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <memory>
@@ -616,14 +617,11 @@ TEST(CorridorRouter, KeepsItsRulesWhenWiresCompete) {
   }
 }
 
-TEST(CorridorRouter, MovesAWireThatHoldsASlotNearTheOneAnotherWants) {
-  // Four wires fed at slots of the fixture, found by a search over random
-  // feeds. One round that may rip up no neighbour leaves the wire to
-  // Q1.port0 without a way, so the exchange pass is the only one that moves
-  // a wire. The way of the wire to Q1.port0 needs a slot next to one that
-  // another wire holds, so the exchange pass has to see the holder of that
-  // slot as a wire in the way, or the wire stays without a way. The stage
-  // reports what the exchange pass placed.
+/// The fixture with one wire per entry, each fed at the slot with that
+/// index among all slots of the fixture and sent to the port with that label.
+Planned
+fedAtSlots(const std::initializer_list<std::pair<std::size_t, std::string_view>>
+               wires) {
   const auto fixture = planMini();
   std::vector<Point> offered;
   for (const auto& slots : routeMini(fixture).slots) {
@@ -631,47 +629,67 @@ TEST(CorridorRouter, MovesAWireThatHoldsASlotNearTheOneAnotherWants) {
       offered.push_back(position);
     }
   }
-  ASSERT_GT(offered.size(), 278U);
-  const auto portOf = [&fixture](const std::string_view label) {
-    const auto found =
-        std::ranges::find_if(fixture.chip.ports, [&](const auto& port) {
-          return port->label == label;
-        });
-    EXPECT_NE(found, fixture.chip.ports.end()) << label;
-    return static_cast<std::uint32_t>(found - fixture.chip.ports.begin());
-  };
   auto planned = planMini();
   planned.assignment.connections.clear();
   planned.assignment.feeds.clear();
-  for (const auto& [slot, label] :
-       {std::pair<std::size_t, std::string_view>{278, "C12.port0"},
-        {150, "Q1.port1"},
-        {116, "Q2.port0"},
-        {3, "Q1.port0"}}) {
+  for (const auto& [slot, label] : wires) {
+    const auto port =
+        std::ranges::find_if(fixture.chip.ports, [&](const auto& candidate) {
+          return candidate->label == label;
+        });
+    EXPECT_NE(port, fixture.chip.ports.end()) << label;
+    EXPECT_LT(slot, offered.size());
     auto connection = std::make_unique<flatbuffers::design::ConnectionT>();
-    connection->target = flatbuffers::design::PortRef(portOf(label));
+    connection->target = flatbuffers::design::PortRef(
+        static_cast<std::uint32_t>(port - fixture.chip.ports.begin()));
     planned.assignment.connections.push_back(std::move(connection));
     planned.assignment.feeds.push_back(offered[slot]);
   }
+  return planned;
+}
 
+TEST(CorridorRouter, MovesAWireThatHoldsASlotNearTheOneAnotherWants) {
+  // Five wires fed at slots of the fixture, found by a search over random
+  // feeds. A way needs a slot next to one that another wire holds. The
+  // sweeps route every wire only when they see the holder of that slot as a
+  // wire in the way.
+  const auto planned = fedAtSlots({{215, "Q2.port1"},
+                                   {174, "Q2.port0"},
+                                   {289, "Q1.port1"},
+                                   {303, "Q1.port0"},
+                                   {131, "C12.port0"}});
   Received received;
 
-  const auto routing = routeMini(planned, receiving(received, Detail::Summary),
-                                 sweepConfig(1, 0));
+  const auto routing = routeMini(planned, receiving(received, Detail::Summary));
 
   EXPECT_EQ(unroutedOf(routing), 0U);
-  const auto exchange =
-      std::ranges::find_if(received.summary, [](const auto& entry) {
-        return entry.first == "exchange";
-      });
-  ASSERT_NE(exchange, received.summary.end());
-  ASSERT_EQ(exchange->second.size(), 2U);
-  EXPECT_EQ(exchange->second[0].text, "placed 1");
-  EXPECT_EQ(exchange->second[1].text, "fails 0");
   EXPECT_EQ(received.fails, 0U);
   expectOneWirePerSlot(routing);
   expectThePitchBetweenWires(routing, crossingPitch(test::miniConfig()));
   expectNoCrossingInsideAPartition(routing);
+}
+
+TEST(CorridorRouter, RipsUpFewerThanHalfTheWires) {
+  // Four wires fed at slots of the fixture, found by a search over random
+  // feeds. A wire that may rip up the three others takes their room, they
+  // find no way back, and every round repeats this. The stage rips up at
+  // most one of the four, whatever the configuration asks for, and routes
+  // every wire.
+  const auto planned = fedAtSlots({{278, "C12.port0"},
+                                   {150, "Q1.port1"},
+                                   {116, "Q2.port0"},
+                                   {3, "Q1.port0"}});
+  Received received;
+
+  const auto routing = routeMini(planned, receiving(received, Detail::Steps),
+                                 sweepConfig(12, 30));
+
+  EXPECT_NE(std::ranges::find(received.steps,
+                              std::format("rounds 12{}max relaxation 1 of 30",
+                                          FIGURE_SEPARATOR)),
+            received.steps.end());
+  EXPECT_EQ(unroutedOf(routing), 0U);
+  EXPECT_EQ(received.fails, 0U);
 }
 
 TEST(CorridorRouter, RoutesAWireThatCrossesBordersOnItsOwn) {
@@ -897,29 +915,6 @@ TEST(CorridorRouter, CompletesTheProgressOfEveryRound) {
   EXPECT_EQ(first->second.first, first->second.second);
 }
 
-TEST(CorridorRouter, CountsTheWiresOfTheExchangePass) {
-  // The exchange pass can run long on a crowded chip, so it reports how many
-  // wires it has offered a swap, and it ends at the count of all wires.
-  const auto planned = crowded(4);
-  std::optional<std::pair<std::uint64_t, std::uint64_t>> last;
-  const Report report(Detail::Summary,
-                      {.progress = [&last](const std::string_view task,
-                                           const std::string_view /*detail*/,
-                                           const std::uint64_t done,
-                                           const std::uint64_t total) {
-                        if (task == "exchanging wires") {
-                          last = {done, total};
-                        }
-                      }});
-
-  static_cast<void>(routeMini(planned, report, sweepConfig(2, 30)));
-
-  const auto wires = planned.assignment.connections.size();
-  ASSERT_TRUE(last.has_value());
-  EXPECT_EQ(last->first, wires);
-  EXPECT_EQ(last->second, wires);
-}
-
 TEST(CorridorRouter, SweepsTwelveRoundsWithoutACorridorSection) {
   auto config = test::miniConfig();
   config.stages->corridor.reset();
@@ -928,9 +923,9 @@ TEST(CorridorRouter, SweepsTwelveRoundsWithoutACorridorSection) {
   const auto routing =
       routeMini(planMini(), receiving(received, Detail::Steps), config);
 
-  EXPECT_NE(std::ranges::find(
-                received.steps,
-                std::format("rounds 12{}max relaxation 30", FIGURE_SEPARATOR)),
+  EXPECT_NE(std::ranges::find(received.steps,
+                              std::format("rounds 12{}max relaxation 2 of 4",
+                                          FIGURE_SEPARATOR)),
             received.steps.end());
   EXPECT_EQ(unroutedOf(routing), 0U);
 }
@@ -1100,7 +1095,7 @@ TEST(CorridorRouter, KeepsItsRulesOnRandomAssignments) {
   for (int round = 0; round < 200; ++round) {
     SCOPED_TRACE(std::format("round {}", round));
     planned.assignment = randomAssignment(fixture, random);
-    const auto rounds = static_cast<std::uint32_t>(random.between(0, 12));
+    const auto rounds = static_cast<std::uint32_t>(random.between(1, 12));
     const auto maxRelaxation =
         static_cast<std::uint32_t>(random.between(0, 30));
     const auto config = sweepConfig(rounds, maxRelaxation);

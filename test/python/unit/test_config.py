@@ -242,7 +242,7 @@ def test_the_stage_and_run_sections_default_when_the_file_leaves_them_out() -> N
     assert stages.solver.timeLimit == pytest.approx(0.0)
     assert stages.solver.threads == 0
     assert stages.corridor is not None
-    assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (12, 30)
+    assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (12, 4)
     assert config.run is not None
     assert (config.run.stopAfter,) == ("",)
 
@@ -264,7 +264,7 @@ def test_a_stage_section_sets_what_it_names() -> None:
     assert (stages.solver.backend, stages.solver.timeLimit) == ("highs", pytest.approx(30.0))
     assert stages.solver.threads == 4
     assert stages.corridor is not None
-    assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (6, 30)
+    assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (6, 4)
     assert config.run is not None
     assert config.run.stopAfter == "assign"
 

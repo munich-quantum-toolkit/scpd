@@ -351,4 +351,16 @@ TEST(ConfigValidation, SolverThreadsStayWithinTheLimitOfGurobi) {
       (Problems{"stages.solver: threads must be at most 1024, not 1025"}));
 }
 
+TEST(ConfigValidation, CorridorSweepsAtLeastOneRound) {
+  ConfigT config = manualConfig();
+  config.stages = std::make_unique<StageParamsT>();
+  config.stages->corridor = std::make_unique<CorridorParamsT>();
+  config.stages->corridor->rounds = 1;
+  EXPECT_TRUE(validate(config).empty());
+
+  config.stages->corridor->rounds = 0;
+  EXPECT_EQ(validate(config),
+            (Problems{"stages.corridor: rounds must be at least one"}));
+}
+
 } // namespace

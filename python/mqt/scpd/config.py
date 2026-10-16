@@ -83,7 +83,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
     "global": {"router": "", "internal_bridges": False},
     "assignment": {"assigner": "", "launcher_target": 0},
     "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0, "threads": 0},
-    "corridor": {"router": "", "rounds": 12, "max_relaxation": 30},
+    "corridor": {"router": "", "rounds": 12, "max_relaxation": 4},
 }
 
 #: The keys of ``[run]`` with the defaults of the schema.

@@ -1078,7 +1078,7 @@ struct CorridorParamsT : public ::flatbuffers::NativeTable {
   typedef CorridorParams TableType;
   std::string router{};
   uint32_t rounds = 12;
-  uint32_t max_relaxation = 30;
+  uint32_t max_relaxation = 4;
 };
 
 /// What the Corridor stage may do.
@@ -1105,18 +1105,17 @@ struct CorridorParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// a later one has not claimed yet, and so that the order of the
   /// connections does not decide the result on its own. A sweep can take a
   /// way from a connection that had one; the stage keeps the round with the
-  /// fewest connections without a way.
+  /// fewest connections without a way. It must be at least one.
   uint32_t rounds() const {
     return GetField<uint32_t>(VT_ROUNDS, 12);
   }
   /// How many neighbouring connections a failed one may rip up in a sweep,
   /// counted along the sweep direction, and how many wires in its way it may
   /// move aside. The pass that moves them also raises the price of the slots
-  /// the failed connection wanted, so with zero no price rises. The exchange
-  /// pass moves every wire in the way of a failed connection, without this
-  /// limit.
+  /// the failed connection wanted, so with zero no price rises. The stage
+  /// uses fewer than half the connections, however many this asks for.
   uint32_t max_relaxation() const {
-    return GetField<uint32_t>(VT_MAX_RELAXATION, 30);
+    return GetField<uint32_t>(VT_MAX_RELAXATION, 4);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -1143,7 +1142,7 @@ struct CorridorParamsBuilder {
     fbb_.AddElement<uint32_t>(CorridorParams::VT_ROUNDS, rounds, 12);
   }
   void add_max_relaxation(uint32_t max_relaxation) {
-    fbb_.AddElement<uint32_t>(CorridorParams::VT_MAX_RELAXATION, max_relaxation, 30);
+    fbb_.AddElement<uint32_t>(CorridorParams::VT_MAX_RELAXATION, max_relaxation, 4);
   }
   explicit CorridorParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -1160,7 +1159,7 @@ inline ::flatbuffers::Offset<CorridorParams> CreateCorridorParams(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<::flatbuffers::String> router = 0,
     uint32_t rounds = 12,
-    uint32_t max_relaxation = 30) {
+    uint32_t max_relaxation = 4) {
   CorridorParamsBuilder builder_(_fbb);
   builder_.add_max_relaxation(max_relaxation);
   builder_.add_rounds(rounds);
@@ -1177,7 +1176,7 @@ inline ::flatbuffers::Offset<CorridorParams> CreateCorridorParamsDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const char *router = nullptr,
     uint32_t rounds = 12,
-    uint32_t max_relaxation = 30) {
+    uint32_t max_relaxation = 4) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
   return mqt::scpd::flatbuffers::config::CreateCorridorParams(
       _fbb,

@@ -197,11 +197,11 @@ of `1024` is the largest value that Gurobi accepts.
 
 ## `[stages.corridor]`
 
-| Key              | Default | Meaning                                                                                                                                                                                                  |
-| ---------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                                                                            |
-| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward                                                                                                                                       |
-| `max_relaxation` | `30`    | How many neighbouring connections along a sweep a connection without a way may rip up, and how many wires in its way it may move aside; the exchange pass moves every wire in its way without this limit |
+| Key              | Default | Meaning                                                                                                                                                                                |
+| ---------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                                                          |
+| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward; at least `1`                                                                                                       |
+| `max_relaxation` | `4`     | How many neighbouring connections along a sweep a connection without a way may rip up, and how many wires in its way it may move aside; the stage uses fewer than half the connections |
 
 The later sweeps let a connection without a way take room that another
 connection has not claimed yet. A sweep can take a way from a connection that
@@ -209,13 +209,17 @@ had one, so the fails of the rounds can go up as well as down. The stage keeps
 the plan of the round with the fewest fails, and goes back to it when the last
 round ends with more. The fails of a round count every connection without a way
 at its end, also one that the round ripped up near its end and had no sweep left
-to place again; the stage takes the plan of the best round as it is. After the
-sweeps, also with `rounds` at `0`, the exchange pass lets each connection
-without a way move the wires in its way, and keeps the change only when fewer
-connections are left without a way. Within a sweep, a connection without a way
-also raises the price of the slots it wanted, so that the next sweeps leave them
-to it. The pass that moves wires aside does this, so with `max_relaxation` at
-`0`, no price rises.
+to place again; the stage takes the plan of the best round as it is. Within a
+sweep, a connection without a way also raises the price of the slots it wanted,
+so that the next sweeps leave them to it. The pass that moves wires aside does
+this, so with `max_relaxation` at `0`, no price rises.
+
+The stage uses a `max_relaxation` of fewer than half the connections. A
+connection that may rip up all the others takes their room, they find no way
+back, and every round repeats this. With the default of `4`, the eight benchmark
+chips route every wire within two rounds. `2` is the smallest value that routes
+every wire there, in up to four rounds. A value above `4` routes them in two
+rounds as well, but each round takes longer.
 
 ## `[run]`
 

@@ -150,15 +150,14 @@ table CorridorParams {
   /// a later one has not claimed yet, and so that the order of the
   /// connections does not decide the result on its own. A sweep can take a
   /// way from a connection that had one; the stage keeps the round with the
-  /// fewest connections without a way.
+  /// fewest connections without a way. It must be at least one.
   rounds: uint32 = 12;
   /// How many neighbouring connections a failed one may rip up in a sweep,
   /// counted along the sweep direction, and how many wires in its way it may
   /// move aside. The pass that moves them also raises the price of the slots
-  /// the failed connection wanted, so with zero no price rises. The exchange
-  /// pass moves every wire in the way of a failed connection, without this
-  /// limit.
-  max_relaxation: uint32 = 30;
+  /// the failed connection wanted, so with zero no price rises. The stage
+  /// uses fewer than half the connections, however many this asks for.
+  max_relaxation: uint32 = 4;
 }
 
 /// The parameters of the stages that are implemented.

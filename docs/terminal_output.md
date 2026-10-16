@@ -83,7 +83,7 @@ has one of these forms:
 | Quantity  | `objective 27.84`   | The name, then the value; two decimals for a length or an objective, one for a percentage |
 | Ratio     | `routed 56/58`      | The name, then the part and the whole                                                     |
 | Verdict   | `fails 2`           | A count that should be zero: green at zero, red otherwise                                 |
-| Parameter | `max relaxation 30` | The configuration key with spaces for underscores, then its value                         |
+| Parameter | `max relaxation 4`  | The configuration key with spaces for underscores, then its value                         |
 
 Figures are lower case and end without a full stop. Times are seconds below a
 minute (`0.38s`), minutes and seconds below an hour (`53m 10s`), and hours and
@@ -159,7 +159,7 @@ A stage reports through the `Report` it is given and never prints.
 2. Report each round of a stage that works in rounds through `Report::entry`,
    with the label `round <n> forward` or `round <n> backward`, counted from 1. A
    pass after the rounds that changes the result gets an entry of its own, such
-   as `back to round <n>` and `exchange` in the Corridor stage.
+   as `back to round <n>` in the Corridor stage.
 3. Build each figure with `counted`, `verdict` or one of the forms above, and
    join figures with `FIGURE_SEPARATOR`.
 4. Report the steps, the parameters and the solves at `Detail::Steps`, and one

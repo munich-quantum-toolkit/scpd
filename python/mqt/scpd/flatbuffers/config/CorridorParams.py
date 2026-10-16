@@ -42,7 +42,7 @@ class CorridorParams(object):
     # a later one has not claimed yet, and so that the order of the
     # connections does not decide the result on its own. A sweep can take a
     # way from a connection that had one; the stage keeps the round with the
-    # fewest connections without a way.
+    # fewest connections without a way. It must be at least one.
     # CorridorParams
     def Rounds(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -53,15 +53,14 @@ class CorridorParams(object):
     # How many neighbouring connections a failed one may rip up in a sweep,
     # counted along the sweep direction, and how many wires in its way it may
     # move aside. The pass that moves them also raises the price of the slots
-    # the failed connection wanted, so with zero no price rises. The exchange
-    # pass moves every wire in the way of a failed connection, without this
-    # limit.
+    # the failed connection wanted, so with zero no price rises. The stage
+    # uses fewer than half the connections, however many this asks for.
     # CorridorParams
     def MaxRelaxation(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 30
+        return 4
 
 def CorridorParamsStart(builder: flatbuffers.Builder):
     builder.StartObject(3)
@@ -82,7 +81,7 @@ def AddRounds(builder: flatbuffers.Builder, rounds: int):
     CorridorParamsAddRounds(builder, rounds)
 
 def CorridorParamsAddMaxRelaxation(builder: flatbuffers.Builder, maxRelaxation: int):
-    builder.PrependUint32Slot(2, maxRelaxation, 30)
+    builder.PrependUint32Slot(2, maxRelaxation, 4)
 
 def AddMaxRelaxation(builder: flatbuffers.Builder, maxRelaxation: int):
     CorridorParamsAddMaxRelaxation(builder, maxRelaxation)
@@ -101,7 +100,7 @@ class CorridorParamsT(object):
         self,
         router = None,
         rounds = 12,
-        maxRelaxation = 30,
+        maxRelaxation = 4,
     ):
         self.router = router  # type: Optional[str]
         self.rounds = rounds  # type: int
