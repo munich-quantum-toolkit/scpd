@@ -11,7 +11,7 @@
 // The in-process backend, on models small enough that the answer is known by
 // hand. HiGHS is linked in, so these run everywhere.
 
-#include "../ScopedBackend.hpp"
+#include "ScopedBackend.hpp"
 #include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/milp/Model.hpp"
 

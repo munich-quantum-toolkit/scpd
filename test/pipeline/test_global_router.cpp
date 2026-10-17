@@ -12,7 +12,7 @@
 // reaches them, the ring it leaves for the assignment, and what it reports.
 
 #include "../MpsSolver.hpp"
-#include "../ScopedBackend.hpp"
+#include "../milp/ScopedBackend.hpp"
 #include "MiniFixture.hpp"
 #include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"

@@ -11,7 +11,7 @@
 // The solve of a stage: which backend the run asks for, and what the solve
 // reports.
 
-#include "../ScopedBackend.hpp"
+#include "../milp/ScopedBackend.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/milp/Model.hpp"

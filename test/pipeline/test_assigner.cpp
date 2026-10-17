@@ -12,7 +12,7 @@
 // its assignment holds on the two-qubit fixture, and what it reports.
 
 #include "../MpsSolver.hpp"
-#include "../ScopedBackend.hpp"
+#include "../milp/ScopedBackend.hpp"
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
