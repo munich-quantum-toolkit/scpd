@@ -26,10 +26,18 @@ using design::Problems;
 
 /**
  * @brief Validates a stage artifact.
+ *
+ * Besides the components that the output carries, the check covers what the
+ * later stages rely on: a capacity chain is a tree whose links stay in the
+ * plan, a target lies on one chain only, and a gate has the capacity of its
+ * bottleneck; the lattice of a Global routing names only its own points and
+ * edges; an Assignment has one connection, launcher and feed per ring node
+ * and chains of ring nodes; a corridor names one more partition than it has
+ * crossings.
+ *
  * @param artifact The artifact to check.
  * @return A problem for an empty producer, one for a missing output, and every
- * problem of the components the output carries, empty when the artifact is
- * valid.
+ * other problem found, empty when the artifact is valid.
  */
 [[nodiscard]] MQT_SCPD_IO_EXPORT Problems
 validate(const flatbuffers::artifacts::ArtifactT& artifact);

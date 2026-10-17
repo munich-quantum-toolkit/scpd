@@ -37,6 +37,7 @@ from .solvers import register as register_external_solver
 from .steps import STEPS
 
 if TYPE_CHECKING:
+    from .console import StageBlock
     from .flatbuffers.config.Config import ConfigT
 
 
@@ -151,20 +152,31 @@ def command_plan(args: argparse.Namespace) -> int:
                 console.closing(stopped_after=last, failed=step)
                 return 130
             # A reader that went away while the stage wrote is no failure of the stage. main()
-            # handles it as for every other command.
-            except BrokenPipeError:
-                raise
+            # handles it as for every other command. Any other broken pipe fails the stage.
+            except BrokenPipeError as error:
+                if console.reader_gone:
+                    raise
+                return _stage_failed(console, block, error, last, step)
             # A stage that fails in any way ends the run with the reason in its block and the
             # closing line, never with a traceback: the core raises ValueError and RuntimeError,
             # but a solver of the user's own may raise anything.
             except Exception as error:  # ruff: ignore[blind-except]
-                block.failure(str(error) or type(error).__name__)
-                console.closing(stopped_after=last, failed=step)
-                return 1
+                return _stage_failed(console, block, error, last, step)
             block.artifact(result.path.name, result.size)
         last = step
     console.closing(stopped_after=last)
     return 1 if console.run.fails else 0
+
+
+def _stage_failed(console: Console, block: StageBlock, error: Exception, last: str | None, step: str) -> int:
+    """End the run at a stage that failed, with the reason in its block and the closing line.
+
+    Returns:
+        The exit code.
+    """
+    block.failure(str(error) or type(error).__name__)
+    console.closing(stopped_after=last, failed=step)
+    return 1
 
 
 def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | None]:
@@ -428,7 +440,11 @@ def main(argv: list[str] | None = None) -> int:
         # error to report. Python flushes the output once more at exit, so it goes to the null
         # device instead.
         with contextlib.suppress(OSError, ValueError):
-            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            null = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(null, sys.stdout.fileno())
+            finally:
+                os.close(null)
         return 1
     # The errors of the inputs, and every error the core raises outside a stage, such as a backend
     # name it does not know.

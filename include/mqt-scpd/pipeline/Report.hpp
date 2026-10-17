@@ -190,8 +190,9 @@ public:
    * sink, under @p task, as its objective, gap and node count. While the
    * backend has no new state, the check of the observer repeats the last one,
    * so that a progress sink that throws stops the solve. HiGHS calls the check
-   * only while it solves a linear program, which has no state of a search, so
-   * there the check reports the task without figures.
+   * only for a model without integer variables, which has no state of a
+   * search, so there the check reports the task without figures. While HiGHS
+   * solves the linear relaxation of a mixed-integer model, it calls neither.
    *
    * @param task What the solve is for, such as "solving the assignment".
    * @return The observer.

@@ -110,8 +110,8 @@ constexpr double FEASIBILITY_TOLERANCE = 1.0e-7;
 
 /// The least wall-clock time between two calls of SolveObserver::check. A
 /// call into Python costs next to nothing at this rate. A pending interrupt
-/// waits this long and then until HiGHS next calls back, which it does every
-/// few iterations.
+/// waits this long and then until HiGHS next calls back, which it does after
+/// every iteration.
 constexpr std::chrono::milliseconds CHECK_INTERVAL{100};
 
 /// The answer to a model without variables. HiGHS calls such a model empty

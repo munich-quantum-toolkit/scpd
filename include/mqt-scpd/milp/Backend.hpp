@@ -41,20 +41,22 @@ struct SolveProgress {
 /**
  * @brief Where a backend reports while it solves.
  *
- * Both members may be empty. A backend never writes to the process output: it
+ * Each member may be empty. A backend never writes to the process output: it
  * writes its own log to @c log when that is set and nowhere when it is not.
- * An exception thrown from either member ends the solve at the next chance;
- * the backend throws it again once the solver has returned.
+ * An exception thrown from any member ends the solve at the next chance; the
+ * backend throws it again once the solver has returned.
  */
 struct SolveObserver {
   /// Receives one line of the log of the backend, without the line break.
   std::function<void(std::string_view)> log;
   /// Receives the state of a mixed-integer search, now and then.
   std::function<void(const SolveProgress&)> progress;
-  /// Called now and then while the backend solves a linear program, which
-  /// has no search state to report. It receives nothing. A caller throws
-  /// from it, as from the other two, to stop the solve, for example when
-  /// Python has an interrupt pending.
+  /// Called now and then while the backend solves a model without integer
+  /// variables, which has no search state to report. It receives nothing. A
+  /// caller throws from it, as from the other two, to stop the solve, for
+  /// example when Python has an interrupt pending. HiGHS calls no member
+  /// while it solves the linear relaxation of a mixed-integer model, so a
+  /// pending interrupt waits until that relaxation is solved.
   std::function<void()> check;
 };
 

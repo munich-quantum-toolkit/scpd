@@ -37,10 +37,11 @@ namespace mqt::scpd::pipeline {
  * chord between where a wire enters and leaves a partition, which is exact
  * only in a convex partition.
  *
- * Where wires compete, the router rips some up and routes them again, for
- * `[stages.corridor] rounds` rounds. It keeps the round with the fewest wires
- * without a way. A last pass then offers each such wire the free slots of
- * that plan and rips up nothing.
+ * Where wires compete, the router rips some up and routes them again, for at
+ * most `[stages.corridor] rounds` rounds; it stops after a round that routes
+ * every wire. It keeps the round with the fewest wires without a way. A last
+ * pass then offers each such wire the free slots of that plan and rips up
+ * nothing.
  *
  * @return The router.
  */

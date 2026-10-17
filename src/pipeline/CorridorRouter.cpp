@@ -1129,6 +1129,10 @@ private:
           break;
         }
       }
+      // A way that no routed wire blocks is free, so the free search above
+      // finds it too unless it gave up on unsound ways first. The wire then
+      // keeps the way it had, and a later round or the free-slot pass tries
+      // again.
       if (!blocker.has_value()) {
         break;
       }

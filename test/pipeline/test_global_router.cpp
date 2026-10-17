@@ -1611,6 +1611,80 @@ TEST(GlobalRouter, LeavesOutALoopThroughInternalBridgesInAFeasibleSolution) {
   EXPECT_NEAR(routing.objective, 300.0, 1.0e-9);
 }
 
+/// A backend that solves to the optimum and then adds a closed loop of arcs.
+///
+/// A loop over crossings touches no port, so every row still holds. A solve
+/// that stops early may return such a loop.
+class CrossingLoopBackend final : public milp::ISolverBackend {
+public:
+  explicit CrossingLoopBackend(std::vector<std::string> loop)
+      : arcs(std::move(loop)) {}
+
+  [[nodiscard]] std::string_view name() const override { return "loop"; }
+
+  [[nodiscard]] milp::Solution
+  solve(const milp::Model& model,
+        const milp::SolveOptions& options) const override {
+    auto solution = milp::makeHighsBackend()->solve(model, options);
+    if (!solution.hasValues()) {
+      return solution;
+    }
+    for (const auto& arc : arcs) {
+      const auto found =
+          std::ranges::find(model.variables(), arc, &milp::Variable::name);
+      if (found == model.variables().end()) {
+        throw std::logic_error("the model has no arc " + arc);
+      }
+      const auto index =
+          static_cast<std::size_t>(found - model.variables().begin());
+      solution.values[index] = 1.0;
+      solution.objective += found->objective;
+    }
+    solution.status = milp::SolveStatus::Feasible;
+    return solution;
+  }
+
+private:
+  std::vector<std::string> arcs;
+};
+
+TEST(GlobalRouter, LeavesOutALoopOverCrossingsInAFeasibleSolution) {
+  // Four ring ports on a diagonal make nodes 10, 11, 16 and 17 of the lattice
+  // crossings. The backend adds a loop over these four crossings to the
+  // optimum. The loop touches no port, so the artifact names only the wire
+  // to T, and its length is not in the objective.
+  const auto chip = handChip(
+      {ringEnd(),
+       {.label = "S.port0", .center = Point(0.0, 0.0)},
+       {.label = "T.port0", .center = Point(300.0, 0.0), .orientation = 180.0},
+       {.label = "A.port0", .center = Point(1000.0, 1000.0)},
+       {.label = "B.port0", .center = Point(1100.0, 1100.0)},
+       {.label = "C.port0", .center = Point(1200.0, 1200.0)},
+       {.label = "D.port0", .center = Point(1300.0, 1300.0)}},
+      handPatterns());
+  auto config =
+      handConfig({"S.port1", "A.port0", "B.port0", "C.port0", "D.port0"});
+  config.stages->solver->backend = "gurobi";
+  const auto plan =
+      planOf({{.targets = indicesOf(chip, {"T.port0", "S.port0", "A.port0",
+                                           "B.port0", "C.port0", "D.port0"}),
+               .gate = {}}});
+  const milp::test::ScopedBackend backend(
+      std::make_shared<CrossingLoopBackend>(std::vector<std::string>{
+          "arc_0_10_11", "arc_0_11_17", "arc_0_17_16", "arc_0_16_10"}));
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Summary));
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "T.port0"));
+  EXPECT_NEAR(selectedLength(routing), 300.0, 1.0e-9);
+  EXPECT_NEAR(routing.objective, 300.0, 1.0e-9);
+  ASSERT_EQ(recorder.results.size(), 1U);
+  EXPECT_EQ(recorder.results[0].back().text, "length 300.00");
+}
+
 TEST(GlobalRouter, GivesTheSameAnswerTwice) {
   const auto bytes = [] {
     const auto chip = bridgedChip();

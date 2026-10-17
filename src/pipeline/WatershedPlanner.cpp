@@ -826,7 +826,7 @@ public:
                 "medial axis of " + counted(axis.neighbors.size(), "cell"));
 
     // A place is a bottleneck only where the free radius around it is below
-    // the configured fraction of the chip. The threshold is a squared cell
+    // `bottleneck_clearance` wire pitches. The threshold is a squared cell
     // count because that is what the distance transform holds.
     const auto pitch = rules.min_wire_spacing + rules.min_obstacle_spacing;
     const auto clearance = clearanceLimit(config, scene, pitch);

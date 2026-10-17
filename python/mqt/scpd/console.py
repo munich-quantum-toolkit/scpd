@@ -106,6 +106,9 @@ class _PipeConsole(RichConsole):
     command alike, so this console raises it instead.
     """
 
+    #: Whether the reader of the output went away while the console wrote to it.
+    reader_gone: bool = False
+
     def on_broken_pipe(self) -> None:
         """Stop writing and hand the broken pipe on.
 
@@ -113,6 +116,7 @@ class _PipeConsole(RichConsole):
             BrokenPipeError: Always.
         """
         self.quiet = True
+        self.reader_gone = True
         raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE))
 
 
@@ -393,10 +397,23 @@ class Console:
             line.stylize("dim")
         return line
 
+    @property
+    def reader_gone(self) -> bool:
+        """Whether the reader of the output went away while the console wrote to it."""
+        return self._rich.reader_gone
+
     def write(self, text: Text) -> None:
-        """Write one lasting line, above the live line when there is one."""
-        with reader_gone_as_broken_pipe():
-            self._rich.print(text)
+        """Write one lasting line, above the live line when there is one.
+
+        Raises:
+            BrokenPipeError: If the reader of the output went away.
+        """
+        try:
+            with reader_gone_as_broken_pipe():
+                self._rich.print(text)
+        except BrokenPipeError:
+            self._rich.reader_gone = True
+            raise
 
     def success(self, text: str) -> None:
         """Write the line of a command that did what it was asked: a green tick and what it made."""

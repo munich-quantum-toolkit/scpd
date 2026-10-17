@@ -1057,3 +1057,23 @@ def test_any_error_of_a_stage_ends_the_run_in_its_block(
     lines = untimed(capsys.readouterr().out, run)
     assert lines[2:4] == ["🧩 capacity", "   ✗ a solver answered with the wrong shape"]
     assert lines[-1].startswith("✗ stopped at capacity after ")
+
+
+def test_a_broken_pipe_of_a_stage_itself_ends_the_run_in_its_block(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken pipe that does not come from the output, such as one of a solver of the user's own, fails the stage."""
+
+    def broken(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        msg = "the solver lost its license server"
+        raise BrokenPipeError(msg)
+
+    monkeypatch.setattr(RunDirectory, "run_stage", broken)
+    run = tmp_path / "run"
+
+    assert plan(run) == 1
+
+    lines = untimed(capsys.readouterr().out, run)
+    assert lines[2:4] == ["🧩 capacity", "   ✗ the solver lost its license server"]
+    assert lines[-1].startswith("✗ stopped at capacity after ")

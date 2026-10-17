@@ -514,7 +514,8 @@ struct Circuit {
   std::unordered_set<std::uint32_t> sources;
   /// The length of each connection, in the order of the connections.
   std::vector<double> lengths;
-  /// The length of the wires that the solution kept but that reach no target.
+  /// The length of the selected edges that the artifact leaves out: the wires
+  /// that reach no target and the loops that touch no port.
   double dropped = 0.0;
 };
 
@@ -1410,6 +1411,9 @@ private:
       std::vector<std::uint32_t> edges;
     };
     std::vector<Wire> wires;
+    // The length of the components without two port ends, such as a closed
+    // loop over crossings.
+    double loops = 0.0;
     for (std::size_t index = 0; index < lattices.size(); ++index) {
       std::vector<bool> seen(lattices[index].nodes.size(), false);
       for (std::size_t start = 0; start < lattices[index].nodes.size();
@@ -1444,6 +1448,7 @@ private:
           }
         }
         if (ends.size() != 2) {
+          loops += wire.length;
           continue;
         }
         // The target end is where the wire ends; the other end is its source.
@@ -1462,10 +1467,11 @@ private:
 
     // A wire may cross internal bridges on its way to its target. A solve
     // that stops early may keep wires that reach no target: a wire between
-    // the inner ends of two ring bridges, or a closed loop through internal
-    // bridges. The optimum never takes such a wire, since it only adds
-    // length. It connects nothing, and the ring end of its source would
-    // surface with nothing behind it, so the artifact leaves it out. Such a
+    // the inner ends of two ring bridges, a closed loop through internal
+    // bridges, or a closed loop over crossings that touches no port. The
+    // optimum never takes such a wire, since it only adds length. It connects
+    // nothing, and the ring end of its source would surface with nothing
+    // behind it, so the artifact leaves it out. Such a
     // wire may still have taken the room of a gate in the model, so the
     // stage can count a ring port without room that an optimal solve serves.
     std::unordered_map<std::uint32_t, std::uint32_t> group;
@@ -1500,6 +1506,7 @@ private:
     }
 
     Circuit solved;
+    solved.dropped = loops;
     for (auto& wire : wires) {
       if (!reaching.contains(find(wire.source))) {
         solved.dropped += wire.length;
