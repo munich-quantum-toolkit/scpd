@@ -12,6 +12,15 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Judge the whole chip after the coupler insertion by its crossing slots
+  (`pipeline::slotCheck`, `SCPD_SLOT_CHECK`, on). The check keeps the gates of
+  the capacity graph and replaces the stretches of every feedline edge by the
+  rectangle slots that fit across it, one wire each. A gate joins only chambers
+  on the two sides of its line. A free line between two places of one feedline
+  edge, or from a slot to the open end of a stub, limits the slots and wire ends
+  behind it. The wires are routed by negotiated congestion (PathFinder). The
+  verdict of the stretches stays in the graph as `previousVerdict`; the chain
+  search keeps its own check. Python reaches the check as `slot_check`.
 - ✨ Keep the gates of the capacity check apart (`grid::uncrossedBottlenecks`):
   of two whose lines cross in the middle of either, or where one ends on the
   middle of the other, the slot's gate stays over the mouth's, the mouth's over

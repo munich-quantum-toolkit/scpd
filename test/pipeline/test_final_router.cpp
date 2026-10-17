@@ -1279,7 +1279,11 @@ TEST(CouplerSession, CarriesTheTerminalEdgesAsWiresInTheCheckOfTheChip) {
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
 
+  // A margin of 5 past the pad's run, measured against the default of none
+  // below.
+  setenv("SCPD_TERMINAL_STUB_MARGIN", "5", 1);
   const auto check = nlohmann::json::parse(session.insertionCheck());
+  unsetenv("SCPD_TERMINAL_STUB_MARGIN");
   const auto& graph = check.at("graph");
   std::set<std::string> terminals;
   for (const auto& wire : graph.at("wires")) {
@@ -1324,13 +1328,11 @@ TEST(CouplerSession, CarriesTheTerminalEdgesAsWiresInTheCheckOfTheChip) {
     }
   }
   EXPECT_EQ(runs, 2 * terminals.size());
-  // At the coupler the run goes on by `SCPD_TERMINAL_STUB_MARGIN` steps (5)
-  // past the pad's run, the room the edge needs to turn.
-  setenv("SCPD_TERMINAL_STUB_MARGIN", "0", 1);
+  // At the coupler the run goes on by `SCPD_TERMINAL_STUB_MARGIN` steps past
+  // the pad's run; by default by none.
   CouplerSession bare(benchmark.chip, planned.global, planned.assignment,
                       planned.detail, benchmark.config);
   const auto unmargined = nlohmann::json::parse(bare.insertionCheck());
-  unsetenv("SCPD_TERMINAL_STUB_MARGIN");
   std::size_t compared = 0;
   for (const auto& stroke : unmargined.at("graph").at("strokes")) {
     const auto name = stroke.at("name").get<std::string>();
@@ -1482,6 +1484,16 @@ TEST(CouplerSession, KeepsTheCrossingPointsClearOfTheTerminalEdgesRuns) {
   EXPECT_GT(points, 0U);
 }
 
+/// The capacity check of the coupler insertion by its stretches, with the
+/// check by crossing slots off (`SCPD_SLOT_CHECK=0`): the graph of gates and
+/// stretches that the slot check starts from, for the tests of that graph.
+nlohmann::json stretchCheck(CouplerSession& session) {
+  setenv("SCPD_SLOT_CHECK", "0", 1);
+  auto check = nlohmann::json::parse(session.insertionCheck());
+  unsetenv("SCPD_SLOT_CHECK");
+  return check;
+}
+
 /// A crossing of a feedline edge takes a rectangle (user, 2026-10-14): the
 /// band's reach across the edge to either side and half a clearance along
 /// it either way, and it touches no other wall. So around every crossing
@@ -1493,7 +1505,7 @@ TEST(CouplerSession, KeepsARectangleClearAroundEveryCrossing) {
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
 
-  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto check = stretchCheck(session);
   const auto& graph = check.at("graph");
   const auto width = graph.at("width").get<std::int64_t>();
   const auto height = graph.at("height").get<std::int64_t>();
@@ -1569,7 +1581,11 @@ TEST(CouplerSession, ClosesTheSlotOfEveryTerminalEdgesRunForTheEdgeAlone) {
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
 
+  // A margin of 5 past the pad's run, measured against the default of none
+  // below.
+  setenv("SCPD_TERMINAL_STUB_MARGIN", "5", 1);
   const auto check = nlohmann::json::parse(session.insertionCheck());
+  unsetenv("SCPD_TERMINAL_STUB_MARGIN");
   const auto& graph = check.at("graph");
   std::set<std::string> terminals;
   for (const auto& wire : graph.at("wires")) {
@@ -1644,7 +1660,7 @@ TEST(CouplerSession, CutsEveryGateAtTheWallsItCrosses) {
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
 
-  const auto check = nlohmann::json::parse(session.insertionCheck());
+  const auto check = stretchCheck(session);
   const auto& graph = check.at("graph");
   const auto width = graph.at("width").get<std::int64_t>();
   const auto height = graph.at("height").get<std::int64_t>();
@@ -1757,7 +1773,7 @@ TEST(CouplerSession, LetsNoGateMeetAnotherInTheMiddle) {
     const auto planned = plan(benchmark);
     CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                            planned.detail, benchmark.config);
-    const auto check = nlohmann::json::parse(session.insertionCheck());
+    const auto check = stretchCheck(session);
     std::vector<std::pair<std::string, GateLine>> gates;
     for (const auto& edge : check.at("graph").at("edges")) {
       if (edge.at("kind") == "bottleneck") {

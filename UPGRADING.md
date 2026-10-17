@@ -37,6 +37,20 @@ routing with no bad wire, but the insertion takes longer.
 `SCPD_CAPACITY_RULE=0`, `SCPD_CAPACITY_FAST=0` and `SCPD_BOTTLENECKS=0` give the
 earlier behavior.
 
+### The crossing slots judge the chip after the coupler insertion
+
+The verdict on the whole chip after the coupler insertion now comes from the
+check by crossing slots (`SCPD_SLOT_CHECK`, on). The log line
+`CAPACITY GRAPH SAT` or `CAPACITY GRAPH UNSAT` and `final-capacity-graph.json`
+carry its verdict; the line of the check by stretches now reads
+`CAPACITY GRAPH by the stretches, before the slot check:`, and the graph keeps
+that verdict as `previousVerdict`. In the graph the slot edges (`□ …`) take the
+place of the stretches (`× …`), and the self-bottlenecks (`S …`) join the
+gates. `CouplerSession.insertion_check` returns the slot check's `verdict`,
+`lost`, `over` and `graph`, and the earlier answer as `previousVerdict` and
+`previousLost`. The chain search keeps its own check. `SCPD_SLOT_CHECK=0` gives
+the earlier behavior.
+
 ### The refinements search a narrower band
 
 Both refinements of the Final stage now redraw a wire within

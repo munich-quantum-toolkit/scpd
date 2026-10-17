@@ -19,3 +19,10 @@ add_mqt_scpd_library(
   MQT::ScpdRouting
   PRIVATE_LINK_LIBRARIES
   mqt-scpd-json)
+
+# The slot check repeats the arithmetic of its Python model operation by operation, so that both
+# break ties between ways of equal length alike. A fused multiply-add rounds once where Python
+# rounds twice, so the compiler must not contract that file's products and sums.
+if(NOT MSVC)
+  set_source_files_properties(SlotCheck.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()

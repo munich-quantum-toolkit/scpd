@@ -28,6 +28,7 @@
 #include "mqt-scpd/pipeline/CapacityFlow.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/CouplerSession.hpp"
+#include "mqt-scpd/pipeline/SlotCheck.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/routing/AnalyticDubins.hpp"
 #include "mqt-scpd/routing/ChainSearch.hpp"
@@ -516,8 +517,9 @@ meanderStartMargin(const std::uint32_t couplerLength,
       std::clamp(envWhole("SCPD_HALO_REACH", 1), 1, 12));
   return reach;
 }
-/// **Off by default.** A falling halo is a mitigation, not a cure: it is
-/// still a price per cell, and a price per cell can always be paid once and
+/// **4 by default** (user, 2026-10-16), after the review rounds of the
+/// capacity check. Below, 1 and 2: a falling halo is a mitigation, not a
+/// cure: it is still a price per cell, and a price per cell can always be paid once and
 /// recouped on the other side. What it cannot express is "do not cross",
 /// which is the thing actually wanted (user, 2026-10-01).
 ///
@@ -536,7 +538,7 @@ meanderStartMargin(const std::uint32_t couplerLength,
 /// `SCPD_RISE_PEAK` times the flat price at `SCPD_RISE_REACH` clearances
 /// (user, 2026-10-15).
 [[nodiscard]] inline int haloDecay() {
-  static const auto shape = std::clamp(envWhole("SCPD_HALO_DECAY", 0), 0, 4);
+  static const auto shape = std::clamp(envWhole("SCPD_HALO_DECAY", 4), 0, 4);
   return shape;
 }
 [[nodiscard]] inline std::uint32_t riseReach() {
@@ -587,9 +589,14 @@ constexpr std::uint32_t CEILING = 4000;
 /// released wire exactly 48 times each, and the fails did not move. The
 /// layer is sixteen bits now and the toll is given in the same units as the
 /// rest, so 150 is about one bend and 1500 about ten (user, 2026-10-01).
+///
+/// **0 by default since 2026-10-16** (user): the rising halo of
+/// `SCPD_HALO_DECAY=4` prices a way that crosses a released wire and runs on
+/// beside it, and the toll made wire 18 of 33q case 05 cross where it could
+/// only cross twice or run on the wire. `=150` puts the toll back.
 [[nodiscard]] inline std::uint32_t crossToll() {
   static const auto toll = static_cast<std::uint32_t>(std::clamp(
-      envWhole("SCPD_CROSS_TOLL", 150), 0, static_cast<int>(CEILING)));
+      envWhole("SCPD_CROSS_TOLL", 0), 0, static_cast<int>(CEILING)));
   return toll;
 }
 [[nodiscard]] inline std::uint32_t crossTollWidth() {
@@ -1179,6 +1186,26 @@ constexpr std::uint32_t CEILING = 4000;
   static const auto cells = static_cast<std::uint32_t>(
       std::clamp(envWhole("SCPD_TERMINAL_SLOT", 20), 0, 200));
   return cells;
+}
+
+/// Whether the slots of a terminal edge keep the clearance from its
+/// neighbour, the edge of its chain that meets it at its coupler:
+/// `SCPD_TERMINAL_SLOT_CLEARANCE`, **on**.
+///
+/// The slots open everything the corridor closed in the straight runs at
+/// the edge's two terminals, and with it the clearance disc around the
+/// chain's other edges; only their copper closes again. On 57q (case 06 of
+/// the capacity check experiment, 2026-10-16) that let f7 leave coupler 18
+/// 12.7 cells from f6, which bends round the coupler there, and the
+/// feedline pass then found no way for f7. A terminal edge cannot be moved
+/// later, so its slots keep the full clearance from its neighbour: an
+/// option that puts the edge's run inside it has no way at the insertion.
+/// The other edges of the chain keep the copper rule alone, as before; on
+/// 17q the launchers of a chain's two terminal edges stand closer than the
+/// clearance. `=0` closes the copper alone for the neighbour too.
+[[nodiscard]] inline bool terminalSlotClearance() {
+  static const bool on = envFlag("SCPD_TERMINAL_SLOT_CLEARANCE", true);
+  return on;
 }
 
 /// Whether the orthogonal crossing rule binds at all. `=1` puts it back,
@@ -6204,11 +6231,37 @@ public:
     // then cross it. The copper of every such way, one cell to each side so
     // that two diagonal steps cannot cross at a cell corner either, closes
     // again here. Edges of other chains may cross in the insertion.
+    //
+    // A terminal edge keeps the whole clearance from its neighbour, the edge
+    // that meets it at its coupler, in the slots too. See
+    // `terminalSlotClearance`.
+    const auto& points = chains_[edge.chain];
+    std::vector<PathPoint> meetings;
+    if (edge.terminal && terminalSlotClearance()) {
+      if (!points[edge.from].fixed) {
+        meetings.push_back(targetOf(points[edge.from]));
+      }
+      if (!points[edge.to].fixed) {
+        meetings.push_back(sourceOf(points[edge.to]));
+      }
+    }
+    const auto meetsHere = [&](const Path& way) {
+      return std::ranges::any_of(meetings, [&](const PathPoint& at) {
+        const auto near = [&](const PathPoint& end) {
+          return std::abs(static_cast<std::int64_t>(end.x) -
+                          static_cast<std::int64_t>(at.x)) <= 2 &&
+                 std::abs(static_cast<std::int64_t>(end.y) -
+                          static_cast<std::int64_t>(at.y)) <= 2;
+        };
+        return near(way.front()) || near(way.back());
+      });
+    };
     const auto closeCopper = [&](const Path& way) {
-      alongDisc(
-          way, stencilFor(1), [&](const std::int64_t x, const std::int64_t y) {
-            corridor_.set(static_cast<std::size_t>((y * width) + x), true);
-          });
+      const auto& stencil =
+          meetsHere(way) ? stencilFor(tuning_.clearance) : stencilFor(1);
+      alongDisc(way, stencil, [&](const std::int64_t x, const std::int64_t y) {
+        corridor_.set(static_cast<std::size_t>((y * width) + x), true);
+      });
     };
     for (const Path* way : sameChainWays_) {
       closeCopper(*way);
@@ -6426,6 +6479,11 @@ public:
   /// The wires of the feedline pass, for the checks `search` makes on a way
   /// it found (`breaksAFeedlineRule`); null outside the feedline pass.
   const std::vector<Wire>* feedlineWires_ = nullptr;
+  /// The wires a relaxation level has let go of, while
+  /// `constrainByFeedlines` builds the search of that level: a feedline
+  /// edge among them is no fence; its room is still priced. See
+  /// `releasedEdgesGone`.
+  std::vector<std::uint32_t> letGo_;
 
   /// How much of the chain a node of the layered search carries: 1 is the
   /// option at its own waypoint, 2 that option **and** the one before it.
@@ -7742,6 +7800,8 @@ public:
     /// graph (`terminalDemands`): the insertion has a hand in it, as in a
     /// pad or a lead.
     bool terminalRun = false;
+    /// A flank of a crossing slot of a feedline edge (`slotWalls`).
+    bool crossingSlot = false;
   };
 
   /// A port run of the bottleneck analysis: the middle line of the copper
@@ -7840,12 +7900,13 @@ public:
   }
 
   /// How many cells the run of a terminal edge at its coupler goes on past
-  /// the pad's run in the capacity graph: `SCPD_TERMINAL_STUB_MARGIN`, 5
-  /// (user, 2026-10-14), the bend radius the edge search needs beyond the
-  /// run to turn.
+  /// the pad's run in the capacity graph: `SCPD_TERMINAL_STUB_MARGIN`, 0
+  /// since 2026-10-16 (user). The 5 cells of the bend radius beyond the run
+  /// closed gates that the feedline routing used (17q, the cases of wire 9
+  /// and f0), so the run ends where the pad's run ends.
   [[nodiscard]] static std::uint32_t terminalStubMargin() {
     return static_cast<std::uint32_t>(
-        std::clamp(envWhole("SCPD_TERMINAL_STUB_MARGIN", 5), 0, 100));
+        std::clamp(envWhole("SCPD_TERMINAL_STUB_MARGIN", 0), 0, 100));
   }
 
   /// The obstacles `reportBottlenecks` builds the medial axis over: the
@@ -7865,6 +7926,20 @@ public:
     /// where a wire runs on its port run.
     std::vector<std::size_t> runSlots;
     std::unordered_map<std::uint32_t, std::array<std::size_t, 2>> terminals;
+    /// A crossing slot of a feedline edge between couplers (`slotWalls`):
+    /// the edge's wire, the slot's middle on the edge's way, the unit
+    /// direction along the edge, and its two flank walls.
+    struct CrossingSlot {
+      std::uint32_t edge = NO_OWNER;
+      std::size_t at = 0;
+      double cx = 0.0;
+      double cy = 0.0;
+      double ux = 0.0;
+      double uy = 0.0;
+      std::uint32_t left = NO_OWNER;
+      std::uint32_t right = NO_OWNER;
+    };
+    std::vector<CrossingSlot> crossingSlots;
   };
 
   /// One bottleneck as `reportBottlenecks` measured it: its length in
@@ -8316,6 +8391,9 @@ public:
       markThick(cellsOf(wire.way),
                 add(WallKind::Feedline, wireId(wire), edge.wire));
     }
+    if (!staticOnly && slotWalls()) {
+      markCrossingSlots(wires, edges, without, terminalsOpen, walls);
+    }
     // A feedline's own line takes any cell, so a slot keeps only the cells
     // still free.
     walls.runSlots = walls.slots;
@@ -8323,6 +8401,215 @@ public:
       return walls.mask.test(cell);
     });
     return walls;
+  }
+
+  /// Whether every feedline edge between couplers is crossed at slots with
+  /// walls of their own: `SCPD_SLOT_WALLS`, off (user, 2026-10-15). A slot
+  /// is a rectangle across a straight piece of the edge, the crossing
+  /// reach to either side of its middle line and a clearance along it,
+  /// clear of every other wall, port run and slot; the slots of an edge are
+  /// laid from either end, each at the first place past the one before it
+  /// fits, and the end that gives more counts. Each slot keeps its two long
+  /// sides as walls, the flanks of a run across the edge, so that the
+  /// bottlenecks are found at its two ends as at a port run's: the room a
+  /// wire has once it is across. Its crossing is a stretch of one wire
+  /// between the chambers at its two ends (`crossingStretches`).
+  [[nodiscard]] static bool slotWalls() {
+    return envFlag("SCPD_SLOT_WALLS", false);
+  }
+
+  /// How far a crossing slot and its flanks reach to either side of the
+  /// edge's middle line, in cells: `SCPD_SLOT_WALL_REACH`, the crossing
+  /// reach plus one (11) by default.
+  [[nodiscard]] double slotReach() const {
+    return std::clamp(envReal("SCPD_SLOT_WALL_REACH",
+                              static_cast<double>(crossingReach() + 1)),
+                      1.0, 200.0);
+  }
+
+  /// Lays the crossing slots of every drawn feedline edge between couplers
+  /// and their flank walls into `walls`: see `slotWalls`.
+  void markCrossingSlots(const std::vector<Wire>& wires,
+                         const std::vector<Edge>& edges,
+                         const std::uint32_t without, const bool terminalsOpen,
+                         Walls& walls) const {
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    const auto reach = slotReach();
+    const auto along = static_cast<double>(tuning_.clearance);
+    std::unordered_set<std::size_t> portSlots(walls.slots.begin(),
+                                              walls.slots.end());
+    std::unordered_map<std::uint32_t, std::uint32_t> feedWall;
+    for (std::uint32_t wall = 0; wall < walls.list.size(); ++wall) {
+      if (walls.list[wall].kind == WallKind::Feedline) {
+        feedWall.emplace(walls.list[wall].wire, wall);
+      }
+    }
+    const auto cellAt = [&](const double x, const double y)
+        -> std::optional<std::size_t> {
+      const auto ix = std::llround(x);
+      const auto iy = std::llround(y);
+      if (ix < 0 || iy < 0 || ix >= width || iy >= height) {
+        return std::nullopt;
+      }
+      return static_cast<std::size_t>((iy * width) + ix);
+    };
+    // The cells a rectangle covers, its middle at (cx, cy), along (ux, uy).
+    const auto covered = [&](const double cx, const double cy, const double ux,
+                             const double uy) {
+      std::vector<std::optional<std::size_t>> cells;
+      for (double t = -along / 2.0; t <= (along / 2.0) + 1e-9; t += 0.5) {
+        for (double sv = -reach; sv <= reach + 1e-9; sv += 0.5) {
+          cells.push_back(cellAt(cx + (t * ux) - (sv * uy),
+                                 cy + (t * uy) + (sv * ux)));
+        }
+      }
+      return cells;
+    };
+    for (const auto& edge : edges) {
+      if (edge.terminal || edge.wire >= wires.size() || edge.wire == without ||
+          (terminalsOpen && edge.terminal)) {
+        continue;
+      }
+      const auto& wire = wires[edge.wire];
+      const auto own = feedWall.find(edge.wire);
+      if (!wire.drawn || wire.way.size() < 3 || own == feedWall.end()) {
+        continue;
+      }
+      const auto place = [&](const bool backward) {
+        std::vector<Walls::CrossingSlot> placed;
+        std::unordered_set<std::size_t> taken;
+        const auto n = wire.way.size();
+        const auto point = [&](const std::size_t k) -> const PathPoint& {
+          return wire.way[backward ? n - 1 - k : k];
+        };
+        double run = 0.0;
+        double last = -1e18;
+        for (std::size_t k = 0; k + 1 < n; ++k) {
+          if (k > 0) {
+            run += std::hypot(static_cast<double>(point(k).x) - point(k - 1).x,
+                              static_cast<double>(point(k).y) -
+                                  point(k - 1).y);
+          }
+          if (run - last < along - 1e-9) {
+            continue;
+          }
+          const auto sx = static_cast<std::int64_t>(point(k + 1).x) -
+                          static_cast<std::int64_t>(point(k).x);
+          const auto sy = static_cast<std::int64_t>(point(k + 1).y) -
+                          static_cast<std::int64_t>(point(k).y);
+          if ((sx == 0 && sy == 0) || std::abs(sx) > 1 || std::abs(sy) > 1) {
+            continue;
+          }
+          const auto norm = std::hypot(static_cast<double>(sx),
+                                       static_cast<double>(sy));
+          const auto halfSteps =
+              static_cast<std::size_t>(std::ceil((along / 2.0 / norm) - 1e-9));
+          if (k < halfSteps || k + halfSteps >= n) {
+            continue;
+          }
+          bool straight = true;
+          for (auto q = k - halfSteps; q < k + halfSteps && straight; ++q) {
+            straight = static_cast<std::int64_t>(point(q + 1).x) -
+                               static_cast<std::int64_t>(point(q).x) ==
+                           sx &&
+                       static_cast<std::int64_t>(point(q + 1).y) -
+                               static_cast<std::int64_t>(point(q).y) ==
+                           sy;
+          }
+          if (!straight) {
+            continue;
+          }
+          const auto ux = static_cast<double>(sx) / norm;
+          const auto uy = static_cast<double>(sy) / norm;
+          const auto cx = static_cast<double>(point(k).x);
+          const auto cy = static_cast<double>(point(k).y);
+          const auto cells = covered(cx, cy, ux, uy);
+          bool fits = true;
+          std::vector<std::size_t> mine;
+          for (const auto& cell : cells) {
+            if (!cell) {
+              fits = false;
+              break;
+            }
+            const auto wall = walls.of[*cell];
+            if (portSlots.contains(*cell) || taken.contains(*cell) ||
+                (wall != NO_OWNER && wall != own->second)) {
+              fits = false;
+              break;
+            }
+            mine.push_back(*cell);
+          }
+          if (!fits) {
+            continue;
+          }
+          taken.insert(mine.begin(), mine.end());
+          placed.push_back({.edge = edge.wire,
+                            .at = backward ? n - 1 - k : k,
+                            .cx = cx,
+                            .cy = cy,
+                            .ux = ux,
+                            .uy = uy});
+          last = run;
+        }
+        return placed;
+      };
+      auto slots = place(false);
+      if (auto other = place(true); other.size() > slots.size()) {
+        slots = std::move(other);
+      }
+      for (std::size_t index = 0; index < slots.size(); ++index) {
+        auto slot = slots[index];
+        const auto name = std::format("slot {} of {}", index + 1, wireId(wire));
+        slot.left = static_cast<std::uint32_t>(walls.list.size());
+        walls.list.push_back({.kind = WallKind::Stub,
+                              .name = name + ", left",
+                              .wire = edge.wire,
+                              .run = slot.left,
+                              .crossingSlot = true});
+        slot.right = static_cast<std::uint32_t>(walls.list.size());
+        walls.list.push_back({.kind = WallKind::Stub,
+                              .name = name + ", right",
+                              .wire = edge.wire,
+                              .run = slot.left,
+                              .crossingSlot = true});
+        // The two flanks across the edge, and the cells between them: the
+        // slot, which no cut crosses.
+        for (const auto& [flank, t] :
+             {std::pair{slot.left, -along / 2.0},
+              std::pair{slot.right, along / 2.0}}) {
+          std::vector<debug::Cell> line;
+          for (double sv = -reach; sv <= reach + 1e-9; sv += 0.5) {
+            const auto cell = cellAt(slot.cx + (t * slot.ux) - (sv * slot.uy),
+                                     slot.cy + (t * slot.uy) + (sv * slot.ux));
+            if (!cell) {
+              continue;
+            }
+            const auto cx = static_cast<std::int64_t>(*cell) % width;
+            const auto cy = static_cast<std::int64_t>(*cell) / width;
+            if (line.empty() || line.back() != debug::Cell{cx, cy}) {
+              line.emplace_back(cx, cy);
+            }
+            if (walls.of[*cell] == NO_OWNER) {
+              walls.mask.set(*cell);
+              walls.of[*cell] = flank;
+            }
+          }
+          walls.strokes.emplace_back(flank, line);
+        }
+        for (double t = (-along / 2.0) + 1.0; t <= (along / 2.0) - 1.0;
+             t += 0.5) {
+          for (double sv = -reach; sv <= reach + 1e-9; sv += 0.5) {
+            const auto cell = cellAt(slot.cx + (t * slot.ux) - (sv * slot.uy),
+                                     slot.cy + (t * slot.uy) + (sv * slot.ux));
+            if (cell && walls.of[*cell] == NO_OWNER) {
+              walls.slots.push_back(*cell);
+            }
+          }
+        }
+        walls.crossingSlots.push_back(slot);
+      }
+    }
   }
 
   /// How the log names the obstacle at one end of a bottleneck: by its
@@ -8473,6 +8760,17 @@ public:
   /// after another with `checkInTurn` (user, 2026-10-08).
   [[nodiscard]] static bool capacityFlow() {
     return envFlag("SCPD_CAPACITY_FLOW", false);
+  }
+  /// Whether the verdict on the whole chip after the insertion comes from
+  /// the check by crossing slots, `slotCheck`: `SCPD_SLOT_CHECK`, on (user,
+  /// 2026-10-16). It judges the capacity graph of the check before, with
+  /// the rectangle slots of every feedline edge in place of its stretches.
+  /// The verdict of the check before stays in the graph as
+  /// `previousVerdict`. Only the verdict of the whole chip, in
+  /// `reportCapacityGraph` and `insertionCheckJson`, changes; the chain
+  /// search keeps its own check.
+  [[nodiscard]] static bool slotCheckVerdict() {
+    return envFlag("SCPD_SLOT_CHECK", true);
   }
 
   /// The bottlenecks the coupler insertion has a hand in (user,
@@ -9341,6 +9639,9 @@ public:
   crossingStretches(const std::vector<Wire>& wires,
                     const std::vector<Edge>& edges, const Walls& walls,
                     const grid::Chambers& chambers) const {
+    if (slotWalls()) {
+      return slotCrossings(edges, walls, chambers);
+    }
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     const auto height = static_cast<std::int64_t>(scene_.router.height);
     const auto pitch = static_cast<double>(roomPitch());
@@ -9744,6 +10045,64 @@ public:
       }
     }
     return stretches;
+  }
+
+  /// The crossings of the feedline edges under `slotWalls`: one per crossing
+  /// slot, for one wire, between the chambers at the slot's two ends, open
+  /// to the wires that bridge its edge. A slot with one chamber at both ends
+  /// is none, unless its chain has a reflector end.
+  [[nodiscard]] std::vector<GraphEdge>
+  slotCrossings(const std::vector<Edge>& edges, const Walls& walls,
+                const grid::Chambers& chambers) const {
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
+    const auto reach = slotReach();
+    std::vector<GraphEdge> out;
+    for (const auto& slot : walls.crossingSlots) {
+      const auto edge = std::ranges::find_if(
+          edges, [&](const Edge& one) { return one.wire == slot.edge; });
+      if (edge == edges.end()) {
+        continue;
+      }
+      const auto chamberAt = [&](const double side) {
+        for (double d = reach; d >= wallInflation(); d -= 0.5) {
+          const auto x = std::llround(slot.cx - (side * d * slot.uy));
+          const auto y = std::llround(slot.cy + (side * d * slot.ux));
+          if (x < 0 || y < 0 || x >= width || y >= height) {
+            continue;
+          }
+          const auto chamber =
+              chambers.of[static_cast<std::size_t>((y * width) + x)];
+          if (chamber != grid::NO_CHAMBER) {
+            return chamber;
+          }
+        }
+        return grid::NO_CHAMBER;
+      };
+      const auto a = chamberAt(1.0);
+      const auto b = chamberAt(-1.0);
+      const auto& ends = chains_[edge->chain];
+      const bool reflected =
+          !edge->open && (!ends.front().fixed || !ends.back().fixed);
+      if (a == grid::NO_CHAMBER || b == grid::NO_CHAMBER ||
+          (a == b && !reflected)) {
+        continue;
+      }
+      GraphEdge one;
+      one.crossing = true;
+      one.id = slot.edge;
+      one.chambers = {std::min(a, b), std::max(a, b)};
+      one.capacity = 1;
+      one.users = std::optional<std::vector<std::uint32_t>>(
+          bridgers_[edge->chain][edge->from]);
+      one.first = slot.at;
+      one.last = slot.at;
+      one.length = static_cast<double>(tuning_.clearance);
+      one.points = {static_cast<std::size_t>(
+          (std::llround(slot.cy) * width) + std::llround(slot.cx))};
+      out.push_back(std::move(one));
+    }
+    return out;
   }
 
   /// Whether the crossings of a feedline edge are counted by placing points
@@ -10587,11 +10946,14 @@ public:
                           : ", not proven least before the time limit",
           overList);
     }
+    // Under `slotCheckVerdict` the check by crossing slots gives the
+    // verdict, and this line names the verdict of the stretches apart.
     const auto judged = std::format(
-        "coupler insertion: CAPACITY GRAPH {} — {} outer wires, {} plain and "
-        "{} "
+        "coupler insertion: CAPACITY GRAPH {}{} — {} outer wires, {} plain "
+        "and {} "
         "resonators from their coupler port, each plain wire crossing "
         "exactly the feedline edges it is prescribed{}{}; {:.2f}s ({})",
+        slotCheckVerdict() ? "by the stretches, before the slot check: " : "",
         verdict, outer, outer - resonators, resonators,
         problem.terminals > 0
             ? std::format(", and {} terminal edges as wires from their "
@@ -10616,7 +10978,57 @@ public:
                         problem.portMarks);
     }
     writeCapacityGraph(wires, walls, gates, measured, chambers, graph,
-                       problem.outerWires, check, verdict, {counted, judged});
+                       problem.outerWires, check, verdict, {counted, judged},
+                       slotCheckVerdict());
+  }
+
+  /// The capacity graph `data`, as `writeCapacityGraph` writes it, judged
+  /// by the check by crossing slots (`slotCheckVerdict`): the graph that
+  /// check saw, with its verdict, and the verdict of the check before as
+  /// `previousVerdict`. Says the verdict as the verdict of the chip. When
+  /// the check cannot read the graph, says why and returns `data` as it
+  /// is, so the verdict of the check before stands.
+  [[nodiscard]] nlohmann::json judgedBySlots(nlohmann::json data) {
+    const auto began = std::chrono::steady_clock::now();
+    const auto previous = data.value("verdict", std::string("UNKNOWN"));
+    SlotCheckResult result;
+    try {
+      result = slotCheck(data.dump());
+    } catch (const std::invalid_argument& error) {
+      say(std::format("coupler insertion: the slot check failed ({}); the "
+                      "verdict of the stretches stands: CAPACITY GRAPH {}",
+                      error.what(), previous));
+      return data;
+    }
+    const auto listed = [](const std::vector<std::string>& names) {
+      std::string list;
+      for (const auto& name : names) {
+        list += (list.empty() ? "" : ", ") + name;
+      }
+      return list;
+    };
+    std::string why;
+    if (!result.lost.empty()) {
+      why += std::format("; no way for {}", listed(result.lost));
+    }
+    if (!result.over.empty()) {
+      why +=
+          std::format("; {} edge{} over: {}", result.over.size(),
+                      result.over.size() == 1 ? "" : "s", listed(result.over));
+    }
+    say(std::format(
+        "coupler insertion: CAPACITY GRAPH {} — by the crossing slots of the "
+        "feedline edges{}; the stretches said {}; {:.2f}s",
+        result.verdict,
+        why.empty() ? std::string("; every one has a way within the "
+                                  "capacities")
+                    : why,
+        previous,
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
+            .count()));
+    auto graph = nlohmann::json::parse(result.graph);
+    graph["previousVerdict"] = previous;
+    return graph;
   }
 
   /// How many times `benchCapacityCheck` runs the whole capacity analysis
@@ -10954,6 +11366,49 @@ public:
                           .towardX = mouth->towardX,
                           .towardY = mouth->towardY,
                           .staticClearance = mouth->staticClearance});
+      }
+    }
+    // The open ends of the flanks of every crossing slot (`slotWalls`): the
+    // cut from each tip to the nearest wall ahead closes the room a wire has
+    // once across the edge, as at a port run.
+    {
+      const auto width = static_cast<std::int64_t>(scene_.router.width);
+      const auto height = static_cast<std::int64_t>(scene_.router.height);
+      const auto reach = slotReach();
+      const auto half = static_cast<double>(tuning_.clearance) / 2.0;
+      for (const auto& slot : walls.crossingSlots) {
+        for (const auto& [flank, t] : {std::pair{slot.left, -half},
+                                       std::pair{slot.right, half}}) {
+          for (const double side : {1.0, -1.0}) {
+            const auto ex = slot.cx + (t * slot.ux) - (side * reach * slot.uy);
+            const auto ey = slot.cy + (t * slot.uy) + (side * reach * slot.ux);
+            std::optional<std::size_t> tip;
+            double nearest = std::numeric_limits<double>::max();
+            for (std::int64_t dy = -3; dy <= 3; ++dy) {
+              for (std::int64_t dx = -3; dx <= 3; ++dx) {
+                const auto x = std::llround(ex) + dx;
+                const auto y = std::llround(ey) + dy;
+                if (x < 0 || y < 0 || x >= width || y >= height) {
+                  continue;
+                }
+                const auto cell = static_cast<std::size_t>((y * width) + x);
+                const auto d = std::hypot(static_cast<double>(x) - ex,
+                                          static_cast<double>(y) - ey);
+                if (walls.of[cell] == flank && d < nearest) {
+                  nearest = d;
+                  tip = cell;
+                }
+              }
+            }
+            if (tip) {
+              mouths.push_back({.flank = flank,
+                                .tip = *tip,
+                                .towardX = -side * slot.uy,
+                                .towardY = side * slot.ux,
+                                .staticClearance = widestGap()});
+            }
+          }
+        }
       }
     }
     const std::array<const grid::NearestBlocked*, 2> fields{&fast.inside,
@@ -14523,7 +14978,10 @@ public:
   /// commit appended the feedline edges, and an edge per way of
   /// `chainEdgePaths_`. Returns JSON: `verdict`, `lost` (the outer wires
   /// with no way) and `graph`, the capacity graph the check saw, as
-  /// `writeCapacityGraph` writes it.
+  /// `writeCapacityGraph` writes it. Under `slotCheckVerdict` the check by
+  /// crossing slots judges that graph: `verdict`, `lost`, `over` (the edges
+  /// over) and `graph` are its own, and `previousVerdict` and
+  /// `previousLost` keep those of the check before.
   [[nodiscard]] std::string insertionCheckJson(const std::vector<Wire>& wires) {
     auto first = static_cast<std::uint32_t>(wires.size());
     for (const auto& edge : edges_) {
@@ -14574,7 +15032,27 @@ public:
             : "the capacity check of the coupler insertion, every chain "
               "standing",
         &lost);
-    return json{{"verdict", lost.empty() ? "SAT" : "UNSAT"},
+    const auto verdict = lost.empty() ? "SAT" : "UNSAT";
+    if (slotCheckVerdict()) {
+      try {
+        auto result = slotCheck(graph);
+        auto judged = json::parse(result.graph);
+        judged["previousVerdict"] = verdict;
+        return json{{"verdict", result.verdict},
+                    {"lost", result.lost},
+                    {"over", result.over},
+                    {"previousVerdict", verdict},
+                    {"previousLost", namesOfLost(state.wires, lost)},
+                    {"local", std::move(local)},
+                    {"graph", std::move(judged)}}
+            .dump();
+      } catch (const std::invalid_argument& error) {
+        say(std::format("[Coupler Session] the slot check failed ({}); the "
+                        "verdict of the stretches stands",
+                        error.what()));
+      }
+    }
+    return json{{"verdict", verdict},
                 {"lost", namesOfLost(state.wires, lost)},
                 {"local", std::move(local)},
                 {"graph", json::parse(graph)}}
@@ -14903,6 +15381,27 @@ public:
   /// bridges, which it may cross once at a right angle, and the edges of a
   /// resonator's own coupler, which the meeting leaves open. The room
   /// around every edge costs five times the wire price.
+  /// Whether the relaxation level being built has let go of this wire.
+  [[nodiscard]] bool isLetGo(const std::uint32_t key) const {
+    return std::ranges::find(letGo_, key) != letGo_.end();
+  }
+
+  /// Whether a feedline edge a relaxation level lets go of is let go of as
+  /// every other wire is: `SCPD_RELEASED_EDGES_GONE`, **on** (user,
+  /// 2026-10-17). The sweep puts the terminal edges into the ring beside
+  /// their coupler's resonator, so a relaxation lets go of one as of any
+  /// wire. It used to set the edge's `routed` flag and nothing else, and
+  /// `constrainByFeedlines` asks whether an edge is drawn: the edge let go
+  /// of still fenced its way and its clearance for a plain wire, which then
+  /// gained nothing by letting it go, while the dashboard showed it let go
+  /// of. Now its fence goes, and what stays is what stays of any wire let
+  /// go of: the price of its room (`priceTheEdges`). The run at its coupler
+  /// (`guardTerminalStub`) and the coupler bodies stay closed as before.
+  /// `=0` fences the edge, as before.
+  [[nodiscard]] static bool releasedEdgesGone() {
+    return envFlag("SCPD_RELEASED_EDGES_GONE", true);
+  }
+
   void constrainByFeedlines(const Wire& wire, const std::vector<Wire>& wires,
                             const Pass& pass) {
     feedlineWires_ = pass.feedlines ? &wires : nullptr;
@@ -14934,6 +15433,12 @@ public:
       // or not the edge is drawn: see `terminalStubGuard`.
       if (edge.terminal && other.key != wire.key && terminalStubGuard()) {
         guardTerminalStub(wire, other);
+      }
+      // An edge the relaxation has let go of closes nothing more, like every
+      // wire let go of: its room is priced (`priceTheEdges`), and it is
+      // drawn again afterwards. See `releasedEdgesGone`.
+      if (isLetGo(other.key)) {
+        continue;
       }
       if (!other.drawn || other.key == wire.key || other.key == wire.bridged) {
         continue;
@@ -16967,7 +17472,14 @@ private:
       }
       fenceFixedPlaces(wire, wires, released);
       priceLane(wires, members, slot, forward, level);
+      letGo_.clear();
+      if (releasedEdgesGone()) {
+        for (const auto& [key, routed] : released) {
+          letGo_.push_back(key);
+        }
+      }
       constrainByFeedlines(wire, wires, pass);
+      letGo_.clear();
       frame_.kind = std::format("relax {}", level);
       frame_.fence = closed;
       frame_.ripped.push_back(ripped.key);
@@ -20180,6 +20692,10 @@ public:
   /// - every outer wire with its source and its target port, the cells its
   ///   ends leave from, the chambers they lie in, its way through the graph
   ///   as edge indices and the way it has now.
+  ///
+  /// With `bySlots` the check by crossing slots judges the data, with or
+  /// without a debug sink, and the graph it saw is written instead
+  /// (`judgedBySlots`).
   void writeCapacityGraph(const std::vector<Wire>& wires, const Walls& walls,
                           const std::vector<grid::Bottleneck>& gates,
                           const std::vector<MeasuredBottleneck>& measured,
@@ -20188,8 +20704,9 @@ public:
                           const std::vector<GraphWire>& outer,
                           const FlowCheck& check,
                           const std::string_view verdict,
-                          const std::vector<std::string>& summary) {
-    if (!debug_) {
+                          const std::vector<std::string>& summary,
+                          const bool bySlots = false) {
+    if (!debug_ && !bySlots) {
       return;
     }
     using nlohmann::json;
@@ -20430,24 +20947,30 @@ public:
       outerWires.push_back(std::move(entry));
     }
 
-    const json data{{"width", scene_.router.width},
-                    {"height", scene_.router.height},
-                    {"cellSize", scene_.router.cellWidth},
-                    {"clearance", tuning_.clearance},
-                    {"straightLength", tuning_.straightLength},
-                    {"pitch", roomPitch()},
-                    {"crossingReach", crossingReach() + 1},
-                    {"inflation", wallInflation()},
-                    {"verdict", verdict},
-                    {"summary", summary},
-                    {"wallKinds", std::move(wallKinds)},
-                    {"raster", std::move(raster)},
-                    {"strokes", std::move(strokes)},
-                    {"slots", std::move(slotCells)},
-                    {"nodes", std::move(nodes)},
-                    {"edges", std::move(edges)},
-                    {"aside", std::move(aside)},
-                    {"wires", std::move(outerWires)}};
+    json data{{"width", scene_.router.width},
+              {"height", scene_.router.height},
+              {"cellSize", scene_.router.cellWidth},
+              {"clearance", tuning_.clearance},
+              {"straightLength", tuning_.straightLength},
+              {"pitch", roomPitch()},
+              {"crossingReach", crossingReach() + 1},
+              {"inflation", wallInflation()},
+              {"verdict", verdict},
+              {"summary", summary},
+              {"wallKinds", std::move(wallKinds)},
+              {"raster", std::move(raster)},
+              {"strokes", std::move(strokes)},
+              {"slots", std::move(slotCells)},
+              {"nodes", std::move(nodes)},
+              {"edges", std::move(edges)},
+              {"aside", std::move(aside)},
+              {"wires", std::move(outerWires)}};
+    if (bySlots) {
+      data = judgedBySlots(std::move(data));
+    }
+    if (!debug_) {
+      return;
+    }
     const auto where = debug_("final-capacity-graph.json", data.dump());
     if (!where.empty()) {
       say(std::format("the capacity graph as data: {}", where));

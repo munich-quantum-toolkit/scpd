@@ -19,6 +19,7 @@
 #include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/pipeline/CouplerSession.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
+#include "mqt-scpd/pipeline/SlotCheck.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 
 #include <nanobind/nanobind.h>
@@ -348,7 +349,9 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
            &mqt::scpd::pipeline::CouplerSession::insertionCheck,
            "The capacity check of the coupler insertion on the chip as it "
            "stands, every chain standing. Returns JSON with verdict, lost and "
-           "graph.")
+           "graph; under SCPD_SLOT_CHECK (on) the check by crossing slots "
+           "gives them, adds over, and keeps the check before as "
+           "previousVerdict and previousLost.")
       .def("route_feedlines",
            &mqt::scpd::pipeline::CouplerSession::routeFeedlines,
            "Run the feedline routing on the chip as it stands. Returns JSON "
@@ -471,6 +474,17 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "receives the MPS text, the variable names in model order, a time limit "
       "and a relative "
       "gap, and returns (status, objective, values).");
+
+  m.def(
+      "slot_check",
+      [](const std::string_view graph) {
+        return mqt::scpd::pipeline::slotCheckJson(graph);
+      },
+      "graph"_a,
+      "Check a capacity graph, the JSON of final-capacity-graph.json, by the "
+      "crossing slots of its feedline edges. Returns JSON with verdict, "
+      "lost, over and graph. Raises ValueError when the graph cannot be "
+      "read.");
 
   m.def(
       "validate_config",

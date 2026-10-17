@@ -65,7 +65,11 @@ public:
   /// `SCPD_CAPACITY_RULE` says once the last step of every chain stands.
   /// Returns JSON with `verdict` (`SAT` or `UNSAT`), `lost` (the outer wires
   /// the graph has no way for) and `graph`, the capacity graph the check
-  /// saw, in the form of `final-capacity-graph.json`.
+  /// saw, in the form of `final-capacity-graph.json`. Under
+  /// `SCPD_SLOT_CHECK` (on) the check by crossing slots, `slotCheck`,
+  /// judges that graph: `verdict`, `lost`, `over` and `graph` are then its
+  /// own, and `previousVerdict` and `previousLost` keep the answer of the
+  /// check before.
   [[nodiscard]] std::string insertionCheck();
 
   /// Runs the feedline routing of the Final stage on the chip as it stands:

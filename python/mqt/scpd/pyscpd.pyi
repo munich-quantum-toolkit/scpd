@@ -76,10 +76,13 @@ class CouplerSession:
         """The capacity graph of the chip as it stands, as the JSON of final-capacity-graph.json."""
 
     def insertion_check(self) -> str:
-        """The capacity check of the coupler insertion on the chip as it stands, every chain standing. Returns JSON with verdict, lost and graph."""
+        """The capacity check of the coupler insertion on the chip as it stands, every chain standing. Returns JSON with verdict, lost and graph; under SCPD_SLOT_CHECK (on) the check by crossing slots gives them, adds over, and keeps the check before as previousVerdict and previousLost."""
 
     def route_feedlines(self) -> str:
         """Run the feedline routing on the chip as it stands. Returns JSON with the fails of every wire and every wire's way. The routing changes the state for good."""
+
+    def set_debug(self, debug: object) -> None:
+        """Draw the stage's pictures from now on: debug is called with the name and the text of every picture and returns where it put it, as in a run with -d."""
 
 def check_final(chip: bytes, global_: bytes, assignment: bytes, final: bytes, config: bytes) -> str:
     """Check a final routing against the design rules. Returns the text of drc.json."""
@@ -89,6 +92,9 @@ def algorithms() -> list[tuple[str, list[str]]]:
 
 def set_solver(solve: object | None) -> None:
     """Register the external solver of this process, or clear it with None. The callable receives the MPS text, the variable names in model order, a time limit and a relative gap, and returns (status, objective, values)."""
+
+def slot_check(graph: str) -> str:
+    """Check a capacity graph, the JSON of final-capacity-graph.json, by the crossing slots of its feedline edges. Returns JSON with verdict, lost, over and graph. Raises ValueError when the graph cannot be read."""
 
 def validate_config(config: bytes) -> list[str]:
     """The problems of a configuration that can be seen without the chip, empty when there are none."""
