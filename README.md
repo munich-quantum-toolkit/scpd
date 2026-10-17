@@ -111,6 +111,12 @@ mqt-scpd plot -c planar-superconducting-pd/inputs/9q/config.toml -o 9q.svg
 mqt-scpd render -c planar-superconducting-pd/inputs/9q/config.toml -o 9q.gds
 ```
 
+`plan` runs the planning steps of a chip into a run directory:
+
+```bash
+mqt-scpd plan -c planar-superconducting-pd/inputs/9q/config.toml -o runs/9q
+```
+
 The
 [benchmark guide](https://mqt.readthedocs.io/projects/scpd/en/latest/benchmarks.html)
 describes the chips and what the current release does with them.

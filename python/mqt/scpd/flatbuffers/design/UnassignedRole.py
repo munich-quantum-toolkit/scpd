@@ -11,3 +11,7 @@ class UnassignedRole(object):
     Conventional = 3
     # Created by the Final stage's coupler insertion. No pattern produces it.
     Coupler = 4
+    # One end of a bridge: a port where a wire crosses the component, rather
+    # than one where a wire ends. The bridge rules of the configuration say
+    # which two of them pair.
+    BridgePair = 5

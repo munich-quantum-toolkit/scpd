@@ -99,6 +99,14 @@ testing::AssertionResult isValidSmoothing(
   return testing::AssertionSuccess();
 }
 
+TEST(Watershed, TheNextLabelNeverWrapsAround) {
+  EXPECT_EQ(nextPartitionLabel(FIRST_PARTITION_LABEL),
+            FIRST_PARTITION_LABEL + 1);
+  constexpr auto last = std::numeric_limits<PartitionLabel>::max();
+  EXPECT_EQ(nextPartitionLabel(last - 1), last);
+  EXPECT_THROW(static_cast<void>(nextPartitionLabel(last)), std::length_error);
+}
+
 TEST(Watershed, TwoSeedsSplitAFreeGridAtTheMidline) {
   const BitGrid blocked(20, 10);
   std::vector<PartitionLabel> labels(blocked.size(), LABEL_NONE);

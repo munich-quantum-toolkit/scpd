@@ -1,0 +1,148 @@
+/*
+ * Copyright (c) 2026 Chair for Design Automation, TUM
+ * Copyright (c) 2026 Munich Quantum Software Company GmbH
+ * All rights reserved.
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License
+ */
+
+#include "mqt-scpd/milp/Backend.hpp"
+
+#include "mqt-scpd/milp/Model.hpp"
+#include "mqt-scpd/milp/Mps.hpp"
+
+#include <cmath>
+#include <format>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace mqt::scpd::milp {
+namespace {
+
+/// The external backend of the process, and the lock that guards it. It is
+/// process state because the Python layer installs it once, before a run, and
+/// every stage of the run reads it.
+std::mutex& externalMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+std::shared_ptr<ISolverBackend>& externalSlot() {
+  static std::shared_ptr<ISolverBackend> backend;
+  return backend;
+}
+
+/// A backend that hands the model out as MPS text and reads the answer back.
+class MpsBackend final : public ISolverBackend {
+public:
+  MpsBackend(std::string name, MpsSolveFunction solve)
+      : backendName(std::move(name)), solveFunction(std::move(solve)) {}
+
+  [[nodiscard]] std::string_view name() const override { return backendName; }
+
+  [[nodiscard]] Solution solve(const Model& model,
+                               const SolveOptions& options) const override {
+    std::vector<std::string> names;
+    names.reserve(model.variableCount());
+    for (const auto& variable : model.variables()) {
+      names.push_back(variable.name);
+    }
+
+    auto solution = solveFunction(toMps(model), names, options);
+    if (solution.backend.empty()) {
+      solution.backend = backendName;
+    }
+    // MPS states a minimization, so toMps() writes a maximization with its
+    // objective negated. The objective and the bound come back negated as
+    // well.
+    if (model.sense() == Sense::Maximize) {
+      if (!std::isnan(solution.objective)) {
+        solution.objective = -solution.objective;
+      }
+      if (!std::isnan(solution.bound)) {
+        solution.bound = -solution.bound;
+      }
+    }
+    if (solution.hasValues() &&
+        solution.values.size() != model.variableCount()) {
+      return {.status = SolveStatus::Error,
+              .nodes = {},
+              .values = {},
+              .backend = backendName,
+              .message =
+                  std::format("the backend returned {} values for {} variables",
+                              solution.values.size(), model.variableCount())};
+    }
+    return solution;
+  }
+
+private:
+  std::string backendName;
+  MpsSolveFunction solveFunction;
+};
+
+} // namespace
+
+std::unique_ptr<ISolverBackend> makeMpsBackend(std::string name,
+                                               MpsSolveFunction solve) {
+  if (!solve) {
+    throw std::invalid_argument("an MPS backend needs a solve function");
+  }
+  return std::make_unique<MpsBackend>(std::move(name), std::move(solve));
+}
+
+BackendChoice backendChoiceFromName(const std::string_view name) {
+  if (name == "highs") {
+    return BackendChoice::Highs;
+  }
+  // The external backend is named after the solver it reaches, because that
+  // is the name a user knows it by.
+  if (name == "gurobi") {
+    return BackendChoice::External;
+  }
+  throw std::invalid_argument(std::format(
+      "'{}' is not a solver backend; use 'highs' or 'gurobi'", name));
+}
+
+void setExternalBackend(std::shared_ptr<ISolverBackend> backend) {
+  // The previous backend is destroyed after the lock is released. Its
+  // destructor may run code of the caller, such as Python, that registers a
+  // backend in turn.
+  auto previous = std::move(backend);
+  {
+    const std::scoped_lock lock(externalMutex());
+    externalSlot().swap(previous);
+  }
+}
+
+std::shared_ptr<ISolverBackend> externalBackend() {
+  const std::scoped_lock lock(externalMutex());
+  return externalSlot();
+}
+
+std::shared_ptr<ISolverBackend> resolveBackend(const BackendChoice choice) {
+  if (choice == BackendChoice::External) {
+    if (auto external = externalBackend()) {
+      return external;
+    }
+    throw std::runtime_error("no external solver is registered; install "
+                             "gurobipy and a license, or use 'highs'");
+  }
+  // HiGHS is linked in, so this branch always has an answer. That is what
+  // makes an installation without a commercial license fully functional.
+  return makeHighsBackend();
+}
+
+Solution solve(const Model& model, const BackendChoice choice,
+               const SolveOptions& options) {
+  return resolveBackend(choice)->solve(model, options);
+}
+
+} // namespace mqt::scpd::milp

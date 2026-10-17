@@ -10,12 +10,15 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 
+#include "mqt-scpd/design/Bridges.hpp"
 #include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <format>
 #include <regex>
 #include <string>
 #include <string_view>
@@ -35,12 +38,25 @@ using flatbuffers::design::ChipT;
 using flatbuffers::design::Rotation;
 using flatbuffers::design::UnassignedRole;
 
+/// The most threads a solve may ask for. It is the upper limit of the Gurobi
+/// parameter Threads, and far below the largest thread count of HiGHS.
+constexpr std::uint32_t MAX_SOLVER_THREADS = 1024;
+
 void requirePositive(const double value, const std::string& what,
                      Problems& problems) {
   if (!std::isfinite(value)) {
     problems.push_back(what + " must be finite");
   } else if (!(value > 0.0)) {
     problems.push_back(what + " must be positive");
+  }
+}
+
+void requireNonNegative(const double value, const std::string& what,
+                        Problems& problems) {
+  if (!std::isfinite(value)) {
+    problems.push_back(what + " must be finite");
+  } else if (value < 0.0) {
+    problems.push_back(what + " must not be negative");
   }
 }
 
@@ -66,6 +82,23 @@ void requirePattern(const std::string& expression, const std::string& key,
     static_cast<void>(std::regex(expression, std::regex::ECMAScript));
   } catch (const std::regex_error& error) {
     problems.push_back(key + " pattern does not compile: " + error.what());
+  }
+}
+
+/// A pattern that names one thing has to capture it in exactly one group, or
+/// it says which labels have the thing without saying which one. A pattern
+/// that does not compile is left to requirePattern.
+void requireOneCapture(const std::string& expression, const std::string& key,
+                       Problems& problems) {
+  try {
+    const std::regex compiled(expression, std::regex::ECMAScript);
+    if (compiled.mark_count() != 1) {
+      problems.push_back(key +
+                         " pattern must have exactly one capture group, not " +
+                         std::to_string(compiled.mark_count()));
+    }
+  } catch (const std::regex_error&) {
+    return;
   }
 }
 
@@ -190,6 +223,25 @@ Problems validate(const PortPatternsT& patterns) {
   requirePattern(patterns.launcher, "launcher", problems);
   requirePattern(patterns.resonator, "resonator", problems);
   requirePattern(patterns.conventional, "conventional", problems);
+  // Both remaining patterns are optional: a chip whose components carry no
+  // crossing declares no bridge pattern, and a chip whose stages need no
+  // component grouping declares no component pattern.
+  if (!patterns.bridge_pair.empty()) {
+    requirePattern(patterns.bridge_pair, "bridge_pair", problems);
+  }
+  if (!patterns.component.empty()) {
+    requirePattern(patterns.component, "component", problems);
+    requireOneCapture(patterns.component, "component", problems);
+  }
+  return problems;
+}
+
+Problems validate(const flatbuffers::config::BridgeRuleT& rule) {
+  Problems problems;
+  requirePattern(rule.first, "first", problems);
+  requireOneCapture(rule.first, "first", problems);
+  requirePattern(rule.second, "second", problems);
+  requireOneCapture(rule.second, "second", problems);
   return problems;
 }
 
@@ -202,6 +254,21 @@ Problems validate(const PortConfigT& ports) {
   }
   if (ports.sequences == nullptr) {
     problems.emplace_back("[ports.sequences] is missing");
+  }
+  for (std::size_t i = 0; i < ports.bridge_pairs.size(); ++i) {
+    const auto where = "bridge_pairs[" + std::to_string(i) + "]: ";
+    if (ports.bridge_pairs[i] == nullptr) {
+      problems.push_back(where + "is missing");
+      continue;
+    }
+    append(problems, validate(*ports.bridge_pairs[i]), where);
+  }
+  // A rule pairs only ports the bridge_pair pattern selected, so a rule
+  // without that pattern can pair nothing.
+  if (!ports.bridge_pairs.empty() && ports.patterns != nullptr &&
+      ports.patterns->bridge_pair.empty()) {
+    problems.emplace_back(
+        "bridge_pairs are declared without a bridge_pair pattern");
   }
   return problems;
 }
@@ -221,8 +288,46 @@ Problems validate(const ConfigT& config) {
   } else {
     append(problems, validate(*config.rules), "rules: ");
   }
-  if (config.grid != nullptr && config.grid->capacity_cells_x == 0) {
-    problems.emplace_back("grid: capacity_cells_x must be at least one");
+  // A grid needs two cells per axis to span the chip from edge to edge.
+  if (config.grid != nullptr && config.grid->capacity_cells_x < 2) {
+    problems.emplace_back("grid: capacity_cells_x must be at least two");
+  }
+  if (config.grid != nullptr && config.grid->capacity_cells_y == 1) {
+    problems.emplace_back(
+        "grid: capacity_cells_y must be 0, which takes the aspect ratio, or at "
+        "least two");
+  }
+  if (config.grid != nullptr && config.grid->detail_factor == 0) {
+    problems.emplace_back("grid: detail_factor must be at least one");
+  }
+  if (config.stages != nullptr) {
+    const auto& stages = *config.stages;
+    if (stages.capacity != nullptr) {
+      requirePositive(stages.capacity->bottleneck_clearance,
+                      "stages.capacity: bottleneck_clearance", problems);
+      requirePositive(stages.capacity->crossing_pitch,
+                      "stages.capacity: crossing_pitch", problems);
+    }
+    if (stages.solver != nullptr) {
+      const auto& backend = stages.solver->backend;
+      if (!backend.empty() && backend != "highs" && backend != "gurobi") {
+        problems.push_back(
+            "stages.solver: backend must be one of highs, gurobi, not '" +
+            backend + "'");
+      }
+      requireNonNegative(stages.solver->time_limit, "stages.solver: time_limit",
+                         problems);
+      requireNonNegative(stages.solver->relative_gap,
+                         "stages.solver: relative_gap", problems);
+      if (stages.solver->threads > MAX_SOLVER_THREADS) {
+        problems.push_back(
+            std::format("stages.solver: threads must be at most {}, not {}",
+                        MAX_SOLVER_THREADS, stages.solver->threads));
+      }
+    }
+    if (stages.corridor != nullptr && stages.corridor->rounds == 0) {
+      problems.emplace_back("stages.corridor: rounds must be at least one");
+    }
   }
   return problems;
 }
@@ -253,6 +358,54 @@ Problems validate(const ConfigT& config, const ChipT& chip) {
                            sequences.fixed_outer[i] + "' is not in all_outer");
       }
     }
+  }
+
+  // The two declarations of a bridge have to agree. The pattern says which
+  // ports are ends of a crossing and the rules say which two of them pair, so
+  // a port that one declaration knows and the other does not makes a pairing
+  // that is not the one the configuration reads as.
+  const auto matches = bridgeMatchesOf(chip, ports.bridge_pairs);
+  for (std::size_t index = 0; index < chip.ports.size(); ++index) {
+    const auto& port = chip.ports[index];
+    if (port == nullptr) {
+      continue;
+    }
+    const auto bridging = port->role == UnassignedRole::BridgePair;
+    const auto claimed = matches[index].size();
+    if (bridging && claimed == 0) {
+      problems.push_back("port '" + port->label +
+                         "' is a bridge_pair port that no bridge rule pairs");
+    } else if (!bridging && claimed > 0) {
+      problems.push_back("port '" + port->label +
+                         "' is paired by a bridge rule but its role is " +
+                         std::string(roleName(port->role)));
+    } else if (claimed > 1) {
+      problems.push_back("port '" + port->label + "' is paired by " +
+                         std::to_string(claimed) + " bridge rule sides");
+    }
+  }
+
+  // A rule pairs two ports of one component. A bridge port whose rule finds
+  // no partner there would end a wire inside the coupler, so it is a problem
+  // too. A bridge port that the component pattern does not match takes no
+  // part in the pairing at all, which is the same problem.
+  const auto bridging = bridgingPorts(chip, ports.bridge_pairs);
+  for (std::size_t index = 0; index < chip.ports.size(); ++index) {
+    const auto& port = chip.ports[index];
+    if (port == nullptr || port->role != UnassignedRole::BridgePair ||
+        matches[index].size() != 1 || bridging[index]) {
+      continue;
+    }
+    if (port->component.empty()) {
+      problems.push_back("port '" + port->label +
+                         "' is a bridge_pair port that the component pattern "
+                         "does not match");
+      continue;
+    }
+    problems.push_back("port '" + port->label +
+                       "' is a bridge_pair port without a partner in "
+                       "component '" +
+                       port->component + "'");
   }
   return problems;
 }
