@@ -196,7 +196,10 @@ can reach another objective.
 
 A solve that stops at `time_limit` keeps the best solution it has found by then.
 That solution depends on the speed of the machine, so the same inputs can give
-different artifacts. Leave `time_limit` at `0.0` where a run has to repeat.
+different artifacts. Leave `time_limit` at `0.0` where a run has to repeat. Such
+a solution of the Global stage can hold wires that reach no target, such as a
+wire between the inner ends of two ring bridges. The Global artifact leaves
+these wires out.
 
 With `threads` at `0`, HiGHS uses half the hardware threads of the machine, and
 Gurobi chooses the count itself (its parameter `Threads`). The count changes the

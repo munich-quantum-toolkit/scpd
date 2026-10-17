@@ -478,6 +478,27 @@ TEST(HighsBackend, EndsALinearSolveWhenTheCheckThrows) {
   EXPECT_EQ(checks, 1U);
 }
 
+TEST(HighsBackend, ChecksALinearSolveAgainAndAgain) {
+  // An interrupt can come at any time during a long linear program, not only
+  // before the first check. The check runs again and again, so a later
+  // interrupt also ends the solve long before the time limit.
+  const auto model = largeCover();
+  SolveOptions options;
+  options.timeLimit = 60.0;
+  std::size_t checks = 0;
+  options.observer.check = [&checks] {
+    if (++checks == 3) {
+      throw std::runtime_error("stopped by the observer");
+    }
+  };
+
+  const auto start = std::chrono::steady_clock::now();
+  EXPECT_THROW(static_cast<void>(makeHighsBackend()->solve(model, options)),
+               std::runtime_error);
+  EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(30));
+  EXPECT_EQ(checks, 3U);
+}
+
 TEST(HighsBackend, EndsTheSolveWhenOnlyTheLogObserverThrows) {
   // The log can be the only observer, as at the solver log level without a
   // progress display. Its exception still ends the solve at the next chance,

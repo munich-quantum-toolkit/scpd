@@ -14,7 +14,7 @@ include "geometry.fbs";
 namespace mqt.scpd.flatbuffers.design;
 
 // Every enum starts with Unset. It is the value an absent field reads as, so
-// a buffer that omits a role or a rotation is recognisable as incomplete and
+// a buffer that omits a role or a rotation is recognizable as incomplete and
 // fails validation instead of decoding as the first real member.
 
 /// What a port is, before anything is decided. Set at load, from the role

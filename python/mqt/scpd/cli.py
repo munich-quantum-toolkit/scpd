@@ -105,6 +105,7 @@ def command_plan(args: argparse.Namespace) -> int:
         ConfigError: If the core refuses a value of the configuration, or if the configuration
             and the chip would stop one of the steps, as ``pyscpd.plan_problems`` and
             ``solver_problem`` report it. The run directory stays as it was.
+        BrokenPipeError: If the reader of the output went away, also while a stage wrote.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
     # The core reaches gurobipy only for a configuration that names the gurobi backend; every other
@@ -149,6 +150,10 @@ def command_plan(args: argparse.Namespace) -> int:
                 block.failure("interrupted")
                 console.closing(stopped_after=last, failed=step)
                 return 130
+            # A reader that went away while the stage wrote is no failure of the stage. main()
+            # handles it as for every other command.
+            except BrokenPipeError:
+                raise
             # A stage that fails in any way ends the run with the reason in its block and the
             # closing line, never with a traceback: the core raises ValueError and RuntimeError,
             # but a solver of the user's own may raise anything.

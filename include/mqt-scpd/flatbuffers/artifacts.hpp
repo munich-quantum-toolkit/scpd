@@ -1738,7 +1738,9 @@ struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *lattices() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *>(VT_LATTICES);
   }
-  /// The connections of the inner circuit that the solved flow implies.
+  /// The connections of the inner circuit that the solved flow implies. A
+  /// wire that reaches no target, which only a solve that stops early keeps,
+  /// is not among them.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
   }
@@ -1755,6 +1757,8 @@ struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *resonators() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_RESONATORS);
   }
+  /// The length of the lattice edges that the connections take, in layout
+  /// units.
   double objective() const {
     return GetField<double>(VT_OBJECTIVE, 0.0);
   }

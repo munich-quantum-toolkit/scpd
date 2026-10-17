@@ -59,7 +59,9 @@ class GlobalRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         return o == 0
 
-    # The connections of the inner circuit that the solved flow implies.
+    # The connections of the inner circuit that the solved flow implies. A
+    # wire that reaches no target, which only a solve that stops early keeps,
+    # is not among them.
     # GlobalRouting
     def Connections(self, j: int) -> Optional[Connection]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -137,6 +139,8 @@ class GlobalRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
         return o == 0
 
+    # The length of the lattice edges that the connections take, in layout
+    # units.
     # GlobalRouting
     def Objective(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))

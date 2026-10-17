@@ -31,11 +31,16 @@ namespace mqt::scpd::pipeline {
  * and the crossings of two wires lie at least one crossing pitch apart, also
  * where two borders meet and their slots lie closer than that. The pitch
  * applies to crossings only: a wire may cross a border closer than one pitch
- * to the target cell or the feed of another wire. Inside one
- * partition no two wires cross, run along each other or meet at a point, so the
- * wires leave a border in the order they arrive at it. The rule is checked on
- * the straight chord between where a wire enters and leaves a partition, which
- * is exact only in a convex partition.
+ * to the target cell or the feed of another wire. Inside one partition no two
+ * wires cross, run along each other or meet at a point, so the wires leave a
+ * border in the order they arrive at it. The rule is checked on the straight
+ * chord between where a wire enters and leaves a partition, which is exact
+ * only in a convex partition.
+ *
+ * Where wires compete, the router rips some up and routes them again, for
+ * `[stages.corridor] rounds` rounds. It keeps the round with the fewest wires
+ * without a way. A last pass then offers each such wire the free slots of
+ * that plan and rips up nothing.
  *
  * @return The router.
  */

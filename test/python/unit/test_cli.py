@@ -228,13 +228,63 @@ def test_inspect_stops_quietly_when_the_reader_goes_away(
 def test_plan_stops_quietly_when_the_reader_goes_away(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The stage blocks of ``plan`` go to a pipe as well, and a reader that leaves early is no error to report."""
+    """The header of ``plan`` goes to a pipe as well, and a reader that leaves before it is no error to report."""
     read, written = os.pipe()
     os.close(read)
     with os.fdopen(written, "w", encoding="utf-8") as closed:
         monkeypatch.setattr(sys, "stdout", closed)
         assert main(["plan", "-c", CONFIG, "-o", str(tmp_path / "run"), "--no-progress"]) == 1
         monkeypatch.undo()
+    assert not capsys.readouterr().err
+
+
+class _ReaderLeavesDuringAStage(io.StringIO):
+    """Standard output whose reader goes away once the first stage block has begun."""
+
+    def __init__(self) -> None:
+        """Start with a reader."""
+        super().__init__()
+        self.stage_began = False
+
+    def write(self, text: str) -> int:
+        """Take the text until the stage block has begun, then refuse it as a pipe without a reader does.
+
+        Returns:
+            The number of characters taken.
+
+        Raises:
+            BrokenPipeError: Once the stage block has begun.
+        """
+        if self.stage_began:
+            raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE))
+        self.stage_began = "capacity" in text
+        return super().write(text)
+
+    @staticmethod
+    def fileno() -> int:
+        """A descriptor number that main() can point at the null device.
+
+        Returns:
+            The number.
+        """
+        return 99
+
+
+def test_plan_stops_quietly_when_the_reader_goes_away_during_a_stage(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reader that leaves while a stage writes its lines is no failure of the stage.
+
+    main() handles it as for every other command, and points standard output at the null device so
+    that Python does not report the pipe again when it exits.
+    """
+    redirected: list[int] = []
+    monkeypatch.setattr(os, "dup2", lambda _source, target: redirected.append(target))
+    monkeypatch.setattr(sys, "stdout", _ReaderLeavesDuringAStage())
+
+    assert main(["plan", "-c", CONFIG, "-o", str(tmp_path / "run"), "--no-progress"]) == 1
+    monkeypatch.undo()
+    assert redirected == [99]
     assert not capsys.readouterr().err
 
 
@@ -271,7 +321,7 @@ def _global_artifact(tmp_path: Path) -> Path:
     return artifact
 
 
-@pytest.mark.parametrize("command", ["inspect", "list-algorithms", "doctor"])
+@pytest.mark.parametrize("command", ["inspect", "list-algorithms", "doctor", "plan"])
 def test_a_command_stops_quietly_when_the_reader_goes_away_on_windows(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, command: str
 ) -> None:
@@ -280,6 +330,7 @@ def test_a_command_stops_quietly_when_the_reader_goes_away_on_windows(
         "inspect": ["inspect", str(_global_artifact(tmp_path))],
         "list-algorithms": ["list-algorithms"],
         "doctor": ["doctor", "-c", CONFIG],
+        "plan": ["plan", "-c", CONFIG, "-o", str(tmp_path / "run"), "--no-progress"],
     }[command]
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(sys, "stdout", _PipeWithoutReaderOnWindows())

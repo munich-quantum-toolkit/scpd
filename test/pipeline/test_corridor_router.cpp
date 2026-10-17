@@ -1178,14 +1178,19 @@ TEST(CorridorRouter, RoutesEveryWireOfEveryAssignmentOfTheFixture) {
   EXPECT_GT(distinct.size(), 1U);
 }
 
-TEST(CorridorRouter, EndsNoWorseThanItsBestRound) {
+TEST(CorridorRouter, KeepsItsBestRoundAndThenFillsFreeSlots) {
   // Where wires compete, a round can rip up more wires than it places again,
   // and the fails of the rounds go up and down. The stage keeps the best
   // round, so it ends with no more fails than that round had, whether the
-  // rounds stop on a good one or a bad one.
+  // rounds stop on a good one or a bad one. A sweep can also rip up a wire
+  // that it has passed, and the plan that the stage keeps can leave free
+  // slots for that wire. The last pass places such a wire on the kept plan,
+  // so the stage then ends with fewer fails than its best round had.
   SplitMix random(5);
   const auto fixture = planMini();
   auto planned = planMini();
+  std::size_t passes = 0;
+  std::size_t passesAfterABack = 0;
   for (int draw = 0; draw < 100; ++draw) {
     planned.assignment = randomAssignment(fixture, random);
     for (const std::uint32_t rounds : {11U, 12U}) {
@@ -1195,14 +1200,25 @@ TEST(CorridorRouter, EndsNoWorseThanItsBestRound) {
           routeMini(planned, receiving(received, Detail::Summary),
                     sweepConfig(rounds, 30));
 
-      // The fails of each round, and the entry that names the round the
-      // stage went back to.
+      // The fails of each round, the entry that names the round the stage
+      // went back to, and the fails before and after the free-slot pass.
       std::vector<std::size_t> fails;
       std::optional<std::string> back;
+      std::optional<std::size_t> before;
+      std::optional<std::size_t> after;
       for (const auto& [label, figures] : received.summary) {
+        const auto failsOf =
+            std::stoul(figures[1].text.substr(std::strlen("fails ")));
+        if (label == "free slots") {
+          ASSERT_FALSE(after.has_value());
+          after = failsOf;
+          continue;
+        }
+        // Every entry of the rounds comes before the pass.
+        ASSERT_FALSE(after.has_value()) << label;
+        before = failsOf;
         if (label.starts_with("round ")) {
-          fails.push_back(
-              std::stoul(figures[1].text.substr(std::strlen("fails "))));
+          fails.push_back(failsOf);
         } else if (label.starts_with("back to round ")) {
           back = label;
         }
@@ -1222,47 +1238,22 @@ TEST(CorridorRouter, EndsNoWorseThanItsBestRound) {
       } else {
         EXPECT_FALSE(back.has_value());
       }
-    }
-  }
-}
-
-TEST(CorridorRouter, PlacesARippedWireOnFreeSlotsAfterTheRounds) {
-  // A sweep can rip up a wire that it has passed, and the plan that the stage
-  // keeps can leave free slots for that wire. The last pass places such a
-  // wire, so the stage ends with fewer fails than its best round had.
-  SplitMix random(5);
-  const auto fixture = planMini();
-  auto planned = planMini();
-  std::size_t passes = 0;
-  for (int draw = 0; draw < 100; ++draw) {
-    planned.assignment = randomAssignment(fixture, random);
-    for (const std::uint32_t rounds : {11U, 12U}) {
-      SCOPED_TRACE(std::format("assignment {}, {} rounds", draw, rounds));
-      Received received;
-      const auto routing =
-          routeMini(planned, receiving(received, Detail::Summary),
-                    sweepConfig(rounds, 30));
-
-      std::optional<std::size_t> before;
-      for (const auto& [label, figures] : received.summary) {
-        const auto failsOf = [&figures] {
-          return std::stoul(figures[1].text.substr(std::strlen("fails ")));
-        };
-        if (label != "free slots") {
-          before = failsOf();
-          continue;
-        }
+      if (after.has_value()) {
         ++passes;
+        passesAfterABack += back.has_value() ? 1 : 0;
         ASSERT_TRUE(before.has_value());
-        EXPECT_LT(failsOf(), *before);
-        EXPECT_EQ(failsOf(), unroutedOf(routing));
+        EXPECT_LT(*after, *before);
+        EXPECT_EQ(*after, unroutedOf(routing));
         // The wires that the pass places keep every rule of the rounds.
         expectTheRulesHold(planned, routing, received);
+      } else {
+        EXPECT_EQ(unroutedOf(routing), before);
       }
     }
   }
-  // The draws reach the pass.
+  // The draws reach the pass, also on a plan that the stage went back to.
   EXPECT_GT(passes, 0U);
+  EXPECT_GT(passesAfterABack, 0U);
 }
 
 } // namespace

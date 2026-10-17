@@ -51,10 +51,10 @@ struct SolveObserver {
   std::function<void(std::string_view)> log;
   /// Receives the state of a mixed-integer search, now and then.
   std::function<void(const SolveProgress&)> progress;
-  /// Called now and then while the backend works on a step with no figures
-  /// to report, such as a linear program at the root of a search. It
-  /// receives nothing. A caller throws from it, as from the other two, to
-  /// stop the solve, for example when Python has an interrupt pending.
+  /// Called now and then while the backend solves a linear program, which
+  /// has no search state to report. It receives nothing. A caller throws
+  /// from it, as from the other two, to stop the solve, for example when
+  /// Python has an interrupt pending.
   std::function<void()> check;
 };
 

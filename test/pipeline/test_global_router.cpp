@@ -1435,7 +1435,8 @@ TEST(GlobalRouter, MarksTheRingPortOfAResonatorWirePastAnInternalBridge) {
 /// that is not the shortest one. This backend returns such a solution on
 /// purpose: it rewards every edge that the stage charges for. The largest
 /// coefficient is the penalty of an unreached target, and it keeps its sign,
-/// so the circuit still reaches every target it can.
+/// so the circuit still reaches every target it can. Like a solver that stops
+/// early, it reports the objective of the stage's model at that solution.
 class LongestCircuitBackend final : public milp::ISolverBackend {
 public:
   [[nodiscard]] std::string_view name() const override { return "longest"; }
@@ -1465,7 +1466,15 @@ public:
                        constraint.upper);
     }
     longest.setSense(model.sense());
-    return milp::makeHighsBackend()->solve(longest, options);
+    auto solution = milp::makeHighsBackend()->solve(longest, options);
+    if (solution.hasValues()) {
+      solution.objective = model.objectiveOffset();
+      for (std::size_t index = 0; index < solution.values.size(); ++index) {
+        solution.objective +=
+            model.variables()[index].objective * solution.values[index];
+      }
+    }
+    return solution;
   }
 };
 
@@ -1550,6 +1559,7 @@ TEST(GlobalRouter, LeavesOutAWireBetweenTwoRingBridgesInAFeasibleSolution) {
   const auto surface =
       source->label.substr(0, source->label.size() - 1).append("1");
   EXPECT_EQ(ringOf(routing), indicesOf(chip, {surface}));
+  EXPECT_NEAR(routing.objective, selectedLength(routing), 1.0e-9);
 }
 
 TEST(GlobalRouter, LeavesOutALoopThroughInternalBridgesInAFeasibleSolution) {
@@ -1598,6 +1608,7 @@ TEST(GlobalRouter, LeavesOutALoopThroughInternalBridgesInAFeasibleSolution) {
   }
   EXPECT_EQ(marked, 1U);
   EXPECT_NEAR(selectedLength(routing), 300.0, 1.0e-9);
+  EXPECT_NEAR(routing.objective, 300.0, 1.0e-9);
 }
 
 TEST(GlobalRouter, GivesTheSameAnswerTwice) {

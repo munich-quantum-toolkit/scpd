@@ -132,7 +132,7 @@ def _doubled_area(vertices: list[tuple[float, float]]) -> float:
 
 
 def test_overlapping_obstacles_of_opposite_winding_leave_no_hole() -> None:
-    """Every subpath winds the same way, so the nonzero rule fills an overlap instead of cancelling it."""
+    """Every subpath winds the same way, so the nonzero rule fills an overlap instead of canceling it."""
     clockwise = [(0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)]
     counterclockwise = [(5.0, 5.0), (15.0, 5.0), (15.0, 15.0), (5.0, 15.0)]
     assert _doubled_area(clockwise) < 0 < _doubled_area(counterclockwise)

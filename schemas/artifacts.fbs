@@ -177,7 +177,9 @@ table Lattice {
 /// inner circuit, which is a valid state rather than a skipped stage.
 table GlobalRouting {
   lattices: [Lattice] (required);
-  /// The connections of the inner circuit that the solved flow implies.
+  /// The connections of the inner circuit that the solved flow implies. A
+  /// wire that reaches no target, which only a solve that stops early keeps,
+  /// is not among them.
   connections: [design.Connection] (required);
   /// The outer port ring that the Assignment stage consumes: the configured
   /// ring in its order, without the ring end of each outer bridge where no
@@ -188,6 +190,8 @@ table GlobalRouting {
   /// wire of a resonator surfaces. The Assignment stage treats the ring
   /// nodes among them as resonators.
   resonators: [design.PortRef] (required);
+  /// The length of the lattice edges that the connections take, in layout
+  /// units.
   objective: double;
 }
 

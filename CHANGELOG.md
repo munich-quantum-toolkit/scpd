@@ -79,8 +79,8 @@ releases may include breaking changes.
   Boost.Polygon and Boost.Config of Boost 1.89.0, all fetched at configure time,
   and the Python dependency `rich`. The wheel carries the licenses of HiGHS, its
   LP file reader, FlatBuffers and nlohmann/json, which its extension links in,
-  and its license expression names Apache-2.0 and BSL-1.0 next to MIT ([#140])
-  ([**@FeldmeierMichael**])
+  and its license expression names Apache-2.0, BSL-1.0 and Zlib next to MIT
+  ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add bridge pairs and components to the configuration: the `bridge_pair` and
   `component` patterns, the `[[ports.bridge_pairs]]` rules, the stage sections
   and `[run]` ([#140]) ([**@FeldmeierMichael**])

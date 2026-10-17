@@ -66,7 +66,9 @@ inline Solution solveMpsText(const std::string_view mps,
   {
     std::ofstream file(path);
     file << mps;
-    if (!file.good()) {
+    // Closing flushes the text, so a write that fails only then shows too.
+    file.close();
+    if (file.fail()) {
       solution.message = std::format("cannot write {}", path.string());
       std::error_code ignored;
       std::filesystem::remove(path, ignored);

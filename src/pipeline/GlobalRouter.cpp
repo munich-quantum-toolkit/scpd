@@ -69,8 +69,7 @@ std::unordered_map<std::string, std::uint32_t> portsByLabel(const ChipT& chip) {
 /// link that names a node the plan does not carry, a target that names a port
 /// the chip does not carry, a chain that leads back into itself or reaches a
 /// node twice, or a target on two chains or twice on one. The Capacity stage
-/// writes no such
-/// plan, so the plan is from another chip or was edited.
+/// writes no such plan, so the plan is from another chip or was edited.
 void checkCapacityPlan(const ChipT& chip, const CapacityPlanT& capacity) {
   const auto nodes = capacity.nodes.size();
   const auto refuse = [](const std::string& what) {
@@ -515,6 +514,8 @@ struct Circuit {
   std::unordered_set<std::uint32_t> sources;
   /// The length of each connection, in the order of the connections.
   std::vector<double> lengths;
+  /// The length of the wires that the solution kept but that reach no target.
+  double dropped = 0.0;
 };
 
 /// The global router of the first release.
@@ -612,10 +613,12 @@ public:
         withoutRoom.insert(port);
       }
     }
-    routing.objective =
-        solution.objective - (penalty * static_cast<double>(missed));
-
     const auto solved = readBack(routing, lattices, arcs, solution, circuit);
+    // The wires that reach no target are not in the artifact, so their
+    // length comes out of the objective too.
+    routing.objective = solution.objective -
+                        (penalty * static_cast<double>(missed)) -
+                        solved.dropped;
     fillRing(routing, chip, config, circuit, solved.sources);
     finish(routing, chip, circuit, solved.lengths, report,
            {withoutRoom.begin(), withoutRoom.end()});
@@ -1462,7 +1465,9 @@ private:
     // the inner ends of two ring bridges, or a closed loop through internal
     // bridges. The optimum never takes such a wire, since it only adds
     // length. It connects nothing, and the ring end of its source would
-    // surface with nothing behind it, so the artifact leaves it out.
+    // surface with nothing behind it, so the artifact leaves it out. Such a
+    // wire may still have taken the room of a gate in the model, so the
+    // stage can count a ring port without room that an optimal solve serves.
     std::unordered_map<std::uint32_t, std::uint32_t> group;
     const auto find = [&group](std::uint32_t port) {
       while (group.contains(port) && group.at(port) != port) {
@@ -1497,6 +1502,7 @@ private:
     Circuit solved;
     for (auto& wire : wires) {
       if (!reaching.contains(find(wire.source))) {
+        solved.dropped += wire.length;
         continue;
       }
       // The source is where a wire of the inner circuit leaves, which is

@@ -18,6 +18,7 @@
 #include "util/HighsInt.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -107,10 +108,11 @@ void prepareScheduler(const std::uint32_t threads) {
 /// feasibility tolerance of HiGHS.
 constexpr double FEASIBILITY_TOLERANCE = 1.0e-7;
 
-/// The seconds of solve time between two calls of SolveObserver::check. A
-/// pending interrupt waits at most this long, and a call into Python costs
-/// next to nothing at this rate.
-constexpr double CHECK_INTERVAL = 0.1;
+/// The least wall-clock time between two calls of SolveObserver::check. A
+/// call into Python costs next to nothing at this rate. A pending interrupt
+/// waits this long and then until HiGHS next calls back, which it does every
+/// few iterations.
+constexpr std::chrono::milliseconds CHECK_INTERVAL{100};
 
 /// The answer to a model without variables. HiGHS calls such a model empty
 /// and solves nothing. A row of it has no terms, because the constant of its
@@ -253,8 +255,9 @@ public:
     // the solve is asked to stop, and the exception leaves after run().
     std::exception_ptr failure;
     // The simplex and interior point solvers call back on every iteration,
-    // so the check runs at most once per CHECK_INTERVAL of solve time.
-    std::optional<double> checked;
+    // so the check runs at most once per CHECK_INTERVAL. HiGHS reports no
+    // running time to these callbacks, so the backend reads its own clock.
+    std::optional<std::chrono::steady_clock::time_point> checked;
     if (logs || observer.progress || observer.check) {
       static_cast<void>(
           highs.setCallback([&observer, &failure, &checked](
@@ -281,11 +284,12 @@ public:
                      .seconds = out->running_time});
               } else if ((type == kCallbackSimplexInterrupt ||
                           type == kCallbackIpmInterrupt) &&
-                         observer.check && out != nullptr &&
-                         (!checked.has_value() ||
-                          out->running_time - *checked >= CHECK_INTERVAL)) {
-                checked = out->running_time;
-                observer.check();
+                         observer.check) {
+                const auto now = std::chrono::steady_clock::now();
+                if (!checked.has_value() || now - *checked >= CHECK_INTERVAL) {
+                  checked = now;
+                  observer.check();
+                }
               }
             } catch (...) {
               failure = std::current_exception();

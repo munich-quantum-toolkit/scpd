@@ -189,7 +189,9 @@ public:
    * the report is that detailed. The state of the search reaches the progress
    * sink, under @p task, as its objective, gap and node count. While the
    * backend has no new state, the check of the observer repeats the last one,
-   * so that a progress sink that throws stops the solve.
+   * so that a progress sink that throws stops the solve. HiGHS calls the check
+   * only while it solves a linear program, which has no state of a search, so
+   * there the check reports the task without figures.
    *
    * @param task What the solve is for, such as "solving the assignment".
    * @return The observer.
