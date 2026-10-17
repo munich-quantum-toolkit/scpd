@@ -197,9 +197,10 @@ can reach another objective.
 A solve that stops at `time_limit` keeps the best solution it has found by then.
 That solution depends on the speed of the machine, so the same inputs can give
 different artifacts. Leave `time_limit` at `0.0` where a run has to repeat. Such
-a solution of the Global stage can hold wires that reach no target, such as a
-wire between the inner ends of two ring bridges. The Global artifact leaves
-these wires out.
+a solution of the Global stage can hold wires that reach no target: a wire
+between the inner ends of two ring bridges, a loop through internal bridges, or
+a closed loop over crossings. The Global artifact and its objective leave these
+wires out.
 
 With `threads` at `0`, HiGHS uses half the hardware threads of the machine, and
 Gurobi chooses the count itself (its parameter `Threads`). The count changes the
@@ -221,14 +222,14 @@ connection has not claimed yet. A sweep can take a way from a connection that
 had one, so the fails of the rounds can go up as well as down. The stage keeps
 the plan of the round with the fewest fails, and goes back to it when the last
 round ends with more. The fails of a round count every connection without a way
-at its end, also one that the round ripped up near its end and had no sweep left
-to place again. After the rounds, one last pass offers every connection without
-a way the free slots of that plan, and rips up nothing; the stage block shows it
-as `free slots` when it places a connection. Within a sweep, a connection
-without a way also raises the price of the slots in its way that another wire
-holds, so that the next sweeps leave them to it. The step that moves the wires
-in its way aside raises the price, so with `max_relaxation` at `0`, no price
-rises.
+at its end, also one that the round ripped up after its sweep had passed it and
+so did not place again. After the rounds, one last pass offers every connection
+without a way the free slots of that plan, and rips up nothing; the stage block
+shows it as `free slots` when it places a connection. Within a sweep, a
+connection without a way also raises the price of the slots in its way that
+another wire holds, so that the next sweeps leave them to it. The step that
+moves the wires in its way aside raises the price, so with `max_relaxation` at
+`0`, no price rises.
 
 The stage limits `max_relaxation` to a value below half the number of
 connections. A connection that may rip up all the others takes their room, they

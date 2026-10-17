@@ -1613,8 +1613,8 @@ TEST(GlobalRouter, LeavesOutALoopThroughInternalBridgesInAFeasibleSolution) {
 
 /// A backend that solves to the optimum and then adds a closed loop of arcs.
 ///
-/// A loop over crossings touches no port, so every row still holds. A solve
-/// that stops early may return such a loop.
+/// A loop over crossings touches no port, so every row still holds, which the
+/// backend checks. A solve that stops early may return such a loop.
 class CrossingLoopBackend final : public milp::ISolverBackend {
 public:
   explicit CrossingLoopBackend(std::vector<std::string> loop)
@@ -1639,6 +1639,17 @@ public:
           static_cast<std::size_t>(found - model.variables().begin());
       solution.values[index] = 1.0;
       solution.objective += found->objective;
+    }
+    // The loop stands for a solution that a solve stops at, so it has to hold
+    // every row of the model.
+    for (const auto& row : model.constraints()) {
+      double activity = 0.0;
+      for (const auto& [index, coefficient] : row.coefficients) {
+        activity += coefficient * solution.values[index];
+      }
+      if (activity < row.lower - 1.0e-9 || activity > row.upper + 1.0e-9) {
+        throw std::logic_error("the loop breaks row " + row.name);
+      }
     }
     solution.status = milp::SolveStatus::Feasible;
     return solution;

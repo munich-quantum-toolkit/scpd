@@ -197,6 +197,11 @@ TEST(MilpModel, RefusesAVariableOfAnotherModel) {
   EXPECT_THROW(second.addLessOrEqual("row", 1.0 * foreign, 1.0),
                std::invalid_argument);
   EXPECT_THROW(second.addObjective(1.0 * foreign), std::invalid_argument);
+  // A zero coefficient drops out of the combined terms, but the variable is
+  // still foreign.
+  EXPECT_THROW(second.addLessOrEqual("zero", 0.0 * foreign, 1.0),
+               std::invalid_argument);
+  EXPECT_THROW(second.addObjective(0.0 * foreign), std::invalid_argument);
 }
 
 TEST(MilpModel, ClampsABinaryToZeroAndOne) {

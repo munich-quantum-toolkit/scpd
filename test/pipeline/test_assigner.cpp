@@ -931,10 +931,10 @@ TEST(Assigner, RunsEveryChainOneWayWhereverTheRingOpens) {
 
 TEST(Assigner, GivesEveryChainALauncher) {
   // Two launcher ends and two terminations make two chains. The target rows
-  // count only ends, so a chain from a termination to a termination costs no
-  // more than two chains from a launcher to a termination. Without the rows
-  // that give every chain a launcher end, the model may take such a chain on
-  // {0, 1, 3, 4, 5}.
+  // count only ends, so a chain from launcher to launcher and one from
+  // termination to termination meet them as well as two chains from a
+  // launcher to a termination. Without the rows that give every chain a
+  // launcher end, the model may take the first pair on {0, 1, 3, 4, 5}.
   std::size_t solved = 0;
   for (std::uint32_t subset = 0; subset < (1U << 8U); ++subset) {
     std::vector<std::uint32_t> resonators;

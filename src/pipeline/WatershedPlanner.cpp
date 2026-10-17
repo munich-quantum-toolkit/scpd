@@ -933,8 +933,8 @@ private:
         config.stages != nullptr && config.stages->capacity != nullptr
             ? config.stages->capacity.get()
             : &defaults;
-    const auto fraction = params->bottleneck_clearance;
-    if (fraction <= 0.0) {
+    const auto pitches = params->bottleneck_clearance;
+    if (pitches <= 0.0) {
       return 0;
     }
     const auto step = std::min(scene.detail.cellWidth, scene.detail.cellHeight);
@@ -947,7 +947,7 @@ private:
     // transform actually holds.
     // A clearance wider than the counter holds counts every place as narrow,
     // which the largest count says as well.
-    const auto radius = fraction * pitch / step;
+    const auto radius = pitches * pitch / step;
     const auto squared = radius * radius;
     constexpr auto largest = std::numeric_limits<std::uint32_t>::max();
     if (!(squared < static_cast<double>(largest))) {

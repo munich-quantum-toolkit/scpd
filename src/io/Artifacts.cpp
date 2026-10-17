@@ -64,6 +64,18 @@ void validateEach(const std::vector<std::unique_ptr<ComponentT>>& components,
   }
 }
 
+/// Writing an artifact packs every entry of a vector of tables, so a missing
+/// entry is a problem even where no other check reads the vector.
+template <typename TableT>
+void requireEach(const std::vector<std::unique_ptr<TableT>>& entries,
+                 const std::string_view what, Problems& problems) {
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    if (entries[i] == nullptr) {
+      problems.push_back(std::format("{} {}: missing", what, i));
+    }
+  }
+}
+
 void validateWires(
     const std::vector<std::unique_ptr<flatbuffers::artifacts::WireT>>& wires,
     Problems& problems) {
@@ -102,6 +114,17 @@ void validateWires(
 /// because the Global stage asks one wire of each target over its chain.
 void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
                           Problems& problems) {
+  requireEach(plan.partitions, "partition", problems);
+  for (std::size_t index = 0; index < plan.partitions.size(); ++index) {
+    if (plan.partitions[index] != nullptr) {
+      requireEach(plan.partitions[index]->outlines,
+                  std::format("partition {} outline", index), problems);
+    }
+  }
+  requireEach(plan.borders, "border", problems);
+  requireEach(plan.bottlenecks, "bottleneck", problems);
+  requireEach(plan.launchers, "launcher slot", problems);
+  requireEach(plan.port_keepout, "port keepout", problems);
   const auto count = plan.nodes.size();
   bool linked = true;
   for (std::size_t index = 0; index < count; ++index) {
@@ -285,6 +308,7 @@ Problems validate(const ArtifactT& artifact) {
     // corridor names one more partition than it has crossings. A corridor
     // without partitions is a connection the stage could not route.
     const auto& routing = *artifact.output.AsCorridorRouting();
+    requireEach(routing.slots, "border slots", problems);
     for (std::size_t index = 0; index < routing.corridors.size(); ++index) {
       if (routing.corridors[index] == nullptr) {
         problems.push_back(std::format("corridor {}: missing", index));

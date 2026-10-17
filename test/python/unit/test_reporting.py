@@ -15,6 +15,9 @@ caller unchanged, and the core has to work as before afterwards.
 
 from __future__ import annotations
 
+import functools
+import itertools
+import signal
 from pathlib import Path
 
 import pytest
@@ -86,6 +89,35 @@ def test_an_interrupt_during_a_solve_reaches_python(inputs: tuple[bytes, bytes, 
         pyscpd.assign(chip, capacity, routing, packed, "test", reporter, 0)
 
     assert reporter.raised
+    assert pyscpd.assign(chip, capacity, routing, packed, "test") == untouched
+
+
+@pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="the platform has no interval timer")
+def test_an_interrupt_stops_a_stage_without_a_reporter(inputs: tuple[bytes, bytes, bytes, bytes]) -> None:
+    """Ctrl-C stops a stage that has no reporter, inside the stage and not after it."""
+    chip, packed, capacity, routing = inputs
+    untouched = pyscpd.assign(chip, capacity, routing, packed, "test")
+    calls = 100
+    done: list[bytes] = []
+
+    # The stages run one after the other in C, so Python can only raise the interrupt from inside a stage.
+    # Without that, every stage ends and the interrupt comes after the last one. The timer raises the
+    # interrupt as Ctrl-C does, without the GIL.
+    stages = itertools.starmap(functools.partial(pyscpd.assign, chip, capacity, routing, packed), [("test",)] * calls)
+
+    def run() -> None:
+        signal.setitimer(signal.ITIMER_REAL, 0.02)
+        done.extend(stages)
+
+    previous = signal.signal(signal.SIGALRM, signal.default_int_handler)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+    assert len(done) < calls
     assert pyscpd.assign(chip, capacity, routing, packed, "test") == untouched
 
 

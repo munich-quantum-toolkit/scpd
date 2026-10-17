@@ -372,6 +372,64 @@ TEST(ArtifactSchema, RefusesAGateNodeThatDisagreesWithItsBottleneck) {
                                       "through"}));
 }
 
+TEST(ArtifactSchema, RefusesAGateNodeWithoutItsBottleneck) {
+  // The Global stage reads the capacity of a gate from its bottleneck, so a
+  // gate has to name one of the plan.
+  CapacityPlanT plan = emptyPlan();
+  plan.bottlenecks.push_back(std::make_unique<BottleneckT>());
+  auto gate = std::make_unique<CapacityNodeT>();
+  gate->kind = CapacityElement::Bottleneck;
+  gate->id = 1;
+  plan.nodes.push_back(std::move(gate));
+  plan.chains.push_back(0);
+
+  EXPECT_EQ(
+      validate(wrap(std::move(plan))),
+      (std::vector<std::string>{"capacity node 0 names bottleneck 1 of 1"}));
+}
+
+TEST(ArtifactSchema, RefusesAMissingEntryOfEveryOutput) {
+  // Writing an artifact packs every entry of a vector of tables, so a missing
+  // entry is refused before the write reads it.
+  CapacityPlanT plan = emptyPlan();
+  plan.partitions.push_back(std::make_unique<PartitionT>());
+  plan.partitions.back()->outlines.push_back(nullptr);
+  plan.partitions.push_back(nullptr);
+  plan.borders.push_back(nullptr);
+  plan.bottlenecks.push_back(nullptr);
+  plan.launchers.push_back(nullptr);
+  plan.port_keepout.push_back(nullptr);
+  plan.nodes.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(plan))),
+            (std::vector<std::string>{
+                "partition 1: missing", "partition 0 outline 0: missing",
+                "border 0: missing", "bottleneck 0: missing",
+                "launcher slot 0: missing", "port keepout 0: missing",
+                "capacity node 0: missing"}));
+
+  AssignmentT assignment;
+  assignment.chains.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(assignment))),
+            (std::vector<std::string>{"chain 0: missing"}));
+
+  GlobalRoutingT global;
+  global.lattices.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(global))),
+            (std::vector<std::string>{"lattice 0: missing"}));
+
+  CorridorRoutingT corridors;
+  corridors.slots.push_back(nullptr);
+  corridors.corridors.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(corridors))),
+            (std::vector<std::string>{"border slots 0: missing",
+                                      "corridor 0: missing"}));
+
+  CapacityPlanT unwritable = emptyPlan();
+  unwritable.bottlenecks.push_back(nullptr);
+  EXPECT_THROW(static_cast<void>(writeArtifact(wrap(std::move(unwritable)))),
+               std::invalid_argument);
+}
+
 TEST(ArtifactSchema, RefusesAPortTheChipDoesNotHave) {
   // An artifact names ports by index, so one made from another chip can name
   // a port past the end of this chip's port list.

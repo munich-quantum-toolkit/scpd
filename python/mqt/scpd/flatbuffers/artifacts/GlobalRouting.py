@@ -60,8 +60,8 @@ class GlobalRouting(object):
         return o == 0
 
     # The connections of the inner circuit that the solved flow implies. A
-    # wire that reaches no target, which only a solve that stops early keeps,
-    # is not among them.
+    # wire that reaches no target or a closed loop over crossings, which only
+    # a solve that stops early keeps, is not among them.
     # GlobalRouting
     def Connections(self, j: int) -> Optional[Connection]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))

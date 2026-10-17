@@ -84,7 +84,8 @@ class Lattice(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         return o == 0
 
-    # The edges the solution selected, as indices into `edges` divided by two.
+    # The edges of the connections, as indices into `edges` divided by two.
+    # The edges of a wire that the connections leave out are not among them.
     # Lattice
     def Selected(self, j: int):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))

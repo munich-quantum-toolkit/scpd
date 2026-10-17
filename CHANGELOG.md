@@ -137,6 +137,8 @@ releases may include breaking changes.
     as `plan` does before its first stage. Without that key, `doctor` checks all
     four steps and fails a configuration without `launcher_target`.
   - `doctor` warns about each removed key on a line that starts with `WARNING:`.
+  - Every command exits with code 130 on Ctrl-C. It stops without a message and
+    exits with code 1 when the reader of its output goes away, as with `| head`.
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that

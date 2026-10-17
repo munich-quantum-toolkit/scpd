@@ -1005,10 +1005,11 @@ private:
   /// along the used chords, to the anchor whose leaving chord is unused, so
   /// it runs in ring order. Its launchers are the slots that its two end
   /// anchors were given. The feed of the first anchor lies on the segment
-  /// that leaves its slot, so the chain starts there. The feed of the last
-  /// anchor lies on the segment that arrives at its slot, so the chain ends
-  /// there without turning back; `endsAChain` places that feed and runs the
-  /// same walk. An end at a termination has no launcher.
+  /// that leaves its slot, so the chain starts there. The feed of a last
+  /// anchor that takes a launcher lies on the segment that arrives at its
+  /// slot, so the chain ends there without turning back; `endsAChain` places
+  /// that feed and runs the same walk. An end at a termination has no
+  /// launcher.
   static void readBackChains(AssignmentT& assignment,
                              const AssignmentInputs& inputs,
                              const RingEdges& ring, const Variables& variables,

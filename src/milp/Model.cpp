@@ -216,14 +216,16 @@ void Model::addRow(const std::string_view name, const LinearExpr& expression,
         "the name '{}' is already taken in model '{}'", name, modelName));
   }
 
-  auto coefficients = expression.combined();
-  for (const auto& [index, _] : coefficients) {
+  // The terms are checked before they are combined, so that a variable of
+  // another model is refused also when its coefficient is zero.
+  for (const auto& [index, _] : expression.terms()) {
     if (index >= variableList.size()) {
       throw std::invalid_argument(std::format(
           "constraint '{}' names variable {}, which model '{}' does not have",
           name, index, modelName));
     }
   }
+  auto coefficients = expression.combined();
   requireFinite(coefficients, expression.constant(), name);
   // An infinite bound is a free side. A bound that is not a number is not a
   // side at all, and the backends would read it in different ways.
@@ -283,14 +285,14 @@ void Model::addRange(const std::string_view name, const LinearExpr& expression,
 }
 
 void Model::addObjective(const LinearExpr& expression) {
-  const auto coefficients = expression.combined();
-  for (const auto& [index, _] : coefficients) {
+  for (const auto& [index, _] : expression.terms()) {
     if (index >= variableList.size()) {
       throw std::invalid_argument(std::format(
           "the objective names variable {}, which model '{}' does not have",
           index, modelName));
     }
   }
+  const auto coefficients = expression.combined();
   requireFinite(coefficients, expression.constant(), {});
   // The checks come first, so that a refused expression leaves the objective
   // as it was.

@@ -215,9 +215,10 @@ TEST(Report, ASolverReportsItsSearchAsProgress) {
 }
 
 TEST(Report, ASolverWithoutNewFiguresRepeatsItsLastState) {
-  // A long linear program reports no figures, but the check still reaches
-  // the progress sink, which can stop the solve from there. The repeat waits
-  // longer than the progress sink is thinned out.
+  // A backend may call the check before the first state of a search and
+  // between two states. The check then repeats the last state, so a progress
+  // sink that throws still stops the solve. The repeat waits longer than the
+  // progress sink is thinned out.
   Recorder recorder;
   const auto observer =
       recorder.report(Detail::Summary).solveObserver("solving");

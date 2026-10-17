@@ -98,7 +98,9 @@ for these lines instead. Wrong arguments still print the `argparse` usage
 message with `error:` and exit with code 2. `doctor` reports each problem on a
 line that starts with `PROBLEM:`, and each warning, such as a removed key, on a
 line that starts with `WARNING:`. It ends with `doctor: OK` or
-`doctor: <n> problem(s)`; a warning is not a problem.
+`doctor: <n> problem(s)`; a warning is not a problem. Every command exits with
+code 130 on Ctrl-C, and with code 1 and no message when the reader of its output
+goes away, as with `| head`.
 
 <!-- Version links -->
 

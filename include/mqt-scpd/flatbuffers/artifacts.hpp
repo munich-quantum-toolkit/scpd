@@ -1625,7 +1625,8 @@ struct Lattice FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint32_t> *edges() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_EDGES);
   }
-  /// The edges the solution selected, as indices into `edges` divided by two.
+  /// The edges of the connections, as indices into `edges` divided by two.
+  /// The edges of a wire that the connections leave out are not among them.
   const ::flatbuffers::Vector<uint32_t> *selected() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_SELECTED);
   }
@@ -1739,8 +1740,8 @@ struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *>(VT_LATTICES);
   }
   /// The connections of the inner circuit that the solved flow implies. A
-  /// wire that reaches no target, which only a solve that stops early keeps,
-  /// is not among them.
+  /// wire that reaches no target or a closed loop over crossings, which only
+  /// a solve that stops early keeps, is not among them.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
   }

@@ -580,7 +580,9 @@ TEST(CorridorRouter, ReportsEveryRoundAndTheResult) {
   static_cast<void>(routeMini(planned, report));
 
   const auto connections = planned.assignment.connections.size();
-  ASSERT_FALSE(entries.empty());
+  // The first round routes every wire of the fixture, so the stage stops
+  // after it, although the configuration allows twelve.
+  ASSERT_EQ(entries.size(), 1U);
   EXPECT_EQ(entries[0].first, "round 1 forward");
   ASSERT_EQ(entries.back().second.size(), 2U);
   EXPECT_EQ(entries.back().second[0].text,

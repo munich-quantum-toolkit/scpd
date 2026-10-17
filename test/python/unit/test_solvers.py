@@ -405,7 +405,7 @@ def test_gurobi_is_unavailable_without_a_license_and_releases_its_environment(
 
 
 def test_gurobi_returns_the_values_in_the_order_of_the_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Gurobi reads the MPS text, honours the limits and answers by variable name."""
+    """Gurobi reads the MPS text, honors the limits and answers by variable name."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi())
 
     answer = solve_mps("NAME pair\nENDATA\n", ["x", "y"], time_limit=5.0, relative_gap=0.01, threads=4)

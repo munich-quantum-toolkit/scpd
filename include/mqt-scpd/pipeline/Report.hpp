@@ -191,8 +191,10 @@ public:
    * backend has no new state, the check of the observer repeats the last one,
    * so that a progress sink that throws stops the solve. HiGHS calls the check
    * only for a model without integer variables, which has no state of a
-   * search, so there the check reports the task without figures. While HiGHS
-   * solves the linear relaxation of a mixed-integer model, it calls neither.
+   * search, so there the check reports the task without figures. HiGHS calls
+   * neither during presolve and postsolve, while it solves the linear
+   * relaxation of a mixed-integer model, or inside a sub-MIP of its
+   * heuristics.
    *
    * @param task What the solve is for, such as "solving the assignment".
    * @return The observer.

@@ -412,6 +412,9 @@ class Console:
             with reader_gone_as_broken_pipe():
                 self._rich.print(text)
         except BrokenPipeError:
+            # On Windows, reader_gone_as_broken_pipe reports the reader as gone, and rich does not call
+            # on_broken_pipe then.
+            self._rich.quiet = True
             self._rich.reader_gone = True
             raise
 

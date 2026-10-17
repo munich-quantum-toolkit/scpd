@@ -169,7 +169,8 @@ table Lattice {
   points: [geometry.Point] (required);
   /// Two point indices per edge, flat.
   edges: [uint32] (required);
-  /// The edges the solution selected, as indices into `edges` divided by two.
+  /// The edges of the connections, as indices into `edges` divided by two.
+  /// The edges of a wire that the connections leave out are not among them.
   selected: [uint32] (required);
 }
 
@@ -178,8 +179,8 @@ table Lattice {
 table GlobalRouting {
   lattices: [Lattice] (required);
   /// The connections of the inner circuit that the solved flow implies. A
-  /// wire that reaches no target, which only a solve that stops early keeps,
-  /// is not among them.
+  /// wire that reaches no target or a closed loop over crossings, which only
+  /// a solve that stops early keeps, is not among them.
   connections: [design.Connection] (required);
   /// The outer port ring that the Assignment stage consumes: the configured
   /// ring in its order, without the ring end of each outer bridge where no

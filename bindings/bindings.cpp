@@ -184,7 +184,9 @@ nb::list figuresOf(const std::vector<mqt::scpd::pipeline::Figure>& figures) {
 }
 
 /// The report of a stage, handed to a Python object with the methods line,
-/// entry, result and progress, or a report that drops everything for None.
+/// entry, result and progress. For None, the report drops everything and only
+/// gives Python the chance to raise a pending interrupt where the stage
+/// reports progress, so that Ctrl-C stops a stage without a reporter too.
 ///
 /// The stage runs with the GIL released, so every call takes it back first.
 /// The callables only refer to the object, which the caller keeps alive for
@@ -194,7 +196,19 @@ mqt::scpd::pipeline::Report reportTo(const nb::object& reporter,
   using mqt::scpd::pipeline::Detail;
   using mqt::scpd::pipeline::Figure;
   if (reporter.is_none()) {
-    return {};
+    return {Detail::Summary,
+            {.progress = [](const std::string_view /*task*/,
+                            const std::string_view /*detail*/,
+                            const std::uint64_t /*done*/,
+                            const std::uint64_t /*total*/) {
+              const nb::gil_scoped_acquire gil;
+              // Python.h, which nanobind includes, declares the call in a
+              // header of its own that an extension does not include itself.
+              // NOLINTNEXTLINE(misc-include-cleaner)
+              if (PyErr_CheckSignals() != 0) {
+                throw nb::python_error();
+              }
+            }}};
   }
   const auto level = static_cast<Detail>(std::clamp(verbosity, 0, 3));
   return {
@@ -276,8 +290,9 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "chip"_a, "config"_a, "steps"_a,
       "What would stop a run of the given steps on a classified chip, before "
       "any stage runs: an unknown implementation name, a detail grid above "
-      "the cell limit, a ring that the global step refuses, a missing or odd "
-      "launcher_target, launchers listed in the direction of the port ring, "
+      "the cell limit, a ring that the global step refuses, a missing "
+      "launcher_target or one whose sum with feedline_terminations is odd, "
+      "launchers listed in the direction of the port ring, "
       "fewer than three launchers off one line on a chip with resonators, or "
       "ring counts that the assignment refuses. Empty when there is "
       "nothing.");

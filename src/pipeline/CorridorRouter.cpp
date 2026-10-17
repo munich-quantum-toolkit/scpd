@@ -369,22 +369,6 @@ public:
     }
   }
 
-  /// Whether a route can be laid down as it stands: every slot still free,
-  /// and every chord clear of the ones already drawn.
-  [[nodiscard]] bool fits(const Request& request, const Route& route) const {
-    if (std::ranges::any_of(route.slots, [&](const std::size_t slot) {
-          return heldByAnother(slot, request.connection);
-        })) {
-      return false;
-    }
-    auto clearAll = true;
-    walk(request, route,
-         [&](const Chord& chord, const PartitionLabel partition) {
-           clearAll = clearAll && clear(chord, partition);
-         });
-    return clearAll;
-  }
-
   /// The layout position of a slot, for the artifact.
   [[nodiscard]] fbg::Point layoutOf(const std::size_t slot) const {
     return grid::cornerToLayout(detailGrid, slotList[slot].place.x,
@@ -905,7 +889,8 @@ public:
     // the rounds go up and down, and on a crowded chip two rounds can undo
     // each other until the last. The plan of the round with the fewest fails
     // is kept, the latest of them on a tie. Its fails include the wires that
-    // the round ripped near its end and had no sweep left to place again.
+    // the round ripped after its sweep had passed them, and so did not place
+    // again.
     auto best = routes;
     auto bestLeft = requests.size();
     std::uint32_t bestRound = 0;
@@ -1058,8 +1043,7 @@ private:
   /// that is what it takes.
   ///
   /// A wire that fails puts every neighbor it ripped back as it was, so a
-  /// failed attempt costs the plan nothing, and it keeps the way it had when
-  /// that still fits.
+  /// failed attempt costs the plan nothing, and it keeps the way it had.
   static void reroute(Corridors& corridors,
                       const std::vector<Request>& requests,
                       std::vector<std::optional<Route>>& routes,
@@ -1111,8 +1095,9 @@ private:
     // The sweep takes out whoever stands beside this wire on the ring, which
     // is rarely who stands in its way. The route the wire would take on an
     // empty chip names the wires that hold a slot it wants and the ones whose
-    // chords it would cross. Those come out one at a time, and the sweep
-    // gives each of them a way of its own.
+    // chords it would cross. Those come out one at a time. The sweep gives a
+    // way of its own to each of them that it has not passed yet; one that it
+    // has passed waits for the next round or the free-slot pass.
     std::vector<std::pair<std::size_t, Route>> displaced;
     std::optional<Route> wanted;
     for (std::uint32_t attempt = 0; attempt < sweeps.maxRelaxation; ++attempt) {
@@ -1153,10 +1138,10 @@ private:
       corridors.chargeFor(request, *wanted);
     }
 
-    // Nothing worked, so the wire keeps the way it had if that still fits. It
-    // was taken out at the top of the attempt, and a wire earlier in the
-    // sweep may have taken part of it since; only then is it left out.
-    if (before.has_value() && corridors.fits(request, *before)) {
+    // Nothing worked, so the wire gets back the way it had. Every wire that
+    // came out above went back to its own way, so the plan is the plan at
+    // the top of the attempt without this wire, and the old way fits again.
+    if (before.has_value()) {
       corridors.commit(request, *before);
       routes[index] = before;
     }

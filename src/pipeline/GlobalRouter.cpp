@@ -615,8 +615,9 @@ public:
       }
     }
     const auto solved = readBack(routing, lattices, arcs, solution, circuit);
-    // The wires that reach no target are not in the artifact, so their
-    // length comes out of the objective too.
+    // The wires that reach no target and the closed loops over crossings
+    // are not in the artifact, so their length comes out of the objective
+    // too.
     routing.objective = solution.objective -
                         (penalty * static_cast<double>(missed)) -
                         solved.dropped;
@@ -1411,8 +1412,7 @@ private:
       std::vector<std::uint32_t> edges;
     };
     std::vector<Wire> wires;
-    // The length of the components without two port ends, such as a closed
-    // loop over crossings.
+    // The length of the closed loops over crossings.
     double loops = 0.0;
     for (std::size_t index = 0; index < lattices.size(); ++index) {
       std::vector<bool> seen(lattices[index].nodes.size(), false);
@@ -1447,6 +1447,10 @@ private:
             }
           }
         }
+        // The rows give every component with ports exactly two port ends, so
+        // a component without two is a closed loop over crossings that
+        // touches no port. A solve that stops early can keep one; it connects
+        // nothing, so the artifact leaves it out.
         if (ends.size() != 2) {
           loops += wire.length;
           continue;
@@ -1467,13 +1471,13 @@ private:
 
     // A wire may cross internal bridges on its way to its target. A solve
     // that stops early may keep wires that reach no target: a wire between
-    // the inner ends of two ring bridges, a closed loop through internal
-    // bridges, or a closed loop over crossings that touches no port. The
-    // optimum never takes such a wire, since it only adds length. It connects
-    // nothing, and the ring end of its source would surface with nothing
-    // behind it, so the artifact leaves it out. Such a
-    // wire may still have taken the room of a gate in the model, so the
-    // stage can count a ring port without room that an optimal solve serves.
+    // the inner ends of two ring bridges, or a closed loop through internal
+    // bridges. The optimum never takes such a wire, since it only adds
+    // length. It connects nothing, and the ring end of its source would
+    // surface with nothing behind it, so the artifact leaves it out. Such a
+    // wire, and a closed loop over crossings, may still have taken the room
+    // of a gate in the model, so the stage can count a ring port without room
+    // that an optimal solve serves.
     std::unordered_map<std::uint32_t, std::uint32_t> group;
     const auto find = [&group](std::uint32_t port) {
       while (group.contains(port) && group.at(port) != port) {
