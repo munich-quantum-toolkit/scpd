@@ -22,13 +22,14 @@ def test_package_imports() -> None:
     assert pyscpd.__doc__ is not None
 
 
-def test_distribution_carries_the_licences_of_the_linked_libraries() -> None:
-    """The extension links HiGHS, FlatBuffers and nlohmann/json, so their licences go with it."""
+def test_distribution_carries_the_licenses_of_the_linked_libraries() -> None:
+    """The extension links HiGHS with its LP reader, FlatBuffers and nlohmann/json, so their licenses go with it."""
     files = metadata.files("mqt-scpd") or []
-    licences = {file.name for file in files if file.parent.name == "licenses"}
+    licenses = {file.name for file in files if file.parent.name == "licenses"}
     assert {
         "LICENSE",
         "HiGHS-LICENSE.txt",
+        "HiGHS-filereaderlp-LICENSE.txt",
         "FlatBuffers-LICENSE.txt",
         "nlohmann_json-LICENSE.txt",
-    } <= licences
+    } <= licenses

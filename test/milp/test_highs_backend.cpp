@@ -11,6 +11,7 @@
 // The in-process backend, on models small enough that the answer is known by
 // hand. HiGHS is linked in, so these run everywhere.
 
+#include "../ScopedBackend.hpp"
 #include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/milp/Model.hpp"
 
@@ -457,6 +458,26 @@ TEST(HighsBackend, EndsTheSolveWhenTheObserverThrowsAndRethrows) {
                std::runtime_error);
 }
 
+TEST(HighsBackend, EndsALinearSolveWhenTheCheckThrows) {
+  // A linear program reports no progress, so only the check gives Python a
+  // chance to raise a pending KeyboardInterrupt. It ends the solve long
+  // before the time limit.
+  const auto model = largeCover();
+  SolveOptions options;
+  options.timeLimit = 60.0;
+  std::size_t checks = 0;
+  options.observer.check = [&checks] {
+    ++checks;
+    throw std::runtime_error("stopped by the observer");
+  };
+
+  const auto start = std::chrono::steady_clock::now();
+  EXPECT_THROW(static_cast<void>(makeHighsBackend()->solve(model, options)),
+               std::runtime_error);
+  EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(30));
+  EXPECT_EQ(checks, 1U);
+}
+
 TEST(HighsBackend, EndsTheSolveWhenOnlyTheLogObserverThrows) {
   // The log can be the only observer, as at the solver log level without a
   // progress display. Its exception still ends the solve at the next chance,
@@ -501,13 +522,11 @@ TEST(SolverChoice, UsesARegisteredExternalBackendOnlyWhenAskedFor) {
         solution.values.assign(names.size(), 0.0);
         return solution;
       });
-  setExternalBackend(std::move(stub));
+  const test::ScopedBackend registered(std::move(stub));
 
   EXPECT_EQ(resolveBackend(BackendChoice::External)->name(), "stub");
   // HiGHS is never replaced by what is registered.
   EXPECT_EQ(resolveBackend(BackendChoice::Highs)->name(), "highs");
-
-  setExternalBackend(nullptr);
 }
 
 TEST(MpsBackend, RefusesAWrongNumberOfValues) {

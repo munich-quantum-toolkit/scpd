@@ -39,11 +39,6 @@ def _config(chip: str) -> Path:
     return DATA / "inputs" / chip / "config.toml"
 
 
-def _chip_input(chip: str) -> Path:
-    assert DATA is not None
-    return DATA / "inputs" / chip / "routing_config.json"
-
-
 def test_every_benchmark_is_present() -> None:
     """The clone carries the eight chips of the paper."""
     assert CHIPS == ["17q", "21q", "33q", "45q", "4q", "57q", "69q", "9q"]
@@ -51,7 +46,7 @@ def test_every_benchmark_is_present() -> None:
 
 @pytest.mark.parametrize("chip", CHIPS)
 def test_the_configuration_follows_table_one(chip: str) -> None:
-    """The configuration obeys the rules for a shipped file, carries Table I and plans the chip."""
+    """The configuration obeys the rules for a shipped file and carries Table I and the launcher target of a plan."""
     assert DATA is not None
     config = load_config(_config(chip), strict=True)
     with (DATA / "qor" / "qor.csv").open(encoding="utf-8") as file:

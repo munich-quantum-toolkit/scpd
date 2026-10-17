@@ -426,20 +426,20 @@ TEST(CapacityPlanner, PutsATargetInThePartitionAroundIt) {
   ASSERT_EQ(scene.targetCell.size(), 2U);
   for (const auto cell : scene.targetCell) {
     const auto at = scene.detail.cell(cell);
-    const auto centre = scene.detail.toLayout(at.x(), at.y());
-    const auto label = partitionAt(plan, centre.x(), centre.y());
+    const auto center = scene.detail.toLayout(at.x(), at.y());
+    const auto label = partitionAt(plan, center.x(), center.y());
     ASSERT_TRUE(label.has_value());
-    std::size_t neighbours = 0;
+    std::size_t neighbors = 0;
     for (const auto& [dx, dy] :
          {std::pair{-1.0, 0.0}, {1.0, 0.0}, {0.0, -1.0}, {0.0, 1.0}}) {
       const auto there = scene.detail.toLayout(at.x() + dx, at.y() + dy);
       if (const auto beside = partitionAt(plan, there.x(), there.y())) {
         EXPECT_EQ(*beside, *label)
             << "target cell (" << at.x() << ", " << at.y() << ")";
-        ++neighbours;
+        ++neighbors;
       }
     }
-    EXPECT_GT(neighbours, 0U);
+    EXPECT_GT(neighbors, 0U);
   }
 }
 
@@ -510,7 +510,7 @@ TEST(CapacityPlanner, JoinsThePartitionsOnBothSidesOfEveryGate) {
     const auto middleX = (from.x() + to.x()) / 2.0;
     const auto middleY = (from.y() + to.y()) / 2.0;
     // The first partition met when walking away from the gate on one side,
-    // from the centre of the detail cell next to the cells that the gate line
+    // from the center of the detail cell next to the cells that the gate line
     // runs through. Those cells belong to the chamber beyond, which may be
     // no more than two cells wide.
     const auto beyond = static_cast<int>(std::ceil(
@@ -551,8 +551,8 @@ TEST(CapacityPlanner, LeavesTheBandItTookBackOutOfEveryPartition) {
     }
     ++freeReserved;
     const auto at = scene.detail.cell(cell);
-    const auto centre = scene.detail.toLayout(at.x(), at.y());
-    EXPECT_FALSE(partitionAt(plan, centre.x(), centre.y()).has_value())
+    const auto center = scene.detail.toLayout(at.x(), at.y());
+    EXPECT_FALSE(partitionAt(plan, center.x(), center.y()).has_value())
         << "reserved cell (" << at.x() << ", " << at.y() << ")";
   }
   EXPECT_GT(freeReserved, 0U);

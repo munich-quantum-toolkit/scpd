@@ -21,7 +21,7 @@ import mqt.scpd.flatbuffers
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-#: The variables through which rich forces colour or a terminal. CI runners set ``FORCE_COLOR``, and
+#: The variables through which rich forces color or a terminal. CI runners set ``FORCE_COLOR``, and
 #: the tests compare the plain text that a file receives. ``pyproject.toml`` names the fixture in
 #: ``usefixtures``, so that every test uses it.
 _TERMINAL_VARIABLES = ("FORCE_COLOR", "NO_COLOR", "TTY_COMPATIBLE", "TTY_INTERACTIVE", "COLUMNS", "LINES")

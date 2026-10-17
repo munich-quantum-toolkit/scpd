@@ -73,7 +73,7 @@ class SolverUnavailableError(RuntimeError):
 
 
 def available() -> tuple[bool, str]:
-    """Whether ``gurobipy`` can be imported and a licence acquired.
+    """Whether ``gurobipy`` can be imported and a license acquired.
 
     Returns:
         Whether Gurobi can be used, and why not when it cannot.
@@ -87,7 +87,7 @@ def available() -> tuple[bool, str]:
         environment.setParam("OutputFlag", 0)
         environment.start()
     except gurobipy.GurobiError as error:
-        return False, f"gurobipy has no usable licence ({error})"
+        return False, f"gurobipy has no usable license ({error})"
     finally:
         environment.dispose()
     return True, ""
@@ -164,7 +164,7 @@ def solve_mps(
     try:
         import gurobipy  # ruff: ignore[import-outside-top-level]  # ty: ignore[unresolved-import]
     except ImportError as error:
-        msg = "gurobipy is not installed; install it and a licence, or use the highs backend"
+        msg = "gurobipy is not installed; install it and a license, or use the highs backend"
         raise SolverUnavailableError(msg) from error
 
     # Gurobi reads a model from a file, so the text goes through one. That takes milliseconds
@@ -231,8 +231,8 @@ def register() -> None:
     """Install this backend as the external solver of the process.
 
     The core uses the backend only for a configuration that asks for ``gurobi``. Registering it
-    imports nothing and acquires no licence: a solve without gurobipy raises
-    :class:`SolverUnavailableError`, and a solve without a licence raises the error of Gurobi.
+    imports nothing and acquires no license: a solve without gurobipy raises
+    :class:`SolverUnavailableError`, and a solve without a license raises the error of Gurobi.
     """
     from .. import pyscpd  # ruff: ignore[import-outside-top-level]
 

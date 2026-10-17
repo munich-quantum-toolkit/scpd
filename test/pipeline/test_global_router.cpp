@@ -12,6 +12,7 @@
 // reaches them, the ring it leaves for the assignment, and what it reports.
 
 #include "../MpsSolver.hpp"
+#include "../ScopedBackend.hpp"
 #include "MiniFixture.hpp"
 #include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
@@ -396,6 +397,17 @@ ConfigT handConfig(const std::vector<std::string>& ring) {
   config.stages->solver =
       std::make_unique<flatbuffers::config::SolverParamsT>();
   return config;
+}
+
+/// Adds a rule to a hand configuration that pairs `<name>.<first>` with
+/// `<name>.<second>` into one bridge.
+void addBridgeRule(ConfigT& config, const std::string_view name,
+                   const std::string_view first,
+                   const std::string_view second) {
+  auto rule = std::make_unique<BridgeRuleT>();
+  rule->first = std::format(R"(^({})\.{}$)", name, first);
+  rule->second = std::format(R"(^({})\.{}$)", name, second);
+  config.ports->bridge_pairs.push_back(std::move(rule));
 }
 
 /// Everything the stage reports, as a renderer would receive it.
@@ -794,12 +806,13 @@ TEST(GlobalRouter, FindsTheSameCircuitThroughMpsText) {
               {.targets = indicesOf(chip, {"C12.port2"}), .gate = {}}});
   const auto direct = makeHananMilpRouter()->run(chip, plan, config, {});
   config.stages->solver->backend = "gurobi";
-  milp::setExternalBackend(
-      milp::makeMpsBackend("mps", milp::test::solveMpsText));
+  std::size_t solves = 0;
+  const milp::test::ScopedBackend backend(
+      milp::test::countingMpsBackend(solves));
 
   const auto throughMps = makeHananMilpRouter()->run(chip, plan, config, {});
-  milp::setExternalBackend(nullptr);
 
+  EXPECT_EQ(solves, 1U);
   ASSERT_EQ(direct.connections.size(), 1U);
   EXPECT_EQ(throughMps.connections.size(), direct.connections.size());
   EXPECT_NEAR(throughMps.objective, direct.objective, 1.0e-9);
@@ -1027,6 +1040,62 @@ TEST(GlobalRouter, GivesANodeThatARingPortSharesToTheTarget) {
     EXPECT_NEAR(routing.objective, 200.0, 1.0e-9);
     ASSERT_EQ(recorder.fails.size(), 1U);
     EXPECT_EQ(recorder.fails[0], 0U);
+  }
+}
+
+TEST(GlobalRouter,
+     GivesANodeThatAnInternalBridgeSharesToTheTargetWhereNoWireMayCrossIt) {
+  // The points in front of the end I.port1 of an internal bridge and the
+  // target T meet. Without internal_bridges, the bridge carries no flow, so
+  // T keeps the node in either order of the chain. With internal_bridges,
+  // both ports may carry a wire, and the stage refuses the chip.
+  auto patterns = handPatterns();
+  patterns.bridge_pair = R"(^(S\.port[01]|I\.port[12])$)";
+  const auto chip = handChip(
+      {ringEnd(),
+       {.label = "S.port0", .center = Point(0.0, 0.0)},
+       {.label = "T.port0", .center = Point(300.0, 0.0), .orientation = 180.0},
+       {.label = "I.port1",
+        .center = Point(200.0, 100.0),
+        .orientation = 270.0},
+       {.label = "I.port2", .center = Point(500.0, 500.0)}},
+      patterns);
+  auto config = handConfig({"S.port1"});
+  addBridgeRule(config, "I", "port1", "port2");
+  config.rules = std::make_unique<DesignRulesT>();
+  config.rules->min_straight_length = 100.0;
+
+  for (const auto& order :
+       {std::vector<std::string>{"I.port1", "T.port0", "S.port0"},
+        std::vector<std::string>{"T.port0", "I.port1", "S.port0"}}) {
+    const auto plan =
+        planOf({{.targets = indicesOf(chip, order), .gate = {}},
+                {.targets = indicesOf(chip, {"I.port2"}), .gate = {}}});
+    config.stages->global->internal_bridges = false;
+    Recorder recorder;
+
+    const auto routing = makeHananMilpRouter()->run(
+        chip, plan, config, recorder.report(Detail::Summary));
+
+    ASSERT_EQ(routing.connections.size(), 1U) << order[0];
+    ASSERT_NE(routing.connections[0]->source, nullptr);
+    EXPECT_EQ(routing.connections[0]->source->index(),
+              indexOf(chip, "S.port0"));
+    EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "T.port0"));
+    EXPECT_NEAR(routing.objective, 100.0, 1.0e-9);
+    ASSERT_EQ(recorder.fails.size(), 1U);
+    EXPECT_EQ(recorder.fails[0], 0U);
+
+    config.stages->global->internal_bridges = true;
+    try {
+      static_cast<void>(makeHananMilpRouter()->run(chip, plan, config, {}));
+      ADD_FAILURE() << "two ports that may carry a wire shared a node";
+    } catch (const std::invalid_argument& error) {
+      EXPECT_NE(
+          std::string_view(error.what()).find("meet the lattice at one node"),
+          std::string_view::npos)
+          << error.what();
+    }
   }
 }
 
@@ -1414,12 +1483,12 @@ TEST(GlobalRouter, NamesEveryReachedTargetInAFeasibleSolution) {
                                            "C12.port0", "Q1.port1"}),
                .gate = {}},
               {.targets = indicesOf(chip, {"C12.port2"}), .gate = {}}});
-  milp::setExternalBackend(std::make_shared<LongestCircuitBackend>());
+  const milp::test::ScopedBackend backend(
+      std::make_shared<LongestCircuitBackend>());
   Recorder recorder;
 
   const auto routing = makeHananMilpRouter()->run(
       chip, plan, config, recorder.report(Detail::Summary));
-  milp::setExternalBackend(nullptr);
 
   ASSERT_EQ(recorder.fails.size(), 1U);
   EXPECT_EQ(recorder.fails[0], 0U);
@@ -1428,6 +1497,107 @@ TEST(GlobalRouter, NamesEveryReachedTargetInAFeasibleSolution) {
   EXPECT_EQ(routing.connections[0]->source->index(),
             indexOf(chip, "C12.port1"));
   EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "Q2.port0"));
+}
+
+TEST(GlobalRouter, LeavesOutAWireBetweenTwoRingBridgesInAFeasibleSolution) {
+  // Three ring bridges and one target share a lattice, and every ring end
+  // lies on no chain. The longest circuit runs a second wire between the
+  // inner ends of two bridges. That wire reaches no target, so the artifact
+  // names only the wire to T, and the ring keeps only the ring end of its
+  // source.
+  PortPatternsT patterns;
+  patterns.launcher = R"(^Chip\.port\d+$)";
+  patterns.resonator = R"(^R\d*\.port0$)";
+  patterns.conventional = R"(^T\.port0$)";
+  patterns.bridge_pair = R"(^[SVW]\.port[01]$)";
+  patterns.component = R"(^([^.]+)\.port\d+$)";
+  const auto chip = handChip(
+      {ringEnd(),
+       {.label = "V.port1",
+        .center = Point(-2000.0, -1000.0),
+        .orientation = 180.0},
+       {.label = "W.port1",
+        .center = Point(-3000.0, -1000.0),
+        .orientation = 180.0},
+       {.label = "S.port0", .center = Point(0.0, 0.0)},
+       {.label = "V.port0", .center = Point(0.0, 100.0)},
+       {.label = "W.port0",
+        .center = Point(300.0, 200.0),
+        .orientation = 180.0},
+       {.label = "T.port0", .center = Point(300.0, 0.0), .orientation = 180.0}},
+      patterns);
+  auto config = handConfig({"S.port1", "V.port1", "W.port1"});
+  addBridgeRule(config, "V", "port0", "port1");
+  addBridgeRule(config, "W", "port0", "port1");
+  config.stages->solver->backend = "gurobi";
+  const auto plan = planOf({{.targets = indicesOf(chip, {"T.port0", "S.port0",
+                                                         "V.port0", "W.port0"}),
+                             .gate = {}}});
+  const milp::test::ScopedBackend backend(
+      std::make_shared<LongestCircuitBackend>());
+  Recorder recorder;
+
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Summary));
+
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 0U);
+  ASSERT_EQ(routing.connections.size(), 1U);
+  ASSERT_NE(routing.connections[0]->source, nullptr);
+  EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "T.port0"));
+  const auto& source = chip.ports[routing.connections[0]->source->index()];
+  ASSERT_TRUE(source->label.ends_with(".port0"));
+  const auto surface =
+      source->label.substr(0, source->label.size() - 1).append("1");
+  EXPECT_EQ(ringOf(routing), indicesOf(chip, {surface}));
+}
+
+TEST(GlobalRouter, LeavesOutALoopThroughInternalBridgesInAFeasibleSolution) {
+  // The ends of two internal bridges I and J lie on two lattices of their
+  // own, apart from the lattice of S.port0 and T. The longest circuit runs a
+  // wire from I to J on one lattice and back on the other: a loop that no
+  // ring bridge feeds and that reaches no target. The artifact names only
+  // the wire to T and marks only its edges.
+  auto patterns = handPatterns();
+  patterns.bridge_pair = R"(^(S\.port[01]|[IJ]\.port[12])$)";
+  const auto chip = handChip(
+      {ringEnd(),
+       {.label = "S.port0", .center = Point(0.0, 0.0)},
+       {.label = "T.port0", .center = Point(300.0, 0.0), .orientation = 180.0},
+       {.label = "I.port1", .center = Point(0.0, 1000.0)},
+       {.label = "J.port1",
+        .center = Point(400.0, 1000.0),
+        .orientation = 180.0},
+       {.label = "I.port2", .center = Point(0.0, 2000.0)},
+       {.label = "J.port2",
+        .center = Point(400.0, 2000.0),
+        .orientation = 180.0}},
+      patterns);
+  auto config = handConfig({"S.port1"});
+  addBridgeRule(config, "I", "port1", "port2");
+  addBridgeRule(config, "J", "port1", "port2");
+  config.stages->global->internal_bridges = true;
+  config.stages->solver->backend = "gurobi";
+  const auto plan = planOf(
+      {{.targets = indicesOf(chip, {"T.port0", "S.port0"}), .gate = {}},
+       {.targets = indicesOf(chip, {"I.port1", "J.port1"}), .gate = {}},
+       {.targets = indicesOf(chip, {"I.port2", "J.port2"}), .gate = {}}});
+  const milp::test::ScopedBackend backend(
+      std::make_shared<LongestCircuitBackend>());
+
+  const auto routing = makeHananMilpRouter()->run(chip, plan, config, {});
+
+  ASSERT_EQ(routing.connections.size(), 1U);
+  ASSERT_NE(routing.connections[0]->source, nullptr);
+  EXPECT_EQ(routing.connections[0]->source->index(), indexOf(chip, "S.port0"));
+  EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "T.port0"));
+  ASSERT_EQ(routing.lattices.size(), 3U);
+  std::size_t marked = 0;
+  for (const auto& lattice : routing.lattices) {
+    marked += lattice->selected.empty() ? 0 : 1;
+  }
+  EXPECT_EQ(marked, 1U);
+  EXPECT_NEAR(selectedLength(routing), 300.0, 1.0e-9);
 }
 
 TEST(GlobalRouter, GivesTheSameAnswerTwice) {

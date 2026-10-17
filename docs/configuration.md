@@ -123,8 +123,10 @@ gets no feed.
 
 The lattice lines of a port run through the point
 `[design_rules] min_straight_length` in front of it. The step refuses two ports
-that can carry an inner wire when these points coincide. A port without an inner
-wire, such as a ring port, may share its point with any port.
+of one capacity chain that can carry an inner wire when these points coincide,
+since both would meet the lattice of their chain at one node. A port without an
+inner wire, such as a ring port, may share its point with any port. `doctor`
+does not check this; the step refuses such a chip when it runs.
 
 The wires of the ring ports behind a gate of a capacity chain pass that gate on
 their way to a launcher, and so do the inner wires that surface there. When the
@@ -205,11 +207,11 @@ of `1024` is the largest value that Gurobi accepts.
 
 ## `[stages.corridor]`
 
-| Key              | Default | Meaning                                                                                                                                                                 |
-| ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                                           |
-| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward; at least `1`                                                                                        |
-| `max_relaxation` | `4`     | How many neighbouring connections along a sweep a connection without a way may rip up, and how many wires in its way it may move aside; the stage limits it (see below) |
+| Key              | Default | Meaning                                                                                                                                                                |
+| ---------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                                          |
+| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward; at least `1`                                                                                       |
+| `max_relaxation` | `4`     | How many neighboring connections along a sweep a connection without a way may rip up, and how many wires in its way it may move aside; the stage limits it (see below) |
 
 The later sweeps let a connection without a way take room that another
 connection has not claimed yet. A sweep can take a way from a connection that
@@ -221,8 +223,9 @@ to place again. After the rounds, one last pass offers every connection without
 a way the free slots of that plan, and rips up nothing; the stage block shows it
 as `free slots` when it places a connection. Within a sweep, a connection
 without a way also raises the price of the slots in its way that another wire
-holds, so that the next sweeps leave them to it. The pass that moves wires aside
-does this, so with `max_relaxation` at `0`, no price rises.
+holds, so that the next sweeps leave them to it. The step that moves the wires
+in its way aside raises the price, so with `max_relaxation` at `0`, no price
+rises.
 
 The stage limits `max_relaxation` to a value below half the number of
 connections. A connection that may rip up all the others takes their room, they

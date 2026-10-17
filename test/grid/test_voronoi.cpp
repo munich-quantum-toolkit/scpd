@@ -52,7 +52,7 @@ TEST(MedialAxis, RunsAlongTheMiddleOfAStraightCorridor) {
   const auto edges = medialAxis(mask);
   ASSERT_FALSE(edges.empty());
 
-  // Every surviving edge has to sit near the centre line of the corridor,
+  // Every surviving edge has to sit near the center line of the corridor,
   // which is the row halfway between the two walls.
   constexpr double center = 10.0;
   for (const auto& edge : edges) {

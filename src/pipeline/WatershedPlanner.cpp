@@ -561,7 +561,7 @@ private:
     }
   }
 
-  /// One chamber of a chain, labelled, then the chambers beyond its gates.
+  /// One chamber of a chain, labeled, then the chambers beyond its gates.
   ///
   /// A cell that an earlier chamber of the walk holds keeps its label; only
   /// the seeds beside the gate can be such cells. A reserved cell keeps its
@@ -572,7 +572,7 @@ private:
   /// chamber before the gate may not reach every cell of the line, and
   /// without a label such a cell would part the two chambers.
   ///
-  /// @return Whether the chamber was labelled, which it is unless it reaches
+  /// @return Whether the chamber was labeled, which it is unless it reaches
   /// a launcher.
   [[nodiscard]] bool stamp(const std::vector<std::size_t>& seeds,
                            const std::unordered_set<std::size_t>& skip) {

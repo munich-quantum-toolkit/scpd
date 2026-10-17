@@ -124,7 +124,7 @@ class Assignment(object):
     # A conventional port is fed at the launcher slot that `launchers` names.
     # A resonator is fed at no launcher: the wire that reaches it comes past
     # the slot, so its feed sits on the segment between its own launcher and a
-    # neighbouring one. The resonators fed on one segment divide it evenly, in
+    # neighboring one. The resonators fed on one segment divide it evenly, in
     # the order the walk of the ring reaches them. No two feeds lie closer than
     # the wire spacing.
     # Assignment

@@ -164,7 +164,7 @@ double crossingPitch(const ConfigT& config) {
 std::vector<grid::Point> crossingSlots(const grid::PartitionBorder& border,
                                        const CapacityScene& scene,
                                        const double pitch) {
-  // The rectangle runs through the centres of the outermost launcher cells.
+  // The rectangle runs through the centers of the outermost launcher cells.
   auto minX = std::numeric_limits<double>::max();
   auto minY = std::numeric_limits<double>::max();
   auto maxX = std::numeric_limits<double>::lowest();
@@ -179,7 +179,7 @@ std::vector<grid::Point> crossingSlots(const grid::PartitionBorder& border,
     maxY = std::max(maxY, y);
   }
   // Launchers on one line span no interval along that axis. The chip bounds
-  // hold the port centres, so such a line lies on the edge of the chip, and
+  // hold the port centers, so such a line lies on the edge of the chip, and
   // the grid bounds the slots along that axis instead.
   const auto width = static_cast<double>(scene.detail.width);
   const auto height = static_cast<double>(scene.detail.height);

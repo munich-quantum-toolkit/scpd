@@ -46,7 +46,7 @@ namespace fbd = flatbuffers::design;
 namespace fbg = flatbuffers::geometry;
 
 /// Two lattice coordinates closer than this are the same line. The chip is
-/// measured in micrometres, so this is far below anything the input resolves.
+/// measured in micrometers, so this is far below anything the input resolves.
 constexpr double COORDINATE_EPSILON = 1.0e-7;
 
 /// An edge runs the way a port faces only where the cosine of the angle
@@ -166,7 +166,7 @@ struct Lattice {
     fbg::Point position;
     /// The port this node is, or none.
     std::optional<std::uint32_t> port;
-    /// The axis neighbours, by node index.
+    /// The axis neighbors, by node index.
     std::vector<std::size_t> neighbors;
   };
   /// The nodes, row by row.
@@ -337,7 +337,7 @@ bool throughArtwork(const ChipT& chip, const fbg::Point& from,
 /// The lines of a lattice through @p values, in ascending order.
 ///
 /// Two anchors on one line can differ in the last bits, since each is a
-/// port centre moved along its direction. A value within COORDINATE_EPSILON
+/// port center moved along its direction. A value within COORDINATE_EPSILON
 /// of the first value of its run is the same line, so the run gives one line
 /// and not several parallel ones a hair apart.
 std::vector<double> linesThrough(const std::set<double>& values) {
@@ -1380,38 +1380,33 @@ private:
     // The edges the solution selected, per lattice and node.
     std::vector<std::vector<std::vector<std::size_t>>> selected(
         lattices.size());
-    Circuit solved;
     for (std::size_t index = 0; index < lattices.size(); ++index) {
       selected[index].assign(lattices[index].nodes.size(), {});
     }
+    // The ports with an outgoing arc. The flow leaves the source of a wire.
+    std::unordered_set<std::uint32_t> leaving;
     for (const auto& arc : arcs) {
       if (!solution.isSet(arc.variable)) {
         continue;
       }
       selected[arc.lattice][arc.from].push_back(arc.to);
       selected[arc.lattice][arc.to].push_back(arc.from);
-
-      const auto key =
-          std::pair{std::min(arc.from, arc.to), std::max(arc.from, arc.to)};
-      if (const auto found = edgeIndex[arc.lattice].find(key);
-          found != edgeIndex[arc.lattice].end()) {
-        routing.lattices[arc.lattice]->selected.push_back(found->second);
-      }
-      // A port with an outgoing arc is where a wire of the inner circuit
-      // leaves, which is what the ring has to keep.
       if (const auto port = lattices[arc.lattice].nodes[arc.from].port;
           port.has_value() && !targets.contains(*port)) {
-        solved.sources.insert(*port);
+        leaving.insert(*port);
       }
-    }
-    for (auto& lattice : routing.lattices) {
-      std::ranges::sort(lattice->selected);
-      const auto duplicates = std::ranges::unique(lattice->selected);
-      lattice->selected.erase(duplicates.begin(), duplicates.end());
     }
 
     // Each connected component of the selected edges is one wire. Its two
     // port ends are the connection that the later stages route.
+    struct Wire {
+      std::uint32_t source = 0;
+      std::uint32_t target = 0;
+      double length = 0.0;
+      std::size_t lattice = 0;
+      std::vector<std::uint32_t> edges;
+    };
+    std::vector<Wire> wires;
     for (std::size_t index = 0; index < lattices.size(); ++index) {
       std::vector<bool> seen(lattices[index].nodes.size(), false);
       for (std::size_t start = 0; start < lattices[index].nodes.size();
@@ -1420,7 +1415,8 @@ private:
           continue;
         }
         std::vector<std::uint32_t> ends;
-        double length = 0.0;
+        Wire wire;
+        wire.lattice = index;
         std::vector<std::size_t> pending{start};
         seen[start] = true;
         while (!pending.empty()) {
@@ -1432,7 +1428,11 @@ private:
           }
           for (const auto next : selected[index][node]) {
             if (node < next) {
-              length += edgeWeight(lattices[index], node, next);
+              wire.length += edgeWeight(lattices[index], node, next);
+              if (const auto found = edgeIndex[index].find({node, next});
+                  found != edgeIndex[index].end()) {
+                wire.edges.push_back(found->second);
+              }
             }
             if (!seen[next]) {
               seen[next] = true;
@@ -1444,22 +1444,78 @@ private:
           continue;
         }
         // The target end is where the wire ends; the other end is its source.
-        // A wire between two bridges has no target end. The flow leaves its
-        // source, and a port that is not a target carries one wire, so the end
-        // with an outgoing arc is the source.
+        // A wire between two bridges has no target end. A port that is not a
+        // target carries one wire, so the end with an outgoing arc is the
+        // source.
         const auto targetFirst =
             targets.contains(ends[0]) ||
-            (!targets.contains(ends[1]) && !solved.sources.contains(ends[0]) &&
-             solved.sources.contains(ends[1]));
-        auto connection = std::make_unique<fbd::ConnectionT>();
-        connection->source =
-            std::make_unique<fbd::PortRef>(targetFirst ? ends[1] : ends[0]);
-        connection->target = fbd::PortRef(targetFirst ? ends[0] : ends[1]);
-        connection->source_role = fbd::AssignedRole::ConventionalSource;
-        connection->target_role = fbd::AssignedRole::ConventionalTarget;
-        routing.connections.push_back(std::move(connection));
-        solved.lengths.push_back(length);
+            (!targets.contains(ends[1]) && !leaving.contains(ends[0]) &&
+             leaving.contains(ends[1]));
+        wire.source = targetFirst ? ends[1] : ends[0];
+        wire.target = targetFirst ? ends[0] : ends[1];
+        wires.push_back(std::move(wire));
       }
+    }
+
+    // A wire may cross internal bridges on its way to its target. A solve
+    // that stops early may keep wires that reach no target: a wire between
+    // the inner ends of two ring bridges, or a closed loop through internal
+    // bridges. The optimum never takes such a wire, since it only adds
+    // length. It connects nothing, and the ring end of its source would
+    // surface with nothing behind it, so the artifact leaves it out.
+    std::unordered_map<std::uint32_t, std::uint32_t> group;
+    const auto find = [&group](std::uint32_t port) {
+      while (group.contains(port) && group.at(port) != port) {
+        port = group.at(port);
+      }
+      return port;
+    };
+    const auto join = [&](const std::uint32_t a, const std::uint32_t b) {
+      group.try_emplace(a, a);
+      group.try_emplace(b, b);
+      group[find(a)] = find(b);
+    };
+    for (const auto& wire : wires) {
+      join(wire.source, wire.target);
+    }
+    std::unordered_set<std::uint32_t> surfaces;
+    for (const auto& bridge : circuit.outerBridges) {
+      surfaces.insert(bridge.to);
+    }
+    for (const auto& bridge : circuit.bridges) {
+      if (!surfaces.contains(bridge.from) && !surfaces.contains(bridge.to)) {
+        join(bridge.from, bridge.to);
+      }
+    }
+    std::unordered_set<std::uint32_t> reaching;
+    for (const auto& wire : wires) {
+      if (targets.contains(wire.target)) {
+        reaching.insert(find(wire.target));
+      }
+    }
+
+    Circuit solved;
+    for (auto& wire : wires) {
+      if (!reaching.contains(find(wire.source))) {
+        continue;
+      }
+      // The source is where a wire of the inner circuit leaves, which is
+      // what the ring has to keep.
+      solved.sources.insert(wire.source);
+      auto& marked = routing.lattices[wire.lattice]->selected;
+      marked.insert(marked.end(), wire.edges.begin(), wire.edges.end());
+      auto connection = std::make_unique<fbd::ConnectionT>();
+      connection->source = std::make_unique<fbd::PortRef>(wire.source);
+      connection->target = fbd::PortRef(wire.target);
+      connection->source_role = fbd::AssignedRole::ConventionalSource;
+      connection->target_role = fbd::AssignedRole::ConventionalTarget;
+      routing.connections.push_back(std::move(connection));
+      solved.lengths.push_back(wire.length);
+    }
+    for (auto& lattice : routing.lattices) {
+      std::ranges::sort(lattice->selected);
+      const auto duplicates = std::ranges::unique(lattice->selected);
+      lattice->selected.erase(duplicates.begin(), duplicates.end());
     }
     return solved;
   }

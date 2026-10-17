@@ -133,10 +133,10 @@ std::shared_ptr<ISolverBackend> resolveBackend(const BackendChoice choice) {
       return external;
     }
     throw std::runtime_error("no external solver is registered; install "
-                             "gurobipy and a licence, or use 'highs'");
+                             "gurobipy and a license, or use 'highs'");
   }
   // HiGHS is linked in, so this branch always has an answer. That is what
-  // makes an installation without a commercial licence fully functional.
+  // makes an installation without a commercial license fully functional.
   return makeHighsBackend();
 }
 

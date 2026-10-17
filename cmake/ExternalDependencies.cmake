@@ -63,7 +63,7 @@ FetchContent_Declare(nlohmann_json URL ${NLOHMANN_JSON_URL})
 list(APPEND FETCH_PACKAGES nlohmann_json)
 
 # HiGHS solves the mixed-integer programs of the planning stages. It is linked in, so an
-# installation without a commercial solver licence works in full. Gurobi is reached at run time
+# installation without a commercial solver license works in full. Gurobi is reached at run time
 # through gurobipy and an MPS round trip, and is never a build dependency. A different HiGHS version
 # can return a different optimum among equal ones, so the version is pinned. Only the library is
 # built: EXCLUDE_FROM_ALL leaves out the solver executable and the examples. HiGHS compiles with

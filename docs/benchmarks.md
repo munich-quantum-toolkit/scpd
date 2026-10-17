@@ -122,19 +122,19 @@ chains are on layer 32, `plan.feedline`. A chain that ends at a termination ends
 at the feed of its resonator there, with a square mark.
 
 An SVG shows the chip like a layout tool shows a mask: hatched metal on a light
-substrate, a millimetre grid, rulers and a scale bar. Every port is a red
+substrate, a millimeter grid, rulers and a scale bar. Every port is a red
 marker. The global picture shows the Hanan lattices and, in green, the lattice
 edges that the inner circuit selected. The capacity picture shows the partition
 borders. The assign picture shows each ring port joined to its feed by a black
 dashed chord, and the corridor picture the corridors as dark lines, both over
 light borders and with the green inner wires of the global step. All four show
-the cells the grid blocked, in dark grey under the artwork: the artwork as the
+the cells the grid blocked, in dark gray under the artwork: the artwork as the
 grid rasterizes it, and the approach of every port. No picture shows the gates.
 The capacity, assign and corridor pictures leave out the borders of partitions
 that the artwork closes in on every side, such as the free space inside a ring
-of qubits. Every other partition is shaded in a light grey that differs from its
-neighbours. Opened on its own in a browser, the picture has a **Layers** panel
-in its top left corner that shows and hides each layer, and it leaves out the
+of qubits. Every other partition is shaded in a light gray that differs from its
+neighbors. Opened on its own in a browser, the picture has a **Layers** panel in
+its top left corner that shows and hides each layer, and it leaves out the
 finest detail when zoomed out.
 
 {doc}`terminal_output` describes what a run prints and what `-v`, `-vv` and

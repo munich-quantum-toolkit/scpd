@@ -40,7 +40,7 @@ __all__ = ["STAGE_STYLES", "Console", "Figure", "StageBlock", "StageStyle", "dur
 
 @dataclass(frozen=True)
 class StageStyle:
-    """How a stage is marked: an emoji, its plain form and a colour."""
+    """How a stage is marked: an emoji, its plain form and a color."""
 
     emoji: str
     ascii: str
@@ -59,7 +59,7 @@ STAGE_STYLES: dict[str, StageStyle] = {
 #: Symbols with a plain form for an output that cannot encode them.
 _PLAIN: dict[str, str] = {"✓": "ok", "✗": "FAIL", "⚠": "!", "·": "-", "→": "->", "\N{MULTIPLICATION SIGN}": "x"}
 
-#: The tones of a figure and the colours they take.
+#: The tones of a figure and the colors they take.
 _TONES: dict[str, str] = {"plain": "", "good": "green", "bad": "red"}
 
 #: The indent of a line of a block, and of a line that only -v shows.
@@ -97,6 +97,23 @@ def reader_gone_as_broken_pipe() -> Generator[None]:
         if sys.platform == "win32" and error.errno == errno.EINVAL:
             raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE)) from error
         raise
+
+
+class _PipeConsole(RichConsole):
+    """A rich console that leaves a reader that went away to ``main()``.
+
+    Rich exits the process on a broken pipe by itself. ``main()`` handles a broken pipe for every
+    command alike, so this console raises it instead.
+    """
+
+    def on_broken_pipe(self) -> None:
+        """Stop writing and hand the broken pipe on.
+
+        Raises:
+            BrokenPipeError: Always.
+        """
+        self.quiet = True
+        raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE))
 
 
 def write_out(text: str) -> None:
@@ -293,7 +310,7 @@ class Console:
             file: Where the output goes; standard output when None.
             verbosity: How many times -v was given.
             live: Whether to show the live line; None shows it on a terminal that can.
-            color: Whether to colour; None decides from the terminal and ``NO_COLOR``.
+            color: Whether to color; None decides from the terminal and ``NO_COLOR``.
             width: The width the time column ends at; None takes it from the terminal.
             encoding: The encoding of the output; None takes it from the file.
             clock: The clock that times the stages.
@@ -302,11 +319,11 @@ class Console:
         self.verbosity = verbosity
         self.clock = clock
         if color is None:
-            self._rich = RichConsole(
+            self._rich = _PipeConsole(
                 file=file, highlight=False, emoji=False, markup=False, soft_wrap=True, force_terminal=force_terminal
             )
         else:
-            self._rich = RichConsole(
+            self._rich = _PipeConsole(
                 file=file,
                 highlight=False,
                 emoji=False,
@@ -350,7 +367,7 @@ class Console:
         return style.emoji if self.unicode else style.ascii
 
     def figures(self, figures: Sequence[Figure]) -> Text:
-        """Figures joined by the separator, each in the colour of its tone.
+        """Figures joined by the separator, each in the color of its tone.
 
         Returns:
             The figures as one text.

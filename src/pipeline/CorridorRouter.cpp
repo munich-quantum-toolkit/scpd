@@ -53,7 +53,7 @@ constexpr double UNREACHED = std::numeric_limits<double>::infinity();
 
 /// A point of the partition graph, in the cell coordinates of the partition
 /// geometry: whole numbers on cell corners, so that a slot on a cell edge and
-/// the centre of a cell both land on a half.
+/// the center of a cell both land on a half.
 struct Place {
   double x = 0.0;
   double y = 0.0;
@@ -697,7 +697,7 @@ struct Sweeps {
 /// Reads the tuning and limits the relaxation to fewer than half of the
 /// `connections`, but to at least one when there are two or more.
 ///
-/// A wire without a way rips up neighbours until it fits. When it may rip up
+/// A wire without a way rips up neighbors until it fits. When it may rip up
 /// all the others, it takes their room, they find no way back, and every
 /// round repeats this. Fewer than half leaves at least as many wires in place
 /// as the sweep takes out. Two connections still get one: otherwise neither
@@ -817,7 +817,7 @@ partitionAt(const std::vector<PartitionLabel>& labels,
   if (labels[cell] != LABEL_NONE) {
     return labels[cell];
   }
-  const auto centre = grid.cell(cell);
+  const auto center = grid.cell(cell);
   for (std::uint32_t radius = 1; radius <= reach; ++radius) {
     const auto span = static_cast<std::int64_t>(radius);
     for (std::int64_t dy = -span; dy <= span; ++dy) {
@@ -825,8 +825,8 @@ partitionAt(const std::vector<PartitionLabel>& labels,
         if (std::max(std::abs(dx), std::abs(dy)) != span) {
           continue;
         }
-        const auto x = static_cast<std::int64_t>(centre.x()) + dx;
-        const auto y = static_cast<std::int64_t>(centre.y()) + dy;
+        const auto x = static_cast<std::int64_t>(center.x()) + dx;
+        const auto y = static_cast<std::int64_t>(center.y()) + dy;
         if (!grid.contains(x, y)) {
           continue;
         }
@@ -841,7 +841,7 @@ partitionAt(const std::vector<PartitionLabel>& labels,
   return LABEL_NONE;
 }
 
-/// The centre of a cell, in the corner coordinates that the partition
+/// The center of a cell, in the corner coordinates that the partition
 /// geometry and the crossing slots share.
 [[nodiscard]] Place placeOf(const grid::GridMetrics& grid,
                             const std::size_t cell) {
@@ -952,6 +952,7 @@ public:
     // can only lower the fails.
     std::size_t placed = 0;
     for (std::size_t index = 0; index < requests.size(); ++index) {
+      report.progress("free slots", "", index, requests.size());
       if (routes[index].has_value()) {
         continue;
       }
@@ -961,6 +962,7 @@ public:
         ++placed;
       }
     }
+    report.progress("free slots", "", requests.size(), requests.size());
     if (placed > 0) {
       const auto after = unrouted(routes);
       report.entry(
@@ -1052,10 +1054,10 @@ private:
     return requests;
   }
 
-  /// Takes one wire out, routes it again, and rips up its neighbours when
+  /// Takes one wire out, routes it again, and rips up its neighbors when
   /// that is what it takes.
   ///
-  /// A wire that fails puts every neighbour it ripped back as it was, so a
+  /// A wire that fails puts every neighbor it ripped back as it was, so a
   /// failed attempt costs the plan nothing, and it keeps the way it had when
   /// that still fits.
   static void reroute(Corridors& corridors,
@@ -1086,13 +1088,13 @@ private:
     const auto total = static_cast<std::int64_t>(requests.size());
     for (std::uint32_t relax = 1; relax <= sweeps.maxRelaxation; ++relax) {
       const auto offset = static_cast<std::int64_t>(relax) * (forward ? 1 : -1);
-      const auto neighbour = static_cast<std::size_t>(
+      const auto neighbor = static_cast<std::size_t>(
           (((static_cast<std::int64_t>(index) + offset) % total) + total) %
           total);
-      if (routes[neighbour].has_value()) {
-        corridors.withdraw(requests[neighbour], *routes[neighbour]);
-        ripped.emplace_back(neighbour, *routes[neighbour]);
-        routes[neighbour].reset();
+      if (routes[neighbor].has_value()) {
+        corridors.withdraw(requests[neighbor], *routes[neighbor]);
+        ripped.emplace_back(neighbor, *routes[neighbor]);
+        routes[neighbor].reset();
       }
       if (auto found = corridors.route(request); found.has_value()) {
         corridors.commit(request, *found);

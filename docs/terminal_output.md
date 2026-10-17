@@ -104,9 +104,9 @@ stage. A run that ends with fails exits with code 1.
 
 ## Stage Marks
 
-Each step has a mark, a plain form and a colour.
+Each step has a mark, a plain form and a color.
 
-| Step     | Mark | Plain form | Colour  |
+| Step     | Mark | Plain form | Color   |
 | -------- | ---- | ---------- | ------- |
 | capacity | 🧩   | `[#]`      | cyan    |
 | global   | 🔳   | `[+]`      | blue    |
@@ -136,7 +136,7 @@ solve shows its objective, its gap and its node count. The live line goes away
 when the stage ends, so a log or a pipe receives the lasting lines only.
 
 The live line is off when the output is not a terminal, with `--no-progress`,
-and with `TERM=dumb`. `NO_COLOR` turns colour off.
+and with `TERM=dumb`. `NO_COLOR` turns color off.
 
 ## Exit Codes
 
@@ -172,6 +172,9 @@ A stage reports through the `Report` it is given and never prints.
    `STAGE_STYLES` in `python/mqt/scpd/console.py`. In `python/mqt/scpd/run.py`,
    add its artifact to `STAGE_FILES`, the configuration sections it reads to
    `STEP_INPUTS`, the artifacts it reads to `ARTIFACT_INPUTS`, and its core call
-   to `RunDirectory.run_stage`. In `python/mqt/scpd/plot.py`, add the stage to
-   `STAGES` if `plot` and `render` draw it.
+   to `RunDirectory.run_stage`. If `plot` and `render` draw the stage, add it to
+   `STAGES` in `python/mqt/scpd/plot.py`, name the artifacts its picture reads
+   in `planning_geometry` in `python/mqt/scpd/planning.py` and in `_drawn` in
+   `python/mqt/scpd/cli.py`, and add its GDS layers to `PLANNING_LAYERS` in
+   `python/mqt/scpd/export/klayout.py`.
 7. Extend the expected run in `test/python/unit/test_cli.py`.

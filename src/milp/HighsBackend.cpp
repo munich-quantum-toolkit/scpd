@@ -107,6 +107,11 @@ void prepareScheduler(const std::uint32_t threads) {
 /// feasibility tolerance of HiGHS.
 constexpr double FEASIBILITY_TOLERANCE = 1.0e-7;
 
+/// The seconds of solve time between two calls of SolveObserver::check. A
+/// pending interrupt waits at most this long, and a call into Python costs
+/// next to nothing at this rate.
+constexpr double CHECK_INTERVAL = 0.1;
+
 /// The answer to a model without variables. HiGHS calls such a model empty
 /// and solves nothing. A row of it has no terms, because the constant of its
 /// expression moved into its bounds, so the value of the row is zero. The
@@ -247,9 +252,13 @@ public:
     // An exception from an observer must not unwind through HiGHS. It is kept,
     // the solve is asked to stop, and the exception leaves after run().
     std::exception_ptr failure;
-    if (logs || observer.progress) {
-      static_cast<void>(highs.setCallback(
-          [&observer, &failure](const int type, const std::string& message,
+    // The simplex and interior point solvers call back on every iteration,
+    // so the check runs at most once per CHECK_INTERVAL of solve time.
+    std::optional<double> checked;
+    if (logs || observer.progress || observer.check) {
+      static_cast<void>(
+          highs.setCallback([&observer, &failure, &checked](
+                                const int type, const std::string& message,
                                 const HighsCallbackOutput* out,
                                 HighsCallbackInput* in, void* /*data*/) {
             if (failure != nullptr) {
@@ -270,6 +279,13 @@ public:
                      .nodes = static_cast<std::uint64_t>(
                          std::max<std::int64_t>(out->mip_node_count, 0)),
                      .seconds = out->running_time});
+              } else if ((type == kCallbackSimplexInterrupt ||
+                          type == kCallbackIpmInterrupt) &&
+                         observer.check && out != nullptr &&
+                         (!checked.has_value() ||
+                          out->running_time - *checked >= CHECK_INTERVAL)) {
+                checked = out->running_time;
+                observer.check();
               }
             } catch (...) {
               failure = std::current_exception();

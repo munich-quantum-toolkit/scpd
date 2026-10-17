@@ -42,7 +42,9 @@ class CorridorParams(object):
     # a later one has not claimed yet, and so that the order of the
     # connections does not decide the result on its own. A sweep can take a
     # way from a connection that had one; the stage keeps the round with the
-    # fewest connections without a way. It must be at least one.
+    # fewest connections without a way. One last pass then offers every
+    # connection still without a way the free slots of that round, and rips
+    # up nothing. It must be at least one.
     # CorridorParams
     def Rounds(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -50,9 +52,9 @@ class CorridorParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 12
 
-    # How many neighbouring connections a failed one may rip up in a sweep,
+    # How many neighboring connections a failed one may rip up in a sweep,
     # counted along the sweep direction, and how many wires in its way it may
-    # move aside. The pass that moves them also raises the price of the slots
+    # move aside. The step that moves them also raises the price of the slots
     # in the way of the failed connection that another wire holds, so with
     # zero no price rises. The stage uses a value below half the number of
     # connections, however many this asks for, but at least one when there

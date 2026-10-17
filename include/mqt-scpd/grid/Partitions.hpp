@@ -60,8 +60,8 @@ struct PartitionBorder {
  * @brief Converts a position in corner coordinates into a layout point.
  *
  * The partition geometry puts the corner of cell (0, 0) at the origin, so the
- * centre of cell (x, y) lies at (x + 0.5, y + 0.5). GridMetrics puts the
- * centre of a cell at its whole-number position, half a cell from there.
+ * center of cell (x, y) lies at (x + 0.5, y + 0.5). GridMetrics puts the
+ * center of a cell at its whole-number position, half a cell from there.
  *
  * @param grid The metrics of the grid.
  * @param x The position along x, in corner coordinates.

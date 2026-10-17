@@ -49,7 +49,7 @@ inline constexpr std::string_view TIMES = "\xC3\x97";
 /// U+2192 in UTF-8.
 inline constexpr std::string_view ARROW = "\xE2\x86\x92";
 
-/// How a renderer colours a figure.
+/// How a renderer colors a figure.
 enum class Tone : std::uint8_t {
   /// A figure without a verdict.
   Plain,
@@ -61,11 +61,11 @@ enum class Tone : std::uint8_t {
 
 /// One figure of a result or an entry, such as "363 partitions",
 /// "objective 27.84" or "fails 2". The text follows the wording rules of the
-/// terminal output; the renderer only lays it out and colours it.
+/// terminal output; the renderer only lays it out and colors it.
 struct Figure {
   /// The figure as it is shown.
   std::string text;
-  /// How it is coloured.
+  /// How it is colored.
   Tone tone = Tone::Plain;
 };
 
@@ -187,7 +187,9 @@ public:
    *
    * The solver log reaches the line sink at the Solver level, and only when
    * the report is that detailed. The state of the search reaches the progress
-   * sink, under @p task, as its objective, gap and node count.
+   * sink, under @p task, as its objective, gap and node count. While the
+   * backend has no new state, the check of the observer repeats the last one,
+   * so that a progress sink that throws stops the solve.
    *
    * @param task What the solve is for, such as "solving the assignment".
    * @return The observer.

@@ -14,17 +14,23 @@
 #include "lp_data/HConst.h"
 #include "lp_data/HighsStatus.h"
 #include "mqt-scpd/milp/Backend.hpp"
+#include "mqt-scpd/milp/Model.hpp"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstddef>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <memory>
 #include <random>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::milp::test {
@@ -39,22 +45,37 @@ inline Solution solveMpsText(const std::string_view mps,
                              const SolveOptions& /*options*/) {
   // CTest runs every test in a process of its own, and parallel runs share
   // the temporary directory, so the name carries the test, a counter for
-  // the solves within it, and a random part against other processes.
+  // the solves within it, and a random part against other processes. A
+  // parameterized test has a slash in its name, so every character that a
+  // file name may not carry becomes an underscore.
   static std::atomic<unsigned> counter{0};
+  std::string test =
+      testing::UnitTest::GetInstance()->current_test_info()->name();
+  std::ranges::replace_if(
+      test,
+      [](const char character) {
+        return std::isalnum(static_cast<unsigned char>(character)) == 0 &&
+               character != '_' && character != '-';
+      },
+      '_');
   std::random_device random;
-  const auto path =
-      std::filesystem::temp_directory_path() /
-      std::format("mqt-scpd-milp-{}-{}-{:08x}{:08x}.mps",
-                  testing::UnitTest::GetInstance()->current_test_info()->name(),
-                  counter.fetch_add(1), random(), random());
+  const auto path = std::filesystem::temp_directory_path() /
+                    std::format("mqt-scpd-milp-{}-{}-{:08x}{:08x}.mps", test,
+                                counter.fetch_add(1), random(), random());
+  Solution solution;
   {
     std::ofstream file(path);
     file << mps;
+    if (!file.good()) {
+      solution.message = std::format("cannot write {}", path.string());
+      std::error_code ignored;
+      std::filesystem::remove(path, ignored);
+      return solution;
+    }
   }
 
   Highs highs;
   static_cast<void>(highs.setOptionValue("output_flag", false));
-  Solution solution;
   if (highs.readModel(path.string()) != HighsStatus::kOk) {
     solution.message = "the emitted MPS text was rejected";
     std::filesystem::remove(path);
@@ -85,18 +106,36 @@ inline Solution solveMpsText(const std::string_view mps,
   solution.objective = highs.getInfo().objective_function_value;
 
   // The round trip only preserves names, so the values are matched back by
-  // name rather than by position.
+  // name rather than by position. A name that the text lost is an error, as
+  // it is for the gurobipy reader.
   const auto& lp = highs.getLp();
-  solution.values.assign(names.size(), 0.0);
+  std::vector<double> values(names.size(), 0.0);
   for (std::size_t index = 0; index < names.size(); ++index) {
-    for (std::size_t column = 0; column < lp.col_names_.size(); ++column) {
-      if (lp.col_names_[column] == names[index]) {
-        solution.values[index] = highs.getSolution().col_value[column];
-        break;
-      }
+    const auto column = std::ranges::find(lp.col_names_, names[index]);
+    if (column == lp.col_names_.end()) {
+      solution.status = SolveStatus::Error;
+      solution.message =
+          std::format("the MPS text carries no variable {}", names[index]);
+      return solution;
     }
+    values[index] = highs.getSolution().col_value[static_cast<std::size_t>(
+        column - lp.col_names_.begin())];
   }
+  solution.values = std::move(values);
   return solution;
+}
+
+/// A backend that solves through solveMpsText() and counts its solves, so
+/// that a test can tell that the MPS text was solved at all.
+///
+/// @param solves The count, which every solve raises by one.
+inline std::shared_ptr<ISolverBackend> countingMpsBackend(std::size_t& solves) {
+  return makeMpsBackend("mps", [&solves](const std::string_view mps,
+                                         const std::vector<std::string>& names,
+                                         const SolveOptions& options) {
+    ++solves;
+    return solveMpsText(mps, names, options);
+  });
 }
 
 } // namespace mqt::scpd::milp::test

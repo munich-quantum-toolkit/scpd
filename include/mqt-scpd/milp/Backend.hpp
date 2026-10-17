@@ -51,6 +51,11 @@ struct SolveObserver {
   std::function<void(std::string_view)> log;
   /// Receives the state of a mixed-integer search, now and then.
   std::function<void(const SolveProgress&)> progress;
+  /// Called now and then while the backend works on a step with no figures
+  /// to report, such as a linear program at the root of a search. It
+  /// receives nothing. A caller throws from it, as from the other two, to
+  /// stop the solve, for example when Python has an interrupt pending.
+  std::function<void()> check;
 };
 
 /// What a solve may spend, and where it reports.
@@ -132,7 +137,7 @@ makeHighsBackend();
  * @brief Solves a model handed over as MPS text and returns the values by
  * variable name.
  *
- * This is the seam of the bring-your-own-licence path: Python receives the MPS
+ * This is the seam of the bring-your-own-license path: Python receives the MPS
  * text, solves it with gurobipy and returns the values it read back. The core
  * neither knows nor links that solver.
  */
@@ -156,7 +161,7 @@ makeMpsBackend(std::string name, MpsSolveFunction solve);
 ///
 /// HiGHS is the default, and an external backend is used only when it is
 /// asked for by name. A registered external backend never replaces HiGHS on
-/// its own, so whether a licence is at hand does not change a result.
+/// its own, so whether a license is at hand does not change a result.
 enum class BackendChoice : std::uint8_t {
   /// HiGHS, whatever is registered.
   Highs,

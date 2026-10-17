@@ -10,10 +10,10 @@
 
 ``plot`` reads the chip and the artifacts of a run; the core writes no SVG. The picture shows the chip
 the way a layout tool shows a mask: the metal as a hatched layer with an inner contour on a light
-substrate, a millimetre grid, and a frame with rulers, corner marks and a scale bar. Every port is
+substrate, a millimeter grid, and a frame with rulers, corner marks and a scale bar. Every port is
 one marker. A planning stage is drawn over the chip, one group per kind of shape.
 
-The picture is in layout units, which the chip inputs give in micrometres, so every coordinate of the
+The picture is in layout units, which the chip inputs give in micrometers, so every coordinate of the
 input survives and a viewer that zooms in sees the geometry the GDS holds. Lines that only guide the
 eye keep their width on screen while zooming. Opened on its own in a browser, the picture has a
 panel that shows and hides each layer, and it leaves out what is finer than a few screen pixels, so
@@ -53,7 +53,7 @@ STAGES: dict[str, str] = {
 SUBSTRATE: tuple[str, str] = ("#f7f7f6", "#efeeeb")
 #: The blocked cells of the grid a plan was cut on, under the artwork.
 RASTER_FILL = "#4a4a50"
-#: The light greys the partitions take by their tone, so that neighbours differ.
+#: The light grays the partitions take by their tone, so that neighbors differ.
 PARTITION_TONES: tuple[str, ...] = ("#ecebe7", "#dfdeda", "#e6e4df", "#d6d4cf", "#f0efeb", "#dad8d3")
 #: The fill of the metal, its edge, and the hatch and inner contour drawn on it.
 METAL_FILL = "#7b7b80"
@@ -66,7 +66,7 @@ PORT_COLOR = "#e34948"
 INK = "#1b1a18"
 MUTED = "#55524b"
 FRAME = "#b5b1a8"
-#: The color of every feedline chain: a grey that stays apart from the dark corridors and the red
+#: The color of every feedline chain: a gray that stays apart from the dark corridors and the red
 #: ports. The chains tell apart by their tooltips, not by color.
 FEEDLINE_COLOR = "#8e8e94"
 
@@ -109,14 +109,14 @@ _HIDDEN: dict[str, frozenset[str]] = {
     "corridor": frozenset({"bottlenecks", "partitions"}),
 }
 
-#: The stages whose picture shades every partition in the grey of its tone.
+#: The stages whose picture shades every partition in the gray of its tone.
 _TONED = frozenset({"capacity", "assign", "corridor"})
 
 #: The borders under the chords and the corridors are only the ground they run on, so those pictures
 #: draw them light and the dark lines stand out.
 _LIGHT_GROUND = "svg.assign g.l-border>path,svg.corridor g.l-border>path{stroke:#c9ccd1;stroke-width:1}"
 
-#: Lengths of the decoration, in layout units (micrometres).
+#: Lengths of the decoration, in layout units (micrometers).
 _HOLE_PITCH = 120.0
 _GRID_MINOR = 250
 _GRID_MAJOR = 1000
@@ -266,8 +266,8 @@ def _rounded(points: Sequence[tuple[float, float]], first_turn: int, radius: flo
             parts.append(f"L{_number(corner[0])} {_number(corner[1])}")
             continue
         ends = []
-        for neighbour in (points[index - 1], points[index + 1]):
-            dx, dy = neighbour[0] - corner[0], neighbour[1] - corner[1]
+        for neighbor in (points[index - 1], points[index + 1]):
+            dx, dy = neighbor[0] - corner[0], neighbor[1] - corner[1]
             length = (dx * dx + dy * dy) ** 0.5 or 1.0
             reach = min(radius, length / 2) / length
             ends.append((corner[0] + dx * reach, corner[1] + dy * reach))
@@ -442,7 +442,7 @@ _MONO = "ui-monospace,'SF Mono',Menlo,Consolas,monospace"
 
 
 def _frame(box: tuple[float, float, float, float], view_height: float, pad: float, font: float, caption: str) -> str:
-    """The marks around the chip: corner marks, rulers in millimetres, a scale bar and a die label.
+    """The marks around the chip: corner marks, rulers in millimeters, a scale bar and a die label.
 
     Args:
         box: The chip in the picture, as left, top, right and bottom.
@@ -617,8 +617,8 @@ def layout_svg(
         tolerance: Drop the vertices that stay within this distance, in layout units, of the line
             between their neighbors. Zero keeps every vertex.
         title: The name of the chip, such as the directory of its configuration.
-        stage: The stage the picture shows, which the caption names. The capacity picture leaves
-            out the gates of its plan.
+        stage: The stage the picture shows, which the caption names. No picture shows the gates of
+            the capacity plan.
         planning: What a planning stage produced, drawn over the artwork on layers of its own.
 
     Returns:
@@ -685,7 +685,7 @@ def layout_svg(
         else ""
     )
 
-    # A millimetre grid under the metal: a fine line every 250 um, a stronger one every 1 mm.
+    # A millimeter grid under the metal: a fine line every 250 um, a stronger one every 1 mm.
     left, top, right, bottom = box
     minor, major = [], []
     for x in range(_GRID_MINOR, int(right - left), _GRID_MINOR):
@@ -712,7 +712,7 @@ def layout_svg(
     hidden = _HIDDEN.get(stage, frozenset())
     tones = ""
     if planning is not None and stage in _TONED and any(tone is not None for tone in planning.partition_tones):
-        # Every partition in the grey of its tone, under the millimetre grid.
+        # Every partition in the gray of its tone, under the millimeter grid.
         shaded = zip(planning.partitions, planning.partition_tones, strict=False)
         # The rings of one partition make one path, so a hole stays open.
         tones = "".join(

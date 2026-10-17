@@ -378,7 +378,7 @@ TEST(CorridorRouter, KeepsTheCrossingPitchBetweenWiresWhereBordersMeet) {
   EXPECT_GT(routed, 0U);
 }
 
-TEST(CorridorRouter, StartsAndEndsEveryWireAtTheCentreOfACell) {
+TEST(CorridorRouter, StartsAndEndsEveryWireAtTheCenterOfACell) {
   // The source of a corridor is the cell its feed was placed at, and its
   // target the cell its port is reached at, so both are layout points of
   // cells of the detail grid.
@@ -475,7 +475,7 @@ TEST(CorridorRouter, StartsAndEndsEveryCorridorInThePartitionsAtItsEnds) {
   EXPECT_GT(ends, 0U);
 }
 
-TEST(CorridorRouter, LeavesAPartitionOnlyIntoANeighbour) {
+TEST(CorridorRouter, LeavesAPartitionOnlyIntoANeighbor) {
   const auto planned = planMini();
   const auto routing = routeMini(planned);
 
@@ -768,17 +768,17 @@ TEST(CorridorRouter, RoutesNoWireWithoutAFeedPoint) {
   EXPECT_EQ(received.fails, planned.assignment.connections.size());
 }
 
-/// The fixture with the feed point of every connection moved to the centre of
+/// The fixture with the feed point of every connection moved to the center of
 /// its target port, shifted by @p offset along x.
 Planned fedAtTheTarget(const double offset) {
   auto planned = planMini();
   for (std::size_t index = 0; index < planned.assignment.connections.size();
        ++index) {
-    const auto& centre =
+    const auto& center =
         planned.chip
             .ports[planned.assignment.connections[index]->target.index()]
             ->center;
-    planned.assignment.feeds[index] = Point(centre.x() + offset, centre.y());
+    planned.assignment.feeds[index] = Point(center.x() + offset, center.y());
   }
   return planned;
 }
@@ -799,7 +799,7 @@ TEST(CorridorRouter, NeedsNoCrossingForAWireFedInItsTargetPartition) {
 }
 
 TEST(CorridorRouter, LeavesAWireFedDeepInsideTheArtworkUnrouted) {
-  // The centre of a port lies on its pad, further from free space than a
+  // The center of a port lies on its pad, further from free space than a
   // feed point looks for a partition.
   const auto routing = routeMini(fedAtTheTarget(0.0));
 
@@ -915,7 +915,7 @@ TEST(CorridorRouter, RefusesAPartitionThatFallsApartIntoPieces) {
                         partitions[apart->first]->label));
 }
 
-TEST(CorridorRouter, CompletesTheProgressOfEveryRound) {
+TEST(CorridorRouter, CompletesTheProgressOfEveryRoundAndTheFreeSlots) {
   std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> last;
   const Report report(Detail::Summary,
                       {.progress = [&last](const std::string_view task,
@@ -927,10 +927,12 @@ TEST(CorridorRouter, CompletesTheProgressOfEveryRound) {
 
   static_cast<void>(routeMini(planMini(), report));
 
-  const auto first = last.find("round 1 forward");
-  ASSERT_NE(first, last.end());
-  EXPECT_GT(first->second.second, 0U);
-  EXPECT_EQ(first->second.first, first->second.second);
+  for (const auto* task : {"round 1 forward", "free slots"}) {
+    const auto found = last.find(task);
+    ASSERT_NE(found, last.end()) << task;
+    EXPECT_GT(found->second.second, 0U) << task;
+    EXPECT_EQ(found->second.first, found->second.second) << task;
+  }
 }
 
 TEST(CorridorRouter, SweepsTwelveRoundsWithoutACorridorSection) {
@@ -980,7 +982,7 @@ TEST(CorridorRouter, ReportsEveryConnectionAtTheItemsLevel) {
 // corridors keep the rules that the later stages rely on.
 
 /// Checks every rule of the routing against the plan it was made from: one
-/// corridor per connection, a way through neighbouring partitions over
+/// corridor per connection, a way through neighboring partitions over
 /// offered slots, one wire per slot, no wires that meet inside a partition,
 /// no wire that meets itself, and as many fails as wires without a way.
 void expectTheRulesHold(const Planned& planned, const CorridorRoutingT& routing,
@@ -1018,7 +1020,7 @@ void expectTheRulesHold(const Planned& planned, const CorridorRoutingT& routing,
       EXPECT_TRUE(borders.contains(std::minmax(corridor.partitions[index],
                                                corridor.partitions[index + 1])))
           << "wire " << wire << " leaves partition "
-          << corridor.partitions[index] << " into one that is not a neighbour";
+          << corridor.partitions[index] << " into one that is not a neighbor";
     }
   }
   expectOneWirePerSlot(routing);
@@ -1254,6 +1256,8 @@ TEST(CorridorRouter, PlacesARippedWireOnFreeSlotsAfterTheRounds) {
         ASSERT_TRUE(before.has_value());
         EXPECT_LT(failsOf(), *before);
         EXPECT_EQ(failsOf(), unroutedOf(routing));
+        // The wires that the pass places keep every rule of the rounds.
+        expectTheRulesHold(planned, routing, received);
       }
     }
   }

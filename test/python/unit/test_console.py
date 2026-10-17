@@ -218,7 +218,7 @@ def test_a_command_ends_with_a_tick_or_a_cross() -> None:
 
 
 def test_every_step_has_a_style() -> None:
-    """A step without an emoji, a plain form and a colour cannot report; a new one fails here."""
+    """A step without an emoji, a plain form and a color cannot report; a new one fails here."""
     assert set(STEPS) <= set(STAGE_STYLES)
     for style in STAGE_STYLES.values():
         assert len(style.emoji) == 1
@@ -262,8 +262,8 @@ def visible(text: str) -> str:
     return "\n".join(line.rsplit("\r", maxsplit=1)[-1] for line in without_codes.split("\n"))
 
 
-def test_colour_marks_a_verdict_and_dims_a_step() -> None:
-    """With colour on, a good verdict is green, a bad one red, and a step line dim."""
+def test_color_marks_a_verdict_and_dims_a_step() -> None:
+    """With color on, a good verdict is green, a bad one red, and a step line dim."""
     out = io.StringIO()
     console = Console(
         out, verbosity=1, live=False, width=72, encoding="utf-8", clock=itertools.count().__next__, color=True

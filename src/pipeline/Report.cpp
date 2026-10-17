@@ -105,8 +105,14 @@ milp::SolveObserver Report::solveObserver(const std::string_view task) const {
     };
   }
   if (sinks != nullptr && sinks->progress) {
-    observer.progress = [report = *this, name = std::string(task)](
-                            const milp::SolveProgress& search) {
+    // The check repeats the last state of the search, so the progress sink
+    // runs, and a caller that stops there stops the solve.
+    auto last = std::make_shared<std::string>();
+    observer.check = [report = *this, name = std::string(task), last] {
+      report.progress(name, *last, 0, 0);
+    };
+    observer.progress = [report = *this, name = std::string(task),
+                         last](const milp::SolveProgress& search) {
       std::string detail;
       const auto append = [&detail](const std::string& figure) {
         detail += detail.empty() ? "" : FIGURE_SEPARATOR;
@@ -120,6 +126,7 @@ milp::SolveObserver Report::solveObserver(const std::string_view task) const {
       }
       append(counted(search.nodes, "node"));
       report.progress(name, detail, 0, 0);
+      *last = std::move(detail);
     };
   }
   return observer;

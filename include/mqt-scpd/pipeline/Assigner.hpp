@@ -83,7 +83,7 @@ launcherOrderProblem(const ChipT& chip, const ConfigT& config);
 /**
  * @brief Checks that the launchers of a chip with resonators can feed them.
  *
- * The assignment feeds a resonator on the segment between two neighbouring
+ * The assignment feeds a resonator on the segment between two neighboring
  * launchers. With one launcher, that segment has no length. With two
  * launchers, or with launchers that all lie on one line, two segments run
  * along one line, and two resonators can share one feed point. A chip whose

@@ -77,7 +77,11 @@ innerCircuitOf(const ChipT& chip, const ConfigT& config);
  * Every inner wire comes from the inner end of a ring bridge and surfaces at
  * the ring end of that bridge. With `[stages.global] internal_bridges`, the
  * wire may cross internal bridges on the way, and is then several connections
- * long. No ring port starts an inner wire: the assignment gives every ring
+ * long. A solve that stops early may keep wires that reach no target, such as
+ * a wire between the inner ends of two ring bridges or a loop through internal
+ * bridges. The artifact leaves such wires out, and the ring does not keep the
+ * ring end of their source. No ring port starts an inner wire: the assignment
+ * gives every ring
  * port a wire of its own, and a second wire there would reach neither a
  * launcher nor a feedline. The ring keeps the ring end of a bridge only where
  * a wire surfaces there, and the ring end is a resonator of the assignment

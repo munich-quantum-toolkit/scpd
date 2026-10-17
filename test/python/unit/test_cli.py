@@ -225,6 +225,19 @@ def test_inspect_stops_quietly_when_the_reader_goes_away(
     assert not capsys.readouterr().err
 
 
+def test_plan_stops_quietly_when_the_reader_goes_away(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stage blocks of ``plan`` go to a pipe as well, and a reader that leaves early is no error to report."""
+    read, written = os.pipe()
+    os.close(read)
+    with os.fdopen(written, "w", encoding="utf-8") as closed:
+        monkeypatch.setattr(sys, "stdout", closed)
+        assert main(["plan", "-c", CONFIG, "-o", str(tmp_path / "run"), "--no-progress"]) == 1
+        monkeypatch.undo()
+    assert not capsys.readouterr().err
+
+
 class _PipeWithoutReaderOnWindows(io.StringIO):
     """Standard output as Windows gives it once the reader of the pipe went away."""
 

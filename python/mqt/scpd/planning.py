@@ -74,7 +74,7 @@ class Feedline:
 class PlanningGeometry:
     """The shapes one planning stage produced, in layout units.
 
-    Each list is one layer of the picture, so a renderer can give it a colour or a GDS layer of its
+    Each list is one layer of the picture, so a renderer can give it a color or a GDS layer of its
     own without knowing what a partition or a capacity chain is.
     """
 
@@ -235,7 +235,7 @@ def _bottlenecks(plan: CapacityPlanT, geometry: PlanningGeometry) -> None:
 def _corner(value: float, origin: float, step: float) -> float:
     """A layout coordinate in corner coordinates of the grid, not rounded.
 
-    The centre of cell k lies at ``origin + k * step``, so corner k, where cell k starts, lies half a
+    The center of cell k lies at ``origin + k * step``, so corner k, where cell k starts, lies half a
     step before it. The partition geometry of a plan runs along these corners.
 
     Returns:
@@ -456,23 +456,23 @@ def _enclosed(plan: CapacityPlanT) -> set[int]:
 def _tones(plan: CapacityPlanT, enclosed: set[int]) -> dict[int, int]:
     """A tone for every open partition, so that two that share a border differ.
 
-    The partitions take tones greedily, the one with the most neighbours first and ties by label, so
-    that the result depends only on the plan. Each takes the lowest tone no neighbour has yet.
+    The partitions take tones greedily, the one with the most neighbors first and ties by label, so
+    that the result depends only on the plan. Each takes the lowest tone no neighbor has yet.
 
     Returns:
         The tone of each open partition, by label.
     """
-    neighbours: dict[int, set[int]] = {
+    neighbors: dict[int, set[int]] = {
         int(partition.label): set() for partition in _entries(plan.partitions) if int(partition.label) not in enclosed
     }
     for border in _entries(plan.borders):
         first, second = int(border.first), int(border.second)
-        if first in neighbours and second in neighbours:
-            neighbours[first].add(second)
-            neighbours[second].add(first)
+        if first in neighbors and second in neighbors:
+            neighbors[first].add(second)
+            neighbors[second].add(first)
     tones: dict[int, int] = {}
-    for label in sorted(neighbours, key=lambda label: (-len(neighbours[label]), label)):
-        taken = {tones[other] for other in neighbours[label] if other in tones}
+    for label in sorted(neighbors, key=lambda label: (-len(neighbors[label]), label)):
+        taken = {tones[other] for other in neighbors[label] if other in tones}
         tones[label] = next(tone for tone in range(len(taken) + 1) if tone not in taken)
     return tones
 

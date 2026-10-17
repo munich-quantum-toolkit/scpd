@@ -16,10 +16,12 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -210,6 +212,25 @@ TEST(Report, ASolverReportsItsSearchAsProgress) {
   EXPECT_EQ(
       recorder.progress[0],
       "solving the assignment|objective 27.84 · gap 3.1 % · 120 nodes|0/0");
+}
+
+TEST(Report, ASolverWithoutNewFiguresRepeatsItsLastState) {
+  // A long linear program reports no figures, but the check still reaches
+  // the progress sink, which can stop the solve from there. The repeat waits
+  // longer than the progress sink is thinned out.
+  Recorder recorder;
+  const auto observer =
+      recorder.report(Detail::Summary).solveObserver("solving");
+  ASSERT_TRUE(static_cast<bool>(observer.check));
+
+  observer.check();
+  observer.progress({.objective = 5.02, .nodes = 3});
+  std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  observer.check();
+
+  ASSERT_EQ(recorder.progress.size(), 2U);
+  EXPECT_EQ(recorder.progress[0], "solving||0/0");
+  EXPECT_EQ(recorder.progress[1], "solving|objective 5.02 · 3 nodes|0/0");
 }
 
 TEST(Report, ASolverCountsOneNodeInTheSingular) {

@@ -8,7 +8,7 @@
 
 """Solver backends that the user brings.
 
-HiGHS is linked into the core and is always there, so an installation without a commercial licence
+HiGHS is linked into the core and is always there, so an installation without a commercial license
 works in full. Gurobi is reached at run time through ``gurobipy``, which the user installs and
 licenses. The core hands it the model as MPS text and reads the solution back by variable name, so
 nothing here is a build dependency of the package.

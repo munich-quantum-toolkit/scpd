@@ -8,7 +8,7 @@
  * Licensed under the MIT License
  */
 
-// The MPS text is the whole contract of the bring-your-own-licence path: the
+// The MPS text is the whole contract of the bring-your-own-license path: the
 // external solver never sees the model, only this. Every test here reads the
 // emitted text back with a solver and asks whether it describes the same
 // problem the in-process backend was handed.
@@ -91,6 +91,33 @@ TEST(Mps, CarriesAnIntegerVariableWithOnlyALowerBound) {
 
   const auto text = toMps(model);
   EXPECT_NE(text.find(" LO BND  x  2\n PL BND  x\n"), std::string::npos)
+      << text;
+}
+
+TEST(Mps, CarriesAnIntegerVariableWithOnlyAnUpperBound) {
+  // MI opens the lower side, and UP closes the upper one.
+  Model model("upper");
+  const auto x = model.addInteger("x", -INFINITE_BOUND, 4.0, 1.0);
+  model.addGreaterOrEqual("floor", 1.0 * x, -6.0);
+  model.setSense(Sense::Maximize);
+  expectAgreement(model);
+
+  const auto text = toMps(model);
+  EXPECT_NE(text.find(" MI BND  x\n UP BND  x  4\n"), std::string::npos)
+      << text;
+}
+
+TEST(Mps, CarriesAContinuousVariableBelowZero) {
+  // Some readers take a negative UP on a column without a lower bound as a
+  // bound of minus infinity below. The text states the lower bound first,
+  // so every reader reads [-5, -2].
+  Model model("negative");
+  static_cast<void>(model.addContinuous("x", -5.0, -2.0, 1.0));
+  static_cast<void>(model.addContinuous("y", -5.0, -2.0, -1.0));
+  expectAgreement(model);
+
+  const auto text = toMps(model);
+  EXPECT_NE(text.find(" LO BND  x  -5\n UP BND  x  -2\n"), std::string::npos)
       << text;
 }
 

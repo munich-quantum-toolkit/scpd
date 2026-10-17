@@ -287,7 +287,7 @@ wallBelow(const CellSpace& space,
     }
 
     if (best == current) {
-      // The descent has flattened out. A blocked neighbour that the walk may
+      // The descent has flattened out. A blocked neighbor that the walk may
       // step to has clearance 0 and would have been the lowest step, so no
       // wall of this shore lies beside it.
       return std::nullopt;

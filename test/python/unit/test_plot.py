@@ -385,7 +385,7 @@ def test_a_border_of_one_cell_edge_is_left_out() -> None:
     assert (data.get("d") or "").count("M") == 1
 
 
-def test_the_partitions_take_the_grey_of_their_tone_where_the_stage_shows_them() -> None:
+def test_the_partitions_take_the_gray_of_their_tone_where_the_stage_shows_them() -> None:
     """The capacity and corridor pictures shade each toned partition under the grid; others do not."""
     square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
     geometry = PlanningGeometry(partitions=[[square], [square], [square]], partition_tones=[0, 1, None])

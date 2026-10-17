@@ -193,7 +193,7 @@ bool onOneLine(const std::vector<geometry::Point>& points) {
 /// The model treats launcher k+1 as the next launcher after k when it walks
 /// the ring, so the launchers have to go once around the chip in index order,
 /// and in the opposite direction to the ring. A chip that breaks this still
-/// solves, but with feeds between launchers that are not neighbours. Fewer
+/// solves, but with feeds between launchers that are not neighbors. Fewer
 /// than three launchers, launchers on one line, or a ring without area have
 /// no direction to check.
 std::optional<std::string>
@@ -220,7 +220,7 @@ orderProblem(const std::vector<geometry::Point>& ring,
 }
 
 /// What keeps the launchers at @p launchers from feeding resonators, or
-/// nothing. The feeds of resonators lie on the segments between neighbouring
+/// nothing. The feeds of resonators lie on the segments between neighboring
 /// launchers, and those segments need to lie on more than one line.
 std::optional<std::string>
 placesProblem(const std::vector<geometry::Point>& launchers) {
@@ -876,7 +876,7 @@ private:
       if (leaving.empty() && arriving.empty()) {
         continue;
       }
-      // Neighbouring feeds, and the first and last feed and their launchers,
+      // Neighboring feeds, and the first and last feed and their launchers,
       // lie one part of the segment apart. Closer than the wire spacing, the
       // wires that reach them break it, and on a short segment two feeds can
       // fall on one cell of the routing grid.

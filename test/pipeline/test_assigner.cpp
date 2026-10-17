@@ -12,13 +12,13 @@
 // its assignment holds on the two-qubit fixture, and what it reports.
 
 #include "../MpsSolver.hpp"
+#include "../ScopedBackend.hpp"
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
-#include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/GlobalRouter.hpp"
@@ -390,7 +390,7 @@ TEST(Assigner, GivesEachOfTwoResonatorsAChainOfItsOwn) {
 }
 
 TEST(Assigner, RefusesFeedsCloserThanTheWireSpacing) {
-  // Neighbouring launchers lie about 85 units apart. A resonator fed between
+  // Neighboring launchers lie about 85 units apart. A resonator fed between
   // two of them lies half of that from each, below a wire spacing of 50.
   const auto chip =
       squareChip({{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}});
@@ -558,12 +558,13 @@ TEST(Assigner, FindsTheSameAssignmentCostThroughMpsText) {
   auto config = test::miniConfig();
   const auto direct = assignMini(config).assignment;
   config.stages->solver->backend = "gurobi";
-  milp::setExternalBackend(
-      milp::makeMpsBackend("mps", milp::test::solveMpsText));
+  std::size_t solves = 0;
+  const milp::test::ScopedBackend backend(
+      milp::test::countingMpsBackend(solves));
 
   const auto throughMps = assignMini(config).assignment;
-  milp::setExternalBackend(nullptr);
 
+  EXPECT_EQ(solves, 1U);
   EXPECT_GT(direct.objective, 0.0);
   EXPECT_EQ(throughMps.connections.size(), direct.connections.size());
   EXPECT_NEAR(throughMps.objective, direct.objective, 1.0e-9);

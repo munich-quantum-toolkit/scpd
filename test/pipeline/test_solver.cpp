@@ -11,6 +11,7 @@
 // The solve of a stage: which backend the run asks for, and what the solve
 // reports.
 
+#include "../ScopedBackend.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/milp/Model.hpp"
@@ -28,7 +29,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
@@ -93,19 +93,7 @@ private:
   std::optional<std::string> previous;
 };
 
-/// Registers an external backend while it lives, and clears the registration
-/// again, also when the test fails on the way.
-class ScopedBackend {
-public:
-  explicit ScopedBackend(std::shared_ptr<milp::ISolverBackend> backend) {
-    milp::setExternalBackend(std::move(backend));
-  }
-  ScopedBackend(const ScopedBackend&) = delete;
-  ScopedBackend& operator=(const ScopedBackend&) = delete;
-  ScopedBackend(ScopedBackend&&) = delete;
-  ScopedBackend& operator=(ScopedBackend&&) = delete;
-  ~ScopedBackend() { milp::setExternalBackend(nullptr); }
-};
+using milp::test::ScopedBackend;
 
 TEST(SolveWith, SolvesWithTheConfiguredBackend) {
   const auto solution =
@@ -269,7 +257,7 @@ TEST(SolverName, NamesHighsWithItsVersion) {
 
 TEST(SolverName, KeepsHighsWhenAnExternalBackendIsRegistered) {
   // A registered backend is used only when the configuration asks for it, so
-  // a licence on the machine does not change the result of a run.
+  // a license on the machine does not change the result of a run.
   const ScopedBackend backend(milp::makeMpsBackend(
       "stub", [](auto, const auto& names, const auto& /*options*/) {
         milp::Solution solution;

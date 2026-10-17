@@ -48,6 +48,11 @@ void requireFinite(
   }
 }
 
+/// A coefficient, or zero where it is too small to be a term.
+double withoutNoise(const double coefficient) {
+  return std::abs(coefficient) <= COEFFICIENT_EPSILON ? 0.0 : coefficient;
+}
+
 } // namespace
 
 LinearExpr& LinearExpr::add(const Var variable, const double coefficient) {
@@ -182,7 +187,7 @@ Var Model::addVariable(const std::string_view name, const double lower,
                           .lower = low,
                           .upper = high,
                           .type = type,
-                          .objective = objective});
+                          .objective = withoutNoise(objective)});
   takenNames.emplace(name);
   return Var{variableList.size() - 1};
 }
@@ -289,8 +294,11 @@ void Model::addObjective(const LinearExpr& expression) {
   requireFinite(coefficients, expression.constant(), {});
   // The checks come first, so that a refused expression leaves the objective
   // as it was.
+  // The sum of several expressions can cancel to a coefficient that is no
+  // term, which goes as a single small coefficient would.
   for (const auto& [index, coefficient] : coefficients) {
-    variableList[index].objective += coefficient;
+    auto& objective = variableList[index].objective;
+    objective = withoutNoise(objective + coefficient);
   }
   offset += expression.constant();
 }

@@ -31,8 +31,9 @@ inline constexpr double INFINITE_BOUND = 1.0e20;
 
 /// The largest coefficient that is not a term. A coefficient this small
 /// carries no information at the tolerances of a solver, so the model drops
-/// it, and every backend reads the model without it. The value is the one
-/// up to which HiGHS drops a coefficient by default.
+/// it, and every backend reads the model without it. This holds for an
+/// objective coefficient too, also where several expressions sum to it. The
+/// value is the one up to which HiGHS drops a coefficient by default.
 inline constexpr double COEFFICIENT_EPSILON = 1.0e-9;
 
 /// Whether a variable ranges over the reals or the integers.

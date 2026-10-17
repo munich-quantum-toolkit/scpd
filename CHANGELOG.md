@@ -32,7 +32,7 @@ releases may include breaking changes.
 - 🎨 Draw `plot` pictures like a mask in a layout tool ([#140])
   ([**@FeldmeierMichael**]):
   - Metal is hatched and has an inner contour on a light substrate. A picture
-    has a millimetre grid, rulers, corner marks, a scale bar and a caption.
+    has a millimeter grid, rulers, corner marks, a scale bar and a caption.
   - Every port is one red marker. Feedlines run in horizontal and vertical steps
     in one color. Corridors are solid dark lines that run on into their target
     port along its direction, with rounded turns.
@@ -41,11 +41,11 @@ releases may include breaking changes.
     gates, the port keep-out or the capacity chains.
   - `plot` and `render` draw a partition border along its cell edges. `plot`
     straightens the staircase of a slanted border.
-  - Every planning picture shows the blocked cells of the grid in dark grey
+  - Every planning picture shows the blocked cells of the grid in dark gray
     under the artwork, without strips of free cells too thin to block. The
     capacity, assign and corridor pictures leave out the borders of the
     partitions that the artwork closes in, and shade every partition in a light
-    grey that differs from its neighbours.
+    gray that differs from its neighbors.
   - The assign and corridor pictures show the inner wires on the lattice edges
     that the global step selected.
   - The assign picture draws its chords as thick black dashes and leaves out the
@@ -55,16 +55,19 @@ releases may include breaking changes.
   axis or a diagonal, and budgets the wires of every capacity chain. The Global
   stage solves the inner circuit as a mixed-integer program on Hanan lattices.
   Every inner wire leaves through a bridge to the ring. The Global stage counts
-  a ring port as a fail when the gates behind it have no room for it, or when
-  its chain does not carry it to a launcher. The Assignment stage assigns the
-  ring ports to launchers and feedline chains with an integer program, and feeds
-  no two of them at one point. The Corridor stage routes every connection
-  through the partitions over the border slots inside the launcher ring, which
-  are the slots that the Capacity stage budgets. It keeps the crossings of two
-  wires one crossing pitch apart. The stages write the artifacts
-  `01-capacity.fb` to `04-corridor.fb`. They refuse a detail grid of more than
-  25,000,000 cells, and a chip on which the targets of two ports lie on one
-  detail cell ([#140]) ([**@FeldmeierMichael**])
+  as a fail an inner port that no wire of the circuit reaches, a ring port that
+  the gates of its chain have no room for, and a ring port without a bridge that
+  its chain does not carry to a launcher. The Assignment stage assigns the ring
+  ports to launchers and feedline chains with an integer program, and feeds no
+  two of them at one point. The Corridor stage routes every connection through
+  the partitions over the border slots inside the launcher ring, which are the
+  slots that the Capacity stage budgets. It keeps the crossings of two wires one
+  crossing pitch apart. The stages write the artifacts `01-capacity.fb` to
+  `04-corridor.fb`. They refuse a detail grid of more than 25,000,000 cells, a
+  chip on which the targets of two ports lie on one detail cell, and two ports
+  of one capacity chain that can carry an inner wire where the points
+  `[design_rules] min_straight_length` in front of them coincide ([#140])
+  ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdMilp`: a linear model, the HiGHS backend with a progress and
   log observer, MPS output, and the choice of the backend through
   `[stages.solver] backend` or `SCPD_SOLVER`: HiGHS by default, and Gurobi
@@ -74,8 +77,9 @@ releases may include breaking changes.
   ([**@FeldmeierMichael**])
 - ➕ Add the C++ dependencies HiGHS 1.11.0, linked static, and the header-only
   Boost.Polygon and Boost.Config of Boost 1.89.0, all fetched at configure time,
-  and the Python dependency `rich`. The wheel carries the licences of HiGHS,
-  FlatBuffers and nlohmann/json, which its extension links in ([#140])
+  and the Python dependency `rich`. The wheel carries the licenses of HiGHS, its
+  LP file reader, FlatBuffers and nlohmann/json, which its extension links in,
+  and its license expression names Apache-2.0 and BSL-1.0 next to MIT ([#140])
   ([**@FeldmeierMichael**])
 - ✨ Add bridge pairs and components to the configuration: the `bridge_pair` and
   `component` patterns, the `[[ports.bridge_pairs]]` rules, the stage sections
@@ -125,7 +129,7 @@ releases may include breaking changes.
   free. A configuration that sets them still loads, and `doctor` and `plan` warn
   about each key ([#140]) ([**@FeldmeierMichael**])
 - 🎨 Change the output of the commands ([#140]) ([**@FeldmeierMichael**]):
-  - `plot`, `render` and `inspect` start their result line with `✓`.
+  - `plot`, `render` and `inspect -o` start their result line with `✓`.
   - Every command except `doctor` starts the line of an input or stage error
     with `✗`.
   - `doctor` shows the `bridge_pair` pattern and the solvers it can reach.

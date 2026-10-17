@@ -216,6 +216,18 @@ TEST(MilpModel, AccumulatesTheObjectiveOnTheVariables) {
   EXPECT_DOUBLE_EQ(model.objectiveOffset(), 4.0);
 }
 
+TEST(MilpModel, DropsAnObjectiveCoefficientThatSumsToNoTerm) {
+  // Each part is a term, but their sum is not. Both backends read the model
+  // as it stores the coefficient, so the model drops it once, here.
+  Model model("noise");
+  const auto x = model.addBinary("x", 1.0);
+  const auto y = model.addBinary("y", 0.5 * COEFFICIENT_EPSILON);
+  model.addObjective((-1.0 + (0.5 * COEFFICIENT_EPSILON)) * x);
+
+  EXPECT_EQ(model.variables()[x.index].objective, 0.0);
+  EXPECT_EQ(model.variables()[y.index].objective, 0.0);
+}
+
 TEST(MilpModel, KnowsWhetherItIsMixedInteger) {
   Model continuous("continuous");
   static_cast<void>(continuous.addContinuous("x", 0.0, 1.0));

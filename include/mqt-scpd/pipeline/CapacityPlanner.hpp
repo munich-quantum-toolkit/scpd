@@ -87,7 +87,7 @@ crossingPitch(const ConfigT& config);
  * would run along the back of the ring. Where the launchers span no interval
  * along an axis, as on one line of launchers or for a single launcher, the
  * edges of the grid bound the slots along that axis instead. The chip bounds
- * hold the port centres, so such launchers sit on the edge of the chip. The
+ * hold the port centers, so such launchers sit on the edge of the chip. The
  * same holds for each edge of the grid that no launcher sits on, where a
  * launcher sits on the edge nearest to it. The Capacity stage counts these
  * slots into the budget of a border, and the Corridor stage routes across the

@@ -33,7 +33,7 @@ namespace mqt::scpd::grid {
 namespace {
 
 /// How far apart two samples of one border may be and still be one run of it.
-/// A sample sits on a cell edge, so neighbours are one cell apart and the
+/// A sample sits on a cell edge, so neighbors are one cell apart and the
 /// diagonal of that is the largest step a run makes.
 constexpr double ADJACENT_SAMPLE_SQUARED = 2.25;
 

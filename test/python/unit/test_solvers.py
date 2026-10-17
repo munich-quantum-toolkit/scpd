@@ -6,7 +6,7 @@
 #
 # Licensed under the MIT License
 
-"""Tests of the bring-your-own-licence solver path, with gurobipy absent or replaced by a fake."""
+"""Tests of the bring-your-own-license solver path, with gurobipy absent or replaced by a fake."""
 
 from __future__ import annotations
 
@@ -321,10 +321,10 @@ class FakeEnvironment:
         del name, value
 
     def start(self) -> None:
-        """Start the environment, or fail as Gurobi does without a licence.
+        """Start the environment, or fail as Gurobi does without a license.
 
         Raises:
-            RuntimeError: If the fake module has no licence.
+            RuntimeError: If the fake module has no license.
         """
         if not self.gurobi.licensed:
             msg = "no Gurobi license found"
@@ -385,22 +385,22 @@ def with_gurobi(monkeypatch: pytest.MonkeyPatch, gurobi: FakeGurobi) -> FakeGuro
     return gurobi
 
 
-def test_gurobi_is_available_when_a_licence_can_be_acquired(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With gurobipy and a licence the backend is available, and the licence check releases it."""
+def test_gurobi_is_available_when_a_license_can_be_acquired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With gurobipy and a license the backend is available, and the license check releases it."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi())
 
     assert available() == (True, "")
     assert gurobi.disposed == 1
 
 
-def test_gurobi_is_unavailable_without_a_licence_and_releases_its_environment(
+def test_gurobi_is_unavailable_without_a_license_and_releases_its_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without a licence the backend is unavailable, says why, and still releases the environment."""
+    """Without a license the backend is unavailable, says why, and still releases the environment."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi())
     gurobi.licensed = False
 
-    assert available() == (False, "gurobipy has no usable licence (no Gurobi license found)")
+    assert available() == (False, "gurobipy has no usable license (no Gurobi license found)")
     assert gurobi.released == ["environment"]
 
 
@@ -464,7 +464,7 @@ def test_gurobi_without_a_value_for_a_variable_is_an_error(monkeypatch: pytest.M
     assert gurobi.released == ["model", "environment"]
 
 
-def test_gurobi_without_a_licence_releases_its_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gurobi_without_a_license_releases_its_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """An environment that cannot start raises the error of Gurobi and is released."""
     gurobi = with_gurobi(monkeypatch, FakeGurobi())
     gurobi.licensed = False

@@ -264,7 +264,7 @@ def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT, pitch: f
         crossings = entries(corridor.crossings)
         assert len(crossings) + 1 == len(partitions)
         for index in range(len(crossings)):
-            assert tuple(sorted(partitions[index : index + 2])) in borders, "a wire leaves into no neighbour"
+            assert tuple(sorted(partitions[index : index + 2])) in borders, "a wire leaves into no neighbor"
 
     launchers = [(slot.position.x, slot.position.y) for slot in entries(plan.launchers)]
     low_x, high_x = min(x for x, _ in launchers), max(x for x, _ in launchers)
