@@ -1185,7 +1185,7 @@ requires-dist = [
     { name = "flatbuffers", specifier = "~=25.12.19" },
     { name = "klayout", marker = "extra == 'klayout'", specifier = "~=0.30.6" },
     { name = "nanobind-backend", specifier = ">=1" },
-    { name = "rich", specifier = ">=14" },
+    { name = "rich", specifier = ">=14.1" },
 ]
 provides-extras = ["klayout"]
 

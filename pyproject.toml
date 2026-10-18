@@ -51,8 +51,9 @@ dependencies = [
   # The same version as FLATBUFFERS_VERSION in cmake/ExternalDependencies.cmake, which generates the code
   "flatbuffers~=25.12.19",
   "nanobind-backend>=1",
-  # Renders the terminal output of a run: the stage blocks and the live progress.
-  "rich>=14",
+  # Renders the terminal output of a run: the stage blocks and the live progress. 14.1 is the
+  # first version that reads TTY_INTERACTIVE.
+  "rich>=14.1",
 ]
 
 [[project.authors]]
