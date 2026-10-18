@@ -26,7 +26,8 @@ namespace mqt::scpd::pipeline {
  * The backend comes from `[stages.solver] backend`. The environment variable
  * `SCPD_SOLVER` overrides it for one run, so a run can be repeated with the
  * other backend without a change to the configuration it is judged on. The
- * time limit and the relative gap come from the same section.
+ * time limit, the relative gap and the thread count come from the same
+ * section.
  *
  * At the Steps level the report receives the size of the model before the
  * solve and how the solve ended after it. While the backend searches, its

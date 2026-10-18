@@ -203,6 +203,9 @@ def test_removed_keys_in_reads_the_file(tmp_path: Path) -> None:
         "[grid] launcher_offset_y has no effect, and a later version will refuse it; remove it"
     ]
     assert removed_keys_in(tmp_path / "absent.toml") == []
+    latin = tmp_path / "latin.toml"
+    latin.write_bytes("# Gr\u00f6\u00dfe\n".encode("latin-1"))
+    assert removed_keys_in(latin) == []
 
 
 def test_configuration_round_trips_through_the_core_bytes() -> None:
@@ -388,6 +391,14 @@ def test_load_config_names_the_file(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="cannot read"):
         load_config(tmp_path / "absent.toml")
+
+
+def test_a_file_that_is_not_utf8_is_named(tmp_path: Path) -> None:
+    """A configuration in another encoding is a ConfigError that names the file."""
+    path = tmp_path / "config.toml"
+    path.write_bytes(("# Gr\u00f6\u00dfe\n" + MANUAL).encode("latin-1"))
+    with pytest.raises(ConfigError, match=re.escape(f"cannot read {path}: it is not UTF-8")):
+        load_config(path)
 
 
 def test_the_fixture_follows_the_shipped_rules() -> None:

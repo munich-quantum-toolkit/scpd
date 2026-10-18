@@ -23,10 +23,17 @@
 namespace mqt::scpd::milp {
 namespace {
 
+/// Whether a coefficient is a finite number below the infinite bound. HiGHS
+/// reads a cost from INFINITE_BOUND on as infinite, while another MPS reader
+/// takes it as a number, so only a value below the bound means the same model
+/// to every backend.
+bool belowInfinity(const double value) {
+  return std::abs(value) < INFINITE_BOUND;
+}
+
 /// Refuses an expression with a term or a constant that is not a finite
-/// number. A solver cannot read such a number, and the MPS text cannot carry
-/// it. @p row names the constraint of the expression, and is empty for the
-/// objective.
+/// number below the infinite bound. @p row names the constraint of the
+/// expression, and is empty for the objective.
 void requireFinite(
     const std::vector<std::pair<std::size_t, double>>& coefficients,
     const double constant, const std::string_view row) {
@@ -35,16 +42,17 @@ void requireFinite(
                        : std::format("constraint '{}'", row);
   };
   for (const auto& [index, coefficient] : coefficients) {
-    if (!std::isfinite(coefficient)) {
+    if (!belowInfinity(coefficient)) {
       throw std::invalid_argument(
-          std::format("the coefficient of variable {} in {} is not a finite "
-                      "number",
-                      index, where()));
+          std::format("the coefficient of variable {} in {} is {}, not a "
+                      "finite number below {}",
+                      index, where(), coefficient, INFINITE_BOUND));
     }
   }
-  if (!std::isfinite(constant)) {
+  if (!belowInfinity(constant)) {
     throw std::invalid_argument(
-        std::format("the constant of {} is not a finite number", where()));
+        std::format("the constant of {} is {}, not a finite number below {}",
+                    where(), constant, INFINITE_BOUND));
   }
 }
 
@@ -154,11 +162,11 @@ Var Model::addVariable(const std::string_view name, const double lower,
     throw std::invalid_argument(
         std::format("variable '{}' has a bound that is not a number", name));
   }
-  if (!std::isfinite(objective)) {
+  if (!belowInfinity(objective)) {
     throw std::invalid_argument(std::format(
-        "variable '{}' has an objective coefficient that is not a finite "
-        "number",
-        name));
+        "variable '{}' has the objective coefficient {}, not a finite number "
+        "below {}",
+        name, objective, INFINITE_BOUND));
   }
   auto low = lower;
   auto high = upper;
@@ -294,15 +302,33 @@ void Model::addObjective(const LinearExpr& expression) {
   }
   const auto coefficients = expression.combined();
   requireFinite(coefficients, expression.constant(), {});
-  // The checks come first, so that a refused expression leaves the objective
-  // as it was.
+  // Each sum is checked as a single coefficient is, and all checks come
+  // first, so that a refused expression leaves the objective as it was.
+  std::vector<double> sums;
+  sums.reserve(coefficients.size());
+  for (const auto& [index, coefficient] : coefficients) {
+    const auto sum = variableList[index].objective + coefficient;
+    if (!belowInfinity(sum)) {
+      throw std::invalid_argument(std::format(
+          "the objective coefficient of variable '{}' comes to {}, not a "
+          "finite number below {}",
+          variableList[index].name, sum, INFINITE_BOUND));
+    }
+    sums.push_back(sum);
+  }
+  const auto summedOffset = offset + expression.constant();
+  if (!belowInfinity(summedOffset)) {
+    throw std::invalid_argument(
+        std::format("the objective offset comes to {}, not a finite number "
+                    "below {}",
+                    summedOffset, INFINITE_BOUND));
+  }
   // The sum of several expressions can cancel to a coefficient that is no
   // term, which goes as a single small coefficient would.
-  for (const auto& [index, coefficient] : coefficients) {
-    auto& objective = variableList[index].objective;
-    objective = withoutNoise(objective + coefficient);
+  for (std::size_t term = 0; term < coefficients.size(); ++term) {
+    variableList[coefficients[term].first].objective = withoutNoise(sums[term]);
   }
-  offset += expression.constant();
+  offset = summedOffset;
 }
 
 bool Model::isMixedInteger() const {

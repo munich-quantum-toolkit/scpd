@@ -24,7 +24,7 @@ import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TextIO
+from typing import IO, TYPE_CHECKING, TextIO
 
 from rich.cells import cell_len
 from rich.console import Console as RichConsole
@@ -118,6 +118,18 @@ class _PipeConsole(RichConsole):
         self.quiet = True
         self.reader_gone = True
         raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE))
+
+
+def _is_tty(file: IO[str]) -> bool:
+    """Whether the output is a terminal.
+
+    Returns:
+        False also for an output that is closed or cannot tell.
+    """
+    try:
+        return file.isatty()
+    except (AttributeError, ValueError):
+        return False
 
 
 def write_out(text: str) -> None:
@@ -343,7 +355,10 @@ class Console:
             self.unicode = True
         except (UnicodeEncodeError, LookupError):
             self.unicode = False
-        terminal = self._rich.is_terminal and not self._rich.is_dumb_terminal
+        # rich takes FORCE_COLOR and TTY_COMPATIBLE as a terminal also when the output is a file. Those
+        # variables ask for color, so the live line and the width follow the output itself.
+        tty = _is_tty(self._rich.file) if force_terminal is None else force_terminal
+        terminal = tty and self._rich.is_interactive and not self._rich.is_dumb_terminal
         self.width = width or (min(self._rich.width, _TERMINAL_WIDTH) if terminal else _FILE_WIDTH)
         self.show_live = terminal if live is None else live
         self.run = _Run()

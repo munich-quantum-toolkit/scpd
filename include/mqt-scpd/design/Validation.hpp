@@ -127,10 +127,12 @@ validate(const flatbuffers::config::PortConfigT& ports);
  * @brief Validates what a configuration can be checked for without its chip.
  * @param config The configuration to check.
  * @return A problem for an empty chip input, for a missing port section or
- * missing design rules, for every problem of both, for a capacity grid
- * without columns or a detail grid of no cells, for a capacity stage whose
- * bottleneck clearance or crossing pitch is not positive, and for a solver
- * section with an unknown backend or a negative limit, empty when the
+ * missing design rules, for every problem of both, for a capacity grid of
+ * fewer than two columns or of one row, for a detail grid of no cells, for
+ * a capacity stage whose bottleneck clearance or crossing pitch is not a
+ * finite positive number, for a solver section with an unknown backend, a
+ * time limit or relative gap that is negative or not finite, or more than
+ * 1024 threads, and for a corridor stage of no rounds, empty when the
  * configuration is valid on its own.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems

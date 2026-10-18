@@ -515,7 +515,7 @@ struct Circuit {
   /// The length of each connection, in the order of the connections.
   std::vector<double> lengths;
   /// The length of the selected edges that the artifact leaves out: the wires
-  /// that reach no target and the loops that touch no port.
+  /// that reach no target and the closed loops over crossings.
   double dropped = 0.0;
 };
 

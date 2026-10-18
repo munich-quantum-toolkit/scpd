@@ -482,6 +482,22 @@ def test_plan_stops_after_the_step_it_is_told(tmp_path: Path, capsys: pytest.Cap
     assert untimed(capsys.readouterr().out, run)[-1] == "✓ 2 stages · stopped after global · fails 0"
 
 
+def test_plan_that_ends_with_fails_exits_with_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A run whose stages all finish but leave fails ends with a cross and exit code 1."""
+    config = stopping_after(tmp_path, "corridor")
+    config.write_text(
+        config.read_text(encoding="utf-8") + "\n[stages.capacity]\ncrossing_pitch = 1500.0\n", encoding="utf-8"
+    )
+    run = tmp_path / "run"
+
+    assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
+
+    assert (run / "04-corridor.fb").is_file()
+    assert re.fullmatch(
+        r"✗ 4 stages · stopped after corridor · fails [1-9]\d*", untimed(capsys.readouterr().out, run)[-1]
+    )
+
+
 @pytest.mark.parametrize("name", ["config.toml", "./config.toml"])
 def test_the_header_names_the_chip_of_a_configuration_in_the_working_directory(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, name: str

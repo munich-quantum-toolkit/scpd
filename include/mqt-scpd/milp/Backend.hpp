@@ -54,10 +54,10 @@ struct SolveObserver {
   /// Called now and then while the backend solves a model without integer
   /// variables, which has no search state to report. It receives nothing. A
   /// caller throws from it, as from the other two, to stop the solve, for
-  /// example when Python has an interrupt pending. HiGHS calls no member
-  /// during presolve and postsolve, while it solves the linear relaxation of
-  /// a mixed-integer model, or inside a sub-MIP of its heuristics, so a
-  /// pending interrupt waits until that step ends.
+  /// example when Python has an interrupt pending. HiGHS calls neither check
+  /// nor progress during presolve and postsolve, while it solves the linear
+  /// relaxation of a mixed-integer model, or inside a sub-MIP of its
+  /// heuristics, so a pending interrupt waits until that step ends.
   std::function<void()> check;
 };
 

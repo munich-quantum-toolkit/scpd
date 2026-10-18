@@ -238,6 +238,29 @@ def test_progress_never_reaches_a_file() -> None:
     assert out.getvalue().splitlines() == ["🧭 corridor"]
 
 
+@pytest.mark.parametrize("variable", ["FORCE_COLOR", "TTY_COMPATIBLE"])
+def test_a_forced_color_leaves_a_file_without_the_live_line(monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
+    """A variable that forces color keeps a file a file: no live line, and the time ends at column 72."""
+    monkeypatch.setenv(variable, "1")
+    out = io.StringIO()
+    console = Console(out, encoding="utf-8", clock=Clock())
+    assert not console.show_live
+    assert console.width == 72
+    with console.stage("corridor") as stage:
+        for done in range(1, 59):
+            stage.progress("round 1 forward", "", done, 58)
+        stage.result([], fails=0)
+    assert visible(out.getvalue()).splitlines() == ["🧭 corridor"]
+    assert "\x1b[2K" not in out.getvalue()
+
+
+def test_a_terminal_that_is_not_interactive_gets_no_live_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``TTY_INTERACTIVE=0`` turns the live line off also on a terminal."""
+    monkeypatch.setenv("TTY_INTERACTIVE", "0")
+    console = Console(io.StringIO(), encoding="utf-8", clock=Clock(), force_terminal=True)
+    assert not console.show_live
+
+
 def test_the_block_header_waits_for_the_first_lasting_line_on_a_terminal() -> None:
     """On a terminal the header is written with the first lasting line, so the spinner holds its place."""
     out = io.StringIO()

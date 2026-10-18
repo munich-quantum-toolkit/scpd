@@ -449,12 +449,18 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                                  const std::vector<std::string>& names,
                                  const mqt::scpd::milp::SolveOptions& options) {
               const nb::gil_scoped_acquire gil;
-              const auto answer = nb::cast<
-                  std::tuple<std::string, double, std::vector<double>, double,
-                             double, std::optional<std::uint64_t>>>(
-                  callable->get()(nb::str(mps.data(), mps.size()), names,
-                                  options.timeLimit, options.relativeGap,
-                                  options.threads));
+              const auto returned = callable->get()(
+                  nb::str(mps.data(), mps.size()), names, options.timeLimit,
+                  options.relativeGap, options.threads);
+              std::tuple<std::string, double, std::vector<double>, double,
+                         double, std::optional<std::uint64_t>>
+                  answer;
+              if (!nb::try_cast(returned, answer)) {
+                throw std::runtime_error(
+                    "the external solver has to return (status, objective, "
+                    "values, bound, gap, nodes) as a str, a float, a list of "
+                    "floats, two floats, and an int or None");
+              }
               const auto& [status, objective, values, bound, gap, nodes] =
                   answer;
               mqt::scpd::milp::Solution solution;

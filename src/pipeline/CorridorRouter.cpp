@@ -269,8 +269,9 @@ public:
   /// A route that crosses itself or comes back to a slot it already used is
   /// a short. That is a property of the whole route and not of one step, so
   /// the search cannot rule it out as it goes. The slots of such a way are
-  /// set aside and the search runs again, so that a second-best way is found
-  /// where one exists.
+  /// set aside and the search runs again, at most UNSOUND_RETRIES times. This
+  /// often finds a second-best way, but not always: a slot that every way of
+  /// the wire needs is set aside too.
   [[nodiscard]] std::optional<Route>
   route(const Request& request, const double displacement = 0.0) const {
     std::vector<bool> aside(slotList.size(), false);
@@ -313,9 +314,9 @@ public:
     }
   }
 
-  /// The wires in the way of a route drawn as though the chip were empty:
-  /// the ones that hold a slot it wants or a slot within one pitch of it, and
-  /// the ones whose chords it would have to cross.
+  /// The wires in the way of a route that may displace others: the ones that
+  /// hold a slot it wants or a slot within one pitch of it, and the ones
+  /// whose chords it would have to cross.
   [[nodiscard]] std::vector<std::size_t> blockersOf(const Request& request,
                                                     const Route& wanted) const {
     std::vector<std::size_t> owners;
@@ -1066,8 +1067,8 @@ private:
     // settled them yet, so it gives each of them a new way before the round
     // is over. Near the end of the sweep the count runs on past the last wire
     // to the first ones, which this round has passed; those wait for the
-    // next round. The relaxation stays below the number of connections, so
-    // the count never comes back to this wire.
+    // next round or the free-slot pass. The relaxation stays below the number
+    // of connections, so the count never comes back to this wire.
     std::vector<std::pair<std::size_t, Route>> ripped;
     const auto total = static_cast<std::int64_t>(requests.size());
     for (std::uint32_t relax = 1; relax <= sweeps.maxRelaxation; ++relax) {
@@ -1093,8 +1094,8 @@ private:
     }
 
     // The sweep takes out whoever stands beside this wire on the ring, which
-    // is rarely who stands in its way. The route the wire would take on an
-    // empty chip names the wires that hold a slot it wants and the ones whose
+    // is rarely who stands in its way. The route with the fewest blocked
+    // steps names the wires that hold a slot it wants and the ones whose
     // chords it would cross. Those come out one at a time. The sweep gives a
     // way of its own to each of them that it has not passed yet; one that it
     // has passed waits for the next round or the free-slot pass.

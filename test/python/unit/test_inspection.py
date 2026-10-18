@@ -171,14 +171,24 @@ STAGE_OUTPUTS = [
         StageOutput.CorridorRouting,
         CorridorRoutingT(
             corridors=[
-                CorridorT(partitions=[4, 7], crossings=[PointT(10.5, 20.25)], source=PointT(0.5, 1.5)),
+                CorridorT(
+                    partitions=[4, 7],
+                    crossings=[PointT(10.5, 20.25)],
+                    source=PointT(0.5, 1.5),
+                    target=PointT(30.0, 40.0),
+                ),
                 CorridorT(partitions=[], crossings=[]),
             ],
             slots=[BorderSlotsT(border=2, positions=[PointT(10.5, 20.25)])],
         ),
         {
             "corridors": [
-                {"partitions": [4, 7], "crossings": [{"x": 10.5, "y": 20.25}], "source": {"x": 0.5, "y": 1.5}},
+                {
+                    "partitions": [4, 7],
+                    "crossings": [{"x": 10.5, "y": 20.25}],
+                    "source": {"x": 0.5, "y": 1.5},
+                    "target": {"x": 30.0, "y": 40.0},
+                },
                 {"partitions": [], "crossings": []},
             ],
             "slots": [{"border": 2, "positions": [{"x": 10.5, "y": 20.25}]}],

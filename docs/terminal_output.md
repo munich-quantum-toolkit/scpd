@@ -136,7 +136,9 @@ solve shows its objective, its gap and its node count. The live line goes away
 when the stage ends, so a log or a pipe receives the lasting lines only.
 
 The live line is off when the output is not a terminal, with `--no-progress`,
-and with `TERM=dumb`. `NO_COLOR` turns color off.
+with `TERM=dumb`, and with `TTY_INTERACTIVE=0`. `NO_COLOR` turns color off.
+`FORCE_COLOR` and `TTY_COMPATIBLE=1` turn color on, also in a file, but a file
+still gets no live line and keeps the time at column 72.
 
 ## Exit Codes
 
@@ -167,7 +169,9 @@ A stage reports through the `Report` it is given and never prints.
    line per item at `Detail::Items`. Ask `Report::wants` before building a line
    that takes time to build.
 5. Report progress through `Report::progress` in every loop that can run for
-   longer than a second.
+   longer than a second, so that the live line moves and Ctrl-C stops the stage.
+   Outside a solve, a progress report is the only place where a stage notices
+   Ctrl-C.
 6. Add the step to `STEPS` in `python/mqt/scpd/steps.py` and its mark to
    `STAGE_STYLES` in `python/mqt/scpd/console.py`. In `python/mqt/scpd/run.py`,
    add its artifact to `STAGE_FILES`, the configuration sections it reads to

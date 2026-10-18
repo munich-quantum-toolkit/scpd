@@ -106,23 +106,6 @@ TEST(HighsBackend, CountsABoundAboveTheInfiniteBoundAsNone) {
   EXPECT_EQ(solution.status, SolveStatus::Unbounded);
 }
 
-TEST(HighsBackend, RethrowsWhatTheObserverThrowsWhileHighsRejectsTheModel) {
-  // HiGHS rejects a matrix value from INFINITE_BOUND on and logs why. The
-  // observer of that log throws, and the exception leaves the backend.
-  Model model("rejected");
-  const auto x = model.addContinuous("x", 0.0, 1.0, 1.0);
-  model.addLessOrEqual("huge", 1.0e21 * x, 1.0);
-  SolveOptions options;
-  options.observer.log = [](const std::string_view) {
-    throw std::runtime_error("stopped by the observer");
-  };
-
-  EXPECT_THROW(static_cast<void>(makeHighsBackend()->solve(model, options)),
-               std::runtime_error);
-  const auto quiet = makeHighsBackend()->solve(model, {});
-  EXPECT_EQ(quiet.message, "HiGHS rejected the model");
-}
-
 TEST(HighsBackend, DoesNotGuessBetweenInfeasibleAndUnbounded) {
   // Two integers without an upper bound, which the objective pulls up. The
   // model is unbounded, but HiGHS reports only that it has no optimum, so

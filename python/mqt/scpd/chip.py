@@ -94,6 +94,9 @@ def load_chip(config: ConfigT, config_path: Path, chip_path: Path | None = None)
     except OSError as error:
         msg = f"cannot read the chip input {path}: {error}"
         raise ChipError(msg) from error
+    except UnicodeDecodeError as error:
+        msg = f"cannot read the chip input {path}: it is not UTF-8 ({error.reason} at byte {error.start})"
+        raise ChipError(msg) from error
     try:
         return pyscpd.load_chip(text, write_config(config))
     except ValueError as error:

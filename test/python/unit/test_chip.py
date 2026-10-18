@@ -84,6 +84,15 @@ def test_a_chip_that_does_not_fit_its_configuration_is_refused() -> None:
         load_chip(config, config_path)
 
 
+def test_a_chip_input_that_is_not_utf8_is_named(tmp_path: Path) -> None:
+    """A chip input in another encoding is a ChipError that names the file."""
+    config_path = FIXTURE / "config.toml"
+    chip_path = tmp_path / "chip.json"
+    chip_path.write_bytes(b"\xff" + (FIXTURE / "routing_config.json").read_bytes())
+    with pytest.raises(ChipError, match=re.escape(f"cannot read the chip input {chip_path}: it is not UTF-8")):
+        load_chip(load_config(config_path), config_path, chip_path)
+
+
 def test_role_names_follow_the_schema() -> None:
     """Every role has the name the configuration keys use."""
     assert role_name(UnassignedRole.Launcher) == "launcher"

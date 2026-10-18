@@ -712,6 +712,24 @@ TEST(CorridorRouter, MovesOneOfTwoWiresAside) {
   EXPECT_EQ(received.fails, 0U);
 }
 
+TEST(CorridorRouter, SearchesAgainWhenTheCheapestWayIsAShort) {
+  // Three wires fed at slots of the fixture, found by a search over random
+  // feeds. The cheapest way that the search finds for one of them comes back
+  // to a slot it already used, which is a short. The stage throws that way
+  // away and searches again. The third wire aims at a launcher, which has no
+  // target cell, so it stays without a way.
+  const auto planned =
+      fedAtSlots({{307, "Q2.port0"}, {156, "Q2.port1"}, {46, "Chip.port1"}});
+
+  const auto routing = routeMini(planned);
+
+  ASSERT_EQ(routing.corridors.size(), 3U);
+  EXPECT_FALSE(routing.corridors[0]->partitions.empty());
+  EXPECT_FALSE(routing.corridors[1]->partitions.empty());
+  EXPECT_EQ(unroutedOf(routing), 1U);
+  expectNoShortInsideAWire(routing);
+}
+
 TEST(CorridorRouter, RoutesAWireThatCrossesBordersOnItsOwn) {
   // Which slots exist does not depend on which wires are routed, so a wire
   // that crosses borders among all the others still has its way alone.

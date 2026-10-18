@@ -161,12 +161,32 @@ TEST(ArtifactSchema, RefusesACorridorThatNamesTheWrongNumberOfPartitions) {
   CorridorRoutingT routing;
   auto corridor = std::make_unique<CorridorT>();
   corridor->partitions = {4, 7};
+  corridor->source = std::make_unique<Point>(0.0, 0.0);
+  corridor->target = std::make_unique<Point>(1.0, 0.0);
   routing.corridors.push_back(std::move(corridor));
 
   const auto problems = validate(wrap(std::move(routing)));
 
   ASSERT_EQ(problems.size(), 1U);
   EXPECT_EQ(problems[0], "corridor 0 names 2 partitions and 0 crossings");
+}
+
+TEST(ArtifactSchema, RefusesARoutedCorridorWithoutItsEnds) {
+  // A way runs from the feed to the target, so a corridor with partitions
+  // has both ends.
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4};
+  routing.corridors.push_back(std::move(corridor));
+  corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4};
+  corridor->source = std::make_unique<Point>(0.0, 0.0);
+  routing.corridors.push_back(std::move(corridor));
+
+  EXPECT_EQ(validate(wrap(std::move(routing))),
+            (std::vector<std::string>{"corridor 0 has a way but no source",
+                                      "corridor 0 has a way but no target",
+                                      "corridor 1 has a way but no target"}));
 }
 
 /// A connection of the assignment to a resonator, with both of its roles.
@@ -197,6 +217,7 @@ TEST(ArtifactSchema, RefusesAnAssignmentWhoseListsDoNotFollowTheRing) {
   AssignmentT assignment;
   assignment.ring = {PortRef(1), PortRef(2)};
   assignment.connections.push_back(resonatorConnection());
+  assignment.connections.back()->target = PortRef(1);
   assignment.launchers = {PortRef(0), PortRef(3)};
   assignment.feeds.emplace_back(0.0, 0.0);
   assignment.feeds.emplace_back(1.0, 0.0);
@@ -211,6 +232,7 @@ TEST(ArtifactSchema, RefusesAFeedlineChainThatLeavesTheRing) {
   // A chain names ring nodes, so each of them has to be a node of the ring.
   AssignmentT assignment;
   assignment.connections.push_back(resonatorConnection());
+  assignment.connections.back()->target = PortRef(3);
   assignment.ring.emplace_back(3);
   assignment.launchers.emplace_back(9);
   assignment.feeds.emplace_back(0.0, 0.0);
@@ -222,6 +244,33 @@ TEST(ArtifactSchema, RefusesAFeedlineChainThatLeavesTheRing) {
 
   ASSERT_EQ(problems.size(), 1U);
   EXPECT_EQ(problems[0], "chain 0 names ring node 1 of 1");
+}
+
+TEST(ArtifactSchema,
+     RefusesAnAssignmentWhoseChainsOrTargetsDisagreeWithTheRing) {
+  // Connection i reaches ring node i, a chain runs through one resonator at
+  // least, and one feedline drives each resonator.
+  AssignmentT assignment;
+  assignment.ring = {PortRef(1), PortRef(2), PortRef(5)};
+  for (const std::uint32_t port : {1U, 4U, 5U}) {
+    assignment.connections.push_back(resonatorConnection());
+    assignment.connections.back()->target = PortRef(port);
+  }
+  assignment.launchers = {PortRef(0), PortRef(0), PortRef(3)};
+  assignment.feeds = {Point(0.0, 0.0), Point(1.0, 0.0), Point(2.0, 0.0)};
+  for (const auto& nodes :
+       std::vector<std::vector<std::uint32_t>>{{0, 1}, {}, {1, 2, 2}}) {
+    auto chain = std::make_unique<FeedlineChainT>();
+    chain->nodes = nodes;
+    assignment.chains.push_back(std::move(chain));
+  }
+
+  EXPECT_EQ(validate(wrap(std::move(assignment))),
+            (std::vector<std::string>{
+                "connection 1 targets port 4, not port 2 of ring node 1",
+                "chain 1 runs through no ring node",
+                "chains 0 and 2 both name ring node 1",
+                "chain 2 names ring node 2 twice"}));
 }
 
 TEST(ArtifactSchema, RefusesAGlobalRoutingThatAPictureCannotDraw) {
@@ -428,6 +477,14 @@ TEST(ArtifactSchema, RefusesAMissingEntryOfEveryOutput) {
   unwritable.bottlenecks.push_back(nullptr);
   EXPECT_THROW(static_cast<void>(writeArtifact(wrap(std::move(unwritable)))),
                std::invalid_argument);
+
+  // The two grids are required tables, which the write cannot leave out.
+  CapacityPlanT withoutGrids = emptyPlan();
+  withoutGrids.capacity_grid.reset();
+  withoutGrids.detail_grid.reset();
+  EXPECT_EQ(validate(wrap(std::move(withoutGrids))),
+            (std::vector<std::string>{"capacity grid: missing",
+                                      "detail grid: missing"}));
 }
 
 TEST(ArtifactSchema, RefusesAPortTheChipDoesNotHave) {
@@ -646,6 +703,36 @@ TEST(ArtifactSchema, ReadArtifactRejectsForeignAndTruncatedBuffers) {
 
   bytes.resize(bytes.size() / 2);
   EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
+}
+
+TEST(ArtifactSchema, RefusesAnOutputTypeOfANewerSchema) {
+  // A newer schema may append an output type under the same identifier. The
+  // verifier lets it pass, so the read has to refuse it.
+  flatbuffers::FlatBufferBuilder builder;
+  const auto producer = builder.CreateString("mqt-scpd newer");
+  const flatbuffers::Offset<void> output(
+      builder.EndTable(builder.StartTable()));
+  // The tag is written as a plain byte, because the enum of this schema has
+  // no value for it.
+  const auto start = builder.StartTable();
+  builder.AddOffset(Artifact::VT_OUTPUT, output);
+  builder.AddOffset(Artifact::VT_PRODUCER, producer);
+  builder.AddElement<std::uint8_t>(
+      Artifact::VT_OUTPUT_TYPE, static_cast<std::uint8_t>(StageOutput::MAX) + 1,
+      0);
+  FinishArtifactBuffer(builder,
+                       flatbuffers::Offset<Artifact>(builder.EndTable(start)));
+  const std::vector<std::uint8_t> bytes(
+      builder.GetBufferPointer(),
+      std::next(builder.GetBufferPointer(), builder.GetSize()));
+
+  try {
+    static_cast<void>(readArtifact(bytes));
+    FAIL() << "the read accepted an unknown output type";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_STREQ(error.what(), "artifact is not valid: output type 8 is "
+                               "unknown to this version of mqt-scpd");
+  }
 }
 
 } // namespace

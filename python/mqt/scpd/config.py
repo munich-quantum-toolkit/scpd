@@ -487,7 +487,7 @@ def removed_keys_in(path: Path) -> list[str]:
     """
     try:
         document = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return []
     return removed_keys(document)
 
@@ -509,6 +509,9 @@ def load_config(path: Path, *, strict: bool = False) -> ConfigT:
         text = path.read_text(encoding="utf-8")
     except OSError as error:
         msg = f"cannot read {path}: {error}"
+        raise ConfigError(msg) from error
+    except UnicodeDecodeError as error:
+        msg = f"cannot read {path}: it is not UTF-8 ({error.reason} at byte {error.start})"
         raise ConfigError(msg) from error
     return parse_config(text, source=str(path), strict=strict)
 

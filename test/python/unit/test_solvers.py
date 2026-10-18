@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import math
+import re
 import subprocess
 import sys
 import textwrap
@@ -122,6 +123,28 @@ def test_a_registered_solver_receives_the_model_as_mps() -> None:
     mps, names = seen[0]
     assert "COLUMNS" in mps
     assert "flow_0" in names
+
+
+@pytest.mark.usefixtures("without_gurobipy", "no_external_solver")
+def test_a_registered_solver_with_an_answer_of_the_wrong_shape_fails_the_stage() -> None:
+    """An answer that is not the documented tuple fails the stage with the shape it needs."""
+
+    def no_objective(mps: str, names: Sequence[str], time_limit: float, relative_gap: float, threads: int) -> object:
+        del mps, names, time_limit, relative_gap, threads
+        return "optimal", None, [], 0.0, 0.0, None
+
+    pyscpd.set_solver(no_objective)
+    config = load_config(FIXTURE)
+    assert config.stages is not None
+    assert config.stages.solver is not None
+    config.stages.solver.backend = "gurobi"
+    packed = write_config(config)
+
+    chip = load_chip(config, FIXTURE)
+    capacity = pyscpd.plan_capacity(chip, packed, "test")
+    routing = pyscpd.route_global(chip, capacity, packed, "test")
+    with pytest.raises(RuntimeError, match=re.escape("the external solver has to return (status, objective, values")):
+        pyscpd.assign(chip, capacity, routing, packed, "test")
 
 
 class StepLines:

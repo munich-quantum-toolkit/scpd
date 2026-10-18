@@ -19,11 +19,13 @@
 #include <flatbuffers/minireflect.h>
 #include <flatbuffers/verifier.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -114,6 +116,12 @@ void validateWires(
 /// because the Global stage asks one wire of each target over its chain.
 void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
                           Problems& problems) {
+  if (plan.capacity_grid == nullptr) {
+    problems.emplace_back("capacity grid: missing");
+  }
+  if (plan.detail_grid == nullptr) {
+    problems.emplace_back("detail grid: missing");
+  }
   requireEach(plan.partitions, "partition", problems);
   for (std::size_t index = 0; index < plan.partitions.size(); ++index) {
     if (plan.partitions[index] != nullptr) {
@@ -255,6 +263,14 @@ Problems validate(const ArtifactT& artifact) {
   if (artifact.producer.empty()) {
     problems.emplace_back("producer is empty");
   }
+  // The verifier lets an output type pass that a newer schema appended, and
+  // the object model then holds no output to check.
+  if (artifact.output.type > StageOutput::MAX) {
+    problems.push_back(
+        std::format("output type {} is unknown to this version of mqt-scpd",
+                    static_cast<unsigned>(artifact.output.type)));
+    return problems;
+  }
   switch (artifact.output.type) {
   case StageOutput::NONE:
     problems.emplace_back("output is missing");
@@ -275,17 +291,45 @@ Problems validate(const ArtifactT& artifact) {
     parallel(assignment.connections.size(), "connection");
     parallel(assignment.launchers.size(), "launcher");
     parallel(assignment.feeds.size(), "feed");
-    // A chain names ring nodes, and each of them has to be a node of the ring.
+    for (std::size_t index = 0; index < std::min(assignment.connections.size(),
+                                                 assignment.ring.size());
+         ++index) {
+      const auto& connection = assignment.connections[index];
+      if (connection != nullptr &&
+          connection->target.index() != assignment.ring[index].index()) {
+        problems.push_back(std::format(
+            "connection {} targets port {}, not port {} of ring node {}", index,
+            connection->target.index(), assignment.ring[index].index(), index));
+      }
+    }
+    // A chain runs through ring nodes, each of them a node of the ring, and
+    // one feedline drives each node of a chain.
+    std::vector<std::optional<std::size_t>> chainOf(assignment.ring.size());
     for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
       if (assignment.chains[index] == nullptr) {
         problems.push_back(std::format("chain {}: missing", index));
         continue;
       }
+      if (assignment.chains[index]->nodes.empty()) {
+        problems.push_back(
+            std::format("chain {} runs through no ring node", index));
+      }
       for (const auto node : assignment.chains[index]->nodes) {
         if (node >= assignment.ring.size()) {
           problems.push_back(std::format("chain {} names ring node {} of {}",
                                          index, node, assignment.ring.size()));
+          continue;
         }
+        if (chainOf[node].has_value()) {
+          problems.push_back(
+              *chainOf[node] == index
+                  ? std::format("chain {} names ring node {} twice", index,
+                                node)
+                  : std::format("chains {} and {} both name ring node {}",
+                                *chainOf[node], index, node));
+          continue;
+        }
+        chainOf[node] = index;
       }
     }
     break;
@@ -321,6 +365,16 @@ Problems validate(const ArtifactT& artifact) {
             std::format("corridor {} names {} and {}", index,
                         counted(corridor.partitions.size(), "partition"),
                         counted(corridor.crossings.size(), "crossing")));
+      }
+      // A way runs from the feed to the target, so a routed corridor has
+      // both.
+      if (!corridor.partitions.empty() && corridor.source == nullptr) {
+        problems.push_back(
+            std::format("corridor {} has a way but no source", index));
+      }
+      if (!corridor.partitions.empty() && corridor.target == nullptr) {
+        problems.push_back(
+            std::format("corridor {} has a way but no target", index));
       }
     }
     break;

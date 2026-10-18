@@ -294,8 +294,10 @@ public:
    * @return The variable.
    * @throws std::invalid_argument When the name is empty or taken, when a
    * bound is not a number, when the objective coefficient is not a finite
-   * number, or when the lower bound is above the upper bound after the
-   * clipping.
+   * number below INFINITE_BOUND, when the lower bound is above the upper
+   * bound after the clipping, or when no value lies between the bounds: a
+   * lower bound of INFINITE_BOUND or more, or an upper bound of
+   * -INFINITE_BOUND or less.
    */
   Var addVariable(std::string_view name, double lower, double upper,
                   VarType type, double objective = 0.0);
@@ -306,7 +308,7 @@ public:
    * @param objective The objective coefficient.
    * @return The variable.
    * @throws std::invalid_argument When the name is empty or taken, or when
-   * the objective coefficient is not a finite number.
+   * the objective coefficient is not a finite number below INFINITE_BOUND.
    */
   Var addBinary(std::string_view name, double objective = 0.0);
 
@@ -319,7 +321,9 @@ public:
    * @return The variable.
    * @throws std::invalid_argument When the name is empty or taken, when a
    * bound is not a number, when the objective coefficient is not a finite
-   * number, or when @p lower is above @p upper.
+   * number below INFINITE_BOUND, when @p lower is above @p upper, or when no
+   * value lies between the bounds: a lower bound of INFINITE_BOUND or more,
+   * or an upper bound of -INFINITE_BOUND or less.
    */
   Var addInteger(std::string_view name, double lower, double upper,
                  double objective = 0.0);
@@ -333,7 +337,9 @@ public:
    * @return The variable.
    * @throws std::invalid_argument When the name is empty or taken, when a
    * bound is not a number, when the objective coefficient is not a finite
-   * number, or when @p lower is above @p upper.
+   * number below INFINITE_BOUND, when @p lower is above @p upper, or when no
+   * value lies between the bounds: a lower bound of INFINITE_BOUND or more,
+   * or an upper bound of -INFINITE_BOUND or less.
    */
   Var addContinuous(std::string_view name, double lower, double upper,
                     double objective = 0.0);
@@ -349,8 +355,9 @@ public:
    * @param bound The right side.
    * @throws std::invalid_argument When the name is empty or taken, when the
    * expression names a variable the model does not have, when a coefficient
-   * or the constant of the expression is not a finite number, or when the
-   * bound is not a number.
+   * or the constant of the expression is not a finite number below
+   * INFINITE_BOUND, when the bound is not a number, or when no value lies
+   * between the bounds once the constant has moved to the other side.
    */
   void addLessOrEqual(std::string_view name, const LinearExpr& expression,
                       double bound);
@@ -362,8 +369,9 @@ public:
    * @param bound The right side.
    * @throws std::invalid_argument When the name is empty or taken, when the
    * expression names a variable the model does not have, when a coefficient
-   * or the constant of the expression is not a finite number, or when the
-   * bound is not a number.
+   * or the constant of the expression is not a finite number below
+   * INFINITE_BOUND, when the bound is not a number, or when no value lies
+   * between the bounds once the constant has moved to the other side.
    */
   void addGreaterOrEqual(std::string_view name, const LinearExpr& expression,
                          double bound);
@@ -375,8 +383,9 @@ public:
    * @param bound The right side.
    * @throws std::invalid_argument When the name is empty or taken, when the
    * expression names a variable the model does not have, when a coefficient
-   * or the constant of the expression is not a finite number, or when the
-   * bound is not a number.
+   * or the constant of the expression is not a finite number below
+   * INFINITE_BOUND, when the bound is not a number, or when no value lies
+   * between the bounds once the constant has moved to the other side.
    */
   void addEqual(std::string_view name, const LinearExpr& expression,
                 double bound);
@@ -389,8 +398,10 @@ public:
    * @param upper The upper bound.
    * @throws std::invalid_argument When the name is empty or taken, when the
    * expression names a variable the model does not have, when a coefficient
-   * or the constant of the expression is not a finite number, when a bound
-   * is not a number, or when the bounds cross.
+   * or the constant of the expression is not a finite number below
+   * INFINITE_BOUND, when a bound is not a number, when the bounds cross, or
+   * when no value lies between them once the constant has moved to the
+   * other side.
    */
   void addRange(std::string_view name, const LinearExpr& expression,
                 double lower, double upper);
@@ -404,8 +415,9 @@ public:
    * @param expression The expression to add.
    * @throws std::invalid_argument When the expression names a variable the
    * model does not have, or when a coefficient or the constant of the
-   * expression is not a finite number. A refused expression leaves the
-   * objective unchanged.
+   * expression, an objective coefficient it sums to or the offset it sums to
+   * is not a finite number below INFINITE_BOUND. A refused expression leaves
+   * the objective unchanged.
    */
   void addObjective(const LinearExpr& expression);
 

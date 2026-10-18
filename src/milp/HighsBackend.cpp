@@ -338,7 +338,9 @@ public:
     prepareScheduler(options.threads);
 
     // HiGHS warns about a model it accepts, for example about the range of
-    // its coefficients, and then solves it. Only an error is a refusal.
+    // its coefficients, and then solves it. Only an error is a refusal. The
+    // model holds no value that HiGHS 1.11 refuses with the options above, so
+    // this guards against a later version that checks more.
     if (highs.passModel(highsModel) == HighsStatus::kError) {
       // HiGHS logs why it rejects the model, and the observer of that log
       // may have thrown.

@@ -186,6 +186,34 @@ TEST(MilpModel, RefusesAnObjectiveThatIsNotFinite) {
   EXPECT_DOUBLE_EQ(model.objectiveOffset(), 0.0);
 }
 
+TEST(MilpModel, RefusesACoefficientFromTheInfiniteBoundOn) {
+  // HiGHS reads a cost from INFINITE_BOUND on as infinite, and another MPS
+  // reader as a number, so the backends would solve two models.
+  Model model("large");
+  EXPECT_THROW(static_cast<void>(model.addBinary("cost", INFINITE_BOUND)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(model.addContinuous("gain", 0.0, 1.0,
+                                                     -10.0 * INFINITE_BOUND)),
+               std::invalid_argument);
+
+  const auto x = model.addContinuous("x", 0.0, 1.0, 0.6 * INFINITE_BOUND);
+  EXPECT_THROW(model.addLessOrEqual("row", INFINITE_BOUND * x, 1.0),
+               std::invalid_argument);
+  EXPECT_THROW(model.addLessOrEqual("shift", (1.0 * x) - INFINITE_BOUND, 1.0),
+               std::invalid_argument);
+  EXPECT_EQ(model.constraintCount(), 0U);
+
+  // A sum is held to the same limit as a single coefficient, and a refused
+  // sum leaves the objective as it was.
+  EXPECT_THROW(model.addObjective(0.6 * INFINITE_BOUND * x),
+               std::invalid_argument);
+  model.addObjective(LinearExpr(0.6 * INFINITE_BOUND));
+  EXPECT_THROW(model.addObjective(LinearExpr(0.6 * INFINITE_BOUND)),
+               std::invalid_argument);
+  EXPECT_DOUBLE_EQ(model.variables()[x.index].objective, 0.6 * INFINITE_BOUND);
+  EXPECT_DOUBLE_EQ(model.objectiveOffset(), 0.6 * INFINITE_BOUND);
+}
+
 TEST(MilpModel, RefusesAVariableOfAnotherModel) {
   Model first("first");
   Model second("second");

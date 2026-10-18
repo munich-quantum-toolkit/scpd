@@ -64,6 +64,24 @@ def test_problems_end_the_report_with_a_verdict(tmp_path: Path) -> None:
     assert "'Q9.port0' is not a port of the chip" in report.problems[0]
 
 
+def test_a_file_that_is_not_utf8_is_a_problem(tmp_path: Path) -> None:
+    """A configuration or a chip input in another encoding ends the report with a verdict."""
+    config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
+    latin = tmp_path / "latin.toml"
+    latin.write_bytes(("# Gr\u00f6\u00dfe\n" + config).encode("latin-1"))
+    report = run_doctor(latin)
+    assert "it is not UTF-8" in report.problems[0]
+    assert report.text().endswith("doctor: 1 problem(s)")
+
+    chip = tmp_path / "chip.json"
+    chip.write_bytes(b"\xff" + (FIXTURE / "routing_config.json").read_bytes())
+    broken = tmp_path / "config.toml"
+    broken.write_text(config.replace('input = "routing_config.json"', 'input = "chip.json"'), encoding="utf-8")
+    report = run_doctor(broken)
+    assert "it is not UTF-8" in report.problems[0]
+    assert report.text().endswith("doctor: 1 problem(s)")
+
+
 def test_a_default_written_out_is_not_a_problem(tmp_path: Path) -> None:
     """The rules for a shipped file are for the benchmarks; a user may write a default out."""
     config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
