@@ -529,6 +529,27 @@ releases may include breaking changes.
 
 ### Fixed
 
+- 🐛 Count a gate on the line of a mouth between the same two chambers as that
+  mouth in the slot check (`SCPD_MOUTH_TWINS`, on). The capacity graph can
+  carry a mouth line twice, once as the mouth and once as a plain gate. On 33q
+  the terminal edge f5 passed the mouth between f39 and f0 by its plain twin,
+  a way round the chip that the feedline routing never takes.
+- 🐛 Lay a crossing slot only where the feedline routing's crossing rule lets
+  a wire cross (`SCPD_SLOT_CROSSING_RULE`, on). The slot check rebuilds
+  `routing::CrossingConstraints` from the feedline strokes of the graph, as the
+  feedline routing builds it, and a slot needs a line across its edge that the
+  rule allows. The slots were laid by the edge's geometry alone. On 33q a slot
+  lay nine cells before the end of f2, where the router may not cross, so the
+  check found a way that the feedline routing could not find.
+- 🐛 Keep two feedline edges of one coupler apart in the slots of the coupler
+  insertion (`SCPD_EDGE_SLOT_CLEARANCE`, on). The slots at an edge's ports
+  opened the clearance around its neighbour edge, and only the copper closed
+  again. The feedline routing grants the two edges less than the clearance only
+  where the middle of a pair of cells lies within half the coupling length and
+  a clearance of the coupler's anchor, and it does not draw an edge between
+  two couplers again. On 33q f3 left its coupler 12.7 cells beside f2, and the
+  feedline routing found both open. The slots now keep the neighbour's
+  clearance outside that meeting.
 - 🐛 Handle a feedline with a reflector, which has one launcher, in the coupler
   insertion. Its edge at the reflector end runs between two couplers and is no
   terminal edge: the fences, the end-pair reorder and the fresh routing of the
@@ -574,6 +595,13 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🔧 Count a gate of the slot check across the heading the wires cross it on
+  (`SCPD_GATE_HEADING`, on), and raise the safety factor on the clearance to
+  1.06 (`SCPD_CAPACITY_MARGIN`). A wire runs on one of eight headings, so a line
+  of length `L` whose normal lies `phi` off the nearest heading holds
+  `floor(L cos(phi) / (1.06 clearance))` wires from three on. On 33q a gate of
+  106 cells at 22 degrees held five wires by its length, and on 45q two gates
+  of 124 and 127 cells across held six; the feedline routing passed neither.
 - ⚡ Give the prefix search of the coupler insertion 20 s per chain by default
   instead of 10 s (`SCPD_CHAIN_ASTAR_SECONDS`). In 10 s, chain 3 of 45q reaches
   no complete run of options, and one of its feedline edges is not drawn. With

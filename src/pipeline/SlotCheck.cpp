@@ -10,6 +10,10 @@
 
 #include "mqt-scpd/pipeline/SlotCheck.hpp"
 
+#include "mqt-scpd/routing/CrossingConstraints.hpp"
+#include "mqt-scpd/routing/Heading.hpp"
+#include "mqt-scpd/routing/Path.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -19,10 +23,12 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <format>
 #include <functional>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <queue>
 #include <set>
@@ -478,6 +484,155 @@ tautLength(const Point& start, const Point& end,
   return length + distance(end, previous);
 }
 
+/// The safety factor on the clearance a wire takes in a gap:
+/// `SCPD_CAPACITY_MARGIN`, **1.06** (user, 2026-10-18). A gap holds
+/// `floor(cells / (clearance * margin))` wires; above 1 the check counts a
+/// gap a little narrower than measured, against the error of the grid,
+/// which adds up over many wires (57q, cases 03 and 05 of the review: a
+/// gate of 115.4 cells for six wires takes five). With the gap counted
+/// across the wires' heading (`gateHeading`), 33q of round 54 (cases 10
+/// and 12) has a gate of 98.3 cells for five wires that the router does
+/// not pass, which takes four from a factor of 1.035 on. At 1.06, 45q of
+/// round 55 (cases 06 and 09) has its gates of six wires that the router
+/// does not pass take five. Read on every check, so that one process can
+/// compare several factors.
+[[nodiscard]] double capacityMargin() {
+  constexpr double FALLBACK = 1.06;
+  const char* text = std::getenv("SCPD_CAPACITY_MARGIN");
+  if (text == nullptr) {
+    return FALLBACK;
+  }
+  char* end = nullptr;
+  const auto value = std::strtod(text, &end);
+  return end != text && value >= 1.0 && value <= 2.0 ? value : FALLBACK;
+}
+
+/// The least number of wires a gap holds without the margin before the
+/// margin applies to it: `SCPD_CAPACITY_MARGIN_FROM`, **3** (user,
+/// 2026-10-17). A gap of one or two clearances is measured exactly on the
+/// grid, often 19 or 38 cells along an axis, and the margin on it closed
+/// eight gaps the routing used (17q and 33q of round 52).
+[[nodiscard]] std::int64_t marginFrom() {
+  constexpr std::int64_t FALLBACK = 3;
+  const char* text = std::getenv("SCPD_CAPACITY_MARGIN_FROM");
+  if (text == nullptr) {
+    return FALLBACK;
+  }
+  char* end = nullptr;
+  const auto value = std::strtol(text, &end, 10);
+  return end != text && value >= 1 && value <= 100 ? value : FALLBACK;
+}
+
+/// How many wires a gap of `cells` holds: `floor(cells / (clearance *
+/// margin))`, none when the gap is narrower than that; the margin applies
+/// to a gap that holds `marginFrom` wires or more without it.
+[[nodiscard]] std::int64_t wiresIn(const double cells, const double clear,
+                                   const double margin) {
+  const auto plain =
+      cells >= clear ? static_cast<std::int64_t>(std::floor(cells / clear)) : 0;
+  if (plain < marginFrom()) {
+    return plain;
+  }
+  const auto taken = clear * margin;
+  return cells >= taken ? static_cast<std::int64_t>(std::floor(cells / taken))
+                        : 0;
+}
+
+/// Whether a line's gap is counted across the heading the wires cross it
+/// on: `SCPD_GATE_HEADING`, **on** (user, 2026-10-18). A wire runs on one of
+/// eight headings and keeps the clearance across its own heading, so
+/// parallel wires that cross a line at an angle phi to the line's normal
+/// take a clearance over cos(phi) of it each. The best heading lies at most
+/// 22.5 degrees off the normal: a line of length L holds
+/// floor(L cos(phi) / (clearance * margin)) wires (`headingShare`).
+[[nodiscard]] bool gateHeading() {
+  const char* text = std::getenv("SCPD_GATE_HEADING");
+  return text == nullptr || std::string_view(text) != "0";
+}
+
+/// The share of a line from a to b that wires crossing it on the best of
+/// the eight headings can use: cos(phi), phi the angle between the line's
+/// normal and the nearest heading, at most 22.5 degrees; 1 under
+/// `gateHeading` off or for a line of no length.
+[[nodiscard]] double headingShare(const Point& a, const Point& b) {
+  const auto dx = b.x - a.x;
+  const auto dy = b.y - a.y;
+  if (!gateHeading() || std::hypot(dx, dy) < 1e-9) {
+    return 1.0;
+  }
+  constexpr double EIGHTH = std::numbers::pi / 4.0;
+  // The normal's angle folded into one eighth turn: the distance to the
+  // nearest heading.
+  const auto angle = std::atan2(dx, -dy);
+  const auto folded = std::fmod(std::fmod(angle, EIGHTH) + EIGHTH, EIGHTH);
+  return std::cos(std::min(folded, EIGHTH - folded));
+}
+
+/// The narrowest gap through which a resonator still leaves its own port
+/// run, as a share of the clearance: `SCPD_RESONATOR_PASSAGE`, **0.8** (user,
+/// 2026-10-18). The check by stretches opens a gate too narrow for any wire
+/// to the owner of a port run at its end, with capacity 1 (the own-run
+/// passage). A resonator gets through a gap of about 17 cells but not of 14
+/// or less (round 55 of the review: 45q, 33q), so a narrower gate keeps
+/// capacity 0 for it; the check would rather be too careful than too bold.
+[[nodiscard]] double resonatorPassage() {
+  constexpr double FALLBACK = 0.8;
+  const char* text = std::getenv("SCPD_RESONATOR_PASSAGE");
+  if (text == nullptr) {
+    return FALLBACK;
+  }
+  char* end = nullptr;
+  const auto value = std::strtod(text, &end);
+  return end != text && value >= 0.0 && value <= 1.0 ? value : FALLBACK;
+}
+
+/// Whether a crossing slot needs a line across its edge that the feedline
+/// routing's crossing rule allows: `SCPD_SLOT_CROSSING_RULE`, **on** (user,
+/// 2026-10-18). The router lets a wire cross a feedline edge only at a
+/// right angle to every straight run within the crossing reach of the
+/// cells it enters, and not at all within one cell of a bend or of the
+/// first and last ten cells of an edge (`routing::CrossingConstraints`).
+/// The slots were laid by the edge's geometry alone; on 33q (round 53,
+/// case 11) the check sent wire 12 over a slot nine cells before the end
+/// of f2, where the router may not cross, and the feedline routing found
+/// no way for it.
+[[nodiscard]] bool slotCrossingRule() {
+  const char* text = std::getenv("SCPD_SLOT_CROSSING_RULE");
+  return text == nullptr || std::string_view(text) != "0";
+}
+
+/// The heading of a unit step on the grid, or nothing for a step of zero.
+[[nodiscard]] std::optional<routing::Heading> headingOfStep(const int dx,
+                                                            const int dy) {
+  for (routing::Heading heading = 0; heading < routing::NUM_HEADINGS;
+       ++heading) {
+    const auto v = routing::headingVector(heading);
+    if (v.dx == dx && v.dy == dy) {
+      return heading;
+    }
+  }
+  return std::nullopt;
+}
+
+/// The sign of a number: -1, 0 or 1.
+[[nodiscard]] int signOf(const double value) {
+  return value > 1e-9 ? 1 : (value < -1e-9 ? -1 : 0);
+}
+
+/// Whether a gate on the line of a mouth between the same two chambers counts
+/// as that mouth: `SCPD_MOUTH_TWINS`, **on** (user, 2026-10-18). The capacity
+/// graph can carry a mouth line twice, once as the mouth and once as a plain
+/// gate; on 33q (round 54, case 16) the terminal edge f5 passed the mouth
+/// between f39 and f0 by its plain twin g141, a way round the chip that the
+/// feedline routing, which keeps f5 in its lane, never takes.
+[[nodiscard]] bool mouthTwins() {
+  const char* text = std::getenv("SCPD_MOUTH_TWINS");
+  return text == nullptr || std::string_view(text) != "0";
+}
+
+/// How far the ends of two lines may lie apart for them to be one line.
+constexpr double MOUTH_TWIN_CELLS = 2.0;
+
 /// Whether the segments p-q and c-d cross at a point inside both.
 [[nodiscard]] bool crossesLine(const Point& p, const Point& q, const Point& c,
                                const Point& d) {
@@ -579,6 +734,10 @@ struct SlotPlacer {
   std::vector<std::string> wallKinds;
   std::vector<bool> portSlots;
   std::set<std::pair<std::int64_t, std::int64_t>> portSlotsOutside;
+  /// The feedline routing's crossing rule over the edges between couplers
+  /// (`slotCrossingRule`), and how far it reaches.
+  routing::CrossingConstraints rule;
+  int ruleReach = 0;
 
   SlotPlacer(const json& graphIn, const Grid& gridIn, Stamps& stampsIn)
       : graph(graphIn), grid(gridIn), stamps(stampsIn),
@@ -688,6 +847,9 @@ struct SlotPlacer {
                            cy + ((a * half) * uy) + ((b * reach) * ny)};
       }
       std::optional<std::string> blocked;
+      if (!rule.empty() && !crossable(cx, cy, *step)) {
+        blocked = "crossing rule";
+      }
       // The edge's own straight piece: the points of the edge within
       // OWN_WINDOW of the slot's.
       const auto first =
@@ -695,6 +857,9 @@ struct SlotPlacer {
       const auto stop =
           static_cast<std::size_t>(std::min(count, k + OWN_WINDOW + 1));
       for (const auto& [x, y] : covered) {
+        if (blocked.has_value()) {
+          break;
+        }
         const bool in = grid.inside(x, y);
         if (in ? portSlots[grid.cell(x, y)]
                : portSlotsOutside.contains({x, y})) {
@@ -746,7 +911,79 @@ struct SlotPlacer {
     return result;
   }
 
+  /// Whether a wire may cross the edge at a cell on the line across it,
+  /// as the router's crossing rule judges every cell the wire enters there:
+  /// the line through the cell, the rule's reach and one more to either
+  /// side, on the heading across a step of the edge.
+  [[nodiscard]] bool crossable(const double cx, const double cy,
+                               const Point& step) const {
+    const auto dx = signOf(-step.y);
+    const auto dy = signOf(step.x);
+    const auto across = headingOfStep(dx, dy);
+    if (!across.has_value()) {
+      return true;
+    }
+    for (int t = -(ruleReach + 1); t <= ruleReach + 1; ++t) {
+      const auto x = static_cast<std::int64_t>(std::lround(cx)) + (t * dx);
+      const auto y = static_cast<std::int64_t>(std::lround(cy)) + (t * dy);
+      if (x < 0 || y < 0 || !grid.inside(x, y) ||
+          !rule.allowed(static_cast<std::uint32_t>(x),
+                        static_cast<std::uint32_t>(y), *across)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// The router's crossing rule, rebuilt from the feedline strokes of the
+  /// graph as the feedline routing builds it: every edge between couplers,
+  /// the terminal edges left out (`SCPD_FEEDLINE_PROTOTYPE`, on), with the
+  /// crossing reach of the router, one less than the graph's. A cell's
+  /// heading is the step into it, the first cell's the step out of it, so
+  /// that a cell is on a straight run when it leaves as it came.
+  void buildRule(const std::vector<Stroke>& strokes) {
+    std::set<std::string> terminal;
+    for (const auto& wire : graph.at("wires")) {
+      if (wire.value("terminal", false)) {
+        terminal.insert(wire.at("name").get<std::string>());
+      }
+    }
+    std::vector<routing::Path> edges;
+    for (const auto& stroke : strokes) {
+      if (stroke.kind != "feedline" || terminal.contains(stroke.name)) {
+        continue;
+      }
+      routing::Path way;
+      for (const auto& point : stroke.points) {
+        const auto x = static_cast<std::uint32_t>(std::lround(point.x));
+        const auto y = static_cast<std::uint32_t>(std::lround(point.y));
+        if (!way.empty() && way.back().x == x && way.back().y == y) {
+          continue;
+        }
+        routing::PathPoint cell{.x = x, .y = y};
+        if (!way.empty()) {
+          cell.heading = headingOfStep(
+                             signOf(static_cast<double>(x) - way.back().x),
+                             signOf(static_cast<double>(y) - way.back().y))
+                             .value_or(way.back().heading);
+        }
+        way.push_back(cell);
+      }
+      if (way.size() >= 2) {
+        way.front().heading = way[1].heading;
+      }
+      edges.push_back(std::move(way));
+    }
+    ruleReach = static_cast<int>(
+        std::lround(graph.at("crossingReach").get<double>())) - 1;
+    rule.build(static_cast<std::uint32_t>(grid.width),
+               static_cast<std::uint32_t>(grid.height), edges, {}, ruleReach);
+  }
+
   [[nodiscard]] std::vector<EdgeSlots> run(const std::vector<Stroke>& strokes) {
+    if (slotCrossingRule()) {
+      buildRule(strokes);
+    }
     std::map<std::string, std::int64_t> stretchCapacity;
     for (const auto& edge : graph.at("edges")) {
       if (edge.at("kind") == "stretch") {
@@ -788,6 +1025,7 @@ selfBottlenecks(const json& graph, const Grid& grid,
                 const std::vector<Stroke>& strokes,
                 const std::vector<Edge>& edges) {
   const auto clear = graph.at("clearance").get<double>();
+  const auto margin = capacityMargin();
   const auto r = graph.at("inflation").get<double>();
   const auto reach = graph.at("crossingReach").get<double>() + 2;
   std::vector<Group> groups;
@@ -837,6 +1075,20 @@ selfBottlenecks(const json& graph, const Grid& grid,
     for (std::size_t p = 1; p < n; ++p) {
       along.push_back(along.back() + distance(pts[p], pts[p - 1]));
     }
+    // Whether a line cuts a slot's way across the edge between the
+    // rectangle and an exit, where a wire runs once it is across: not
+    // inside the rectangle, which is the crossing itself (33q case 02 of
+    // the review: f4 0..53 cuts the first slot of f4 inside its rectangle).
+    const auto cutsPastRectangle = [&](const std::array<Point, 2>& ends,
+                                       const Point& from, const Point& to) {
+      const Point mid{(ends[0].x + ends[1].x) / 2.0,
+                      (ends[0].y + ends[1].y) / 2.0};
+      return std::ranges::any_of(ends, [&](const Point& end) {
+        const Point rim{end.x + ((mid.x - end.x) * (2.0 / reach)),
+                        end.y + ((mid.y - end.y) * (2.0 / reach))};
+        return crossesLine(rim, end, from, to);
+      });
+    };
     // The points of the edge by square of side `near`: a pair of points
     // closer than `near` lies in one square or in two that touch.
     const auto bucketOf = [near](const Point& point) {
@@ -873,10 +1125,8 @@ selfBottlenecks(const json& graph, const Grid& grid,
               d - (2 * r) < 6 * clear)) {
           continue;
         }
-        const auto gap = d - (2 * r);
-        const auto capacity =
-            gap >= clear ? static_cast<std::int64_t>(std::floor(gap / clear))
-                         : 0;
+        const auto gap = (d - (2 * r)) * headingShare(pts[i], pts[j]);
+        const auto capacity = wiresIn(gap, clear, margin);
         // Only the slots between the two places can lie past the line.
         const auto between = std::ranges::count_if(
             mine, [&](const auto k) { return i < at[k] && at[k] < j; });
@@ -927,7 +1177,14 @@ selfBottlenecks(const json& graph, const Grid& grid,
           continue;
         }
         // A slot is past the line when its end on one side of the edge lies
-        // in the room the line and the edge enclose.
+        // in the room the line and the edge enclose, or when the line cuts
+        // the slot's way across the edge from exit to exit: a wire crossing
+        // there passes the line once (45q case 06 of the review: the exit
+        // of the slot of f46 below its bend lies 1.5 cells past the line
+        // from f46 to the end of f46, 14 cells from surface to surface). The
+        // slot's rectangle has to lie wholly between the line's two ends
+        // along the edge: a slot at an end of the line has its way beside
+        // the line's end (33q case 02: the slot at the end of f4 0..85).
         const auto apart = distance(pts[j], pts[i]);
         const auto unit = std::max(1e-9, apart);
         const Point u0{(pts[j].x - pts[i].x) / unit,
@@ -939,11 +1196,16 @@ selfBottlenecks(const json& graph, const Grid& grid,
                        pts.begin() + static_cast<std::ptrdiff_t>(j) + 1);
         polygon.push_back({pts[j].x - (r * u0.x), pts[j].y - (r * u0.y)});
         std::vector<std::size_t> inside;
+        const Point lineFrom = polygon.front();
+        const Point lineTo = polygon.back();
         for (const auto k : mine) {
           if (i < at[k] && at[k] < j &&
-              std::ranges::any_of(
-                  exits[k],
-                  [&](const Point& q) { return inPolygon(q, polygon); })) {
+              (std::ranges::any_of(
+                   exits[k],
+                   [&](const Point& q) { return inPolygon(q, polygon); }) ||
+               (along[at[k]] - along[i] >= clear / 2.0 &&
+                along[j] - along[at[k]] >= clear / 2.0 &&
+                cutsPastRectangle(exits[k], lineFrom, lineTo)))) {
             inside.push_back(k);
           }
         }
@@ -985,6 +1247,7 @@ slotStubBottlenecks(const json& graph, const Grid& grid, Stamps& stamps,
                     const std::vector<Edge>& edges,
                     const std::vector<Wire>& wires) {
   const auto clear = graph.at("clearance").get<double>();
+  const auto margin = capacityMargin();
   const auto longest = 4 * clear;
   // The open ends of the stubs' walls: stub cells with one stub cell
   // around them.
@@ -1137,7 +1400,8 @@ slotStubBottlenecks(const json& graph, const Grid& grid, Stamps& stamps,
         if (!(length <= longest)) {
           continue;
         }
-        auto capacity = static_cast<std::int64_t>(std::floor(length / clear));
+        auto capacity =
+            wiresIn(length * headingShare(a, b), clear, margin);
         // The line must run free between its ends.
         bool free = true;
         const auto steps = static_cast<std::int64_t>(length > 2 ? length : 2.0);
@@ -1264,7 +1528,8 @@ class Checker {
 public:
   explicit Checker(const json& graph)
       : graph_(graph), grid_(gridOf(graph)), stamps_(grid_.code.size()),
-        clear_(graph.at("clearance").get<double>()) {}
+        clear_(graph.at("clearance").get<double>()),
+        margin_(capacityMargin()) {}
 
   /// The verdict, the lost wires and the edges over, and the graph as the
   /// check saw it.
@@ -1275,6 +1540,8 @@ private:
   Grid grid_;
   Stamps stamps_;
   double clear_;
+  /// The safety factor on the clearance (`capacityMargin`).
+  double margin_;
   std::vector<Stroke> strokes_;
   std::vector<Wire> wires_;
   std::vector<Edge> edges_;
@@ -1298,6 +1565,7 @@ private:
   void addSides();
   void addSlots(const std::vector<EdgeSlots>& slots);
   void findOwners();
+  void markMouthTwins();
   void findMouths();
   void openEdges(Demand& demand) const;
   [[nodiscard]] std::int64_t limitOf(std::size_t k, std::int64_t own) const;
@@ -1345,6 +1613,12 @@ void Checker::addSides() {
           std::pair{pointOf(line.front()), pointOf(line.back())});
     }
   }
+  std::set<std::string> resonatorNames;
+  for (const auto& wire : graph_.at("wires")) {
+    if (truthy(wire, "resonator")) {
+      resonatorNames.insert(wire.at("name").get<std::string>());
+    }
+  }
   for (const auto& edge : graph_.at("edges")) {
     if (edge.at("kind") != "bottleneck") {
       continue;
@@ -1364,6 +1638,23 @@ void Checker::addSides() {
     }
     one.mouth = truthy(edge, "mouth");
     one.length = edge.at("length").get<double>();
+    // A gate too narrow for any wire that the check by stretches opened to
+    // the resonators at whose own runs it ends holds none of them when it is
+    // narrower than `resonatorPassage` of the clearance.
+    if (one.capacity >= 1 && one.length < clear_ && one.users.has_value() &&
+        !one.users->empty() && one.length < resonatorPassage() * clear_ &&
+        std::ranges::all_of(*one.users, [&](const std::string& name) {
+          return resonatorNames.contains(name);
+        })) {
+      one.capacity = 0;
+    }
+    // A gate that holds its length over the clearance holds it over the
+    // clearance times the margin; a gate the check by stretches gave another
+    // capacity (a slot, a mouth, an own run's passage) keeps it.
+    if (one.capacity == wiresIn(one.length, clear_, 1.0)) {
+      one.capacity = wiresIn(one.length * headingShare(one.from, one.to),
+                             clear_, margin_);
+    }
     if (edge.contains("sides")) {
       one.sides =
           std::array{edge.at("sides").at(0).get<std::vector<std::int64_t>>(),
@@ -1473,6 +1764,43 @@ void Checker::addSlots(const std::vector<EdgeSlots>& slots) {
   }
 }
 
+void Checker::markMouthTwins() {
+  if (!mouthTwins()) {
+    return;
+  }
+  // A gate on the line of a mouth between the same two chambers is that
+  // mouth: it passes what the mouth bars otherwise.
+  const auto near = [](const Point& a, const Point& b) {
+    return distance(a, b) <= MOUTH_TWIN_CELLS;
+  };
+  std::vector<std::size_t> mouths;
+  for (std::size_t k = 0; k < edges_.size(); ++k) {
+    if (!edges_[k].stretch && edges_[k].mouth) {
+      mouths.push_back(k);
+    }
+  }
+  for (auto& edge : edges_) {
+    if (edge.stretch || edge.mouth) {
+      continue;
+    }
+    const std::set<std::int64_t> chambers(edge.chambers.begin(),
+                                          edge.chambers.end());
+    for (const auto m : mouths) {
+      const auto& mouth = edges_[m];
+      const bool sameLine = (near(edge.from, mouth.from) &&
+                             near(edge.to, mouth.to)) ||
+                            (near(edge.from, mouth.to) &&
+                             near(edge.to, mouth.from));
+      if (sameLine && chambers == std::set<std::int64_t>(mouth.chambers.begin(),
+                                                         mouth.chambers.end())) {
+        edge.mouth = true;
+        edge.out["mouth"] = true;
+        break;
+      }
+    }
+  }
+}
+
 void Checker::findOwners() {
   // The middle line of every port run, by its wire: port to open end.
   std::unordered_map<std::string, std::vector<const std::vector<Point>*>> runs;
@@ -1539,10 +1867,14 @@ std::int64_t Checker::limitOf(const std::size_t k,
   const auto margins =
       ((2 * clear_) / 2) -
       ((static_cast<double>(std::min<std::int64_t>(own, 2)) * clear_) / 2);
-  const auto room = edges_[k].length - margins;
-  return std::max(
-      capacity_[k],
-      room >= 0 ? static_cast<std::int64_t>(std::floor(room / clear_)) + 1 : 0);
+  const auto room =
+      (edges_[k].length * headingShare(edges_[k].from, edges_[k].to)) -
+      margins;
+  return std::max(capacity_[k],
+                  room >= 0 ? static_cast<std::int64_t>(
+                                  std::floor(room / (clear_ * margin_))) +
+                                  1
+                            : 0);
 }
 
 void Checker::findMouths() {
@@ -1782,8 +2114,11 @@ void Checker::openEdges(Demand& demand) const {
     const auto mouthOf = gate == mouthOfGate_.end()
                              ? std::optional<std::string>()
                              : gate->second;
-    // A wire of a mouth passes that mouth and no other.
-    if (mine.has_value() && edge.mouth && mouthOf != mine) {
+    // A wire of a mouth passes that mouth and no other. A piece whose mouth
+    // is not known bars no wire (9q case 09 of round 54: the line from f4
+    // to f6 in the mouth of f5).
+    if (mine.has_value() && edge.mouth && mouthOf.has_value() &&
+        mouthOf != mine) {
       ok = false;
     }
     demand.open[k] = ok;
@@ -2014,6 +2349,7 @@ std::pair<SlotCheckResult, json> Checker::run() {
         "slot check: the graph is too large for the search");
   }
   findOwners();
+  markMouthTwins();
   findMouths();
   for (auto& demand : demands) {
     openEdges(demand);
@@ -2182,9 +2518,10 @@ std::pair<SlotCheckResult, json> Checker::run() {
     out["index"] = k;
     out["load"] = load[k];
     out["overflow"] = std::max<std::int64_t>(0, load[k] - limits[k]);
-    if (limits[k] != capacity_[k]) {
-      out["capacity"] = limits[k];
-    }
+    // The capacity the check routed against: after the margin and the
+    // resonator passage, which the graph of the check by stretches does not
+    // carry (45q case 02 of round 55 showed 5 where the check took 4).
+    out["capacity"] = limits[k];
     out["through"] = through[k];
     edgesOut.push_back(std::move(out));
   }

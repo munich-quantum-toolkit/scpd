@@ -1208,6 +1208,28 @@ constexpr std::uint32_t CEILING = 4000;
   return on;
 }
 
+/// Whether the slots of an edge between two couplers keep the clearance
+/// from its neighbour outside the meeting at their coupler:
+/// `SCPD_EDGE_SLOT_CLEARANCE`, **on** (user, 2026-10-18).
+///
+/// The feedline routing holds two edges of one coupler to the clearance
+/// everywhere but where they meet: the pair of cells closer than the rule
+/// passes only when its middle lies within half the coupling length and a
+/// clearance of the coupler's anchor, or near two ports that stand within
+/// the rule of each other (`meetAt`). The insertion has to draw the edges
+/// that pass this test. With the copper rule alone in the slots, 33q
+/// (round 55, case 02) let f3 leave coupler 5 12.7 cells from f2, which
+/// bends round the coupler there; the feedline routing does not draw the
+/// two again and found both open. A coupler session also measures every
+/// edge it draws against its neighbours at both couplers by the same test
+/// and lets an edge that fails it stand down: on 33q, f0 is drawn before
+/// f1 and cannot see the straight run f1 has to make out of its port.
+/// `=0` closes the copper alone and measures nothing, as before.
+[[nodiscard]] inline bool edgeSlotClearance() {
+  static const bool on = envFlag("SCPD_EDGE_SLOT_CLEARANCE", true);
+  return on;
+}
+
 /// Whether the orthogonal crossing rule binds at all. `=1` puts it back,
 /// `=0` lifts it entirely.
 ///
@@ -6234,34 +6256,95 @@ public:
     //
     // A terminal edge keeps the whole clearance from its neighbour, the edge
     // that meets it at its coupler, in the slots too. See
-    // `terminalSlotClearance`.
+    // `terminalSlotClearance`. Any other edge keeps it outside the meeting
+    // the feedline routing grants the two. See `edgeSlotClearance`.
     const auto& points = chains_[edge.chain];
-    std::vector<PathPoint> meetings;
-    if (edge.terminal && terminalSlotClearance()) {
+    struct Meeting {
+      /// The neighbour's port at the shared coupler.
+      PathPoint port;
+      /// This edge's port at the shared coupler.
+      PathPoint own;
+      /// The shared coupler's anchor.
+      PathPoint anchor;
+    };
+    std::vector<Meeting> meetings;
+    const bool whole = edge.terminal && terminalSlotClearance();
+    if (whole || edgeSlotClearance()) {
+      const auto anchorOf = [&](const Waypoint& point) {
+        const auto& coupler = couplers_[point.coupler];
+        return coupler.options[coupler.chosen].anchor;
+      };
       if (!points[edge.from].fixed) {
-        meetings.push_back(targetOf(points[edge.from]));
+        meetings.push_back({.port = targetOf(points[edge.from]),
+                            .own = objective.source,
+                            .anchor = anchorOf(points[edge.from])});
       }
       if (!points[edge.to].fixed) {
-        meetings.push_back(sourceOf(points[edge.to]));
+        meetings.push_back({.port = sourceOf(points[edge.to]),
+                            .own = objective.target,
+                            .anchor = anchorOf(points[edge.to])});
       }
     }
-    const auto meetsHere = [&](const Path& way) {
-      return std::ranges::any_of(meetings, [&](const PathPoint& at) {
+    const auto meetingOf = [&](const Path& way) -> const Meeting* {
+      for (const auto& meeting : meetings) {
         const auto near = [&](const PathPoint& end) {
           return std::abs(static_cast<std::int64_t>(end.x) -
-                          static_cast<std::int64_t>(at.x)) <= 2 &&
+                          static_cast<std::int64_t>(meeting.port.x)) <= 2 &&
                  std::abs(static_cast<std::int64_t>(end.y) -
-                          static_cast<std::int64_t>(at.y)) <= 2;
+                          static_cast<std::int64_t>(meeting.port.y)) <= 2;
         };
-        return near(way.front()) || near(way.back());
-      });
+        if (near(way.front()) || near(way.back())) {
+          return &meeting;
+        }
+      }
+      return nullptr;
+    };
+    // Whether two cells of the edges that meet at a coupler pass the rule
+    // where its middle lies, as `meetAt` judges a pair in the feedline
+    // routing: within half the coupling length and a clearance of the
+    // anchor, or within one and a half clearances of either port when the
+    // two ports stand within the rule of each other.
+    const auto link = static_cast<double>(tuning_.clearance);
+    const auto reach = (0.5 * static_cast<double>(tuning_.couplerLength)) + link;
+    const auto meets = [&](const Meeting& meeting, const double x,
+                           const double y) {
+      const auto from = [&](const PathPoint& at) {
+        return std::hypot(x - static_cast<double>(at.x),
+                          y - static_cast<double>(at.y));
+      };
+      if (from(meeting.anchor) <= reach) {
+        return true;
+      }
+      const auto apart = std::hypot(static_cast<double>(meeting.port.x) -
+                                        static_cast<double>(meeting.own.x),
+                                    static_cast<double>(meeting.port.y) -
+                                        static_cast<double>(meeting.own.y));
+      return apart <= link &&
+             (from(meeting.port) <= 1.5 * link || from(meeting.own) <= 1.5 * link);
     };
     const auto closeCopper = [&](const Path& way) {
-      const auto& stencil =
-          meetsHere(way) ? stencilFor(tuning_.clearance) : stencilFor(1);
+      const auto* meeting = meetingOf(way);
+      const auto& stencil = meeting != nullptr && whole
+                                ? stencilFor(tuning_.clearance)
+                                : stencilFor(1);
       alongDisc(way, stencil, [&](const std::int64_t x, const std::int64_t y) {
         corridor_.set(static_cast<std::size_t>((y * width) + x), true);
       });
+      if (meeting == nullptr || whole) {
+        return;
+      }
+      for (const auto& point : way) {
+        for (const auto& [dx, dy] : stencilFor(tuning_.clearance).full) {
+          const auto x = static_cast<std::int64_t>(point.x) + dx;
+          const auto y = static_cast<std::int64_t>(point.y) + dy;
+          if (x < 0 || y < 0 || x >= width || y >= height ||
+              meets(*meeting, static_cast<double>(point.x) + (0.5 * dx),
+                    static_cast<double>(point.y) + (0.5 * dy))) {
+            continue;
+          }
+          corridor_.set(static_cast<std::size_t>((y * width) + x), true);
+        }
+      }
     };
     for (const Path* way : sameChainWays_) {
       closeCopper(*way);
@@ -14852,6 +14935,7 @@ public:
                {"jog", option.secondStraight},
                {"moved", {option.shiftX, option.shiftY}},
                {"centre", point(option.centre)},
+               {"anchor", point(option.anchor)},
                {"in", point(option.in)},
                {"out", point(option.out)},
                {"pad", padCorners(option)},
@@ -14879,7 +14963,7 @@ public:
   /// routed around the other's way to the old ports, and are then routed
   /// as the commit routes an edge, against every edge on the chip
   /// (`fenceEverything_`). Returns
-  /// JSON: per edge whether it was drawn and its length in cells.
+  /// JSON: per edge whether it was drawn, its length in cells and its way.
   ///
   /// @throws std::invalid_argument when the coupler or the option does not
   /// exist.
@@ -14932,14 +15016,57 @@ public:
         place(wire);
       }
       chainEdgePaths_[edge.chain][edge.from] = wire.way;
+      // An edge that comes closer to a neighbour than the feedline routing
+      // grants the two at their coupler is no edge the feedline routing can
+      // keep: it does not draw the edge again and finds both open. Such an
+      // edge stands down, and the chip is not complete.
+      std::string refused;
+      if (wire.drawn && edgeSlotClearance()) {
+        for (const auto at : {edge.from, edge.to}) {
+          // The edge before meets this one at its source, the edge after at
+          // its target; a chain that ends at a reflector has none there.
+          const auto& ways = chainEdgePaths_[edge.chain];
+          if (points[at].fixed || (at == edge.from && edge.from == 0) ||
+              (at == edge.to && edge.to >= ways.size())) {
+            continue;
+          }
+          const auto other = at == edge.from ? edge.from - 1 : edge.to;
+          const auto& theirs = ways[other];
+          const auto& shared = couplers_[points[at].coupler];
+          if (const auto pair = tooClose(wire.way, theirs,
+                                         shared.options[shared.chosen]);
+              pair.has_value()) {
+            refused = std::format(
+                "NO WAY: ({},{}) is {:.1f} cells from ({},{}) of the edge "
+                "it meets at coupler {}",
+                pair->first.x, pair->first.y,
+                std::hypot(static_cast<double>(pair->first.x) - pair->second.x,
+                           static_cast<double>(pair->first.y) -
+                               pair->second.y),
+                pair->second.x, pair->second.y, points[at].coupler);
+            break;
+          }
+        }
+      }
+      if (!refused.empty()) {
+        lift(wire);
+        wire.drawn = false;
+        wire.way.clear();
+        chainEdgePaths_[edge.chain][edge.from].clear();
+      }
+      json laid = json::array();
+      for (const auto& cell : wire.way) {
+        laid.push_back(json::array({cell.x, cell.y}));
+      }
       drawn.push_back({{"edge", wireId(wire)},
                        {"drawn", wire.drawn},
-                       {"cells", wire.way.size()}});
+                       {"cells", wire.way.size()},
+                       {"way", laid}});
       say(std::format("[Coupler Session] '{}' on option {}: edge {} {}",
                       wireId(wires[coupler.wire]), option, wireId(wire),
-                      wire.drawn
-                          ? std::format("drawn, {} cells", wire.way.size())
-                          : std::string("NO WAY")));
+                      wire.drawn ? std::format("drawn, {} cells", wire.way.size())
+                      : refused.empty() ? std::string("NO WAY")
+                                        : refused));
     }
     return json{{"coupler", index}, {"option", option}, {"edges", drawn}}
         .dump();
@@ -17958,6 +18085,46 @@ private:
     return 0.0;
   }
 
+  /// The first pair of cells of two feedline edges that meet at a coupler on
+  /// `option` that the feedline routing holds against them: closer than the
+  /// rule, with the middle of the pair outside the meeting `meetAt` grants
+  /// two edges there — half the coupling length and a clearance from the
+  /// anchor, or one and a half clearances from either port where the two
+  /// ports stand within the rule of each other. Nothing when every pair
+  /// passes or either way is empty.
+  [[nodiscard]] std::optional<std::pair<PathPoint, PathPoint>>
+  tooClose(const Path& one, const Path& two,
+           const CouplerOption& option) const {
+    const auto limit = static_cast<double>(tuning_.spacing * tuning_.spacing);
+    const auto link = static_cast<double>(tuning_.clearance);
+    const auto reach =
+        (0.5 * static_cast<double>(tuning_.couplerLength)) + link;
+    const auto from = [](const double x, const double y, const PathPoint& at) {
+      return std::hypot(x - static_cast<double>(at.x),
+                        y - static_cast<double>(at.y));
+    };
+    const bool portsMeet =
+        from(option.in.x, option.in.y, option.out) <= link;
+    for (const auto& a : one) {
+      for (const auto& b : two) {
+        const auto dx = static_cast<double>(a.x) - static_cast<double>(b.x);
+        const auto dy = static_cast<double>(a.y) - static_cast<double>(b.y);
+        if ((dx * dx) + (dy * dy) > limit) {
+          continue;
+        }
+        const auto x = 0.5 * (static_cast<double>(a.x) + b.x);
+        const auto y = 0.5 * (static_cast<double>(a.y) + b.y);
+        if (from(x, y, option.anchor) <= reach ||
+            (portsMeet && (from(x, y, option.in) <= 1.5 * link ||
+                           from(x, y, option.out) <= 1.5 * link))) {
+          continue;
+        }
+        return std::pair{a, b};
+      }
+    }
+    return std::nullopt;
+  }
+
   /// Whether two wires of one coupler meet only where `meetingReach` says:
   /// `SCPD_NARROW_MEETING`, on (user, 2026-10-13). Off, they meet within
   /// the coupler's reach of its anchor, whatever they are.
@@ -19013,18 +19180,55 @@ private:
     }
     const auto& stencil = stencilFor(tuning_.clearance);
     const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto height = static_cast<std::int64_t>(scene_.router.height);
     const bool meeting = couldMeet(wire, other);
     // What the search draws of a resonator starts where its lead ends.
     const bool onLead = !wire.resonator;
-    alongDisc(cells, stencil, [&](const std::int64_t x, const std::int64_t y) {
-      const auto cell = static_cast<std::size_t>((y * width) + x);
-      if (meeting && field_.owner(cell) != other.key &&
-          meetAt(wire, other, static_cast<double>(x), static_cast<double>(y),
-                 onLead)) {
-        return;
+    if (!meeting || !meetAtTheMiddle()) {
+      alongDisc(cells, stencil,
+                [&](const std::int64_t x, const std::int64_t y) {
+                  const auto cell = static_cast<std::size_t>((y * width) + x);
+                  if (meeting && field_.owner(cell) != other.key &&
+                      meetAt(wire, other, static_cast<double>(x),
+                             static_cast<double>(y), onLead)) {
+                    return;
+                  }
+                  corridor_.set(cell, true);
+                });
+      return;
+    }
+    // Where the two may meet, a cell stays open only when every pair it
+    // forms with a cell of the other wire within the rule meets, judged at
+    // the middle of the pair as `conflictsIn` judges the laid way: the
+    // search may then draw no way the count holds against it.
+    for (const auto& point : cells) {
+      for (const auto& [dx, dy] : stencil.full) {
+        const auto x = static_cast<std::int64_t>(point.x) + dx;
+        const auto y = static_cast<std::int64_t>(point.y) + dy;
+        if (x < 0 || y < 0 || x >= width || y >= height) {
+          continue;
+        }
+        const auto cell = static_cast<std::size_t>((y * width) + x);
+        if (field_.owner(cell) != other.key &&
+            meetAt(wire, other, static_cast<double>(point.x) + (0.5 * dx),
+                   static_cast<double>(point.y) + (0.5 * dy), onLead)) {
+          continue;
+        }
+        corridor_.set(cell, true);
       }
-      corridor_.set(cell, true);
-    });
+    }
+  }
+
+  /// Whether the fence of a wire that may meet another judges a cell at the
+  /// middle of the pair it forms with the other's cell, as the count of the
+  /// fails does: `SCPD_MEET_AT_THE_MIDDLE`, **on** (user, 2026-10-18). Judged
+  /// at the open cell alone, the fence let f15 of 17q (round 55, case 05)
+  /// leave its coupler where its own run out of the port made the cell a
+  /// meeting with its resonator 47, while the middle of the pair lay past
+  /// that run, and the count found both open after every search had found a
+  /// way. `=0` judges the open cell, as before.
+  [[nodiscard]] static bool meetAtTheMiddle() {
+    return envFlag("SCPD_MEET_AT_THE_MIDDLE", true);
   }
 
   /// Close some cells of another wire by the length-point radius, except

@@ -106,8 +106,9 @@ struct Drawing {
 
 /// A chip of 260 by 240 cells with clearance 19: chamber 0 above, chamber
 /// 1 below, and between them the feedline edge f1 along row 170 from x 60
-/// to 100 inside artwork. One crossing slot fits on f1, at x 70; its exits
-/// lie at (70, 157) and (70, 183).
+/// to 100 inside artwork. One crossing slot fits on f1, at x 71, the first
+/// place past the ten cells at the edge's end where the router may cross;
+/// its exits lie at (71, 157) and (71, 183).
 Drawing feedlineChip() {
   Drawing chip(260, 240, 19.0);
   chip.fill(0, 180, 259, 239, CHAMBER + 1);
@@ -124,7 +125,7 @@ Drawing feedlineChip() {
 
 /// Adds a stub of `owner` shaped as an L: from (80, top) left to (40, top)
 /// and down to (40, 160). Its open end at (80, top) and the corner of the
-/// slot at (79.5, 159) close a room round the slot's upper exit.
+/// slot at (80.5, 159) close a room round the slot's upper exit.
 void addStub(Drawing& chip, const std::string& owner, const int top) {
   chip.fill(40, top, 80, top, STUB);
   chip.fill(40, top, 40, 160, STUB);
@@ -206,6 +207,74 @@ TEST(SlotCheck, CrossingPrescriptionTakesTheSlot) {
   EXPECT_EQ(graph.at("verdict"), "SAT");
 }
 
+/// A slot needs a line across its edge that the feedline routing's crossing
+/// rule allows (`SCPD_SLOT_CROSSING_RULE`). On an edge of 21 cells the one
+/// straight piece a slot fits on has its middle on the last of the first
+/// ten cells' neighbours, where the router may not cross, so the edge holds
+/// no slot and the wire prescribed to cross it has no way.
+TEST(SlotCheck, LaysNoSlotWhereTheRouterMayNotCross) {
+  Drawing chip(260, 240, 19.0);
+  chip.fill(0, 180, 259, 239, CHAMBER + 1);
+  chip.fill(0, 161, 259, 179, ARTWORK);
+  chip.fill(60, 161, 80, 179, FEEDLINE);
+  json points = json::array();
+  for (int x = 60; x <= 80; ++x) {
+    points.push_back({x, 170});
+  }
+  chip.strokes.push_back(
+      {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
+  chip.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
+
+  const auto result = slotCheck(chip.text());
+  const auto graph = json::parse(result.graph);
+
+  EXPECT_EQ(result.verdict, "UNSAT");
+  EXPECT_EQ(result.lost, std::vector<std::string>{"1"});
+  const auto& edges = graph.at("crossSlots").at("edges");
+  ASSERT_EQ(edges.size(), 1U);
+  EXPECT_TRUE(edges[0].at("slots").empty());
+  bool ruled = false;
+  for (const auto& place : edges[0].at("rejected")) {
+    ruled = ruled || place.at("why") == "crossing rule";
+  }
+  EXPECT_TRUE(ruled) << edges[0].at("rejected");
+}
+
+/// A gate on the line of a mouth between the same two chambers is that
+/// mouth (`SCPD_MOUTH_TWINS`): a wire prescribed to cross a feedline edge
+/// passes no mouth, so it passes the plain twin of the mouth neither. Below
+/// f1, chamber 2 lies behind an artwork wall that only the mouth g0 and its
+/// twin g1 cross.
+TEST(SlotCheck, LetsNoWirePastAMouthByItsTwin) {
+  auto chip = feedlineChip();
+  chip.fill(200, 180, 259, 239, CHAMBER + 2);
+  chip.fill(199, 180, 199, 239, ARTWORK);
+  for (const auto& [name, mouth] :
+       {std::pair{"g0", true}, std::pair{"g1", false}}) {
+    chip.edges.push_back({{"kind", "bottleneck"},
+                          {"name", name},
+                          {"line", {{199, 195}, {199, 205}}},
+                          {"ends",
+                           {"f1 at its coupler, left", "f2 at its coupler, right"}},
+                          {"chambers", {1, 2}},
+                          {"capacity", 3},
+                          {"users", nullptr},
+                          {"length", 10.0},
+                          {"mouth", mouth},
+                          {"slot", false},
+                          {"terminal", false}});
+  }
+  chip.wire("1", {100, 60}, 0, {230, 220}, 2, {"f1"});
+  auto graph = json::parse(chip.text());
+  graph["nodes"].push_back({{"chamber", 2}});
+
+  const auto result = slotCheck(graph.dump());
+
+  EXPECT_EQ(result.verdict, "UNSAT");
+  EXPECT_EQ(result.lost, std::vector<std::string>{"1"});
+  EXPECT_EQ(edgeNamed(json::parse(result.graph), "g1").at("mouth"), true);
+}
+
 TEST(SlotCheck, WireWithoutPrescriptionCannotCross) {
   auto chip = feedlineChip();
   chip.wire("1", {200, 60}, 0, {200, 220}, 1, {});
@@ -247,6 +316,25 @@ TEST(SlotCheck, GateOverCapacityIsUnsat) {
   const auto gate = edgeNamed(json::parse(result.graph), "g0");
   EXPECT_EQ(gate.at("load"), 2);
   EXPECT_EQ(gate.at("overflow"), 1);
+}
+
+/// A gate is counted across the heading the wires cross it on
+/// (`SCPD_GATE_HEADING`): its line lies 21.8 degrees off the nearest of the
+/// eight headings' normals, so two wires that would fit 8.6 cells straight
+/// across take 8.6 / cos(21.8) = 9.3 of it at that angle, and the gate
+/// holds one.
+TEST(SlotCheck, CountsAGateAcrossTheHeadingTheWiresCrossItOn) {
+  auto chip = gateChip(2);
+  chip.edges[0]["line"] = {{14, 20}, {24, 16}};
+  chip.edges[0]["length"] = 8.6;
+  chip.wire("1", {20, 5}, 0, {20, 35}, 1, {});
+  chip.wire("2", {22, 5}, 0, {22, 35}, 1, {});
+
+  const auto result = slotCheck(chip.text());
+
+  EXPECT_EQ(result.verdict, "UNSAT");
+  EXPECT_EQ(result.over, std::vector<std::string>{"g0"});
+  EXPECT_EQ(edgeNamed(json::parse(result.graph), "g0").at("capacity"), 1);
 }
 
 TEST(SlotCheck, GateWithRoomForBothIsSat) {

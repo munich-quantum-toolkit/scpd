@@ -1967,6 +1967,87 @@ TEST(CouplerSession, KeepsTheEdgesOfAChainApartInTheFeedlineRouting) {
   }
 }
 
+/// Two feedline edges that meet at a coupler keep the wire clearance from
+/// each other outside the meeting the feedline routing grants them: two
+/// cells closer than the clearance have their middle within half the
+/// coupling length and a clearance of the coupler's anchor. The feedline
+/// routing does not draw an edge between two couplers again, so an edge the
+/// insertion lets closer stays open. On 4q every open option of every
+/// coupler is drawn, and the two edges at that coupler are measured.
+/// `SCPD_EDGE_SLOT_CLEARANCE`.
+TEST(CouplerSession, KeepsTheEdgesAtACouplerApartOutsideTheirMeeting) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  const auto clearance =
+      nlohmann::json::parse(session.graph()).at("clearance").get<double>();
+  const auto listed = nlohmann::json::parse(session.couplers()).at("couplers");
+  using Cell = std::array<double, 2>;
+  const auto cellOf = [](const nlohmann::json& at) {
+    return Cell{at.at(0).get<double>(), at.at(1).get<double>()};
+  };
+  const auto apart = [](const Cell& a, const Cell& b) {
+    return std::hypot(a[0] - b[0], a[1] - b[1]);
+  };
+  std::size_t measured = 0;
+  for (const auto& coupler : listed) {
+    if (coupler.at("edgeIn").is_null() || coupler.at("edgeOut").is_null()) {
+      continue;
+    }
+    const auto index = coupler.at("index").get<std::uint32_t>();
+    for (const auto& option : coupler.at("options")) {
+      if (!option.at("open").get<bool>()) {
+        continue;
+      }
+      const auto moved = nlohmann::json::parse(
+          session.setOption(index, option.at("index").get<std::uint32_t>()));
+      std::vector<std::vector<Cell>> ways;
+      for (const auto& edge : moved.at("edges")) {
+        if (edge.at("drawn").get<bool>()) {
+          std::vector<Cell> way;
+          for (const auto& at : edge.at("way")) {
+            way.push_back(cellOf(at));
+          }
+          ways.push_back(std::move(way));
+        }
+      }
+      if (ways.size() != 2) {
+        continue;
+      }
+      ++measured;
+      const auto anchor = cellOf(option.at("anchor"));
+      const auto in = cellOf(option.at("in"));
+      const auto out = cellOf(option.at("out"));
+      // One cell of slack on both figures: the rule is a little under the
+      // clearance in cells, and the pad's ports stand about the coupling
+      // length apart.
+      const auto reach = (0.5 * apart(in, out)) + clearance + 1.0;
+      const bool portsMeet = apart(in, out) <= clearance;
+      for (const auto& a : ways[0]) {
+        for (const auto& b : ways[1]) {
+          if (apart(a, b) >= clearance - 1.0) {
+            continue;
+          }
+          const Cell middle{0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])};
+          const bool meets =
+              apart(middle, anchor) <= reach ||
+              (portsMeet && (apart(middle, in) <= (1.5 * clearance) + 1.0 ||
+                             apart(middle, out) <= (1.5 * clearance) + 1.0));
+          EXPECT_TRUE(meets)
+              << "coupler " << index << " option " << option.at("index")
+              << ": (" << a[0] << ", " << a[1] << ") and (" << b[0] << ", "
+              << b[1] << ") are " << apart(a, b) << " apart";
+          if (!meets) {
+            return;
+          }
+        }
+      }
+    }
+  }
+  EXPECT_GT(measured, 0U);
+}
+
 /// `SCPD_COUPLER_SHIFT` (20) moves an option that leaves the coupler box
 /// into it, by at most that many cells along each axis. On 4q some options
 /// are moved, and none further than the limit.
