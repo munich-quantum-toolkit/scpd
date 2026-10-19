@@ -43,6 +43,9 @@ namespace mqt::scpd::pipeline {
  * nor "gurobi".
  * @throws std::runtime_error When "gurobi" is asked for and no external
  * backend is registered.
+ * @throws Whatever the backend throws, as milp::ISolverBackend::solve() says:
+ * what an observer throws, such as an interrupt, and for an external backend
+ * what the hand-over throws.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT milp::Solution
 solveWith(const milp::Model& model, const ConfigT& config, const Report& report,

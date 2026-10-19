@@ -561,10 +561,10 @@ public:
     const auto lattices = latticesOf(chip, capacity, circuit, reach,
                                      internalBridgesAllowed(config), report);
     if (lattices.empty()) {
-      // The chip has inner targets, but no capacity chain offers a lattice
-      // that could reach one: every chain is either all targets, so nothing
-      // could supply them, or a single point. There is no circuit to solve,
-      // and a solver takes no empty model.
+      // The chip has inner targets, but no capacity chain holds a target, or
+      // with internal bridges an end of one, on a lattice of two nodes or
+      // more. No wire can move, so there is no model to solve, and finish()
+      // counts every target as a fail.
       fillRing(routing, chip, config, circuit, {});
       finish(routing, chip, circuit, {}, report, cutOff);
       return routing;

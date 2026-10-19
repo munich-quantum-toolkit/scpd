@@ -137,8 +137,9 @@ when the stage ends, so a log or a pipe receives the lasting lines only.
 
 The live line is off when the output is not a terminal, with `--no-progress`,
 with `TERM=dumb`, and with `TTY_INTERACTIVE=0`. `NO_COLOR` turns color off.
-`FORCE_COLOR` and `TTY_COMPATIBLE=1` turn color on, also in a file, but a file
-still gets no live line and keeps the time at column 72.
+`TTY_COMPATIBLE=0` turns the live line and color off. `FORCE_COLOR` and
+`TTY_COMPATIBLE=1` turn color on, also in a file, but a file still gets no live
+line and keeps the time at column 72.
 
 ## Exit Codes
 

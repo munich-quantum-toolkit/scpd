@@ -131,6 +131,18 @@ TEST(MilpModel, RefusesBoundsThatLeaveNoValue) {
   EXPECT_EQ(model.constraintCount(), 0U);
 }
 
+TEST(MilpModel, StoresABoundBeyondTheInfiniteBoundAsNone) {
+  // A backend reads a bound of INFINITE_BOUND as none, so a larger bound is
+  // stored as INFINITE_BOUND.
+  Model model("free");
+  const auto x = model.addContinuous("x", -INFINITE, 10.0 * INFINITE_BOUND);
+  model.addRange("row", (1.0 * x) + 1.0, -10.0 * INFINITE_BOUND, INFINITE);
+  EXPECT_EQ(model.variables()[x.index].lower, -INFINITE_BOUND);
+  EXPECT_EQ(model.variables()[x.index].upper, INFINITE_BOUND);
+  EXPECT_EQ(model.constraints()[0].lower, -INFINITE_BOUND);
+  EXPECT_EQ(model.constraints()[0].upper, INFINITE_BOUND);
+}
+
 TEST(MilpModel, RefusesARowBoundThatIsNotANumber) {
   // HiGHS refuses a bound that is not a number, and the MPS text cannot carry
   // one, so the model refuses it before either backend sees it.
@@ -201,6 +213,12 @@ TEST(MilpModel, RefusesACoefficientFromTheInfiniteBoundOn) {
                std::invalid_argument);
   EXPECT_THROW(model.addLessOrEqual("shift", (1.0 * x) - INFINITE_BOUND, 1.0),
                std::invalid_argument);
+  // The limit holds for the stored row, in which the terms of one variable
+  // are summed.
+  EXPECT_THROW(
+      model.addLessOrEqual(
+          "sum", (0.6 * INFINITE_BOUND * x) + (0.6 * INFINITE_BOUND * x), 1.0),
+      std::invalid_argument);
   EXPECT_EQ(model.constraintCount(), 0U);
 
   // A sum is held to the same limit as a single coefficient, and a refused

@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -336,6 +337,26 @@ TEST(ConfigValidation, StageParametersMustBeUsable) {
 
   config.stages->solver->backend = "highs";
   EXPECT_EQ(validate(config).size(), 5U);
+}
+
+TEST(ConfigValidation, StageParametersMustBeFinite) {
+  // TOML reads nan and inf as numbers. A NaN time limit is not above zero,
+  // so the solve would run without a limit.
+  ConfigT config = manualConfig();
+  config.stages = std::make_unique<StageParamsT>();
+  config.stages->capacity = std::make_unique<CapacityParamsT>();
+  config.stages->solver = std::make_unique<SolverParamsT>();
+  config.stages->capacity->bottleneck_clearance =
+      std::numeric_limits<double>::infinity();
+  config.stages->capacity->crossing_pitch =
+      std::numeric_limits<double>::quiet_NaN();
+  config.stages->solver->time_limit = std::numeric_limits<double>::quiet_NaN();
+  config.stages->solver->relative_gap = std::numeric_limits<double>::infinity();
+  EXPECT_EQ(validate(config),
+            (Problems{"stages.capacity: bottleneck_clearance must be finite",
+                      "stages.capacity: crossing_pitch must be finite",
+                      "stages.solver: time_limit must be finite",
+                      "stages.solver: relative_gap must be finite"}));
 }
 
 TEST(ConfigValidation, SolverThreadsStayWithinTheLimitOfGurobi) {

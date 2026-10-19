@@ -356,9 +356,11 @@ class Console:
         except (UnicodeEncodeError, LookupError):
             self.unicode = False
         # rich takes FORCE_COLOR and TTY_COMPATIBLE as a terminal also when the output is a file. Those
-        # variables ask for color, so the live line and the width follow the output itself.
+        # variables ask for color, so the live line and the width follow the output itself. A terminal
+        # that rich does not take as one, such as one with TTY_COMPATIBLE=0, gets no cursor movements,
+        # so it gets no live line either.
         tty = _is_tty(self._rich.file) if force_terminal is None else force_terminal
-        terminal = tty and self._rich.is_interactive and not self._rich.is_dumb_terminal
+        terminal = tty and self._rich.is_terminal and self._rich.is_interactive and not self._rich.is_dumb_terminal
         self.width = width or (min(self._rich.width, _TERMINAL_WIDTH) if terminal else _FILE_WIDTH)
         self.show_live = terminal if live is None else live
         self.run = _Run()

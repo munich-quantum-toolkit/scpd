@@ -20,6 +20,7 @@ on:
       - "test/CMakeLists.txt"
       - "test/grid/**"
       - "test/python/benchmarks/**"
+      - "test/python/conftest.py"
       - "test/SplitMix.hpp"
       - "uv.lock"
   schedule:

@@ -216,6 +216,7 @@ resolveBackend(BackendChoice choice);
  * @return The solution.
  * @throws std::runtime_error When @c External is chosen and no external
  * backend is registered.
+ * @throws Whatever the backend throws, as ISolverBackend::solve() says.
  */
 [[nodiscard]] MQT_SCPD_MILP_EXPORT Solution solve(
     const Model& model, BackendChoice choice, const SolveOptions& options = {});

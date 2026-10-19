@@ -11,10 +11,10 @@
 The generated FlatBuffers code neither enforces the required fields when Python writes a buffer nor
 verifies a buffer when Python reads one; a buffer without a producer or an output passes through it
 silently. The functions here check the identifier and every field the schema marks as required, so
-an artifact that Python writes is one that the core accepts, and an artifact that Python reads is
-complete. They also check that the lists of an assignment hold one entry per ring node and that a
-corridor names one more partition than it has crossings. Checking the other values, such as a role
-left unset or a dimension of zero, is the core's job.
+an artifact that Python writes or reads is complete. They also check that the lists of an assignment
+hold one entry per ring node and that a corridor names one more partition than it has crossings.
+Checking the other values, such as a role left unset, a dimension of zero or a connection that does
+not end at its ring node, is the core's job: the core refuses such an artifact when it reads it.
 """
 
 from __future__ import annotations

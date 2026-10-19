@@ -818,6 +818,35 @@ TEST(GlobalRouter, FindsTheSameCircuitThroughMpsText) {
   EXPECT_NEAR(throughMps.objective, direct.objective, 1.0e-9);
 }
 
+TEST(GlobalRouter, StopsWithTheAnswerOfASolverThatGivesNoSolution) {
+  // Without a solution there is no circuit to read back, so the stage stops
+  // and says what the solver answered.
+  auto config = bridgedConfig();
+  config.stages->solver->backend = "gurobi";
+  const auto chip = bridgedChip(config);
+  const auto plan =
+      planOf({{.targets = indicesOf(chip, {"Q2.port0", "C12.port1", "Q2.port1",
+                                           "C12.port0", "Q1.port1"}),
+               .gate = {}},
+              {.targets = indicesOf(chip, {"C12.port2"}), .gate = {}}});
+  const milp::test::ScopedBackend backend(milp::makeMpsBackend(
+      "stub", [](auto, const auto& /*names*/, const auto& /*options*/) {
+        milp::Solution solution;
+        solution.status = milp::SolveStatus::Infeasible;
+        solution.message = "no circuit fits";
+        return solution;
+      }));
+
+  try {
+    static_cast<void>(makeHananMilpRouter()->run(chip, plan, config, {}));
+    FAIL() << "a solve without a solution was read back";
+  } catch (const std::runtime_error& error) {
+    EXPECT_STREQ(
+        error.what(),
+        "the inner circuit did not solve: infeasible, no circuit fits");
+  }
+}
+
 TEST(GlobalRouter, CountsAResonatorAsAFailWhereNoRingBridgeCanCarryItsWire) {
   // A gate without room cuts the ring end of the bridge off from every
   // launcher. Q2.port1 lies on the same lattice as the resonator Q2.port0,

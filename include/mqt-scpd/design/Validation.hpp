@@ -147,9 +147,10 @@ validate(const flatbuffers::config::ConfigT& config);
  * that is not routable, or that appears twice, for every fixed port that is
  * not in @c all_outer, and for every port on which the @c bridge_pair pattern
  * and the bridge rules disagree: a bridge port no rule pairs, a port a rule
- * pairs whose role is not @c BridgePair, a port several rule sides claim,
- * and a bridge port of a component whose rule finds no partner port in that
- * component, empty when the configuration fits the chip.
+ * pairs whose role is not @c BridgePair, a port several rule sides claim, a
+ * bridge port that the @c component pattern does not match, and a bridge port
+ * of a component whose rule finds no partner port in that component; empty
+ * when the configuration fits the chip.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::ConfigT& config,

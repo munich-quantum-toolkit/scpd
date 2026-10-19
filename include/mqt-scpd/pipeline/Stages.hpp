@@ -61,8 +61,10 @@ public:
    * @param report Where the stage reports what it does.
    * @return The capacity plan.
    * @throws std::invalid_argument When the configuration carries no design
-   * rules, asks for a detail grid above MAX_DETAIL_CELLS, or when the chip
-   * carries no launcher.
+   * rules, asks for a grid of fewer than two cells along an axis, a
+   * `detail_factor` of zero or a detail grid above MAX_DETAIL_CELLS, or when
+   * the chip carries no launcher or puts the targets of two ports on one cell
+   * of the detail grid.
    * @throws std::length_error When the partitions need more labels than a
    * plan holds.
    */
@@ -100,8 +102,12 @@ public:
    * @throws std::invalid_argument When the ring of the configuration does not
    * fit the chip, or when the capacity plan does not fit the chip: an index
    * names no node or no port, a chain leads back into itself or reaches a
-   * node twice, or a target lies on two chains or twice on one; or when two
-   * ports of one lattice that can carry an inner wire meet it at one node.
+   * node twice, or a target lies on two chains or twice on one; when two
+   * ports of one lattice that can carry an inner wire meet it at one node; or
+   * when the backend name is neither "highs" nor "gurobi".
+   * @throws std::runtime_error When the solver gives no solution, or when
+   * "gurobi" is asked for and no external backend is registered.
+   * @throws Whatever the solve throws, as solveWith() says.
    */
   [[nodiscard]] virtual GlobalRoutingT run(const ChipT& chip,
                                            const CapacityPlanT& capacity,
@@ -136,11 +142,14 @@ public:
    * @throws std::invalid_argument When the configuration or the chip cannot
    * give an assignment: no design rules or no `launcher_target`, launchers
    * listed in the direction of the ring, too few launchers off one line,
-   * counts of the ring that no assignment meets, feeds closer than
-   * `[design_rules] min_wire_spacing`, or two feeds on one cell of the detail
-   * grid; or when the capacity plan or the global routing does not fit the
-   * chip.
-   * @throws std::runtime_error When the solver gives no solution.
+   * counts of the ring that no assignment meets, a feed closer than
+   * `[design_rules] min_wire_spacing` to a neighboring feed or to a launcher
+   * at an end of its segment, or two feeds on one cell of the detail grid; when
+   * the capacity plan or the global routing does not fit the chip; or when the
+   * backend name is neither "highs" nor "gurobi".
+   * @throws std::runtime_error When the solver gives no solution, or when
+   * "gurobi" is asked for and no external backend is registered.
+   * @throws Whatever the solve throws, as solveWith() says.
    */
   [[nodiscard]] virtual AssignmentT run(const ChipT& chip,
                                         const CapacityPlanT& capacity,

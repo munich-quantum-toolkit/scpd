@@ -71,8 +71,9 @@ innerCircuitOf(const ChipT& chip, const ConfigT& config);
 /**
  * @brief Creates the global router of the first release.
  *
- * The router solves a binary flow model on the Hanan lattice of each
- * capacity chain as one mixed-integer program.
+ * The router solves a flow model on the Hanan lattice of each capacity chain
+ * as one mixed-integer program: a binary variable selects an arc of a lattice,
+ * and an integer variable counts the wires along a link of a capacity chain.
  *
  * Every inner wire comes from the inner end of a ring bridge and surfaces at
  * the ring end of that bridge. With `[stages.global] internal_bridges`, the
@@ -81,11 +82,12 @@ innerCircuitOf(const ChipT& chip, const ConfigT& config);
  * between the inner ends of two ring bridges, a closed loop through internal
  * bridges, or a closed loop over crossings that touches no port. The artifact
  * and its objective leave such wires out, and the ring does not keep the ring
- * end where such a wire starts. No ring port starts an inner wire: the
- * assignment gives every ring port a wire of its own, and a second wire there
- * would reach neither a launcher nor a feedline. The ring keeps the ring end
- * of a bridge only where a wire surfaces there, and the ring end is a
- * resonator of the assignment when the wire comes from an inner resonator.
+ * end of a bridge whose inner end starts such a wire. No ring port starts an
+ * inner wire: the assignment gives every ring port a wire of its own, and a
+ * second wire there would reach neither a launcher nor a feedline. The ring
+ * keeps the ring end of a bridge only where a wire surfaces there, and the ring
+ * end is a resonator of the assignment when the wire comes from an inner
+ * resonator.
  *
  * A target counts as reached when one connection ends at it. A target that no
  * wire through a ring bridge can reach stays unreached and counts as a fail,

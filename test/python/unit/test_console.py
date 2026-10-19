@@ -261,6 +261,22 @@ def test_a_terminal_that_is_not_interactive_gets_no_live_line(monkeypatch: pytes
     assert not console.show_live
 
 
+def test_a_terminal_that_takes_no_cursor_movements_gets_no_live_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``TTY_COMPATIBLE=0`` turns the live line off also when ``TTY_INTERACTIVE=1`` asks for it."""
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("TTY_INTERACTIVE", "1")
+    monkeypatch.setenv("TTY_COMPATIBLE", "0")
+    out = io.StringIO()
+    monkeypatch.setattr(out, "isatty", lambda: True)
+    console = Console(out, encoding="utf-8", clock=Clock())
+    assert not console.show_live
+    with console.stage("corridor") as stage:
+        for done in range(1, 59):
+            stage.progress("round 1 forward", "", done, 58)
+        stage.result([], fails=0)
+    assert out.getvalue().splitlines() == ["🧭 corridor"]
+
+
 def test_the_block_header_waits_for_the_first_lasting_line_on_a_terminal() -> None:
     """On a terminal the header is written with the first lasting line, so the spinner holds its place."""
     out = io.StringIO()

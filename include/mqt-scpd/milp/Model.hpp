@@ -25,8 +25,9 @@
 namespace mqt::scpd::milp {
 
 /// A bound that does not constrain. A bound of this size or larger counts as
-/// none. The value is the one that MPS readers use, Gurobi and HiGHS among
-/// them, so every backend reads the same model.
+/// none, and the model stores it as this value. The value is the one that MPS
+/// readers use, Gurobi and HiGHS among them, so every backend reads the same
+/// model.
 inline constexpr double INFINITE_BOUND = 1.0e20;
 
 /// The largest coefficient that is not a term. A coefficient this small

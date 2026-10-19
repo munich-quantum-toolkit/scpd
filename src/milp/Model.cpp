@@ -192,8 +192,8 @@ Var Model::addVariable(const std::string_view name, const double lower,
   }
 
   variableList.push_back({.name = std::string(name),
-                          .lower = low,
-                          .upper = high,
+                          .lower = std::max(low, -INFINITE_BOUND),
+                          .upper = std::min(high, INFINITE_BOUND),
                           .type = type,
                           .objective = withoutNoise(objective)});
   takenNames.emplace(name);
@@ -266,8 +266,8 @@ void Model::addRow(const std::string_view name, const LinearExpr& expression,
 
   constraintList.push_back({.name = std::string(name),
                             .coefficients = std::move(coefficients),
-                            .lower = low,
-                            .upper = high});
+                            .lower = std::max(low, -INFINITE_BOUND),
+                            .upper = std::min(high, INFINITE_BOUND)});
   takenNames.emplace(name);
 }
 
