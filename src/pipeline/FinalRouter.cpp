@@ -66,7 +66,9 @@
 #include <numeric>
 #include <optional>
 #include <queue>
+#include <random>
 #include <ranges>
+#include <regex>
 #include <set>
 #include <span>
 #include <stdexcept>
@@ -4399,6 +4401,18 @@ public:
                      : std::string("NO WAY"),
           picture()));
     }
+    if (globalSatSearch() && searchGlobalSat(wires)) {
+      // The edges of the couplers the search moved were drawn again.
+      drawn = 0;
+      angle = 0;
+      for (const auto& edge : edges_) {
+        const auto& wire = wires[edge.wire];
+        if (wire.drawn) {
+          ++drawn;
+          angle += angleCostOf(wire.way, wire.objective.target.heading);
+        }
+      }
+    }
     for (std::uint32_t index = 0; index < couplers_.size(); ++index) {
       sayCoupler(wires, index);
     }
@@ -5750,11 +5764,11 @@ public:
       if (chain != edge.chain) {
         // Another chain's feedline. It stands open unless something asks
         // for it: `edgesSeeOtherChains` is the standing answer and says no,
-        // `soloChain_` says no for the prefix search whatever that answers,
-        // and `fenceEverything_` overrides both for the one diagnostic that
-        // has to see the whole chip.
-        const bool fenceIt = fenceEverything_ ||
-                             (edgesSeeOtherChains() && soloChain_ == NO_OWNER);
+        // and `soloChain_` says no for the prefix search whatever that
+        // answers. `fenceEverything_` fences the edge's own chain whole and
+        // leaves the others open as well: an edge keeps clear of the edges
+        // of its own feedline only (user, 2026-10-21).
+        const bool fenceIt = edgesSeeOtherChains() && soloChain_ == NO_OWNER;
         if (!fenceIt) {
           continue;
         }
@@ -7057,15 +7071,12 @@ public:
     return on;
   }
 
-  /// Whether the other chains' edges, and this chain's edges outside the
-  /// segment, are fenced while a segment is re-searched:
-  /// `SCPD_RESEARCH_SEES_CHAINS`, on — `fenceEverything_` for the length of
-  /// the search, whatever `edgesSeeOtherChains`, `terminalEdgesFenceAll` and
-  /// `fenceLaterEdges` say. The insertion searches each chain on its own
-  /// chip (`chainSolo`) and lets the commit settle the conflicts; here the
-  /// rest of the chip is frozen and is exactly what a re-searched edge must
-  /// not cross — the terminal pairs of neighbouring chains on 69q cross
-  /// because nothing ever fenced them against each other.
+  /// Whether this chain's edges outside the segment are fenced while a
+  /// segment is re-searched: `SCPD_RESEARCH_SEES_CHAINS`, on —
+  /// `fenceEverything_` for the length of the search, whatever
+  /// `terminalEdgesFenceAll` and `fenceLaterEdges` say. The edges of the
+  /// other chains stand open, as everywhere else: an edge keeps clear of the
+  /// edges of its own feedline only (user, 2026-10-21).
   [[nodiscard]] static bool researchSeesChains() {
     static const bool on = envFlag("SCPD_RESEARCH_SEES_CHAINS", true);
     return on;
@@ -14495,6 +14506,550 @@ public:
   /// commit lays them in.
   ///
   /// @returns How many chains it settled.
+  /// Whether the insertion, when the whole chip comes out UNSAT after the
+  /// chain search, looks for a combination of locally SAT chain states that
+  /// is SAT on the whole chip: `SCPD_GLOBAL_SAT_SEARCH`, **on** (user,
+  /// 2026-10-21). The chain search settles each chain on its own chip, and a
+  /// chain that is SAT alone need not be SAT beside its neighbours: their
+  /// first and last couplers meet. On 17q every chain was SAT alone and the
+  /// chip UNSAT (wires 11 and 40), while 20 of 70 combinations of locally SAT
+  /// runs of the local comparison were SAT on the whole chip.
+  [[nodiscard]] static bool globalSatSearch() {
+    static const bool on = envFlag("SCPD_GLOBAL_SAT_SEARCH", true);
+    return on;
+  }
+  /// How many runs of options the segment search hands the global search
+  /// per segment (`SCPD_GLOBAL_SAT_RUNS`, 8), how many locally SAT states of
+  /// a chain it keeps (`SCPD_GLOBAL_SAT_STATES`, 8) and how many whole-chip
+  /// combinations it checks (`SCPD_GLOBAL_SAT_TRIES`, 200).
+  [[nodiscard]] static std::uint32_t globalSatRuns() {
+    static const auto n = static_cast<std::uint32_t>(
+        std::clamp(envWhole("SCPD_GLOBAL_SAT_RUNS", 8), 1, 1000));
+    return n;
+  }
+  [[nodiscard]] static std::size_t globalSatStates() {
+    static const auto n = static_cast<std::size_t>(
+        std::clamp(envWhole("SCPD_GLOBAL_SAT_STATES", 8), 1, 100));
+    return n;
+  }
+  /// How long the global search may try combinations, in seconds
+  /// (`SCPD_GLOBAL_SAT_SECONDS`, 60), after the collection of the states.
+  [[nodiscard]] static double globalSatSeconds() {
+    static const auto n = static_cast<double>(
+        std::clamp(envWhole("SCPD_GLOBAL_SAT_SECONDS", 60), 1, 100000));
+    return n;
+  }
+  /// How long the global search may collect chain states, in seconds
+  /// (`SCPD_GLOBAL_SAT_COLLECT_SECONDS`, 600); the chains not reached keep
+  /// the state they stand on.
+  [[nodiscard]] static double globalSatCollectSeconds() {
+    static const auto n = static_cast<double>(std::clamp(
+        envWhole("SCPD_GLOBAL_SAT_COLLECT_SECONDS", 600), 1, 100000));
+    return n;
+  }
+  [[nodiscard]] static std::uint32_t globalSatTries() {
+    static const auto n = static_cast<std::uint32_t>(
+        std::clamp(envWhole("SCPD_GLOBAL_SAT_TRIES", 200), 1, 100000));
+    return n;
+  }
+
+  /// What the slot check of the whole chip finds against it, as the
+  /// insertion's check judges it (`insertionCheckJson`): every chain
+  /// standing, the terminal edges as wires. The wires it loses and the edges
+  /// over their capacity; both empty when the chip is SAT. `touching`, when
+  /// given, gets the feedline edges (`f<k>`) that an edge over its capacity
+  /// lies on or ends at.
+  [[nodiscard]] std::vector<std::string>
+  wholeChipLost(const std::vector<Wire>& wires,
+                std::set<std::string>* touching = nullptr) {
+    auto first = static_cast<std::uint32_t>(wires.size());
+    for (const auto& edge : edges_) {
+      first = std::min(first, edge.wire);
+    }
+    const std::vector<Wire> before(
+        wires.begin(), wires.begin() + static_cast<std::ptrdiff_t>(first));
+    auto state = stateOf(before, std::vector<bool>(chains_.size(), true));
+    state.terminalsAsWires = terminalDemands();
+    localWires_ = nullptr;
+    std::set<std::uint32_t> lost;
+    std::optional<SlotCheckResult> typed;
+    SlotGraph input;
+    static_cast<void>(capacityGraphJsonOf(state, "the whole chip", &lost,
+                                          slotCheckVerdict() ? &typed : nullptr,
+                                          &input));
+    if (typed.has_value()) {
+      if (touching != nullptr) {
+        const std::regex feedline(R"(\bf\d+\b)");
+        const auto take = [&](const std::string& text) {
+          for (auto it = std::sregex_iterator(text.begin(), text.end(),
+                                              feedline);
+               it != std::sregex_iterator(); ++it) {
+            touching->insert(it->str());
+          }
+        };
+        // An edge over by its name; a self-bottleneck by its name and load.
+        for (const auto& over : typed->over) {
+          take(over);
+          for (const auto& edge : input.edges) {
+            if (over == edge.name || over.starts_with(edge.name + " ")) {
+              take(edge.feedline);
+              for (const auto& end : edge.ends) {
+                take(end);
+              }
+            }
+          }
+        }
+      }
+      auto against = typed->lost;
+      against.insert(against.end(), typed->over.begin(), typed->over.end());
+      if (against.empty() && typed->verdict != "SAT") {
+        against.emplace_back(typed->verdict);
+      }
+      return against;
+    }
+    std::vector<std::string> names;
+    for (const auto key : lost) {
+      names.push_back(wireId(state.wires[key]));
+    }
+    return names;
+  }
+
+  /// The locally SAT states of every chain for `searchGlobalSat`, after the
+  /// commit: the chain as it stands first, then the runs of options of the
+  /// segments at its two ends (`researchSegment` handing them to
+  /// `segmentCollect_`) that put its first or last coupler on another option
+  /// and whose chain the slot check of that chain alone finds SAT, end
+  /// options not kept yet first. The first and last couplers are where a
+  /// chain meets its neighbours. A chain with a feedline edge at an edge over
+  /// its capacity (`focus`: per chain, the waypoints at the ends of such
+  /// edges) is searched on every segment that holds such a waypoint as well
+  /// and keeps every locally SAT state, its ends moved or not, without the
+  /// limit of `globalSatStates`; those that move the coupler of such a
+  /// waypoint come first.
+  void collectChainStates(
+      std::vector<Wire>& wires,
+      const std::map<std::uint32_t, std::set<std::size_t>>& focus) {
+    const auto chains = static_cast<std::uint32_t>(chains_.size());
+    chainStates_.assign(chains, {});
+    auto firstEdge = static_cast<std::uint32_t>(wires.size());
+    for (const auto& edge : edges_) {
+      firstEdge = std::min(firstEdge, edge.wire);
+    }
+    const std::vector<Wire> before(
+        wires.begin(), wires.begin() + static_cast<std::ptrdiff_t>(firstEdge));
+    const auto began = std::chrono::steady_clock::now();
+    const auto collectBudget =
+        std::chrono::duration<double>(globalSatCollectSeconds());
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      if (std::chrono::steady_clock::now() - began > collectBudget) {
+        say(std::format("[Global SAT] out of collection time before chain {}",
+                        chain));
+        break;
+      }
+      const auto& points = chains_[chain];
+      std::size_t first = points.size();
+      std::size_t last = 0;
+      for (std::size_t at = 0; at < points.size(); ++at) {
+        if (!points[at].fixed) {
+          first = std::min(first, at);
+          last = std::max(last, at);
+        }
+      }
+      if (first > last || points.size() < 3) {
+        continue;
+      }
+      std::vector<std::size_t> current(points.size(), 0);
+      for (std::size_t at = 0; at < points.size(); ++at) {
+        if (!points[at].fixed) {
+          current[at] = couplers_[points[at].coupler].chosen;
+        }
+      }
+      auto& kept = chainStates_[chain];
+      kept.push_back(current);
+      std::set<std::vector<std::size_t>> seen{current};
+      std::set<std::pair<std::size_t, std::size_t>> ends{
+          {current[first], current[last]}};
+      std::vector<std::vector<std::size_t>> others;
+      std::uint32_t runs = 0;
+      std::uint32_t sat = 0;
+      std::chrono::duration<double> checking{0};
+      const auto chainBegan = std::chrono::steady_clock::now();
+      const auto own = chainWires(before, chain);
+      const std::vector<bool> every(chains, true);
+      std::vector<bool> only(chains, false);
+      only[chain] = true;
+      std::uint32_t fitting = 0;
+      const auto span = std::min<std::size_t>(3, points.size() - 1);
+      std::set<std::size_t> starts{0, points.size() - 1 - span};
+      const auto focused = focus.find(chain);
+      std::set<std::size_t> marked;
+      if (focused != focus.end()) {
+        for (const auto at : focused->second) {
+          if (!points[at].fixed) {
+            marked.insert(at);
+          }
+        }
+        for (std::size_t lo = 0; lo + span < points.size(); ++lo) {
+          if (std::ranges::any_of(marked, [&](const std::size_t at) {
+                return at >= lo && at <= lo + span;
+              })) {
+            starts.insert(lo);
+          }
+        }
+      }
+      // A chain at an edge over keeps every locally SAT state, its ends
+      // moved or not; first those that move the coupler of a marked
+      // waypoint.
+      const bool atOver = focused != focus.end();
+      std::vector<std::vector<std::size_t>> moving;
+      // The states SAT only with the chain alone, for a chain at an edge
+      // over; after those SAT with the other chains standing.
+      std::vector<std::vector<std::size_t>> aloneMoving;
+      std::vector<std::vector<std::size_t>> aloneOthers;
+      for (const auto lo : starts) {
+        const RunCollector collect = [&](const std::vector<std::size_t>& layer,
+                                         const std::vector<Path>& ways) {
+          ++runs;
+          auto options = current;
+          for (std::size_t k = 0; k < layer.size(); ++k) {
+            if (!points[lo + k].fixed) {
+              options[lo + k] = layer[k];
+            }
+          }
+          const bool moves = std::ranges::any_of(
+              marked, [&](const std::size_t at) {
+                return options[at] != current[at];
+              });
+          if (seen.contains(options) ||
+              (!atOver && options[first] == current[first] &&
+               options[last] == current[last])) {
+            return false;
+          }
+          seen.insert(options);
+          std::vector<const Path*> paths;
+          for (std::size_t at = 0; at + 1 < points.size(); ++at) {
+            paths.push_back(at >= lo && at < lo + ways.size()
+                                ? &ways[at - lo]
+                                : &chainEdgePaths_[chain][at]);
+          }
+          // A chain with an edge that has no way is no state of it.
+          if (std::ranges::any_of(paths,
+                                  [](const Path* way) { return way->empty(); })) {
+            return false;
+          }
+          // Two local checks; a state either finds SAT is kept. First as the
+          // comparison of the local check with the rip-up makes it
+          // (`slotCheckNow`): every other chain standing as the commit left
+          // it, the terminal edges as wires, and only the chain's own wires
+          // and terminal edges routed and judged. Such a state can stand on
+          // its own. Then with the chain alone, its own wires routed: such a
+          // state may need its neighbours to move as well.
+          auto state = stateOf(before, every, chain, &options, &paths);
+          state.terminalsAsWires = terminalDemands();
+          std::set<std::string> judged = own;
+          for (const auto& edge : state.edges) {
+            if (edge.chain == chain && edge.terminal) {
+              judged.insert(wireId(state.wires[edge.wire]));
+            }
+          }
+          localWires_ = &judged;
+          const auto checkBegan = std::chrono::steady_clock::now();
+          const auto verdict = capacityVerdictOf(state);
+          checking += std::chrono::steady_clock::now() - checkBegan;
+          localWires_ = nullptr;
+          std::vector<std::string> ownLost;
+          for (const auto key : verdict.lost) {
+            if (const auto name = wireId(state.wires[key]);
+                judged.contains(name)) {
+              ownLost.push_back(name);
+            }
+          }
+          const bool fits = ownLost.empty();
+          bool alone = false;
+          if (!fits) {
+            localWires_ = localSatWires() && slotCheckSteps() ? &own : nullptr;
+            const auto aloneBegan = std::chrono::steady_clock::now();
+            alone = capacityVerdictOf(
+                        stateOf(before, only, chain, &options, &paths))
+                        .lost.empty();
+            checking += std::chrono::steady_clock::now() - aloneBegan;
+            localWires_ = nullptr;
+          }
+          if (!fits && !alone) {
+            if (atOver) {
+              std::string named;
+              for (const auto option : options) {
+                named += std::format(" {}", option);
+              }
+              std::string lostText;
+              for (const auto& name : ownLost) {
+                lostText += " " + name;
+              }
+              tell(std::format("[Global SAT] chain {} segment {}: locally "
+                               "UNSAT on options{} (lost{})",
+                               chain, lo, named, lostText));
+            }
+            return false;
+          }
+          ++sat;
+          fitting += fits ? 1U : 0U;
+          if (atOver) {
+            std::string named;
+            for (const auto option : options) {
+              named += std::format(" {}", option);
+            }
+            tell(std::format("[Global SAT] chain {} segment {}: locally SAT "
+                             "on options{}{}",
+                             chain, lo, named,
+                             fits ? "" : " with the chain alone"));
+            ends.insert({options[first], options[last]});
+            if (fits) {
+              (moves ? moving : others).push_back(options);
+            } else {
+              (moves ? aloneMoving : aloneOthers).push_back(options);
+            }
+          } else if (ends.insert({options[first], options[last]}).second) {
+            kept.push_back(options);
+          } else {
+            others.push_back(options);
+          }
+          return false;
+        };
+        segmentCollect_ = &collect;
+        std::uint32_t badNow = 0;
+        static_cast<void>(researchSegment(wires, {}, {}, Pass{},
+                                          {.chain = chain,
+                                           .lo = lo,
+                                           .hi = lo + span,
+                                           .fails = {},
+                                           .because = {}},
+                                          globalSatRuns(), badNow));
+        segmentCollect_ = nullptr;
+      }
+      if (atOver) {
+        kept.insert(kept.end(), std::make_move_iterator(moving.begin()),
+                    std::make_move_iterator(moving.end()));
+        kept.insert(kept.end(), std::make_move_iterator(others.begin()),
+                    std::make_move_iterator(others.end()));
+        kept.insert(kept.end(), std::make_move_iterator(aloneMoving.begin()),
+                    std::make_move_iterator(aloneMoving.end()));
+        kept.insert(kept.end(), std::make_move_iterator(aloneOthers.begin()),
+                    std::make_move_iterator(aloneOthers.end()));
+        others.clear();
+      }
+      for (auto& other : others) {
+        if (kept.size() >= globalSatStates()) {
+          break;
+        }
+        kept.push_back(std::move(other));
+      }
+      if (!atOver && kept.size() > globalSatStates()) {
+        kept.resize(globalSatStates());
+      }
+      say(std::format("[Global SAT] chain {}: {} runs of {} segment{}, {} "
+                      "locally SAT on other options ({} with the other chains "
+                      "standing){}; {} state{} kept, {} end pair{}; {:.1f}s, "
+                      "{:.1f}s of it in slot checks",
+                      chain, runs, starts.size(),
+                      starts.size() == 1 ? "" : "s", sat, fitting,
+                      moving.empty() ? std::string{}
+                                     : std::format(", {} moving a waypoint at "
+                                                   "an edge over",
+                                                   moving.size()),
+                      kept.size(),
+                      kept.size() == 1 ? "" : "s", ends.size(),
+                      ends.size() == 1 ? "" : "s",
+                      std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - chainBegan)
+                          .count(),
+                      checking.count()));
+    }
+    say(std::format("[Global SAT] states collected in {:.1f}s",
+                    std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - began)
+                        .count()));
+  }
+
+  /// **The search for a globally SAT state** (`globalSatSearch`), after the
+  /// commit. When the slot check of the whole chip finds a wire lost or an
+  /// edge over, every segment of every chain is searched as the targeted
+  /// repair searches it (`researchSegment`), and every run of options it
+  /// reaches whose chain the local check finds SAT is a state of that chain;
+  /// a chain keeps up to `globalSatStates`, end options (its first and last
+  /// coupler) not kept yet first. Then whole-chip states, every chain on one
+  /// of its states and most on other ends, are tried: the couplers moved as
+  /// the coupler session moves them (`setCouplerOption`), every edge drawn,
+  /// and the chip checked as the insertion checks it. The first SAT state
+  /// stays; when there is none, every coupler goes back to its option.
+  /// Whether the search moved a coupler.
+  bool searchGlobalSat(std::vector<Wire>& wires) {
+    const auto chains = static_cast<std::uint32_t>(chains_.size());
+    if (chains < 2) {
+      return false;
+    }
+    // A chip with an edge that has no way is no SAT state, whatever the
+    // check of the edges that stand says.
+    const bool complete = std::ranges::all_of(
+        edges_, [&](const Edge& edge) { return wires[edge.wire].drawn; });
+    std::set<std::string> touching;
+    auto lost = wholeChipLost(wires, &touching);
+    if (lost.empty() && complete) {
+      say("[Global SAT] the chip is SAT after the commit; nothing to search");
+      return false;
+    }
+    if (!complete) {
+      lost.emplace_back("an edge without a way");
+    }
+    const auto began = std::chrono::steady_clock::now();
+    std::string named;
+    for (const auto& name : lost) {
+      named += (named.empty() ? "" : " ") + name;
+    }
+    say(std::format("[Global SAT] the chip is UNSAT ({}); searching locally "
+                    "SAT chain states",
+                    named));
+    // The waypoints at the ends of the feedline edges at an edge over.
+    std::map<std::uint32_t, std::set<std::size_t>> focus;
+    for (const auto& edge : edges_) {
+      if (!edge.terminal && touching.contains(wireId(wires[edge.wire]))) {
+        focus[edge.chain].insert(edge.from);
+        focus[edge.chain].insert(edge.to);
+      }
+    }
+    std::string focusText;
+    for (const auto& [chain, at] : focus) {
+      focusText += std::format("{}chain {} at", focusText.empty() ? "" : "; ",
+                               chain);
+      for (const auto point : at) {
+        focusText += std::format(" {}", point);
+      }
+    }
+    if (!focusText.empty()) {
+      say(std::format("[Global SAT] the edges over lie on {}", focusText));
+    }
+    collectChainStates(wires, focus);
+    if (std::ranges::all_of(chainStates_,
+                            [](const auto& kept) { return kept.size() < 2; })) {
+      say("[Global SAT] no chain has a second locally SAT state");
+      return false;
+    }
+    std::vector<std::size_t> original(couplers_.size());
+    for (std::size_t index = 0; index < couplers_.size(); ++index) {
+      original[index] = couplers_[index].chosen;
+    }
+    // Every combination starts from the chip as the commit left it: a
+    // combination that failed leaves edges drawn elsewhere, and the next one
+    // would start on them.
+    const auto taken = snapshot(wires);
+    const auto paths = chainEdgePaths_;
+    const auto backToStart = [&]() {
+      restore(wires, taken);
+      chainEdgePaths_ = paths;
+      foreignRoomStale_ = true;
+    };
+    // Moves the couplers to a whole-chip state; whether every edge of the
+    // chip is drawn, those of an earlier state's couplers included.
+    const auto standOn = [&](const std::vector<std::size_t>& options) {
+      for (std::size_t index = 0; index < couplers_.size(); ++index) {
+        if (couplers_[index].chosen != options[index]) {
+          static_cast<void>(setCouplerOption(
+              wires, static_cast<std::uint32_t>(index), options[index]));
+        }
+      }
+      return std::ranges::all_of(edges_, [&](const Edge& edge) {
+        return wires[edge.wire].drawn;
+      });
+    };
+    std::mt19937 rng(2026);
+    std::set<std::vector<std::size_t>> tried;
+    std::uint32_t checks = 0;
+    const auto combining = std::chrono::steady_clock::now();
+    const auto budget = std::chrono::duration<double>(globalSatSeconds());
+    // First every state of a chain at an edge over on its own, the other
+    // chains as the commit left them; then random combinations.
+    std::vector<std::vector<std::size_t>> alone;
+    for (const auto& [chain, at] : focus) {
+      for (std::size_t k = 1; k < chainStates_[chain].size(); ++k) {
+        alone.emplace_back(chains, 0)[chain] = k;
+      }
+    }
+    for (std::uint32_t attempt = 0;
+         checks < globalSatTries() && attempt < 50 * globalSatTries() &&
+         std::chrono::steady_clock::now() - combining < budget;
+         ++attempt) {
+      const double share =
+          attempt % 3 == 0 ? 1.0 : (attempt % 3 == 1 ? 0.75 : 0.5);
+      std::vector<std::size_t> pick(chains, 0);
+      for (std::uint32_t chain = 0; attempt >= alone.size() && chain < chains;
+           ++chain) {
+        const auto n = chainStates_[chain].size();
+        // A chain at an edge over leaves the state the commit left.
+        if (n > 1 &&
+            (focus.contains(chain) ||
+             std::uniform_real_distribution<double>(0.0, 1.0)(rng) < share)) {
+          pick[chain] =
+              1 + std::uniform_int_distribution<std::size_t>(0, n - 2)(rng);
+        }
+      }
+      if (attempt < alone.size()) {
+        pick = alone[attempt];
+      }
+      if (std::ranges::all_of(pick, [](const auto k) { return k == 0; }) ||
+          !tried.insert(pick).second) {
+        continue;
+      }
+      ++checks;
+      backToStart();
+      auto options = original;
+      for (std::uint32_t chain = 0; chain < chains; ++chain) {
+        const auto& points = chains_[chain];
+        if (chainStates_[chain].empty()) {
+          continue;
+        }
+        const auto& state = chainStates_[chain][pick[chain]];
+        for (std::size_t at = 0; at < points.size(); ++at) {
+          if (!points[at].fixed) {
+            options[points[at].coupler] = state[at];
+          }
+        }
+      }
+      const bool drawn = standOn(options);
+      const auto against = drawn ? wholeChipLost(wires)
+                                 : std::vector<std::string>{"an edge without a way"};
+      std::string moved;
+      for (std::uint32_t chain = 0; chain < chains; ++chain) {
+        if (pick[chain] != 0) {
+          moved += std::format("{}chain {} state {}", moved.empty() ? "" : "; ",
+                               chain, pick[chain]);
+        }
+      }
+      if (!against.empty()) {
+        std::string named;
+        for (const auto& name : against) {
+          named += (named.empty() ? "" : " ") + name;
+        }
+        tell(std::format("[Global SAT] combination {} ({}): UNSAT ({})", checks,
+                         moved, named));
+      }
+      if (against.empty()) {
+        say(std::format("[Global SAT] SAT after {} combination{}: {}; {:.1f}s",
+                        checks, checks == 1 ? "" : "s", moved,
+                        std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - began)
+                            .count()));
+        return true;
+      }
+    }
+    backToStart();
+    say(std::format("[Global SAT] no SAT combination in {} checked; the chip "
+                    "as the commit left it; {:.1f}s",
+                    checks,
+                    std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - began)
+                        .count()));
+    return true;
+  }
+
   [[nodiscard]] std::uint32_t optimizeChainsPrefix(std::vector<Wire>& wires) {
     std::uint32_t settled = 0;
     // The chains settled so far, for the capacity check; under `localCheck`
@@ -14932,11 +15487,16 @@ public:
   [[nodiscard]] std::string
   capacityGraphJsonOf(const InsertionState& state, const std::string& said,
                       std::set<std::uint32_t>* lostOut = nullptr,
-                      std::optional<SlotCheckResult>* slotOut = nullptr) {
+                      std::optional<SlotCheckResult>* slotOut = nullptr,
+                      SlotGraph* slotGraphOut = nullptr) {
     auto pass = capacityPass(state.wires, state.edges, &state.placed, NO_OWNER,
                              capacityFast() == 1, state.terminalsAsWires);
     if (slotOut != nullptr) {
-      *slotOut = slotCheck(slotGraphOfPass(state.wires, pass));
+      auto input = slotGraphOfPass(state.wires, pass);
+      *slotOut = slotCheck(input);
+      if (slotGraphOut != nullptr) {
+        *slotGraphOut = std::move(input);
+      }
     }
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     std::vector<MeasuredBottleneck> measured;
@@ -15244,7 +15804,7 @@ public:
   /// (`CouplerSession`). The option is applied as the commit applies it
   /// (`applyOption`); both edges stand down first, so that neither is
   /// routed around the other's way to the old ports, and are then routed
-  /// as the commit routes an edge, against every edge on the chip
+  /// as the commit routes an edge, against every edge of its chain
   /// (`fenceEverything_`). Returns
   /// JSON: per edge whether it was drawn, its length in cells and its way.
   ///
@@ -17157,6 +17717,14 @@ public:
     problem.accept = [&](const std::span<const std::uint32_t> run,
                          const std::uint64_t cost) {
       const auto ways = waysOfRun(laid, run);
+      if (segmentCollect_ != nullptr) {
+        std::vector<std::size_t> options(layers, 0);
+        for (std::size_t k = 0; k < layers; ++k) {
+          options[k] = open[k][run[k]];
+        }
+        static_cast<void>((*segmentCollect_)(options, ways));
+        return false;
+      }
       // The current run on the ways it already holds: nothing to test.
       bool same = true;
       for (std::size_t k = 0; same && k < layers; ++k) {
@@ -22776,6 +23344,14 @@ private:
   Debug debug_;
   std::uint32_t verbosity_ = 0;
   DebugFrame frame_;
+  /// Per chain, the options of every waypoint of its locally SAT states,
+  /// the state it stands on first (`collectChainStates`).
+  std::vector<std::vector<std::vector<std::size_t>>> chainStates_;
+  /// A run of options of a segment and the ways of its edges, handed to
+  /// `collectChainStates` by the segment search instead of being tested.
+  using RunCollector = std::function<bool(const std::vector<std::size_t>&,
+                                          const std::vector<Path>&)>;
+  const RunCollector* segmentCollect_ = nullptr;
   /// Counts the sweeps, so that a wire's `relaxedOut` names one.
   std::uint32_t sweepSerial_ = 0;
   std::uint32_t pictures_ = 0;

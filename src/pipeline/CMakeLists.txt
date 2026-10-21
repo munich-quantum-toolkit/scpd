@@ -24,5 +24,5 @@ add_mqt_scpd_library(
 # break ties between ways of equal length alike. A fused multiply-add rounds once where Python
 # rounds twice, so the compiler must not contract that file's products and sums.
 if(NOT MSVC)
-  set_source_files_properties(SlotCheck.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+  set_source_files_properties(SlotCheck.cpp SlotCheckFast.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()

@@ -592,6 +592,30 @@ TEST(SlotCheck, StubOfAnotherWireTakesNoWireThroughANarrowLine) {
             std::vector<std::string>{"□ f1 1 to stub (80, 145) 1/0"});
 }
 
+/// The faster check (`SCPD_SLOT_CHECK_FAST`) finds what the check finds,
+/// down to the graph it writes, on a feedline with slots and stubs and on a
+/// gate over its capacity.
+TEST(SlotCheck, FastCheckFindsTheSame) {
+  auto feedline = feedlineChip();
+  feedline.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
+  addStub(feedline, "9", 145);
+  feedline.wire("7", {60, 152}, 0, {200, 50}, 0, {});
+  auto gate = gateChip(1);
+  gate.wire("1", {20, 5}, 0, {20, 35}, 1, {});
+  gate.wire("2", {22, 5}, 0, {22, 35}, 1, {});
+
+  for (const auto& text : {feedline.text(), gate.text()}) {
+    EXPECT_EQ(fast::slotCheckJson(text), slotCheckJson(text));
+    const auto graph = slotGraphOf(text);
+    const auto plain = slotCheck(graph);
+    const auto quick = fast::slotCheck(graph);
+    EXPECT_EQ(quick.verdict, plain.verdict);
+    EXPECT_EQ(quick.lost, plain.lost);
+    EXPECT_EQ(quick.over, plain.over);
+    EXPECT_EQ(quick.crowded, plain.crowded);
+  }
+}
+
 TEST(SlotCheck, RejectsAGraphWithoutRaster) {
   EXPECT_THROW((void)slotCheck(R"({"width": 2, "height": 2})"),
                std::invalid_argument);

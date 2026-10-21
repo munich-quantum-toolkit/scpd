@@ -10,6 +10,7 @@
 
 #include "mqt-scpd/pipeline/SlotCheck.hpp"
 
+
 #include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
@@ -3938,15 +3939,32 @@ std::pair<SlotCheckResult, json> judge(const std::string_view graph) {
   }
 }
 
+/// Whether `slotCheck` runs the faster check of SlotCheckFast.cpp
+/// (`SCPD_SLOT_CHECK_FAST`, off): the same results with less work.
+bool fastCheck() {
+  static const bool on = [] {
+    const char* value = std::getenv("SCPD_SLOT_CHECK_FAST");
+    return value != nullptr && std::string_view(value) != "0" &&
+           !std::string_view(value).empty();
+  }();
+  return on;
+}
+
 } // namespace
 
 SlotCheckResult slotCheck(const std::string_view graph) {
+  if (fastCheck()) {
+    return fast::slotCheck(graph);
+  }
   auto [result, out] = judge(graph);
   result.graph = out.dump();
   return result;
 }
 
 SlotCheckResult slotCheck(const SlotGraph& graph) {
+  if (fastCheck()) {
+    return fast::slotCheck(graph);
+  }
   readSettings();
   return Checker(graph, nullptr).run().first;
 }
@@ -3961,6 +3979,9 @@ SlotGraph slotGraphOf(const std::string_view graph) {
 }
 
 std::string slotCheckJson(const std::string_view graph) {
+  if (fastCheck()) {
+    return fast::slotCheckJson(graph);
+  }
   auto [result, out] = judge(graph);
   return json{{"verdict", result.verdict},
               {"lost", result.lost},

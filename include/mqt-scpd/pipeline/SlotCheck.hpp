@@ -191,4 +191,18 @@ slotGraphOf(std::string_view graph);
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string
 slotCheckJson(std::string_view graph);
 
+/// The faster slot check, which `slotCheck` and `slotCheckJson` run when
+/// `SCPD_SLOT_CHECK_FAST` is on: the same results with less work per check.
+namespace fast {
+/// `slotCheck` of a graph as JSON.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
+slotCheck(std::string_view graph);
+/// `slotCheck` of a graph in memory.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
+slotCheck(const SlotGraph& graph);
+/// `slotCheckJson`.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string
+slotCheckJson(std::string_view graph);
+} // namespace fast
+
 } // namespace mqt::scpd::pipeline
