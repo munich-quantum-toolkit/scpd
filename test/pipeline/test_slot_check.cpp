@@ -106,9 +106,10 @@ struct Drawing {
 
 /// A chip of 260 by 240 cells with clearance 19: chamber 0 above, chamber
 /// 1 below, and between them the feedline edge f1 along row 170 from x 60
-/// to 100 inside artwork. One crossing slot fits on f1, at x 71, the first
-/// place past the ten cells at the edge's end where the router may cross;
-/// its exits lie at (71, 157) and (71, 183).
+/// to 100 inside artwork. One crossing slot fits on f1, between the ten
+/// cells at either end where the router may not cross; spread over that
+/// room it lies in the middle, at x 80, and its exits lie at (80, 157) and
+/// (80, 183).
 Drawing feedlineChip() {
   Drawing chip(260, 240, 19.0);
   chip.fill(0, 180, 259, 239, CHAMBER + 1);
@@ -124,8 +125,9 @@ Drawing feedlineChip() {
 }
 
 /// Adds a stub of `owner` shaped as an L: from (80, top) left to (40, top)
-/// and down to (40, 160). Its open end at (80, top) and the corner of the
-/// slot at (80.5, 159) close a room round the slot's upper exit.
+/// and down to (40, 160). Its open end at (80, top), above the slot, and
+/// the slot's corner at (70.5, 159) close a room round the slot's upper
+/// exit.
 void addStub(Drawing& chip, const std::string& owner, const int top) {
   chip.fill(40, top, 80, top, STUB);
   chip.fill(40, top, 40, 160, STUB);
@@ -207,6 +209,96 @@ TEST(SlotCheck, CrossingPrescriptionTakesTheSlot) {
   EXPECT_EQ(graph.at("verdict"), "SAT");
 }
 
+/// The slots of a straight piece are spread evenly over it
+/// (`SCPD_EVEN_SLOTS`): as many as laid one after the other, with equal gaps
+/// between them and to the two ends. On f1 from x 60 to 170 they lie as far
+/// from the one end as from the other; laid one after the other they
+/// crowd the start.
+TEST(SlotCheck, SpreadsTheSlotsOfAStraightPieceEvenly) {
+  Drawing chip(260, 240, 19.0);
+  chip.fill(0, 180, 259, 239, CHAMBER + 1);
+  chip.fill(0, 161, 259, 179, ARTWORK);
+  chip.fill(60, 161, 170, 179, FEEDLINE);
+  json points = json::array();
+  for (int x = 60; x <= 170; ++x) {
+    points.push_back({x, 170});
+  }
+  chip.strokes.push_back(
+      {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
+  chip.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
+  const auto slotsAt = [&](const char* even) {
+    setenv("SCPD_EVEN_SLOTS", even, 1);
+    const auto graph = json::parse(slotCheck(chip.text()).graph);
+    unsetenv("SCPD_EVEN_SLOTS");
+    std::vector<double> xs;
+    for (const auto& slot : graph.at("crossSlots").at("edges").at(0).at("slots")) {
+      xs.push_back(slot.at("at").at(0).get<double>());
+    }
+    std::ranges::sort(xs);
+    return xs;
+  };
+
+  const auto laid = slotsAt("0");
+  const auto spread = slotsAt("1");
+
+  ASSERT_GE(spread.size(), 3U);
+  EXPECT_EQ(spread.size(), laid.size());
+  EXPECT_NEAR(spread.front() - 60.0, 170.0 - spread.back(), 1.0);
+  EXPECT_GT(std::abs((laid.front() - 60.0) - (170.0 - laid.back())), 1.0);
+  for (std::size_t k = 2; k < spread.size(); ++k) {
+    EXPECT_NEAR(spread[k] - spread[k - 1], spread[1] - spread[0], 1.0);
+  }
+}
+
+/// Under `SCPD_SLOT_ESCAPE` a slot goes only where each of its ends has a way
+/// out: one of the router's turns and five cells on, every cell free. On f1
+/// from x 60 to 170, artwork from x 60 to 110 a cell below the lower ends of
+/// the slots leaves no turn there, so the slots move right of it; without
+/// the switch they lie over the whole edge.
+TEST(SlotCheck, PlacesASlotOnlyWhereItsEndsHaveAWayOut) {
+  Drawing chip(260, 240, 19.0);
+  chip.fill(0, 180, 259, 239, CHAMBER + 1);
+  chip.fill(0, 161, 259, 179, ARTWORK);
+  chip.fill(60, 161, 170, 179, FEEDLINE);
+  chip.fill(60, 183, 110, 210, ARTWORK);
+  json points = json::array();
+  for (int x = 60; x <= 170; ++x) {
+    points.push_back({x, 170});
+  }
+  chip.strokes.push_back(
+      {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
+  chip.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
+  const auto graphWith = [&](const char* escape) {
+    setenv("SCPD_SLOT_ESCAPE", escape, 1);
+    auto graph = json::parse(slotCheck(chip.text()).graph);
+    unsetenv("SCPD_SLOT_ESCAPE");
+    return graph;
+  };
+  const auto slotsOf = [](const json& graph) {
+    std::vector<double> xs;
+    for (const auto& slot :
+         graph.at("crossSlots").at("edges").at(0).at("slots")) {
+      xs.push_back(slot.at("at").at(0).get<double>());
+    }
+    std::ranges::sort(xs);
+    return xs;
+  };
+
+  const auto plain = graphWith("0");
+  const auto escaping = graphWith("1");
+
+  ASSERT_FALSE(slotsOf(plain).empty());
+  EXPECT_LT(slotsOf(plain).front(), 110.0);
+  ASSERT_FALSE(slotsOf(escaping).empty());
+  EXPECT_GT(slotsOf(escaping).front(), 110.0);
+  // Every end of a slot placed shows the way out its placement chose.
+  ASSERT_EQ(escaping.at("escapes").size(), 2 * slotsOf(escaping).size());
+  for (const auto& end : escaping.at("escapes")) {
+    EXPECT_FALSE(end.at("line").is_null()) << end;
+  }
+  EXPECT_EQ(escaping.at("verdict"), "SAT");
+}
+
 /// A slot needs a line across its edge that the feedline routing's crossing
 /// rule allows (`SCPD_SLOT_CROSSING_RULE`). On an edge of 21 cells the one
 /// straight piece a slot fits on has its middle on the last of the first
@@ -238,6 +330,30 @@ TEST(SlotCheck, LaysNoSlotWhereTheRouterMayNotCross) {
     ruled = ruled || place.at("why") == "crossing rule";
   }
   EXPECT_TRUE(ruled) << edges[0].at("rejected");
+}
+
+/// With fewer cells closed at the ends of an edge (`SCPD_SLOT_PIN_CELLS`),
+/// the middle of the edge of 21 cells lies outside them, and its slot takes
+/// the wire.
+TEST(SlotCheck, LaysASlotNearerTheEndsWithFewerPinCells) {
+  Drawing chip(260, 240, 19.0);
+  chip.fill(0, 180, 259, 239, CHAMBER + 1);
+  chip.fill(0, 161, 259, 179, ARTWORK);
+  chip.fill(60, 161, 80, 179, FEEDLINE);
+  json points = json::array();
+  for (int x = 60; x <= 80; ++x) {
+    points.push_back({x, 170});
+  }
+  chip.strokes.push_back(
+      {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
+  chip.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
+
+  setenv("SCPD_SLOT_PIN_CELLS", "5", 1);
+  const auto result = slotCheck(chip.text());
+  unsetenv("SCPD_SLOT_PIN_CELLS");
+
+  EXPECT_EQ(result.verdict, "SAT");
+  EXPECT_TRUE(result.lost.empty());
 }
 
 /// A gate on the line of a mouth between the same two chambers is that
@@ -289,6 +405,64 @@ TEST(SlotCheck, WireWithoutPrescriptionCannotCross) {
       << graph.at("summary");
 }
 
+/// An edge of an open chain is prescribed to no wire, but its stretches
+/// stay open to the wires that bridge it, and so do its slots: wire 1
+/// bridges f1 and crosses it without a prescription; wire 2 does not
+/// bridge f1 and has no way.
+TEST(SlotCheck, WireThatBridgesAnEdgeCrossesItWithoutPrescription) {
+  auto chip = feedlineChip();
+  chip.edges.push_back({{"kind", "stretch"},
+                        {"name", "× f1 cells 0..40"},
+                        {"feedline", "f1"},
+                        {"chambers", {0, 1}},
+                        {"capacity", 1},
+                        {"users", {"1"}}});
+  chip.wire("1", {200, 60}, 0, {200, 220}, 1, {});
+  chip.wire("2", {220, 60}, 0, {220, 220}, 1, {});
+
+  const auto result = slotCheck(chip.text());
+  const auto graph = json::parse(result.graph);
+
+  EXPECT_EQ(result.verdict, "UNSAT");
+  EXPECT_EQ(result.lost, std::vector<std::string>{"2"});
+  const auto slot = edgeNamed(graph, "□ f1 1");
+  ASSERT_FALSE(slot.is_null());
+  EXPECT_EQ(slot.at("users"), json::array({"1"}));
+  EXPECT_EQ(wireNamed(graph, "1").at("way"), json::array({slot.at("index")}));
+}
+
+/// An edge of a chain with a reflector end may have one chamber on both
+/// sides; its slots then lead from that chamber back into it, and a wire
+/// prescribed to cross the edge crosses at one of them. Here f1 lies in
+/// chamber 0 alone, and wire 1 starts and ends in chamber 0.
+TEST(SlotCheck, CrossesASlotThatLeadsBackIntoItsChamber) {
+  Drawing chip(260, 240, 19.0);
+  chip.fill(60, 161, 100, 179, FEEDLINE);
+  json points = json::array();
+  for (int x = 60; x <= 100; ++x) {
+    points.push_back({x, 170});
+  }
+  chip.strokes.push_back(
+      {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
+  chip.edges.push_back({{"kind", "stretch"},
+                        {"name", "× f1 cells 0..40"},
+                        {"feedline", "f1"},
+                        {"chambers", {0, 0}},
+                        {"capacity", 1},
+                        {"users", {"1"}}});
+  chip.wire("1", {200, 60}, 0, {200, 220}, 0, {"f1"});
+
+  const auto result = slotCheck(chip.text());
+  const auto graph = json::parse(result.graph);
+
+  EXPECT_EQ(result.verdict, "SAT");
+  EXPECT_TRUE(result.lost.empty());
+  const auto slot = edgeNamed(graph, "□ f1 1");
+  ASSERT_FALSE(slot.is_null());
+  EXPECT_EQ(slot.at("chambers"), json::array({0, 0}));
+  EXPECT_EQ(wireNamed(graph, "1").at("way"), json::array({slot.at("index")}));
+}
+
 TEST(SlotCheck, WireWithAPortInNoChamberIsLost) {
   auto chip = feedlineChip();
   chip.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
@@ -313,6 +487,7 @@ TEST(SlotCheck, GateOverCapacityIsUnsat) {
   EXPECT_EQ(result.verdict, "UNSAT");
   EXPECT_TRUE(result.lost.empty());
   EXPECT_EQ(result.over, std::vector<std::string>{"g0"});
+  EXPECT_EQ(result.crowded, (std::vector<std::string>{"1", "2"}));
   const auto gate = edgeNamed(json::parse(result.graph), "g0");
   EXPECT_EQ(gate.at("load"), 2);
   EXPECT_EQ(gate.at("overflow"), 1);
@@ -348,10 +523,23 @@ TEST(SlotCheck, GateWithRoomForBothIsSat) {
   EXPECT_EQ(edgeNamed(json::parse(result.graph), "g0").at("load"), 2);
 }
 
+/// Places the slots by the edge alone (`SCPD_SLOT_ESCAPE=0`) while it lives.
+/// The stub of the tests below closes every way out of the slot's upper end,
+/// so with the escape check the slot they are about is not placed.
+struct WithoutEscapes {
+  WithoutEscapes() { setenv("SCPD_SLOT_ESCAPE", "0", 1); }
+  WithoutEscapes(const WithoutEscapes&) = delete;
+  WithoutEscapes& operator=(const WithoutEscapes&) = delete;
+  WithoutEscapes(WithoutEscapes&&) = delete;
+  WithoutEscapes& operator=(WithoutEscapes&&) = delete;
+  ~WithoutEscapes() { unsetenv("SCPD_SLOT_ESCAPE"); }
+};
+
 TEST(SlotCheck, SlotAndStubShareALineForOneWire) {
-  // The line from the slot's corner to the stub's open end is 19 cells
+  // The line from the slot's corner to the stub's open end is 21 cells
   // long and takes one wire. Wire 7 starts in the room behind it and wire
   // 2 crosses f1 at the slot whose exit lies in that room: both pass it.
+  const WithoutEscapes plain;
   auto chip = feedlineChip();
   addStub(chip, "7", 140);
   chip.wire("7", {60, 150}, 0, {200, 50}, 0, {});
@@ -373,9 +561,10 @@ TEST(SlotCheck, SlotAndStubShareALineForOneWire) {
 }
 
 TEST(SlotCheck, StubTakesItsOwnWire) {
-  // The line from the slot's corner to the stub's open end is 14 cells
+  // The line from the slot's corner to the stub's open end is 17 cells
   // long, less than a clearance, yet the stub's own wire always leaves the
   // stub: the line takes wire 7.
+  const WithoutEscapes plain;
   auto chip = feedlineChip();
   addStub(chip, "7", 145);
   chip.wire("7", {60, 152}, 0, {200, 50}, 0, {});
@@ -391,6 +580,7 @@ TEST(SlotCheck, StubTakesItsOwnWire) {
 }
 
 TEST(SlotCheck, StubOfAnotherWireTakesNoWireThroughANarrowLine) {
+  const WithoutEscapes plain;
   auto chip = feedlineChip();
   addStub(chip, "9", 145);
   chip.wire("7", {60, 152}, 0, {200, 50}, 0, {});

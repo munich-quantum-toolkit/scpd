@@ -1403,6 +1403,18 @@ constexpr std::uint32_t CEILING = 4000;
   static const bool on = envFlag("SCPD_TERMINAL_STUB_GUARD", true);
   return on;
 }
+/// Whether the coupler insertion closes, in the corridor of an edge, the
+/// coupler-end run of the terminal edge of its own chain that meets it at a
+/// coupler: `SCPD_OWN_TERMINAL_STUB_GUARD`, on (user, 2026-10-19). The run
+/// follows from the coupler's option alone, so it is known before the
+/// terminal edge is drawn; `guardSettledTerminalRuns` closes it only for
+/// the other chains. Without it, 9q let f8 pass 3 to 8 cells from the run
+/// f9 makes out of coupler '2' on option 31, and the feedline routing found
+/// f9 open in its own stub. `=0` leaves the run open, as before.
+[[nodiscard]] inline bool ownTerminalStubGuard() {
+  static const bool on = envFlag("SCPD_OWN_TERMINAL_STUB_GUARD", true);
+  return on;
+}
 [[nodiscard]] inline std::uint32_t terminalStubExtra() {
   static const auto extra = static_cast<std::uint32_t>(
       std::clamp(envWhole("SCPD_TERMINAL_STUB_EXTRA", 5), 0, 100));
@@ -2159,6 +2171,9 @@ struct Wire {
   /// then it is drawn again even where its way holds, because letting it
   /// go was a promise that it moves.
   bool ripped = false;
+  /// The sweep and the round, one based, in which the wire found no way at
+  /// any level of the relaxation; 0 for none (`relaxBoth`).
+  std::uint64_t relaxedOut = 0;
 };
 
 /// What one pass of the driver does.
@@ -2836,6 +2851,7 @@ public:
     std::uint32_t stale = 0;
     say(std::format("{}: {} wires, up to {} rounds, {} relaxations each way",
                     pass.name, total, pass.rounds, pass.maxRelaxation));
+    ++sweepSerial_;
     for (std::uint32_t round = 0; round < pass.rounds; ++round) {
       const bool forward = (round % 2) == 0;
       frame_.pass = passTag(pass.name);
@@ -3508,6 +3524,7 @@ public:
     // resonator that has reached it rolls back onto a way that is still at
     // its length, so a second search buys nothing. See `refineFallback`.
     std::vector<std::uint8_t> fitted(wires.size(), 0);
+    ++sweepSerial_;
     for (std::uint32_t round = 0; round < pass.rounds; ++round) {
       std::uint32_t fallbacksTried = 0;
       std::uint32_t fallbacksTaken = 0;
@@ -3737,6 +3754,9 @@ public:
     /// on — the same pad, reached from one side or the other.
     std::uint32_t secondStraight = 0;
     bool secondReverse = false;
+    /// How many cells of `arc` the first quarter turn and its straight take;
+    /// with a second dogleg the cell after them is the first lead's tip.
+    std::size_t firstLead = 0;
     /// How far the option was moved into the box, in cells (see
     /// `couplerShift`). Zero when the lead's tip lands on the place.
     std::int64_t shiftX = 0;
@@ -5609,6 +5629,10 @@ public:
     if (option.arc.empty()) {
       return refuse("the lead has no cells");
     }
+    // `lead.path` ends on the first tip, which the second dogleg starts on.
+    option.firstLead = secondStraight > 0 && !lead.path.empty()
+                           ? lead.path.size() - 1
+                           : option.arc.size();
     option.anchor = leaveFrom;
     option.arcEnd = tip;
     // **The resonator's own turn.** The lead already carries the straight
@@ -6183,6 +6207,9 @@ public:
     // f5 and f6 crossed at the insertion that way. See `terminalStubGuard`.
     if (terminalStubGuard()) {
       guardSettledTerminalRuns(edge);
+    }
+    if (ownTerminalStubGuard()) {
+      guardOwnTerminalRuns(edge);
     }
 
     // **The slot**, and the only thing that opens again — last, so that it
@@ -6910,6 +6937,112 @@ public:
     static const auto rounds = static_cast<std::uint32_t>(
         std::clamp(envWhole("SCPD_RESEARCH_ROUNDS", 2), 1, 10));
     return rounds;
+  }
+
+  /// How many runs of options each segment tests in the comparison of the
+  /// local slot check with the local rip-up-and-reroute:
+  /// `SCPD_LOCAL_AGREEMENT`, 0 (off). When set, phase 4 compares instead of
+  /// repairing (`compareLocally`): every segment of `localAgreementSpan`
+  /// edges of every chain is searched as the targeted repair searches it,
+  /// and each run it reaches is judged by both and put back.
+  [[nodiscard]] static std::uint32_t localAgreementRuns() {
+    static const auto runs = static_cast<std::uint32_t>(
+        std::clamp(envWhole("SCPD_LOCAL_AGREEMENT", 0), 0, 1000));
+    return runs;
+  }
+
+  /// Whether the comparison looks at the feedline and the wires it encloses
+  /// alone: `SCPD_LOCAL_AGREEMENT_ENCLOSED`, on (user, 2026-10-19). The
+  /// window is the enclosed one of `windowOfRun`, and the rip-up ignores
+  /// every wire outside it (`rerouteWindow`). `=0` takes the repair's window
+  /// and its rip-up over the whole ring.
+  [[nodiscard]] static bool localAgreementEnclosed() {
+    static const bool on = envFlag("SCPD_LOCAL_AGREEMENT_ENCLOSED", true);
+    return on;
+  }
+
+  /// Whether the comparison tests the crossing slots alone:
+  /// `SCPD_LOCAL_AGREEMENT_PLAIN`, off (user, 2026-10-20). A feedline's
+  /// wires are then its plain wires and its starting and ending edges: the
+  /// slot check judges them with the resonators out of the graph (their
+  /// leads stay walls), and the rip-up routes them alone, every resonator
+  /// left open and off the canvas.
+  /// One segment and one run of options of the comparison alone, so that
+  /// its local rip-up can be drawn for a dashboard:
+  /// `SCPD_LOCAL_AGREEMENT_ONLY=<chain>:<lo>:<options>`, for example
+  /// `10:1:6 5 4 27`; unset compares every segment.
+  struct AgreementOnly {
+    bool on = false;
+    std::uint32_t chain = 0;
+    std::size_t lo = 0;
+    std::string options;
+  };
+  [[nodiscard]] static const AgreementOnly& localAgreementOnly() {
+    static const AgreementOnly only = [] {
+      AgreementOnly out;
+      const char* text = std::getenv("SCPD_LOCAL_AGREEMENT_ONLY");
+      if (text == nullptr) {
+        return out;
+      }
+      const std::string_view value(text);
+      const auto first = value.find(':');
+      const auto second = first == std::string_view::npos
+                              ? std::string_view::npos
+                              : value.find(':', first + 1);
+      if (second == std::string_view::npos) {
+        return out;
+      }
+      out.chain = static_cast<std::uint32_t>(
+          std::strtoul(std::string(value.substr(0, first)).c_str(), nullptr, 10));
+      out.lo = std::strtoul(
+          std::string(value.substr(first + 1, second - first - 1)).c_str(),
+          nullptr, 10);
+      out.options = std::string(value.substr(second + 1));
+      out.on = true;
+      return out;
+    }();
+    return only;
+  }
+
+  [[nodiscard]] static bool localAgreementPlain() {
+    static const bool on = envFlag("SCPD_LOCAL_AGREEMENT_PLAIN", false);
+    return on;
+  }
+
+  /// How many edges a segment of the comparison spans:
+  /// `SCPD_LOCAL_AGREEMENT_SPAN`, 3, so that two couplers move.
+  [[nodiscard]] static std::size_t localAgreementSpan() {
+    static const auto span = static_cast<std::size_t>(
+        std::clamp(envWhole("SCPD_LOCAL_AGREEMENT_SPAN", 3), 2, 20));
+    return span;
+  }
+
+  /// Where the comparison writes every run it judges, as
+  /// `c<chain>-w<lo>-r<n>.json` (the window, both verdicts, what every round
+  /// of the rip-up came to, every wire's way after it, the pads), and the
+  /// graph the slot check saw as
+  /// `…-graph.json` for a run the two judge otherwise:
+  /// `SCPD_LOCAL_AGREEMENT_DIR`, unset (nothing written).
+  [[nodiscard]] static const char* localAgreementDir() {
+    return envSet("SCPD_LOCAL_AGREEMENT_DIR");
+  }
+
+  /// Whether the comparison writes the graph of every run, not only of the
+  /// runs the two judge otherwise: `SCPD_LOCAL_AGREEMENT_GRAPHS`, off.
+  [[nodiscard]] static bool localAgreementGraphs() {
+    static const bool on = envFlag("SCPD_LOCAL_AGREEMENT_GRAPHS", false);
+    return on;
+  }
+
+  /// The clock of one segment's search in the comparison, its tests
+  /// included: `SCPD_LOCAL_AGREEMENT_SECONDS`, 120 s.
+  [[nodiscard]] static std::chrono::nanoseconds localAgreementBudget() {
+    static const auto budget = [] {
+      const double seconds = envReal("SCPD_LOCAL_AGREEMENT_SECONDS", 120.0);
+      return std::chrono::nanoseconds(
+          static_cast<std::int64_t>(std::max(0.0, seconds) * 1e9));
+    }();
+    return budget;
   }
 
   /// Whether the second-dogleg options are open for the couplers a segment
@@ -8854,6 +8987,15 @@ public:
   /// search keeps its own check.
   [[nodiscard]] static bool slotCheckVerdict() {
     return envFlag("SCPD_SLOT_CHECK", true);
+  }
+  /// Whether every check of the chain search, the check of each chain on
+  /// its own and the check of the whole chip before a chain is laid come
+  /// from the check by crossing slots too: `SCPD_SLOT_CHECK_STEPS`, on
+  /// (user, 2026-10-19). A wire is lost when it has no way or its way
+  /// passes an edge or a self-bottleneck that is over, as with the check by
+  /// stretches. The check reads the graph in memory (`slotGraphOf`).
+  [[nodiscard]] static bool slotCheckSteps() {
+    return envFlag("SCPD_SLOT_CHECK_STEPS", true);
   }
 
   /// The bottlenecks the coupler insertion has a hand in (user,
@@ -11065,24 +11207,10 @@ public:
                        slotCheckVerdict());
   }
 
-  /// The capacity graph `data`, as `writeCapacityGraph` writes it, judged
-  /// by the check by crossing slots (`slotCheckVerdict`): the graph that
-  /// check saw, with its verdict, and the verdict of the check before as
-  /// `previousVerdict`. Says the verdict as the verdict of the chip. When
-  /// the check cannot read the graph, says why and returns `data` as it
-  /// is, so the verdict of the check before stands.
-  [[nodiscard]] nlohmann::json judgedBySlots(nlohmann::json data) {
-    const auto began = std::chrono::steady_clock::now();
-    const auto previous = data.value("verdict", std::string("UNKNOWN"));
-    SlotCheckResult result;
-    try {
-      result = slotCheck(data.dump());
-    } catch (const std::invalid_argument& error) {
-      say(std::format("coupler insertion: the slot check failed ({}); the "
-                      "verdict of the stretches stands: CAPACITY GRAPH {}",
-                      error.what(), previous));
-      return data;
-    }
+  /// Say the verdict of the check by crossing slots (`slotCheckVerdict`) as
+  /// the verdict of the chip, beside the verdict of the stretches.
+  void sayBySlots(const SlotCheckResult& result, const std::string_view previous,
+                  const std::chrono::steady_clock::time_point began) {
     const auto listed = [](const std::vector<std::string>& names) {
       std::string list;
       for (const auto& name : names) {
@@ -11109,9 +11237,22 @@ public:
         previous,
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
             .count()));
-    auto graph = nlohmann::json::parse(result.graph);
-    graph["previousVerdict"] = previous;
-    return graph;
+  }
+
+  /// The page of the capacity graph `data`, as `writeCapacityGraph` writes
+  /// it, as the check by crossing slots saw it: its slots, loads and ways,
+  /// and the verdict of the check before as `previousVerdict`. Only for the
+  /// debug output; the verdict itself comes from the graph in memory. When
+  /// the check cannot read the graph, `data` stays as it is.
+  [[nodiscard]] static nlohmann::json judgedBySlots(nlohmann::json data) {
+    const auto previous = data.value("verdict", std::string("UNKNOWN"));
+    try {
+      auto graph = nlohmann::json::parse(slotCheck(data.dump()).graph);
+      graph["previousVerdict"] = previous;
+      return graph;
+    } catch (const std::invalid_argument&) {
+      return data;
+    }
   }
 
   /// How many times `benchCapacityCheck` runs the whole capacity analysis
@@ -12160,6 +12301,9 @@ public:
   /// otherwise. With `stepRefuses_` a step whose edge closes a wire is
   /// refused.
   const std::vector<bool>* stepSettled_ = nullptr;
+  /// The wires the slot check of a step routes and judges while a chain is
+  /// searched (`localSatWires`), by name, or nothing for every wire.
+  const std::set<std::string>* localWires_ = nullptr;
   bool stepRefuses_ = false;
   /// The room of the resonators outside one chain, and which chain that is.
   /// `foreignRoomStale_` is set wherever a resonator can have moved.
@@ -12176,6 +12320,42 @@ public:
   std::uint32_t openChain_ = NO_OWNER;
   std::size_t openLo_ = 0;
   std::size_t openHi_ = 0;
+
+  /// What the local rip-up-and-reroute of one feedline came to in the
+  /// comparison (`ripFeedline`).
+  struct FeedlineRip {
+    bool clean = true;
+    /// The wires it left unrouted, open or crossing, and what each was.
+    std::string failing;
+    /// Who each open wire meets.
+    std::string blocked;
+    /// Every round of the pass: its direction, how many wires found a way
+    /// at once and how many only by the relaxation, and which found none.
+    nlohmann::json rounds = nlohmann::json::array();
+    double seconds = 0.0;
+  };
+
+  /// What the comparison of the local slot check with the local
+  /// rip-up-and-reroute has counted (`compareLocally`), and whether a
+  /// segment's search is that comparison rather than the repair.
+  struct Agreement {
+    bool on = false;
+    /// Over every feedline of every run: SAT and clean, SAT and failing,
+    /// UNSAT and clean, UNSAT and failing.
+    std::array<std::uint32_t, 4> whole{};
+    /// Per feedline its wires (`feedlineWindow`), by key and by name, and
+    /// what the slot check and the rip-up said of the chip as it began.
+    std::vector<std::set<std::uint32_t>> windows;
+    std::vector<std::set<std::string>> windowNames;
+    std::vector<bool> baseSat;
+    std::vector<FeedlineRip> baseRip;
+    std::uint32_t unjudged = 0;
+    double slotSeconds = 0.0;
+    double rerouteSeconds = 0.0;
+    /// The runs written to `localAgreementDir`.
+    std::uint32_t written = 0;
+  };
+  Agreement agreement_;
 
   /// The chain that is being searched and is therefore not fenced by its own
   /// edges, or NO_OWNER. Only `SCPD_CHAIN_DP=2` ever sets it.
@@ -14324,6 +14504,8 @@ public:
     const auto* const checkedWith = localCheck() ? &none : &standing;
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
       soloChain_ = chainSolo() ? chain : NO_OWNER;
+      const auto own = chainWires(wires, chain);
+      localWires_ = localSatWires() && slotCheckSteps() ? &own : nullptr;
       stepSettled_ = (capacityStep() || capacityRule()) ? checkedWith : nullptr;
       stepRefuses_ = capacityRule();
       auto answer = solveChainAStar(wires, chain);
@@ -14344,6 +14526,7 @@ public:
       stepSettled_ = nullptr;
       stepRefuses_ = false;
       soloChain_ = NO_OWNER;
+      localWires_ = nullptr;
       auto& points = chains_[chain];
       if (!answer.solved) {
         // **The chain is left as it stands**, and the edges it cannot draw
@@ -14418,6 +14601,77 @@ public:
   /// final one: `SCPD_CAPACITY_STEP_GRAPHS`, off. The files are
   /// `step-c<chain>-f<edge>-capacity-graph.json` in the debug directory.
   /// Needs `capacityStep` or `capacityRule`.
+  /// Whether the slot check of a step of the chain search, and of every
+  /// chain on its own, routes and judges the wires of that chain's feedline
+  /// alone (`chainWires`), with every terminal edge kept for the mouths:
+  /// `SCPD_LOCAL_SAT_WIRES`, on (user, 2026-10-19). The local check is then
+  /// the one the comparison with the local rip-up measured
+  /// (`compareLocally`). `=0` routes and judges every wire of the state.
+  [[nodiscard]] static bool localSatWires() {
+    static const bool on = envFlag("SCPD_LOCAL_SAT_WIRES", true);
+    return on;
+  }
+
+  /// The wires of one chain's feedline in the insertion, by name: for a
+  /// chain with a launcher at both ends the ring from the resonator of its
+  /// first coupler to that of its last, every plain wire and resonator
+  /// between them, as the feedline routing's ring places its terminal edges
+  /// next to those resonators; for a chain with a reflector end the
+  /// resonators of its couplers and the wires that bridge one of its edges.
+  [[nodiscard]] std::set<std::string>
+  chainWires(const std::vector<Wire>& wires, const std::uint32_t chain) const {
+    std::set<std::string> names;
+    const auto& points = chains_[chain];
+    std::vector<std::uint32_t> resonators;
+    for (const auto& point : points) {
+      if (!point.fixed && couplers_[point.coupler].wire < wires.size()) {
+        resonators.push_back(couplers_[point.coupler].wire);
+      }
+    }
+    const auto total = ring_.size();
+    std::vector<std::size_t> at;
+    for (const auto key : resonators) {
+      const auto found = std::ranges::find(ring_, key);
+      if (found != ring_.end()) {
+        at.push_back(static_cast<std::size_t>(found - ring_.begin()));
+      }
+    }
+    if (points.size() >= 2 && points.front().fixed && points.back().fixed &&
+        at.size() >= 2 && total > 0) {
+      // The ring from the first resonator to the last, one way round or the
+      // other: the way that passes every resonator of the chain, the shorter
+      // when both do.
+      const auto span = [&](const std::size_t from, const std::size_t to) {
+        return (to + total - from) % total;
+      };
+      const auto passes = [&](const std::size_t from, const std::size_t to) {
+        return std::ranges::all_of(
+            at, [&](const auto k) { return span(from, k) <= span(from, to); });
+      };
+      auto from = at.front();
+      auto to = at.back();
+      if (!passes(from, to) ||
+          (passes(to, from) && span(to, from) < span(from, to))) {
+        std::swap(from, to);
+      }
+      for (std::size_t step = 0; step <= span(from, to); ++step) {
+        names.insert(wireId(wires[ring_[(from + step) % total]]));
+      }
+      return names;
+    }
+    for (const auto key : resonators) {
+      names.insert(wireId(wires[key]));
+    }
+    if (chain < bridgers_.size()) {
+      for (const auto& over : bridgers_[chain]) {
+        for (const auto key : over) {
+          names.insert(wireId(wires[key]));
+        }
+      }
+    }
+    return names;
+  }
+
   [[nodiscard]] static bool capacityStepGraphs() {
     return envFlag("SCPD_CAPACITY_STEP_GRAPHS", false);
   }
@@ -14549,19 +14803,9 @@ public:
         state.placed[index] = true;
         // The lead as `applyOption` cuts it.
         auto& wire = state.wires[coupler.wire];
-        const auto spare =
-            (trimTheLead() && option.arc.size() > couplerLeadMargin() + 1)
-                ? static_cast<std::size_t>(couplerLeadMargin())
-                : std::size_t{0};
-        wire.arc.assign(option.arc.begin(),
-                        option.arc.end() - static_cast<std::ptrdiff_t>(spare));
-        wire.objective.source =
-            spare == 0 || wire.arc.empty()
-                ? option.arcEnd
-                : PathPoint{.x = wire.arc.back().x,
-                            .y = wire.arc.back().y,
-                            .heading = option.arcEnd.heading,
-                            .primitive = wire.arc.back().primitive};
+        auto lead = leadOf(option);
+        wire.arc = std::move(lead.arc);
+        wire.objective.source = lead.source;
         wire.couplerAtSource = index;
       }
       for (std::size_t from = 0; from + 1 < points.size(); ++from) {
@@ -14637,6 +14881,41 @@ public:
     auto pass = timed(mode == 1, verdict.seconds);
     verdict.shortBy = pass.check.shortBy;
     verdict.lost = lostOf(pass);
+    if (slotCheckSteps()) {
+      const auto began = std::chrono::steady_clock::now();
+      try {
+        auto graph = slotGraphOfPass(state.wires, pass);
+        if (localWires_ != nullptr) {
+          // The wires of the chain's feedline alone, and every terminal
+          // edge, which names the mouths between the chains.
+          std::erase_if(graph.wires, [&](const SlotGraph::Wire& wire) {
+            return !wire.terminal && !localWires_->contains(wire.name);
+          });
+        }
+        const auto result = slotCheck(graph);
+        std::unordered_map<std::string, std::uint32_t> keyOf;
+        for (const auto& wire : state.wires) {
+          keyOf.emplace(wireId(wire), wire.key);
+        }
+        std::set<std::uint32_t> lost;
+        for (const auto* names : {&result.lost, &result.crowded}) {
+          for (const auto& name : *names) {
+            if (const auto found = keyOf.find(name); found != keyOf.end()) {
+              lost.insert(found->second);
+            }
+          }
+        }
+        verdict.lost = std::move(lost);
+        verdict.shortBy = static_cast<std::uint32_t>(result.over.size());
+      } catch (const std::invalid_argument& error) {
+        tell(std::format("[Capacity Step] the slot check failed ({}); the "
+                         "check by stretches decides",
+                         error.what()));
+      }
+      verdict.seconds += std::chrono::duration<double>(
+                             std::chrono::steady_clock::now() - began)
+                             .count();
+    }
     if (mode == 2) {
       giveBack(pass);
       pass = timed(true, verdict.fastSeconds);
@@ -14652,9 +14931,13 @@ public:
   /// the wires of `lostWires`.
   [[nodiscard]] std::string
   capacityGraphJsonOf(const InsertionState& state, const std::string& said,
-                      std::set<std::uint32_t>* lostOut = nullptr) {
+                      std::set<std::uint32_t>* lostOut = nullptr,
+                      std::optional<SlotCheckResult>* slotOut = nullptr) {
     auto pass = capacityPass(state.wires, state.edges, &state.placed, NO_OWNER,
                              capacityFast() == 1, state.terminalsAsWires);
+    if (slotOut != nullptr) {
+      *slotOut = slotCheck(slotGraphOfPass(state.wires, pass));
+    }
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     std::vector<MeasuredBottleneck> measured;
     measured.reserve(pass.gates.size());
@@ -15134,7 +15417,10 @@ public:
         std::vector<bool> only(chains_.size(), false);
         only[chain] = true;
         const auto alone = stateOf(before, only);
+        const auto own = chainWires(before, chain);
+        localWires_ = localSatWires() && slotCheckSteps() ? &own : nullptr;
         const auto verdict = capacityVerdictOf(alone);
+        localWires_ = nullptr;
         json stood = json::array();
         for (const auto& edge : alone.edges) {
           if (edge.chain == chain && edge.wire < alone.wires.size()) {
@@ -15151,6 +15437,7 @@ public:
     auto state = stateOf(before, std::vector<bool>(chains_.size(), true));
     state.terminalsAsWires = terminalDemands();
     std::set<std::uint32_t> lost;
+    std::optional<SlotCheckResult> typed;
     auto graph = capacityGraphJsonOf(
         state,
         state.terminalsAsWires
@@ -15158,13 +15445,14 @@ public:
               "standing, the terminal edges as wires"
             : "the capacity check of the coupler insertion, every chain "
               "standing",
-        &lost);
+        &lost, slotCheckVerdict() ? &typed : nullptr);
     const auto verdict = lost.empty() ? "SAT" : "UNSAT";
     if (slotCheckVerdict()) {
       try {
-        auto result = slotCheck(graph);
-        auto judged = json::parse(result.graph);
+        // The verdict from the graph in memory; the JSON is the page.
+        auto judged = json::parse(slotCheck(graph).graph);
         judged["previousVerdict"] = verdict;
+        const auto& result = *typed;
         return json{{"verdict", result.verdict},
                     {"lost", result.lost},
                     {"over", result.over},
@@ -15264,6 +15552,85 @@ public:
         .dump();
   }
 
+  /// Whether the capacity graph and the feedline routing hold a resonator to
+  /// the first quarter turn and its straight alone when its coupler's option
+  /// has a second dogleg: `SCPD_SHORT_JOG_LEAD`, on (user, 2026-10-20). The
+  /// second dogleg places the pad; it is no part of the run the component
+  /// asks for, and as a fixed lead it walled the resonator in and fixed
+  /// where it starts (45q, chain 1 on options 6 2 30 3: resonator 25 on a
+  /// lead of 66 cells against 27, crossing a feedline in the rip-up). The
+  /// insertion still judges an option by its whole lead. `=0` holds the
+  /// resonator to the whole lead, as before.
+  [[nodiscard]] static bool shortJogLead() {
+    static const bool on = envFlag("SCPD_SHORT_JOG_LEAD", true);
+    return on;
+  }
+
+  /// The lead a resonator is held to in the capacity graph and the feedline
+  /// routing, and where its search starts: the option's lead, or under
+  /// `shortJogLead` the first quarter turn and its straight alone, less the
+  /// margin the insertion needed and the routing does not (`trimTheLead`).
+  /// What is cut off goes back to the search, which starts where the kept
+  /// head ends.
+  struct Lead {
+    Path arc;
+    PathPoint source;
+  };
+  [[nodiscard]] static Lead leadOf(const CouplerOption& option) {
+    Lead out{.arc = option.arc, .source = option.arcEnd};
+    if (shortJogLead() && option.secondStraight > 0 &&
+        option.firstLead < option.arc.size()) {
+      out.source = option.arc[option.firstLead];
+      out.source.heading = option.couplerOrientation;
+      out.arc.resize(option.firstLead);
+    }
+    if (trimTheLead() && out.arc.size() > couplerLeadMargin() + 1) {
+      out.arc.resize(out.arc.size() - couplerLeadMargin());
+      out.source = {.x = out.arc.back().x,
+                    .y = out.arc.back().y,
+                    .heading = out.source.heading,
+                    .primitive = out.arc.back().primitive};
+    }
+    return out;
+  }
+
+  /// Whether a coupler's option keeps a clearance from some feedline
+  /// ways: its body, its two feedline ports and its lead. The segment
+  /// search lays the edges of a run one after the other with the interior
+  /// pads hidden, so an edge may run where the option of a later coupler
+  /// then stands, or a later edge where an earlier coupler's option stands.
+  /// On 17q, chain 0 on options launcher 31 1 0, f0 ran across the pad of
+  /// resonator 11's coupler on option 1, and the insertion could not draw f1
+  /// into it.
+  [[nodiscard]] bool optionClearOf(const CouplerOption& option,
+                                   const std::vector<const Path*>& ways) const {
+    const auto clear = static_cast<double>(tuning_.clearance);
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    std::vector<std::pair<std::int64_t, std::int64_t>> cells;
+    cells.reserve(option.body.size() + option.arc.size() + 2);
+    for (const auto cell : option.body) {
+      cells.emplace_back(static_cast<std::int64_t>(cell) % width,
+                         static_cast<std::int64_t>(cell) / width);
+    }
+    for (const auto& point : leadOf(option).arc) {
+      cells.emplace_back(point.x, point.y);
+    }
+    cells.emplace_back(option.in.x, option.in.y);
+    cells.emplace_back(option.out.x, option.out.y);
+    for (const Path* way : ways) {
+      for (const auto& point : *way) {
+        for (const auto& [x, y] : cells) {
+          const auto dx = static_cast<double>(x) - point.x;
+          const auto dy = static_cast<double>(y) - point.y;
+          if ((dx * dx) + (dy * dy) < clear * clear) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
   /// Put a coupler's option in place: the resonator's way is cut back to
   /// the coupler, its search from now on starts at the end of the turn on
   /// the coupling run, and the body becomes an obstacle. The body it had
@@ -15283,22 +15650,10 @@ public:
     coupler.chosen = option;
     const auto& chosen = coupler.options[option];
     lift(wire);
-    // The lead, less the margin the insertion needed and the routing does
-    // not: see `trimTheLead`. What is cut off goes back to the search,
-    // which starts where the kept head ends.
-    const auto spare =
-        (trimTheLead() && chosen.arc.size() > couplerLeadMargin() + 1)
-            ? static_cast<std::size_t>(couplerLeadMargin())
-            : std::size_t{0};
-    wire.arc.assign(chosen.arc.begin(),
-                    chosen.arc.end() - static_cast<std::ptrdiff_t>(spare));
-    wire.objective.source =
-        spare == 0 || wire.arc.empty()
-            ? chosen.arcEnd
-            : PathPoint{.x = wire.arc.back().x,
-                        .y = wire.arc.back().y,
-                        .heading = chosen.arcEnd.heading,
-                        .primitive = wire.arc.back().primitive};
+    // The lead the routing holds the resonator to (`leadOf`).
+    auto lead = leadOf(chosen);
+    wire.arc = std::move(lead.arc);
+    wire.objective.source = lead.source;
     // The run is a length in layout units, and `straightStart` counts the
     // cells that span it **along an axis** (`cellsFor`, which says so). The
     // router walks that many cells along the heading, and a diagonal step
@@ -15311,7 +15666,8 @@ public:
     // already the rule's length, and the prototype forces nothing beyond it.
     wire.startStub = !resonatorStub() ? 0U
                      : couplerStubs()
-                         ? cellsOn(tuning_.straightStart, chosen.arcEnd.heading)
+                         ? cellsOn(tuning_.straightStart,
+                                   wire.objective.source.heading)
                          : tuning_.straightStart;
     wire.fixed.clear();
     wire.couplerAtSource = index;
@@ -15525,6 +15881,19 @@ public:
   /// go of: the price of its room (`priceTheEdges`). The run at its coupler
   /// (`guardTerminalStub`) and the coupler bodies stay closed as before.
   /// `=0` fences the edge, as before.
+  /// Whether a wire that found no way at any level of the relaxation in one
+  /// round, and finds none in the next, the other way round, tries once
+  /// more with both its neighbours let go of: `SCPD_RELAX_BOTH`, **on**
+  /// (user, 2026-10-21). A level lets go of the wires on one side and
+  /// fences the neighbour on the other, so a wire held from both sides at
+  /// once never gets out. On 69q, chain 10 on options 6 5 4 27, in the local
+  /// rip-up wire 206 took the room of 207 letting it go, and 207 found no
+  /// way in any round, forward with 206 fenced and backward with 208 fenced.
+  [[nodiscard]] static bool relaxBoth() {
+    static const bool on = envFlag("SCPD_RELAX_BOTH", true);
+    return on;
+  }
+
   [[nodiscard]] static bool releasedEdgesGone() {
     return envFlag("SCPD_RELEASED_EDGES_GONE", true);
   }
@@ -15703,6 +16072,43 @@ public:
         close(router_.straightStub(sourceOf(points[last]), false,
                                    run + terminalStubExtra()));
       }
+    }
+  }
+
+  /// Close, in the corridor of an edge search, the coupler-end run of the
+  /// terminal edge of the same chain that meets the edge at one of its
+  /// couplers: the run into the first coupler for the edge after it, the
+  /// run out of the last coupler for the edge before it, each with
+  /// `terminalStubExtra` cells beyond it and the clearance around the
+  /// whole. The couplers stand on the options under test, so the runs are
+  /// those the terminal edge will have to make. The edge's own run at the
+  /// coupler opens again with its slot. See `ownTerminalStubGuard`.
+  void guardOwnTerminalRuns(const Edge& edge) {
+    const auto& points = chains_[edge.chain];
+    if (edge.terminal || points.size() < 3) {
+      return;
+    }
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto& stencil = stencilFor(tuning_.clearance);
+    const auto close = [&](const Path& cells) {
+      alongDisc(
+          cells, stencil, [&](const std::int64_t x, const std::int64_t y) {
+            corridor_.set(static_cast<std::size_t>((y * width) + x), true);
+          });
+    };
+    // The edge after, from the coupler this edge ends at to a launcher.
+    if (edge.to + 1 < points.size() && points[edge.to + 1].fixed &&
+        !points[edge.to].fixed) {
+      const auto run = couplerRunOf(points[edge.to].coupler);
+      close(router_.straightStub(sourceOf(points[edge.to]), false,
+                                 run + terminalStubExtra()));
+    }
+    // The edge before, from a launcher into the coupler this edge starts at.
+    if (edge.from >= 1 && points[edge.from - 1].fixed &&
+        !points[edge.from].fixed) {
+      const auto run = couplerRunOf(points[edge.from].coupler);
+      close(router_.straightStub(targetOf(points[edge.from]), true,
+                                 run + terminalStubExtra()));
     }
   }
 
@@ -16488,6 +16894,10 @@ public:
               orthoCrossing() ? "on" : "off", from("SCPD_ORTHO_CROSSING")) +
           (researchVerbose() ? ", the local passes speak (env)" : ""));
     }
+    if (localAgreementRuns() > 0) {
+      compareLocally(wires, members, every, pass);
+      return;
+    }
     if (!repairSearch()) {
       static_cast<void>(repair(wires, members, every, pass));
       return;
@@ -16663,7 +17073,8 @@ public:
                         const std::uint32_t j) {
       return turns[e][(static_cast<std::size_t>(i) * open[e + 1].size()) + j];
     };
-    problem.budget = researchBudget();
+    problem.budget =
+        agreement_.on ? localAgreementBudget() : researchBudget();
     // One more than the tests left: the current run may be refused once
     // without a test, and that refusal counts in the search's own tally.
     problem.maxAccepts = trialsLeft + 1;
@@ -16703,12 +17114,30 @@ public:
           fence.push_back(&found->second.way);
         }
       }
+      // The option the step ends on keeps a clearance from every way laid
+      // before it (`optionClearOf`).
+      if (const auto& next = points[lo + at + 1];
+          !next.fixed &&
+          !optionClearOf(couplers_[next.coupler].options[open[at + 1][j]],
+                         fence)) {
+        return routing::TRELLIS_UNREACHABLE;
+      }
       Path way;
       const auto real =
           edgeCost(wires, chain, lo + at, open[at][prefix[at]], open[at + 1][j],
                    0, fence.empty() ? nullptr : &fence, &way, false);
       if (real == routing::TRELLIS_UNREACHABLE) {
         return real;
+      }
+      // And the way keeps a clearance from the options of the couplers
+      // before the one it leaves.
+      for (std::size_t k = 0; k < at; ++k) {
+        const auto& point = points[lo + k];
+        if (!point.fixed &&
+            !optionClearOf(couplers_[point.coupler].options[open[k][prefix[k]]],
+                           {&way})) {
+          return routing::TRELLIS_UNREACHABLE;
+        }
       }
       key.push_back(j);
       laid[std::move(key)] = Laid{.way = std::move(way), .before = {}};
@@ -16741,7 +17170,7 @@ public:
                                     return a.samePlace(b);
                                   });
       }
-      if (same) {
+      if (same && !agreement_.on) {
         ++out.skippedCurrent;
         tell(std::format("targeted repair:   {} run {} (cost {}): the current "
                          "run on the ways it holds, not tested",
@@ -16753,6 +17182,14 @@ public:
         return false;
       }
       ++trials;
+      if (agreement_.on) {
+        if (!localAgreementOnly().on ||
+            runText(run) == localAgreementOnly().options) {
+          agreeRun(wires, members, every, pass, segment, open, run, ways, cost,
+                   taken);
+        }
+        return false;
+      }
       const bool kept = tryRun(wires, members, every, pass, segment, open, run,
                                ways, cost, taken, badNow);
       if (!kept) {
@@ -16795,6 +17232,277 @@ public:
         answer.expansions == 0
             ? std::string{}
             : std::format(", {} prefixes expanded", answer.expansions)));
+    return out;
+  }
+
+  /// Put a segment on a run of options: the interior couplers on their
+  /// options, the segment's edges on `ways` with their objectives and stubs
+  /// again, and the crossing rule rebuilt (`tryRun`, step 1).
+  void applyRun(std::vector<Wire>& wires, const Segment& segment,
+                const std::vector<std::vector<std::uint32_t>>& open,
+                const std::span<const std::uint32_t> run,
+                const std::vector<Path>& ways) {
+    const auto chain = segment.chain;
+    const auto& points = chains_[chain];
+    const auto lo = segment.lo;
+    const auto edges = segment.hi - segment.lo;
+    for (std::size_t k = 1; k + 1 < run.size(); ++k) {
+      if (!points[lo + k].fixed) {
+        applyOption(wires, points[lo + k].coupler, open[k][run[k]]);
+      }
+    }
+    for (std::size_t e = 0; e < edges; ++e) {
+      auto& wire = wires[edgeWireOf_[chain][lo + e]];
+      const auto& edge = edges_[wire.edge];
+      lift(wire);
+      wire.way = ways[e];
+      wire.objective.source = sourceOf(points[edge.from]);
+      wire.objective.target = targetOf(points[edge.to]);
+      wire.fixed.clear();
+      const auto [startRun, endRun] = runsOfEdge(edge);
+      wire.startStub = startRun;
+      wire.endStub = endRun;
+      wire.drawn = !wire.way.empty();
+      wire.routed = wire.drawn;
+      wire.tooShort = false;
+      wire.tooLong = false;
+      place(wire);
+    }
+    rebuildCrossingRule(wires);
+  }
+
+  /// The wires a run of options for a segment puts at stake, by key
+  /// (`tryRun`, step 2). With `enclosedOnly` the feedline and the wires it
+  /// encloses (user, 2026-10-19): the ring from the segment's starting edge
+  /// to its ending edge, every plain wire and resonator between them, and
+  /// the wires the fails named; not the members near a new edge way or
+  /// across one, and not the ring members beyond.
+  [[nodiscard]] std::set<std::uint32_t>
+  windowOfRun(const std::vector<Wire>& wires,
+              const std::vector<std::uint32_t>& members, const Segment& segment,
+              const std::span<const std::uint32_t> run,
+              const bool enclosedOnly = false) {
+    const auto chain = segment.chain;
+    const auto& points = chains_[chain];
+    const auto lo = segment.lo;
+    const auto edges = segment.hi - segment.lo;
+    std::set<std::uint32_t> window;
+    for (std::size_t e = 0; e < edges; ++e) {
+      if (lo + e < bridgers_[chain].size()) {
+        for (const auto key : bridgers_[chain][lo + e]) {
+          window.insert(key);
+        }
+      }
+      const auto key = edgeWireOf_[chain][lo + e];
+      if (edges_[wires[key].edge].terminal) {
+        window.insert(key);
+      }
+    }
+    for (std::size_t k = 0; k < run.size(); ++k) {
+      if (!points[lo + k].fixed) {
+        window.insert(couplers_[points[lo + k].coupler].wire);
+      }
+    }
+    for (const auto key : segment.fails) {
+      window.insert(key);
+    }
+    if (enclosedOnly) {
+      std::set<std::uint32_t> enclosed(segment.fails.begin(),
+                                       segment.fails.end());
+      const auto total = members.size();
+      std::vector<std::size_t> at;
+      for (std::size_t e = 0; e < edges; ++e) {
+        const auto found = std::ranges::find(members, edgeWireOf_[chain][lo + e]);
+        if (found != members.end()) {
+          at.push_back(static_cast<std::size_t>(found - members.begin()));
+        }
+      }
+      if (at.empty()) {
+        return window;
+      }
+      // The ring from the first edge to the last one way round or the
+      // other: the way that passes every edge of the segment, the shorter
+      // when both do.
+      const auto span = [&](const std::size_t from, const std::size_t to) {
+        return (to + total - from) % total;
+      };
+      const auto passes = [&](const std::size_t from, const std::size_t to) {
+        return std::ranges::all_of(
+            at, [&](const auto k) { return span(from, k) <= span(from, to); });
+      };
+      auto from = at.front();
+      auto to = at.back();
+      if (!passes(from, to) ||
+          (passes(to, from) && span(to, from) < span(from, to))) {
+        std::swap(from, to);
+      }
+      for (std::size_t step = 0; step <= span(from, to); ++step) {
+        enclosed.insert(members[(from + step) % total]);
+      }
+      return enclosed;
+    }
+    {
+      const std::unordered_set<std::uint32_t> isMember(members.begin(),
+                                                       members.end());
+      const auto& stencil = stencilFor(tuning_.clearance);
+      const auto width = static_cast<std::int64_t>(scene_.router.width);
+      for (std::size_t e = 0; e < edges; ++e) {
+        const auto& way = wires[edgeWireOf_[chain][lo + e]].way;
+        alongDisc(way, stencil,
+                  [&](const std::int64_t x, const std::int64_t y) {
+                    const auto owner =
+                        field_.owner(static_cast<std::size_t>((y * width) + x));
+                    if (owner != NO_OWNER && owner < wires.size() &&
+                        isMember.contains(owner)) {
+                      window.insert(owner);
+                    }
+                  });
+        for (const auto member : members) {
+          if (!window.contains(member) && !wires[member].way.empty() &&
+              waysCross(way, wires[member].way)) {
+            window.insert(member);
+          }
+        }
+      }
+    }
+    {
+      const auto k = researchK();
+      const auto total = members.size();
+      std::vector<std::uint32_t> more;
+      for (std::size_t at = 0; at < total; ++at) {
+        if (!window.contains(members[at])) {
+          continue;
+        }
+        for (std::size_t step = 1; step <= k && step < total; ++step) {
+          more.push_back(members[(at + step) % total]);
+          more.push_back(members[(at + total - step) % total]);
+        }
+      }
+      window.insert(more.begin(), more.end());
+    }
+    return window;
+  }
+
+  /// What the local rip-up-and-reroute of a window came to.
+  struct WindowPass {
+    /// The window's wires and the members whose way changed.
+    std::uint32_t flagged = 0;
+    std::uint32_t moved = 0;
+    /// The wires the pass touched — the window, and what the relaxation
+    /// released and redrew — that end unrouted, open or crossing.
+    std::uint32_t unrouted = 0;
+    std::uint32_t open = 0;
+    std::uint32_t crossing = 0;
+    std::set<std::uint32_t> failing;
+    std::string named;
+    /// The wires that found no way in the last round of the pass.
+    std::string noWay;
+    Fails after;
+
+    [[nodiscard]] bool clean() const {
+      return unrouted + open + crossing == 0;
+    }
+  };
+
+  /// Rip up the wires of `window` and route them again in one silenced
+  /// sweep over the whole ring (`tryRun`, steps 3 and 4): every other
+  /// member is held where it is. With `ignoreOutside` the sweep runs over
+  /// the window and the feedline edges alone, in ring order, and every
+  /// other member is off the canvas for its length: no obstacle, never
+  /// released by the relaxation, and not judged.
+  [[nodiscard]] WindowPass
+  rerouteWindow(std::vector<Wire>& wires,
+                const std::vector<std::uint32_t>& members,
+                const std::vector<std::uint32_t>& every, const Pass& pass,
+                const std::set<std::uint32_t>& window, const std::string& label,
+                const bool ignoreOutside = false) {
+    WindowPass out;
+    std::vector<std::uint32_t> ring;
+    std::vector<std::uint32_t> ignored;
+    for (const auto member : members) {
+      if (!ignoreOutside || window.contains(member) || wires[member].feedline) {
+        ring.push_back(member);
+      } else {
+        lift(wires[member]);
+        ignored.push_back(member);
+      }
+    }
+    std::vector<std::uint32_t> flagged;
+    std::vector<Path> had;
+    had.reserve(ring.size());
+    for (const auto member : ring) {
+      auto& wire = wires[member];
+      had.push_back(wire.way);
+      if (window.contains(member)) {
+        wire.routed = false;
+        wire.ripped = true;
+        flagged.push_back(member);
+      } else {
+        wire.routed = true;
+      }
+    }
+
+    // The local pass, silenced unless asked to speak.
+    Pass local = pass;
+    local.rounds = researchRounds();
+    local.name = "targeted repair";
+    local.onlyUnsettled = true;
+    const auto verbosity = verbosity_;
+    const auto quiet = progress_;
+    if (!researchVerbose()) {
+      verbosity_ = 0;
+      progress_ = {};
+    } else {
+      say(label + ": the local pass");
+    }
+    sweep(wires, ring, local);
+    out.after = failsOf(wires, ignoreOutside ? ring : every);
+    progress_ = quiet;
+    verbosity_ = verbosity;
+    // Which window wires found no way in the last round of the local pass
+    // and kept what they had: a wire that fails the window because it was
+    // never redrawn reads differently from one redrawn into a fail.
+    if (!rounds_.empty()) {
+      for (const auto& id : rounds_.back().failed) {
+        out.noWay += (out.noWay.empty() ? "" : ", ") + id;
+      }
+    }
+
+    // What it came to among the wires it touched.
+    std::set<std::uint32_t> touched(flagged.begin(), flagged.end());
+    for (std::size_t at = 0; at < ring.size(); ++at) {
+      const auto& now = wires[ring[at]].way;
+      const bool same =
+          now.size() == had[at].size() &&
+          std::ranges::equal(now, had[at],
+                             [](const PathPoint& a, const PathPoint& b) {
+                               return a.samePlace(b);
+                             });
+      if (!same) {
+        ++out.moved;
+        touched.insert(ring[at]);
+      }
+    }
+    const auto count = [&](const std::vector<std::uint32_t>& keys,
+                           std::uint32_t& figure, const char* what) {
+      for (const auto key : keys) {
+        if (touched.contains(key)) {
+          ++figure;
+          out.failing.insert(key);
+          out.named += std::format("{}{} {}", out.named.empty() ? "" : ", ",
+                                   wireId(wires[key]), what);
+        }
+      }
+    };
+    count(out.after.unroutedKeys, out.unrouted, "unrouted");
+    count(out.after.openKeys, out.open, "open");
+    count(out.after.crossingKeys, out.crossing, "crossing");
+    out.flagged = static_cast<std::uint32_t>(flagged.size());
+    for (const auto key : ignored) {
+      if (wires[key].drawn) {
+        place(wires[key]);
+      }
+    }
     return out;
   }
 
@@ -16855,176 +17563,27 @@ public:
                                    segmentName(wires, segment), options, cost);
 
     // 1. Apply.
-    for (std::size_t k = 1; k + 1 < run.size(); ++k) {
-      if (!points[lo + k].fixed) {
-        applyOption(wires, points[lo + k].coupler, open[k][run[k]]);
-      }
-    }
-    for (std::size_t e = 0; e < edges; ++e) {
-      auto& wire = wires[edgeWireOf_[chain][lo + e]];
-      const auto& edge = edges_[wire.edge];
-      lift(wire);
-      wire.way = ways[e];
-      wire.objective.source = sourceOf(points[edge.from]);
-      wire.objective.target = targetOf(points[edge.to]);
-      wire.fixed.clear();
-      const auto [startRun, endRun] = runsOfEdge(edge);
-      wire.startStub = startRun;
-      wire.endStub = endRun;
-      wire.drawn = !wire.way.empty();
-      wire.routed = wire.drawn;
-      wire.tooShort = false;
-      wire.tooLong = false;
-      place(wire);
-    }
-    rebuildCrossingRule(wires);
+    applyRun(wires, segment, open, run, ways);
 
     // 2. The window.
-    std::set<std::uint32_t> window;
-    for (std::size_t e = 0; e < edges; ++e) {
-      if (lo + e < bridgers_[chain].size()) {
-        for (const auto key : bridgers_[chain][lo + e]) {
-          window.insert(key);
-        }
-      }
-      const auto key = edgeWireOf_[chain][lo + e];
-      if (edges_[wires[key].edge].terminal) {
-        window.insert(key);
-      }
-    }
-    for (std::size_t k = 0; k < run.size(); ++k) {
-      if (!points[lo + k].fixed) {
-        window.insert(couplers_[points[lo + k].coupler].wire);
-      }
-    }
-    for (const auto key : segment.fails) {
-      window.insert(key);
-    }
-    {
-      const std::unordered_set<std::uint32_t> isMember(members.begin(),
-                                                       members.end());
-      const auto& stencil = stencilFor(tuning_.clearance);
-      const auto width = static_cast<std::int64_t>(scene_.router.width);
-      for (std::size_t e = 0; e < edges; ++e) {
-        const auto& way = wires[edgeWireOf_[chain][lo + e]].way;
-        alongDisc(way, stencil,
-                  [&](const std::int64_t x, const std::int64_t y) {
-                    const auto owner =
-                        field_.owner(static_cast<std::size_t>((y * width) + x));
-                    if (owner != NO_OWNER && owner < wires.size() &&
-                        isMember.contains(owner)) {
-                      window.insert(owner);
-                    }
-                  });
-        for (const auto member : members) {
-          if (!window.contains(member) && !wires[member].way.empty() &&
-              waysCross(way, wires[member].way)) {
-            window.insert(member);
-          }
-        }
-      }
-    }
-    {
-      const auto k = researchK();
-      const auto total = members.size();
-      std::vector<std::uint32_t> more;
-      for (std::size_t at = 0; at < total; ++at) {
-        if (!window.contains(members[at])) {
-          continue;
-        }
-        for (std::size_t step = 1; step <= k && step < total; ++step) {
-          more.push_back(members[(at + step) % total]);
-          more.push_back(members[(at + total - step) % total]);
-        }
-      }
-      window.insert(more.begin(), more.end());
-    }
-    std::vector<std::uint32_t> flagged;
-    std::vector<Path> had;
-    had.reserve(members.size());
-    for (const auto member : members) {
-      auto& wire = wires[member];
-      had.push_back(wire.way);
-      if (window.contains(member)) {
-        wire.routed = false;
-        wire.ripped = true;
-        flagged.push_back(member);
-      } else {
-        wire.routed = true;
-      }
-    }
-
-    // 3. The local pass, silenced unless asked to speak.
-    Pass local = pass;
-    local.rounds = researchRounds();
-    local.name = "targeted repair";
-    local.onlyUnsettled = true;
-    const auto verbosity = verbosity_;
-    const auto quiet = progress_;
-    if (!researchVerbose()) {
-      verbosity_ = 0;
-      progress_ = {};
-    } else {
-      say(label + ": the local pass");
-    }
-    sweep(wires, members, local);
-    const auto after = failsOf(wires, every);
-    progress_ = quiet;
-    verbosity_ = verbosity;
-    // Which window wires found no way in the last round of the local pass
-    // and kept what they had: a wire that fails the window because it was
-    // never redrawn reads differently from one redrawn into a fail.
-    std::string noWay;
-    if (!rounds_.empty()) {
-      for (const auto& id : rounds_.back().failed) {
-        noWay += (noWay.empty() ? "" : ", ") + id;
-      }
-    }
-
-    // 4. The verdict.
-    std::set<std::uint32_t> touched(flagged.begin(), flagged.end());
-    std::uint32_t moved = 0;
-    for (std::size_t at = 0; at < members.size(); ++at) {
-      const auto& now = wires[members[at]].way;
-      const bool same =
-          now.size() == had[at].size() &&
-          std::ranges::equal(now, had[at],
-                             [](const PathPoint& a, const PathPoint& b) {
-                               return a.samePlace(b);
-                             });
-      if (!same) {
-        ++moved;
-        touched.insert(members[at]);
-      }
-    }
-    std::uint32_t unrouted = 0;
-    std::uint32_t openInWindow = 0;
-    std::uint32_t crossing = 0;
-    std::string named;
-    const auto count = [&](const std::vector<std::uint32_t>& keys,
-                           std::uint32_t& figure, const char* what) {
-      for (const auto key : keys) {
-        if (touched.contains(key)) {
-          ++figure;
-          named += std::format("{}{} {}", named.empty() ? "" : ", ",
-                               wireId(wires[key]), what);
-        }
-      }
-    };
-    count(after.unroutedKeys, unrouted, "unrouted");
-    count(after.openKeys, openInWindow, "open");
-    count(after.crossingKeys, crossing, "crossing");
-    const bool clean = unrouted + openInWindow + crossing == 0;
+    const auto window = windowOfRun(wires, members, segment, run);
+    // 3. The local pass, and 4. what it came to in the window.
+    const auto local = rerouteWindow(wires, members, every, pass, window,
+                                     label);
+    const auto& after = local.after;
+    const bool clean = local.clean();
     const bool better = after.bad() < badNow;
     tell(std::format(
         "{}: window {} wire{}, {} moved{}; in it {} unrouted, {} "
         "open, {} crossing{}; bad {} -> {} ({} unrouted, {} open, "
         "{} crossing): {}",
-        label, flagged.size(), flagged.size() == 1 ? "" : "s", moved,
-        noWay.empty() ? std::string{}
-                      : ", no way for " + noWay + " in the last round",
-        unrouted, openInWindow, crossing,
-        named.empty() ? std::string{} : " (" + named + ")", badNow, after.bad(),
+        label, local.flagged, local.flagged == 1 ? "" : "s", local.moved,
+        local.noWay.empty()
+            ? std::string{}
+            : ", no way for " + local.noWay + " in the last round",
+        local.unrouted, local.open, local.crossing,
+        local.named.empty() ? std::string{} : " (" + local.named + ")", badNow,
+        after.bad(),
         after.unrouted, after.open, after.crossing,
         clean && better ? "ACCEPTED"
         : clean         ? "rejected, the chip is not better"
@@ -17042,6 +17601,445 @@ public:
     restore(wires, taken);
     foreignRoomStale_ = true;
     return false;
+  }
+
+  /// The wires of one feedline for the comparison. A feedline with a
+  /// launcher at both ends: the ring from its starting edge to its ending
+  /// edge, every plain wire and resonator between them (`windowOfRun` with
+  /// `enclosedOnly`). The ring holds the terminal edges alone, so a
+  /// feedline with a reflector end has one edge in it: its wires are the
+  /// resonators of its couplers, the wires that bridge one of its edges,
+  /// and its terminal edge.
+  [[nodiscard]] std::set<std::uint32_t>
+  feedlineWindow(const std::vector<Wire>& wires,
+                 const std::vector<std::uint32_t>& members,
+                 const std::uint32_t chain) {
+    const auto& points = chains_[chain];
+    if (points.size() < 2) {
+      return {};
+    }
+    if (points.front().fixed && points.back().fixed) {
+      return windowOfRun(wires, members,
+                         {.chain = chain,
+                          .lo = 0,
+                          .hi = points.size() - 1,
+                          .fails = {},
+                          .because = {}},
+                         {}, true);
+    }
+    std::set<std::uint32_t> window;
+    for (std::size_t at = 0; at + 1 < points.size(); ++at) {
+      if (at < bridgers_[chain].size()) {
+        window.insert(bridgers_[chain][at].begin(), bridgers_[chain][at].end());
+      }
+      const auto key = edgeWireOf_[chain][at];
+      if (edges_[wires[key].edge].terminal) {
+        window.insert(key);
+      }
+    }
+    for (const auto& point : points) {
+      if (!point.fixed) {
+        window.insert(couplers_[point.coupler].wire);
+      }
+    }
+    return window;
+  }
+
+  /// The slot checks of the chip as it stands, on the graph the insertion
+  /// builds (the terminal edges as wires when `terminalDemands` says so,
+  /// the bottlenecks found as it finds them): once with every wire, and
+  /// once per feedline with its wires alone (user, 2026-10-19), so that a
+  /// feedline's check routes only its own wires. The terminal edges of the
+  /// other feedlines stay in the graph: they name the mouths between the
+  /// chains, and without them a feedline's own terminal edge lost its way
+  /// (17q, f6 and f0). Nothing when the check cannot read the graph.
+  struct SlotChecks {
+    SlotCheckResult whole;
+    std::vector<std::optional<SlotCheckResult>> feedlines;
+  };
+  [[nodiscard]] std::optional<SlotChecks>
+  slotCheckNow(const std::vector<Wire>& wires,
+               const std::vector<std::set<std::string>>& windows,
+               const std::string& label) {
+    auto capacity = capacityPass(wires, edges_, nullptr, NO_OWNER,
+                                 capacityFast() == 1, terminalDemands());
+    std::optional<SlotChecks> out;
+    try {
+      auto graph = slotGraphOfPass(wires, capacity);
+      SlotChecks checks{.whole = slotCheck(graph), .feedlines = {}};
+      const auto every = std::move(graph.wires);
+      for (const auto& window : windows) {
+        if (window.empty()) {
+          checks.feedlines.emplace_back();
+          continue;
+        }
+        graph.wires.clear();
+        for (const auto& wire : every) {
+          if (window.contains(wire.name) || wire.terminal) {
+            graph.wires.push_back(wire);
+          }
+        }
+        checks.feedlines.emplace_back(slotCheck(graph));
+      }
+      out = std::move(checks);
+    } catch (const std::invalid_argument& error) {
+      tell(std::format("{}: the slot check failed ({})", label, error.what()));
+    }
+    giveBack(capacity);
+    return out;
+  }
+
+  /// The wires of a window that a slot check loses or crowds, by name.
+  [[nodiscard]] static std::vector<std::string>
+  lostIn(const SlotCheckResult& result, const std::set<std::string>& window) {
+    std::set<std::string> named(result.lost.begin(), result.lost.end());
+    named.insert(result.crowded.begin(), result.crowded.end());
+    std::vector<std::string> out;
+    for (const auto& name : named) {
+      if (window.contains(name)) {
+        out.push_back(name);
+      }
+    }
+    return out;
+  }
+
+  /// The local rip-up-and-reroute of one feedline's window, every wire
+  /// outside it ignored (`rerouteWindow` with `ignoreOutside`).
+  [[nodiscard]] FeedlineRip
+  ripFeedline(std::vector<Wire>& wires,
+              const std::vector<std::uint32_t>& members,
+              const std::vector<std::uint32_t>& every, const Pass& pass,
+              const std::set<std::uint32_t>& window, const std::string& label) {
+    const auto began = std::chrono::steady_clock::now();
+    const auto local =
+        rerouteWindow(wires, members, every, pass, window, label, true);
+    FeedlineRip out;
+    out.clean = local.clean();
+    out.failing = local.named;
+    for (const auto key : local.after.openKeys) {
+      if (!local.failing.contains(key)) {
+        continue;
+      }
+      auto& wire = wires[key];
+      lift(wire);
+      out.blocked += std::format("{}{} is open in the room of {}",
+                                 out.blocked.empty() ? "" : "; ",
+                                 wireId(wire), whoBlocks(wire, wires));
+      place(wire);
+    }
+    for (std::size_t round = 0; round < rounds_.size(); ++round) {
+      const auto& record = rounds_[round];
+      out.rounds.push_back({{"round", round},
+                            {"forward", record.forward},
+                            {"normal", record.normal},
+                            {"relaxed", record.relaxed},
+                            {"failed", record.failed}});
+    }
+    out.seconds = std::chrono::duration<double>(
+                      std::chrono::steady_clock::now() - began)
+                      .count();
+    return out;
+  }
+
+  /// **One run of the comparison** of the local slot check with the local
+  /// rip-up-and-reroute, feedline by feedline (user, 2026-10-19). The run
+  /// is applied as `tryRun` applies it. Then, for every feedline, on its
+  /// wires (`feedlineWindow`):
+  ///
+  /// 1. The slot check of the chip as it now stands with the feedline's
+  ///    wires alone: SAT for the feedline when none of them is lost or
+  ///    crowded. The check with every wire is kept beside it.
+  /// 2. The local rip-up-and-reroute of its wires alone, every other wire
+  ///    ignored: clean when none of them ends unrouted, open or crossing.
+  ///    It runs again for the feedline of the segment, for every feedline
+  ///    that shares a wire with it and for every feedline whose verdict
+  ///    differs from the chip as it began; any other feedline keeps the
+  ///    rip-up of the chip as it began.
+  ///
+  /// One `[Local Agreement]` line says both for every feedline; the chip is
+  /// put back.
+  void agreeRun(std::vector<Wire>& wires,
+                const std::vector<std::uint32_t>& members,
+                const std::vector<std::uint32_t>& every, const Pass& pass,
+                const Segment& segment,
+                const std::vector<std::vector<std::uint32_t>>& open,
+                const std::span<const std::uint32_t> run,
+                const std::vector<Path>& ways, const std::uint64_t cost,
+                const Snapshot& taken) {
+    const auto& points = chains_[segment.chain];
+    std::string options;
+    for (std::size_t k = 0; k < run.size(); ++k) {
+      options += std::format("{}{}", k == 0 ? "" : " ",
+                             points[segment.lo + k].fixed
+                                 ? std::string("launcher")
+                                 : std::to_string(open[k][run[k]]));
+    }
+    const auto label =
+        std::format("[Local Agreement] {} run {} (cost {})",
+                    segmentName(wires, segment), options, cost);
+    applyRun(wires, segment, open, run, ways);
+    const auto chains = static_cast<std::uint32_t>(chains_.size());
+    const auto& windows = agreement_.windows;
+
+    // 1. The slot checks: every wire, and every feedline's wires alone.
+    const auto began = std::chrono::steady_clock::now();
+    const auto checks = slotCheckNow(wires, agreement_.windowNames, label);
+    const auto slotSeconds = std::chrono::duration<double>(
+                                 std::chrono::steady_clock::now() - began)
+                                 .count();
+    agreement_.slotSeconds += slotSeconds;
+    if (!checks.has_value()) {
+      ++agreement_.unjudged;
+      restore(wires, taken);
+      foreignRoomStale_ = true;
+      return;
+    }
+    const auto& whole = checks->whole;
+    std::vector<std::vector<std::string>> lost(chains);
+    std::vector<std::vector<std::string>> lostWhole(chains);
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      if (checks->feedlines[chain].has_value()) {
+        lost[chain] =
+            lostIn(*checks->feedlines[chain], agreement_.windowNames[chain]);
+      }
+      lostWhole[chain] = lostIn(whole, agreement_.windowNames[chain]);
+    }
+
+    // 2. The rip-up of every feedline the run may touch, the segment's own
+    // last, so that the chip it leaves is the one the page draws.
+    std::vector<std::uint32_t> again;
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      if (chain == segment.chain || windows[chain].empty()) {
+        continue;
+      }
+      const bool shares = std::ranges::any_of(
+          windows[chain],
+          [&](const auto key) { return windows[segment.chain].contains(key); });
+      if (shares || lost[chain].empty() != agreement_.baseSat[chain]) {
+        again.push_back(chain);
+      }
+    }
+    again.push_back(segment.chain);
+    std::vector<std::optional<FeedlineRip>> rips(chains);
+    for (std::size_t at = 0; at < again.size(); ++at) {
+      if (at > 0) {
+        restore(wires, taken);
+        applyRun(wires, segment, open, run, ways);
+      }
+      const auto chain = again[at];
+      rips[chain] = ripFeedline(wires, members, every, pass, windows[chain],
+                                label);
+      agreement_.rerouteSeconds += rips[chain]->seconds;
+    }
+
+    // What each feedline came to, and the count of the comparison.
+    using nlohmann::json;
+    json feedlines = json::array();
+    std::string said;
+    std::uint32_t disagree = 0;
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      if (windows[chain].empty()) {
+        continue;
+      }
+      const bool reused = !rips[chain].has_value();
+      const auto& rip = reused ? agreement_.baseRip[chain] : *rips[chain];
+      const bool sat = lost[chain].empty();
+      ++agreement_.whole.at((sat ? 0U : 2U) + (rip.clean ? 0U : 1U));
+      disagree += sat == rip.clean ? 0U : 1U;
+      std::string lostText;
+      for (const auto& name : lost[chain]) {
+        lostText += (lostText.empty() ? "" : ", ") + name;
+      }
+      said += std::format(
+          "; feedline {} {}{} rip-up {}{}{}", chain, sat ? "SAT" : "UNSAT",
+          lostText.empty() ? std::string{} : " (" + lostText + ")",
+          rip.clean ? "clean" : "fails",
+          rip.failing.empty() ? std::string{} : " (" + rip.failing + ")",
+          reused ? " as begun" : "");
+      json names = json::array();
+      for (const auto& name : agreement_.windowNames[chain]) {
+        names.push_back(name);
+      }
+      feedlines.push_back({{"chain", chain},
+                           {"window", std::move(names)},
+                           {"sat", sat},
+                           {"lost", lost[chain]},
+                           {"wholeSat", lostWhole[chain].empty()},
+                           {"wholeLost", lostWhole[chain]},
+                           {"clean", rip.clean},
+                           {"failing", rip.failing},
+                           {"blocked", rip.blocked},
+                           {"rounds", rip.rounds},
+                           {"reused", reused},
+                           {"seconds", rip.seconds}});
+    }
+    say(std::format("{}: {}{}; {:.2f}s in the slot check", label,
+                    disagree == 0 ? std::string("AGREE")
+                                  : std::format("DISAGREE on {}", disagree),
+                    said, slotSeconds));
+
+    if (const char* dir = localAgreementDir(); dir != nullptr) {
+      const auto id = std::format("c{}-w{}-r{}", segment.chain, segment.lo,
+                                  agreement_.written++);
+      json pads = json::array();
+      for (std::uint32_t index = 0; index < couplers_.size(); ++index) {
+        const auto& coupler = couplers_[index];
+        if (coupler.options.empty()) {
+          continue;
+        }
+        pads.push_back(
+            {{"index", index},
+             {"resonator", wireId(wires[coupler.wire])},
+             {"pad", padCorners(coupler.options[coupler.chosen])}});
+      }
+      // `routedJson` counts the fails again; its lines stay out of the log.
+      const auto verbosity = verbosity_;
+      verbosity_ = 0;
+      auto routed = json::parse(routedJson(wires));
+      verbosity_ = verbosity;
+      json out{{"id", id},
+               {"chain", segment.chain},
+               {"lo", segment.lo},
+               {"hi", segment.hi},
+               {"segment", segmentName(wires, segment)},
+               {"options", options},
+               {"cost", cost},
+               {"slot",
+                {{"verdict", whole.verdict},
+                 {"lost", whole.lost},
+                 {"crowded", whole.crowded},
+                 {"over", whole.over}}},
+               {"feedlines", std::move(feedlines)},
+               {"disagree", disagree},
+               {"seconds", {{"slot", slotSeconds}}},
+               {"routed", std::move(routed)},
+               {"pads", std::move(pads)}};
+      const std::filesystem::path folder(dir);
+      std::filesystem::create_directories(folder);
+      std::ofstream(folder / (id + ".json")) << out.dump();
+      // The graph the slot check saw, for a run with a feedline the two
+      // judge otherwise.
+      if (disagree > 0 || localAgreementGraphs()) {
+        try {
+          const InsertionState state{
+              .wires = wires,
+              .edges = edges_,
+              .placed = std::vector<bool>(couplers_.size(), true),
+              .terminalsAsWires = terminalDemands()};
+          const auto page = capacityGraphJsonOf(state, label);
+          std::ofstream(folder / (id + "-graph.json")) << slotCheck(page).graph;
+        } catch (const std::invalid_argument& error) {
+          tell(std::format("{}: no graph written ({})", label, error.what()));
+        }
+      }
+    }
+
+    restore(wires, taken);
+    foreignRoomStale_ = true;
+  }
+
+  /// **The comparison** of the local slot check with the local
+  /// rip-up-and-reroute, in place of the repair (`localAgreementRuns`):
+  /// every segment of `localAgreementSpan` edges of every chain, its ends
+  /// fixed and the couplers between them open, is searched as the targeted
+  /// repair searches it, and up to `localAgreementRuns` runs it reaches are
+  /// judged feedline by feedline (`agreeRun`) and put back. First the chip
+  /// as it began is judged the same way. The chip ends as it began.
+  void compareLocally(std::vector<Wire>& wires,
+                      const std::vector<std::uint32_t>& members,
+                      const std::vector<std::uint32_t>& every,
+                      const Pass& pass) {
+    const auto began = std::chrono::steady_clock::now();
+    const auto runs = localAgreementRuns();
+    say(std::format("[Local Agreement] {} run{} a segment of {} edges, {:.0f}s "
+                    "a segment{}",
+                    runs, runs == 1 ? "" : "s", localAgreementSpan(),
+                    static_cast<double>(localAgreementBudget().count()) / 1e9,
+                    localAgreementPlain()
+                        ? "; plain wires alone, the resonators left open"
+                        : ""));
+    agreement_ = Agreement{.on = true};
+    const auto chains = static_cast<std::uint32_t>(chains_.size());
+    // The chip as it began, feedline by feedline.
+    agreement_.windows.resize(chains);
+    agreement_.windowNames.resize(chains);
+    agreement_.baseSat.assign(chains, true);
+    agreement_.baseRip.resize(chains);
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      agreement_.windows[chain] = feedlineWindow(wires, members, chain);
+      if (localAgreementPlain()) {
+        std::erase_if(agreement_.windows[chain],
+                      [&](const auto key) { return wires[key].resonator; });
+      }
+      for (const auto key : agreement_.windows[chain]) {
+        agreement_.windowNames[chain].insert(wireId(wires[key]));
+      }
+    }
+    if (const auto checks = slotCheckNow(wires, agreement_.windowNames,
+                                         "[Local Agreement] as begun");
+        checks.has_value()) {
+      for (std::uint32_t chain = 0; chain < chains; ++chain) {
+        agreement_.baseSat[chain] =
+            !checks->feedlines[chain].has_value() ||
+            lostIn(*checks->feedlines[chain], agreement_.windowNames[chain])
+                .empty();
+      }
+    }
+    {
+      const auto taken = snapshot(wires);
+      for (std::uint32_t chain = 0; chain < chains; ++chain) {
+        if (agreement_.windows[chain].empty() ||
+            (localAgreementOnly().on && chain != localAgreementOnly().chain)) {
+          continue;
+        }
+        agreement_.baseRip[chain] =
+            ripFeedline(wires, members, every, pass,
+                        agreement_.windows[chain], "[Local Agreement]");
+        restore(wires, taken);
+        foreignRoomStale_ = true;
+        say(std::format("[Local Agreement] as begun: feedline {} {}, rip-up "
+                        "{}{}",
+                        chain, agreement_.baseSat[chain] ? "SAT" : "UNSAT",
+                        agreement_.baseRip[chain].clean ? "clean" : "fails",
+                        agreement_.baseRip[chain].failing.empty()
+                            ? std::string{}
+                            : " (" + agreement_.baseRip[chain].failing + ")"));
+      }
+    }
+    auto badNow = failsOf(wires, every).bad();
+    std::uint32_t segments = 0;
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      const auto& points = chains_[chain];
+      if (points.size() < 3) {
+        continue;
+      }
+      const auto span = std::min(localAgreementSpan(), points.size() - 1);
+      for (std::size_t lo = 0; lo + span < points.size(); ++lo) {
+        if (localAgreementOnly().on && (chain != localAgreementOnly().chain ||
+                                        lo != localAgreementOnly().lo)) {
+          continue;
+        }
+        ++segments;
+        static_cast<void>(researchSegment(wires, members, every, pass,
+                                          {.chain = chain,
+                                           .lo = lo,
+                                           .hi = lo + span,
+                                           .fails = {},
+                                           .because = {}},
+                                          runs, badNow));
+      }
+    }
+    const auto& w = agreement_.whole;
+    say(std::format(
+        "==> [Local Agreement] {} segments; feedlines judged: {} SAT and "
+        "clean, {} SAT but failing, {} UNSAT but clean, {} UNSAT and "
+        "failing; {} not judged; {:.0f}s in the slot check, {:.0f}s "
+        "rerouting, {:.0f}s in all",
+        segments, w[0], w[1], w[2], w[3], agreement_.unjudged,
+        agreement_.slotSeconds, agreement_.rerouteSeconds,
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
+            .count()));
+    agreement_ = Agreement{};
   }
 
   /// **The targeted repair over one chip**, in place of the blind `repair`:
@@ -17625,6 +18623,51 @@ private:
                            ? deadOnArrival(wire, wires, pass.straightStart)
                            : std::string{}));
     }
+
+    // Both neighbours at once (`relaxBoth`), when the round before, the other
+    // way round, ended for this wire with no way at any level either.
+    const auto thisRound =
+        (static_cast<std::uint64_t>(sweepSerial_) << 32U) | (frame_.round + 1U);
+    if (found.empty() && relaxBoth() && total > 4 && wire.relaxedOut != 0 &&
+        wire.relaxedOut + 1 == thisRound) {
+      auto& ahead = wires[members[(slot + 1) % total]];
+      auto& behind = wires[members[(slot + total - 1) % total]];
+      for (Wire* const other : {&ahead, &behind}) {
+        if (std::ranges::none_of(released, [&](const auto& r) {
+              return r.first == other->key;
+            })) {
+          released.emplace_back(other->key, other->routed);
+          other->routed = false;
+        }
+      }
+      const auto& farAhead = wires[members[(slot + 2) % total]];
+      const auto& farBehind = wires[members[(slot + total - 2) % total]];
+      buildCorridor(wire, pass.reach);
+      fence(wire, {&farAhead, &farBehind});
+      fenceFixedPlaces(wire, wires, released);
+      letGo_.clear();
+      if (releasedEdgesGone()) {
+        for (const auto& [key, routed] : released) {
+          letGo_.push_back(key);
+        }
+      }
+      constrainByFeedlines(wire, wires, pass);
+      letGo_.clear();
+      const auto level = pass.maxRelaxation + 1;
+      frame_.kind = std::format("relax {}", level);
+      frame_.fence = {farAhead.key, farBehind.key};
+      frame_.ripped.push_back(ahead.key);
+      frame_.ripped.push_back(behind.key);
+      found = search(wire, pass.straightStart, true, !lengthened);
+      refuseTheDetour(std::format("relax {}", level));
+      lengthenFound(true);
+      tell(std::format("wire {} · relax {}: let go of {} and {}, both "
+                       "neighbours, fence {}, {} · {}{}",
+                       id, level, wireId(behind), wireId(ahead),
+                       wireId(farBehind), wireId(farAhead), outcome(),
+                       picture()));
+    }
+    wire.relaxedOut = found.empty() ? thisRound : 0;
 
     if (found.empty()) {
       // The rollback: every wire let go of is exactly what it was.
@@ -20910,7 +21953,21 @@ public:
                           const std::string_view verdict,
                           const std::vector<std::string>& summary,
                           const bool bySlots = false) {
-    if (!debug_ && !bySlots) {
+    if (bySlots) {
+      // The verdict of the chip, from the graph in memory; the JSON below
+      // is only the page.
+      const auto began = std::chrono::steady_clock::now();
+      try {
+        sayBySlots(slotCheck(slotGraphOf(wires, walls, gates, measured,
+                                         chambers, graph, outer)),
+                   verdict, began);
+      } catch (const std::invalid_argument& error) {
+        say(std::format("coupler insertion: the slot check failed ({}); the "
+                        "verdict of the stretches stands: CAPACITY GRAPH {}",
+                        error.what(), verdict));
+      }
+    }
+    if (!debug_) {
       return;
     }
     using nlohmann::json;
@@ -21172,13 +22229,176 @@ public:
     if (bySlots) {
       data = judgedBySlots(std::move(data));
     }
-    if (!debug_) {
-      return;
-    }
     const auto where = debug_("final-capacity-graph.json", data.dump());
     if (!where.empty()) {
       say(std::format("the capacity graph as data: {}", where));
     }
+  }
+
+  /// The capacity graph of a pass of the insertion's check in memory
+  /// (`slotGraphOf`), with the mouths where the pass put them.
+  [[nodiscard]] SlotGraph slotGraphOfPass(const std::vector<Wire>& wires,
+                                          const CapacityPass& pass) const {
+    std::vector<MeasuredBottleneck> measured;
+    measured.reserve(pass.gates.size());
+    for (std::size_t index = 0; index < pass.gates.size(); ++index) {
+      measured.push_back({.gate = pass.gates[index],
+                          .mouth = index >= pass.mouthsFrom &&
+                                   index < pass.slotsFrom,
+                          .slot = index >= pass.slotsFrom});
+    }
+    return slotGraphOf(wires, pass.walls, pass.gates, measured, pass.chambers,
+                       pass.problem.graph, pass.problem.outerWires);
+  }
+
+  /// The capacity graph of `writeCapacityGraph` in memory, as the slot
+  /// check reads it (`SlotGraph`): the same cells, port runs, edges and
+  /// wires, without the JSON.
+  [[nodiscard]] SlotGraph
+  slotGraphOf(const std::vector<Wire>& wires, const Walls& walls,
+              const std::vector<grid::Bottleneck>& gates,
+              const std::vector<MeasuredBottleneck>& measured,
+              const grid::Chambers& chambers,
+              const std::vector<GraphEdge>& graph,
+              const std::vector<GraphWire>& outer) const {
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto cellAt = [width](const std::size_t cell) {
+      return std::array{
+          static_cast<double>(static_cast<std::int64_t>(cell) % width),
+          static_cast<double>(static_cast<std::int64_t>(cell) / width)};
+    };
+    const auto names = [&wires](const std::vector<std::uint32_t>& keys) {
+      std::vector<std::string> list;
+      list.reserve(keys.size());
+      for (const auto key : keys) {
+        list.push_back(wireId(wires[key]));
+      }
+      return list;
+    };
+    SlotGraph out;
+    out.width = width;
+    out.height = static_cast<std::int64_t>(scene_.router.height);
+    out.clearance = static_cast<double>(tuning_.clearance);
+    out.crossingReach = static_cast<double>(crossingReach() + 1);
+    out.inflation = wallInflation();
+    for (const auto kind :
+         {WallKind::Border, WallKind::Artwork, WallKind::Coupler,
+          WallKind::Stub, WallKind::Feedline}) {
+      out.wallKinds.emplace_back(kindName(kind));
+    }
+    const auto stub = static_cast<std::uint16_t>(
+        1 + static_cast<int>(WallKind::Stub));
+    out.codes.resize(chambers.of.size());
+    for (std::size_t cell = 0; cell < chambers.of.size(); ++cell) {
+      std::uint16_t code = 0;
+      if (walls.mask.test(cell)) {
+        code = static_cast<std::uint16_t>(
+            walls.of[cell] < walls.list.size()
+                ? 1 + static_cast<int>(walls.list[walls.of[cell]].kind)
+                : 1 + static_cast<int>(WallKind::Artwork));
+      } else if (chambers.of[cell] != grid::NO_CHAMBER) {
+        code = static_cast<std::uint16_t>(6 + chambers.of[cell]);
+      }
+      out.codes[cell] = code;
+      if (code == stub) {
+        out.stubCells.push_back(cell);
+      }
+    }
+    for (const auto& [wall, points] : walls.strokes) {
+      SlotGraph::Stroke one{.name = walls.list[wall].name,
+                            .kind = std::string(kindName(walls.list[wall].kind)),
+                            .points = {}};
+      one.points.reserve(points.size());
+      for (const auto& [x, y] : points) {
+        one.points.push_back(
+            {static_cast<double>(x), static_cast<double>(y)});
+      }
+      out.strokes.push_back(std::move(one));
+    }
+    for (const auto cell : walls.slots) {
+      out.portSlots.push_back({static_cast<std::int64_t>(cell) % width,
+                               static_cast<std::int64_t>(cell) / width});
+    }
+    for (const auto& edge : graph) {
+      SlotGraph::Edge one;
+      one.stretch = edge.crossing;
+      one.chambers.assign(edge.chambers.begin(), edge.chambers.end());
+      one.capacity = edge.capacity;
+      if (edge.crossing) {
+        one.feedline = wireId(wires[edge.id]);
+        one.name = std::format("× {} cells {}..{}", one.feedline, edge.first,
+                               edge.last);
+      } else {
+        const auto& gate = gates[edge.id];
+        one.name = std::format("g{}", edge.id);
+        one.ends = {endName(walls, gate.first), endName(walls, gate.second)};
+        one.from = cellAt(gate.first);
+        one.to = cellAt(gate.second);
+        one.mouth = measured[edge.id].mouth;
+        one.length = edge.length;
+      }
+      if (edge.users.has_value()) {
+        one.users = names(*edge.users);
+      }
+      out.edges.push_back(std::move(one));
+    }
+    // The launcher a plain wire starts at, which its wire does not name:
+    // the launcher port nearest the start of its way.
+    const auto launcherAt = [this](const PathPoint& end) -> std::uint32_t {
+      std::uint32_t nearest = NO_OWNER;
+      std::int64_t best = std::numeric_limits<std::int64_t>::max();
+      for (const auto& port : ports_) {
+        if (!scene_.launcherCell.contains(port.index)) {
+          continue;
+        }
+        const auto dx = port.x - static_cast<std::int64_t>(end.x);
+        const auto dy = port.y - static_cast<std::int64_t>(end.y);
+        if ((dx * dx) + (dy * dy) < best) {
+          best = (dx * dx) + (dy * dy);
+          nearest = port.index;
+        }
+      }
+      return nearest;
+    };
+    // A port as the graph gives it: the cell it is placed by, the chambers
+    // it lies in, and what the chip calls it.
+    const auto endOf = [&](const std::uint32_t index, const PathPoint& leaves,
+                           const std::vector<std::uint32_t>& in,
+                           const std::string_view otherwise) {
+      return SlotGraph::End{
+          .cell = {static_cast<double>(leaves.x),
+                   static_cast<double>(leaves.y)},
+          .chambers = {in.begin(), in.end()},
+          .label = index < ports_.size() ? ports_[index].label
+                                         : std::string(otherwise)};
+    };
+    for (const auto& one : outer) {
+      const auto& wire = wires[one.wire];
+      SlotGraph::Wire entry{.name = wireId(wire),
+                            .source = {},
+                            .target = {},
+                            .crosses = names(one.crosses),
+                            .terminal = one.terminal,
+                            .resonator = wire.resonator};
+      if (one.terminal) {
+        entry.source =
+            endOf(one.sourcePort, one.ends[0], one.from, "coupler port");
+        entry.target =
+            endOf(one.targetPort, one.ends[1], one.to, "coupler port");
+      } else {
+        entry.source =
+            wire.couplerAtSource != NO_OWNER
+                ? endOf(wire.sourcePort, one.ends[0], one.from, "coupler port")
+                : endOf(wire.sourcePort < ports_.size()
+                            ? wire.sourcePort
+                            : launcherAt(wire.objective.source),
+                        one.ends[0], one.from, "");
+        entry.target = endOf(wire.targetPort, one.ends[1], one.to, "");
+      }
+      out.wires.push_back(std::move(entry));
+    }
+    out.chambers = chambers.count;
+    return out;
   }
 
   /// Where the capacity graph puts the node of each chamber: the cell of
@@ -21556,6 +22776,8 @@ private:
   Debug debug_;
   std::uint32_t verbosity_ = 0;
   DebugFrame frame_;
+  /// Counts the sweeps, so that a wire's `relaxedOut` names one.
+  std::uint32_t sweepSerial_ = 0;
   std::uint32_t pictures_ = 0;
   /// The ports as the chip carries them, for the pictures.
   std::vector<PortMark> ports_;

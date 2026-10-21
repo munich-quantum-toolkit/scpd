@@ -1967,6 +1967,116 @@ TEST(CouplerSession, KeepsTheEdgesOfAChainApartInTheFeedlineRouting) {
   }
 }
 
+/// An edge that meets a terminal edge of its own chain at a coupler keeps the
+/// wire clearance from the run the terminal edge makes at that coupler: the
+/// run follows from the coupler's option, so the edge is drawn round it even
+/// before the terminal edge is (`SCPD_OWN_TERMINAL_STUB_GUARD`). On 9q every
+/// open option of every coupler next to a launcher is drawn, and the run is
+/// measured against the other edge outside that edge's own slot.
+TEST(CouplerSession, KeepsAnEdgeClearOfTheRunOfItsTerminalNeighbour) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  const auto clearance =
+      nlohmann::json::parse(session.graph()).at("clearance").get<double>();
+  const auto listed = nlohmann::json::parse(session.couplers()).at("couplers");
+  using Cell = std::array<double, 2>;
+  const auto apart = [](const Cell& a, const Cell& b) {
+    return std::hypot(a[0] - b[0], a[1] - b[1]);
+  };
+  std::map<std::uint32_t, std::uint32_t> lastAt;
+  for (const auto& coupler : listed) {
+    auto& last = lastAt[coupler.at("chain").get<std::uint32_t>()];
+    last = std::max(last, coupler.at("at").get<std::uint32_t>());
+  }
+  // The edge's own slot at the coupler opens again after the guard: the
+  // run of `SCPD_TERMINAL_SLOT` cells, or the pad's run and a bend.
+  constexpr std::size_t SLOT = 30;
+  std::size_t measured = 0;
+  for (const auto& coupler : listed) {
+    if (coupler.at("edgeIn").is_null() || coupler.at("edgeOut").is_null()) {
+      continue;
+    }
+    const auto at = coupler.at("at").get<std::uint32_t>();
+    const bool terminalIn = at == 1;
+    const bool terminalOut = at == lastAt[coupler.at("chain").get<std::uint32_t>()];
+    if (terminalIn == terminalOut) {
+      continue;
+    }
+    const auto terminal = coupler.at(terminalIn ? "edgeIn" : "edgeOut");
+    const auto index = coupler.at("index").get<std::uint32_t>();
+    for (const auto& option : coupler.at("options")) {
+      if (!option.at("open").get<bool>()) {
+        continue;
+      }
+      const auto moved = nlohmann::json::parse(
+          session.setOption(index, option.at("index").get<std::uint32_t>()));
+      std::vector<Cell> run;
+      std::vector<Cell> other;
+      for (const auto& edge : moved.at("edges")) {
+        if (!edge.at("drawn").get<bool>()) {
+          continue;
+        }
+        std::vector<Cell> way;
+        for (const auto& cell : edge.at("way")) {
+          way.push_back({cell.at(0).get<double>(), cell.at(1).get<double>()});
+        }
+        // Both ways from the coupler on.
+        const bool endsHere = edge.at("edge") == terminal ? terminalIn
+                                                          : !terminalIn;
+        if (endsHere) {
+          std::ranges::reverse(way);
+        }
+        if (edge.at("edge") == terminal) {
+          const auto port = way.front();
+          const auto length = apart({option.at("in").at(0).get<double>(),
+                                     option.at("in").at(1).get<double>()},
+                                    {option.at("out").at(0).get<double>(),
+                                     option.at("out").at(1).get<double>()});
+          for (const auto& cell : way) {
+            if (apart(cell, port) > length) {
+              break;
+            }
+            run.push_back(cell);
+          }
+        } else if (way.size() > SLOT) {
+          other.assign(way.begin() + SLOT, way.end());
+        }
+      }
+      if (run.empty() || other.empty()) {
+        continue;
+      }
+      ++measured;
+      for (const auto& a : run) {
+        for (const auto& b : other) {
+          ASSERT_GE(apart(a, b), clearance - 1.0)
+              << "coupler " << index << " option " << option.at("index")
+              << ": (" << b[0] << ", " << b[1] << ") of the edge beside "
+              << terminal << " is " << apart(a, b) << " from (" << a[0]
+              << ", " << a[1] << ") of its run";
+        }
+      }
+    }
+  }
+  EXPECT_GT(measured, 0U);
+
+  // The case that showed it, from the comparison of the local checks:
+  // coupler '1' on option 0 and coupler '2' on option 31. f8 ran past the
+  // port of f9, and f9 then found no way out of its run.
+  std::map<std::string, std::uint32_t> indexOf;
+  for (const auto& coupler : listed) {
+    indexOf[coupler.at("resonator").get<std::string>()] =
+        coupler.at("index").get<std::uint32_t>();
+  }
+  static_cast<void>(session.setOption(indexOf.at("1"), 0));
+  const auto moved =
+      nlohmann::json::parse(session.setOption(indexOf.at("2"), 31));
+  for (const auto& edge : moved.at("edges")) {
+    EXPECT_TRUE(edge.at("drawn").get<bool>()) << edge.at("edge");
+  }
+}
+
 /// Two feedline edges that meet at a coupler keep the wire clearance from
 /// each other outside the meeting the feedline routing grants them: two
 /// cells closer than the clearance have their middle within half the
@@ -2046,6 +2156,34 @@ TEST(CouplerSession, KeepsTheEdgesAtACouplerApartOutsideTheirMeeting) {
     }
   }
   EXPECT_GT(measured, 0U);
+}
+
+/// The slot check judges the capacity graph in memory (`slotGraphOf`); its
+/// JSON, which the page shows, must say the same. On 4q every coupler is
+/// moved to each of its first open options and the two are compared.
+TEST(CouplerSession, JudgesTheGraphInMemoryAsItsJson) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  const auto listed = nlohmann::json::parse(session.couplers()).at("couplers");
+  std::size_t compared = 0;
+  for (const auto& coupler : listed) {
+    std::size_t tried = 0;
+    for (const auto& option : coupler.at("options")) {
+      if (!option.at("open").get<bool>() || ++tried > 3) {
+        continue;
+      }
+      static_cast<void>(
+          session.setOption(coupler.at("index").get<std::uint32_t>(),
+                            option.at("index").get<std::uint32_t>()));
+      const auto check = nlohmann::json::parse(session.insertionCheck());
+      const auto& page = check.at("graph");
+      EXPECT_EQ(check.at("verdict"), page.at("verdict"));
+      ++compared;
+    }
+  }
+  EXPECT_GT(compared, 0U);
 }
 
 /// `SCPD_COUPLER_SHIFT` (20) moves an option that leaves the coupler box

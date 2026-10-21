@@ -24,7 +24,8 @@ namespace mqt::scpd::routing {
 void CrossingConstraints::build(const uint32_t width, const uint32_t height,
                                 const std::vector<Path>& feedlines,
                                 const std::vector<bool>& skip,
-                                const int expandRadius) {
+                                const int expandRadius,
+                                const std::size_t pinCells) {
   width_ = width;
   height_ = height;
   masks_.assign(static_cast<std::size_t>(width) * height, 0);
@@ -90,11 +91,11 @@ void CrossingConstraints::build(const uint32_t width, const uint32_t height,
       }
     }
     // The pin zones at both ends may not be crossed.
-    for (std::size_t i = 0; i < 10 && i < wire.size(); ++i) {
+    for (std::size_t i = 0; i < pinCells && i < wire.size(); ++i) {
       blockAround(wire[i].x, wire[i].y, 1);
     }
-    if (wire.size() > 10) {
-      for (std::size_t i = wire.size() - 10; i < wire.size(); ++i) {
+    if (wire.size() > pinCells) {
+      for (std::size_t i = wire.size() - pinCells; i < wire.size(); ++i) {
         blockAround(wire[i].x, wire[i].y, 1);
       }
     }

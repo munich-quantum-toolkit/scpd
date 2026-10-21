@@ -44,11 +44,15 @@ public:
 
   CrossingConstraints() = default;
 
+  /// The cells at either end of a feedline that no route may cross.
+  static constexpr std::size_t PIN_CELLS = 10;
+
   /// Build the constraints of a grid from routed feedlines. Feedlines flagged
-  /// in `skip` are left out.
+  /// in `skip` are left out. The first and last `pinCells` cells of every
+  /// feedline, and one cell around them, may not be entered.
   void build(uint32_t width, uint32_t height,
              const std::vector<Path>& feedlines, const std::vector<bool>& skip,
-             int expandRadius = 10);
+             int expandRadius = 10, std::size_t pinCells = PIN_CELLS);
 
   /// Forget every constraint. `allowed` then permits everything.
   void clear();

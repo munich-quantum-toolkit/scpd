@@ -453,10 +453,25 @@
       #world * {
         vector-effect: non-scaling-stroke;
       }
+      /* The inflations are widths in cells, so they scale with the chip. */
+      #world .escape-band,
+      #world .escape-rim,
+      #world .escape-zone,
+      #world .escape-stub,
+      #world .coupler-run,
+      #world .coupler-run-fill {
+        vector-effect: none;
+      }
       .stroke-feed {
         fill: none;
         stroke: var(--stroke-feed);
         stroke-width: 2;
+      }
+      .tedge {
+        fill: none;
+        stroke: var(--stroke-feed);
+        stroke-width: 2;
+        stroke-dasharray: 6 3;
       }
       .stroke-run {
         fill: none;
@@ -688,6 +703,70 @@
         fill: var(--ink);
         opacity: 0.55;
       }
+      .xslot {
+        fill: #2ca02c;
+        fill-opacity: 0.3;
+        stroke: #2ca02c;
+        stroke-width: 1;
+      }
+      .xslot-miss {
+        fill: none;
+        stroke: #d62728;
+        stroke-width: 0.6;
+        stroke-dasharray: 2 2;
+      }
+      .escape {
+        fill: none;
+        stroke: #0f766e;
+        stroke-width: 1.5;
+      }
+      .escape-band {
+        fill: none;
+        stroke: #22d3ee;
+        stroke-opacity: 0.55;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .escape-rim {
+        fill: none;
+        stroke: #0e7490;
+        stroke-opacity: 0.9;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .escape-end {
+        fill: #0f766e;
+      }
+      .escape-zone {
+        fill: none;
+        stroke: #14b8a6;
+        stroke-opacity: 0.12;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .coupler-run {
+        fill: none;
+        stroke-linecap: butt;
+      }
+      .coupler-run-fill {
+        fill: none;
+        stroke: #dc2626;
+        stroke-opacity: 0.25;
+        stroke-linecap: butt;
+      }
+      .escape-stub {
+        fill: none;
+        stroke: #f97316;
+        stroke-opacity: 0.18;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .escape-held {
+        fill: #dc2626;
+      }
+      .escape-none {
+        fill: #f59e0b;
+      }
       .tlink {
         fill: none;
         stroke: var(--target);
@@ -795,6 +874,13 @@
       #overlay.no-slabels .sport text,
       #overlay.no-paths .path.all,
       #overlay.no-slots .slot,
+      #overlay.no-xslots .xslots,
+      #overlay.no-escapes .escapes,
+      #overlay.no-ezones .escape-zones,
+      #overlay.no-estubs .escape-stubs,
+      #overlay.no-cruns .coupler-runs,
+      #overlay.no-tedges .tedge,
+      #overlay.no-xmiss .xslot-miss,
       #overlay.no-tlinks .tlink {
         display: none;
       }
@@ -1447,9 +1533,16 @@
           "Chip",
           [
             ["strokes", "feedline edges and port runs as lines", true],
+            ["tedges", "starting and ending feedline edges: their ways in the check", true],
             ["flabels", "feedline edge names", true],
             ["paths", "the way every wire has now", false],
             ["slots", "the slots the terminals lie in", true],
+            ["xslots", "crossing slots of the feedline edges", true],
+            ["xmiss", "places where no crossing slot fits", true],
+            ["escapes", "ways out of the crossing slots (SCPD_SLOT_ESCAPE)", true],
+            ["ezones", "each way out inflated by the clearance: no other way out may enter it", false],
+            ["estubs", "the stubs inflated as the ways out keep from them", true],
+            ["cruns", "each coupler's run between its two feedline ports, a clearance wide (hatched red)", true],
           ],
         ],
         [
@@ -1557,6 +1650,14 @@
           "port run inflated by half the clearance",
         );
         keyRow("background: var(--wall-pad)", "coupler pad");
+        keyRow(
+          "background: #2ca02c; opacity: .5",
+          "crossing slot: a rectangle across a feedline edge that fits",
+        );
+        keyRow(
+          "border: 1.5px dashed #d62728; width: 10px",
+          "a place where no crossing slot fits",
+        );
         keyRow("background: var(--wall-art)", "artwork");
         keyRow(
           "background: var(--muted)",
@@ -1626,6 +1727,136 @@
             .join("");
           el("path", { d, class: "slot" }, world);
         }
+        // The crossing slots of the feedline edges, where the graph has them:
+        // rectangles across a straight piece of an edge that fit, and the
+        // places where none fits.
+        if (data.crossSlots) {
+          const xs = el("g", { class: "xslots" }, world);
+          for (const edge of data.crossSlots.edges) {
+            for (const slot of edge.rejected || []) {
+              const miss = el(
+                "polygon",
+                { points: worldPoints(slot.corners), class: "xslot-miss" },
+                xs,
+              );
+              miss.dataset.tip = `${edge.name}: no crossing slot fits (${slot.why})`;
+            }
+            for (const slot of edge.slots) {
+              const fit = el(
+                "polygon",
+                { points: worldPoints(slot.corners), class: "xslot" },
+                xs,
+              );
+              fit.dataset.tip = `${edge.name}: crossing slot, ${edge.count} on the edge`;
+            }
+          }
+        }
+        // The ways out of the crossing slots (`SCPD_SLOT_ESCAPE`): at every
+        // end of a slot without a limit the one way out chosen to keep a
+        // clearance from the ways of the ends near it, drawn as a band of the
+        // clearance; the ends of a limited slot, and the ends left without a
+        // way that fits.
+        if (data.escapes) {
+          // The stubs as obstacles of the ways out: a way keeps the clearance
+          // less the inflation from a stub's wall, so a clearance from its line.
+          const stubKeep = Math.max(0, (data.clearance || 0) - (data.inflation || 0));
+          const zs = el("g", { class: "escape-stubs" }, world);
+          // The run of a feedline through each coupler, the line between its
+          // two feedline ports a clearance wide, hatched red: the band of a
+          // way out does not overlap it.
+          if (!document.getElementById("coupler-hatch")) {
+            const defs = el("defs", {}, overlay);
+            const hatch = el(
+              "pattern",
+              {
+                id: "coupler-hatch",
+                patternUnits: "userSpaceOnUse",
+                width: 2,
+                height: 2,
+                patternTransform: "rotate(45)",
+              },
+              defs,
+            );
+            el("line", { x1: 0, y1: 0, x2: 0, y2: 2, stroke: "#dc2626", "stroke-width": 0.8 }, hatch);
+          }
+          const cr = el("g", { class: "coupler-runs" }, world);
+          for (const run of data.couplerRuns || []) {
+            const pts = worldPoints(run);
+            el("polyline", { points: pts, class: "coupler-run-fill", "stroke-width": data.clearance || 0 }, cr);
+            const band = el(
+              "polyline",
+              { points: pts, class: "coupler-run", "stroke-width": data.clearance || 0, stroke: "url(#coupler-hatch)" },
+              cr,
+            );
+            band.dataset.tip = "a coupler's run between its two feedline ports, a clearance wide: no way out's band overlaps it";
+          }
+          for (const s of data.strokes) {
+            if (s.kind !== "stub" || !s.points || s.points.length < 1) continue;
+            const pts = s.points.length === 1 ? [s.points[0], s.points[0]] : s.points;
+            const band = el(
+              "polyline",
+              { points: worldPoints(pts), class: "escape-stub", "stroke-width": 2 * stubKeep },
+              zs,
+            );
+            band.dataset.tip = `${s.name}: no way out enters this (${stubKeep.toFixed(1)} cells from the wall)`;
+          }
+          // Every chosen way out inflated by the clearance: two ways out are
+          // apart when neither enters the other's zone.
+          const ez = el("g", { class: "escape-zones" }, world);
+          for (const end of data.escapes) {
+            if (end.limited || !end.way) continue;
+            const zone = el(
+              "polyline",
+              {
+                points: worldPoints(end.line || end.way),
+                class: "escape-zone",
+                "stroke-width": 2 * (data.clearance || 0),
+              },
+              ez,
+            );
+            zone.dataset.tip = `${end.slot}: no other way out enters this`;
+          }
+          const es = el("g", { class: "escapes" }, world);
+          for (const end of data.escapes) {
+            if (end.limited || !end.way) {
+              const dot = el(
+                "circle",
+                {
+                  cx: wx(end.at[0]),
+                  cy: wy(end.at[1]),
+                  r: 3,
+                  class: end.limited ? "escape-held" : "escape-none",
+                },
+                es,
+              );
+              dot.dataset.tip = end.limited
+                ? `${end.slot}: limited, at most one wire with its neighbour`
+                : `${end.slot}: no way out (${end.ways} free)`;
+              continue;
+            }
+            // The curve where the page has it; the cells otherwise. The way
+            // inflated by half a clearance to either side, with its rim: two
+            // ways out are apart when their inflated ways do not overlap.
+            const pts = worldPoints(end.line || end.way);
+            el(
+              "polyline",
+              { points: pts, class: "escape-rim", "stroke-width": data.clearance + 1.5 },
+              es,
+            );
+            el(
+              "polyline",
+              { points: pts, class: "escape-band", "stroke-width": data.clearance },
+              es,
+            );
+            const line = el("polyline", { points: pts, class: "escape" }, es);
+            line.dataset.tip = `${end.slot}: the way out its placement chose, a clearance wide (${end.ways} free)`;
+            el(
+              "circle",
+              { cx: wx(end.at[0]), cy: wy(end.at[1]), r: 1.5, class: "escape-end" },
+              es,
+            );
+          }
+        }
         // Each target port to the node of the partition its terminal lies in.
         for (const w of wires) {
           for (const c of w.target.chambers) {
@@ -1640,6 +1871,17 @@
               world,
             );
           }
+        }
+        // The starting and ending edges of the feedlines: the check routes
+        // them as wires, so they are no feedline lines; their ways show them.
+        for (const w of wires) {
+          if (!w.terminal || !w.path || w.path.length < 2) continue;
+          const line = el(
+            "polyline",
+            { points: worldPoints(w.path), class: `tedge${dimWire(w)}` },
+            world,
+          );
+          line.dataset.tip = `${w.name}: starting or ending feedline edge, its way in the check`;
         }
         // The way every wire has now, and the selected wires' ways.
         for (const w of wires) {

@@ -19,8 +19,22 @@ releases may include breaking changes.
   on the two sides of its line. A free line between two places of one feedline
   edge, or from a slot to the open end of a stub, limits the slots and wire ends
   behind it. The wires are routed by negotiated congestion (PathFinder). The
-  verdict of the stretches stays in the graph as `previousVerdict`; the chain
-  search keeps its own check. Python reaches the check as `slot_check`.
+  verdict of the stretches stays in the graph as `previousVerdict`. The chain
+  search judges each step and each chain on its own by the same check
+  (`SCPD_SLOT_CHECK_STEPS`, on), handed over in memory as a `SlotGraph`. The
+  slots of an edge of an open chain are open to the wires that bridge it,
+  without a prescription. Python reaches the check as `slot_check`. Its crossing
+  rule closes the router's ten cells at either end of an edge
+  (`SCPD_SLOT_PIN_CELLS`); `SCPD_SLOT_STUB_GAP` lets a slot nearer a stub along
+  its edge, for experiments.
+- ✨ Compare the slot check of each feedline with a rip-up of that feedline's
+  wires alone (`SCPD_LOCAL_AGREEMENT=<runs>`, off). Phase 4 then runs the
+  segment search of the targeted repair on every chain and, for each run of
+  options it yields, judges every feedline both ways and writes the runs as
+  JSON (`SCPD_LOCAL_AGREEMENT_DIR`). `SCPD_LOCAL_AGREEMENT_PLAIN=1` routes the
+  plain wires and the starting and ending edges alone, the resonators off the
+  canvas; `SCPD_LOCAL_AGREEMENT_ONLY=<chain>:<lo>:<options>` compares one run,
+  for its dashboard.
 - ✨ Keep the gates of the capacity check apart (`grid::uncrossedBottlenecks`):
   of two whose lines cross in the middle of either, or where one ends on the
   middle of the other, the slot's gate stays over the mouth's, the mouth's over
@@ -529,6 +543,33 @@ releases may include breaking changes.
 
 ### Fixed
 
+- 🐛 Keep each coupler option that the segment search of the targeted repair
+  chooses a clearance from the feedline edges it has laid before: the option's
+  body, its feedline ports and its lead, and the other way round for a new edge
+  and the earlier couplers. The search lays the edges of a run one after the
+  other with the interior pads hidden, and the slot at a port opens the
+  clearance of every edge but the neighbour at that coupler. On 17q chain 0 on
+  options launcher 31 1 0, f0 ran across the pad of resonator 11's coupler on
+  option 1 and f1 ended 3 cells from f0; the insertion cannot draw f1 there.
+- 🐛 Hold a resonator to the first quarter turn and its straight in the
+  capacity graph and the feedline routing when its coupler's option has a
+  second dogleg (`SCPD_SHORT_JOG_LEAD`, on). The second dogleg places the pad;
+  as part of the fixed lead it walled the resonator in and moved the start of
+  its search. On 45q chain 1 on options 6 2 30 3, resonator 25 had a lead of 66
+  cells against 27 and ended crossing a feedline in the local rip-up. The
+  insertion still judges an option by its whole lead.
+- 🐛 Let a crossing slot that has one chamber on both sides lead from that
+  chamber back into it. A slot of an edge of a chain with a reflector end can
+  have one chamber on both sides, and the search of the slot check built no
+  move for it: on 45q, chain 3 checked alone, wires 57 and 58 had to cross f20
+  and found no way in 209 steps, and the chain search ran out of time.
+- 🐛 Keep a feedline edge clear of the run that the terminal edge of its own
+  chain makes at their shared coupler (`SCPD_OWN_TERMINAL_STUB_GUARD`, on).
+  The run follows from the coupler's option, so it is closed with the wire
+  clearance in the edge's search before the terminal edge is drawn; the guard
+  for the terminal runs of the other chains left the own chain out. On 9q, f8
+  passed 3 to 8 cells from the run of f9 out of coupler '2' on option 31, and
+  the feedline routing found f9 open in its own run.
 - 🐛 Count a gate on the line of a mouth between the same two chambers as that
   mouth in the slot check (`SCPD_MOUTH_TWINS`, on). The capacity graph can
   carry a mouth line twice, once as the mouth and once as a plain gate. On 33q
@@ -595,6 +636,43 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🔧 Place a crossing slot only where a wire can get away from it
+  (`SCPD_SLOT_ESCAPE`, on). At each end of a slot a way out is one of the
+  router's turns and five cells straight on (`SCPD_ESCAPE_STRAIGHT`), every
+  cell free and a clearance and 4 cells from the line of every stub
+  (`SCPD_ESCAPE_STUB_MARGIN`); a slot goes only where each end has a way out a
+  clearance from the ways out of the slots placed before, and moves on along
+  the edge where none has. Two slots whose ends have no pair of ways out a
+  clearance apart take one wire between them. On 45q chain 7 on options 6 1 2
+  37 and 6 1 5 37, wires 132 and 133 came to the two slots of f46 from one
+  side, and the feedline routing could lay only one of them; the check now
+  finds them lost. The capacity graph page draws the chosen ways out, a
+  clearance wide, as the layer `escapes`, the stubs as the ways out keep from
+  them as `estubs`, each coupler's run between its feedline ports as `cruns`,
+  and the starting and ending edges of the feedlines as `tedges`. Switches for
+  experiments, off by default: `SCPD_ESCAPE_QUARTER_TURNS=0` leaves the quarter
+  turns out, `SCPD_ESCAPE_APART_MARGIN` keeps two ways out further apart, and
+  `SCPD_ESCAPE_COUPLER_RUNS=1` keeps them a clearance from each coupler's run.
+- 🔧 Hold a gate at a wire's own port run to the capacity of any gate
+  (`SCPD_OWN_RUN_BONUS`, off). The wire's own side of the line had no margin, so
+  a gate held one wire more than its cells across the heading did. On 69q chain
+  9 on options 0 0 0 32, g222 at the target run of wire 185 held five wires
+  where it has room for four, and seven local runs of 69q came out SAT with a
+  failing rip-up; now none does.
+- 🔧 Let a wire of the feedline routing that found no way at any relaxation
+  level in one round and in the next, the other way round, try once more with
+  both its ring neighbours let go of (`SCPD_RELAX_BOTH`, on). A level lets go of
+  the wires on one side and fences the neighbour on the other, so a wire held
+  from both sides never got out. On 69q chain 10 on options 6 5 4 27, wire 207
+  found its way in the local rip-up only so. The eight benchmarks end as
+  before.
+- 🔧 Spread the crossing slots of a straight piece of a feedline edge evenly
+  over it (`SCPD_EVEN_SLOTS`, on). The slots were laid one after the other
+  from one end, so they crowded that end and left the other free. Each run of
+  places where a slot fits now gets as many slots as before, with equal gaps
+  between them and to its two ends; an edge that would get fewer slots keeps
+  them as laid. Over the 372 cases of rounds 53m to 55m the check judges two
+  more right and none wrong.
 - 🔧 Count a gate of the slot check across the heading the wires cross it on
   (`SCPD_GATE_HEADING`, on), and raise the safety factor on the clearance to
   1.06 (`SCPD_CAPACITY_MARGIN`). A wire runs on one of eight headings, so a line

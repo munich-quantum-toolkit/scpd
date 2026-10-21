@@ -12,11 +12,91 @@
 
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
+
+/// The capacity graph the slot check judges, in memory: what the JSON of
+/// `final-capacity-graph.json` carries of it, without the JSON. The coupler
+/// insertion fills it from its own data; `slotGraphOf` reads it from JSON
+/// for debugging and for Python.
+struct SlotGraph {
+  std::int64_t width = 0;
+  std::int64_t height = 0;
+  /// The clearance between two wires, in cells.
+  double clearance = 0.0;
+  /// The crossing reach of the graph: the router's reach plus one.
+  double crossingReach = 0.0;
+  /// How far a feedline or a port run is inflated into a wall, in cells.
+  double inflation = 0.0;
+  /// The names of the wall kinds; wall code k + 1 is kind k.
+  std::vector<std::string> wallKinds;
+  /// Per cell, row by row: 0 a cut line, 1 to 5 a wall (`wallKinds`),
+  /// 6 + c chamber c.
+  std::vector<std::uint16_t> codes;
+  /// The cells whose code is the stub wall, row by row.
+  std::vector<std::size_t> stubCells;
+  /// The cells of the port runs' slots.
+  std::vector<std::array<std::int64_t, 2>> portSlots;
+
+  /// A port run or a feedline edge, by its middle line.
+  struct Stroke {
+    std::string name;
+    std::string kind;
+    std::vector<std::array<double, 2>> points;
+  };
+  std::vector<Stroke> strokes;
+
+  /// A bottleneck, or a stretch of a feedline edge the check by stretches
+  /// crosses.
+  struct Edge {
+    bool stretch = false;
+    std::string name;
+    /// The feedline edge of a stretch.
+    std::string feedline;
+    std::vector<std::int64_t> chambers;
+    std::int64_t capacity = 0;
+    /// The wires that may use it; every wire when nothing. The slots of a
+    /// stretch's feedline edge are open to the users of its stretches.
+    std::optional<std::vector<std::string>> users;
+    /// The first and the last point of the line.
+    std::array<double, 2> from{};
+    std::array<double, 2> to{};
+    /// What the bottleneck's two ends lie on.
+    std::vector<std::string> ends;
+    bool mouth = false;
+    double length = 0.0;
+    /// The chambers on the two sides of the line, when the graph knows them.
+    std::optional<std::array<std::vector<std::int64_t>, 2>> sides;
+  };
+  std::vector<Edge> edges;
+
+  /// One end of a wire.
+  struct End {
+    std::array<double, 2> cell{};
+    std::vector<std::int64_t> chambers;
+    std::string label;
+  };
+  /// A wire to route.
+  struct Wire {
+    std::string name;
+    End source;
+    End target;
+    std::vector<std::string> crosses;
+    bool terminal = false;
+    bool resonator = false;
+  };
+  std::vector<Wire> wires;
+
+  /// How many chambers the graph has.
+  std::size_t chambers = 0;
+};
 
 /// What `slotCheck` found.
 struct SlotCheckResult {
@@ -28,6 +108,9 @@ struct SlotCheckResult {
   /// The edges that take more wires than they hold, by name, and after them
   /// every self-bottleneck that does, as `<name> <load>/<capacity>`.
   std::vector<std::string> over;
+  /// The wires whose way passes an edge or a self-bottleneck that is over,
+  /// in the order they were routed.
+  std::vector<std::string> crowded;
   /// The capacity graph as the check saw it, as JSON in the form of
   /// `final-capacity-graph.json`: the slot edges in place of the stretches,
   /// a self-bottleneck edge (`S …`) per line that limits a group of slots,
@@ -83,6 +166,22 @@ struct SlotCheckResult {
 /// larger than the search can index.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
 slotCheck(std::string_view graph);
+
+/// The verdict of `slotCheck` on a graph in memory, without the graph as
+/// JSON: `graph` of the result stays empty.
+///
+/// @throws std::invalid_argument when the graph has no feedline wall kind,
+/// names a terminal edge with no number, or is larger than the search can
+/// index.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
+slotCheck(const SlotGraph& graph);
+
+/// A capacity graph read from the JSON of `final-capacity-graph.json`.
+///
+/// @throws std::invalid_argument when the JSON is not valid or lacks a key
+/// the check reads.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotGraph
+slotGraphOf(std::string_view graph);
 
 /// What `slotCheck` finds, as one JSON object: `verdict`, `lost`, `over`
 /// and `graph`, the graph as an object.
