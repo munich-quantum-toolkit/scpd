@@ -14,6 +14,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 namespace mqt::scpd::grid {
@@ -33,6 +34,24 @@ void BitGrid::fill(const bool value) {
   }
 }
 
+void BitGrid::setRange(const std::size_t first, const std::size_t last) {
+  if (first >= last) {
+    return;
+  }
+  const auto from = first >> 6U;
+  const auto to = (last - 1) >> 6U;
+  const auto low = ~uint64_t{0} << (first & 63U);
+  const auto high = ~uint64_t{0} >> (63U - ((last - 1) & 63U));
+  if (from == to) {
+    words_[from] |= low & high;
+    return;
+  }
+  words_[from] |= low;
+  std::fill(words_.begin() + static_cast<std::ptrdiff_t>(from + 1),
+            words_.begin() + static_cast<std::ptrdiff_t>(to), ~uint64_t{0});
+  words_[to] |= high;
+}
+
 std::size_t BitGrid::count() const {
   std::size_t total = 0;
   for (const uint64_t word : words_) {
@@ -41,5 +60,14 @@ std::size_t BitGrid::count() const {
   return total;
 }
 
+BitGrid& BitGrid::operator&=(const BitGrid& other) {
+  if (other.width_ != width_ || other.height_ != height_) {
+    throw std::invalid_argument("BitGrid &= needs grids of the same size");
+  }
+  for (std::size_t i = 0; i < words_.size(); ++i) {
+    words_[i] &= other.words_[i];
+  }
+  return *this;
+}
 
 } // namespace mqt::scpd::grid

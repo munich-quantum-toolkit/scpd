@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -438,6 +439,253 @@ TEST(DubinsRouter, ARoutedPathNeverCrossesItself) {
   EXPECT_EQ(f.router.loopGuardRejections(), 0U);
 }
 
+/// The targets of the multi-target tests: ports on every side of a wall,
+/// arriving on several headings.
+std::vector<PathPoint> multiTargets() {
+  return {{.x = 260, .y = 100, .heading = 6, .primitive = 0},
+          {.x = 250, .y = 40, .heading = 6, .primitive = 0},
+          {.x = 220, .y = 170, .heading = 4, .primitive = 0},
+          {.x = 200, .y = 30, .heading = 0, .primitive = 0},
+          {.x = 270, .y = 160, .heading = 7, .primitive = 0},
+          {.x = 180, .y = 120, .heading = 2, .primitive = 0}};
+}
+
+/// One search to every target costs, per target, what a search to that
+/// target alone costs, and finds the same verdict, in the same corridor.
+TEST(DubinsRouter, AMultiTargetSearchCostsWhatEachSingleSearchCosts) {
+  for (const bool usePenalty : {false, true}) {
+    for (const Heuristic heuristic :
+         {Heuristic::DistanceField, Heuristic::Octile}) {
+      Fixture f;
+      f.block(120, 50, 130, 150);
+      f.block(160, 0, 170, 70);
+      f.router.setHeuristic(heuristic);
+      const auto targets = multiTargets();
+      std::vector<DubinsRouter::MultiTarget> asked;
+      for (const PathPoint& target : targets) {
+        asked.push_back({.target = target, .own = nullptr});
+      }
+      const auto multi = f.router.routeMulti(ACROSS.source, asked, usePenalty);
+      ASSERT_EQ(multi.size(), targets.size());
+      std::size_t found = 0;
+      for (std::size_t k = 0; k < targets.size(); ++k) {
+        const Path single = f.router.route(
+            {.source = ACROSS.source, .target = targets[k]}, usePenalty);
+        if (single.empty()) {
+          EXPECT_NE(multi[k].outcome, DubinsRouter::MultiRoute::Outcome::Found)
+              << k;
+          continue;
+        }
+        ++found;
+        ASSERT_EQ(multi[k].outcome, DubinsRouter::MultiRoute::Outcome::Found)
+            << k;
+        EXPECT_EQ(multi[k].cost, f.router.lastSearchCost()) << k;
+        EXPECT_EQ(multi[k].way.front(), single.front()) << k;
+        EXPECT_EQ(multi[k].way.back(), single.back()) << k;
+        EXPECT_TRUE(avoids(multi[k].way, f.corridor)) << k;
+      }
+      EXPECT_GE(found, 5U);
+    }
+  }
+}
+
+/// A search to one target is the single search: the same way, cost and
+/// expansions.
+TEST(DubinsRouter, AMultiTargetSearchToOneTargetIsTheSingleSearch) {
+  Fixture f;
+  f.block(120, 50, 130, 150);
+  const auto target = multiTargets()[2];
+  const Path single =
+      f.router.route({.source = ACROSS.source, .target = target}, true);
+  const auto cost = f.router.lastSearchCost();
+  const auto expansions = f.router.lastSearchExpansions();
+  ASSERT_FALSE(single.empty());
+  EXPECT_GT(expansions, 0U);
+  const auto multi = f.router.routeMulti(
+      ACROSS.source, {{.target = target, .own = nullptr}}, true);
+  ASSERT_EQ(multi.size(), 1U);
+  EXPECT_EQ(multi[0].outcome, DubinsRouter::MultiRoute::Outcome::Found);
+  EXPECT_EQ(multi[0].way, single);
+  EXPECT_EQ(multi[0].cost, cost);
+  EXPECT_EQ(f.router.lastSearchExpansions(), expansions);
+}
+
+/// With the union of the targets' corridors attached, a target whose way
+/// stays in its own corridor costs what a search in that corridor alone
+/// costs, and any target costs no more than that.
+TEST(DubinsRouter, AMultiTargetSearchInTheUnionCostsNoMoreThanEachOwnCorridor) {
+  Fixture f;
+  const auto targets = multiTargets();
+  // Each target's corridor closes a block of its own on the straight way.
+  std::vector<grid::BitGrid> own(targets.size(), grid::BitGrid{WIDTH, HEIGHT});
+  for (std::size_t k = 0; k < targets.size(); ++k) {
+    const auto x0 = static_cast<uint32_t>(100 + (20 * k));
+    for (uint32_t y = 60; y <= 140; ++y) {
+      for (uint32_t x = x0; x <= x0 + 8; ++x) {
+        own[k].setCell(x, y);
+      }
+    }
+  }
+  // The union of the open space: a cell is closed only where every target's
+  // corridor closes it, which here is nowhere.
+  std::vector<DubinsRouter::MultiTarget> asked;
+  for (std::size_t k = 0; k < targets.size(); ++k) {
+    asked.push_back({.target = targets[k], .own = &own[k]});
+  }
+  const auto multi = f.router.routeMulti(ACROSS.source, asked, true);
+  std::size_t kept = 0;
+  for (std::size_t k = 0; k < targets.size(); ++k) {
+    f.router.attachCorridor(&own[k]);
+    const Path single =
+        f.router.route({.source = ACROSS.source, .target = targets[k]}, true);
+    const auto cost = f.router.lastSearchCost();
+    f.router.attachCorridor(&f.corridor);
+    ASSERT_FALSE(single.empty()) << k;
+    const auto outcome = multi[k].outcome;
+    ASSERT_TRUE(outcome == DubinsRouter::MultiRoute::Outcome::Found ||
+                outcome == DubinsRouter::MultiRoute::Outcome::LeftOwnCorridor)
+        << k;
+    EXPECT_LE(multi[k].cost, cost) << k;
+    if (outcome == DubinsRouter::MultiRoute::Outcome::Found) {
+      ++kept;
+      EXPECT_EQ(multi[k].cost, cost) << k;
+      EXPECT_TRUE(avoids(multi[k].way, own[k])) << k;
+    } else {
+      EXPECT_FALSE(avoids(multi[k].way, own[k])) << k;
+    }
+  }
+  // The first target's block lies across its straight way; the way through
+  // the union runs through it.
+  EXPECT_EQ(multi[0].outcome,
+            DubinsRouter::MultiRoute::Outcome::LeftOwnCorridor);
+  EXPECT_GE(kept, 1U);
+}
+
+/// A target no way reaches does not keep the search from the others, and a
+/// turn bound none of a target's ways fits is said as such.
+TEST(DubinsRouter, AMultiTargetSearchSettlesEveryTargetOnItsOwn) {
+  Fixture f;
+  // A box closed on every side around one target.
+  f.block(200, 140, 260, 141);
+  f.block(200, 190, 260, 191);
+  f.block(200, 140, 201, 191);
+  f.block(259, 140, 260, 191);
+  std::vector<DubinsRouter::MultiTarget> asked{
+      {.target = {.x = 240, .y = 165, .heading = 6, .primitive = 0},
+       .own = nullptr},
+      {.target = ACROSS.target, .own = nullptr},
+      {.target = {.x = 150, .y = 30, .heading = 0, .primitive = 0},
+       .own = nullptr}};
+  const auto multi = f.router.routeMulti(ACROSS.source, asked);
+  EXPECT_EQ(multi[0].outcome, DubinsRouter::MultiRoute::Outcome::NoWay);
+  ASSERT_EQ(multi[1].outcome, DubinsRouter::MultiRoute::Outcome::Found);
+  EXPECT_EQ(countBends(multi[1].way), 0U);
+  EXPECT_EQ(multi[1].turns, 0U);
+  ASSERT_EQ(multi[2].outcome, DubinsRouter::MultiRoute::Outcome::Found);
+  EXPECT_GT(multi[2].turns, 0U);
+
+  f.router.setMaxTurns(0);
+  const auto straight = f.router.routeMulti(ACROSS.source, asked);
+  f.router.setMaxTurns(-1);
+  EXPECT_EQ(straight[1].outcome, DubinsRouter::MultiRoute::Outcome::Found);
+  EXPECT_EQ(straight[2].outcome, DubinsRouter::MultiRoute::Outcome::CutOff);
+}
+
+/// A search resumed from target to target costs, for every target and in
+/// every order of the targets, what a fresh search to that target alone
+/// costs in the same corridor, under `order` and `heuristic`.
+void resumedCostsAsFresh(const Heuristic heuristic,
+                         const DubinsRouter::ResumeOrder order) {
+  Fixture f;
+  f.block(120, 50, 130, 150);
+  f.block(160, 0, 170, 70);
+  f.router.setHeuristic(heuristic);
+  f.router.setResumeOrder(order);
+  const auto all = multiTargets();
+  const std::vector<PathPoint> targets{all[0], all[2], all[3], all[5]};
+  std::vector<uint32_t> fresh;
+  for (const PathPoint& target : targets) {
+    ASSERT_FALSE(
+        f.router.route({.source = ACROSS.source, .target = target}, true)
+            .empty());
+    fresh.push_back(f.router.lastSearchCost());
+  }
+  std::vector<std::size_t> sequence{0, 1, 2, 3};
+  std::size_t sequences = 0;
+  do {
+    DubinsRouter::PausedSearch search;
+    uint64_t resumed = 0;
+    for (const std::size_t k : sequence) {
+      const auto answer = f.router.routeResumable(
+          search, ACROSS.source, targets[k], nullptr, true, targets);
+      ASSERT_EQ(answer.outcome, DubinsRouter::MultiRoute::Outcome::Found) << k;
+      EXPECT_EQ(answer.cost, fresh[k]) << k;
+      EXPECT_TRUE(answer.way.front().samePlace(ACROSS.source)) << k;
+      EXPECT_TRUE(answer.way.back().samePlace(targets[k])) << k;
+      EXPECT_TRUE(avoids(answer.way, f.corridor)) << k;
+      resumed += f.router.lastSearchExpansions();
+    }
+    EXPECT_TRUE(search.started());
+    EXPECT_GT(search.states(), 0U);
+    EXPECT_GT(resumed, 0U);
+    ++sequences;
+  } while (std::ranges::next_permutation(sequence).found);
+  EXPECT_EQ(sequences, 24U);
+}
+
+TEST(DubinsRouter, AResumedSearchCostsWhatAFreshSearchCostsInAnyOrder) {
+  for (const auto heuristic : {Heuristic::DistanceField, Heuristic::Octile}) {
+    for (const auto order :
+         {DubinsRouter::ResumeOrder::Target, DubinsRouter::ResumeOrder::Minimum,
+          DubinsRouter::ResumeOrder::Offset}) {
+      SCOPED_TRACE(static_cast<int>(order));
+      SCOPED_TRACE(static_cast<int>(heuristic));
+      resumedCostsAsFresh(heuristic, order);
+    }
+  }
+}
+
+/// A target whose goal state an earlier call closed on its way is answered
+/// without a search, and a target no way reaches leaves the search able to
+/// answer the next one.
+TEST(DubinsRouter, AResumedSearchAnswersATargetPassedOnTheWay) {
+  Fixture f;
+  // The far target first: the straight way to it runs through the goal
+  // state of the near one.
+  const PathPoint near{.x = 150, .y = 100, .heading = 6, .primitive = 0};
+  DubinsRouter::PausedSearch search;
+  ASSERT_EQ(
+      f.router.routeResumable(search, ACROSS.source, ACROSS.target, nullptr)
+          .outcome,
+      DubinsRouter::MultiRoute::Outcome::Found);
+  const auto passed =
+      f.router.routeResumable(search, ACROSS.source, near, nullptr);
+  ASSERT_EQ(passed.outcome, DubinsRouter::MultiRoute::Outcome::Found);
+  EXPECT_EQ(f.router.lastSearchExpansions(), 0U);
+  EXPECT_EQ(passed.turns, 0U);
+  ASSERT_FALSE(
+      f.router.route({.source = ACROSS.source, .target = near}).empty());
+  EXPECT_EQ(passed.cost, f.router.lastSearchCost());
+
+  // A target shut in a box, then one in the open.
+  Fixture g;
+  g.block(200, 140, 260, 141);
+  g.block(200, 190, 260, 191);
+  g.block(200, 140, 201, 191);
+  g.block(259, 140, 260, 191);
+  DubinsRouter::PausedSearch again;
+  EXPECT_EQ(g.router
+                .routeResumable(
+                    again, ACROSS.source,
+                    {.x = 240, .y = 165, .heading = 6, .primitive = 0}, nullptr)
+                .outcome,
+            DubinsRouter::MultiRoute::Outcome::NoWay);
+  const auto open =
+      g.router.routeResumable(again, ACROSS.source, ACROSS.target, nullptr);
+  ASSERT_EQ(open.outcome, DubinsRouter::MultiRoute::Outcome::Found);
+  EXPECT_EQ(countBends(open.way), 0U);
+}
+
 TEST(DubinsRouter, TheSanitizedEndsAreTheStraightStubsOwnEnds) {
   Fixture f;
   const PathPoint source{.x = 100, .y = 100, .heading = 6, .primitive = 0};
@@ -594,6 +842,170 @@ TEST(DubinsRouter, TheRouterGridMustFitTheSearchState) {
   // A grid whose states do not fit a search index is refused where it is
   // allocated, not later in a search.
   EXPECT_THROW(static_cast<void>(SearchScratch(40000, 40000)), std::invalid_argument);
+}
+
+/// The eighth turns of a way: the heading distance summed over its points.
+uint32_t eighthTurns(const Path& path) {
+  uint32_t turns = 0;
+  for (std::size_t i = 1; i < path.size(); ++i) {
+    turns += headingDistance(path[i - 1].heading, path[i].heading);
+  }
+  return turns;
+}
+
+/// One case of the turn bound tests: walls on the grid and a source and a
+/// target on either side.
+struct TurnCase {
+  std::vector<std::array<uint32_t, 4>> walls;
+  RoutingObjective objective;
+};
+
+/// Cases where the cheapest way turns, and where a tight turn bound leaves
+/// a way, a cut-off or both: a wall with one gap, a winding passage, a
+/// target that faces back toward the source, and random blocks.
+std::vector<TurnCase> turnCases() {
+  std::vector<TurnCase> cases;
+  const RoutingObjective back{
+      {.x = 30, .y = 100, .heading = 6, .primitive = 0},
+      {.x = 200, .y = 60, .heading = 2, .primitive = 0}};
+  const RoutingObjective up{{.x = 40, .y = 170, .heading = 6, .primitive = 0},
+                            {.x = 250, .y = 40, .heading = 0, .primitive = 0}};
+  cases.push_back({{{140, 0, 150, 80}, {140, 120, 150, HEIGHT - 1}}, ACROSS});
+  cases.push_back(
+      {{{80, 0, 90, 150}, {150, 50, 160, HEIGHT - 1}, {220, 0, 230, 150}},
+       ACROSS});
+  cases.push_back({{{120, 40, 130, 160}}, back});
+  cases.push_back({{{100, 100, 200, 110}, {150, 0, 160, 60}}, up});
+  std::mt19937 rng(7);
+  std::uniform_int_distribution<uint32_t> x(60, 230);
+  std::uniform_int_distribution<uint32_t> y(10, 180);
+  std::uniform_int_distribution<uint32_t> side(4, 30);
+  for (int layout = 0; layout < 4; ++layout) {
+    TurnCase random{{}, layout % 2 == 0 ? ACROSS : up};
+    for (int k = 0; k < 8; ++k) {
+      const uint32_t x0 = x(rng);
+      const uint32_t y0 = y(rng);
+      random.walls.push_back({x0, y0, std::min(x0 + side(rng), 240U),
+                              std::min(y0 + side(rng), HEIGHT - 1)});
+    }
+    cases.push_back(random);
+  }
+  return cases;
+}
+
+/// Each heading has one move that does not turn, the straight step along
+/// it. The turn bound treats that move as a straight run of its model, so
+/// the bound needs it to be one.
+TEST(DubinsRouter, TheOnlyMoveThatDoesNotTurnIsTheStraightStep) {
+  const MovePrimitives primitives(5);
+  for (Heading heading = 0; heading < NUM_HEADINGS; ++heading) {
+    std::size_t straight = 0;
+    const HeadingVector v = headingVector(heading);
+    for (const Primitive& p : primitives.of(heading)) {
+      if (p.exitHeading != heading) {
+        continue;
+      }
+      ++straight;
+      EXPECT_EQ((v.dx * p.dy) - (v.dy * p.dx), 0) << int{heading};
+      EXPECT_GT((v.dx * p.dx) + (v.dy * p.dy), 0) << int{heading};
+    }
+    EXPECT_EQ(straight, 1U) << int{heading};
+  }
+}
+
+/// With the turn bound, a search finds a way wherever the search without it
+/// does, at the same price, and never returns a way over the turn bound.
+TEST(DubinsRouter, TheTurnBoundKeepsEveryWayAndItsPrice) {
+  std::size_t found = 0;
+  std::size_t cutOff = 0;
+  for (const TurnCase& one : turnCases()) {
+    for (const Heuristic heuristic :
+         {Heuristic::DistanceField, Heuristic::Octile}) {
+      for (const bool usePenalty : {false, true}) {
+        Fixture f;
+        for (const auto& wall : one.walls) {
+          f.block(wall[0], wall[1], wall[2], wall[3]);
+        }
+        f.router.setHeuristic(heuristic);
+        for (const int16_t bound : {-1, 0, 1, 2, 3, 4, 5, 6, 8}) {
+          f.router.setMaxTurns(bound);
+          f.router.setTurnLowerBound(false);
+          const Path off = f.router.route(one.objective, usePenalty);
+          const auto offCost = f.router.lastSearchCost();
+          f.router.setTurnLowerBound(true);
+          const Path on = f.router.route(one.objective, usePenalty);
+          const auto onCost = f.router.lastSearchCost();
+          const bool onCutOff = f.router.lastSearchCutOff();
+          f.router.setTurnLowerBound(false);
+          f.router.setMaxTurns(-1);
+          if (!on.empty() && bound >= 0) {
+            EXPECT_LE(eighthTurns(on), static_cast<uint32_t>(bound)) << bound;
+          }
+          if (off.empty()) {
+            continue;
+          }
+          ++found;
+          ASSERT_FALSE(on.empty()) << bound;
+          EXPECT_EQ(onCost, offCost) << bound;
+          EXPECT_TRUE(avoids(on, f.corridor)) << bound;
+          cutOff += onCutOff ? 1U : 0U;
+        }
+      }
+    }
+  }
+  EXPECT_GE(found, 100U);
+  // Some searches that found a way still dropped moves for the bound.
+  EXPECT_GT(cutOff, 0U);
+}
+
+/// A search with the turn bound that finds no way under a turn bound says
+/// that it was cut off wherever a way exists without the bound.
+TEST(DubinsRouter, TheTurnBoundCutsOffWhatTheTurnLimitCutsOff) {
+  for (const TurnCase& one : turnCases()) {
+    Fixture f;
+    for (const auto& wall : one.walls) {
+      f.block(wall[0], wall[1], wall[2], wall[3]);
+    }
+    const Path free = f.router.route(one.objective, true);
+    f.router.setTurnLowerBound(true);
+    for (const int16_t bound : {0, 1, 2, 3}) {
+      f.router.setMaxTurns(bound);
+      const Path bounded = f.router.route(one.objective, true);
+      if (bounded.empty() && !free.empty()) {
+        EXPECT_TRUE(f.router.lastSearchCutOff()) << bound;
+      }
+    }
+  }
+}
+
+/// With the turn bound, a multi-target search costs what it costs without
+/// it, target by target.
+TEST(DubinsRouter, TheTurnBoundKeepsTheMultiTargetPrices) {
+  for (const int16_t bound : {-1, 2, 4}) {
+    Fixture f;
+    f.block(120, 50, 130, 150);
+    f.block(160, 0, 170, 70);
+    std::vector<DubinsRouter::MultiTarget> asked;
+    for (const PathPoint& target : multiTargets()) {
+      asked.push_back({.target = target, .own = nullptr});
+    }
+    f.router.setMaxTurns(bound);
+    const auto off = f.router.routeMulti(ACROSS.source, asked, true);
+    f.router.setTurnLowerBound(true);
+    const auto on = f.router.routeMulti(ACROSS.source, asked, true);
+    ASSERT_EQ(on.size(), off.size());
+    for (std::size_t k = 0; k < off.size(); ++k) {
+      if (off[k].outcome != DubinsRouter::MultiRoute::Outcome::Found) {
+        continue;
+      }
+      ASSERT_EQ(on[k].outcome, DubinsRouter::MultiRoute::Outcome::Found)
+          << bound << " " << k;
+      EXPECT_EQ(on[k].cost, off[k].cost) << bound << " " << k;
+      if (bound >= 0) {
+        EXPECT_LE(on[k].turns, static_cast<uint32_t>(bound)) << k;
+      }
+    }
+  }
 }
 
 } // namespace

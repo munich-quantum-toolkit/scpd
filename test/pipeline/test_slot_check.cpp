@@ -592,9 +592,9 @@ TEST(SlotCheck, StubOfAnotherWireTakesNoWireThroughANarrowLine) {
             std::vector<std::string>{"□ f1 1 to stub (80, 145) 1/0"});
 }
 
-/// The faster check (`SCPD_SLOT_CHECK_FAST`) finds what the check finds,
-/// down to the graph it writes, on a feedline with slots and stubs and on a
-/// gate over its capacity.
+/// The faster check, the default of `SCPD_SLOT_CHECK_FAST`, finds what the
+/// plain check finds, down to the graph it writes, on a feedline with slots
+/// and stubs and on a gate over its capacity.
 TEST(SlotCheck, FastCheckFindsTheSame) {
   auto feedline = feedlineChip();
   feedline.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
@@ -605,14 +605,69 @@ TEST(SlotCheck, FastCheckFindsTheSame) {
   gate.wire("2", {22, 5}, 0, {22, 35}, 1, {});
 
   for (const auto& text : {feedline.text(), gate.text()}) {
-    EXPECT_EQ(fast::slotCheckJson(text), slotCheckJson(text));
+    EXPECT_EQ(fast::slotCheckJson(text), detail::plainSlotCheckJson(text));
     const auto graph = slotGraphOf(text);
-    const auto plain = slotCheck(graph);
+    const auto plain = detail::plainSlotCheck(graph);
     const auto quick = fast::slotCheck(graph);
     EXPECT_EQ(quick.verdict, plain.verdict);
     EXPECT_EQ(quick.lost, plain.lost);
     EXPECT_EQ(quick.over, plain.over);
     EXPECT_EQ(quick.crowded, plain.crowded);
+  }
+}
+
+/// A graph whose raster is a view over wall and chamber buffers
+/// (`SlotGraph::raster`) is judged as the same graph with its codes written
+/// out, by the fast check and by the plain one.
+TEST(SlotCheck, ARasterViewIsJudgedAsTheCodes) {
+  auto feedline = feedlineChip();
+  feedline.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
+  addStub(feedline, "9", 145);
+  feedline.wire("7", {60, 152}, 0, {200, 50}, 0, {});
+  auto gate = gateChip(1);
+  gate.wire("1", {20, 5}, 0, {20, 35}, 1, {});
+  gate.wire("2", {22, 5}, 0, {22, 35}, 1, {});
+
+  for (const auto& text : {feedline.text(), gate.text()}) {
+    const auto coded = slotGraphOf(text);
+    // The buffers of the view, read off the codes: walls 0 to 4 for the
+    // codes 1 to 5, and chamber c for the code 6 + c.
+    const std::vector<std::uint16_t> wallCodes{1, 2, 3, 4, 5};
+    constexpr std::uint32_t NONE = 0xFFFFFFFFU;
+    std::vector<std::uint64_t> mask((coded.codes.size() + 63) / 64, 0);
+    std::vector<std::uint32_t> wallOf(coded.codes.size(), 0);
+    std::vector<std::uint32_t> chamberOf(coded.codes.size(), NONE);
+    for (std::size_t cell = 0; cell < coded.codes.size(); ++cell) {
+      const auto code = coded.codes[cell];
+      if (code >= 1 && code <= 5) {
+        mask[cell / 64] |= std::uint64_t{1} << (cell % 64);
+        wallOf[cell] = code - 1U;
+      } else if (code >= 6) {
+        chamberOf[cell] = code - 6U;
+      }
+    }
+    auto viewed = coded;
+    viewed.codes.clear();
+    viewed.raster = SlotGraph::RasterView{.wallMask = mask.data(),
+                                          .wallOf = wallOf.data(),
+                                          .wallCodes = wallCodes.data(),
+                                          .walls = wallCodes.size(),
+                                          .otherWall = 2,
+                                          .chamberOf = chamberOf.data(),
+                                          .noChamber = NONE};
+    for (std::size_t cell = 0; cell < coded.codes.size(); ++cell) {
+      ASSERT_EQ(viewed.raster->code(cell), coded.codes[cell]) << cell;
+    }
+    const auto quickCoded = fast::slotCheck(coded);
+    const auto quickViewed = fast::slotCheck(viewed);
+    const auto plainCoded = detail::plainSlotCheck(coded);
+    const auto plainViewed = detail::plainSlotCheck(viewed);
+    for (const auto* result : {&quickViewed, &plainCoded, &plainViewed}) {
+      EXPECT_EQ(result->verdict, quickCoded.verdict);
+      EXPECT_EQ(result->lost, quickCoded.lost);
+      EXPECT_EQ(result->over, quickCoded.over);
+      EXPECT_EQ(result->crowded, quickCoded.crowded);
+    }
   }
 }
 

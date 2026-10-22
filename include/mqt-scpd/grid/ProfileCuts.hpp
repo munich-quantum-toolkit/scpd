@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -80,6 +81,10 @@ struct ProfileScene {
   std::span<const NearestBlocked* const> fields;
   /// The free cells no cut may cross: the slots terminals lie in.
   const BitGrid* slots = nullptr;
+  /// When given, a mask that holds every cell of every dynamic wall, and
+  /// may hold cells of other walls: the dynamic walls are then gathered from
+  /// its set bits alone, not from every cell of `wallOf`.
+  const BitGrid* walls = nullptr;
   /// The dynamic walls drawn as inflated lines. Every other dynamic wall
   /// is drawn by its own outline.
   std::span<const ProfileLine> lines;
@@ -127,5 +132,80 @@ struct ProfileOptions {
 /// other. The saddle is the middle cell of the line.
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<Bottleneck>
 profileCuts(const ProfileScene& scene, const ProfileOptions& options = {});
+
+/// What `profileCuts` keeps from one call to the next, by content: the
+/// outline traces of a dynamic wall's cells, the simplified line of a
+/// wall's dense line, and the narrowings of the gap from one wall's line to
+/// another's. A wall with the same cells as a wall of an earlier call has
+/// the same traces; a pair of walls with the same lines has the same
+/// narrowings. Every entry is found by a hash and checked against the full
+/// content it was made from, and the cuts themselves are drawn on every
+/// call, so a call gives the same bottlenecks with the memo as without it.
+/// A memo serves one thread at a time. It forgets everything when the grid
+/// or the options change.
+class MQT_SCPD_GRID_EXPORT ProfileMemo {
+public:
+  ProfileMemo();
+  ~ProfileMemo();
+  ProfileMemo(const ProfileMemo&) = delete;
+  ProfileMemo& operator=(const ProfileMemo&) = delete;
+  ProfileMemo(ProfileMemo&& other) noexcept;
+  ProfileMemo& operator=(ProfileMemo&& other) noexcept;
+
+  /// Forget every entry.
+  void clear();
+
+  /// How often the calls took an entry from the memo (`kept`) and how often
+  /// they worked it out (`made`).
+  struct Counts {
+    std::uint64_t tracesKept = 0;
+    std::uint64_t tracesMade = 0;
+    std::uint64_t linesKept = 0;
+    std::uint64_t linesMade = 0;
+    std::uint64_t pairsKept = 0;
+    std::uint64_t pairsMade = 0;
+  };
+  [[nodiscard]] Counts counts() const;
+
+  /// The entries; defined where `profileCuts` reads them.
+  struct State;
+  [[nodiscard]] State& state() { return *state_; }
+
+private:
+  std::unique_ptr<State> state_;
+};
+
+/// `profileCuts` with the work on the walls kept in `memo` from call to
+/// call. The result is the one `profileCuts` gives without it.
+[[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<Bottleneck>
+profileCuts(const ProfileScene& scene, const ProfileOptions& options,
+            ProfileMemo& memo);
+
+/// The seconds `profileCuts` spent in each of its parts, summed over the
+/// calls of this thread since the last `takeProfileCutsSplit`. The clock is
+/// read only while `SCPD_STEP_PROFILE` is on; it changes no result.
+struct ProfileCutsSplit {
+  /// How many calls the seconds cover.
+  std::uint64_t calls = 0;
+  /// Gathering the cells of the dynamic walls.
+  double walls = 0.0;
+  /// Tracing their outlines.
+  double outlines = 0.0;
+  /// Their lines, simplified.
+  double lines = 0.0;
+  /// The gaps to the static fields.
+  double fields = 0.0;
+  /// The gaps between two dynamic walls.
+  double pairs = 0.0;
+  /// The cuts at the mouths.
+  double mouths = 0.0;
+  /// The wedges where two walls touch.
+  double wedges = 0.0;
+  /// One cut per narrowing.
+  double narrowings = 0.0;
+};
+
+/// The split since the last call, which starts a new one.
+[[nodiscard]] MQT_SCPD_GRID_EXPORT ProfileCutsSplit takeProfileCutsSplit();
 
 } // namespace mqt::scpd::grid

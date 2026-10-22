@@ -27,6 +27,7 @@
 #include "mqt-scpd/grid/Voronoi.hpp"
 #include "mqt-scpd/pipeline/CapacityFlow.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
+#include "mqt-scpd/pipeline/CombinationOrder.hpp"
 #include "mqt-scpd/pipeline/CouplerSession.hpp"
 #include "mqt-scpd/pipeline/SlotCheck.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
@@ -49,6 +50,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -66,7 +68,6 @@
 #include <numeric>
 #include <optional>
 #include <queue>
-#include <random>
 #include <ranges>
 #include <regex>
 #include <set>
@@ -1985,6 +1986,7 @@ public:
 
   /// Take the copper of a wire, without its room.
   void occupy(const Path& path, const std::uint32_t wire) {
+    note(path, 0);
     for (const auto& point : path) {
       if (point.x < width_ && point.y < height_) {
         owner_[index(point.x, point.y)] = wire;
@@ -1996,6 +1998,7 @@ public:
   /// left alone, which cannot happen while no two wires share a cell but
   /// costs nothing to say.
   void vacate(const Path& path, const std::uint32_t wire) {
+    note(path, 0);
     for (const auto& point : path) {
       if (point.x < width_ && point.y < height_) {
         const auto cell = index(point.x, point.y);
@@ -2014,7 +2017,58 @@ public:
   void chargeFixed(const Path& fixed) { walk(fixed, 1); }
   void dischargeFixed(const Path& fixed) { walk(fixed, -1); }
 
+  /// Start to record the rows every later change writes, for
+  /// `restoreRowsFrom`.
+  void track() {
+    reach_ = 0;
+    for (const auto& offset : stencil_.full) {
+      reach_ = std::max<std::int64_t>(reach_, std::abs(offset.second));
+    }
+    tracking_ = true;
+    dirtyLo_ = height_;
+    dirtyHi_ = -1;
+  }
+
+  /// Stop recording rows.
+  void untrack() { tracking_ = false; }
+
+  /// Copy back from `from` every row written since `track`, and the pass
+  /// counter. When this field equalled `from` at `track`, it equals `from`
+  /// again, cell for cell.
+  void restoreRowsFrom(const Field& from) {
+    if (dirtyHi_ >= dirtyLo_) {
+      const auto begin = static_cast<std::ptrdiff_t>(dirtyLo_ * width_);
+      const auto end = static_cast<std::ptrdiff_t>((dirtyHi_ + 1) * width_);
+      std::copy(from.guard_.begin() + begin, from.guard_.begin() + end,
+                guard_.begin() + begin);
+      std::copy(from.owner_.begin() + begin, from.owner_.begin() + end,
+                owner_.begin() + begin);
+      std::copy(from.stamp_.begin() + begin, from.stamp_.begin() + end,
+                stamp_.begin() + begin);
+    }
+    pass_ = from.pass_;
+    track();
+  }
+
+  /// Whether two fields hold the same room, copper and stamps.
+  [[nodiscard]] bool sameAs(const Field& other) const {
+    return guard_ == other.guard_ && owner_ == other.owner_ &&
+           stamp_ == other.stamp_ && pass_ == other.pass_;
+  }
+
 private:
+  /// Record the rows a path writes, `reach` rows beyond it on each side.
+  void note(const Path& path, const std::int64_t reach) {
+    if (!tracking_) {
+      return;
+    }
+    for (const auto& point : path) {
+      const auto y = static_cast<std::int64_t>(point.y);
+      dirtyLo_ = std::min(dirtyLo_, std::max<std::int64_t>(0, y - reach));
+      dirtyHi_ = std::min(height_ - 1, std::max(dirtyHi_, y + reach));
+    }
+  }
+
   [[nodiscard]] std::size_t index(const std::uint32_t x,
                                   const std::uint32_t y) const {
     return (static_cast<std::size_t>(y) * static_cast<std::size_t>(width_)) + x;
@@ -2030,6 +2084,7 @@ private:
     if (path.empty()) {
       return;
     }
+    note(path, reach_);
     beginPass();
     bool started = false;
     std::int64_t lastX = 0;
@@ -2063,6 +2118,8 @@ private:
     if (++pass_ == 0) {
       std::ranges::fill(stamp_, 0);
       pass_ = 1;
+      dirtyLo_ = 0;
+      dirtyHi_ = height_ - 1;
     }
   }
 
@@ -2090,6 +2147,11 @@ private:
   std::vector<std::uint32_t> owner_;
   std::vector<std::uint32_t> stamp_;
   std::uint32_t pass_ = 0;
+  /// The rows written since `track`, and how far the stencil reaches.
+  bool tracking_ = false;
+  std::int64_t reach_ = 0;
+  std::int64_t dirtyLo_ = 0;
+  std::int64_t dirtyHi_ = -1;
 };
 
 // ----------------------------------------------------------------- The wires
@@ -2564,6 +2626,18 @@ public:
     // cost. On an *empty* grid the ranking reverses and the field is pure
     // overhead — which is why a synthetic benchmark says the opposite.
     router_.setHeuristic(routing::Heuristic::DistanceField);
+  }
+
+  /// Whether the edge searches of the coupler insertion (`routeEdge`) bound
+  /// the turns a state still owes by the analytic Dubins bound, in the
+  /// heuristic and against the step's turn budget:
+  /// `SCPD_ROUTER_TURN_BOUND`, off
+  /// (`routing::DubinsRouter::setTurnLowerBound`). The wire routings run
+  /// without it: with it, the outer routing of 17q took 3.7 s against
+  /// 2.8 s. Read once.
+  [[nodiscard]] static bool routerTurnBound() {
+    static const bool on = envFlag("SCPD_ROUTER_TURN_BOUND", false);
+    return on;
   }
 
   [[nodiscard]] const Field& field() const { return field_; }
@@ -3756,6 +3830,9 @@ public:
     /// on — the same pad, reached from one side or the other.
     std::uint32_t secondStraight = 0;
     bool secondReverse = false;
+    /// Which place of the resonator's way the option sits at, in the order
+    /// `couplerPlace` offers them: 0 is the place nearest the target length.
+    std::uint32_t place = 0;
     /// How many cells of `arc` the first quarter turn and its straight take;
     /// with a second dogleg the cell after them is the first lead's tip.
     std::size_t firstLead = 0;
@@ -3924,6 +4001,7 @@ public:
     chains_.clear();
     edges_.clear();
     fastCapacity_.reset();
+    profileMemo_.clear();
     familyStats_ = {};
     familyViolations_ = 0;
     learnedRaised_ = 0;
@@ -4045,12 +4123,38 @@ public:
       Coupler coupler;
       coupler.wire = wire.key;
       coupler.outerWay = wire.way;
-      coupler.options = optionsOf(wire);
+      const auto offsets = couplerOffsets();
+      coupler.options = optionsOf(wire, offsets);
+      if (coupler.options.empty() &&
+          std::ranges::any_of(offsets, [](const bool on) { return !on; })) {
+        // None of the allowed offsets fits this coupler: it takes every
+        // offset, as without `couplerOffsets`.
+        ++offsetFallbacks_;
+        say(std::format("[Coupler Insertion] coupler for resonator {}: no "
+                        "option on the allowed offsets {} fits — every "
+                        "offset is allowed for it",
+                        wireId(wire), offsetsText(offsets)));
+        std::array<bool, routing::NUM_HEADINGS> every{};
+        every.fill(true);
+        coupler.options = optionsOf(wire, every);
+      }
       if (coupler.options.empty()) {
         ++withoutOptions;
         tell(std::format("coupler for resonator {}: no option fits",
                          wireId(wire)));
         continue;
+      }
+      // Without `secondDogleg` the coupler starts on its first option
+      // without a second dogleg, where it has one.
+      if (!secondDogleg()) {
+        const auto plain = std::ranges::find_if(
+            coupler.options, [](const CouplerOption& option) {
+              return option.secondStraight == 0;
+            });
+        if (plain != coupler.options.end()) {
+          coupler.chosen =
+              static_cast<std::size_t>(plain - coupler.options.begin());
+        }
       }
       std::string where;
       for (Heading heading = 0; heading < routing::NUM_HEADINGS; ++heading) {
@@ -4202,21 +4306,33 @@ public:
       say(std::format(
           "[Coupler Insertion] settings: search {} ({}), each chain on its "
           "own chip {} ({}), commit keeps the search's ways {} ({}), "
-          "{:.0f}s a chain ({}), shortfall {:.0f}% ({}), moved into the box "
-          "by up to {} cells ({}); room: pitch {} "
+          "progress every {} steps ({}), second dogleg {} ({}), end edge "
+          "weight {:g} ({}), coupler offsets {} ({}{}), length cost {} ({}), "
+          "A* weight {:g} ({}), "
+          "shortfall "
+          "{:.0f}% ({}), moved into the box by up to {} cells ({}); room: "
+          "pitch {} "
           "({}), margin {} ({}), channel reach {} ({}), channel count {} "
           "({}), report {} ({})",
           chainAStar() ? "prefix A*"
                        : (exactChainSearch() != 0 ? "trellis" : "greedy"),
           from("SCPD_CHAIN_ASTAR"), chainSolo() ? "yes" : "no",
           from("SCPD_CHAIN_SOLO"), chainKeepWays() ? "yes" : "no",
-          from("SCPD_CHAIN_KEEP_WAYS"),
-          static_cast<double>(chainAStarBudget().count()) / 1e9,
-          from("SCPD_CHAIN_ASTAR_SECONDS"), couplerMaxShortfall() * 100.0,
-          from("SCPD_COUPLER_MAX_SHORTFALL"), couplerShift(),
-          from("SCPD_COUPLER_SHIFT"), roomPitch(), from("SCPD_ROOM_PITCH"),
-          roomMargin(), from("SCPD_ROOM_MARGIN"), roomChannelReach(),
-          from("SCPD_ROOM_CHANNEL_REACH"),
+          from("SCPD_CHAIN_KEEP_WAYS"), chainProgressSteps(),
+          from("SCPD_CHAIN_PROGRESS_STEPS"), secondDogleg() ? "on" : "off",
+          from("SCPD_SECOND_DOGLEG"), chainEndEdgeWeight(),
+          from("SCPD_CHAIN_END_EDGE_WEIGHT"), offsetsText(couplerOffsets()),
+          from("SCPD_COUPLER_OFFSETS"),
+          offsetFallbacks_ == 0
+              ? std::string{}
+              : std::format("; {} coupler{} on every offset", offsetFallbacks_,
+                            offsetFallbacks_ == 1 ? "" : "s"),
+          chainLengthCost() ? "on" : "off", from("SCPD_CHAIN_LENGTH_COST"),
+          chainAStarWeight(), from("SCPD_CHAIN_ASTAR_WEIGHT"),
+          couplerMaxShortfall() * 100.0, from("SCPD_COUPLER_MAX_SHORTFALL"),
+          couplerShift(), from("SCPD_COUPLER_SHIFT"), roomPitch(),
+          from("SCPD_ROOM_PITCH"), roomMargin(), from("SCPD_ROOM_MARGIN"),
+          roomChannelReach(), from("SCPD_ROOM_CHANNEL_REACH"),
           roomChannelCount() == 2 ? "ring" : "ways",
           from("SCPD_ROOM_CHANNEL_COUNT"), roomReport() ? "yes" : "no",
           from("SCPD_ROOM_REPORT")));
@@ -4226,6 +4342,11 @@ public:
     std::uint32_t passes = 0;
     if (chainAStar()) {
       passes = optimizeChainsPrefix(wires);
+      if (lengthAudit()) {
+        say(std::format("[Length Audit] {} priced pairs, {} with the bound "
+                        "above the price",
+                        lengthAuditPairs_, lengthAuditAbove_));
+      }
     } else if (exactChainSearch()) {
       passes = optimizeChainsExact(wires);
     } else {
@@ -4401,6 +4522,10 @@ public:
                      : std::string("NO WAY"),
           picture()));
     }
+    std::vector<std::size_t> chosenAtCommit;
+    for (const auto& coupler : couplers_) {
+      chosenAtCommit.push_back(coupler.chosen);
+    }
     if (globalSatSearch() && searchGlobalSat(wires)) {
       // The edges of the couplers the search moved were drawn again.
       drawn = 0;
@@ -4412,6 +4537,9 @@ public:
           angle += angleCostOf(wire.way, wire.objective.target.heading);
         }
       }
+    }
+    if (optionDump()) {
+      sayOptionStats(wires, chosenAtCommit);
     }
     for (std::uint32_t index = 0; index < couplers_.size(); ++index) {
       sayCoupler(wires, index);
@@ -4478,6 +4606,7 @@ public:
               static_cast<double>(boundPairs_),
           chainBound() == 0   ? "turnBound"
           : chainBound() == 3 ? "analytic around the artwork"
+          : chainBound() == 4 ? "analytic with the end runs"
                               : "analytic"));
     }
     if (chainBound() == 3) {
@@ -4543,7 +4672,9 @@ public:
   /// Every option of a coupler on a resonator's way: the prototype's sweep
   /// over the orientation offsets and the mirror, with the direction of the
   /// feedline and one second dogleg on top.
-  [[nodiscard]] std::vector<CouplerOption> optionsOf(Wire& resonator) {
+  [[nodiscard]] std::vector<CouplerOption>
+  optionsOf(Wire& resonator,
+            const std::array<bool, routing::NUM_HEADINGS>& offsets) {
     std::vector<CouplerOption> options;
     // The resonator's own room must not stand in the way of its own body.
     lift(resonator);
@@ -4561,6 +4692,9 @@ public:
     // whole coupler was built at the first point that suited *anybody*.
     const auto places = couplerPlace(resonator);
     for (Heading offset = 0; offset < routing::NUM_HEADINGS; ++offset) {
+      if (!offsets.at(offset)) {
+        continue;
+      }
       for (const bool secondPort : {false, true}) {
         // The second dogleg, as the prototype sweeps it: none, or one of
         // twenty turned each way. It slides the pad sideways off the way it
@@ -4622,6 +4756,7 @@ public:
                 options.size(), tried - 1, places.size(), spot.centreLength,
                 spot.wanted, degreesOfHeading(option->couplerOrientation),
                 option->centre.x, option->centre.y, option->guarded));
+            option->place = static_cast<std::uint32_t>(tried - 1);
             options.push_back(std::move(*option));
             got = true;
             break;
@@ -4751,7 +4886,11 @@ public:
 
   /// Whether any of the eight orientations fits at a cell. A place needs one
   /// — the greedy is free to take another and reach past the box, as it was
-  /// before the box existed.
+  /// before the box existed. All eight whatever `couplerOffsets` allows:
+  /// this picks the places, and an allowed offset may fit a place that only
+  /// another offset fits unmoved once the place is moved into the box, so
+  /// the options of the allowed offsets are those they are without the
+  /// switch.
   [[nodiscard]] bool anyOrientationFits(const std::int64_t cx,
                                         const std::int64_t cy,
                                         const Heading leaves) const {
@@ -6058,15 +6197,21 @@ public:
               : nullptr;
       // The coupler box, for an edge between two couplers: see `edgeInBox`.
       const bool inBox = edgeInBox() && !edge.terminal && !couplerBox_.empty();
-      for (std::int64_t y = 0; y < h; ++y) {
-        const bool outsideRow = y < box_.minY || y > box_.maxY;
-        for (std::int64_t x = 0; x < w; ++x) {
-          const auto cell = static_cast<std::size_t>((y * w) + x);
-          if (outsideRow || x < box_.minX || x > box_.maxX ||
-              (inBox && !couplerBox_.holds(x, y))) {
-            corridor_.set(cell, true);
-          } else if ((guard && bodies_.test(cell)) ||
-                     (foreign != nullptr && foreign->test(cell))) {
+      // Everything outside the box closed a word at a time; the cells
+      // inside it one by one.
+      const auto row = [w](const std::int64_t y, const std::int64_t x) {
+        return static_cast<std::size_t>((y * w) + x);
+      };
+      corridor_.setRange(0, row(box_.minY, 0));
+      corridor_.setRange(row(box_.maxY + 1, 0), row(h, 0));
+      for (std::int64_t y = box_.minY; y <= box_.maxY; ++y) {
+        corridor_.setRange(row(y, 0), row(y, box_.minX));
+        corridor_.setRange(row(y, box_.maxX + 1), row(y + 1, 0));
+        for (std::int64_t x = box_.minX; x <= box_.maxX; ++x) {
+          const auto cell = row(y, x);
+          if ((inBox && !couplerBox_.holds(x, y)) ||
+              (guard && bodies_.test(cell)) ||
+              (foreign != nullptr && foreign->test(cell))) {
             corridor_.set(cell, true);
           }
         }
@@ -6451,16 +6596,24 @@ public:
   /// Which bound the layered search leans on, on the same reasoning as
   /// `exactChainSearch` above: 0 is `turnBound`, 1 the analytic answer, 2
   /// the analytic answer with every step it priced reported beside both,
-  /// and 3 the analytic answer **around the artwork** — every family of
+  /// 3 the analytic answer **around the artwork** — every family of
   /// ways of `k` turns tried against the artwork and the edge box, the
   /// bound raised where all of them are blocked
   /// (`AnalyticDubins::minTurnsAround`, user, 2026-10-05) — with the same
-  /// audit. `SCPD_CHAIN_FAMILY_PATHS` (20000) bounds the ways tried per
-  /// pair; past it the family is left unsettled.
-  [[nodiscard]] static int chainBound() {
-    static const int mode = [] { return envWhole("SCPD_CHAIN_BOUND", 1); }();
-    return mode;
-  }
+  /// audit, and 4 the analytic answer **with the end runs folded in**
+  /// (`stubbedTurns` below). `SCPD_CHAIN_FAMILY_PATHS` (20000) bounds the
+  /// ways mode 3 tries per pair; past it the family is left unsettled.
+  ///
+  /// **Mode 4 is the default.** It is a lower bound like mode 1, only
+  /// sharper, so the search stays exact; measured on 17q/33q/45q it never
+  /// changed a chain's cost and cut the insertion time by up to 57 %.
+  /// `SCPD_CHAIN_BOUND=1` restores the old bound.
+  ///
+  /// The mode is read from the environment once per run, when the driver is
+  /// built, as `readSettings` reads the slot check's switches: not at every
+  /// bound, and not into a process-wide `static`, so one process can still
+  /// compare modes across runs.
+  [[nodiscard]] int chainBound() const { return chainBound_; }
 
   /// The fewest eighth turns an edge between two poses can make, by whichever
   /// bound is switched on. Both are lower bounds on `angleCostOf`, so the
@@ -6475,6 +6628,47 @@ public:
       return boundTurnsAround(from, to);
     }
     return analytic_.minTurns(from, to);
+  }
+
+  /// The forced straight run at a waypoint's port for a named option, as
+  /// `runsOfEdge` reads it off the chosen one.
+  [[nodiscard]] std::uint32_t forcedRunOf(const std::uint32_t chain,
+                                          const std::size_t at,
+                                          const std::size_t option,
+                                          const bool leaving) const {
+    const auto& point = chains_[chain][at];
+    if (point.fixed || (leaving && !couplerStubs())) {
+      return tuning_.straightStart;
+    }
+    return couplers_[point.coupler].options[option].run;
+  }
+
+  /// The analytic bound with the forced end runs folded in
+  /// (`SCPD_CHAIN_BOUND=4`). Every way has to run `first` cells straight out
+  /// of the source and `last` straight into the target, so the rest of it
+  /// covers the displacement less those two runs. Both points are lifted by
+  /// a constant so the shifted target stays inside the unsigned
+  /// coordinates; the bound reads differences only.
+  [[nodiscard]] std::uint32_t stubbedTurns(const PathPoint& from,
+                                           const PathPoint& to,
+                                           const std::uint32_t first,
+                                           const std::uint32_t last) const {
+    constexpr std::int64_t LIFT = 1LL << 20U;
+    const auto vs = routing::headingVector(from.heading & 7U);
+    const auto vt = routing::headingVector(to.heading & 7U);
+    auto a = from;
+    auto b = to;
+    a.x = static_cast<std::uint32_t>(static_cast<std::int64_t>(a.x) + LIFT);
+    a.y = static_cast<std::uint32_t>(static_cast<std::int64_t>(a.y) + LIFT);
+    b.x =
+        static_cast<std::uint32_t>(static_cast<std::int64_t>(b.x) + LIFT -
+                                   ((static_cast<std::int64_t>(first) * vs.dx) +
+                                    (static_cast<std::int64_t>(last) * vt.dx)));
+    b.y =
+        static_cast<std::uint32_t>(static_cast<std::int64_t>(b.y) + LIFT -
+                                   ((static_cast<std::int64_t>(first) * vs.dy) +
+                                    (static_cast<std::int64_t>(last) * vt.dy)));
+    return analytic_.minTurns(a, b);
   }
 
   [[nodiscard]] static std::uint64_t familyPathBudget() {
@@ -6529,7 +6723,7 @@ public:
       ++auditUnreachable_;
       return;
     }
-    const auto truth = static_cast<std::uint32_t>(real / 10000ULL);
+    const auto truth = static_cast<std::uint32_t>(real / bendUnit());
     const auto loose = turnBound(from, to);
     const auto sharp = analytic_.minTurns(from, to);
     if (chainBound() == 3) {
@@ -6561,6 +6755,8 @@ public:
         chain, layer, loose, sharp, truth));
   }
 
+  /// The bound mode of this run; see `chainBound`.
+  int chainBound_ = envWhole("SCPD_CHAIN_BOUND", 4);
   /// What the bound cost and how sharp it was, over the whole insertion.
   std::uint64_t boundPairs_ = 0;
   /// What the family bound did, summed over the insertion.
@@ -6576,6 +6772,14 @@ public:
   std::uint64_t stepBudget_ = routing::TRELLIS_UNREACHABLE;
   std::uint64_t budgetCutoffs_ = 0;
   bool lastCutOff_ = false;
+  /// Under `multiTargetRoute`: what `edgeCost` takes in place of
+  /// `routeEdge` for the step the chain search is pricing, or empty.
+  std::function<Path(const std::vector<Wire>&, const RoutingObjective&,
+                     const Edge&)>
+      multiRoute_;
+  /// The union of the corridors of a multi-target search
+  /// (`multiTargetAnswers`).
+  grid::BitGrid multiCorridor_;
   std::uint64_t boundNanos_ = 0;
   std::uint32_t auditSteps_ = 0;
   std::uint32_t auditUnreachable_ = 0;
@@ -6680,38 +6884,31 @@ public:
     return on;
   }
 
-  /// How long the prefix search may spend on one chain before it settles for
-  /// the cheapest complete run of options it has reached — every edge of that
-  /// run drawn, and drawn against the run itself. `SCPD_CHAIN_ASTAR_SECONDS`
-  /// sets it; zero is no limit and then the answer is always the optimum.
-  ///
-  /// Without one the search is exponential in the worst case, and it is not
-  /// a theoretical worst case: on 57q one chain of nine waypoints had routed
-  /// 24 897 edges in 1 400 s and was not done. Six of the eight chips never
-  /// reach this limit — their whole insertion is under 70 s.
-  ///
-  /// **It is spent per attempt, not per chain.** A chain whose plain options
-  /// do not reach opens its jogs and searches again, and the second attempt
-  /// starts the clock over, so such a chain can spend twice this.
-  ///
-  /// **Twenty seconds, because some chains need more than ten to reach their
-  /// first complete run.** 45q's chain 3 reaches none in 10 s, so one of its
-  /// feedline edges is not drawn. In 20 s it reaches a complete run, and 30,
-  /// 60 and 120 s give the same run. Where a chain reaches its answer early,
-  /// the rest of the time is the proof: 57q's chain 4 comes home at
-  /// **220000 either way**, after 202 edge searches at 10 s and after 3209 at
-  /// 180 s.
-  ///
-  /// The cost is the word in the log: a chain that reaches the limit reports
-  /// `best in the time given` and `ChainSolution::optimal` is false, so the
-  /// search no longer claims an optimum it has not proved.
-  [[nodiscard]] static std::chrono::nanoseconds chainAStarBudget() {
-    static const auto budget = [] {
-      const double seconds = envReal("SCPD_CHAIN_ASTAR_SECONDS", 20.0);
-      return std::chrono::nanoseconds(
-          static_cast<std::int64_t>(std::max(0.0, seconds) * 1e9));
-    }();
-    return budget;
+  /// How often a chain search says how far it has come: every
+  /// `SCPD_CHAIN_PROGRESS_STEPS` priced steps, 100 by default, a
+  /// `[Chain Progress]` line with the steps priced, the edge searches, the
+  /// prefixes expanded, the open list, the deepest layer reached and the
+  /// cheapest complete run so far. Zero says nothing. The search has no time
+  /// limit: it ends on the optimum or when it has seen every run of options,
+  /// so its answer does not depend on the speed of the machine. These lines
+  /// show a search that grows without end while it runs.
+  /// Whether the prefix search checks a step's capacity when it takes the
+  /// step's prefix off its open list rather than when it prices the step:
+  /// `SCPD_LAZY_STEP_CHECK`, off. The check only refuses and never changes a
+  /// price, and a refused prefix grows nothing either way, so the search
+  /// takes the same prefixes and gives the same answer; the steps it prices
+  /// and never takes are not checked. The step that completes a run is
+  /// checked when priced, since it becomes the incumbent at once. With the
+  /// learned bound on (`chainLearnedBound`) every step is checked when
+  /// priced. Fewer `[Capacity Step]` lines and checks are counted, in
+  /// another order. Read on every call.
+  [[nodiscard]] static bool lazyStepCheck() {
+    return envFlag("SCPD_LAZY_STEP_CHECK", false);
+  }
+
+  [[nodiscard]] static std::uint32_t chainProgressSteps() {
+    return static_cast<std::uint32_t>(
+        std::clamp(envWhole("SCPD_CHAIN_PROGRESS_STEPS", 100), 0, 1000000));
   }
 
   /// Whether a chain is searched as though the other chains were not there:
@@ -6916,32 +7113,6 @@ public:
     return k;
   }
 
-  /// The clock of one segment's search, the whole enumeration of its runs
-  /// **and their legality tests** included: `SCPD_RESEARCH_SECONDS`, 20 s;
-  /// zero is no limit. A legality test is a local sweep and takes seconds,
-  /// so the search reads the clock again after every refusal. As every
-  /// wall-clock budget, it makes the answer machine-dependent
-  /// (handover-chain-astar, trap 0); a run that has to reproduce to the
-  /// digit sets 0 and pays for it in time.
-  ///
-  /// **Twenty seconds is the binding budget on the large chips** (measured
-  /// 2026-10-04, `artifacts/logs/research`): on 69q the segments of chains 0
-  /// and 9 — six and five edges, 8229 and 6299 option pairs — reach no
-  /// complete run at all in 20 s (288 and 293 edge searches), and on 33q
-  /// chain 0 tests three candidates before the clock stops it; 6 of 20
-  /// legality tests were used on 69q, 7 on 33q. The trials are the budget
-  /// the user set; this clock is what keeps a wide segment from eating them
-  /// all, and the sweep over it (or over `SCPD_RESEARCH_GROW`, which sets
-  /// the width) is still owed.
-  [[nodiscard]] static std::chrono::nanoseconds researchBudget() {
-    static const auto budget = [] {
-      const double seconds = envReal("SCPD_RESEARCH_SECONDS", 20.0);
-      return std::chrono::nanoseconds(
-          static_cast<std::int64_t>(std::max(0.0, seconds) * 1e9));
-    }();
-    return budget;
-  }
-
   /// How many rounds the local rip-up-and-reroute sweeps:
   /// `SCPD_RESEARCH_ROUNDS`,
   /// 2. Not 1 by default: a wire the relaxation releases late in a round
@@ -6960,9 +7131,8 @@ public:
   /// edges of every chain is searched as the targeted repair searches it,
   /// and each run it reaches is judged by both and put back.
   [[nodiscard]] static std::uint32_t localAgreementRuns() {
-    static const auto runs = static_cast<std::uint32_t>(
+    return static_cast<std::uint32_t>(
         std::clamp(envWhole("SCPD_LOCAL_AGREEMENT", 0), 0, 1000));
-    return runs;
   }
 
   /// Whether the comparison looks at the feedline and the wires it encloses
@@ -7048,19 +7218,140 @@ public:
     return on;
   }
 
-  /// The clock of one segment's search in the comparison, its tests
-  /// included: `SCPD_LOCAL_AGREEMENT_SECONDS`, 120 s.
-  [[nodiscard]] static std::chrono::nanoseconds localAgreementBudget() {
-    static const auto budget = [] {
-      const double seconds = envReal("SCPD_LOCAL_AGREEMENT_SECONDS", 120.0);
-      return std::chrono::nanoseconds(
-          static_cast<std::int64_t>(std::max(0.0, seconds) * 1e9));
-    }();
-    return budget;
+  /// Whether the coupler insertion may open the second-dogleg options of a
+  /// coupler (`Coupler::jogsUnlocked`): `SCPD_SECOND_DOGLEG`, **off** (user,
+  /// 2026-10-22). Off, no search offers or prices an option with a second
+  /// dogleg, and a coupler starts on its first option without one. On 45q
+  /// the opened jogs cost chain 2 its plain optimum (140000 became 160000)
+  /// and chain 6 needed 2977 prefixes to prove its optimum. `=1` opens them
+  /// where a chain does not reach past a coupler on plain options and in the
+  /// segment search (`researchJogs`), as before. Read on every call, so that
+  /// one process can compare both.
+  [[nodiscard]] static bool secondDogleg() {
+    return envFlag("SCPD_SECOND_DOGLEG", false);
+  }
+
+  /// The weight of an edge between a launcher and the coupler beside it in
+  /// the chain searches: `SCPD_CHAIN_END_EDGE_WEIGHT`, **0.1** (user,
+  /// 2026-10-22), from 0 to 1000; 1 is the price before. The feedline
+  /// routing draws those edges again anyway. With 0.1 and the offsets of
+  /// `couplerOffsets` the Final stage of 4q to 57q took 634 s instead of
+  /// 1843 s (45q 519 → 214 s, 57q 1132 → 244 s), every chip ended globally
+  /// SAT, the fails stayed but for 57q (0 → 2 short) and the feedline angle
+  /// cost rose on 17q (49 → 53), 21q (52 → 54) and 57q (134 → 140). The
+  /// trellis, the prefix search and the segment search price such an edge,
+  /// and bound it, at the weight times its price (`weighted`); the edge is
+  /// still routed, still fenced against the later edges and still stands in
+  /// every step check, so the capacity rule judges the same chip. An edge
+  /// with no way still shuts its prefix. A chain end with a reflector has no
+  /// launcher and so no such edge; a chain of two launchers has one edge,
+  /// which is weighted. The greedy keeps its own price. Read on every call.
+  [[nodiscard]] static double chainEndEdgeWeight() {
+    return std::clamp(envReal("SCPD_CHAIN_END_EDGE_WEIGHT", 0.1), 0.0, 1000.0);
+  }
+
+  /// The offsets the option generator turns a pad by, off the heading the
+  /// resonator's way holds at the place (`CouplerOption::offset`):
+  /// `SCPD_COUPLER_OFFSETS`, a comma list of offsets from 0 to 7,
+  /// **0,1,2,5,6,7** by default (user, 2026-10-22); `0,1,2,3,4,5,6,7` is
+  /// every offset, as before. On 4q to 45q offsets 3 and 4, the pad turned
+  /// 135° and 180° against the way, took 35 % of the priced steps of the
+  /// chain search and no chip ever chose one; see `chainEndEdgeWeight` for
+  /// what the two defaults do together. A coupler with no option on the
+  /// allowed offsets takes every offset, and says so. A list with no valid
+  /// offset gives the default. Read on every call.
+  [[nodiscard]] static std::array<bool, routing::NUM_HEADINGS>
+  couplerOffsets() {
+    std::array<bool, routing::NUM_HEADINGS> on{};
+    on.fill(true);
+    on.at(3) = false;
+    on.at(4) = false;
+    const char* text = envSet("SCPD_COUPLER_OFFSETS");
+    if (text == nullptr) {
+      return on;
+    }
+    std::array<bool, routing::NUM_HEADINGS> listed{};
+    bool any = false;
+    std::string_view rest(text);
+    while (!rest.empty()) {
+      const auto comma = rest.find(',');
+      auto item = rest.substr(0, comma);
+      rest = comma == std::string_view::npos ? std::string_view{}
+                                             : rest.substr(comma + 1);
+      while (!item.empty() && item.front() == ' ') {
+        item.remove_prefix(1);
+      }
+      while (!item.empty() && item.back() == ' ') {
+        item.remove_suffix(1);
+      }
+      if (item.size() == 1 && item.front() >= '0' &&
+          item.front() < static_cast<char>('0' + routing::NUM_HEADINGS)) {
+        listed.at(static_cast<std::size_t>(item.front() - '0')) = true;
+        any = true;
+      }
+    }
+    return any ? listed : on;
+  }
+
+  /// The allowed offsets as a comma list.
+  [[nodiscard]] static std::string
+  offsetsText(const std::array<bool, routing::NUM_HEADINGS>& offsets) {
+    std::string text;
+    for (std::size_t offset = 0; offset < offsets.size(); ++offset) {
+      if (offsets.at(offset)) {
+        text += std::format("{}{}", text.empty() ? "" : ",", offset);
+      }
+    }
+    return text;
+  }
+
+  /// How many couplers took every offset because none of the allowed ones
+  /// fits them (`couplerOffsets`).
+  std::uint32_t offsetFallbacks_ = 0;
+
+  /// The weight of edge `at` of chain `chain` in the chain searches:
+  /// `chainEndEdgeWeight` for an edge with a launcher at one end, 1 else.
+  [[nodiscard]] double edgeWeight(const std::uint32_t chain,
+                                  const std::size_t at) const {
+    return atLauncher(chain, at) ? chainEndEdgeWeight() : 1.0;
+  }
+
+  /// A price or a bound of the chain searches times `weight`, rounded to
+  /// the nearest whole number, halves away from zero (`std::llround`). The
+  /// rounding never lowers a larger value below a smaller one, so a bound
+  /// weighted alike stays a lower bound. TRELLIS_UNREACHABLE and a weight
+  /// of 1 leave the value as it is.
+  [[nodiscard]] static std::uint64_t weighted(const std::uint64_t value,
+                                              const double weight) {
+    if (value == routing::TRELLIS_UNREACHABLE || weight == 1.0) {
+      return value;
+    }
+    return static_cast<std::uint64_t>(
+        std::llround(weight * static_cast<double>(value)));
+  }
+
+  /// The turn budget of an edge of weight `weight` from the step budget of
+  /// its prefix (`ChainProblem::stepBudget`, in weighted price): its way may
+  /// cost up to `(budget + 0.5) / weight` unweighted and still round to no
+  /// more than the budget, so the router is told that, rounded up. A weight
+  /// of 0 leaves the edge without a budget: no way of it can cost more.
+  [[nodiscard]] static std::uint64_t weightedBudget(const std::uint64_t budget,
+                                                    const double weight) {
+    if (budget == routing::TRELLIS_UNREACHABLE || weight == 1.0) {
+      return budget;
+    }
+    if (weight == 0.0) {
+      return routing::TRELLIS_UNREACHABLE;
+    }
+    const auto most = std::ceil((static_cast<double>(budget) + 0.5) / weight);
+    return most >= static_cast<double>(routing::TRELLIS_UNREACHABLE)
+               ? routing::TRELLIS_UNREACHABLE
+               : static_cast<std::uint64_t>(most);
   }
 
   /// Whether the second-dogleg options are open for the couplers a segment
-  /// re-searches: `SCPD_RESEARCH_JOGS`, on. The jogs are exactly the
+  /// re-searches: `SCPD_RESEARCH_JOGS`, on; only under `secondDogleg`. The
+  /// jogs are exactly the
   /// "new/old options" a re-search should explore — a pad slid sideways
   /// off the way it sits on — and the insertion opened them only where a
   /// chain hit a wall. `jogsUnlocked` is monotone, so a coupler re-searched
@@ -7241,13 +7532,6 @@ public:
     return offsets;
   }
 
-  /// How long the capacity check of `reportCapacityGraph` may search, in
-  /// seconds: `SCPD_CAPACITY_SECONDS`, 30.
-  [[nodiscard]] static double capacitySeconds() {
-    static const auto seconds =
-        std::clamp(envReal("SCPD_CAPACITY_SECONDS", 30.0), 1.0, 3600.0);
-    return seconds;
-  }
   /// `grid::BottleneckOptions::minimumRise` for `reportBottlenecks`, in
   /// cells: `SCPD_BOTTLENECK_RISE`, 2. Zero keeps every local minimum of
   /// the clearance along the axis.
@@ -8167,6 +8451,9 @@ public:
       std::uint32_t right = NO_OWNER;
     };
     std::vector<CrossingSlot> crossingSlots;
+    /// The cells whose label this pass wrote: every cell of a wall but the
+    /// border and the artwork (`baseWalls`).
+    grid::BitGrid drawn;
   };
 
   /// One bottleneck as `reportBottlenecks` measured it: its length in
@@ -8449,6 +8736,7 @@ public:
       const auto cell = static_cast<std::size_t>((y * width) + x);
       walls.mask.set(cell);
       walls.of[cell] = wall;
+      walls.drawn.set(cell);
     };
     // A line through cells as an obstacle, inflated by `wallInflation`: the
     // line takes its cells whatever holds them, the disc around each cell
@@ -8480,6 +8768,7 @@ public:
       for (const auto cell : line) {
         walls.mask.set(cell);
         walls.of[cell] = wall;
+        walls.drawn.set(cell);
       }
       walls.strokes.emplace_back(wall, points);
     };
@@ -8492,6 +8781,7 @@ public:
       const auto& base = baseWalls();
       walls.of.assign(base.of.begin(), base.of.end());
       walls.mask = base.mask;
+      walls.drawn = grid::BitGrid(scene_.router.width, scene_.router.height);
     }
 
     for (std::size_t index = 0; index < couplers_.size(); ++index) {
@@ -8507,6 +8797,7 @@ public:
       for (const auto cell : coupler.options[coupler.chosen].body) {
         walls.mask.set(cell);
         walls.of[cell] = pad;
+        walls.drawn.set(cell);
       }
     }
 
@@ -8548,6 +8839,7 @@ public:
         } else {
           walls.mask.set(cell);
           walls.of[cell] = place == RunCell::Right ? right : left;
+          walls.drawn.set(cell);
         }
       }
       walls.strokes.emplace_back(left, stamp.line);
@@ -8820,6 +9112,7 @@ public:
             if (walls.of[*cell] == NO_OWNER) {
               walls.mask.set(*cell);
               walls.of[*cell] = flank;
+              walls.drawn.set(*cell);
             }
           }
           walls.strokes.emplace_back(flank, line);
@@ -9007,6 +9300,13 @@ public:
   /// stretches. The check reads the graph in memory (`slotGraphOf`).
   [[nodiscard]] static bool slotCheckSteps() {
     return envFlag("SCPD_SLOT_CHECK_STEPS", true);
+  }
+  /// Whether `capacityVerdictOf` prints a `[Capacity Split]` line per check
+  /// with the seconds of the stretch pass, the slot-graph build and the slot
+  /// check: `SCPD_STEP_PROFILE`, off. The split says which of the three to
+  /// make faster next.
+  [[nodiscard]] static bool stepProfile() {
+    return envFlag("SCPD_STEP_PROFILE", false);
   }
 
   /// The bottlenecks the coupler insertion has a hand in (user,
@@ -11035,10 +11335,8 @@ public:
     lap("stretches and ports");
     FlowCheck check;
     if (capacityFlow()) {
-      milp::SolveOptions options;
-      options.timeLimit = capacitySeconds();
-      check =
-          checkCapacity(chambers.count, problem.flowEdges, demands, options);
+      check = checkCapacity(chambers.count, problem.flowEdges, demands,
+                            milp::SolveOptions{});
       lap("flow");
     } else {
       check = checkInTurn(chambers.count, problem.flowEdges, demands,
@@ -11343,6 +11641,12 @@ public:
   /// chain said it, and how many passes.
   mutable std::array<double, 9> fastLaps_{};
   mutable std::uint32_t fastPasses_ = 0;
+  /// Under `stepProfile`: the seconds of the parts of the passes' saddles
+  /// lap since the last chain said them, in the order of `SADDLE_PARTS`.
+  mutable std::array<double, 6> saddleLaps_{};
+  static constexpr std::array<std::string_view, 6> SADDLE_PARTS{
+      "setup",         "profiles",         "coupler cuts",
+      "cuts at walls", "mouths and slots", "crossing gates"};
 
   /// The widest gap a bottleneck spans, in cells: `bottleneckWires` wires.
   [[nodiscard]] double widestGap() const {
@@ -11541,6 +11845,7 @@ public:
   /// run's slot is closed at its mouth.
   [[nodiscard]] std::vector<grid::Bottleneck>
   fastGates(const std::vector<Wire>& wires, const Walls& walls) const {
+    const auto settingUp = std::chrono::steady_clock::now();
     const auto& fast = fastCapacityOf(wires);
     std::vector<grid::ProfileRole> roles;
     std::vector<std::uint32_t> runs;
@@ -11648,25 +11953,56 @@ public:
     }
     const std::array<const grid::NearestBlocked*, 2> fields{&fast.inside,
                                                             &fast.outside};
-    return grid::profileCuts(
-        {.width = scene_.router.width,
-         .height = scene_.router.height,
-         .wallOf = walls.of,
-         .roles = roles,
-         .runs = runs,
-         .fields = fields,
-         .slots = &slots,
-         .lines = lines,
-         .mouths = mouths},
-        {.widest = widestGap(),
-         .minimumRise = 2.0 * bottleneckRise(),
-         .sameNarrowing = static_cast<double>(roomPitch()),
-         .narrowest = FAST_NARROWEST,
-         .clearance = narrowingAtItsMouths()
-                          ? static_cast<double>(tuning_.clearance)
-                          : 0.0,
-         .dropCrossing = noCrossingCuts(),
-         .keepEdgeWedges = keepEdgeWedges()});
+    const auto profiling = std::chrono::steady_clock::now();
+    if (stepProfile()) {
+      saddleLaps_[0] +=
+          std::chrono::duration<double>(profiling - settingUp).count();
+    }
+    const grid::ProfileScene profileScene{.width = scene_.router.width,
+                                          .height = scene_.router.height,
+                                          .wallOf = walls.of,
+                                          .roles = roles,
+                                          .runs = runs,
+                                          .fields = fields,
+                                          .slots = &slots,
+                                          .walls = &walls.drawn,
+                                          .lines = lines,
+                                          .mouths = mouths};
+    const grid::ProfileOptions profileOptions{
+        .widest = widestGap(),
+        .minimumRise = 2.0 * bottleneckRise(),
+        .sameNarrowing = static_cast<double>(roomPitch()),
+        .narrowest = FAST_NARROWEST,
+        .clearance = narrowingAtItsMouths()
+                         ? static_cast<double>(tuning_.clearance)
+                         : 0.0,
+        .dropCrossing = noCrossingCuts(),
+        .keepEdgeWedges = keepEdgeWedges()};
+    auto cuts =
+        profileMemoOn()
+            ? grid::profileCuts(profileScene, profileOptions, profileMemo_)
+            : grid::profileCuts(profileScene, profileOptions);
+    if (profileMemoOn() && reuseVerify()) {
+      const auto plain = grid::profileCuts(profileScene, profileOptions);
+      const auto same = [](const grid::Bottleneck& a,
+                           const grid::Bottleneck& b) {
+        return a.first == b.first && a.second == b.second &&
+               a.saddle == b.saddle;
+      };
+      if (!std::ranges::equal(cuts, plain, same)) {
+        throw std::logic_error(std::format(
+            "[Reuse Verify] profile cuts {}: the memo gives {} cuts, the "
+            "plain call {}, or other cuts",
+            reuseVerified_.profiles, cuts.size(), plain.size()));
+      }
+      ++reuseVerified_.profiles;
+    }
+    if (stepProfile()) {
+      saddleLaps_[1] += std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - profiling)
+                            .count();
+    }
+    return cuts;
   }
   /// Whether a narrowing the profile cuts find is cut at both of its ends,
   /// as far along the wall as the gap holds as few wires as at its
@@ -11701,6 +12037,31 @@ public:
   /// A gap narrower than this many cells is a contact between two walls,
   /// not a bottleneck, for `fastGates`.
   static constexpr double FAST_NARROWEST = 3.0;
+
+  /// Whether `fastGates` keeps the work on the walls from pass to pass
+  /// (`grid::ProfileMemo`): `SCPD_PROFILE_MEMO`, on. The memo finds the
+  /// traces, lines and gaps of the walls a step left as they were by their
+  /// content, so the cuts are the same with it as without it.
+  [[nodiscard]] static bool profileMemoOn() {
+    static const bool on = envFlag("SCPD_PROFILE_MEMO", true);
+    return on;
+  }
+  /// The traces, lines and gaps `fastGates` keeps (`profileMemoOn`).
+  mutable grid::ProfileMemo profileMemo_;
+
+  /// Whether every pass checks the work it reuses from the pass before
+  /// against the work done in full, and throws on a difference:
+  /// `SCPD_REUSE_VERIFY`, off. A development check of the memo of the
+  /// profile cuts.
+  [[nodiscard]] static bool reuseVerify() {
+    static const bool on = envFlag("SCPD_REUSE_VERIFY", false);
+    return on;
+  }
+  /// How many passes `reuseVerify` compared, by what they reused.
+  struct ReuseVerified {
+    std::uint64_t profiles = 0;
+  };
+  mutable ReuseVerified reuseVerified_;
 
   /// The analysis of `reportBottlenecks` and `reportCapacityGraph` without
   /// a line of log, with the feedline edge of wire `without` left out.
@@ -11737,8 +12098,15 @@ public:
       lap();
       lap();
       lap();
-      pass.gates = couplerCuts(pass.walls.list, pass.walls.of,
-                               fastGates(wires, pass.walls));
+      auto profiled = fastGates(wires, pass.walls);
+      const auto cutting = std::chrono::steady_clock::now();
+      pass.gates =
+          couplerCuts(pass.walls.list, pass.walls.of, std::move(profiled));
+      if (stepProfile()) {
+        saddleLaps_[2] += std::chrono::duration<double>(
+                              std::chrono::steady_clock::now() - cutting)
+                              .count();
+      }
     } else {
       const auto distance = grid::squaredDistanceTransform(pass.walls.mask);
       lap();
@@ -11753,9 +12121,19 @@ public:
               pass.walls.mask, axis, distance, scene_.router,
               bottleneckOptionsOf(pass.walls.slots, pass.walls.of)));
     }
+    auto part = std::chrono::steady_clock::now();
+    const auto partDone = [&](const std::size_t which) {
+      const auto now = std::chrono::steady_clock::now();
+      if (fast && stepProfile()) {
+        saddleLaps_.at(which) +=
+            std::chrono::duration<double>(now - part).count();
+      }
+      part = now;
+    };
     if (cutsGatesAtWalls()) {
       pass.gates = cutGatesAtWalls(pass.gates, pass.walls);
     }
+    partDone(3);
     if (terminalsAsWires) {
       pass.mouthsFrom = pass.gates.size();
       const auto mouths = mouthGates(wires, edges, pass.walls);
@@ -11768,7 +12146,9 @@ public:
         pass.gates.push_back(slot);
       }
     }
+    partDone(4);
     dropCrossingGates(pass.gates, pass.mouthsFrom, pass.slotsFrom);
+    partDone(5);
     lap();
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     std::vector<MeasuredBottleneck> measured;
@@ -11796,10 +12176,8 @@ public:
                                      pass.chambers, terminalsAsWires);
     lap();
     if (capacityFlow()) {
-      milp::SolveOptions options;
-      options.timeLimit = capacitySeconds();
       pass.check = checkCapacity(pass.chambers.count, pass.problem.flowEdges,
-                                 pass.problem.demands, options);
+                                 pass.problem.demands, milp::SolveOptions{});
     } else {
       pass.check =
           checkInTurn(pass.chambers.count, pass.problem.flowEdges,
@@ -11960,8 +12338,7 @@ public:
         full->problem.flowEdges.size(), full->problem.demands.size(),
         full->unrouted, full->check.shortBy,
         capacityFlow() ? "the flow" : "the wires in turn"));
-    milp::SolveOptions options;
-    options.timeLimit = capacitySeconds();
+    const milp::SolveOptions options;
     std::vector<double> flows;
     std::vector<double> turns;
     for (std::uint32_t round = 0; round < repeats; ++round) {
@@ -12391,14 +12768,239 @@ public:
     });
   }
 
+  /// Under `stepProfile`: how many edge searches `routeEdge` ran, the
+  /// seconds of their corridors and of the router, and the states they
+  /// expanded, since the run began.
+  struct EdgeSplit {
+    std::uint64_t searches = 0;
+    double corridor = 0.0;
+    double route = 0.0;
+    /// The states the searches expanded (`lastSearchExpansions`).
+    std::uint64_t expansions = 0;
+  };
+  EdgeSplit edgeSplit_;
+
+  /// Under `stepProfile`: the edge searches of `routeEdge` by their outcome
+  /// — a way, no way because the turn bound dropped a move, or no way with
+  /// nothing dropped — with the states they expanded and their seconds;
+  /// and, for the searches cut off while the step's analytic bound was
+  /// known (`stepBound_`), how many had a bound of more turns than the
+  /// bound the router got, and the mean turns between the two.
+  struct RouterClass {
+    std::uint64_t calls = 0;
+    std::uint64_t budgeted = 0;
+    std::uint64_t expansions = 0;
+    std::uint64_t most = 0;
+    double seconds = 0.0;
+  };
+  struct RouterClasses {
+    RouterClass found;
+    RouterClass cutOff;
+    RouterClass noWay;
+    std::uint64_t boundKnown = 0;
+    std::uint64_t boundAbove = 0;
+    double boundGap = 0.0;
+  };
+  RouterClasses routerClasses_;
+  /// The analytic bound of the step the chain search is pricing
+  /// (`pairBound`, at weight 1), or TRELLIS_UNREACHABLE.
+  std::uint64_t stepBound_ = routing::TRELLIS_UNREACHABLE;
+
+  /// The `[Router Classes]` line of `what`, and the classes cleared.
+  void sayRouterClasses(const std::string& what) {
+    if (!stepProfile()) {
+      return;
+    }
+    const auto text = [](const RouterClass& one) {
+      return std::format(
+          "{} ({} under a budget), {} states expanded (mean {:.0f}, most {}), "
+          "{:.3f}s",
+          one.calls, one.budgeted, one.expansions,
+          one.calls == 0 ? 0.0
+                         : static_cast<double>(one.expansions) /
+                               static_cast<double>(one.calls),
+          one.most, one.seconds);
+    };
+    const auto& c = routerClasses_;
+    say(std::format("[Router Classes] {}: found {}; cut off {}; no way {}; of "
+                    "{} cut off with the step's bound known, {} had a bound "
+                    "above the turn budget, the budget {:.2f} eighth turns "
+                    "above the bound on average",
+                    what, text(c.found), text(c.cutOff), text(c.noWay),
+                    c.boundKnown, c.boundAbove,
+                    c.boundKnown == 0
+                        ? 0.0
+                        : c.boundGap / static_cast<double>(c.boundKnown)));
+    routerClasses_ = {};
+  }
+
+  /// The `[Edge Split]` line of `what`: the edge searches since `since`.
+  void sayEdgeSplit(const std::string& what, const EdgeSplit& since) const {
+    if (!stepProfile()) {
+      return;
+    }
+    say(std::format("[Edge Split] {}: {} edge searches, corridor {:.3f}s, "
+                    "route {:.3f}s, {} states expanded",
+                    what, edgeSplit_.searches - since.searches,
+                    edgeSplit_.corridor - since.corridor,
+                    edgeSplit_.route - since.route,
+                    edgeSplit_.expansions - since.expansions));
+  }
+
+  /// Whether the coupler insertion says, after the global SAT search, one
+  /// `[Option Stats]` line per coupler with every option and how the
+  /// searches used it: `SCPD_OPTION_DUMP`, off. `mqt-scpd plan` writes these
+  /// lines into `<run>/option-stats.jsonl` and leaves them out of the log.
+  /// The counts change no result.
+  [[nodiscard]] static bool optionDump() {
+    return envFlag("SCPD_OPTION_DUMP", false);
+  }
+
+  /// How the searches of the insertion used one option of one coupler
+  /// (`optionDump`).
+  struct OptionUse {
+    /// Steps of the chain search that laid an edge onto the option.
+    std::uint32_t priced = 0;
+    /// Prefixes the chain search expanded whose last choice is the option.
+    std::uint32_t expanded = 0;
+    /// Step checks of such steps that found the chip SAT, and UNSAT.
+    std::uint32_t sat = 0;
+    std::uint32_t unsat = 0;
+    /// Steps of the segment search (targeted repair and the collection of
+    /// the global SAT search) that laid an edge onto the option.
+    std::uint32_t segment = 0;
+  };
+  std::vector<std::vector<OptionUse>> optionUses_;
+
+  /// The use of option `option` of coupler `coupler`, or nothing when the
+  /// dump is off.
+  [[nodiscard]] OptionUse* useOf(const std::uint32_t coupler,
+                                 const std::size_t option) {
+    if (!optionDump() || coupler >= couplers_.size()) {
+      return nullptr;
+    }
+    optionUses_.resize(couplers_.size());
+    auto& uses = optionUses_[coupler];
+    uses.resize(couplers_[coupler].options.size());
+    return option < uses.size() ? &uses[option] : nullptr;
+  }
+
+  /// The `[Option Stats]` lines (`optionDump`): per coupler its chain and
+  /// waypoint, its options with what the generator varied and how the
+  /// searches used each, the option chosen at the commit and after the
+  /// global SAT search, and in how many kept chain states of the global SAT
+  /// search (the commit's state included) each option stands.
+  void sayOptionStats(const std::vector<Wire>& wires,
+                      const std::vector<std::size_t>& chosenAtCommit) {
+    using nlohmann::json;
+    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      const auto& points = chains_[chain];
+      for (std::size_t at = 0; at < points.size(); ++at) {
+        if (points[at].fixed) {
+          continue;
+        }
+        const auto index = points[at].coupler;
+        const auto& coupler = couplers_[index];
+        std::vector<std::uint32_t> states(coupler.options.size(), 0);
+        if (chain < chainStates_.size()) {
+          for (const auto& state : chainStates_[chain]) {
+            if (at < state.size() && state[at] < states.size()) {
+              ++states[state[at]];
+            }
+          }
+        }
+        json options = json::array();
+        for (std::size_t k = 0; k < coupler.options.size(); ++k) {
+          const auto& option = coupler.options[k];
+          const auto* use = useOf(index, k);
+          const OptionUse none;
+          const auto& used = use != nullptr ? *use : none;
+          const auto feedline = static_cast<int>(option.out.heading);
+          options.push_back(
+              {{"index", k},
+               {"orientation", static_cast<int>(option.orientation)},
+               {"offset", static_cast<int>(option.offset)},
+               {"couplerOrientation",
+                static_cast<int>(option.couplerOrientation)},
+               {"feedlineHeading", feedline},
+               {"couplerToFeedline",
+                (static_cast<int>(option.couplerOrientation) - feedline +
+                 routing::NUM_HEADINGS) %
+                    routing::NUM_HEADINGS},
+               {"secondPort", option.secondPort},
+               {"secondStraight", option.secondStraight},
+               {"secondReverse", option.secondReverse},
+               {"place", option.place},
+               {"shiftX", option.shiftX},
+               {"shiftY", option.shiftY},
+               {"run", option.run},
+               {"depth", option.depth},
+               {"guarded", option.guarded},
+               {"priced", used.priced},
+               {"expanded", used.expanded},
+               {"sat", used.sat},
+               {"unsat", used.unsat},
+               {"segment", used.segment},
+               {"states", states[k]}});
+        }
+        say("[Option Stats] " +
+            json{{"chain", chain},
+                 {"waypoint", at},
+                 {"coupler", index},
+                 {"resonator", wireId(wires[coupler.wire])},
+                 {"options", coupler.options.size()},
+                 {"chosenAtCommit", index < chosenAtCommit.size()
+                                        ? chosenAtCommit[index]
+                                        : coupler.chosen},
+                 {"chosen", coupler.chosen},
+                 {"jogs", coupler.jogsUnlocked},
+                 {"perOption", options}}
+                .dump());
+      }
+    }
+  }
+
+  /// The `[Slot Split]` line of `what`: the seconds of the parts of the
+  /// fast slot checks since the last such line, per check
+  /// (`fast::takeSlotCheckSplit`). Under `SCPD_STEP_PROFILE` alone.
+  void saySlotSplit(const std::string& what) const {
+    const auto split = fast::takeSlotCheckSplit();
+    if (!stepProfile()) {
+      return;
+    }
+    const auto per = [&](const double seconds) {
+      return split.checks == 0 ? 0.0
+                               : seconds / static_cast<double>(split.checks);
+    };
+    say(std::format(
+        "[Slot Split] {}: {} checks, seconds per check: setup {:.4f}, slot "
+        "placement {:.4f}, self-bottlenecks {:.4f}, stub rooms {:.4f}, escape "
+        "ways {:.4f}, search graph {:.4f}, shortest ways {:.4f}, negotiation "
+        "{:.4f}",
+        what, split.checks, per(split.setup), per(split.placement),
+        per(split.bottlenecks), per(split.rooms), per(split.escapes),
+        per(split.graph), per(split.ways), per(split.negotiation)));
+  }
+
   /// Route one feedline edge, free of any crossing rule, as the prototype
   /// routes its chain edges: the room of every wire is priced, nothing but
-  /// the artwork and the couplers is in the way.
+  /// the artwork and the couplers is in the way. `corridorReady` says the
+  /// caller has just built the corridor of this edge (`segmentWayOf`).
   [[nodiscard]] Path routeEdge(const std::vector<Wire>& wires,
                                const RoutingObjective& objective,
-                               const Edge& edge) {
+                               const Edge& edge,
+                               const bool corridorReady = false) {
     lastPicture_.clear();
-    corridorOfEdge(wires, objective, edge);
+    const bool timing = stepProfile();
+    auto began = std::chrono::steady_clock::now();
+    if (!corridorReady) {
+      corridorOfEdge(wires, objective, edge);
+    }
+    if (timing) {
+      const auto now = std::chrono::steady_clock::now();
+      edgeSplit_.corridor += std::chrono::duration<double>(now - began).count();
+      began = now;
+    }
     // Nothing another wire holds is priced here. An edge is drawn against
     // the artwork and the couplers alone; every wire it passes is drawn
     // again under the feedline constraints afterwards, and the price on its
@@ -12432,12 +13034,46 @@ public:
     // chain search said: see `chainStepBudget`.
     if (stepBudget_ != routing::TRELLIS_UNREACHABLE) {
       router_.setMaxTurns(static_cast<std::int16_t>(
-          std::min<std::uint64_t>(stepBudget_ / 10000ULL, 255ULL)));
+          std::min<std::uint64_t>(stepBudget_ / bendUnit(), 255ULL)));
     }
+    router_.setTurnLowerBound(routerTurnBound());
     auto found = router_.route(objective, true);
+    router_.setTurnLowerBound(false);
+    const double seconds = timing
+                               ? std::chrono::duration<double>(
+                                     std::chrono::steady_clock::now() - began)
+                                     .count()
+                               : 0.0;
+    if (timing) {
+      edgeSplit_.route += seconds;
+      ++edgeSplit_.searches;
+      edgeSplit_.expansions += router_.lastSearchExpansions();
+    }
     lastCutOff_ = stepBudget_ != routing::TRELLIS_UNREACHABLE &&
                   found.empty() && router_.lastSearchCutOff();
     budgetCutoffs_ += lastCutOff_ ? 1 : 0;
+    if (timing) {
+      // The class of this search, for the `[Router Classes]` line.
+      auto& one = !found.empty()
+                      ? routerClasses_.found
+                      : (router_.lastSearchCutOff() ? routerClasses_.cutOff
+                                                    : routerClasses_.noWay);
+      ++one.calls;
+      one.budgeted += stepBudget_ != routing::TRELLIS_UNREACHABLE ? 1U : 0U;
+      one.expansions += router_.lastSearchExpansions();
+      one.most = std::max(one.most, router_.lastSearchExpansions());
+      one.seconds += seconds;
+      if (found.empty() && router_.lastSearchCutOff() &&
+          stepBound_ != routing::TRELLIS_UNREACHABLE &&
+          stepBudget_ != routing::TRELLIS_UNREACHABLE) {
+        ++routerClasses_.boundKnown;
+        routerClasses_.boundAbove +=
+            stepBound_ / bendUnit() > stepBudget_ / bendUnit() ? 1U : 0U;
+        routerClasses_.boundGap +=
+            static_cast<double>(stepBudget_ / bendUnit()) -
+            static_cast<double>(stepBound_ / bendUnit());
+      }
+    }
     router_.setMaxTurns(-1);
     // One picture per search, as the outer routing draws one: what the
     // corridor left open, what the search paid for and the way it took. The
@@ -12525,8 +13161,777 @@ public:
     if (way.empty()) {
       return 0;
     }
-    return (10000ULL * angleCostOf(way, targetHeading)) +
+    return (bendUnit() * angleCostOf(way, targetHeading)) +
+           (chainLengthCost() ? lengthUnitsOf(way) : 0) +
            (lengthWeight() * static_cast<std::uint64_t>(way.size()));
+  }
+
+  /// Whether the chain searches price an edge's way by its length as well
+  /// as by its turns: `SCPD_CHAIN_LENGTH_COST`, off (as before). On, a way
+  /// costs `bendUnit` per eighth turn plus its length in tenths of a cell
+  /// (`lengthUnitsOf`), and the bound of a pair of options adds a lower
+  /// bound on that length (`pairBound`). Among the runs with the fewest
+  /// turns the shortest one wins, where before the search kept whichever it
+  /// proved first; on 45q dozens of runs of chain 6 cost the same. Read on
+  /// every call.
+  [[nodiscard]] static bool chainLengthCost() {
+    return envFlag("SCPD_CHAIN_LENGTH_COST", false);
+  }
+
+  /// Whether the prefix search checks the bound of every pair it prices
+  /// against the price (`pairBound`): `SCPD_CHAIN_LENGTH_AUDIT`, off. A
+  /// development check; a bound above a price says a line `[Length Audit]`,
+  /// and the chain search ends with the counts.
+  [[nodiscard]] static bool lengthAudit() {
+    return envFlag("SCPD_CHAIN_LENGTH_AUDIT", false);
+  }
+  std::uint64_t lengthAuditPairs_ = 0;
+  std::uint64_t lengthAuditAbove_ = 0;
+
+  /// Whether the prefix search of a chain first routes every pair of
+  /// options of its open layers once with no fence of the chain's own edges
+  /// and compares that free-space price with the analytic bound and with
+  /// every price the search pays: `SCPD_FREESPACE_PROBE`, off. A
+  /// measurement; it changes no result. One `[Free-Space Probe]` line per
+  /// chain says what it found.
+  [[nodiscard]] static bool freeSpaceProbe() {
+    return envFlag("SCPD_FREESPACE_PROBE", false);
+  }
+
+  /// Whether the prefix search takes the free-space price of a pair as its
+  /// bound where that is above the analytic one: `SCPD_FREESPACE_BOUND`,
+  /// off. A development replay to count prefixes; the free-space price is
+  /// not proved a lower bound, since the router does not minimise turns
+  /// alone, so it may change results.
+  [[nodiscard]] static bool freeSpaceBound() {
+    return envFlag("SCPD_FREESPACE_BOUND", false);
+  }
+
+  /// Whether the prefix search keeps the way of every pair of options and
+  /// takes it, at its price, wherever a prefix leaves the way open:
+  /// `SCPD_PAIR_MEMO`, 0 (off). At 1 the way is searched once in free space
+  /// — no fence of the chain's own edges; at 2 it is the way of the pair's
+  /// first search under a fence, which a looser fence may beat, so 2 is not
+  /// exact.
+  /// Under a fence the search routes as before. More obstacles leave no
+  /// cheaper way to a router that minimises its own cost, and the free-space
+  /// probe found every priced step of 17q and 45q at its pair's free-space
+  /// price; `SCPD_PAIR_MEMO_AUDIT=1` routes every hit under the fence as
+  /// well and counts where the price or the way differs. The memo lives for
+  /// one go of one chain's search. Read on every call.
+  [[nodiscard]] static int pairMemo() {
+    return std::clamp(envWhole("SCPD_PAIR_MEMO", 0), 0, 2);
+  }
+  [[nodiscard]] static bool pairMemoAudit() {
+    return envFlag("SCPD_PAIR_MEMO_AUDIT", false);
+  }
+  /// A pair's way in free space and its price.
+  struct PairWay {
+    Path way;
+    std::uint64_t price = routing::TRELLIS_UNREACHABLE;
+  };
+  /// What the pair memo of one chain did.
+  struct PairMemoStats {
+    std::uint64_t hits = 0;
+    std::uint64_t searches = 0;
+    std::uint64_t blocked = 0;
+    std::uint64_t none = 0;
+    std::uint64_t audited = 0;
+    /// Hits whose kept price is above, or below, the price of a search
+    /// under the fence, and hits at the same price on another way.
+    std::uint64_t dearer = 0;
+    std::uint64_t cheaper = 0;
+    std::uint64_t otherWay = 0;
+  };
+
+  /// Whether `way`, the free-space way of the edge from waypoint `from` of
+  /// `chain` on option `optionFrom` to the next on `optionTo`, is open
+  /// with `fence` standing (`edgeWayStillOpen`). The two couplers stand on
+  /// the options for the test and are put back.
+  [[nodiscard]] bool
+  pairWayOpen(const std::vector<Wire>& wires, const std::uint32_t chain,
+              const std::size_t from, const std::size_t optionFrom,
+              const std::size_t optionTo, const std::vector<const Path*>& fence,
+              const Path& way) {
+    auto& points = chains_[chain];
+    const auto stand = [&](const std::size_t at, const std::size_t option) {
+      if (points[at].fixed) {
+        return std::size_t{0};
+      }
+      auto& coupler = couplers_[points[at].coupler];
+      const auto kept = coupler.chosen;
+      coupler.chosen = option;
+      return kept;
+    };
+    const auto keptFrom = stand(from, optionFrom);
+    const auto keptTo = stand(from + 1, optionTo);
+    const RoutingObjective objective{.source = sourceOf(points[from]),
+                                     .target = targetOf(points[from + 1])};
+    const Edge edge{.chain = chain,
+                    .from = from,
+                    .to = from + 1,
+                    .terminal = points[from].fixed || points[from + 1].fixed};
+    prefixFence_ = &fence;
+    const bool open = edgeWayStillOpen(wires, objective, edge, way);
+    prefixFence_ = nullptr;
+    stand(from, keptFrom);
+    stand(from + 1, keptTo);
+    return open;
+  }
+
+  /// Whether the prefix search prices the steps into several options of the
+  /// next layer with one router search: `SCPD_MULTI_TARGET_ROUTE`, off. A step
+  /// priced under a prefix whose answer is not stored builds the corridors of
+  /// its own option's edge and of the options `multiTargetEps` takes along,
+  /// under the prefix fence, and searches once from the prefix's leaving port
+  /// to every arriving port
+  /// (`routing::DubinsRouter::routeMulti`), with the turn bound of the
+  /// largest step budget any of those steps gets
+  /// (`routing::ChainProblem::siblingBudget`). Each step then takes its own
+  /// answer and holds it to its own budget: a way with more turns than the
+  /// step's own bound is a cut-off, as the router would have cut it.
+  ///
+  /// The search runs in the **union** of the options' corridors: a cell is
+  /// closed only where every option's corridor closes it. The union holds
+  /// every option's own corridor, so no option's way is lost, and it opens
+  /// nothing that no option may use, as a bounding box of the corridors
+  /// would. A way that enters a cell the option's own corridor closes is not
+  /// taken, and the step is routed alone as before; a way that stays in it
+  /// costs what a search in the own corridor costs, since the union holds
+  /// that search's way too. A way that crosses itself is routed alone as
+  /// well, as is an option the edge memo already holds. The search order is
+  /// the one without the switch: a step is still priced only when the
+  /// search pops it, and only where its price comes from changes. A
+  /// prefix's answers are kept until every option asked has taken its
+  /// answer, and at most for one go of one chain's search. One
+  /// `[Multi Target]` line per chain.
+  /// Read on every call.
+  [[nodiscard]] static bool multiTargetRoute() {
+    return envFlag("SCPD_MULTI_TARGET_ROUTE", false);
+  }
+  /// The options a multi-target search takes along, in eighth turns of the
+  /// chain's own price: `SCPD_MULTI_TARGET_EPS`, 0. The search of a step
+  /// takes every option whose step waits under the same prefix at a key at
+  /// most this far above the step's own key, below the cheapest complete
+  /// run priced so far (`routing::ChainProblem::siblingKeys`). A step whose
+  /// option no search took starts a search of its own when the chain
+  /// search pops it, by the same rule; a step with no option to take along
+  /// is routed alone, as without the switch. Read on every call.
+  [[nodiscard]] static std::uint64_t multiTargetEps() {
+    return static_cast<std::uint64_t>(
+        std::max(envWhole("SCPD_MULTI_TARGET_EPS", 0), 0));
+  }
+  /// Whether every step `multiTargetRoute` answers is routed alone as well,
+  /// and the two compared: `SCPD_MULTI_TARGET_AUDIT`, off. The search
+  /// takes the multi-target answer either way; the `[Multi Target]` line
+  /// counts the steps whose price or way differs. Every multi-target search
+  /// is also timed against the single searches to its targets, by the
+  /// number of targets (`[Multi Target Timing]`), and up to
+  /// `MULTI_BENCH_CASES` searches of four targets or more per chain are
+  /// replayed on four of them (`[Multi Target Bench]`).
+  [[nodiscard]] static bool multiTargetAudit() {
+    return envFlag("SCPD_MULTI_TARGET_AUDIT", false);
+  }
+  /// One option's answer from the multi-target search of a prefix.
+  struct MultiAnswer {
+    /// Whether the option was a target of the search; an option the edge
+    /// memo held was not.
+    bool asked = false;
+    routing::DubinsRouter::MultiRoute route;
+  };
+  /// What the multi-target routing of one chain did.
+  struct MultiTargetStats {
+    std::uint64_t searches = 0;
+    std::uint64_t targets = 0;
+    /// Steps that took a way, found no way, or were cut off by the search's
+    /// bound or by their own.
+    std::uint64_t taken = 0;
+    std::uint64_t noWay = 0;
+    std::uint64_t cutOff = 0;
+    std::uint64_t ownCut = 0;
+    /// Steps routed alone: the way left the own corridor, crossed itself, or
+    /// the option was not a target.
+    std::uint64_t leftOwn = 0;
+    std::uint64_t looped = 0;
+    std::uint64_t notAsked = 0;
+    /// Steps with no other option within `multiTargetEps`, routed alone.
+    std::uint64_t single = 0;
+    /// The audit: steps routed alone as well, and those whose price under
+    /// the multi-target answer is above or below the one alone, those at the
+    /// same price on another way, and those where one found a way and the
+    /// other none.
+    std::uint64_t audited = 0;
+    std::uint64_t dearer = 0;
+    std::uint64_t cheaper = 0;
+    std::uint64_t otherWay = 0;
+    std::uint64_t onlyMulti = 0;
+    std::uint64_t onlyAlone = 0;
+    /// The timing audit of the searches, by their number of targets k (1,
+    /// 2, 3, 4, 5 to 8, 9 and more): how many searches, and the seconds and
+    /// expansions of the multi-target searches and of the single searches
+    /// to the same targets, each in its own corridor.
+    struct Timing {
+      std::uint64_t searches = 0;
+      double multiSeconds = 0.0;
+      double singleSeconds = 0.0;
+      std::uint64_t multiExpansions = 0;
+      std::uint64_t singleExpansions = 0;
+    };
+    std::array<Timing, 6> byTargets{};
+    /// The seconds of the options' corridors, which the single searches
+    /// build as well, and of the copies and the intersection that make the
+    /// union, which only the multi-target search needs.
+    double corridorSeconds = 0.0;
+    double unionSeconds = 0.0;
+    /// Searches of four targets or more, replayed on their first four
+    /// targets: the median seconds of ten multi-target searches and of ten
+    /// rounds of the four single searches, per case.
+    std::vector<std::pair<double, double>> bench;
+  };
+  /// The cases `MultiTargetStats::bench` replays per chain, and the runs of
+  /// each.
+  static constexpr std::size_t MULTI_BENCH_CASES = 20;
+  static constexpr std::size_t MULTI_BENCH_RUNS = 10;
+
+  /// The multi-target search of `multiTargetRoute` for the edge from
+  /// waypoint `at` of `chain` into the options `choices` names at the next
+  /// waypoint where `wanted` is set, against the fence in `prefixFence_`;
+  /// one answer per option of `choices`.
+  /// The coupler at `at` stands on the prefix's option. `remember` says the
+  /// edge memo is asked for this edge, so that an option it holds is left
+  /// out. `budget` is the largest step budget of the options, at weight 1,
+  /// or TRELLIS_UNREACHABLE for none. The coupler at `at + 1` is put back.
+  [[nodiscard]] std::vector<MultiAnswer>
+  multiTargetAnswers(const std::vector<Wire>& wires, const std::uint32_t chain,
+                     const std::size_t at,
+                     const std::vector<std::uint32_t>& choices,
+                     const std::vector<bool>& wanted, const bool remember,
+                     const std::uint64_t budget, MultiTargetStats& stats) {
+    std::vector<MultiAnswer> out(choices.size());
+    auto& points = chains_[chain];
+    if (points[at + 1].fixed) {
+      return out;
+    }
+    const bool timing = stepProfile();
+    auto began = std::chrono::steady_clock::now();
+    const Edge edge{.chain = chain,
+                    .from = at,
+                    .to = at + 1,
+                    .terminal = points[at].fixed || points[at + 1].fixed};
+    const bool audit = multiTargetAudit();
+    const auto secondsSince =
+        [](const std::chrono::steady_clock::time_point from) {
+          return std::chrono::duration<double>(
+                     std::chrono::steady_clock::now() - from)
+              .count();
+        };
+    auto children =
+        childCorridors(wires, chain, at, choices, wanted, remember,
+                       multiCorridor_, audit ? &stats.corridorSeconds : nullptr,
+                       audit ? &stats.unionSeconds : nullptr);
+    auto& corridors = children.corridors;
+    const auto& asked = children.asked;
+    std::vector<routing::DubinsRouter::MultiTarget> targets;
+    for (const auto& target : children.targets) {
+      targets.push_back({.target = target, .own = nullptr});
+    }
+    if (targets.empty()) {
+      return out;
+    }
+    for (std::size_t t = 0; t < targets.size(); ++t) {
+      targets[t].own = &corridors[t];
+    }
+    if (timing) {
+      const auto now = std::chrono::steady_clock::now();
+      edgeSplit_.corridor += std::chrono::duration<double>(now - began).count();
+      began = now;
+    }
+    if (zeroProximity_.size() != proximity_.size()) {
+      zeroProximity_.assign(proximity_.size(), 0);
+    }
+    const auto [startRun, endRun] = runsOfEdge(edge);
+    router_.setParams({.startStraightLength = startRun,
+                       .endStraightLength = endRun,
+                       .minRadius = BEND_RADIUS,
+                       .bendPenalty = edgeBendPenalty()});
+    router_.setSingleCrossingFeedline(nullptr, 0, 1);
+    router_.attachCorridor(&multiCorridor_);
+    router_.attachWireProximity(&zeroProximity_);
+    if (budget != routing::TRELLIS_UNREACHABLE) {
+      router_.setMaxTurns(static_cast<std::int16_t>(
+          std::min<std::uint64_t>(budget / bendUnit(), 255ULL)));
+    }
+    const auto source = sourceOf(points[at]);
+    auto routes = router_.routeMulti(source, targets, true);
+    if (timing || audit) {
+      const auto seconds = secondsSince(began);
+      edgeSplit_.route += timing ? seconds : 0.0;
+      edgeSplit_.searches += timing ? 1 : 0;
+      edgeSplit_.expansions += timing ? router_.lastSearchExpansions() : 0;
+      if (audit) {
+        auto& row = stats.byTargets[multiTimingRow(targets.size())];
+        ++row.searches;
+        row.multiSeconds += seconds;
+        row.multiExpansions += router_.lastSearchExpansions();
+        // The single searches to the same targets, each in its own
+        // corridor, as the steps would route them alone.
+        for (std::size_t t = 0; t < targets.size(); ++t) {
+          const auto lap = std::chrono::steady_clock::now();
+          router_.attachCorridor(&corridors[t]);
+          static_cast<void>(router_.route(
+              {.source = source, .target = targets[t].target}, true));
+          row.singleSeconds += secondsSince(lap);
+          row.singleExpansions += router_.lastSearchExpansions();
+        }
+        if (targets.size() >= 4 && stats.bench.size() < MULTI_BENCH_CASES) {
+          stats.bench.push_back(multiTargetBench(source, targets, corridors));
+        }
+      }
+    }
+    router_.setMaxTurns(-1);
+    ++stats.searches;
+    stats.targets += targets.size();
+    for (std::size_t t = 0; t < targets.size(); ++t) {
+      out[asked[t]] = {.asked = true, .route = std::move(routes[t])};
+    }
+    return out;
+  }
+
+  /// The corridors of the edges of `childCorridors`, the options they lead
+  /// into and the targets they arrive at.
+  struct ChildCorridors {
+    std::vector<std::size_t> asked;
+    std::vector<grid::BitGrid> corridors;
+    std::vector<PathPoint> targets;
+  };
+
+  /// The corridors of the edges from waypoint `at` of `chain` into the
+  /// options `choices` names at the next waypoint where `wanted` is set and,
+  /// with `remember`, the edge memo holds no way, under the fence in
+  /// `prefixFence_`; their union, where a cell is closed only if every one
+  /// closes it, in `joined`. The coupler at `at` stands on the prefix's
+  /// option; the coupler at `at + 1` is put back. The seconds of the
+  /// corridors and of the union are added where asked.
+  [[nodiscard]] ChildCorridors childCorridors(
+      const std::vector<Wire>& wires, const std::uint32_t chain,
+      const std::size_t at, const std::vector<std::uint32_t>& choices,
+      const std::vector<bool>& wanted, const bool remember,
+      grid::BitGrid& joined, double* corridorSeconds, double* unionSeconds) {
+    ChildCorridors out;
+    auto& points = chains_[chain];
+    auto& coupler = couplers_[points[at + 1].coupler];
+    const auto kept = coupler.chosen;
+    const Edge edge{.chain = chain,
+                    .from = at,
+                    .to = at + 1,
+                    .terminal = points[at].fixed || points[at + 1].fixed};
+    const auto secondsSince =
+        [](const std::chrono::steady_clock::time_point from) {
+          return std::chrono::duration<double>(
+                     std::chrono::steady_clock::now() - from)
+              .count();
+        };
+    for (std::size_t k = 0; k < choices.size(); ++k) {
+      if (!wanted[k]) {
+        continue;
+      }
+      coupler.chosen = choices[k];
+      if (remember && edgeMemo_.contains(edgeMemoKey(chain, at))) {
+        continue;
+      }
+      const RoutingObjective objective{.source = sourceOf(points[at]),
+                                       .target = targetOf(points[at + 1])};
+      auto lap = std::chrono::steady_clock::now();
+      corridorOfEdge(wires, objective, edge);
+      if (corridorSeconds != nullptr) {
+        *corridorSeconds += secondsSince(lap);
+      }
+      lap = std::chrono::steady_clock::now();
+      if (out.corridors.empty()) {
+        joined = corridor_;
+      } else {
+        joined &= corridor_;
+      }
+      out.corridors.push_back(corridor_);
+      if (unionSeconds != nullptr) {
+        *unionSeconds += secondsSince(lap);
+      }
+      out.asked.push_back(k);
+      out.targets.push_back(objective.target);
+    }
+    coupler.chosen = kept;
+    return out;
+  }
+
+  /// The row of `MultiTargetStats::byTargets` for a search to `targets`
+  /// targets.
+  [[nodiscard]] static std::size_t multiTimingRow(const std::size_t targets) {
+    if (targets <= 4) {
+      return targets == 0 ? 0 : targets - 1;
+    }
+    return targets <= 8 ? 4 : 5;
+  }
+
+  /// One case of `MultiTargetStats::bench`: the search from `source` to the
+  /// first four `targets` replayed `MULTI_BENCH_RUNS` times, in the union of
+  /// their four corridors, against as many rounds of the four single
+  /// searches, each in its own corridor. Each run attaches its corridors, as
+  /// a search does. The median seconds of each.
+  [[nodiscard]] std::pair<double, double> multiTargetBench(
+      const PathPoint& source,
+      const std::vector<routing::DubinsRouter::MultiTarget>& targets,
+      const std::vector<grid::BitGrid>& corridors) {
+    std::vector<routing::DubinsRouter::MultiTarget> four(targets.begin(),
+                                                         targets.begin() + 4);
+    grid::BitGrid joined = corridors[0];
+    for (std::size_t t = 1; t < 4; ++t) {
+      joined &= corridors[t];
+    }
+    const auto median = [](std::vector<double> seconds) {
+      std::ranges::sort(seconds);
+      return seconds[seconds.size() / 2];
+    };
+    std::vector<double> multi;
+    std::vector<double> singles;
+    for (std::size_t run = 0; run < MULTI_BENCH_RUNS; ++run) {
+      const auto began = std::chrono::steady_clock::now();
+      router_.attachCorridor(&joined);
+      static_cast<void>(router_.routeMulti(source, four, true));
+      multi.push_back(std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - began)
+                          .count());
+    }
+    for (std::size_t run = 0; run < MULTI_BENCH_RUNS; ++run) {
+      const auto began = std::chrono::steady_clock::now();
+      for (std::size_t t = 0; t < 4; ++t) {
+        router_.attachCorridor(&corridors[t]);
+        static_cast<void>(
+            router_.route({.source = source, .target = four[t].target}, true));
+      }
+      singles.push_back(std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - began)
+                            .count());
+    }
+    return {median(multi), median(singles)};
+  }
+
+  /// Whether the prefix search prices the steps under a prefix with one
+  /// Dubins search that pauses after each step and resumes for the next:
+  /// `SCPD_RESUMABLE_ROUTE`, off. The first step priced under a prefix
+  /// builds the corridor of its own option's edge and of every option whose
+  /// step still waits under the prefix (`routing::ChainProblem::siblingKeys`),
+  /// under the prefix fence, and starts a search in their union from the
+  /// prefix's leaving port (`routing::DubinsRouter::routeResumable`). The
+  /// search runs until the step's own target is settled and pauses. A
+  /// later step under the prefix builds its own corridor again and resumes
+  /// the search toward its target, with the open list keyed for that
+  /// target; a target the search closed on its way is answered at once. The
+  /// search order is the one without the switch; only where a step's price
+  /// comes from changes.
+  ///
+  /// The search's turn bound is the largest step budget of the options
+  /// (`routing::ChainProblem::siblingBudget`), and each answer is held to
+  /// its step's own: a way with more turns than the step's own bound, a
+  /// target cut off by the search's bound, a way that leaves the option's
+  /// own corridor or crosses itself, and an option the search does not
+  /// serve are routed alone, as without the switch, so no step loses a way
+  /// its own search would keep. A way that stays in the own corridor costs
+  /// what the own search costs (see `multiTargetRoute`).
+  ///
+  /// A prefix's search is freed once every option it serves is priced, and
+  /// with the go; at most `resumableCap` searches are kept, and the one
+  /// used least recently goes first: a step of an evicted prefix starts a
+  /// new search. One `[Resumable Route]` line per chain. Read on every call.
+  [[nodiscard]] static bool resumableRoute() {
+    return envFlag("SCPD_RESUMABLE_ROUTE", false);
+  }
+  /// How a resumed search of `resumableRoute` orders its open list:
+  /// `SCPD_RESUME_REKEY`, `heapify` (the default: every entry keyed for the
+  /// step's own target), `min` (the minimum over every option the search
+  /// serves, never keyed again) or `offset` (the keys of the last step
+  /// lowered by the distance between the two targets and set right when
+  /// popped). See `routing::DubinsRouter::ResumeOrder`. Read on every call.
+  [[nodiscard]] static routing::DubinsRouter::ResumeOrder resumeRekey() {
+    const char* value = envSet("SCPD_RESUME_REKEY");
+    const std::string_view text = value != nullptr ? value : "heapify";
+    if (text == "min") {
+      return routing::DubinsRouter::ResumeOrder::Minimum;
+    }
+    if (text == "offset") {
+      return routing::DubinsRouter::ResumeOrder::Offset;
+    }
+    return routing::DubinsRouter::ResumeOrder::Target;
+  }
+  /// Whether every step `resumableRoute` answers from a paused search is
+  /// routed alone as well, as the step would route it without the switch,
+  /// to compare the states the two expand and their prices:
+  /// `SCPD_RESUMABLE_AUDIT`, off. The search takes the paused search's
+  /// answer either way. Read on every call.
+  [[nodiscard]] static bool resumableAudit() {
+    return envFlag("SCPD_RESUMABLE_AUDIT", false);
+  }
+  /// The searches `resumableRoute` keeps at most: `SCPD_RESUMABLE_ROUTE_CAP`,
+  /// 32.
+  [[nodiscard]] static std::size_t resumableCap() {
+    return static_cast<std::size_t>(
+        std::clamp(envWhole("SCPD_RESUMABLE_ROUTE_CAP", 32), 1, 4096));
+  }
+  /// The paused search of one prefix under `resumableRoute`.
+  struct ResumableSearch {
+    routing::DubinsRouter::PausedSearch search;
+    /// The union of the corridors of the options it serves.
+    grid::BitGrid corridor;
+    /// The options it serves, and how many of them are still to be priced.
+    std::vector<bool> serves;
+    std::size_t left = 0;
+    std::int16_t maxTurns = -1;
+    /// When it was used last, for the eviction.
+    std::uint64_t used = 0;
+    /// The arriving ports of the options it serves.
+    std::vector<PathPoint> family;
+    /// Its place in `ResumableStats::legs`.
+    std::size_t id = 0;
+    [[nodiscard]] std::size_t bytes() const {
+      return search.bytes() + (corridor.words().size() * sizeof(std::uint64_t));
+    }
+  };
+  /// What the resumable routing of one chain did.
+  struct ResumableStats {
+    std::uint64_t fresh = 0;
+    std::uint64_t resumes = 0;
+    /// Steps answered without a search: their goal was closed on the way.
+    std::uint64_t atOnce = 0;
+    /// Steps with no other option waiting, and steps of an option the
+    /// prefix's search does not serve, routed alone.
+    std::uint64_t single = 0;
+    std::uint64_t notServed = 0;
+    std::uint64_t taken = 0;
+    std::uint64_t noWay = 0;
+    /// Answers routed alone after all.
+    std::uint64_t overOwn = 0;
+    std::uint64_t cutOff = 0;
+    std::uint64_t leftOwn = 0;
+    std::uint64_t looped = 0;
+    std::uint64_t evicted = 0;
+    /// Searches started for a prefix whose search was evicted.
+    std::uint64_t restarted = 0;
+    std::uint64_t expansions = 0;
+    /// The steps each search answered, by search.
+    std::vector<std::uint32_t> legs;
+    /// Steps answered by a resumed search that expanded states, and by a
+    /// first call.
+    std::uint64_t resumedLegs = 0;
+    std::uint64_t freshLegs = 0;
+    /// Under `ResumeOrder::Offset`: entries popped below their true key.
+    std::uint64_t reinserts = 0;
+    /// The audit (`resumableAudit`): per leg, the states the paused search
+    /// expanded and those the step's own search expands, for resumed legs
+    /// and first legs, and the legs whose price differs.
+    std::vector<std::uint64_t> resumedExpanded;
+    std::vector<std::uint64_t> resumedAlone;
+    std::vector<std::uint64_t> freshExpanded;
+    std::vector<std::uint64_t> freshAlone;
+    std::uint64_t audited = 0;
+    std::uint64_t priceDiffers = 0;
+    /// The seconds of putting paused searches back, of keying their
+    /// entries for a new target, and of pausing them
+    /// (`routing::DubinsRouter::lastResumeSplit`).
+    double restoreSeconds = 0.0;
+    double rekeySeconds = 0.0;
+    double pauseSeconds = 0.0;
+    std::size_t peakStored = 0;
+    std::size_t peakBytes = 0;
+  };
+
+  /// Whether the prefix search treats options as one where their prices
+  /// are the same: `SCPD_OPTION_CLASSES`, off. Every pair of open options
+  /// of a go is routed once in free space (as `freeSpaceProbe` routes it);
+  /// the options of a layer whose free-space prices to every option of both
+  /// neighbour layers are the same form a class, and the search offers its
+  /// first member alone, the next ones only where a prefix through a member
+  /// is refused, finds no way, or prices off the class's free-space price
+  /// (`routing::ChainProblem::classOf` says why that is complete). The
+  /// free-space ways are kept and taken where a prefix leaves them open, as
+  /// `pairMemo` 1 does. One `[Option Classes]` line per chain. Read on
+  /// every call.
+  [[nodiscard]] static bool optionClasses() {
+    return envFlag("SCPD_OPTION_CLASSES", false);
+  }
+
+  /// Whether every step check of the chain search says whether a slot of
+  /// the step's own feedline edge is over its capacity, the only case a
+  /// test of that edge alone could catch: `SCPD_PREFILTER_PROBE`, off. A
+  /// measurement; a `[Prefilter Probe]` line per chain counts the checks,
+  /// the UNSAT ones and those, with their seconds.
+  [[nodiscard]] static bool prefilterProbe() {
+    return envFlag("SCPD_PREFILTER_PROBE", false);
+  }
+  /// What the prefilter probe of one chain counted.
+  struct PrefilterProbe {
+    std::uint64_t checks = 0;
+    double seconds = 0.0;
+    std::uint64_t unsat = 0;
+    double unsatSeconds = 0.0;
+    std::uint64_t ownOver = 0;
+    double ownOverSeconds = 0.0;
+    std::uint64_t ownOverRefused = 0;
+    std::vector<std::string> samples;
+  };
+
+  /// What the free-space probe of one chain counted.
+  struct FreeSpaceProbe {
+    std::uint64_t pairs = 0;
+    double seconds = 0.0;
+    double slowest = 0.0;
+    std::uint64_t withoutWay = 0;
+    /// The pairs with a free-space way, the sums of their free-space prices
+    /// and analytic bounds, and how often the price is above or below the
+    /// bound.
+    std::uint64_t compared = 0;
+    double freeSum = 0.0;
+    double boundSum = 0.0;
+    std::uint64_t sharper = 0;
+    std::uint64_t belowBound = 0;
+    /// The cheapest run through the free-space prices and through the
+    /// analytic bounds.
+    std::uint64_t freeRoot = routing::TRELLIS_UNREACHABLE;
+    std::uint64_t boundRoot = routing::TRELLIS_UNREACHABLE;
+    /// Steps of the search whose price under the fence equals, exceeds or
+    /// undercuts the free-space price, with the first undercuts.
+    std::uint64_t equal = 0;
+    std::uint64_t above = 0;
+    double gapSum = 0.0;
+    std::uint64_t below = 0;
+    std::vector<std::string> belowCases;
+  };
+
+  /// The `[Free-Space Probe]` line of a chain.
+  void sayFreeSpaceProbe(const std::uint32_t chain, const FreeSpaceProbe& probe,
+                         const std::uint64_t cost) const {
+    const auto number = [](const std::uint64_t value) {
+      return value == routing::TRELLIS_UNREACHABLE ? std::string("none")
+                                                   : std::to_string(value);
+    };
+    say(std::format(
+        "[Free-Space Probe] chain {}: {} pairs in {:.1f}s ({:.1f} ms mean, "
+        "{:.1f} ms max), {} without a way; cheapest run of free-space "
+        "prices {}, of analytic bounds {}, chain cost {}; free-space price "
+        "above the analytic bound on {} of {} pairs (mean {:.0f} against "
+        "{:.0f}), below it on {}; steps priced: {} equal, {} above (mean "
+        "gap {:.0f}), {} below{}",
+        chain, probe.pairs, probe.seconds,
+        probe.pairs == 0
+            ? 0.0
+            : 1000.0 * probe.seconds / static_cast<double>(probe.pairs),
+        1000.0 * probe.slowest, probe.withoutWay, number(probe.freeRoot),
+        number(probe.boundRoot), number(cost), probe.sharper, probe.compared,
+        probe.compared == 0
+            ? 0.0
+            : probe.freeSum / static_cast<double>(probe.compared),
+        probe.compared == 0
+            ? 0.0
+            : probe.boundSum / static_cast<double>(probe.compared),
+        probe.belowBound, probe.equal, probe.above,
+        probe.above == 0 ? 0.0
+                         : probe.gapSum / static_cast<double>(probe.above),
+        probe.below,
+        probe.belowCases.empty() ? std::string{}
+                                 : std::format(" — first: {}", [&] {
+                                     std::string text;
+                                     for (const auto& one : probe.belowCases) {
+                                       text += (text.empty() ? "" : "; ") + one;
+                                     }
+                                     return text;
+                                   }())));
+  }
+
+  /// What one eighth turn costs the chain searches: 10000, as before; with
+  /// `chainLengthCost` 1000000, so that a chain's whole length stays below
+  /// one eighth turn and the turns decide first. The longest chain of the
+  /// benchmarks is 3261 cells (57q chain search, `optstats-2026-10-22`),
+  /// at most 46000 tenths of a cell; 1000000 leaves room for chains of
+  /// 71000 cells.
+  [[nodiscard]] static std::uint64_t bendUnit() {
+    return chainLengthCost() ? 1000000ULL : 10000ULL;
+  }
+
+  /// The length of a way in tenths of a cell: 10 a step along an axis, 14 a
+  /// diagonal step (√2 rounded down), and for two points further apart the
+  /// octile distance between them, `10 * max + 4 * min` of the two
+  /// differences. The router prices its moves the same way (100 and 141
+  /// hundredths, `DubinsRouter.cpp`).
+  [[nodiscard]] static std::uint64_t lengthUnitsOf(const Path& way) {
+    std::uint64_t length = 0;
+    for (std::size_t k = 1; k < way.size(); ++k) {
+      length += octileUnits(way[k - 1].x, way[k - 1].y, way[k].x, way[k].y);
+    }
+    return length;
+  }
+
+  /// `10 * max + 4 * min` of the two differences: the octile distance in
+  /// tenths of a cell, with a diagonal step at 14.
+  [[nodiscard]] static std::uint64_t octileUnits(const std::int64_t x0,
+                                                 const std::int64_t y0,
+                                                 const std::int64_t x1,
+                                                 const std::int64_t y1) {
+    const auto dx = static_cast<std::uint64_t>(std::abs(x1 - x0));
+    const auto dy = static_cast<std::uint64_t>(std::abs(y1 - y0));
+    return (10 * std::max(dx, dy)) + (4 * std::min(dx, dy));
+  }
+
+  /// The bound of a pair of options in the chain searches: `bendUnit` times
+  /// the fewest eighth turns between the two ports (`stubbedTurns` under
+  /// `SCPD_CHAIN_BOUND=4`, `boundTurns` else), and under `chainLengthCost`
+  /// a lower bound on the length of the way between them
+  /// (`lengthBoundOf`).
+  [[nodiscard]] std::uint64_t pairBound(const PathPoint& leaving,
+                                        const PathPoint& arriving,
+                                        const std::uint32_t firstRun,
+                                        const std::uint32_t lastRun) const {
+    const bool stubbed = chainBound() == 4;
+    const auto turns = stubbed
+                           ? stubbedTurns(leaving, arriving, firstRun, lastRun)
+                           : boundTurns(leaving, arriving);
+    return (bendUnit() * turns) +
+           (chainLengthCost()
+                ? lengthBoundOf(leaving, arriving, stubbed ? firstRun : 0,
+                                stubbed ? lastRun : 0)
+                : 0);
+  }
+
+  /// A lower bound on `lengthUnitsOf` of every way from `from` to `to` that
+  /// leaves `from` straight on its heading for `firstRun` cells and enters
+  /// `to` straight on its heading for `lastRun` cells.
+  ///
+  /// Admissible: such a way passes the cell `r1` steps out of `from` along
+  /// its heading and the cell `r2` steps back from `to`, with `r1 =
+  /// firstRun - 1` and `r2 = lastRun - 1` (a run of `n` cells holds `n - 1`
+  /// steps; fewer steps are assumed where the run is not a whole number of
+  /// steps, which only lowers the bound). Its length is the length of those
+  /// two straight pieces, `r1` and `r2` steps of 10 or 14, plus the length
+  /// of the part between, and the octile distance is a metric that no path
+  /// of axis and diagonal steps priced 10 and 14 undercuts: every step
+  /// covers at most what it costs. So the sum is at most the way's length.
+  /// The way the router returns is such a way whatever else it minimises,
+  /// so the bound holds against it as well. `SCPD_CHAIN_LENGTH_AUDIT=1`
+  /// counts every priced pair whose bound exceeds its price.
+  [[nodiscard]] static std::uint64_t
+  lengthBoundOf(const PathPoint& from, const PathPoint& to,
+                const std::uint32_t firstRun, const std::uint32_t lastRun) {
+    const auto vs = routing::headingVector(from.heading & 7U);
+    const auto vt = routing::headingVector(to.heading & 7U);
+    const auto r1 = static_cast<std::int64_t>(firstRun > 0 ? firstRun - 1 : 0);
+    const auto r2 = static_cast<std::int64_t>(lastRun > 0 ? lastRun - 1 : 0);
+    const auto stepOf = [](const auto& v) -> std::uint64_t {
+      return v.dx != 0 && v.dy != 0 ? 14 : 10;
+    };
+    const auto x0 = static_cast<std::int64_t>(from.x) + (r1 * vs.dx);
+    const auto y0 = static_cast<std::int64_t>(from.y) + (r1 * vs.dy);
+    const auto x1 = static_cast<std::int64_t>(to.x) - (r2 * vt.dx);
+    const auto y1 = static_cast<std::int64_t>(to.y) - (r2 * vt.dy);
+    return (static_cast<std::uint64_t>(r1) * stepOf(vs)) +
+           (static_cast<std::uint64_t>(r2) * stepOf(vt)) +
+           octileUnits(x0, y0, x1, y1);
   }
 
   /// How much a way turns, in eighths, its arrival at the target counted:
@@ -12931,7 +14336,7 @@ public:
         // Not one plain option brought both edges home: open the jogs, and
         // let the next pass use them. Opening them in this pass would mean
         // routing them against a chain that is still moving under them.
-        if (!plainFits && !coupler.jogsUnlocked) {
+        if (!plainFits && !coupler.jogsUnlocked && secondDogleg()) {
           coupler.jogsUnlocked = true;
           moved = true;
           tell(std::format(
@@ -13016,10 +14421,16 @@ public:
       ++memoHits_;
       lastCutOff_ = false;
       way = found->second;
+    } else if (!remember && segmentMemo_ != nullptr && !debug_ &&
+               stepBudget_ == routing::TRELLIS_UNREACHABLE) {
+      prefixFence_ = fence;
+      way = segmentWayOf(wires, objective, edge, optionFrom, optionTo);
+      prefixFence_ = nullptr;
     } else {
       ++memoMisses_;
       prefixFence_ = fence;
-      way = routeEdge(wires, objective, edge);
+      way = multiRoute_ ? multiRoute_(wires, objective, edge)
+                        : routeEdge(wires, objective, edge);
       prefixFence_ = nullptr;
       // An edge with no way under a fence may have one under another fence.
       if (remember && !lastCutOff_ && (fence == nullptr || !way.empty())) {
@@ -13052,19 +14463,20 @@ public:
     std::uint32_t expansions = 0;
     /// Placeholders the search dropped unpriced against its incumbent.
     std::uint32_t pruned = 0;
-    /// Whether the budget stopped the search rather than the search settling
-    /// the chain — the one thing that separates a chain with no answer from
-    /// one there was no time to answer.
-    bool outOfTime = false;
     /// Whether the search proved this the cheapest run of options there is.
-    /// False when the prefix search ran out of time, or when it reordered a
-    /// pair of edges at an end of the chain; either way this is then only
-    /// the cheapest run it reached.
+    /// False when the prefix search reordered a pair of edges at an end of
+    /// the chain; this is then only the cheapest run it reached.
     bool optimal = false;
     /// Whether a pair of edges at an end of the chain had to be laid the
-    /// other way round. That is the reason `optimal` is false when the
-    /// search did not run out of time.
+    /// other way round. That is the reason `optimal` is false.
     bool relaid = false;
+    /// Under weighted A*, a lower bound on the cheapest run
+    /// (`ChainSolution::lowerBound`); TRELLIS_UNREACHABLE otherwise.
+    std::uint64_t lowerBound = routing::TRELLIS_UNREACHABLE;
+    /// What the run costs with every edge at weight 1
+    /// (`chainEndEdgeWeight`); TRELLIS_UNREACHABLE where the search does not
+    /// say.
+    std::uint64_t unweighted = routing::TRELLIS_UNREACHABLE;
     std::uint64_t pairs = 0;
     std::vector<std::size_t> chosen;
     std::vector<Path> ways;
@@ -13264,7 +14676,9 @@ public:
             for (std::size_t d = 0; d < m; ++d) {
               const auto arriving =
                   portOf(at + 1, static_cast<std::uint32_t>(d), false);
-              turns[at][(c * m) + d] = 10000ULL * boundTurns(leaving, arriving);
+              turns[at][(c * m) + d] = pairBound(
+                  leaving, arriving, forcedRunOf(chain, at, open[at][c], true),
+                  forcedRunOf(chain, at + 1, open[at + 1][d], false));
             }
           }
           boundPairs_ += n * m;
@@ -13296,7 +14710,9 @@ public:
 
         problem.bound = [&](const std::size_t at, const std::uint32_t i,
                             const std::uint32_t j) {
-          return bounds[at][(static_cast<std::size_t>(i) * wide[at + 1]) + j];
+          const auto bound =
+              bounds[at][(static_cast<std::size_t>(i) * wide[at + 1]) + j];
+          return weighted(bound, edgeWeight(chain, at));
         };
         problem.evaluate = [&](const std::size_t at, const std::uint32_t i,
                                const std::uint32_t j) {
@@ -13321,11 +14737,11 @@ public:
           const auto real =
               edgeCost(wires, chain, at, open[at][c], open[at + 1][d],
                        aheadCode, ahead.empty() ? nullptr : &laid);
-          if (chainBound() >= 2) {
+          if (chainBound() == 2 || chainBound() == 3) {
             audit(chain, at, portOf(at, static_cast<std::uint32_t>(c), true),
                   portOf(at + 1, static_cast<std::uint32_t>(d), false), real);
           }
-          return real;
+          return weighted(real, edgeWeight(chain, at));
         };
         answer = routing::solveTrellis(problem);
         if (answer.solved) {
@@ -13338,7 +14754,7 @@ public:
         // every round has to route and was measured worse.
         bool widened = false;
         const auto unlock = [&](const std::size_t at) {
-          if (points[at].fixed) {
+          if (points[at].fixed || !secondDogleg()) {
             return;
           }
           auto& coupler = couplers_[points[at].coupler];
@@ -13451,7 +14867,93 @@ public:
     /// because the shorter prefix is shared by every choice that extends it,
     /// and only this choice needed its predecessor moved.
     Path before;
+    /// The prices of `way` and of `before` at weight 1, whatever
+    /// `chainEndEdgeWeight` says.
+    std::uint64_t price = 0;
+    std::uint64_t beforePrice = 0;
   };
+
+  /// What the chain line calls a chain's answer: `optimum` when the search
+  /// proved it, `best found, an end pair laid the other way round` when a
+  /// relaid pair cost the proof, and `within <w> of the optimum` under
+  /// weighted A* (`chainAStarWeight`).
+  [[nodiscard]] static std::string answerWord(const ChainAnswer& answer) {
+    if (answer.optimal) {
+      return "optimum";
+    }
+    if (answer.relaid) {
+      return "best found, an end pair laid the other way round";
+    }
+    return std::format("within {:g} of the optimum", chainAStarWeight());
+  }
+
+  /// The weight of weighted A* in the prefix search of a chain:
+  /// `SCPD_CHAIN_ASTAR_WEIGHT`, 1 (plain A*, as before), from 1 to 10. Above
+  /// 1 the open list is ordered by `g + w * h` and the first complete run
+  /// is the answer, at most `w` times the optimum; the chain line says the
+  /// least `g + h` left in the open list, a lower bound on the optimum.
+  /// Only the chain search of the insertion: the segment search refuses
+  /// runs one by one and needs them cheapest first, and the trellis is
+  /// exact by its own construction. Read on every call.
+  [[nodiscard]] static double chainAStarWeight() {
+    return std::clamp(envReal("SCPD_CHAIN_ASTAR_WEIGHT", 1.0), 1.0, 10.0);
+  }
+
+  /// The tail of a chain line: under weighted A* `, lower bound <cost>`
+  /// (`ChainAnswer::lowerBound`, in the chain's own price), then what the
+  /// answer costs at weight 1 when the search says it: under
+  /// `chainLengthCost` `, <n> eighth turns and <m> tenths of a cell at
+  /// weight 1`; else `, <cost> at weight 1` when the end edges weigh
+  /// otherwise (`chainEndEdgeWeight`).
+  [[nodiscard]] static std::string atWeightOne(const ChainAnswer& answer) {
+    const auto bound = answer.lowerBound == routing::TRELLIS_UNREACHABLE
+                           ? std::string{}
+                           : std::format(", lower bound {}", answer.lowerBound);
+    if (answer.unweighted == routing::TRELLIS_UNREACHABLE) {
+      return bound;
+    }
+    return bound + atWeightOneAlone(answer);
+  }
+
+  /// `atWeightOne` without the lower bound.
+  [[nodiscard]] static std::string atWeightOneAlone(const ChainAnswer& answer) {
+    if (chainLengthCost()) {
+      return std::format(", {} eighth turns and {} tenths of a cell at "
+                         "weight 1",
+                         answer.unweighted / bendUnit(),
+                         answer.unweighted % bendUnit());
+    }
+    return chainEndEdgeWeight() == 1.0
+               ? std::string{}
+               : std::format(", {} at weight 1", answer.unweighted);
+  }
+
+  /// What a complete run of choices costs at weight 1: the prices of the
+  /// ways `waysOfRun` reads, each at weight 1.
+  [[nodiscard]] static std::uint64_t
+  unweightedOfRun(const std::map<std::vector<std::uint32_t>, Laid>& laid,
+                  const std::span<const std::uint32_t> run) {
+    const std::vector<std::uint32_t> whole(run.begin(), run.end());
+    const auto upto = [&](const std::size_t take) {
+      return std::vector<std::uint32_t>(
+          whole.begin(), whole.begin() + static_cast<std::ptrdiff_t>(take));
+    };
+    std::uint64_t total = 0;
+    for (std::size_t at = 0; at + 1 < whole.size(); ++at) {
+      if (at + 3 <= whole.size()) {
+        const auto moved = laid.find(upto(at + 3));
+        if (moved != laid.end() && !moved->second.before.empty()) {
+          total += moved->second.beforePrice;
+          continue;
+        }
+      }
+      const auto found = laid.find(upto(at + 2));
+      if (found != laid.end()) {
+        total += found->second.price;
+      }
+    }
+    return total;
+  }
 
   /// The ways of a complete run of choices, read out of what the search laid
   /// under the prefix each edge was priced under — which is the run itself.
@@ -13487,6 +14989,11 @@ public:
                                             const std::uint32_t chain) {
     ChainAnswer out;
     const auto routedBefore = memoMisses_;
+    const auto edgesBefore = edgeSplit_;
+    routerClasses_ = {};
+    static_cast<void>(fast::takeSlotCheckSplit());
+    static_cast<void>(grid::takeProfileCutsSplit());
+    static_cast<void>(grid::takeChambersSplit());
     auto& points = chains_[chain];
     const auto layers = points.size();
     if (layers < 2) {
@@ -13538,6 +15045,26 @@ public:
       unchained = capacityVerdictOf(stateOf(wires, *stepSettled_));
     }
 
+    // What the free-space probe found (`freeSpaceProbe`), over both goes.
+    FreeSpaceProbe probe;
+    // What the pair memo did (`pairMemo`), over both goes.
+    PairMemoStats pairStats;
+    // What the multi-target routing did (`multiTargetRoute`), over both
+    // goes.
+    MultiTargetStats multiStats;
+    // What the resumable routing did (`resumableRoute`), over both goes.
+    ResumableStats resumeStats;
+    std::uint64_t resumeClock = 0;
+    // What the prefilter probe counted (`prefilterProbe`).
+    PrefilterProbe prefilter;
+    // The classes of options (`optionClasses`), over both goes.
+    struct {
+      std::uint64_t options = 0;
+      std::uint64_t classes = 0;
+      std::string layers;
+      std::uint64_t offPrice = 0;
+    } classStats;
+
     // Two goes at most: the plain options, then the jogs opened at the wall
     // if the plain ones did not reach.
     const auto feedlines = feedlineCellsBut(chain);
@@ -13564,7 +15091,9 @@ public:
           for (std::size_t d = 0; d < m; ++d) {
             const auto arriving =
                 portOfOption(chain, at + 1, open[at + 1][d], false);
-            turns[at][(c * m) + d] = 10000ULL * boundTurns(leaving, arriving);
+            turns[at][(c * m) + d] = pairBound(
+                leaving, arriving, forcedRunOf(chain, at, open[at][c], true),
+                forcedRunOf(chain, at + 1, open[at + 1][d], false));
           }
         }
         boundPairs_ += n * m;
@@ -13574,9 +15103,150 @@ public:
               std::chrono::steady_clock::now() - beganBound)
               .count());
 
+      // The free-space ways of the pairs of this go (`pairMemo`), by
+      // `pairKey`. Nothing the search does in a go moves what an edge of
+      // this chain is routed against but the prefix fence, which every use
+      // tests, so an entry never goes stale within the go.
+      std::map<std::uint64_t, PairWay> pairWays;
+      // The answers of the multi-target searches of this go
+      // (`multiTargetRoute`), by prefix, one per option of the next layer,
+      // and how many of the options asked are still to be priced. The fence
+      // of a prefix never changes within a go, so neither does an answer.
+      // A prefix's entry goes once every option asked has taken its answer,
+      // and every entry goes with the go.
+      struct MultiPrefix {
+        std::vector<MultiAnswer> answers;
+        std::size_t left = 0;
+      };
+      std::map<std::vector<std::uint32_t>, MultiPrefix> multiWays;
+      // The paused searches of this go (`resumableRoute`), by prefix, and
+      // the prefixes whose search was evicted.
+      std::map<std::vector<std::uint32_t>, ResumableSearch> resumables;
+      std::set<std::vector<std::uint32_t>> evictedPrefixes;
+
+      // The free-space table (`freeSpaceProbe`): every pair of options
+      // routed as a step would route it, with no fence of the chain's own
+      // edges, priced at the edge's weight. The counters the log reports
+      // are put back, so the probe changes nothing the search does.
+      std::vector<std::vector<std::uint64_t>> freePrice;
+      if (freeSpaceProbe() || freeSpaceBound() || optionClasses()) {
+        const auto missesBefore = memoMisses_;
+        const auto splitBefore = edgeSplit_;
+        freePrice.resize(layers - 1);
+        for (std::size_t at = 0; at + 1 < layers; ++at) {
+          const auto n = open[at].size();
+          const auto m = open[at + 1].size();
+          freePrice[at].assign(n * m, routing::TRELLIS_UNREACHABLE);
+          for (std::size_t c = 0; c < n; ++c) {
+            for (std::size_t d = 0; d < m; ++d) {
+              const auto began = std::chrono::steady_clock::now();
+              Path free;
+              const auto price =
+                  edgeCost(wires, chain, at, open[at][c], open[at + 1][d], 0,
+                           nullptr, &free, false);
+              if (optionClasses()) {
+                // Kept for the step, as the pair memo keeps it.
+                pairWays.emplace(
+                    (static_cast<std::uint64_t>(at) << 40U) |
+                        (static_cast<std::uint64_t>(c) << 20U) | d,
+                    PairWay{.way = std::move(free), .price = price});
+              }
+              const auto seconds = std::chrono::duration<double>(
+                                       std::chrono::steady_clock::now() - began)
+                                       .count();
+              freePrice[at][(c * m) + d] =
+                  weighted(price, edgeWeight(chain, at));
+              ++probe.pairs;
+              probe.seconds += seconds;
+              probe.slowest = std::max(probe.slowest, seconds);
+              probe.withoutWay +=
+                  price == routing::TRELLIS_UNREACHABLE ? 1U : 0U;
+              const auto bound =
+                  weighted(turns[at][(c * m) + d], edgeWeight(chain, at));
+              if (price != routing::TRELLIS_UNREACHABLE) {
+                ++probe.compared;
+                probe.freeSum +=
+                    static_cast<double>(freePrice[at][(c * m) + d]);
+                probe.boundSum += static_cast<double>(bound);
+                probe.sharper += freePrice[at][(c * m) + d] > bound ? 1U : 0U;
+                probe.belowBound +=
+                    freePrice[at][(c * m) + d] < bound ? 1U : 0U;
+              }
+            }
+          }
+        }
+        if (!optionClasses()) {
+          memoMisses_ = missesBefore;
+          edgeSplit_ = splitBefore;
+        }
+        // The cheapest run through the free-space prices and through the
+        // analytic bounds, each a lower bound on the chain under its own
+        // assumption.
+        const auto cheapestRun = [&](const std::function<std::uint64_t(
+                                         std::size_t, std::size_t)>& price) {
+          std::vector<std::uint64_t> best(open[0].size(), 0);
+          for (std::size_t at = 0; at + 1 < layers; ++at) {
+            const auto m = open[at + 1].size();
+            std::vector<std::uint64_t> next(m, routing::TRELLIS_UNREACHABLE);
+            for (std::size_t c = 0; c < best.size(); ++c) {
+              for (std::size_t d = 0; d < m; ++d) {
+                const auto step = price(at, (c * m) + d);
+                if (best[c] == routing::TRELLIS_UNREACHABLE ||
+                    step == routing::TRELLIS_UNREACHABLE) {
+                  continue;
+                }
+                next[d] = std::min(next[d], best[c] + step);
+              }
+            }
+            best = std::move(next);
+          }
+          return best.empty() ? routing::TRELLIS_UNREACHABLE
+                              : std::ranges::min(best);
+        };
+        probe.freeRoot =
+            cheapestRun([&](const std::size_t at, const std::size_t k) {
+              return freePrice[at][k];
+            });
+        probe.boundRoot =
+            cheapestRun([&](const std::size_t at, const std::size_t k) {
+              return weighted(turns[at][k], edgeWeight(chain, at));
+            });
+      }
+
       routing::ChainProblem problem;
       for (const auto& choices : open) {
         problem.width.push_back(static_cast<std::uint32_t>(choices.size()));
+      }
+      // The classes of options (`optionClasses`): the options of a layer
+      // whose free-space prices to every option of both neighbour layers
+      // are the same, by their first member.
+      if (optionClasses()) {
+        problem.classOf.resize(layers);
+        for (std::size_t at = 0; at < layers; ++at) {
+          std::map<std::vector<std::uint64_t>, std::uint32_t> firstOf;
+          for (std::uint32_t c = 0; c < open[at].size(); ++c) {
+            std::vector<std::uint64_t> prices;
+            if (at > 0) {
+              const auto m = open[at].size();
+              for (std::size_t p = 0; p < open[at - 1].size(); ++p) {
+                prices.push_back(freePrice[at - 1][(p * m) + c]);
+              }
+            }
+            if (at + 1 < layers) {
+              const auto m = open[at + 1].size();
+              for (std::size_t d = 0; d < m; ++d) {
+                prices.push_back(freePrice[at][(c * m) + d]);
+              }
+            }
+            problem.classOf[at].push_back(
+                firstOf.try_emplace(std::move(prices), c).first->second);
+          }
+          classStats.options += open[at].size();
+          classStats.classes += firstOf.size();
+          classStats.layers +=
+              std::format("{}{}/{}", classStats.layers.empty() ? "" : " ",
+                          open[at].size(), firstOf.size());
+        }
       }
       // The cheapest a pair of options has cost in this solve, by layer and
       // pair: see `chainLearnedBound`.
@@ -13590,6 +15260,18 @@ public:
                           const std::uint32_t j) {
         auto bound =
             turns[at][(static_cast<std::size_t>(i) * open[at + 1].size()) + j];
+        if (freeSpaceBound()) {
+          // The replay of `freeSpaceBound`: the free-space price where it
+          // is above the analytic bound. Not proved a lower bound.
+          const auto free =
+              freePrice[at]
+                       [(static_cast<std::size_t>(i) * open[at + 1].size()) +
+                        j];
+          return std::max(weighted(bound, edgeWeight(chain, at)), free);
+        }
+        if (const auto weight = edgeWeight(chain, at); weight != 1.0) {
+          return weighted(bound, weight);
+        }
         if (chainLearnedBound()) {
           const auto known = learned.find(pairKey(at, i, j));
           if (known != learned.end() && known->second > bound) {
@@ -13599,11 +15281,9 @@ public:
         }
         return bound;
       };
-      problem.budget = chainAStarBudget();
       // Every time a run of options comes back with all of its feedline
-      // edges drawn. This is what the budget falls back on, so say when one
-      // arrives and what it costs: a chain that never prints this line is
-      // one the search never joined.
+      // edges drawn: say when one arrives and what it costs. A chain that
+      // never prints this line is one the search never joined.
       problem.found = [&](const std::span<const std::uint32_t> run,
                           const std::uint64_t cost) {
         std::string options;
@@ -13617,11 +15297,244 @@ public:
                          "drawn on options {} -> cost {}",
                          chain, options, cost));
       };
+      // How far the search has come, every `chainProgressSteps` priced
+      // steps.
+      const auto goBegan = std::chrono::steady_clock::now();
+      if (optionDump()) {
+        problem.expanded = [&](const std::span<const std::uint32_t> run) {
+          const auto last = run.size() - 1;
+          if (!points[last].fixed) {
+            if (auto* use = useOf(points[last].coupler, open[last][run[last]]);
+                use != nullptr) {
+              ++use->expanded;
+            }
+          }
+        };
+      }
+      problem.weightThousandths =
+          static_cast<std::uint32_t>(std::llround(chainAStarWeight() * 1000.0));
+      problem.progressEvery = chainProgressSteps();
+      problem.progress = [&](const routing::ChainSolution& sofar,
+                             const std::size_t queued) {
+        say(std::format(
+            "[Chain Progress] chain {} go {}{}: {} steps priced, {} edge "
+            "searches, {} prefixes expanded, {} left unpriced, {} open, "
+            "deepest layer {} of {}, {}; {:.1f}s",
+            chain, go, stepRefuses_ ? " under the capacity rule" : "",
+            sofar.routed, memoMisses_ - routedBefore, sofar.expansions,
+            sofar.pruned, queued, sofar.reached, layers - 1,
+            sofar.solved ? std::format("cheapest run so far {}", sofar.cost)
+                         : std::string("no run yet"),
+            std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          goBegan)
+                .count()));
+      };
+      // The ways of the edges of a prefix laid so far, by the prefix's key:
+      // what `step` reads as `wayOfEdge`.
+      const auto wayOfEdgeIn = [&](const std::vector<std::uint32_t>& key,
+                                   const std::size_t e) -> const Path* {
+        const auto upto = [&](const std::size_t take) {
+          return std::vector<std::uint32_t>(
+              key.begin(), key.begin() + static_cast<std::ptrdiff_t>(take));
+        };
+        if (e + 3 <= key.size()) {
+          const auto moved = laid.find(upto(e + 3));
+          if (moved != laid.end() && !moved->second.before.empty()) {
+            return &moved->second.before;
+          }
+        }
+        const auto found = laid.find(upto(e + 2));
+        return (found != laid.end() && !found->second.way.empty())
+                   ? &found->second.way
+                   : nullptr;
+      };
+      // The capacity check of one step: the chip the chains settled before
+      // this one leave, with the prefix `key` and the option `j` after it
+      // standing on top — its couplers up to this edge's far end and its
+      // edges up to this one, `way` the edge's own and `before` the one
+      // before it where the pair was laid the other way round. Under
+      // `capacityRule` a step whose edge closes a wire is refused: whether
+      // it is. Asked when the step is priced, or under `lazyStepCheck` when
+      // its prefix is taken (`ChainProblem::admit`).
+      const auto checkStep = [&](const std::vector<std::uint32_t>& key,
+                                 const std::uint32_t j, const Path& way,
+                                 const Path& before) {
+        const auto at = key.size() - 1;
+        const auto edges = layers - 1;
+        auto* const use = points[at + 1].fixed
+                              ? nullptr
+                              : useOf(points[at + 1].coupler, open[at + 1][j]);
+        const auto began = std::chrono::steady_clock::now();
+        std::vector<std::size_t> options(layers, 0);
+        std::string named;
+        for (std::size_t layer = 0; layer <= at + 1; ++layer) {
+          options[layer] = open[layer][layer <= at ? key[layer] : j];
+          named +=
+              std::format("{}{}", layer == 0 ? "" : " ",
+                          points[layer].fixed ? std::string("launcher")
+                                              : std::to_string(options[layer]));
+        }
+        std::vector<const Path*> ways(edges, nullptr);
+        for (std::size_t e = 0; e < at; ++e) {
+          ways[e] = wayOfEdgeIn(key, e);
+        }
+        if (!before.empty()) {
+          ways[at - 1] = &before;
+        }
+        ways[at] = &way;
+        const auto state =
+            stateOf(wires, *stepSettled_, chain, &options, &ways, at + 2);
+        auto verdict = capacityVerdictOf(state);
+        if (use != nullptr) {
+          ++(verdict.lost.empty() ? use->sat : use->unsat);
+        }
+        const auto parent = checked.find(key);
+        const auto& was = (at == 0 || parent == checked.end())
+                              ? unchained
+                              : parent->second.verdict;
+        std::vector<std::uint32_t> closed;
+        std::ranges::set_difference(verdict.lost, was.lost,
+                                    std::back_inserter(closed));
+        if (verdict.fastLost) {
+          std::vector<std::uint32_t> fastClosed;
+          std::ranges::set_difference(*verdict.fastLost,
+                                      was.fastLost ? *was.fastLost
+                                                   : std::set<std::uint32_t>{},
+                                      std::back_inserter(fastClosed));
+          ++fastCompared;
+          fastSame += fastClosed == closed ? 1U : 0U;
+          fastSameRefusal += fastClosed.empty() == closed.empty() ? 1U : 0U;
+          axisSeconds += verdict.seconds;
+          fastSeconds += verdict.fastSeconds;
+          if (fastClosed != closed) {
+            tell(std::format(
+                "[Capacity Fast] chain {} f{} on options {}: the medial "
+                "axis closes {}, the profiles close {}{}",
+                chain, firstSlot + at, named,
+                closed.empty() ? std::string("none") : namesOf(wires, closed),
+                fastClosed.empty() ? std::string("none")
+                                   : namesOf(wires, fastClosed),
+                fastClosed.empty() == closed.empty()
+                    ? ""
+                    : " — the refusal differs"));
+          }
+        }
+        const auto spent = std::chrono::steady_clock::now() - began;
+        const auto seconds = std::chrono::duration<double>(spent).count();
+        if (prefilterProbe()) {
+          // Whether an edge over is a slot of this step's own feedline
+          // edge: the only steps a test of that edge alone could refuse.
+          const auto own = std::format("f{}", firstSlot + at);
+          const bool unsat = !verdict.lost.empty() || !verdict.over.empty();
+          const bool ownOver =
+              std::ranges::any_of(verdict.over, [&](const std::string& name) {
+                // A slot is named `□ f<k> <n>` (SlotCheckFast).
+                return name == own || name.starts_with(own + " ") ||
+                       name.starts_with("□ " + own + " ");
+              });
+          prefilter.checks += 1;
+          prefilter.seconds += seconds;
+          prefilter.unsat += unsat ? 1U : 0U;
+          prefilter.unsatSeconds += unsat ? seconds : 0.0;
+          prefilter.ownOver += ownOver ? 1U : 0U;
+          prefilter.ownOverSeconds += ownOver ? seconds : 0.0;
+          prefilter.ownOverRefused +=
+              ownOver && stepRefuses_ && !closed.empty() ? 1U : 0U;
+          if (ownOver && prefilter.samples.size() < 3) {
+            std::string names;
+            for (const auto& name : verdict.over) {
+              names += (names.empty() ? "" : ", ") + name;
+            }
+            prefilter.samples.push_back(std::format("{}: {}", own, names));
+          }
+        }
+        ++stepChecks;
+        stepsCarrying += verdict.lost.empty() ? 1U : 0U;
+        stepsClosing += closed.empty() ? 0U : 1U;
+        stepSeconds += seconds;
+        const bool refused = stepRefuses_ && !closed.empty();
+        stepsRefused += refused ? 1U : 0U;
+        // A step that closes a wire names the feedline edges its edge
+        // meets, and under `capacityStepGraphs` the first few such steps
+        // of a chain write the graph the check saw.
+        std::string meets;
+        if (!closed.empty()) {
+          const auto met = feedlinesMet(state, chain, at);
+          if (!met.empty()) {
+            meets =
+                std::format("; its edge meets {}", namesOf(state.wires, met));
+          }
+          if (capacityStepGraphs() && debug_ &&
+              stepsClosing <= STEP_GRAPHS_CLOSING) {
+            const auto where = debug_(
+                std::format("step-c{}-closing{}-capacity-graph.json", chain,
+                            stepsClosing),
+                capacityGraphJsonOf(
+                    state, std::format("chain {} f{} ({}->{}) on options {}: "
+                                       "this edge closes {}{}",
+                                       chain, firstSlot + at, at, at + 1, named,
+                                       namesOf(wires, closed), meets)));
+            if (!where.empty()) {
+              tell(std::format("[Capacity Step] chain {} f{}: its "
+                               "capacity graph as data: {}",
+                               chain, firstSlot + at, where));
+            }
+          }
+        }
+        const std::vector<std::uint32_t> lost(verdict.lost.begin(),
+                                              verdict.lost.end());
+        tell(std::format(
+            "[Capacity Step] chain {} f{} ({}->{}) on options {}: {}{}; "
+            "{}{}{}; {:.3f}s",
+            chain, firstSlot + at, at, at + 1, named,
+            lost.empty() ? std::string("SAT") : std::string("UNSAT"),
+            lost.empty()
+                ? std::string()
+                : std::format(" — {} wire{} without a way ({}), short by {}",
+                              lost.size(), lost.size() == 1 ? "" : "s",
+                              namesOf(wires, lost), verdict.shortBy),
+            closed.empty()
+                ? std::string("this edge closes no wire")
+                : std::format("this edge closes {}", namesOf(wires, closed)),
+            meets, refused ? " — refused (SCPD_CAPACITY_RULE)" : "", seconds));
+        if (refused) {
+          return true;
+        }
+        auto mine = key;
+        mine.push_back(j);
+        checked[std::move(mine)] = StepCheck{.verdict = std::move(verdict),
+                                             .closed = std::move(closed)};
+        return false;
+      };
+      // Whether the step checks wait until the search takes a prefix
+      // (`lazyStepCheck`); not with the learned bound, which learns from
+      // the checked steps as they are priced.
+      const bool lazyCheck = lazyStepCheck() && !chainLearnedBound();
+      if (lazyCheck) {
+        problem.admit = [&](const std::span<const std::uint32_t> run) {
+          if (stepSettled_ == nullptr || run.size() == layers) {
+            return true;
+          }
+          const std::vector<std::uint32_t> key(run.begin(), run.end() - 1);
+          const auto found =
+              laid.find(std::vector<std::uint32_t>(run.begin(), run.end()));
+          return found == laid.end() ||
+                 !checkStep(key, run.back(), found->second.way,
+                            found->second.before);
+        };
+      }
       problem.step = [&](const std::span<const std::uint32_t> prefix,
                          const std::uint32_t j, std::int64_t& redone) {
         redone = 0;
         const auto at = prefix.size() - 1;
         const auto edges = layers - 1;
+        // The option this step lays its edge onto, for `optionDump`.
+        auto* const use = points[at + 1].fixed
+                              ? nullptr
+                              : useOf(points[at + 1].coupler, open[at + 1][j]);
+        if (use != nullptr) {
+          ++use->priced;
+        }
         std::vector<std::uint32_t> key(prefix.begin(), prefix.end());
         const auto upto = [&](const std::size_t take) {
           return std::vector<std::uint32_t>(
@@ -13686,16 +15599,467 @@ public:
             (at + 1 == edges && at >= 1 && atLauncher(chain, at));
         const bool mayReorder = pairAtAnEnd && !fence.empty();
         Path way;
-        stepBudget_ = (chainStepBudget() && !mayReorder)
-                          ? problem.stepBudget
-                          : routing::TRELLIS_UNREACHABLE;
-        auto real =
-            edgeCost(wires, chain, at, open[at][prefix[at]], open[at + 1][j], 0,
-                     fence.empty() ? nullptr : &fence, &way, !fresh);
-        stepBudget_ = routing::TRELLIS_UNREACHABLE;
-        if (chainBound() >= 2) {
+        // An end edge is priced at its weight, so its turn budget is the
+        // step budget unweighted (`weightedBudget`).
+        const auto weight = edgeWeight(chain, at);
+        // The edge routed under the prefix fence, as the search always
+        // routed it.
+        const auto routeUnderFence = [&](Path& out) {
+          stepBudget_ = (chainStepBudget() && !mayReorder)
+                            ? weightedBudget(problem.stepBudget, weight)
+                            : routing::TRELLIS_UNREACHABLE;
+          stepBound_ = turns[at][(static_cast<std::size_t>(prefix[at]) *
+                                  open[at + 1].size()) +
+                                 j];
+          const auto price =
+              edgeCost(wires, chain, at, open[at][prefix[at]], open[at + 1][j],
+                       0, fence.empty() ? nullptr : &fence, &out, !fresh);
+          stepBudget_ = routing::TRELLIS_UNREACHABLE;
+          stepBound_ = routing::TRELLIS_UNREACHABLE;
+          return price;
+        };
+        std::uint64_t real = routing::TRELLIS_UNREACHABLE;
+        const int memoMode = optionClasses() ? 1 : pairMemo();
+        if (memoMode != 0) {
+          // The pair's way (`pairMemo`): at 1 searched once a go in free
+          // space, at 2 kept from its first search under a fence; taken
+          // where the prefix leaves it open.
+          const auto pair = pairKey(at, prefix[at], j);
+          auto stored = pairWays.find(pair);
+          bool firstSearch = false;
+          if (stored == pairWays.end() && memoMode == 1) {
+            Path free;
+            const auto price =
+                edgeCost(wires, chain, at, open[at][prefix[at]],
+                         open[at + 1][j], 0, nullptr, &free, false);
+            stored = pairWays
+                         .emplace(pair, PairWay{.way = std::move(free),
+                                                .price = price})
+                         .first;
+            ++pairStats.searches;
+          } else if (stored == pairWays.end()) {
+            // At 2 the first search is the one under this prefix's fence; a
+            // way it found is kept, unless the turn budget cut it short.
+            real = routeUnderFence(way);
+            ++pairStats.searches;
+            firstSearch = true;
+            if (real != routing::TRELLIS_UNREACHABLE && !lastCutOff_) {
+              pairWays.emplace(pair, PairWay{.way = way, .price = real});
+            }
+          }
+          if (!firstSearch) {
+            const bool none =
+                stored->second.price == routing::TRELLIS_UNREACHABLE;
+            const bool isOpen =
+                !none &&
+                (fence.empty() ||
+                 pairWayOpen(wires, chain, at, open[at][prefix[at]],
+                             open[at + 1][j], fence, stored->second.way));
+            if (none) {
+              ++pairStats.none;
+            } else if (isOpen) {
+              ++pairStats.hits;
+              real = stored->second.price;
+              way = stored->second.way;
+            } else {
+              ++pairStats.blocked;
+              real = routeUnderFence(way);
+              // Under classes a price off the free-space one breaks the
+              // class for this prefix: its other members are offered too.
+              if (optionClasses() && real != stored->second.price) {
+                ++classStats.offPrice;
+                problem.askNext = true;
+              }
+            }
+            if (pairMemoAudit() && (none || isOpen)) {
+              Path routed;
+              const auto price = routeUnderFence(routed);
+              const bool sameWay =
+                  routed.size() == way.size() &&
+                  std::ranges::equal(
+                      routed, way, [](const PathPoint& a, const PathPoint& b) {
+                        return a.samePlace(b) && a.heading == b.heading;
+                      });
+              ++pairStats.audited;
+              pairStats.dearer += real > price ? 1U : 0U;
+              pairStats.cheaper += real < price ? 1U : 0U;
+              pairStats.otherWay += real == price && !sameWay ? 1U : 0U;
+            }
+          }
+        } else if (resumableRoute() && !debug_) {
+          // The step's answer from the paused search of its prefix
+          // (`resumableRoute`), routed alone where it says so.
+          multiRoute_ = [&](const std::vector<Wire>& ws,
+                            const RoutingObjective& objective,
+                            const Edge& edge) -> Path {
+            auto found = resumables.find(key);
+            if (found != resumables.end() && !found->second.serves[j]) {
+              ++resumeStats.notServed;
+              return routeEdge(ws, objective, edge);
+            }
+            const bool timing = stepProfile();
+            auto began = std::chrono::steady_clock::now();
+            grid::BitGrid mine;
+            const grid::BitGrid* own = &corridor_;
+            if (found == resumables.end()) {
+              // The options of the search: this one and every one whose
+              // step still waits under the prefix.
+              std::vector<bool> wanted(open[at + 1].size(), false);
+              wanted[j] = true;
+              for (std::size_t d = 0;
+                   d < wanted.size() && d < problem.siblingKeys.size(); ++d) {
+                wanted[d] = wanted[d] || problem.siblingKeys[d] !=
+                                             routing::TRELLIS_UNREACHABLE;
+              }
+              if (std::ranges::count(wanted, true) < 2 ||
+                  points[at + 1].fixed) {
+                ++resumeStats.single;
+                return routeEdge(ws, objective, edge);
+              }
+              ResumableSearch entry;
+              auto children =
+                  childCorridors(ws, chain, at, open[at + 1], wanted, !fresh,
+                                 entry.corridor, nullptr, nullptr);
+              const auto self = std::ranges::find(children.asked, j);
+              if (self == children.asked.end() || children.asked.size() < 2) {
+                ++resumeStats.single;
+                return routeEdge(ws, objective, edge);
+              }
+              mine = std::move(children.corridors[static_cast<std::size_t>(
+                  self - children.asked.begin())]);
+              own = &mine;
+              entry.serves.assign(open[at + 1].size(), false);
+              for (const auto k : children.asked) {
+                entry.serves[k] = true;
+              }
+              entry.left = children.asked.size();
+              entry.family = children.targets;
+              entry.id = resumeStats.legs.size();
+              resumeStats.legs.push_back(0);
+              const auto budget =
+                  (chainStepBudget() && !mayReorder)
+                      ? weightedBudget(problem.siblingBudget, weight)
+                      : routing::TRELLIS_UNREACHABLE;
+              entry.maxTurns =
+                  budget == routing::TRELLIS_UNREACHABLE
+                      ? std::int16_t{-1}
+                      : static_cast<std::int16_t>(std::min<std::uint64_t>(
+                            budget / bendUnit(), 255ULL));
+              if (resumables.size() >= resumableCap()) {
+                const auto oldest = std::ranges::min_element(
+                    resumables, {},
+                    [](const auto& one) { return one.second.used; });
+                evictedPrefixes.insert(oldest->first);
+                resumables.erase(oldest);
+                ++resumeStats.evicted;
+              }
+              resumeStats.restarted += evictedPrefixes.contains(key) ? 1U : 0U;
+              found = resumables.emplace(key, std::move(entry)).first;
+              ++resumeStats.fresh;
+            } else {
+              corridorOfEdge(ws, objective, edge);
+              ++resumeStats.resumes;
+            }
+            if (timing) {
+              const auto now = std::chrono::steady_clock::now();
+              edgeSplit_.corridor +=
+                  std::chrono::duration<double>(now - began).count();
+              began = now;
+            }
+            auto& entry = found->second;
+            entry.used = ++resumeClock;
+            if (zeroProximity_.size() != proximity_.size()) {
+              zeroProximity_.assign(proximity_.size(), 0);
+            }
+            const auto [startRun, endRun] = runsOfEdge(edge);
+            router_.setParams({.startStraightLength = startRun,
+                               .endStraightLength = endRun,
+                               .minRadius = BEND_RADIUS,
+                               .bendPenalty = edgeBendPenalty()});
+            router_.setSingleCrossingFeedline(nullptr, 0, 1);
+            router_.attachCorridor(&entry.corridor);
+            router_.attachWireProximity(&zeroProximity_);
+            router_.setMaxTurns(entry.maxTurns);
+            router_.setResumeOrder(resumeRekey());
+            const bool first = !entry.search.started();
+            auto answer = router_.routeResumable(entry.search, objective.source,
+                                                 objective.target, own, true,
+                                                 entry.family);
+            router_.setMaxTurns(-1);
+            const auto expanded = router_.lastSearchExpansions();
+            resumeStats.expansions += expanded;
+            resumeStats.restoreSeconds += router_.lastResumeSplit().restore;
+            resumeStats.rekeySeconds += router_.lastResumeSplit().rekey;
+            resumeStats.pauseSeconds += router_.lastResumeSplit().pause;
+            resumeStats.reinserts += router_.lastResumeSplit().reinserts;
+            resumeStats.atOnce += !first && expanded == 0 ? 1U : 0U;
+            resumeStats.resumedLegs += !first && expanded != 0 ? 1U : 0U;
+            resumeStats.freshLegs += first ? 1U : 0U;
+            ++resumeStats.legs[entry.id];
+            if (timing) {
+              edgeSplit_.route += std::chrono::duration<double>(
+                                      std::chrono::steady_clock::now() - began)
+                                      .count();
+              ++edgeSplit_.searches;
+              edgeSplit_.expansions += expanded;
+            }
+            std::size_t bytes = 0;
+            for (const auto& [prefixKey, one] : resumables) {
+              bytes += one.bytes();
+            }
+            resumeStats.peakStored =
+                std::max(resumeStats.peakStored, resumables.size());
+            resumeStats.peakBytes = std::max(resumeStats.peakBytes, bytes);
+            if (resumableAudit()) {
+              // The step's own search: its corridor, its budget.
+              const auto cutoffs = budgetCutoffs_;
+              const bool cutOff = lastCutOff_;
+              const auto split = edgeSplit_;
+              router_.attachCorridor(own);
+              if (stepBudget_ != routing::TRELLIS_UNREACHABLE) {
+                router_.setMaxTurns(static_cast<std::int16_t>(
+                    std::min<std::uint64_t>(stepBudget_ / bendUnit(), 255ULL)));
+              }
+              const auto alone = router_.route(objective, true);
+              router_.setMaxTurns(-1);
+              const auto aloneExpanded = router_.lastSearchExpansions();
+              budgetCutoffs_ = cutoffs;
+              lastCutOff_ = cutOff;
+              edgeSplit_ = split;
+              ++resumeStats.audited;
+              if (first) {
+                resumeStats.freshExpanded.push_back(expanded);
+                resumeStats.freshAlone.push_back(aloneExpanded);
+              } else {
+                resumeStats.resumedExpanded.push_back(expanded);
+                resumeStats.resumedAlone.push_back(aloneExpanded);
+              }
+              const bool mine =
+                  answer.outcome ==
+                  routing::DubinsRouter::MultiRoute::Outcome::Found;
+              resumeStats.priceDiffers +=
+                  mine != !alone.empty() ||
+                          (mine &&
+                           wayCostOf(answer.way, objective.target.heading) !=
+                               wayCostOf(alone, objective.target.heading))
+                      ? 1U
+                      : 0U;
+            }
+            if (--entry.left == 0) {
+              resumables.erase(found);
+            }
+            using Outcome = routing::DubinsRouter::MultiRoute::Outcome;
+            const bool budgeted = stepBudget_ != routing::TRELLIS_UNREACHABLE;
+            const auto bound =
+                budgeted
+                    ? std::min<std::uint64_t>(stepBudget_ / bendUnit(), 255)
+                    : 0;
+            switch (answer.outcome) {
+            case Outcome::Found:
+              if (budgeted && answer.turns > bound) {
+                ++resumeStats.overOwn;
+                return routeEdge(ws, objective, edge);
+              }
+              ++resumeStats.taken;
+              lastCutOff_ = false;
+              return std::move(answer.way);
+            case Outcome::NoWay:
+              ++resumeStats.taken;
+              ++resumeStats.noWay;
+              lastCutOff_ = false;
+              return {};
+            case Outcome::CutOff:
+              ++resumeStats.cutOff;
+              break;
+            case Outcome::LeftOwnCorridor:
+              ++resumeStats.leftOwn;
+              break;
+            case Outcome::Looped:
+              ++resumeStats.looped;
+              break;
+            }
+            return routeEdge(ws, objective, edge);
+          };
+          real = routeUnderFence(way);
+          multiRoute_ = nullptr;
+        } else if (multiTargetRoute() && !debug_) {
+          // The step's answer from the search of its prefix to every option
+          // (`multiTargetRoute`), routed alone where it says so.
+          multiRoute_ = [&](const std::vector<Wire>& ws,
+                            const RoutingObjective& objective,
+                            const Edge& edge) -> Path {
+            auto found = multiWays.find(key);
+            if (found == multiWays.end() || !found->second.answers[j].asked) {
+              // The options searched with this step: it, and every option
+              // whose step waits under the same prefix at a key within
+              // `multiTargetEps` of its own and was not searched yet.
+              const auto reach =
+                  problem.stepKey > routing::TRELLIS_UNREACHABLE -
+                                        (multiTargetEps() * bendUnit())
+                      ? routing::TRELLIS_UNREACHABLE
+                      : problem.stepKey + (multiTargetEps() * bendUnit());
+              std::vector<bool> wanted(open[at + 1].size(), false);
+              wanted[j] = true;
+              std::size_t together = 1;
+              for (std::size_t d = 0; d < wanted.size(); ++d) {
+                const auto f = d < problem.siblingKeys.size()
+                                   ? problem.siblingKeys[d]
+                                   : routing::TRELLIS_UNREACHABLE;
+                if (d == j || f == routing::TRELLIS_UNREACHABLE || f > reach ||
+                    (found != multiWays.end() &&
+                     found->second.answers[d].asked)) {
+                  continue;
+                }
+                wanted[d] = true;
+                ++together;
+              }
+              if (together == 1) {
+                // No option to share the search with: the single search.
+                ++multiStats.single;
+                return routeEdge(ws, objective, edge);
+              }
+              const auto budget =
+                  (chainStepBudget() && !mayReorder)
+                      ? weightedBudget(problem.siblingBudget, weight)
+                      : routing::TRELLIS_UNREACHABLE;
+              auto answers =
+                  multiTargetAnswers(ws, chain, at, open[at + 1], wanted,
+                                     !fresh, budget, multiStats);
+              if (found == multiWays.end()) {
+                found =
+                    multiWays
+                        .emplace(key, MultiPrefix{.answers =
+                                                      std::vector<MultiAnswer>(
+                                                          answers.size())})
+                        .first;
+              }
+              for (std::size_t d = 0; d < answers.size(); ++d) {
+                if (answers[d].asked) {
+                  found->second.answers[d] = std::move(answers[d]);
+                  ++found->second.left;
+                }
+              }
+            }
+            // Each option is priced once under a prefix, so its answer is
+            // taken out of the store.
+            const MultiAnswer answer = std::move(found->second.answers[j]);
+            if (answer.asked && --found->second.left == 0) {
+              multiWays.erase(found);
+            }
+            using Outcome = routing::DubinsRouter::MultiRoute::Outcome;
+            const bool budgeted = stepBudget_ != routing::TRELLIS_UNREACHABLE;
+            const auto bound =
+                budgeted
+                    ? std::min<std::uint64_t>(stepBudget_ / bendUnit(), 255)
+                    : 0;
+            Path taken;
+            bool alone = false;
+            if (!answer.asked) {
+              ++multiStats.notAsked;
+              alone = true;
+            } else if (answer.route.outcome == Outcome::LeftOwnCorridor) {
+              ++multiStats.leftOwn;
+              alone = true;
+            } else if (answer.route.outcome == Outcome::Looped) {
+              ++multiStats.looped;
+              alone = true;
+            } else if (answer.route.outcome == Outcome::CutOff && !budgeted) {
+              // Cut off by a bound this step does not have.
+              alone = true;
+            }
+            if (alone) {
+              return routeEdge(ws, objective, edge);
+            }
+            ++multiStats.taken;
+            lastCutOff_ = false;
+            if (answer.route.outcome == Outcome::NoWay) {
+              ++multiStats.noWay;
+            } else if (answer.route.outcome == Outcome::CutOff) {
+              ++multiStats.cutOff;
+              lastCutOff_ = true;
+            } else if (budgeted && answer.route.turns > bound) {
+              // More turns than this step's own bound lets the router make.
+              ++multiStats.ownCut;
+              lastCutOff_ = true;
+            } else {
+              taken = answer.route.way;
+            }
+            budgetCutoffs_ += lastCutOff_ ? 1 : 0;
+            if (multiTargetAudit()) {
+              const bool cutOff = lastCutOff_;
+              const auto cutoffs = budgetCutoffs_;
+              const auto split = edgeSplit_;
+              const auto alonePath = routeEdge(ws, objective, edge);
+              lastCutOff_ = cutOff;
+              budgetCutoffs_ = cutoffs;
+              edgeSplit_ = split;
+              ++multiStats.audited;
+              if (taken.empty() != alonePath.empty()) {
+                multiStats.onlyMulti += alonePath.empty() ? 1U : 0U;
+                multiStats.onlyAlone += taken.empty() ? 1U : 0U;
+              } else if (!taken.empty()) {
+                const auto mine = wayCostOf(taken, objective.target.heading);
+                const auto theirs =
+                    wayCostOf(alonePath, objective.target.heading);
+                multiStats.dearer += mine > theirs ? 1U : 0U;
+                multiStats.cheaper += mine < theirs ? 1U : 0U;
+                multiStats.otherWay +=
+                    mine == theirs &&
+                            !std::ranges::equal(
+                                taken, alonePath,
+                                [](const PathPoint& a, const PathPoint& b) {
+                                  return a.samePlace(b) &&
+                                         a.heading == b.heading;
+                                })
+                        ? 1U
+                        : 0U;
+              }
+            }
+            return taken;
+          };
+          real = routeUnderFence(way);
+          multiRoute_ = nullptr;
+        } else {
+          real = routeUnderFence(way);
+        }
+        if (chainBound() == 2 || chainBound() == 3) {
           audit(chain, at, portOfOption(chain, at, open[at][prefix[at]], true),
                 portOfOption(chain, at + 1, open[at + 1][j], false), real);
+        }
+        if (!freePrice.empty() && real != routing::TRELLIS_UNREACHABLE) {
+          const auto free =
+              freePrice[at][(static_cast<std::size_t>(prefix[at]) *
+                             open[at + 1].size()) +
+                            j];
+          const auto priced = weighted(real, edgeWeight(chain, at));
+          if (free == routing::TRELLIS_UNREACHABLE || priced < free) {
+            ++probe.below;
+            if (probe.belowCases.size() < 10) {
+              probe.belowCases.push_back(std::format(
+                  "edge {} options {}->{} priced {} free {}", at,
+                  open[at][prefix[at]], open[at + 1][j], priced,
+                  free == routing::TRELLIS_UNREACHABLE ? std::string("none")
+                                                       : std::to_string(free)));
+            }
+          } else if (priced == free) {
+            ++probe.equal;
+          } else {
+            ++probe.above;
+            probe.gapSum += static_cast<double>(priced - free);
+          }
+        }
+        if (lengthAudit() && real != routing::TRELLIS_UNREACHABLE) {
+          const auto bound = turns[at][(static_cast<std::size_t>(prefix[at]) *
+                                        open[at + 1].size()) +
+                                       j];
+          ++lengthAuditPairs_;
+          if (bound > real) {
+            ++lengthAuditAbove_;
+            say(std::format("[Length Audit] chain {} edge {} on options {} "
+                            "and {}: the bound {} is ABOVE the price {}",
+                            chain, at, open[at][prefix[at]], open[at + 1][j],
+                            bound, real));
+          }
         }
 
         // **The other order, for the pair at either end of the chain.**
@@ -13714,6 +16078,7 @@ public:
         // this choice needed it moved. And the price of the prefix changes
         // with it, which is what `redone` carries back.
         Path before;
+        std::uint64_t beforePrice = 0;
         if (real == routing::TRELLIS_UNREACHABLE && mayReorder) {
           const Path* stood = fence.back();
           const auto wasTurning = wayCostOf(
@@ -13735,8 +16100,12 @@ public:
               real = first;
               way = std::move(mine);
               before = std::move(again);
-              redone = static_cast<std::int64_t>(nowTurning) -
-                       static_cast<std::int64_t>(wasTurning);
+              beforePrice = nowTurning;
+              // The predecessor at its own weight, laid either way.
+              redone = static_cast<std::int64_t>(
+                           weighted(nowTurning, edgeWeight(chain, at - 1))) -
+                       static_cast<std::int64_t>(
+                           weighted(wasTurning, edgeWeight(chain, at - 1)));
               tell(std::format(
                   "[Coupler Insertion]   chain {} edge {}: no way after edge "
                   "{}, but both fit with edge {} laid first — edge {} redone "
@@ -13784,139 +16153,15 @@ public:
             return routing::TRELLIS_UNREACHABLE;
           }
         }
-        // The capacity check of this step: the chip the chains settled
-        // before this one leave, with this prefix standing on top — its
-        // couplers up to this edge's far end and its edges up to this one.
-        // Under `capacityRule` a step whose edge closes a wire is refused
-        // here, before anything of it is remembered.
-        if (stepSettled_ != nullptr) {
-          const auto began = std::chrono::steady_clock::now();
-          std::vector<std::size_t> options(layers, 0);
-          std::string named;
-          for (std::size_t layer = 0; layer <= at + 1; ++layer) {
-            options[layer] = open[layer][layer <= at ? prefix[layer] : j];
-            named += std::format("{}{}", layer == 0 ? "" : " ",
-                                 points[layer].fixed
-                                     ? std::string("launcher")
-                                     : std::to_string(options[layer]));
-          }
-          std::vector<const Path*> ways(edges, nullptr);
-          for (std::size_t e = 0; e < at; ++e) {
-            ways[e] = wayOfEdge(e);
-          }
-          if (!before.empty()) {
-            ways[at - 1] = &before;
-          }
-          ways[at] = &way;
-          const auto state =
-              stateOf(wires, *stepSettled_, chain, &options, &ways, at + 2);
-          auto verdict = capacityVerdictOf(state);
-          const auto parent = checked.find(key);
-          const auto& was = (at == 0 || parent == checked.end())
-                                ? unchained
-                                : parent->second.verdict;
-          std::vector<std::uint32_t> closed;
-          std::ranges::set_difference(verdict.lost, was.lost,
-                                      std::back_inserter(closed));
-          if (verdict.fastLost) {
-            std::vector<std::uint32_t> fastClosed;
-            std::ranges::set_difference(
-                *verdict.fastLost,
-                was.fastLost ? *was.fastLost : std::set<std::uint32_t>{},
-                std::back_inserter(fastClosed));
-            ++fastCompared;
-            fastSame += fastClosed == closed ? 1U : 0U;
-            fastSameRefusal += fastClosed.empty() == closed.empty() ? 1U : 0U;
-            axisSeconds += verdict.seconds;
-            fastSeconds += verdict.fastSeconds;
-            if (fastClosed != closed) {
-              tell(std::format(
-                  "[Capacity Fast] chain {} f{} on options {}: the medial "
-                  "axis closes {}, the profiles close {}{}",
-                  chain, firstSlot + at, named,
-                  closed.empty() ? std::string("none") : namesOf(wires, closed),
-                  fastClosed.empty() ? std::string("none")
-                                     : namesOf(wires, fastClosed),
-                  fastClosed.empty() == closed.empty()
-                      ? ""
-                      : " — the refusal differs"));
-            }
-          }
-          const auto spent = std::chrono::steady_clock::now() - began;
-          const auto seconds = std::chrono::duration<double>(spent).count();
-          // The check's time is given back to the clock: the budget is for
-          // routing, and a chain checked step by step prices as many steps
-          // as one that is not.
-          if (problem.budget.count() > 0) {
-            problem.budget +=
-                std::chrono::duration_cast<std::chrono::nanoseconds>(spent);
-          }
-          ++stepChecks;
-          stepsCarrying += verdict.lost.empty() ? 1U : 0U;
-          stepsClosing += closed.empty() ? 0U : 1U;
-          stepSeconds += seconds;
-          const bool refused = stepRefuses_ && !closed.empty();
-          stepsRefused += refused ? 1U : 0U;
-          // A step that closes a wire names the feedline edges its edge
-          // meets, and under `capacityStepGraphs` the first few such steps
-          // of a chain write the graph the check saw.
-          std::string meets;
-          if (!closed.empty()) {
-            const auto met = feedlinesMet(state, chain, at);
-            if (!met.empty()) {
-              meets =
-                  std::format("; its edge meets {}", namesOf(state.wires, met));
-            }
-            if (capacityStepGraphs() && debug_ &&
-                stepsClosing <= STEP_GRAPHS_CLOSING) {
-              const auto drawing = std::chrono::steady_clock::now();
-              const auto where = debug_(
-                  std::format("step-c{}-closing{}-capacity-graph.json", chain,
-                              stepsClosing),
-                  capacityGraphJsonOf(
-                      state,
-                      std::format("chain {} f{} ({}->{}) on options {}: "
-                                  "this edge closes {}{}",
-                                  chain, firstSlot + at, at, at + 1, named,
-                                  namesOf(wires, closed), meets)));
-              if (!where.empty()) {
-                tell(std::format("[Capacity Step] chain {} f{}: its "
-                                 "capacity graph as data: {}",
-                                 chain, firstSlot + at, where));
-              }
-              if (problem.budget.count() > 0) {
-                problem.budget +=
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now() - drawing);
-              }
-            }
-          }
-          const std::vector<std::uint32_t> lost(verdict.lost.begin(),
-                                                verdict.lost.end());
-          tell(std::format(
-              "[Capacity Step] chain {} f{} ({}->{}) on options {}: {}{}; "
-              "{}{}{}; {:.3f}s",
-              chain, firstSlot + at, at, at + 1, named,
-              lost.empty() ? std::string("SAT") : std::string("UNSAT"),
-              lost.empty()
-                  ? std::string()
-                  : std::format(" — {} wire{} without a way ({}), short by {}",
-                                lost.size(), lost.size() == 1 ? "" : "s",
-                                namesOf(wires, lost), verdict.shortBy),
-              closed.empty()
-                  ? std::string("this edge closes no wire")
-                  : std::format("this edge closes {}", namesOf(wires, closed)),
-              meets, refused ? " — refused (SCPD_CAPACITY_RULE)" : "",
-              seconds));
-          if (refused) {
-            return routing::TRELLIS_UNREACHABLE;
-          }
-          auto mine = key;
-          mine.push_back(j);
-          checked[std::move(mine)] = StepCheck{.verdict = std::move(verdict),
-                                               .closed = std::move(closed)};
+        // The capacity check of this step (`checkStep`), now or, under
+        // `lazyStepCheck`, when the search takes its prefix. The step that
+        // completes a run is always checked now: it can become the search's
+        // incumbent at once, which prunes and budgets the steps after it.
+        if (stepSettled_ != nullptr && !(lazyCheck && at + 1 < edges) &&
+            checkStep(key, j, way, before)) {
+          return routing::TRELLIS_UNREACHABLE;
         }
-        if (chainLearnedBound()) {
+        if (chainLearnedBound() && weight == 1.0) {
           auto& known = learned[pairKey(at, prefix[at], j)];
           if (known == 0) {
             known = real;
@@ -13926,9 +16171,11 @@ public:
           }
         }
         key.push_back(j);
-        laid[std::move(key)] =
-            Laid{.way = std::move(way), .before = std::move(before)};
-        return real;
+        laid[std::move(key)] = Laid{.way = std::move(way),
+                                    .before = std::move(before),
+                                    .price = real,
+                                    .beforePrice = beforePrice};
+        return weighted(real, weight);
       };
 
       answer = routing::solveChainAStar(problem);
@@ -13941,7 +16188,7 @@ public:
       // trebles what every round has to route and was measured worse.
       bool widened = false;
       const auto unlock = [&](const std::size_t at) {
-        if (at >= layers || points[at].fixed) {
+        if (at >= layers || points[at].fixed || !secondDogleg()) {
           return;
         }
         auto& coupler = couplers_[points[at].coupler];
@@ -13968,7 +16215,8 @@ public:
     out.routed = static_cast<std::uint32_t>(memoMisses_ - routedBefore);
     out.expansions = answer.expansions;
     out.pruned = answer.pruned;
-    out.outOfTime = answer.outOfTime;
+    sayEdgeSplit(std::format("chain {}", chain), edgesBefore);
+    sayRouterClasses(std::format("chain {}", chain));
     if (stepSettled_ != nullptr) {
       const std::vector<std::uint32_t> lost(unchained.lost.begin(),
                                             unchained.lost.end());
@@ -14001,9 +16249,59 @@ public:
         say(std::format("[Capacity Fast] chain {}: {} passes, seconds per "
                         "pass: {}",
                         chain, fastPasses_, laps));
+        if (stepProfile()) {
+          std::string parts;
+          for (std::size_t part = 0; part < saddleLaps_.size(); ++part) {
+            parts += std::format("{}{} {:.4f}", parts.empty() ? "" : ", ",
+                                 SADDLE_PARTS.at(part),
+                                 saddleLaps_.at(part) / fastPasses_);
+          }
+          say(std::format("[Saddle Split] chain {}: seconds per pass: {}",
+                          chain, parts));
+          const auto split = grid::takeProfileCutsSplit();
+          const auto per = [&](const double seconds) {
+            return split.calls == 0
+                       ? 0.0
+                       : seconds / static_cast<double>(split.calls);
+          };
+          say(std::format(
+              "[Profile Split] chain {}: {} calls, seconds per call: walls "
+              "{:.4f}, outlines {:.4f}, lines {:.4f}, fields {:.4f}, pairs "
+              "{:.4f}, mouths {:.4f}, wedges {:.4f}, narrowings {:.4f}",
+              chain, split.calls, per(split.walls), per(split.outlines),
+              per(split.lines), per(split.fields), per(split.pairs),
+              per(split.mouths), per(split.wedges), per(split.narrowings)));
+          if (profileMemoOn()) {
+            const auto counts = profileMemo_.counts();
+            say(std::format("[Profile Memo] so far: traces {} kept, {} made; "
+                            "lines {} kept, {} made; pairs {} kept, {} made",
+                            counts.tracesKept, counts.tracesMade,
+                            counts.linesKept, counts.linesMade,
+                            counts.pairsKept, counts.pairsMade));
+          }
+          if (reuseVerify()) {
+            say(std::format("[Reuse Verify] so far: {} profile cuts "
+                            "compared, all equal",
+                            reuseVerified_.profiles));
+          }
+          const auto rooms = grid::takeChambersSplit();
+          const auto perRoom = [&](const double seconds) {
+            return rooms.calls == 0
+                       ? 0.0
+                       : seconds / static_cast<double>(rooms.calls);
+          };
+          say(std::format("[Chambers Split] chain {}: {} calls, seconds per "
+                          "call: moves {:.4f}, runs {:.4f}, labels {:.4f}, "
+                          "beside {:.4f}",
+                          chain, rooms.calls, perRoom(rooms.moves),
+                          perRoom(rooms.runs), perRoom(rooms.labels),
+                          perRoom(rooms.beside)));
+        }
+        saddleLaps_ = {};
         fastLaps_ = {};
         fastPasses_ = 0;
       }
+      saySlotSplit(std::format("chain {}", chain));
       // Every feedline edge of the run the chain settles on, with what the
       // check said when the search laid it.
       for (std::size_t e = 0; answer.solved && e + 1 < layers; ++e) {
@@ -14063,6 +16361,119 @@ public:
       out.pairs +=
           static_cast<std::uint64_t>(open[at].size()) * open[at + 1].size();
     }
+    if (resumableRoute()) {
+      // The steps per search, as 1, 2, 3, 4, 5 to 8 and 9 or more.
+      std::array<std::uint64_t, 6> perSearch{};
+      for (const auto served : resumeStats.legs) {
+        ++perSearch[multiTimingRow(served)];
+      }
+      const auto meanAndMedian = [](std::vector<std::uint64_t> values) {
+        if (values.empty()) {
+          return std::string("-");
+        }
+        double sum = 0.0;
+        for (const auto value : values) {
+          sum += static_cast<double>(value);
+        }
+        std::ranges::sort(values);
+        return std::format("mean {:.0f} median {}",
+                           sum / static_cast<double>(values.size()),
+                           values[values.size() / 2]);
+      };
+      say(std::format(
+          "[Resumable Legs] chain {}: {} order; searches serving 1 step {}, 2 "
+          "{}, 3 {}, 4 {}, 5-8 {}, 9+ {}; steps: {} first, {} resumed with "
+          "expansions, {} answered at once, {} routed alone; {} searches "
+          "started again after an eviction; {} entries put back at their "
+          "true key{}",
+          chain,
+          resumeRekey() == routing::DubinsRouter::ResumeOrder::Minimum
+              ? "min"
+              : (resumeRekey() == routing::DubinsRouter::ResumeOrder::Offset
+                     ? "offset"
+                     : "heapify"),
+          perSearch[0], perSearch[1], perSearch[2], perSearch[3], perSearch[4],
+          perSearch[5], resumeStats.freshLegs, resumeStats.resumedLegs,
+          resumeStats.atOnce,
+          resumeStats.single + resumeStats.notServed + resumeStats.overOwn +
+              resumeStats.cutOff + resumeStats.leftOwn + resumeStats.looped,
+          resumeStats.restarted, resumeStats.reinserts,
+          resumableAudit()
+              ? std::format(
+                    "; audit: {} steps, expansions of resumed legs {} against "
+                    "alone {}, of first legs {} against alone {}, {} prices "
+                    "differ",
+                    resumeStats.audited,
+                    meanAndMedian(resumeStats.resumedExpanded),
+                    meanAndMedian(resumeStats.resumedAlone),
+                    meanAndMedian(resumeStats.freshExpanded),
+                    meanAndMedian(resumeStats.freshAlone),
+                    resumeStats.priceDiffers)
+              : std::string{}));
+      say(std::format(
+          "[Resumable Route] chain {}: {} searches started, {} resumed ({} "
+          "answered at once), {} expansions; {} steps answered ({} without a "
+          "way); routed alone: {} with no other option waiting, {} not "
+          "served, {} over their own bound, {} cut off, {} off their own "
+          "corridor, {} crossing themselves; {} searches evicted, at most {} "
+          "kept in {:.1f} MB; putting back {:.3f}s, keying {:.3f}s, pausing "
+          "{:.3f}s",
+          chain, resumeStats.fresh, resumeStats.resumes, resumeStats.atOnce,
+          resumeStats.expansions, resumeStats.taken, resumeStats.noWay,
+          resumeStats.single, resumeStats.notServed, resumeStats.overOwn,
+          resumeStats.cutOff, resumeStats.leftOwn, resumeStats.looped,
+          resumeStats.evicted, resumeStats.peakStored,
+          static_cast<double>(resumeStats.peakBytes) / (1024.0 * 1024.0),
+          resumeStats.restoreSeconds, resumeStats.rekeySeconds,
+          resumeStats.pauseSeconds));
+    }
+    if (multiTargetRoute()) {
+      say(std::format(
+          "[Multi Target] chain {}: {} searches for {} targets; {} steps "
+          "answered ({} without a way, {} cut off by the search's bound, {} "
+          "by their own), routed alone: {} off their own corridor, {} "
+          "crossing themselves, {} not asked, {} with no option within {} "
+          "eighth turns{}",
+          chain, multiStats.searches, multiStats.targets, multiStats.taken,
+          multiStats.noWay, multiStats.cutOff, multiStats.ownCut,
+          multiStats.leftOwn, multiStats.looped, multiStats.notAsked,
+          multiStats.single, multiTargetEps(),
+          multiTargetAudit()
+              ? std::format("; audit: {} routed alone as well, the answer "
+                            "dearer on {}, cheaper on {}, another way at the "
+                            "same price on {}, a way only in the answer on "
+                            "{}, only alone on {}",
+                            multiStats.audited, multiStats.dearer,
+                            multiStats.cheaper, multiStats.otherWay,
+                            multiStats.onlyMulti, multiStats.onlyAlone)
+              : std::string{}));
+      if (multiTargetAudit()) {
+        // Sums, so that the lines of several chains add up.
+        constexpr std::array<const char*, 6> rows{"1", "2",   "3",
+                                                  "4", "5-8", "9+"};
+        std::string text;
+        for (std::size_t r = 0; r < rows.size(); ++r) {
+          const auto& row = multiStats.byTargets[r];
+          text += std::format(
+              "; k {}: {} searches, multi {:.4f}s {} expansions, singles "
+              "{:.4f}s {} expansions",
+              rows[r], row.searches, row.multiSeconds, row.multiExpansions,
+              row.singleSeconds, row.singleExpansions);
+        }
+        say(std::format("[Multi Target Timing] chain {}: corridors {:.4f}s, "
+                        "union {:.4f}s{}",
+                        chain, multiStats.corridorSeconds,
+                        multiStats.unionSeconds, text));
+        std::string cases;
+        for (const auto& [multi, singles] : multiStats.bench) {
+          cases += std::format(" {:.6f}/{:.6f}", multi, singles);
+        }
+        say(std::format("[Multi Target Bench] chain {}: {} cases of 4 "
+                        "targets, median of {} runs, multi/singles seconds:{}",
+                        chain, multiStats.bench.size(), MULTI_BENCH_RUNS,
+                        cases));
+      }
+    }
     if (!answer.solved) {
       return out;
     }
@@ -14079,6 +16490,49 @@ public:
     // pair at an end of the chain was reordered, the earlier edge's way is
     // the replacement the later one left behind.
     out.ways = waysOfRun(laid, answer.chosen);
+    out.unweighted = unweightedOfRun(laid, answer.chosen);
+    out.lowerBound = answer.lowerBound;
+    if (freeSpaceProbe()) {
+      sayFreeSpaceProbe(chain, probe, out.cost);
+    }
+    if (optionClasses()) {
+      say(std::format(
+          "[Option Classes] chain {}: {} options in {} classes (options/"
+          "classes per layer: {}); {} members offered in a representative's "
+          "place, {} steps priced off their class's free-space price, {} "
+          "prefixes expanded",
+          chain, classStats.options, classStats.classes, classStats.layers,
+          answer.membersOffered, classStats.offPrice, answer.expansions));
+    }
+    if (prefilterProbe()) {
+      say(std::format(
+          "[Prefilter Probe] chain {}: {} step checks in {:.2f}s, {} UNSAT "
+          "in {:.2f}s, {} with a slot of the step's own feedline edge over "
+          "in {:.2f}s ({} of them refused){}",
+          chain, prefilter.checks, prefilter.seconds, prefilter.unsat,
+          prefilter.unsatSeconds, prefilter.ownOver, prefilter.ownOverSeconds,
+          prefilter.ownOverRefused, [&] {
+            std::string text;
+            for (const auto& one : prefilter.samples) {
+              text += "; " + one;
+            }
+            return text;
+          }()));
+    }
+    if (pairMemo() != 0) {
+      say(std::format(
+          "[Pair Memo] chain {}: {} hits, {} first searches, {} blocked "
+          "(routed under the fence), {} without a way{}",
+          chain, pairStats.hits, pairStats.searches, pairStats.blocked,
+          pairStats.none,
+          pairMemoAudit()
+              ? std::format("; audit: {} routed again under the fence, the "
+                            "kept price dearer on {}, cheaper on {}, another "
+                            "way at the same price on {}",
+                            pairStats.audited, pairStats.dearer,
+                            pairStats.cheaper, pairStats.otherWay)
+              : std::string{}));
+    }
     return out;
   }
 
@@ -14388,19 +16842,12 @@ public:
           // chain alone keeps the round one method's answer, and the edges
           // that cannot be drawn are counted by `stateFaults` and reported
           // by the commit — which is the honest outcome rather than a
-          // quietly patched one.
-          // Two different things, and calling them by one name reads as a
-          // geometric verdict where it is only a clock. `optimal` on an
-          // unsolved answer says the search saw every run of options there
-          // is; without it, the search simply ran out of time.
+          // quietly patched one. The search saw every run of options there
+          // is: it has no time limit.
           say(std::format(
-              "[Coupler Insertion] chain {} round {}: {} — leaving it as it "
-              "stands ({} steps routed)",
-              chain, round,
-              answer.optimal
-                  ? "no run of options joins the chain"
-                  : "out of time before any run of options joined the chain",
-              answer.routed));
+              "[Coupler Insertion] chain {} round {}: no run of options joins "
+              "the chain — leaving it as it stands ({} steps routed)",
+              chain, round, answer.routed));
           continue;
         }
         auto& points = chains_[chain];
@@ -14421,16 +16868,12 @@ public:
                 ? std::format("[Coupler Insertion] chain {} round {}: {} {} "
                               "over {} layers, {} prefixes expanded, {} "
                               "steps routed",
-                              chain, round,
-                              answer.optimal  ? "optimum"
-                              : answer.relaid ? "best found, an end pair "
-                                                "laid the other way round"
-                                              : "best in the time given",
-                              answer.cost, points.size(), answer.expansions,
-                              answer.routed) +
+                              chain, round, answerWord(answer), answer.cost,
+                              points.size(), answer.expansions, answer.routed) +
                       (answer.pruned == 0
                            ? std::string{}
-                           : std::format(", {} left unpriced", answer.pruned))
+                           : std::format(", {} left unpriced", answer.pruned)) +
+                      atWeightOne(answer)
                 : std::format("[Coupler Insertion] chain {} round {}: optimum "
                               "{} over {} layers, {} of {} pairs priced, {} "
                               "of them searched",
@@ -14521,7 +16964,9 @@ public:
   /// How many runs of options the segment search hands the global search
   /// per segment (`SCPD_GLOBAL_SAT_RUNS`, 8), how many locally SAT states of
   /// a chain it keeps (`SCPD_GLOBAL_SAT_STATES`, 8) and how many whole-chip
-  /// combinations it checks (`SCPD_GLOBAL_SAT_TRIES`, 200).
+  /// combinations it checks (`SCPD_GLOBAL_SAT_TRIES`, 200). These counts
+  /// are the only limits of the search: it has no time limit, so it tries
+  /// the same combinations in the same order on every machine.
   [[nodiscard]] static std::uint32_t globalSatRuns() {
     static const auto n = static_cast<std::uint32_t>(
         std::clamp(envWhole("SCPD_GLOBAL_SAT_RUNS", 8), 1, 1000));
@@ -14532,25 +16977,49 @@ public:
         std::clamp(envWhole("SCPD_GLOBAL_SAT_STATES", 8), 1, 100));
     return n;
   }
-  /// How long the global search may try combinations, in seconds
-  /// (`SCPD_GLOBAL_SAT_SECONDS`, 60), after the collection of the states.
-  [[nodiscard]] static double globalSatSeconds() {
-    static const auto n = static_cast<double>(
-        std::clamp(envWhole("SCPD_GLOBAL_SAT_SECONDS", 60), 1, 100000));
-    return n;
-  }
-  /// How long the global search may collect chain states, in seconds
-  /// (`SCPD_GLOBAL_SAT_COLLECT_SECONDS`, 600); the chains not reached keep
-  /// the state they stand on.
-  [[nodiscard]] static double globalSatCollectSeconds() {
-    static const auto n = static_cast<double>(std::clamp(
-        envWhole("SCPD_GLOBAL_SAT_COLLECT_SECONDS", 600), 1, 100000));
-    return n;
-  }
   [[nodiscard]] static std::uint32_t globalSatTries() {
     static const auto n = static_cast<std::uint32_t>(
         std::clamp(envWhole("SCPD_GLOBAL_SAT_TRIES", 200), 1, 100000));
     return n;
+  }
+  /// Whether the global search collects the states of the chains at an edge
+  /// over first, one chain at a time, and tries the states of each such
+  /// chain on their own before it collects the next chain:
+  /// `SCPD_GLOBAL_SAT_LAZY`, **on**. The search stops at the first SAT
+  /// combination, so the other chains are collected only when no state of
+  /// a chain at an edge over is SAT on its own. The search tries the same
+  /// combinations in the same order as with `=0`, which collects every
+  /// chain first.
+  /// On 17q, 45q and 69q the answer was such a state, and the collection of
+  /// the other chains took most of the search (69q: 187 s of 188 s).
+  [[nodiscard]] static bool globalSatLazy() {
+    return envFlag("SCPD_GLOBAL_SAT_LAZY", true);
+  }
+  /// Whether the global search checks its way back to the commit:
+  /// `SCPD_GLOBAL_SAT_VERIFY`, off. A combination puts back only what the
+  /// combination before it changed. With the switch, every combination is
+  /// also built from a full `restore`, and the search throws when the two
+  /// chips differ in a wire, the field, the pads, a coupler or a way of
+  /// `chainEdgePaths_`.
+  [[nodiscard]] static bool globalSatVerify() {
+    return envFlag("SCPD_GLOBAL_SAT_VERIFY", false);
+  }
+  /// Whether the lazy global search tries the states of a chain at an edge
+  /// over on their own after each segment of its collection, and stops at
+  /// the first SAT one: `SCPD_GLOBAL_SAT_EARLY`, off. It tries the states in
+  /// the order the segments find them, not in the order the chain keeps
+  /// them, so it can stop on another state than the search without it.
+  [[nodiscard]] static bool globalSatEarly() {
+    return envFlag("SCPD_GLOBAL_SAT_EARLY", false);
+  }
+  /// The options of a chain state, each after a space.
+  [[nodiscard]] static std::string
+  optionsText(const std::vector<std::size_t>& state) {
+    std::string text;
+    for (const auto option : state) {
+      text += std::format(" {}", option);
+    }
+    return text;
   }
 
   /// What the slot check of the whole chip finds against it, as the
@@ -14558,10 +17027,12 @@ public:
   /// standing, the terminal edges as wires. The wires it loses and the edges
   /// over their capacity; both empty when the chip is SAT. `touching`, when
   /// given, gets the feedline edges (`f<k>`) that an edge over its capacity
-  /// lies on or ends at.
+  /// lies on or ends at; `overGates`, when given, the middle of the line of
+  /// every bottleneck over its capacity.
   [[nodiscard]] std::vector<std::string>
   wholeChipLost(const std::vector<Wire>& wires,
-                std::set<std::string>* touching = nullptr) {
+                std::set<std::string>* touching = nullptr,
+                std::vector<std::array<double, 2>>* overGates = nullptr) {
     auto first = static_cast<std::uint32_t>(wires.size());
     for (const auto& edge : edges_) {
       first = std::min(first, edge.wire);
@@ -14574,9 +17045,7 @@ public:
     std::set<std::uint32_t> lost;
     std::optional<SlotCheckResult> typed;
     SlotGraph input;
-    static_cast<void>(capacityGraphJsonOf(state, "the whole chip", &lost,
-                                          slotCheckVerdict() ? &typed : nullptr,
-                                          &input));
+    capacityCheckOf(state, lost, slotCheckVerdict() ? &typed : nullptr, &input);
     if (typed.has_value()) {
       if (touching != nullptr) {
         const std::regex feedline(R"(\bf\d+\b)");
@@ -14589,6 +17058,14 @@ public:
         };
         // An edge over by its name; a self-bottleneck by its name and load.
         for (const auto& over : typed->over) {
+          if (overGates != nullptr) {
+            for (const auto& edge : input.edges) {
+              if (!edge.stretch && over == edge.name) {
+                overGates->push_back({(edge.from[0] + edge.to[0]) / 2.0,
+                                      (edge.from[1] + edge.to[1]) / 2.0});
+              }
+            }
+          }
           take(over);
           for (const auto& edge : input.edges) {
             if (over == edge.name || over.starts_with(edge.name + " ")) {
@@ -14614,6 +17091,12 @@ public:
     return names;
   }
 
+  /// What `collectChainStates` hands on after each segment of a chain at an
+  /// edge over (`globalSatEarly`): the chain and the states the segment
+  /// found. True ends the collection of that chain.
+  using StatesFound = std::function<bool(
+      std::uint32_t, const std::vector<std::vector<std::size_t>>&)>;
+
   /// The locally SAT states of every chain for `searchGlobalSat`, after the
   /// commit: the chain as it stands first, then the runs of options of the
   /// segments at its two ends (`researchSegment` handing them to
@@ -14626,11 +17109,20 @@ public:
   /// and keeps every locally SAT state, its ends moved or not, without the
   /// limit of `globalSatStates`; those that move the coupler of such a
   /// waypoint come first.
+  ///
+  /// Collects the chains of `order`, in that order, into `chainStates_`,
+  /// which the caller sizes. `spent` holds the seconds every earlier call
+  /// of the same search collected and gets this call's seconds added; it
+  /// is reported and decides nothing. When `afterSegment` is given, it gets
+  /// the new states of each segment of a chain at an edge over, and the
+  /// collection of that chain stops when it returns true.
   void collectChainStates(
       std::vector<Wire>& wires,
-      const std::map<std::uint32_t, std::set<std::size_t>>& focus) {
+      const std::map<std::uint32_t, std::set<std::size_t>>& focus,
+      const std::vector<std::uint32_t>& order,
+      std::chrono::duration<double>& spent,
+      const StatesFound* afterSegment = nullptr) {
     const auto chains = static_cast<std::uint32_t>(chains_.size());
-    chainStates_.assign(chains, {});
     auto firstEdge = static_cast<std::uint32_t>(wires.size());
     for (const auto& edge : edges_) {
       firstEdge = std::min(firstEdge, edge.wire);
@@ -14638,14 +17130,7 @@ public:
     const std::vector<Wire> before(
         wires.begin(), wires.begin() + static_cast<std::ptrdiff_t>(firstEdge));
     const auto began = std::chrono::steady_clock::now();
-    const auto collectBudget =
-        std::chrono::duration<double>(globalSatCollectSeconds());
-    for (std::uint32_t chain = 0; chain < chains; ++chain) {
-      if (std::chrono::steady_clock::now() - began > collectBudget) {
-        say(std::format("[Global SAT] out of collection time before chain {}",
-                        chain));
-        break;
-      }
+    for (const auto chain : order) {
       const auto& points = chains_[chain];
       std::size_t first = points.size();
       std::size_t last = 0;
@@ -14707,6 +17192,9 @@ public:
       std::vector<std::vector<std::size_t>> aloneMoving;
       std::vector<std::vector<std::size_t>> aloneOthers;
       for (const auto lo : starts) {
+        const std::array<std::size_t, 4> sizes{moving.size(), others.size(),
+                                               aloneMoving.size(),
+                                               aloneOthers.size()};
         const RunCollector collect = [&](const std::vector<std::size_t>& layer,
                                          const std::vector<Path>& ways) {
           ++runs;
@@ -14825,6 +17313,21 @@ public:
                                            .because = {}},
                                           globalSatRuns(), badNow));
         segmentCollect_ = nullptr;
+        // The states this segment found, in the order the chain keeps them.
+        if (atOver && afterSegment != nullptr) {
+          std::vector<std::vector<std::size_t>> found;
+          for (const auto& [states, size] :
+               {std::pair{&moving, sizes[0]}, std::pair{&others, sizes[1]},
+                std::pair{&aloneMoving, sizes[2]},
+                std::pair{&aloneOthers, sizes[3]}}) {
+            found.insert(found.end(),
+                         states->begin() + static_cast<std::ptrdiff_t>(size),
+                         states->end());
+          }
+          if (!found.empty() && (*afterSegment)(chain, found)) {
+            break;
+          }
+        }
       }
       if (atOver) {
         kept.insert(kept.end(), std::make_move_iterator(moving.begin()),
@@ -14864,10 +17367,7 @@ public:
                           .count(),
                       checking.count()));
     }
-    say(std::format("[Global SAT] states collected in {:.1f}s",
-                    std::chrono::duration<double>(
-                        std::chrono::steady_clock::now() - began)
-                        .count()));
+    spent += std::chrono::steady_clock::now() - began;
   }
 
   /// **The search for a globally SAT state** (`globalSatSearch`), after the
@@ -14879,9 +17379,15 @@ public:
   /// coupler) not kept yet first. Then whole-chip states, every chain on one
   /// of its states and most on other ends, are tried: the couplers moved as
   /// the coupler session moves them (`setCouplerOption`), every edge drawn,
-  /// and the chip checked as the insertion checks it. The first SAT state
+  /// and the chip checked as the insertion checks it. Stage 1 tries every
+  /// state of a chain at an edge over on its own; stage 2 starts from the
+  /// failed combination with the fewest lost wires and edges over and moves
+  /// one more chain at its edges over per round. The order of the
+  /// combinations is fixed and nothing in it depends on time or chance;
+  /// `globalSatTries` bounds how many are checked. The first SAT state
   /// stays; when there is none, every coupler goes back to its option.
-  /// Whether the search moved a coupler.
+  /// Under `globalSatLazy` a chain is collected only when a stage first
+  /// needs its states. Whether the search moved a coupler.
   bool searchGlobalSat(std::vector<Wire>& wires) {
     const auto chains = static_cast<std::uint32_t>(chains_.size());
     if (chains < 2) {
@@ -14892,7 +17398,8 @@ public:
     const bool complete = std::ranges::all_of(
         edges_, [&](const Edge& edge) { return wires[edge.wire].drawn; });
     std::set<std::string> touching;
-    auto lost = wholeChipLost(wires, &touching);
+    std::vector<std::array<double, 2>> gatesAtCommit;
+    auto lost = wholeChipLost(wires, &touching, &gatesAtCommit);
     if (lost.empty() && complete) {
       say("[Global SAT] the chip is SAT after the commit; nothing to search");
       return false;
@@ -14901,6 +17408,30 @@ public:
       lost.emplace_back("an edge without a way");
     }
     const auto began = std::chrono::steady_clock::now();
+    static_cast<void>(fast::takeSlotCheckSplit());
+    // The collection opens the second-dogleg options of the couplers it
+    // searches (`researchJogs`). That is no decision of the search, and the
+    // lazy search collects fewer chains than the eager one, so every
+    // coupler leaves the search with the flag it came with: the targeted
+    // repair (under `SCPD_RESEARCH_JOGS=0`) and `couplersJson` read it.
+    struct JogsScope {
+      std::vector<Coupler>& couplers;
+      std::vector<bool> kept;
+      explicit JogsScope(std::vector<Coupler>& all) : couplers(all) {
+        for (const auto& coupler : couplers) {
+          kept.push_back(coupler.jogsUnlocked);
+        }
+      }
+      JogsScope(const JogsScope&) = delete;
+      JogsScope& operator=(const JogsScope&) = delete;
+      JogsScope(JogsScope&&) = delete;
+      JogsScope& operator=(JogsScope&&) = delete;
+      ~JogsScope() {
+        for (std::size_t index = 0; index < couplers.size(); ++index) {
+          couplers[index].jogsUnlocked = kept[index];
+        }
+      }
+    } jogsScope{couplers_};
     std::string named;
     for (const auto& name : lost) {
       named += (named.empty() ? "" : " ") + name;
@@ -14927,31 +17458,106 @@ public:
     if (!focusText.empty()) {
       say(std::format("[Global SAT] the edges over lie on {}", focusText));
     }
-    collectChainStates(wires, focus);
-    if (std::ranges::all_of(chainStates_,
-                            [](const auto& kept) { return kept.size() < 2; })) {
-      say("[Global SAT] no chain has a second locally SAT state");
-      return false;
-    }
+    // Under `globalSatLazy` the chains at an edge over are collected one at
+    // a time, and the states of each are tried on their own before the next
+    // chain is collected; another chain is collected only when the
+    // conflict-directed stage first needs its states. Without it every
+    // chain is collected first, in chain order.
+    const bool lazy = globalSatLazy();
+    chainStates_.assign(chains, {});
+    std::chrono::duration<double> collecting{0};
     std::vector<std::size_t> original(couplers_.size());
-    for (std::size_t index = 0; index < couplers_.size(); ++index) {
-      original[index] = couplers_[index].chosen;
-    }
+    std::optional<Snapshot> taken;
+    std::vector<std::vector<Path>> paths;
+    std::optional<Field> fieldAtCommit;
     // Every combination starts from the chip as the commit left it: a
     // combination that failed leaves edges drawn elsewhere, and the next one
     // would start on them.
-    const auto taken = snapshot(wires);
-    const auto paths = chainEdgePaths_;
-    const auto backToStart = [&]() {
-      restore(wires, taken);
+    const auto settle = [&]() {
+      for (std::size_t index = 0; index < couplers_.size(); ++index) {
+        original[index] = couplers_[index].chosen;
+      }
+      taken = snapshot(wires);
+      paths = chainEdgePaths_;
+    };
+    const auto fullBack = [&]() {
+      restore(wires, *taken);
       chainEdgePaths_ = paths;
       foreignRoomStale_ = true;
+    };
+    // `restore` builds the field again from every wire. It is built once
+    // (`restoredWires`, `restoredField`); after that, the search puts back
+    // only what the last `standOn` changed: the wires of the couplers it
+    // moved and of their edges (`touchedWires`), the ways of their chains
+    // (`touchedChains`), the rows of the field it wrote, the pads and the
+    // couplers. `onRestored` says that the chip is that copy with one
+    // `standOn` on top. `restore` reads nothing but the snapshot, so the
+    // chip is the one a full `restore` would give, cell for cell.
+    std::optional<std::vector<Wire>> restoredWires;
+    std::optional<Field> restoredField;
+    bool onRestored = false;
+    std::set<std::uint32_t> touchedWires;
+    std::set<std::uint32_t> touchedChains;
+    const auto backToStart = [&]() {
+      if (!restoredWires.has_value()) {
+        fullBack();
+        restoredWires = wires;
+        restoredField = field_;
+      } else {
+        if (onRestored) {
+          for (const auto key : touchedWires) {
+            wires[key] = (*restoredWires)[key];
+          }
+          field_.restoreRowsFrom(*restoredField);
+          for (const auto chain : touchedChains) {
+            chainEdgePaths_[chain] = paths[chain];
+          }
+        } else {
+          wires = *restoredWires;
+          field_ = *restoredField;
+          chainEdgePaths_ = paths;
+        }
+        bodies_ = taken->bodies;
+        for (std::size_t index = 0; index < couplers_.size(); ++index) {
+          couplers_[index].chosen = taken->chosen[index];
+          couplers_[index].anchor = taken->anchors[index];
+        }
+        foreignRoomStale_ = true;
+      }
+      touchedWires.clear();
+      touchedChains.clear();
+      field_.track();
+      onRestored = true;
+    };
+    // The chip exactly as the commit left it, the field as the commit built
+    // it and not built again: where the next collection starts after a
+    // chain's states were tried. The insertion runs outside a feedline pass,
+    // so there is no crossing rule to put back.
+    const auto backToCommit = [&]() {
+      wires = taken->wires;
+      bodies_ = taken->bodies;
+      for (std::size_t index = 0; index < couplers_.size(); ++index) {
+        couplers_[index].chosen = taken->chosen[index];
+        couplers_[index].anchor = taken->anchors[index];
+      }
+      field_ = *fieldAtCommit;
+      chainEdgePaths_ = paths;
+      foreignRoomStale_ = true;
+      onRestored = false;
     };
     // Moves the couplers to a whole-chip state; whether every edge of the
     // chip is drawn, those of an earlier state's couplers included.
     const auto standOn = [&](const std::vector<std::size_t>& options) {
       for (std::size_t index = 0; index < couplers_.size(); ++index) {
         if (couplers_[index].chosen != options[index]) {
+          const auto& coupler = couplers_[index];
+          touchedWires.insert(coupler.wire);
+          for (const auto key : {coupler.edgeIn, coupler.edgeOut}) {
+            if (key < wires.size()) {
+              touchedWires.insert(key);
+              touchedChains.insert(edges_[wires[key].slot].chain);
+            }
+          }
           static_cast<void>(setCouplerOption(
               wires, static_cast<std::uint32_t>(index), options[index]));
         }
@@ -14960,50 +17566,172 @@ public:
         return wires[edge.wire].drawn;
       });
     };
-    std::mt19937 rng(2026);
     std::set<std::vector<std::size_t>> tried;
     std::uint32_t checks = 0;
-    const auto combining = std::chrono::steady_clock::now();
-    const auto budget = std::chrono::duration<double>(globalSatSeconds());
-    // First every state of a chain at an edge over on its own, the other
-    // chains as the commit left them; then random combinations.
-    std::vector<std::vector<std::size_t>> alone;
-    for (const auto& [chain, at] : focus) {
-      for (std::size_t k = 1; k < chainStates_[chain].size(); ++k) {
-        alone.emplace_back(chains, 0)[chain] = k;
+    // The seconds the combinations take and where they go, for the report
+    // alone.
+    std::chrono::duration<double> combined{0};
+    std::chrono::duration<double> restoring{0};
+    std::chrono::duration<double> moving{0};
+    std::chrono::duration<double> judging{0};
+    std::chrono::duration<double> verifying{0};
+    std::uint32_t repeated = 0;
+    std::uint32_t verified = 0;
+    std::string satMoved;
+    // Builds the combination once more from a full `restore` and compares
+    // the two chips (`globalSatVerify`); the chip stays the full one.
+    const auto verify = [&](const std::vector<std::size_t>& options,
+                            const bool drawn) {
+      const auto verifyBegan = std::chrono::steady_clock::now();
+      const auto cheapWires = wires;
+      const auto cheapField = field_;
+      const auto cheapBodies = bodies_;
+      const auto cheapPaths = chainEdgePaths_;
+      std::vector<std::size_t> cheapChosen;
+      std::vector<PathPoint> cheapAnchors;
+      for (const auto& coupler : couplers_) {
+        cheapChosen.push_back(coupler.chosen);
+        cheapAnchors.push_back(coupler.anchor);
       }
-    }
-    for (std::uint32_t attempt = 0;
-         checks < globalSatTries() && attempt < 50 * globalSatTries() &&
-         std::chrono::steady_clock::now() - combining < budget;
-         ++attempt) {
-      const double share =
-          attempt % 3 == 0 ? 1.0 : (attempt % 3 == 1 ? 0.75 : 0.5);
-      std::vector<std::size_t> pick(chains, 0);
-      for (std::uint32_t chain = 0; attempt >= alone.size() && chain < chains;
-           ++chain) {
-        const auto n = chainStates_[chain].size();
-        // A chain at an edge over leaves the state the commit left.
-        if (n > 1 &&
-            (focus.contains(chain) ||
-             std::uniform_real_distribution<double>(0.0, 1.0)(rng) < share)) {
-          pick[chain] =
-              1 + std::uniform_int_distribution<std::size_t>(0, n - 2)(rng);
+      fullBack();
+      std::string differs;
+      if (!field_.sameAs(*restoredField)) {
+        differs += " the restored field;";
+      }
+      field_.track();
+      touchedWires.clear();
+      touchedChains.clear();
+      if (standOn(options) != drawn) {
+        differs += " the drawn edges;";
+      }
+      if (!field_.sameAs(cheapField)) {
+        differs += " the field;";
+      }
+      if (!(bodies_ == cheapBodies)) {
+        differs += " the pads;";
+      }
+      if (chainEdgePaths_ != cheapPaths) {
+        differs += " chainEdgePaths_;";
+      }
+      for (std::size_t index = 0; index < couplers_.size(); ++index) {
+        if (couplers_[index].chosen != cheapChosen[index] ||
+            !(couplers_[index].anchor == cheapAnchors[index])) {
+          differs += std::format(" coupler {};", index);
         }
       }
-      if (attempt < alone.size()) {
-        pick = alone[attempt];
+      for (std::size_t key = 0; key < wires.size(); ++key) {
+        const auto& full = wires[key];
+        const auto& cheap = cheapWires[key];
+        if (full.way != cheap.way || full.drawn != cheap.drawn ||
+            full.placed != cheap.placed || full.endsOnly != cheap.endsOnly ||
+            full.fixed != cheap.fixed || full.arc != cheap.arc ||
+            !(full.objective.source == cheap.objective.source) ||
+            !(full.objective.target == cheap.objective.target) ||
+            full.startStub != cheap.startStub ||
+            full.endStub != cheap.endStub ||
+            full.couplerAtSource != cheap.couplerAtSource) {
+          differs += " wire " + wireId(full) + ";";
+        }
       }
-      if (std::ranges::all_of(pick, [](const auto k) { return k == 0; }) ||
-          !tried.insert(pick).second) {
-        continue;
+      if (!differs.empty()) {
+        throw std::logic_error(std::format(
+            "[Global SAT] combination {} differs from a full restore in{}",
+            checks, differs));
       }
+      ++verified;
+      verifying += std::chrono::steady_clock::now() - verifyBegan;
+    };
+    // The chains a failed check names (`namedChains`): those whose feedline
+    // edges an edge over lies on or ends at, terminal edges included; those
+    // whose feedline holds a lost wire (`chainWires`); for a feedline edge
+    // that has no way its own chain and every chain with a way that reaches
+    // into the box the edge is searched in (`edgeBox`, `reachOf`); and when
+    // none of these names a chain, the chain of the coupler nearest each
+    // bottleneck over its capacity.
+    ChipChains chip;
+    for (const auto& edge : edges_) {
+      chip.chainOfFeedline.emplace(wireId(wires[edge.wire]), edge.chain);
+    }
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      chip.wiresOfChain.push_back(chainWires(wires, chain));
+    }
+    const auto chainsAt = [&](const std::set<std::string>& names,
+                              const std::vector<std::string>& against,
+                              const std::vector<std::array<double, 2>>& gates) {
+      CheckFinding finding{.touching = names,
+                           .against = against,
+                           .overGates = gates,
+                           .named = {}};
+      for (const auto& edge : edges_) {
+        if (wires[edge.wire].drawn) {
+          continue;
+        }
+        finding.named.insert(edge.chain);
+        const auto& points = chains_[edge.chain];
+        const auto optionAt = [&](const std::size_t at) {
+          return points[at].fixed ? std::size_t{0}
+                                  : couplers_[points[at].coupler].chosen;
+        };
+        const auto box = edgeBox(edge.chain, edge.from, optionAt(edge.from),
+                                 optionAt(edge.to));
+        for (const auto& other : edges_) {
+          const auto& way = wires[other.wire].way;
+          if (other.chain != edge.chain && wires[other.wire].drawn &&
+              !way.empty() && reachOf(way).meets(box)) {
+            finding.named.insert(other.chain);
+          }
+        }
+      }
+      // The pads as the combination stands them.
+      chip.couplers.clear();
+      for (std::uint32_t chain = 0; chain < chains; ++chain) {
+        for (const auto& point : chains_[chain]) {
+          if (!point.fixed) {
+            const auto& coupler = couplers_[point.coupler];
+            const auto& centre = coupler.options[coupler.chosen].centre;
+            chip.couplers.push_back(
+                {{static_cast<double>(centre.x), static_cast<double>(centre.y)},
+                 chain});
+          }
+        }
+      }
+      return namedChains(finding, chip);
+    };
+    // The combinations that were UNSAT since the last round of the
+    // conflict-directed stage (`nextCombinationRound`).
+    std::vector<FailedCombination> failed;
+    // The commit is the first failed combination: the chains at its edges
+    // over are the focus chains.
+    failed.push_back({.pick = std::vector<std::size_t>(chains, 0),
+                      .against = complete
+                                     ? lost.size()
+                                     : std::numeric_limits<std::size_t>::max(),
+                      .named = chainsAt(touching, lost, gatesAtCommit),
+                      .check = 0});
+    const auto pickText = [&](const std::vector<std::size_t>& pick) {
+      std::string moved;
+      for (std::uint32_t chain = 0; chain < chains; ++chain) {
+        if (pick[chain] != 0) {
+          moved += std::format("{}chain {} state {}", moved.empty() ? "" : "; ",
+                               chain, pick[chain]);
+        }
+      }
+      return moved;
+    };
+    // Tries one combination: every chain on the state the combination
+    // names. Whether it is SAT; the SAT combination stays on the chip, and
+    // a combination that is not goes into `failed`.
+    const auto tryPick = [&](const std::vector<std::size_t>& pick,
+                             const std::string_view stage) {
+      const auto tryBegan = std::chrono::steady_clock::now();
       ++checks;
       backToStart();
+      const auto moveBegan = std::chrono::steady_clock::now();
+      restoring += moveBegan - tryBegan;
       auto options = original;
       for (std::uint32_t chain = 0; chain < chains; ++chain) {
         const auto& points = chains_[chain];
-        if (chainStates_[chain].empty()) {
+        if (pick[chain] == 0) {
           continue;
         }
         const auto& state = chainStates_[chain][pick[chain]];
@@ -15014,40 +17742,318 @@ public:
         }
       }
       const bool drawn = standOn(options);
-      const auto against = drawn ? wholeChipLost(wires)
-                                 : std::vector<std::string>{"an edge without a way"};
-      std::string moved;
-      for (std::uint32_t chain = 0; chain < chains; ++chain) {
-        if (pick[chain] != 0) {
-          moved += std::format("{}chain {} state {}", moved.empty() ? "" : "; ",
-                               chain, pick[chain]);
-        }
+      moving += std::chrono::steady_clock::now() - moveBegan;
+      if (globalSatVerify()) {
+        verify(options, drawn);
       }
-      if (!against.empty()) {
-        std::string named;
-        for (const auto& name : against) {
-          named += (named.empty() ? "" : " ") + name;
-        }
-        tell(std::format("[Global SAT] combination {} ({}): UNSAT ({})", checks,
-                         moved, named));
-      }
+      const auto checkBegan = std::chrono::steady_clock::now();
+      std::set<std::string> over;
+      std::vector<std::array<double, 2>> gates;
+      const auto against =
+          drawn ? wholeChipLost(wires, &over, &gates)
+                : std::vector<std::string>{"an edge without a way"};
+      judging += std::chrono::steady_clock::now() - checkBegan;
+      combined += std::chrono::steady_clock::now() - tryBegan;
+      const auto moved = pickText(pick);
       if (against.empty()) {
-        say(std::format("[Global SAT] SAT after {} combination{}: {}; {:.1f}s",
-                        checks, checks == 1 ? "" : "s", moved,
-                        std::chrono::duration<double>(
-                            std::chrono::steady_clock::now() - began)
-                            .count()));
+        for (std::uint32_t chain = 0; chain < chains; ++chain) {
+          if (pick[chain] != 0) {
+            tell(std::format("[Global SAT] chain {} state {} stands on "
+                             "options{}",
+                             chain, pick[chain],
+                             optionsText(chainStates_[chain][pick[chain]])));
+          }
+        }
+        satMoved = moved;
+        return true;
+      }
+      std::string lostText;
+      for (const auto& name : against) {
+        lostText += (lostText.empty() ? "" : " ") + name;
+      }
+      tell(std::format("[Global SAT] combination {} ({}{}): UNSAT ({})", checks,
+                       stage, moved, lostText));
+      failed.push_back(
+          {.pick = pick,
+           .against =
+               drawn ? against.size() : std::numeric_limits<std::size_t>::max(),
+           .named = chainsAt(over, against, gates),
+           .check = checks});
+      return false;
+    };
+    // Tries the combinations in `picks`, in that order, until one is SAT or
+    // the tries run out; a combination tried before is skipped.
+    const auto tryAll = [&](const std::vector<std::vector<std::size_t>>& picks,
+                            const std::string_view stage) {
+      for (const auto& pick : picks) {
+        if (checks >= globalSatTries()) {
+          return false;
+        }
+        if (!tried.insert(pick).second) {
+          ++repeated;
+          continue;
+        }
+        if (tryPick(pick, stage)) {
+          return true;
+        }
+      }
+      return false;
+    };
+    const auto saySat = [&]() {
+      say(std::format("[Global SAT] SAT after {} combination{}: {}; {:.1f}s",
+                      checks, checks == 1 ? "" : "s", satMoved,
+                      std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - began)
+                          .count()));
+    };
+    // The summary of the combinations; the field stops recording rows.
+    const auto sayCombined = [&]() {
+      field_.untrack();
+      say(std::format(
+          "[Global SAT] {} combination{} in {:.1f}s: {:.1f}s back to the "
+          "commit, {:.1f}s moving couplers, {:.1f}s in whole-chip checks; {} "
+          "combination{} skipped as tried before{}",
+          checks, checks == 1 ? "" : "s", combined.count(), restoring.count(),
+          moving.count(), judging.count(), repeated, repeated == 1 ? "" : "s",
+          globalSatVerify()
+              ? std::format("; {} checked against a full restore in {:.1f}s",
+                            verified, verifying.count())
+              : std::string{}));
+      saySlotSplit("global SAT");
+    };
+    const auto sayCollected = [&]() {
+      say(std::format("[Global SAT] states collected in {:.1f}s",
+                      collecting.count()));
+    };
+    const auto sayNone = [&]() {
+      backToStart();
+      sayCombined();
+      say(std::format("[Global SAT] no SAT combination in {} checked; the "
+                      "chip as the commit left it; {:.1f}s",
+                      checks,
+                      std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - began)
+                          .count()));
+    };
+
+    // Under `globalSatEarly`, the states each segment of a chain at an edge
+    // over finds, tried on their own at once; the chip goes back to the
+    // commit before the segment search goes on. A failed state is kept by
+    // its options until the chain's states are numbered.
+    const bool early = lazy && globalSatEarly();
+    std::chrono::duration<double> triedEarly{0};
+    std::vector<std::size_t> earlyState;
+    std::vector<std::pair<std::vector<std::size_t>, FailedCombination>>
+        failedEarly;
+    const StatesFound tryEarly =
+        [&](const std::uint32_t chain,
+            const std::vector<std::vector<std::size_t>>& found) {
+          const auto earlyBegan = std::chrono::steady_clock::now();
+          const auto& points = chains_[chain];
+          bool sat = false;
+          for (const auto& state : found) {
+            if (checks >= globalSatTries()) {
+              break;
+            }
+            const auto tryBegan = std::chrono::steady_clock::now();
+            ++checks;
+            backToStart();
+            const auto moveBegan = std::chrono::steady_clock::now();
+            restoring += moveBegan - tryBegan;
+            auto options = original;
+            for (std::size_t at = 0; at < points.size(); ++at) {
+              if (!points[at].fixed) {
+                options[points[at].coupler] = state[at];
+              }
+            }
+            const bool drawn = standOn(options);
+            moving += std::chrono::steady_clock::now() - moveBegan;
+            if (globalSatVerify()) {
+              verify(options, drawn);
+            }
+            const auto checkBegan = std::chrono::steady_clock::now();
+            std::set<std::string> over;
+            std::vector<std::array<double, 2>> gates;
+            const auto against =
+                drawn ? wholeChipLost(wires, &over, &gates)
+                      : std::vector<std::string>{"an edge without a way"};
+            judging += std::chrono::steady_clock::now() - checkBegan;
+            combined += std::chrono::steady_clock::now() - tryBegan;
+            if (against.empty()) {
+              earlyState = state;
+              sat = true;
+              break;
+            }
+            std::string lostText;
+            for (const auto& name : against) {
+              lostText += (lostText.empty() ? "" : " ") + name;
+            }
+            tell(std::format("[Global SAT] combination {} (chain {} on "
+                             "options{}, found early): UNSAT ({})",
+                             checks, chain, optionsText(state), lostText));
+            failedEarly.push_back(
+                {state,
+                 {.pick = {},
+                  .against = drawn ? against.size()
+                                   : std::numeric_limits<std::size_t>::max(),
+                  .named = chainsAt(over, against, gates),
+                  .check = checks}});
+          }
+          if (!sat) {
+            backToCommit();
+          }
+          triedEarly += std::chrono::steady_clock::now() - earlyBegan;
+          return sat;
+        };
+
+    // Which chains have their states. Under `globalSatLazy` a chain is
+    // collected only when a stage first needs its states, from the chip as
+    // the commit left it; without it every chain is collected first.
+    std::vector<bool> collected(chains, false);
+    const auto collect = [&](const std::uint32_t chain,
+                             const StatesFound* afterSegment) {
+      if (collected[chain]) {
+        return;
+      }
+      if (lazy && onRestored) {
+        backToCommit();
+      }
+      collected[chain] = true;
+      triedEarly = {};
+      collectChainStates(wires, focus, {chain}, collecting, afterSegment);
+      // The early tries count as combinations, not as collection.
+      collecting -= triedEarly;
+    };
+    if (lazy) {
+      settle();
+      fieldAtCommit = field_;
+    } else {
+      for (std::uint32_t chain = 0; chain < chains; ++chain) {
+        collect(chain, nullptr);
+      }
+      sayCollected();
+      if (std::ranges::all_of(
+              chainStates_, [](const auto& kept) { return kept.size() < 2; })) {
+        say("[Global SAT] no chain has a second locally SAT state");
+        return false;
+      }
+      settle();
+    }
+
+    // **Stage 1**: every state of a chain at an edge over on its own, the
+    // other chains as the commit left them, chain by chain and in the order
+    // each chain keeps its states.
+    for (const auto& entry : focus) {
+      const auto chain = entry.first;
+      collect(chain, early ? &tryEarly : nullptr);
+      const auto& kept = chainStates_[chain];
+      if (!earlyState.empty()) {
+        // The state's place among the chain's states as the chain keeps
+        // them.
+        const auto index = static_cast<std::size_t>(
+            std::ranges::find(kept, earlyState) - kept.begin());
+        sayCollected();
+        sayCombined();
+        satMoved = std::format("chain {} state {} (found early on options{})",
+                               chain, index, optionsText(earlyState));
+        saySat();
+        return true;
+      }
+      std::vector<std::vector<std::size_t>> picks;
+      for (std::size_t k = 1; k < kept.size(); ++k) {
+        picks.emplace_back(chains, 0)[chain] = k;
+      }
+      // The states tried as their segment found them count as tried, under
+      // their number.
+      for (auto& [state, one] : failedEarly) {
+        one.pick.assign(chains, 0);
+        one.pick[chain] = static_cast<std::size_t>(
+            std::ranges::find(kept, state) - kept.begin());
+        tried.insert(one.pick);
+        failed.push_back(std::move(one));
+      }
+      failedEarly.clear();
+      say(std::format("[Global SAT] stage 1: chain {} alone on its {} "
+                      "state{}",
+                      chain, picks.size(), picks.size() == 1 ? "" : "s"));
+      if (tryAll(picks, "stage 1: ")) {
+        sayCollected();
+        sayCombined();
+        saySat();
+        return true;
+      }
+      if (checks >= globalSatTries()) {
+        sayCollected();
+        say("[Global SAT] out of combinations after stage 1");
+        sayNone();
+        return true;
+      }
+      if (lazy && onRestored) {
+        backToCommit();
+      }
+    }
+
+    // **Stage 2**, conflict-directed. A failed combination names chains
+    // (`chainsAt`, `namedChains`): the chains at its edges over, terminal
+    // edges included; the chains whose feedline holds one of its lost
+    // wires; for an edge that has no way its own chain and the chains whose
+    // ways reach into its box; and when none of these names a chain, the
+    // chain of the pad nearest each gate over. The base of a round is the failed combination of the round before (stage 1 and
+    // the commit for the first round) with the fewest lost wires and edges
+    // over, the earliest on a tie, that names a chain it does not move yet
+    // and that has a state to move to. The round moves one such chain onto
+    // one of its states on top of the base. The order is fixed: fewer moved
+    // chains first, then the smaller sum of the state numbers, then the
+    // chain and the state with the smaller index. Every round moves one
+    // chain more than the round before. The search ends at a SAT
+    // combination, when no failed combination of the last round names a
+    // chain to move, or after `globalSatTries` combinations.
+    for (std::uint32_t round = 1;; ++round) {
+      const auto next = nextCombinationRound(
+          std::exchange(failed, {}),
+          [&](const std::uint32_t chain) {
+            collect(chain, nullptr);
+            return chainStates_[chain].size();
+          },
+          tried);
+      if (!next.has_value()) {
+        sayCollected();
+        say(std::format("[Global SAT] stage 2 round {}: no failed combination "
+                        "names a chain to move",
+                        round));
+        sayNone();
+        return true;
+      }
+      const auto& base = next->base;
+      const auto& picks = next->picks;
+      std::string chainList;
+      for (const auto chain : next->movable) {
+        chainList += std::format("{}{}", chainList.empty() ? "" : " ", chain);
+      }
+      say(std::format("[Global SAT] stage 2 round {}: on combination {} ({}; "
+                      "{} against it), moving one of chains {}; {} "
+                      "combination{}",
+                      round, base.check,
+                      base.check == 0 ? std::string("the commit")
+                                      : pickText(base.pick),
+                      base.against == std::numeric_limits<std::size_t>::max()
+                          ? std::string("an edge without a way")
+                          : std::to_string(base.against),
+                      chainList, picks.size(), picks.size() == 1 ? "" : "s"));
+      if (tryAll(picks, std::format("stage 2 round {}: ", round))) {
+        sayCollected();
+        sayCombined();
+        saySat();
+        return true;
+      }
+      if (checks >= globalSatTries()) {
+        sayCollected();
+        say(std::format("[Global SAT] out of combinations in stage 2 round {}",
+                        round));
+        sayNone();
         return true;
       }
     }
-    backToStart();
-    say(std::format("[Global SAT] no SAT combination in {} checked; the chip "
-                    "as the commit left it; {:.1f}s",
-                    checks,
-                    std::chrono::duration<double>(
-                        std::chrono::steady_clock::now() - began)
-                        .count()));
-    return true;
   }
 
   [[nodiscard]] std::uint32_t optimizeChainsPrefix(std::vector<Wire>& wires) {
@@ -15065,15 +18071,10 @@ public:
       stepRefuses_ = capacityRule();
       auto answer = solveChainAStar(wires, chain);
       if (!answer.solved && stepRefuses_) {
-        say(std::format("[Coupler Insertion] chain {}: {} ({} steps routed) "
-                        "— searched again without the capacity rule",
-                        chain,
-                        answer.outOfTime
-                            ? "out of time before a run of options joined "
-                              "the chain without closing a wire"
-                            : "no run of options joins the chain without "
-                              "closing a wire",
-                        answer.routed));
+        say(std::format("[Coupler Insertion] chain {}: no run of options "
+                        "joins the chain without closing a wire ({} steps "
+                        "routed) — searched again without the capacity rule",
+                        chain, answer.routed));
         stepRefuses_ = false;
         stepSettled_ = capacityStep() ? checkedWith : nullptr;
         answer = solveChainAStar(wires, chain);
@@ -15085,17 +18086,11 @@ public:
       auto& points = chains_[chain];
       if (!answer.solved) {
         // **The chain is left as it stands**, and the edges it cannot draw
-        // are reported by the commit. Two different reasons, and calling
-        // them by one name reads as a verdict about the geometry where it is
-        // only a clock.
-        say(std::format(
-            "[Coupler Insertion] chain {}: {} — leaving it as it stands "
-            "({} steps routed)",
-            chain,
-            answer.outOfTime
-                ? "out of time before any run of options joined the chain"
-                : "no run of options joins the chain",
-            answer.routed));
+        // are reported by the commit.
+        say(std::format("[Coupler Insertion] chain {}: no run of options "
+                        "joins the chain — leaving it as it stands ({} steps "
+                        "routed)",
+                        chain, answer.routed));
         continue;
       }
       ++settled;
@@ -15111,13 +18106,9 @@ public:
       }
       say(std::format("[Coupler Insertion] chain {}: {} {} over {} layers, "
                       "{} prefixes expanded, {} steps routed",
-                      chain,
-                      answer.optimal  ? "optimum"
-                      : answer.relaid ? "best found, an end pair laid the "
-                                        "other way round"
-                                      : "best in the time given",
-                      answer.cost, points.size(), answer.expansions,
-                      answer.routed));
+                      chain, answerWord(answer), answer.cost, points.size(),
+                      answer.expansions, answer.routed) +
+          atWeightOne(answer));
       if (capacityChain()) {
         checkChainCapacity(wires, chain, standing);
       }
@@ -15144,9 +18135,7 @@ public:
   /// (user, 2026-10-08). On its own it reports and the search takes no
   /// notice of it; `capacityRule` checks every step as well and refuses. The
   /// steps say at `-v 1` whether the graph still carries every wire, and
-  /// every feedline edge of a settled chain says it once. The checks spend
-  /// the time of the chain search's clock, so a chain that runs into
-  /// `SCPD_CHAIN_ASTAR_SECONDS` prices fewer steps with them.
+  /// every feedline edge of a settled chain says it once.
   [[nodiscard]] static bool capacityStep() {
     return envFlag("SCPD_CAPACITY_STEP", false);
   }
@@ -15403,6 +18392,8 @@ public:
   struct CapacityVerdict {
     std::set<std::uint32_t> lost;
     std::uint32_t shortBy = 0;
+    /// The edges the slot check finds over their capacity, by name.
+    std::vector<std::string> over;
     /// Under `capacityFast` 2: the wires the profile cuts lose, beside the
     /// medial axis's, and the time of each.
     std::optional<std::set<std::uint32_t>> fastLost;
@@ -15438,16 +18429,39 @@ public:
     verdict.lost = lostOf(pass);
     if (slotCheckSteps()) {
       const auto began = std::chrono::steady_clock::now();
+      double graphSeconds = 0.0;
       try {
-        auto graph = slotGraphOfPass(state.wires, pass);
+        auto& graph = scratchGraph_;
+        fillSlotGraphOfPass(graph, state.wires, pass, true);
+        std::optional<SlotGraph> fresh;
+        if (slotGraphVerify()) {
+          fresh = verifySlotGraph(graph, state.wires, pass);
+        }
         if (localWires_ != nullptr) {
           // The wires of the chain's feedline alone, and every terminal
           // edge, which names the mouths between the chains.
-          std::erase_if(graph.wires, [&](const SlotGraph::Wire& wire) {
+          const auto other = [&](const SlotGraph::Wire& wire) {
             return !wire.terminal && !localWires_->contains(wire.name);
-          });
+          };
+          std::erase_if(graph.wires, other);
+          if (fresh.has_value()) {
+            std::erase_if(fresh->wires, other);
+          }
         }
+        graphSeconds = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now() - began)
+                           .count();
         const auto result = slotCheck(graph);
+        if (fresh.has_value()) {
+          const auto again = slotCheck(*fresh);
+          if (again.verdict != result.verdict || again.lost != result.lost ||
+              again.over != result.over || again.crowded != result.crowded) {
+            throw std::logic_error(std::format(
+                "[Slot Graph Verify] graph {}: the check of the raster view "
+                "differs from the check of the raster",
+                verifiedGraphs_));
+          }
+        }
         std::unordered_map<std::string, std::uint32_t> keyOf;
         for (const auto& wire : state.wires) {
           keyOf.emplace(wireId(wire), wire.key);
@@ -15462,14 +18476,21 @@ public:
         }
         verdict.lost = std::move(lost);
         verdict.shortBy = static_cast<std::uint32_t>(result.over.size());
+        verdict.over = result.over;
       } catch (const std::invalid_argument& error) {
         tell(std::format("[Capacity Step] the slot check failed ({}); the "
                          "check by stretches decides",
                          error.what()));
       }
-      verdict.seconds += std::chrono::duration<double>(
-                             std::chrono::steady_clock::now() - began)
-                             .count();
+      const auto slotSeconds = std::chrono::duration<double>(
+                                   std::chrono::steady_clock::now() - began)
+                                   .count();
+      if (stepProfile()) {
+        tell(std::format(
+            "[Capacity Split] pass {:.4f}s, graph {:.4f}s, check {:.4f}s",
+            verdict.seconds, graphSeconds, slotSeconds - graphSeconds));
+      }
+      verdict.seconds += slotSeconds;
     }
     if (mode == 2) {
       giveBack(pass);
@@ -15577,6 +18598,28 @@ public:
     return captured;
   }
 
+  /// What `capacityGraphJsonOf` gives its caller besides the JSON, without
+  /// building the JSON: the wires of `lostWires` and, when `slotOut` is
+  /// given, the slot check of the graph and, in `slotGraphOut`, the graph it
+  /// read. The global SAT search checks the whole chip once per combination,
+  /// and on 69q the JSON it threw away was 2.8 MB each time.
+  void capacityCheckOf(const InsertionState& state,
+                       std::set<std::uint32_t>& lostOut,
+                       std::optional<SlotCheckResult>* slotOut = nullptr,
+                       SlotGraph* slotGraphOut = nullptr) {
+    auto pass = capacityPass(state.wires, state.edges, &state.placed, NO_OWNER,
+                             capacityFast() == 1, state.terminalsAsWires);
+    if (slotOut != nullptr) {
+      auto input = slotGraphOfPass(state.wires, pass);
+      *slotOut = slotCheck(input);
+      if (slotGraphOut != nullptr) {
+        *slotGraphOut = std::move(input);
+      }
+    }
+    lostOut = lostOf(pass);
+    giveBack(pass);
+  }
+
   /// The labels of a pass's walls and chambers, a cell each, kept for the
   /// next pass: the chain search checks thousands of steps, and on a grid
   /// of millions of cells fresh memory costs more than the labelling.
@@ -15585,6 +18628,84 @@ public:
   void giveBack(CapacityPass& pass) const {
     spareWallOf_ = std::move(pass.walls.of);
     spareChambers_ = std::move(pass.chambers.of);
+  }
+
+  /// The graph every check of `capacityVerdictOf` fills (`fillSlotGraph`),
+  /// kept between checks: a fresh graph a step allocates and clears a cell
+  /// raster the size of the grid.
+  mutable SlotGraph scratchGraph_;
+  /// The code of every wall of the last view (`SlotGraph::RasterView`).
+  mutable std::vector<std::uint16_t> viewWallCodes_;
+  /// How many graphs `SCPD_SLOT_GRAPH_VERIFY` has built both ways.
+  mutable std::uint64_t verifiedGraphs_ = 0;
+
+  /// Whether `capacityVerdictOf` builds every graph fresh as well and
+  /// compares it with the one it filled again: `SCPD_SLOT_GRAPH_VERIFY`,
+  /// off. A development check of `scratchGraph_`.
+  [[nodiscard]] static bool slotGraphVerify() {
+    return envFlag("SCPD_SLOT_GRAPH_VERIFY", false);
+  }
+
+  /// The check of `slotGraphVerify`: `filled`, whose raster is a view,
+  /// against a graph built fresh from the same pass with its raster written
+  /// out, after `filled`'s raster is read cell by cell. Throws
+  /// `std::logic_error` when they differ; says the count of equal graphs on
+  /// the first and every thousandth. Returns the fresh graph, for the
+  /// caller to check as well.
+  [[nodiscard]] SlotGraph verifySlotGraph(const SlotGraph& filled,
+                                          const std::vector<Wire>& wires,
+                                          const CapacityPass& pass) const {
+    auto fresh = slotGraphOfPass(wires, pass);
+    auto decoded = filled;
+    if (decoded.raster.has_value()) {
+      decoded.codes.resize(pass.chambers.of.size());
+      for (std::size_t cell = 0; cell < decoded.codes.size(); ++cell) {
+        decoded.codes[cell] = decoded.raster->code(cell);
+      }
+      decoded.raster.reset();
+    }
+    if (!(fresh == decoded)) {
+      throw std::logic_error(std::format(
+          "[Slot Graph Verify] graph {} filled again differs from the graph "
+          "built fresh",
+          verifiedGraphs_ + 1));
+    }
+    // The raster cell by cell, as it was built before the words of the wall
+    // mask did it.
+    const auto& walls = pass.walls;
+    const auto& chambers = pass.chambers;
+    const auto stub =
+        static_cast<std::uint16_t>(1 + static_cast<int>(WallKind::Stub));
+    std::vector<std::uint16_t> codes(chambers.of.size());
+    std::vector<std::size_t> stubCells;
+    for (std::size_t cell = 0; cell < chambers.of.size(); ++cell) {
+      std::uint16_t code = 0;
+      if (walls.mask.test(cell)) {
+        code = static_cast<std::uint16_t>(
+            walls.of[cell] < walls.list.size()
+                ? 1 + static_cast<int>(walls.list[walls.of[cell]].kind)
+                : 1 + static_cast<int>(WallKind::Artwork));
+      } else if (chambers.of[cell] != grid::NO_CHAMBER) {
+        code = static_cast<std::uint16_t>(6 + chambers.of[cell]);
+      }
+      codes[cell] = code;
+      if (code == stub) {
+        stubCells.push_back(cell);
+      }
+    }
+    if (codes != decoded.codes || stubCells != decoded.stubCells) {
+      throw std::logic_error(std::format(
+          "[Slot Graph Verify] graph {}: the raster differs from the raster "
+          "built cell by cell",
+          verifiedGraphs_ + 1));
+    }
+    ++verifiedGraphs_;
+    if (verifiedGraphs_ == 1 || verifiedGraphs_ % 1000 == 0) {
+      say(std::format("[Slot Graph Verify] {} graph{} built both ways, all "
+                      "equal",
+                      verifiedGraphs_, verifiedGraphs_ == 1 ? "" : "s"));
+    }
+    return fresh;
   }
 
   /// The outer wires a pass has no way for: a terminal in no chamber, no
@@ -15664,12 +18785,11 @@ public:
                                .count();
       if (!answer.solved) {
         say(std::format(
-            "[Capacity Check] chain {}: searched again, {} run of options "
+            "[Capacity Check] chain {}: searched again, no run of options "
             "closes fewer than {} — the chain stays as it was ({} runs "
             "checked, {} refused, {} steps routed, {:.2f}s)",
-            chain, answer.outOfTime ? "out of time before any" : "no",
-            lost.size(), chainCheck_.checks, chainCheck_.refused, answer.routed,
-            seconds));
+            chain, lost.size(), chainCheck_.checks, chainCheck_.refused,
+            answer.routed, seconds));
         break;
       }
       for (std::size_t at = 0; at < points.size(); ++at) {
@@ -15686,11 +18806,8 @@ public:
       say(std::format(
           "[Capacity Check] chain {}: searched again, {} {} — {} more without "
           "a way{}{} ({} runs checked, {} refused, {} steps routed, {:.2f}s)",
-          chain,
-          answer.optimal  ? "optimum"
-          : answer.relaid ? "best found, an end pair laid the other way round"
-                          : "best in the time given",
-          answer.cost, lost.size(), lost.empty() ? "" : ": ",
+          chain, answerWord(answer), answer.cost, lost.size(),
+          lost.empty() ? "" : ": ",
           lost.empty() ? std::string() : namesOf(wires, lost),
           chainCheck_.checks, chainCheck_.refused, answer.routed, seconds));
     }
@@ -16976,7 +20093,9 @@ public:
         std::vector<std::size_t> options;
         for (std::size_t option = 0; option < coupler.options.size();
              ++option) {
-          if (option != coupler.chosen && !tried.contains({index, option})) {
+          // No second dogleg without `secondDogleg`.
+          if (option != coupler.chosen && !tried.contains({index, option}) &&
+              (secondDogleg() || coupler.options[option].secondStraight == 0)) {
             options.push_back(option);
           }
         }
@@ -17437,16 +20556,15 @@ public:
       };
       say(std::format(
               "targeted repair settings: re-search {} ({}), k {} ({}), grow {} "
-              "({}), {:.0f}s a segment ({}), {} rounds ({}), jogs {} ({}), "
+              "({}), {} rounds ({}), jogs {} ({}), "
               "sees "
               "chains {} ({}), final sweep {} ({}), budget {} legality tests "
               "(repair_trials), crossing rule {} ({})",
               repairSearch() ? "yes" : "no", from("SCPD_REPAIR_SEARCH"),
               researchK(), from("SCPD_RESEARCH_K"), researchGrow(),
-              from("SCPD_RESEARCH_GROW"),
-              static_cast<double>(researchBudget().count()) / 1e9,
-              from("SCPD_RESEARCH_SECONDS"), researchRounds(),
-              from("SCPD_RESEARCH_ROUNDS"), researchJogs() ? "on" : "off",
+              from("SCPD_RESEARCH_GROW"), researchRounds(),
+              from("SCPD_RESEARCH_ROUNDS"),
+              researchJogs() && secondDogleg() ? "on" : "off",
               from("SCPD_RESEARCH_JOGS"), researchSeesChains() ? "yes" : "no",
               from("SCPD_RESEARCH_SEES_CHAINS"),
               researchFinalSweep() ? "on" : "off",
@@ -17519,10 +20637,112 @@ public:
     /// Edge searches of the prefix search.
     std::uint32_t routed = 0;
     std::uint32_t runs = 0;
-    bool outOfTime = false;
     bool outOfTrials = false;
     bool exhausted = false;
   };
+
+  /// Whether `researchSegment` keeps the ways of its edge searches by their
+  /// corridor (`SegmentMemo`): `SCPD_SEGMENT_MEMO`, off. On 17q the global
+  /// SAT search answered 24 of 850 edge searches from it and took as long:
+  /// only 80 of the 850 asked for a pair of options a second time, so few
+  /// searches repeat at all. The switch stays for the larger chips.
+  [[nodiscard]] static bool segmentMemo() {
+    return envFlag("SCPD_SEGMENT_MEMO", false);
+  }
+
+  /// The ways the edge searches of one `researchSegment` call found, by all
+  /// that a search reads: its two ends, the straight runs at them, and every
+  /// cell of the corridor `corridorOfEdge` builds, the prefix fence and the
+  /// box around the ends included. The key is two 64-bit hashes of these.
+  /// Two steps with the same key ask the router the same question and get
+  /// the same way back, so a hit gives the step the way a search would.
+  ///
+  /// `edgeMemo_` keys a way by the pair of options and tests it against the
+  /// fence. That is not enough here: a way found under a wide fence and
+  /// still open under a narrow one can cost more than the best way the
+  /// narrow fence leaves open, and the segment search would price the step
+  /// differently.
+  ///
+  /// The memo lives for one call. The call clears it after every run it
+  /// applies to the chip (`tryRun`, `agreeRun`), since an applied run changes
+  /// the chip under the router.
+  struct SegmentMemo {
+    std::map<std::pair<std::uint64_t, std::uint64_t>, Path> ways;
+    /// The steps searched so far, by edge and pair of options.
+    std::set<std::tuple<std::size_t, std::size_t, std::size_t>> pairs;
+    std::uint32_t hits = 0;
+    std::uint32_t misses = 0;
+    /// Misses whose edge and pair of options the call had searched before
+    /// under another corridor.
+    std::uint32_t moved = 0;
+  };
+  SegmentMemo* segmentMemo_ = nullptr;
+
+  /// The key of `SegmentMemo` for the corridor `corridorOfEdge` just built.
+  [[nodiscard]] std::pair<std::uint64_t, std::uint64_t>
+  corridorKeyOf(const RoutingObjective& objective, const Edge& edge) const {
+    const auto [startRun, endRun] = runsOfEdge(edge);
+    // Two hashes with different mixers, each over every word in order.
+    std::uint64_t a = 0x9E3779B97F4A7C15ULL;
+    std::uint64_t b = 0xD1B54A32D192ED03ULL;
+    const auto mix = [&a, &b](const std::uint64_t word) {
+      a ^= word;
+      a ^= a >> 33U;
+      a *= 0xFF51AFD7ED558CCDULL;
+      a ^= a >> 33U;
+      a *= 0xC4CEB9FE1A85EC53ULL;
+      a ^= a >> 33U;
+      b += word + 0x9E3779B97F4A7C15ULL;
+      b ^= b >> 30U;
+      b *= 0xBF58476D1CE4E5B9ULL;
+      b ^= b >> 27U;
+      b *= 0x94D049BB133111EBULL;
+      b ^= b >> 31U;
+    };
+    for (const auto& point : {objective.source, objective.target}) {
+      mix((static_cast<std::uint64_t>(point.x) << 32U) | point.y);
+      mix(static_cast<std::uint64_t>(point.heading));
+    }
+    mix((static_cast<std::uint64_t>(startRun) << 32U) | endRun);
+    for (const auto word : corridor_.words()) {
+      mix(word);
+    }
+    return {a, b};
+  }
+
+  /// The way of one step of `researchSegment`, from `segmentMemo_` when a
+  /// step with the same corridor was searched before, otherwise searched
+  /// and kept. A search the step budget cut off is not kept; `edgeCost` only
+  /// asks here without a step budget.
+  [[nodiscard]] Path segmentWayOf(const std::vector<Wire>& wires,
+                                  const RoutingObjective& objective,
+                                  const Edge& edge,
+                                  const std::size_t optionFrom,
+                                  const std::size_t optionTo) {
+    auto& memo = *segmentMemo_;
+    corridorOfEdge(wires, objective, edge);
+    const auto key = corridorKeyOf(objective, edge);
+    if (const auto found = memo.ways.find(key); found != memo.ways.end()) {
+      ++memo.hits;
+      lastCutOff_ = false;
+      lastPicture_.clear();
+      if (found->second.empty()) {
+        tell(std::format("edge of chain {} from {} to {}: no way, as under the "
+                         "same corridor before",
+                         edge.chain, edge.from, edge.to));
+      }
+      return found->second;
+    }
+    ++memo.misses;
+    memo.moved +=
+        memo.pairs.insert({edge.from, optionFrom, optionTo}).second ? 0U : 1U;
+    ++memoMisses_;
+    auto way = routeEdge(wires, objective, edge, true);
+    if (!lastCutOff_) {
+      memo.ways.emplace(key, way);
+    }
+    return way;
+  }
 
   /// **The re-search of one segment**: the prefix search on the sub-chain
   /// `lo..hi`, both ends fixed on the option they stand on, the interior
@@ -17530,12 +20750,13 @@ public:
   /// the local rip-up-and-reroute of `tryRun` before it is taken. Built as
   /// `solveChainAStar` is, with what differs said here:
   ///
-  /// - **No memo and no reorder.** `edgeMemoKey` knows nothing of the fence
-  ///   and the phase-3 entries are stale in phase 4, so every step is a
-  ///   fresh search; and the end-pair reorder would fire at the segment
-  ///   ends and break the cost order the enumeration rests on — a `redone`
-  ///   price makes a prefix cheaper than its parent, and then the runs no
-  ///   longer pop cheapest first.
+  /// - **No `edgeMemo_` and no reorder.** `edgeMemoKey` knows nothing of the
+  ///   fence and the phase-3 entries are stale in phase 4, so `edgeMemo_` is
+  ///   not read; a step's way comes from its own search or from the call's
+  ///   `SegmentMemo`, which keys it by the whole corridor. The end-pair
+  ///   reorder would fire at the segment ends and break the cost order the
+  ///   enumeration rests on — a `redone` price makes a prefix cheaper than
+  ///   its parent, and then the runs no longer pop cheapest first.
   /// - **The fence.** `prefixFence_` holds the segment's own laid ways, every
   ///   one of them; `fenceCommittedEdges` holds the rest of the chip, with
   ///   the segment's own edges left open (`openChain_`) and, under
@@ -17568,6 +20789,7 @@ public:
                   const Segment& segment, const std::uint32_t trialsLeft,
                   std::uint32_t& badNow) {
     Research out;
+    const auto edgesBefore = edgeSplit_;
     const auto chain = segment.chain;
     auto& points = chains_[chain];
     const auto lo = segment.lo;
@@ -17589,7 +20811,7 @@ public:
         interior.push_back(point.coupler);
       }
     }
-    if (researchJogs()) {
+    if (researchJogs() && secondDogleg()) {
       for (const auto index : interior) {
         couplers_[index].jogsUnlocked = true;
       }
@@ -17619,7 +20841,9 @@ public:
         for (std::size_t d = 0; d < m; ++d) {
           const auto arriving =
               portOfOption(chain, lo + e + 1, open[e + 1][d], false);
-          turns[e][(c * m) + d] = 10000ULL * boundTurns(leaving, arriving);
+          turns[e][(c * m) + d] = pairBound(
+              leaving, arriving, forcedRunOf(chain, lo + e, open[e][c], true),
+              forcedRunOf(chain, lo + e + 1, open[e + 1][d], false));
         }
       }
       pairs += n * m;
@@ -17631,10 +20855,25 @@ public:
     }
     problem.bound = [&](const std::size_t e, const std::uint32_t i,
                         const std::uint32_t j) {
-      return turns[e][(static_cast<std::size_t>(i) * open[e + 1].size()) + j];
+      return weighted(
+          turns[e][(static_cast<std::size_t>(i) * open[e + 1].size()) + j],
+          edgeWeight(chain, lo + e));
     };
-    problem.budget =
-        agreement_.on ? localAgreementBudget() : researchBudget();
+    // How far the search has come, every `chainProgressSteps` priced steps.
+    const auto began = std::chrono::steady_clock::now();
+    problem.progressEvery = chainProgressSteps();
+    problem.progress = [&](const routing::ChainSolution& sofar,
+                           const std::size_t queued) {
+      say(std::format(
+          "[Chain Progress] {}: {} steps priced, {} prefixes expanded, {} "
+          "left unpriced, {} open, deepest layer {} of {}, {} runs reached, "
+          "{} refused; {:.1f}s",
+          name, sofar.routed, sofar.expansions, sofar.pruned, queued,
+          sofar.reached, layers - 1, out.runs, sofar.rejected,
+          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        began)
+              .count()));
+    };
     // One more than the tests left: the current run may be refused once
     // without a test, and that refusal counts in the search's own tally.
     problem.maxAccepts = trialsLeft + 1;
@@ -17661,6 +20900,12 @@ public:
                        const std::uint32_t j, std::int64_t& redone) {
       redone = 0;
       const auto at = prefix.size() - 1;
+      if (!points[lo + at + 1].fixed) {
+        if (auto* use = useOf(points[lo + at + 1].coupler, open[at + 1][j]);
+            use != nullptr) {
+          ++use->segment;
+        }
+      }
       std::vector<std::uint32_t> key(prefix.begin(), prefix.end());
       // Every way the prefix has laid is fenced, no exemption: the terminal
       // exemptions of the insertion's fence are chain-relative, and a
@@ -17700,8 +20945,9 @@ public:
         }
       }
       key.push_back(j);
-      laid[std::move(key)] = Laid{.way = std::move(way), .before = {}};
-      return real;
+      laid[std::move(key)] = Laid{
+          .way = std::move(way), .before = {}, .price = real, .beforePrice = 0};
+      return weighted(real, edgeWeight(chain, lo + at));
     };
 
     // The state the segment starts from, with the interior pads hidden: a
@@ -17713,6 +20959,19 @@ public:
     openLo_ = lo;
     openHi_ = hi;
     std::uint32_t trials = 0;
+    // The ways of this call's edge searches by their corridor; never past the
+    // end of the call.
+    SegmentMemo memo;
+    struct MemoScope {
+      SegmentMemo*& slot;
+      explicit MemoScope(SegmentMemo*& memo) : slot(memo) {}
+      MemoScope(const MemoScope&) = delete;
+      MemoScope& operator=(const MemoScope&) = delete;
+      MemoScope(MemoScope&&) = delete;
+      MemoScope& operator=(MemoScope&&) = delete;
+      ~MemoScope() { slot = nullptr; }
+    } memoScope{segmentMemo_};
+    segmentMemo_ = segmentMemo() ? &memo : nullptr;
 
     problem.accept = [&](const std::span<const std::uint32_t> run,
                          const std::uint64_t cost) {
@@ -17753,13 +21012,21 @@ public:
       if (agreement_.on) {
         if (!localAgreementOnly().on ||
             runText(run) == localAgreementOnly().options) {
+          segmentMemo_ = nullptr;
           agreeRun(wires, members, every, pass, segment, open, run, ways, cost,
                    taken);
+          memo.ways.clear();
+          segmentMemo_ = segmentMemo() ? &memo : nullptr;
         }
         return false;
       }
+      // The run is applied to the chip while it is tested: no edge search
+      // of the test reads or fills the memo, and the memo is cleared after.
+      segmentMemo_ = nullptr;
       const bool kept = tryRun(wires, members, every, pass, segment, open, run,
                                ways, cost, taken, badNow);
+      memo.ways.clear();
+      segmentMemo_ = segmentMemo() ? &memo : nullptr;
       if (!kept) {
         ++out.rejected;
         setPads(interior, false);
@@ -17781,7 +21048,6 @@ public:
     out.trials = trials;
     out.routed = answer.routed;
     out.accepted = answer.solved;
-    out.outOfTime = answer.outOfTime;
     out.outOfTrials = out.outOfTrials || answer.outOfTrials;
     out.exhausted = !answer.solved && answer.optimal;
     say(std::format(
@@ -17789,17 +21055,23 @@ public:
         "refused, {} the current run; {} edge searches over {} option "
         "pair{}{}",
         name,
-        answer.solved      ? std::format("ACCEPTED options {} at cost {}",
-                                         runText(answer.chosen), answer.cost)
-        : out.outOfTrials  ? "nothing accepted, out of legality tests"
-        : answer.outOfTime ? "nothing accepted, out of time"
-        : answer.optimal   ? "nothing accepted, every run refused"
-                           : "nothing accepted, no run of options joins it",
+        answer.solved     ? std::format("ACCEPTED options {} at cost {}",
+                                        runText(answer.chosen), answer.cost)
+        : out.outOfTrials ? "nothing accepted, out of legality tests"
+        : out.runs > 0    ? "nothing accepted, every run refused"
+                          : "nothing accepted, no run of options joins it",
         out.runs, out.runs == 1 ? "" : "s", trials, out.rejected,
         out.skippedCurrent, answer.routed, pairs, pairs == 1 ? "" : "s",
         answer.expansions == 0
             ? std::string{}
             : std::format(", {} prefixes expanded", answer.expansions)));
+    sayEdgeSplit(name, edgesBefore);
+    if (memo.hits + memo.misses > 0) {
+      say(std::format("targeted repair: {} — edge memo: {} of {} edge "
+                      "searches answered by an earlier search under the same "
+                      "corridor, {} searched again under another corridor",
+                      name, memo.hits, memo.hits + memo.misses, memo.moved));
+    }
     return out;
   }
 
@@ -18519,10 +21791,8 @@ public:
                       const Pass& pass) {
     const auto began = std::chrono::steady_clock::now();
     const auto runs = localAgreementRuns();
-    say(std::format("[Local Agreement] {} run{} a segment of {} edges, {:.0f}s "
-                    "a segment{}",
-                    runs, runs == 1 ? "" : "s", localAgreementSpan(),
-                    static_cast<double>(localAgreementBudget().count()) / 1e9,
+    say(std::format("[Local Agreement] {} run{} a segment of {} edges{}", runs,
+                    runs == 1 ? "" : "s", localAgreementSpan(),
                     localAgreementPlain()
                         ? "; plain wires alone, the resonators left open"
                         : ""));
@@ -22807,6 +26077,17 @@ public:
   /// (`slotGraphOf`), with the mouths where the pass put them.
   [[nodiscard]] SlotGraph slotGraphOfPass(const std::vector<Wire>& wires,
                                           const CapacityPass& pass) const {
+    SlotGraph out;
+    fillSlotGraphOfPass(out, wires, pass);
+    return out;
+  }
+
+  /// `slotGraphOfPass` into `out`, whose buffers keep their capacity. With
+  /// `asView` the raster is a view over the pass's buffers
+  /// (`SlotGraph::raster`); the pass must then outlive the check.
+  void fillSlotGraphOfPass(SlotGraph& out, const std::vector<Wire>& wires,
+                           const CapacityPass& pass,
+                           const bool asView = false) const {
     std::vector<MeasuredBottleneck> measured;
     measured.reserve(pass.gates.size());
     for (std::size_t index = 0; index < pass.gates.size(); ++index) {
@@ -22815,8 +26096,8 @@ public:
                                    index < pass.slotsFrom,
                           .slot = index >= pass.slotsFrom});
     }
-    return slotGraphOf(wires, pass.walls, pass.gates, measured, pass.chambers,
-                       pass.problem.graph, pass.problem.outerWires);
+    fillSlotGraph(out, wires, pass.walls, pass.gates, measured, pass.chambers,
+                  pass.problem.graph, pass.problem.outerWires, asView);
   }
 
   /// The capacity graph of `writeCapacityGraph` in memory, as the slot
@@ -22829,6 +26110,25 @@ public:
               const grid::Chambers& chambers,
               const std::vector<GraphEdge>& graph,
               const std::vector<GraphWire>& outer) const {
+    SlotGraph out;
+    fillSlotGraph(out, wires, walls, gates, measured, chambers, graph, outer);
+    return out;
+  }
+
+  /// `slotGraphOf` into `out`. Every field is set again; the vectors are
+  /// cleared and refilled, so a graph used again keeps its buffers, the
+  /// cell raster above all, which is a cell for every cell of the grid.
+  /// With `asView` no raster is written: `raster` points at `walls` and
+  /// `chambers`, and only the stub cells are collected, from the words of
+  /// the wall mask that hold a wall.
+  void fillSlotGraph(SlotGraph& out, const std::vector<Wire>& wires,
+                     const Walls& walls,
+                     const std::vector<grid::Bottleneck>& gates,
+                     const std::vector<MeasuredBottleneck>& measured,
+                     const grid::Chambers& chambers,
+                     const std::vector<GraphEdge>& graph,
+                     const std::vector<GraphWire>& outer,
+                     const bool asView = false) const {
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     const auto cellAt = [width](const std::size_t cell) {
       return std::array{
@@ -22843,12 +26143,17 @@ public:
       }
       return list;
     };
-    SlotGraph out;
     out.width = width;
     out.height = static_cast<std::int64_t>(scene_.router.height);
     out.clearance = static_cast<double>(tuning_.clearance);
     out.crossingReach = static_cast<double>(crossingReach() + 1);
     out.inflation = wallInflation();
+    out.wallKinds.clear();
+    out.stubCells.clear();
+    out.portSlots.clear();
+    out.strokes.clear();
+    out.edges.clear();
+    out.wires.clear();
     for (const auto kind :
          {WallKind::Border, WallKind::Artwork, WallKind::Coupler,
           WallKind::Stub, WallKind::Feedline}) {
@@ -22856,20 +26161,65 @@ public:
     }
     const auto stub = static_cast<std::uint16_t>(
         1 + static_cast<int>(WallKind::Stub));
-    out.codes.resize(chambers.of.size());
-    for (std::size_t cell = 0; cell < chambers.of.size(); ++cell) {
-      std::uint16_t code = 0;
-      if (walls.mask.test(cell)) {
-        code = static_cast<std::uint16_t>(
-            walls.of[cell] < walls.list.size()
-                ? 1 + static_cast<int>(walls.list[walls.of[cell]].kind)
-                : 1 + static_cast<int>(WallKind::Artwork));
-      } else if (chambers.of[cell] != grid::NO_CHAMBER) {
-        code = static_cast<std::uint16_t>(6 + chambers.of[cell]);
+    // The raster 64 cells at a time, by the words of the wall mask: a word
+    // with no wall cell holds chambers and cut lines only. A cell of a wall
+    // takes its kind's code; one of no listed wall is artwork.
+    std::vector<std::uint16_t> kindCode(walls.list.size());
+    for (std::size_t wall = 0; wall < walls.list.size(); ++wall) {
+      kindCode[wall] = static_cast<std::uint16_t>(
+          1 + static_cast<int>(walls.list[wall].kind));
+    }
+    const auto artwork =
+        static_cast<std::uint16_t>(1 + static_cast<int>(WallKind::Artwork));
+    const auto cells = chambers.of.size();
+    const auto& maskWords = walls.mask.words();
+    if (asView) {
+      out.codes.clear();
+      viewWallCodes_ = std::move(kindCode);
+      out.raster = SlotGraph::RasterView{.wallMask = maskWords.data(),
+                                         .wallOf = walls.of.data(),
+                                         .wallCodes = viewWallCodes_.data(),
+                                         .walls = viewWallCodes_.size(),
+                                         .otherWall = artwork,
+                                         .chamberOf = chambers.of.data(),
+                                         .noChamber = grid::NO_CHAMBER};
+      // The stubs are walls the pass drew (`Walls::drawn`): the border and
+      // the artwork hold none.
+      const auto& drawnWords = walls.drawn.words().size() == maskWords.size()
+                                   ? walls.drawn.words()
+                                   : maskWords;
+      for (std::size_t first = 0; first < cells; first += 64) {
+        auto mask = drawnWords[first / 64];
+        while (mask != 0) {
+          const auto cell =
+              first + static_cast<std::size_t>(std::countr_zero(mask));
+          mask &= mask - 1;
+          if (out.raster->code(cell) == stub) {
+            out.stubCells.push_back(cell);
+          }
+        }
       }
-      out.codes[cell] = code;
-      if (code == stub) {
-        out.stubCells.push_back(cell);
+    } else {
+      out.raster.reset();
+      out.codes.resize(cells);
+    }
+    for (std::size_t first = 0; !asView && first < cells; first += 64) {
+      const auto last = std::min(first + 64, cells);
+      const auto mask = maskWords[first / 64];
+      for (std::size_t cell = first; cell < last; ++cell) {
+        if (((mask >> (cell - first)) & 1U) == 0) {
+          const auto chamber = chambers.of[cell];
+          out.codes[cell] = chamber != grid::NO_CHAMBER
+                                ? static_cast<std::uint16_t>(6 + chamber)
+                                : std::uint16_t{0};
+          continue;
+        }
+        const auto wall = walls.of[cell];
+        const auto code = wall < kindCode.size() ? kindCode[wall] : artwork;
+        out.codes[cell] = code;
+        if (code == stub) {
+          out.stubCells.push_back(cell);
+        }
       }
     }
     for (const auto& [wall, points] : walls.strokes) {
@@ -22966,7 +26316,6 @@ public:
       out.wires.push_back(std::move(entry));
     }
     out.chambers = chambers.count;
-    return out;
   }
 
   /// Where the capacity graph puts the node of each chamber: the cell of

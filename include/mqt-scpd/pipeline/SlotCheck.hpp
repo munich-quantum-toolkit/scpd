@@ -38,8 +38,40 @@ struct SlotGraph {
   /// The names of the wall kinds; wall code k + 1 is kind k.
   std::vector<std::string> wallKinds;
   /// Per cell, row by row: 0 a cut line, 1 to 5 a wall (`wallKinds`),
-  /// 6 + c chamber c.
+  /// 6 + c chamber c. Empty when `raster` gives the codes.
   std::vector<std::uint16_t> codes;
+
+  /// The codes of `codes` read from the buffers the coupler insertion holds,
+  /// a cell at a time when the check asks for it, so that no raster of the
+  /// whole chip is written per check. The buffers must outlive the check.
+  struct RasterView {
+    /// One bit per cell, row by row, 64 cells a word: whether it is a wall.
+    const std::uint64_t* wallMask = nullptr;
+    /// Per cell: the wall it belongs to, read where `wallMask` is set.
+    const std::uint32_t* wallOf = nullptr;
+    /// Per wall: its code, 1 to 5.
+    const std::uint16_t* wallCodes = nullptr;
+    std::size_t walls = 0;
+    /// The code of a wall cell whose wall is not among `walls`.
+    std::uint16_t otherWall = 0;
+    /// Per cell: its chamber, or `noChamber`.
+    const std::uint32_t* chamberOf = nullptr;
+    std::uint32_t noChamber = 0;
+
+    /// The code of a cell, as `codes` holds it.
+    [[nodiscard]] std::uint16_t code(const std::size_t cell) const {
+      if (((wallMask[cell >> 6U] >> (cell & 63U)) & 1U) != 0U) {
+        const auto wall = wallOf[cell];
+        return wall < walls ? wallCodes[wall] : otherWall;
+      }
+      const auto chamber = chamberOf[cell];
+      return chamber != noChamber ? static_cast<std::uint16_t>(6U + chamber)
+                                  : std::uint16_t{0};
+    }
+    bool operator==(const RasterView&) const = default;
+  };
+  /// Read in place of `codes` when `codes` is empty.
+  std::optional<RasterView> raster;
   /// The cells whose code is the stub wall, row by row.
   std::vector<std::size_t> stubCells;
   /// The cells of the port runs' slots.
@@ -50,6 +82,7 @@ struct SlotGraph {
     std::string name;
     std::string kind;
     std::vector<std::array<double, 2>> points;
+    bool operator==(const Stroke&) const = default;
   };
   std::vector<Stroke> strokes;
 
@@ -74,6 +107,7 @@ struct SlotGraph {
     double length = 0.0;
     /// The chambers on the two sides of the line, when the graph knows them.
     std::optional<std::array<std::vector<std::int64_t>, 2>> sides;
+    bool operator==(const Edge&) const = default;
   };
   std::vector<Edge> edges;
 
@@ -82,6 +116,7 @@ struct SlotGraph {
     std::array<double, 2> cell{};
     std::vector<std::int64_t> chambers;
     std::string label;
+    bool operator==(const End&) const = default;
   };
   /// A wire to route.
   struct Wire {
@@ -91,11 +126,15 @@ struct SlotGraph {
     std::vector<std::string> crosses;
     bool terminal = false;
     bool resonator = false;
+    bool operator==(const Wire&) const = default;
   };
   std::vector<Wire> wires;
 
   /// How many chambers the graph has.
   std::size_t chambers = 0;
+
+  /// Whether two graphs hold the same data, field by field.
+  bool operator==(const SlotGraph&) const = default;
 };
 
 /// What `slotCheck` found.
@@ -191,8 +230,9 @@ slotGraphOf(std::string_view graph);
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string
 slotCheckJson(std::string_view graph);
 
-/// The faster slot check, which `slotCheck` and `slotCheckJson` run when
-/// `SCPD_SLOT_CHECK_FAST` is on: the same results with less work per check.
+/// The faster slot check, which `slotCheck` and `slotCheckJson` run while
+/// `SCPD_SLOT_CHECK_FAST` is on (the default): the same results with less
+/// work per check.
 namespace fast {
 /// `slotCheck` of a graph as JSON.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
@@ -203,6 +243,49 @@ slotCheck(const SlotGraph& graph);
 /// `slotCheckJson`.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string
 slotCheckJson(std::string_view graph);
+
+/// The seconds the fast check spent in each of its parts, summed over the
+/// checks of this thread since the last `takeSlotCheckSplit`. The check
+/// reads the clock only while `SCPD_STEP_PROFILE` is on; the clock changes
+/// no result.
+struct SlotCheckSplit {
+  /// How many checks the seconds cover.
+  std::uint64_t checks = 0;
+  /// Reading the strokes and wires, and the sides of every gate.
+  double setup = 0.0;
+  /// The placement of the crossing slots.
+  double placement = 0.0;
+  /// The self-bottlenecks between two places of one feedline edge.
+  double bottlenecks = 0.0;
+  /// The bottlenecks between a slot and a stub, with their room fills.
+  double rooms = 0.0;
+  /// The escape ways and their limits.
+  double escapes = 0.0;
+  /// The moves, owners, limits, mouths and open edges of the search graph.
+  double graph = 0.0;
+  /// The shortest way of every wire.
+  double ways = 0.0;
+  /// The negotiated congestion and the result.
+  double negotiation = 0.0;
+};
+
+/// The split since the last call, which starts a new one.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckSplit takeSlotCheckSplit();
 } // namespace fast
+
+/// The plain slot check, which `slotCheck` and `slotCheckJson` run under
+/// `SCPD_SLOT_CHECK_FAST=0`: the reference the fast check is held against,
+/// callable by name whatever the switch says.
+namespace detail {
+/// `slotCheck` of a graph as JSON.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
+plainSlotCheck(std::string_view graph);
+/// `slotCheck` of a graph in memory.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
+plainSlotCheck(const SlotGraph& graph);
+/// `slotCheckJson`.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string
+plainSlotCheckJson(std::string_view graph);
+} // namespace detail
 
 } // namespace mqt::scpd::pipeline

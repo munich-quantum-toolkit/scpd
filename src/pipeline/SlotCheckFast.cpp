@@ -14,7 +14,6 @@
 // `SCPD_SLOT_CHECK_FAST` is on.
 
 #include "mqt-scpd/pipeline/SlotCheck.hpp"
-
 #include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
@@ -27,6 +26,7 @@
 #include <bit>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -258,8 +258,10 @@ couplerEnd(const std::string_view end) {
 struct Grid {
   std::int64_t width = 0;
   std::int64_t height = 0;
-  /// The codes of the graph's cells, row by row (`SlotGraph::codes`).
+  /// The codes of the graph's cells, row by row (`SlotGraph::codes`), or
+  /// nothing when `view` gives them (`SlotGraph::raster`).
   const std::uint16_t* code = nullptr;
+  const SlotGraph::RasterView* view = nullptr;
   std::size_t size = 0;
   /// The cells of the stubs' walls, row by row (`SlotGraph::stubCells`).
   const std::vector<std::size_t>* stubCells = nullptr;
@@ -271,8 +273,12 @@ struct Grid {
                                  const std::int64_t y) const {
     return static_cast<std::size_t>((y * width) + x);
   }
+  /// The code of cell number `index`.
+  [[nodiscard]] std::uint16_t codeAt(const std::size_t index) const {
+    return code != nullptr ? code[index] : view->code(index);
+  }
   [[nodiscard]] int at(const std::int64_t x, const std::int64_t y) const {
-    return code[cell(x, y)];
+    return codeAt(cell(x, y));
   }
   /// Whether a wire may pass the cell: a chamber or a cut line.
   [[nodiscard]] bool open(const std::int64_t x, const std::int64_t y) const {
@@ -282,6 +288,14 @@ struct Grid {
 };
 
 [[nodiscard]] Grid gridOf(const SlotGraph& graph) {
+  if (graph.codes.empty() && graph.raster.has_value()) {
+    return {.width = graph.width,
+            .height = graph.height,
+            .code = nullptr,
+            .view = &*graph.raster,
+            .size = static_cast<std::size_t>(graph.width * graph.height),
+            .stubCells = &graph.stubCells};
+  }
   if (std::cmp_not_equal(graph.codes.size(), graph.width * graph.height)) {
     throw std::invalid_argument(
         "slot check: the raster does not cover the chip");
@@ -289,6 +303,7 @@ struct Grid {
   return {.width = graph.width,
           .height = graph.height,
           .code = graph.codes.data(),
+          .view = nullptr,
           .size = graph.codes.size(),
           .stubCells = &graph.stubCells};
 }
@@ -1390,6 +1405,21 @@ private:
                               (fixed(ends[0]) && feedline(ends[1])));
 }
 
+/// Whether the check times its parts (`fast::takeSlotCheckSplit`):
+/// `SCPD_STEP_PROFILE`, off.
+[[nodiscard]] bool stepProfileOfEnvironment() {
+  const char* text = std::getenv("SCPD_STEP_PROFILE");
+  return text != nullptr && std::string_view(text) != "0" &&
+         std::string_view(text) != "";
+}
+
+/// The split of the checks of this thread since the last
+/// `fast::takeSlotCheckSplit`.
+[[nodiscard]] fast::SlotCheckSplit& slotCheckSplit() {
+  thread_local fast::SlotCheckSplit split;
+  return split;
+}
+
 /// Read the switches for one check.
 void readSettings() {
   settings() = Settings{.margin = capacityMarginOfEnvironment(),
@@ -1552,9 +1582,9 @@ public:
       const auto first = static_cast<std::int64_t>(index % words_) * 64;
       const auto count = static_cast<unsigned>(
           std::min<std::int64_t>(64, grid_.width - first));
-      const auto* code = grid_.code + grid_.cell(first, y);
+      const auto base = grid_.cell(first, y);
       for (unsigned b = 0; b < count; ++b) {
-        const auto value = static_cast<int>(code[b]);
+        const auto value = static_cast<int>(grid_.codeAt(base + b));
         word.open |= static_cast<std::uint64_t>(value >= CHAMBER || value == 0)
                      << b;
         word.stub |= static_cast<std::uint64_t>(value == stubCode_) << b;
@@ -4239,8 +4269,22 @@ Way Checker::shortest(const Demand& demand,
 }
 
 std::pair<SlotCheckResult, json> Checker::run() {
+  // The seconds of each part under `SCPD_STEP_PROFILE`; read only for the
+  // split, never for a result.
+  const bool timed = stepProfileOfEnvironment();
+  auto lapStart = std::chrono::steady_clock::now();
+  const auto lap = [&](double fast::SlotCheckSplit::* part) {
+    if (!timed) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    slotCheckSplit().*part +=
+        std::chrono::duration<double>(now - lapStart).count();
+    lapStart = now;
+  };
   readStrokesAndWires();
   addSides();
+  lap(&fast::SlotCheckSplit::setup);
   SlotPlacer placer(graph_, grid_, page_ != nullptr);
   auto slots = placer.run(strokes_);
   addSlots(slots);
@@ -4248,11 +4292,14 @@ std::pair<SlotCheckResult, json> Checker::run() {
   for (const auto& edge : edges_) {
     capacity_.push_back(edge.capacity);
   }
+  lap(&fast::SlotCheckSplit::placement);
   auto groups = selfBottlenecks(graph_, grid_, strokes_, edges_);
+  lap(&fast::SlotCheckSplit::bottlenecks);
   for (auto& group : slotStubBottlenecks(graph_, grid_, *placer.bits, strokes_,
                                          edges_, wires_)) {
     groups.push_back(std::move(group));
   }
+  lap(&fast::SlotCheckSplit::rooms);
   json escapesOut = json::array();
   if (slotEscape()) {
     for (auto& group : escapeLimits(graph_, grid_, edges_,
@@ -4260,6 +4307,7 @@ std::pair<SlotCheckResult, json> Checker::run() {
       groups.push_back(std::move(group));
     }
   }
+  lap(&fast::SlotCheckSplit::escapes);
   // Per edge: the groups whose slots it is.
   std::vector<std::vector<std::size_t>> member(ne);
   // Per wire: the groups whose room it ends in.
@@ -4420,6 +4468,7 @@ std::pair<SlotCheckResult, json> Checker::run() {
       }
     }
   }
+  lap(&fast::SlotCheckSplit::graph);
   std::unordered_map<std::string, Way> base;
   std::unordered_map<std::string, double> tautBase;
   for (std::size_t d = 0; d < demands.size(); ++d) {
@@ -4432,6 +4481,7 @@ std::pair<SlotCheckResult, json> Checker::run() {
     }
     base[demand.name] = shortest(demand, weight);
   }
+  lap(&fast::SlotCheckSplit::ways);
   // Per wire: the ways pulled tight so far and their lengths, as a wire
   // often takes a way again in a later round.
   std::vector<std::map<std::vector<std::size_t>, double>> tautWays(
@@ -4632,6 +4682,8 @@ std::pair<SlotCheckResult, json> Checker::run() {
     }
   }
 
+  lap(&fast::SlotCheckSplit::negotiation);
+  slotCheckSplit().checks += timed ? 1U : 0U;
   if (page_ == nullptr) {
     return {std::move(result), json()};
   }
@@ -4964,6 +5016,10 @@ std::string slotCheckJson(const std::string_view graph) {
               {"over", result.over},
               {"graph", std::move(out)}}
       .dump();
+}
+
+SlotCheckSplit takeSlotCheckSplit() {
+  return std::exchange(slotCheckSplit(), SlotCheckSplit{});
 }
 
 } // namespace fast

@@ -67,7 +67,7 @@ constexpr bool alongside(const Vector u, const Vector r) {
 /// strictly between that heading and the next. The cone of any set of
 /// headings has its edges on headings, so every displacement of one class
 /// lies in it or none does — which is what lets the answer be tabulated.
-std::uint32_t classOf(const Vector r) {
+std::uint32_t classBySearch(const Vector r) {
   for (Heading h = 0; h < NUM_HEADINGS; ++h) {
     if (alongside(vectorOf(h), r)) {
       return 2U * h;
@@ -79,6 +79,30 @@ std::uint32_t classOf(const Vector r) {
     }
   }
   return 0;
+}
+
+/// `classBySearch` read from a table: the class is set by the signs of the
+/// four forms x, y, x + y and x - y, since the eight headings lie on their
+/// zero lines. The table is filled from the vectors of the square of side
+/// five around the origin, which show every sign pattern a vector can have.
+std::uint32_t classOf(const Vector r) {
+  const auto sign = [](const std::int64_t v) {
+    return static_cast<std::uint32_t>((v > 0) - (v < 0) + 1);
+  };
+  const auto key = [&](const Vector v) {
+    return (((((sign(v.x) * 3U) + sign(v.y)) * 3U) + sign(v.x + v.y)) * 3U) +
+           sign(v.x - v.y);
+  };
+  static const std::array<std::uint32_t, 81> table = [&] {
+    std::array<std::uint32_t, 81> built{};
+    for (std::int64_t y = -2; y <= 2; ++y) {
+      for (std::int64_t x = -2; x <= 2; ++x) {
+        built[key({.x = x, .y = y})] = classBySearch({.x = x, .y = y});
+      }
+    }
+    return built;
+  }();
+  return table[key(r)];
 }
 
 /// A representative displacement of a direction class.
@@ -469,8 +493,12 @@ std::uint32_t AnalyticDubins::minTurns(const PathPoint& from,
   const auto target = static_cast<Heading>(to.heading & 7U);
 
   // A way walks the ring of headings from one to the other, so it can never
-  // turn less than that; there is nothing to look for below it.
-  for (auto turns = headingDistance(source, target); turns <= cap_; ++turns) {
+  // turn less than that; there is nothing to look for below it. Each move
+  // turns its heading by its eighths to one side, and the ring has an even
+  // number of headings, so the turns of every way have the parity of that
+  // distance: a budget of the other parity finds what the one below finds.
+  for (auto turns = headingDistance(source, target); turns <= cap_;
+       turns += 2) {
     if (within(source, dx, dy, target, turns, 1U << source)) {
       return turns;
     }

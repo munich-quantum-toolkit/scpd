@@ -251,8 +251,10 @@ couplerEnd(const std::string_view end) {
 struct Grid {
   std::int64_t width = 0;
   std::int64_t height = 0;
-  /// The codes of the graph's cells, row by row (`SlotGraph::codes`).
+  /// The codes of the graph's cells, row by row (`SlotGraph::codes`), or
+  /// nothing when `view` gives them (`SlotGraph::raster`).
   const std::uint16_t* code = nullptr;
+  const SlotGraph::RasterView* view = nullptr;
   std::size_t size = 0;
   /// The cells of the stubs' walls, row by row (`SlotGraph::stubCells`).
   const std::vector<std::size_t>* stubCells = nullptr;
@@ -264,8 +266,12 @@ struct Grid {
                                  const std::int64_t y) const {
     return static_cast<std::size_t>((y * width) + x);
   }
+  /// The code of cell number `index`.
+  [[nodiscard]] std::uint16_t codeAt(const std::size_t index) const {
+    return code != nullptr ? code[index] : view->code(index);
+  }
   [[nodiscard]] int at(const std::int64_t x, const std::int64_t y) const {
-    return code[cell(x, y)];
+    return codeAt(cell(x, y));
   }
   /// Whether a wire may pass the cell: a chamber or a cut line.
   [[nodiscard]] bool open(const std::int64_t x, const std::int64_t y) const {
@@ -275,6 +281,14 @@ struct Grid {
 };
 
 [[nodiscard]] Grid gridOf(const SlotGraph& graph) {
+  if (graph.codes.empty() && graph.raster.has_value()) {
+    return {.width = graph.width,
+            .height = graph.height,
+            .code = nullptr,
+            .view = &*graph.raster,
+            .size = static_cast<std::size_t>(graph.width * graph.height),
+            .stubCells = &graph.stubCells};
+  }
   if (std::cmp_not_equal(graph.codes.size(), graph.width * graph.height)) {
     throw std::invalid_argument(
         "slot check: the raster does not cover the chip");
@@ -282,6 +296,7 @@ struct Grid {
   return {.width = graph.width,
           .height = graph.height,
           .code = graph.codes.data(),
+          .view = nullptr,
           .size = graph.codes.size(),
           .stubCells = &graph.stubCells};
 }
@@ -3940,33 +3955,54 @@ std::pair<SlotCheckResult, json> judge(const std::string_view graph) {
 }
 
 /// Whether `slotCheck` runs the faster check of SlotCheckFast.cpp
-/// (`SCPD_SLOT_CHECK_FAST`, off): the same results with less work.
+/// (`SCPD_SLOT_CHECK_FAST`, on): the same results with less work.
+/// `SCPD_SLOT_CHECK_FAST=0` restores the plain check.
 bool fastCheck() {
   static const bool on = [] {
     const char* value = std::getenv("SCPD_SLOT_CHECK_FAST");
-    return value != nullptr && std::string_view(value) != "0" &&
-           !std::string_view(value).empty();
+    return value == nullptr || std::string_view(value) != "0";
   }();
   return on;
 }
 
 } // namespace
 
+namespace detail {
+
+SlotCheckResult plainSlotCheck(const std::string_view graph) {
+  auto [result, out] = judge(graph);
+  result.graph = out.dump();
+  return result;
+}
+
+SlotCheckResult plainSlotCheck(const SlotGraph& graph) {
+  readSettings();
+  return Checker(graph, nullptr).run().first;
+}
+
+std::string plainSlotCheckJson(const std::string_view graph) {
+  auto [result, out] = judge(graph);
+  return json{{"verdict", result.verdict},
+              {"lost", result.lost},
+              {"over", result.over},
+              {"graph", std::move(out)}}
+      .dump();
+}
+
+} // namespace detail
+
 SlotCheckResult slotCheck(const std::string_view graph) {
   if (fastCheck()) {
     return fast::slotCheck(graph);
   }
-  auto [result, out] = judge(graph);
-  result.graph = out.dump();
-  return result;
+  return detail::plainSlotCheck(graph);
 }
 
 SlotCheckResult slotCheck(const SlotGraph& graph) {
   if (fastCheck()) {
     return fast::slotCheck(graph);
   }
-  readSettings();
-  return Checker(graph, nullptr).run().first;
+  return detail::plainSlotCheck(graph);
 }
 
 SlotGraph slotGraphOf(const std::string_view graph) {
@@ -3982,12 +4018,7 @@ std::string slotCheckJson(const std::string_view graph) {
   if (fastCheck()) {
     return fast::slotCheckJson(graph);
   }
-  auto [result, out] = judge(graph);
-  return json{{"verdict", result.verdict},
-              {"lost", result.lost},
-              {"over", result.over},
-              {"graph", std::move(out)}}
-      .dump();
+  return detail::plainSlotCheckJson(graph);
 }
 
 } // namespace mqt::scpd::pipeline

@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <random>
 #include <utility>
 #include <vector>
 
@@ -58,11 +59,15 @@ struct Chip {
   [[nodiscard]] std::size_t cell(const int x, const int y) const {
     return (static_cast<std::size_t>(y) * width) + static_cast<std::size_t>(x);
   }
-  std::vector<Bottleneck> cuts(const ProfileOptions& options = {
-                                   .widest = 60.0,
-                                   .minimumRise = 2.0,
-                                   .sameNarrowing = 10.0,
-                                   .narrowest = 2.0}) {
+  /// The cuts of the chip; with `withMask` the walls are gathered from a
+  /// mask of the wall cells (`ProfileScene::walls`), with `memo` the work on
+  /// the walls is kept there.
+  std::vector<Bottleneck>
+  cuts(const ProfileOptions& options = {.widest = 60.0,
+                                        .minimumRise = 2.0,
+                                        .sameNarrowing = 10.0,
+                                        .narrowest = 2.0},
+       const bool withMask = false, ProfileMemo* memo = nullptr) {
     // One field per side: every static wall lies in the field `sideOf`
     // names, the first by default.
     std::size_t sides = 1;
@@ -84,16 +89,24 @@ struct Chip {
     for (const auto& one : field) {
       fields.push_back(&one);
     }
-    return profileCuts({.width = width,
-                        .height = height,
-                        .wallOf = wallOf,
-                        .roles = roles,
-                        .runs = runs,
-                        .fields = fields,
-                        .slots = &slots,
-                        .lines = lines,
-                        .mouths = mouths},
-                       options);
+    BitGrid walled(width, height);
+    for (std::size_t c = 0; c < wallOf.size(); ++c) {
+      if (wallOf[c] != NO_WALL) {
+        walled.set(c);
+      }
+    }
+    const ProfileScene scene{.width = width,
+                             .height = height,
+                             .wallOf = wallOf,
+                             .roles = roles,
+                             .runs = runs,
+                             .fields = fields,
+                             .slots = &slots,
+                             .walls = withMask ? &walled : nullptr,
+                             .lines = lines,
+                             .mouths = mouths};
+    return memo != nullptr ? profileCuts(scene, options, *memo)
+                           : profileCuts(scene, options);
   }
   [[nodiscard]] int x(const std::size_t c) const {
     return static_cast<int>(c % width);
@@ -288,6 +301,131 @@ TEST(ProfileCuts, CutsNothingInTheWedgeWhereTwoWallsTouch) {
     chip.paint(two, 61 + k, 70 - k, 62 + k, 70 - k);
   }
   EXPECT_TRUE(between(chip, chip.cuts(), one, two).empty());
+}
+
+/// The walls gathered from a mask of the wall cells give the cuts the scan
+/// of every cell gives, on chips of random static and dynamic rectangles
+/// whose rows start inside a word of the mask.
+TEST(ProfileCuts, AMaskOfTheWallCellsGivesTheSameCuts) {
+  for (std::uint32_t seed = 1; seed <= 12; ++seed) {
+    std::mt19937 rng(seed);
+    Chip chip;
+    std::uniform_int_distribution<int> column(0, 110);
+    std::uniform_int_distribution<int> row(0, 70);
+    std::uniform_int_distribution<int> size(1, 12);
+    for (int k = 0; k < 14; ++k) {
+      const auto wall =
+          chip.wall(k % 2 == 0 ? ProfileRole::Static : ProfileRole::Dynamic);
+      const auto x0 = column(rng);
+      const auto y0 = row(rng);
+      const auto x1 = std::min(119, x0 + size(rng));
+      const auto y1 = std::min(79, y0 + size(rng));
+      chip.paint(wall, x0, y0, x1, y1);
+    }
+    const auto scanned = chip.cuts();
+    const auto masked = chip.cuts({.widest = 60.0,
+                                   .minimumRise = 2.0,
+                                   .sameNarrowing = 10.0,
+                                   .narrowest = 2.0},
+                                  true);
+    ASSERT_EQ(masked.size(), scanned.size()) << "seed " << seed;
+    for (std::size_t k = 0; k < scanned.size(); ++k) {
+      EXPECT_EQ(masked[k].first, scanned[k].first) << "seed " << seed;
+      EXPECT_EQ(masked[k].second, scanned[k].second) << "seed " << seed;
+      EXPECT_EQ(masked[k].saddle, scanned[k].saddle) << "seed " << seed;
+    }
+  }
+}
+
+/// A memo kept from call to call gives the cuts a call without it gives,
+/// while walls move a cell or two between calls, a static wall comes to
+/// touch the dynamic ones, the walls are numbered anew, and a wall drawn as
+/// a line bends. The memo serves the walls that stay.
+TEST(ProfileCuts, AMemoGivesTheCutsOfACallWithout) {
+  struct Box {
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+    ProfileRole role;
+  };
+  std::mt19937 rng(7);
+  std::uniform_int_distribution<int> column(0, 105);
+  std::uniform_int_distribution<int> row(0, 60);
+  std::uniform_int_distribution<int> size(1, 10);
+  std::vector<Box> boxes;
+  for (int k = 0; k < 12; ++k) {
+    const auto x0 = column(rng);
+    const auto y0 = row(rng);
+    boxes.push_back({x0, y0, std::min(119, x0 + size(rng)),
+                     std::min(64, y0 + size(rng)),
+                     k % 3 == 0 ? ProfileRole::Static : ProfileRole::Dynamic});
+  }
+  std::uniform_int_distribution<std::size_t> which(0, boxes.size() - 1);
+  std::uniform_int_distribution<int> shift(-2, 2);
+  ProfileMemo memo;
+  int bend = 72;
+  for (int call = 0; call < 30; ++call) {
+    // Move one box a little, and the line's bend every third call.
+    auto& moved = boxes[which(rng)];
+    const auto dx = std::clamp(shift(rng), -moved.x0, 119 - moved.x1);
+    const auto dy = std::clamp(shift(rng), -moved.y0, 64 - moved.y1);
+    moved = {moved.x0 + dx, moved.y0 + dy, moved.x1 + dx, moved.y1 + dy,
+             moved.role};
+    if (call % 3 == 2) {
+      bend = bend == 72 ? 70 : 72;
+    }
+    Chip chip;
+    // The walls are numbered from the first box or from the last.
+    const bool backwards = call % 4 == 1;
+    std::vector<std::uint32_t> id(boxes.size());
+    for (std::size_t k = 0; k < boxes.size(); ++k) {
+      const auto box = backwards ? boxes.size() - 1 - k : k;
+      id[box] = chip.wall(boxes[box].role);
+    }
+    for (std::size_t k = 0; k < boxes.size(); ++k) {
+      const auto& box = boxes[k];
+      chip.paint(id[k], box.x0, box.y0, box.x1, box.y1);
+    }
+    // A dynamic wall drawn as a line with a radius, a feedline edge.
+    const auto edge = chip.wall(ProfileRole::Dynamic);
+    ProfileLine line{.wall = edge, .points = {}, .radius = 1.0};
+    for (const auto& [x, y] :
+         std::vector<std::pair<int, int>>{{5, 76}, {60, 76}, {bend, 68}}) {
+      line.points.emplace_back(x, y);
+    }
+    for (std::size_t k = 0; k + 1 < line.points.size(); ++k) {
+      const auto [ax, ay] = line.points[k];
+      const auto [bx, by] = line.points[k + 1];
+      const auto steps =
+          static_cast<int>(std::max(std::abs(bx - ax), std::abs(by - ay)));
+      for (int s = 0; s <= steps; ++s) {
+        const auto x = static_cast<int>(
+            std::lround(ax + ((bx - ax) * s / std::max(1, steps))));
+        const auto y = static_cast<int>(
+            std::lround(ay + ((by - ay) * s / std::max(1, steps))));
+        chip.paint(edge, x - 1, y - 1, std::min(119, x + 1),
+                   std::min(79, y + 1));
+      }
+    }
+    chip.lines.push_back(line);
+    const auto plain = chip.cuts();
+    const auto kept = chip.cuts({.widest = 60.0,
+                                 .minimumRise = 2.0,
+                                 .sameNarrowing = 10.0,
+                                 .narrowest = 2.0},
+                                false, &memo);
+    ASSERT_EQ(kept.size(), plain.size()) << "call " << call;
+    for (std::size_t k = 0; k < plain.size(); ++k) {
+      EXPECT_EQ(kept[k].first, plain[k].first) << "call " << call;
+      EXPECT_EQ(kept[k].second, plain[k].second) << "call " << call;
+      EXPECT_EQ(kept[k].saddle, plain[k].saddle) << "call " << call;
+    }
+  }
+  const auto counts = memo.counts();
+  EXPECT_GT(counts.tracesKept, 0U);
+  EXPECT_GT(counts.linesKept, 0U);
+  EXPECT_GT(counts.pairsKept, 0U);
 }
 
 } // namespace

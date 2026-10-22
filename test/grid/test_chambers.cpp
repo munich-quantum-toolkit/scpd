@@ -303,5 +303,44 @@ TEST(Chambers, LabelEveryCellAsAFloodFromTheLowestCellWould) {
   }
 }
 
+/// The same on a grid whose rows span several words of the masks and start
+/// inside a word: the labelling scans the rows 64 cells at a time.
+TEST(Chambers, LabelEveryCellOfAWideGridAsAFloodWould) {
+  constexpr std::uint32_t WIDE = 200;
+  constexpr std::uint32_t ROWS = 37;
+  const auto grid = GridMetrics::fit({.minX = 0.0,
+                                      .minY = 0.0,
+                                      .maxX = static_cast<double>(WIDE - 1),
+                                      .maxY = static_cast<double>(ROWS - 1)},
+                                     WIDE, ROWS);
+  for (std::uint32_t seed = 1; seed <= 20; ++seed) {
+    std::mt19937 rng(seed);
+    std::bernoulli_distribution wall(seed % 3 == 0   ? 0.35
+                                     : seed % 3 == 1 ? 0.12
+                                                     : 0.03);
+    std::uniform_int_distribution<std::uint32_t> column(0, WIDE - 1);
+    std::uniform_int_distribution<std::uint32_t> row(0, ROWS - 1);
+    BitGrid mask(WIDE, ROWS);
+    for (std::size_t cell = 0; cell < mask.size(); ++cell) {
+      if (wall(rng)) {
+        mask.set(cell);
+      }
+    }
+    std::vector<Bottleneck> gates;
+    for (int k = 0; k < 60; ++k) {
+      const auto y0 = static_cast<std::size_t>(row(rng));
+      const auto first = (y0 * WIDE) + column(rng);
+      const auto y1 = static_cast<std::size_t>(row(rng));
+      const auto second = (y1 * WIDE) + column(rng);
+      mask.set(first);
+      mask.set(second);
+      gates.push_back({.first = first, .second = second, .saddle = first});
+    }
+    const auto expected = floodedChambers(mask, gates, grid);
+    const auto chambers = chambersOf(mask, gates, grid);
+    EXPECT_EQ(chambers.of, expected) << "seed " << seed;
+  }
+}
+
 } // namespace
 } // namespace mqt::scpd::grid

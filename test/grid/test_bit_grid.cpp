@@ -12,7 +12,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -50,6 +53,43 @@ TEST(BitGrid, FillCountsExactly) {
   EXPECT_EQ(grid.count(), 210U);
   EXPECT_EQ(grid, BitGrid(70, 3, true));
   EXPECT_NE(grid, BitGrid(70, 3));
+}
+
+/// `setRange` sets the same cells as `set` cell by cell, within one word,
+/// across words, up to the last cell and for an empty range.
+TEST(BitGrid, SetRangeSetsTheCellsSetSets) {
+  const std::vector<std::pair<std::size_t, std::size_t>> ranges{
+      {0, 0}, {3, 9}, {0, 64}, {63, 65}, {10, 200}, {128, 192}, {150, 210}};
+  for (const auto& [first, last] : ranges) {
+    BitGrid ranged(70, 3);
+    BitGrid single(70, 3);
+    ranged.set(1);
+    single.set(1);
+    ranged.setRange(first, last);
+    for (auto cell = first; cell < last; ++cell) {
+      single.set(cell);
+    }
+    EXPECT_EQ(ranged, single) << first << ".." << last;
+  }
+}
+
+/// `&=` keeps the cells both grids set and refuses a grid of another size.
+TEST(BitGrid, AndKeepsTheCellsBothGridsSet) {
+  BitGrid kept(70, 3);
+  BitGrid other(70, 3);
+  for (const std::size_t cell : {0U, 5U, 64U, 130U, 209U}) {
+    kept.set(cell);
+  }
+  for (const std::size_t cell : {5U, 64U, 100U, 209U}) {
+    other.set(cell);
+  }
+  kept &= other;
+  BitGrid both(70, 3);
+  for (const std::size_t cell : {5U, 64U, 209U}) {
+    both.set(cell);
+  }
+  EXPECT_EQ(kept, both);
+  EXPECT_THROW(kept &= BitGrid(69, 3), std::invalid_argument);
 }
 
 } // namespace

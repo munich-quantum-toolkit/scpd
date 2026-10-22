@@ -14,10 +14,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <random>
 #include <span>
 #include <utility>
@@ -482,41 +482,21 @@ TEST(ChainSearch, WithoutARedonePriceTheAnswerIsProved) {
   EXPECT_FALSE(result.relaid);
 }
 
-TEST(ChainSearch, TheBudgetStopsTheSearchAndClaimsNothing) {
-  auto chain =
-      chainOf(6, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
-        return static_cast<uint64_t>((from * 7) + (to * 3) + 1);
-      });
-  auto problem = chain.problem();
-  problem.budget = std::chrono::nanoseconds(1);
-  const auto result = solveChainAStar(problem);
-  // Whatever it managed, it may not call it an optimum, and what it hands
-  // back must price as what it says it costs.
-  EXPECT_FALSE(result.optimal);
-  if (result.solved) {
-    EXPECT_EQ(chain.priceOf(result.chosen), result.cost);
-  } else {
-    EXPECT_TRUE(result.chosen.empty());
-  }
-}
-
-TEST(ChainSearch, NoBudgetMeansNoLimit) {
+TEST(ChainSearch, TheSearchEndsOnTheOptimum) {
   auto chain =
       chainOf(5, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
         return static_cast<uint64_t>(((from * 13) ^ (to * 5)) + 1);
       });
-  auto problem = chain.problem();
-  problem.budget = std::chrono::nanoseconds(0);
-  const auto result = solveChainAStar(problem);
+  const auto result = solveChainAStar(chain.problem());
   ASSERT_TRUE(result.solved);
   EXPECT_TRUE(result.optimal);
   EXPECT_EQ(result.cost, chain.exhaustive());
 }
 
 TEST(ChainSearch, EveryCompleteRunIsReportedAndTheCheapestIsKept) {
-  // What the budget falls back on, and what `-v 1` prints: every run of
-  // choices whose every step is priced. Each one must be a whole run, must
-  // cost what it is reported to cost, and none may undercut the answer.
+  // What `-v 1` prints: every run of choices whose every step is priced.
+  // Each one must be a whole run, must cost what it is reported to cost,
+  // and none may undercut the answer.
   auto chain =
       chainOf(5, 3, [](std::size_t, const uint32_t from, const uint32_t to) {
         return static_cast<uint64_t>(((from * 11) ^ (to * 7)) + 1);
@@ -654,7 +634,6 @@ TEST(ChainSearch, RefusingEveryRunExhaustsTheChain) {
   const auto result = solveChainAStar(problem);
   EXPECT_FALSE(result.solved);
   EXPECT_TRUE(result.optimal);
-  EXPECT_FALSE(result.outOfTime);
   EXPECT_FALSE(result.outOfTrials);
   EXPECT_TRUE(result.chosen.empty());
   EXPECT_EQ(result.cost, TRELLIS_UNREACHABLE);
@@ -669,7 +648,7 @@ TEST(ChainSearch, RefusingEveryRunExhaustsTheChain) {
 
 TEST(ChainSearch, TheTrialBoundStopsTheRefusals) {
   // The same chain, two trials allowed: two refusals, then the search stops
-  // and says it was the trials and not the clock or the chain.
+  // and says it was the trials and not the chain.
   auto chain =
       chainOf(3, 2, [](const std::size_t layer, const uint32_t from,
                        const uint32_t to) {
@@ -681,7 +660,6 @@ TEST(ChainSearch, TheTrialBoundStopsTheRefusals) {
   const auto result = solveChainAStar(problem);
   EXPECT_FALSE(result.solved);
   EXPECT_FALSE(result.optimal);
-  EXPECT_FALSE(result.outOfTime);
   EXPECT_TRUE(result.outOfTrials);
   EXPECT_EQ(result.rejected, 2U);
   EXPECT_TRUE(result.chosen.empty());
@@ -700,32 +678,292 @@ TEST(ChainSearch, TheTrialBoundStopsTheRefusals) {
   EXPECT_EQ(second.chosen, everyRunOf(chain)[1].second);
 }
 
-TEST(ChainSearch, TheClockIsReadAfterARefusal) {
-  // A budget the first refusal alone outlasts: the search stops on the
-  // clock right after that refusal, hands back no run — the one it reached
-  // was refused — and says it was the time.
+TEST(ChainSearch, EveryExpandedPrefixIsReportedOnce) {
+  // The report sees as many prefixes as the search says it expanded, each
+  // one a run of choices from the first layer, and the answer stays.
   auto chain =
-      chainOf(4, 3, [](std::size_t, const uint32_t from, const uint32_t to) {
-        return static_cast<uint64_t>((from * 7) + (to * 3) + 1);
+      chainOf(5, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>(((from * 13) ^ (to * 5)) + 1);
       });
+  blind(chain);
+  const auto plain = solveChainAStar(chain.problem());
   auto problem = chain.problem();
-  problem.budget = std::chrono::milliseconds(1);
-  uint32_t asked = 0;
-  problem.accept = [&](std::span<const uint32_t>, uint64_t) {
-    ++asked;
-    const auto until = std::chrono::steady_clock::now() +
-                       std::chrono::milliseconds(5);
-    while (std::chrono::steady_clock::now() < until) {
-    }
-    return false;
+  std::vector<std::vector<uint32_t>> seen;
+  problem.expanded = [&](const std::span<const uint32_t> prefix) {
+    seen.emplace_back(prefix.begin(), prefix.end());
   };
-  const auto result = solveChainAStar(problem);
-  EXPECT_FALSE(result.solved);
-  EXPECT_TRUE(result.outOfTime);
-  EXPECT_FALSE(result.outOfTrials);
-  EXPECT_TRUE(result.chosen.empty());
-  EXPECT_EQ(asked, 1U);
-  EXPECT_EQ(result.rejected, 1U);
+  const auto reported = solveChainAStar(problem);
+  EXPECT_EQ(reported.chosen, plain.chosen);
+  EXPECT_EQ(reported.cost, plain.cost);
+  ASSERT_EQ(seen.size(), plain.expansions);
+  for (const auto& prefix : seen) {
+    EXPECT_FALSE(prefix.empty());
+    EXPECT_LT(prefix.size(), 5U);
+  }
+}
+
+TEST(ChainSearch, TheSiblingBudgetBoundsEveryLaterBudgetUnderThePrefix) {
+  // Under a bound at half the price, runs are priced before the search
+  // ends, so the budgets are finite. The sibling budget a prefix's first
+  // step sees is at least the budget of every step under that prefix,
+  // then or later.
+  auto chain =
+      chainOf(5, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>((((from * 7) + (to * 3)) % 11) + 2);
+      });
+  for (auto& block : chain.hint) {
+    for (auto& row : block) {
+      for (auto& value : row) {
+        value /= 2;
+      }
+    }
+  }
+  const auto plain = solveChainAStar(chain.problem());
+  auto problem = chain.problem();
+  const auto inner = problem.step;
+  std::map<std::vector<uint32_t>, uint64_t> first;
+  std::size_t finite = 0;
+  problem.step = [&](const std::span<const uint32_t> prefix, const uint32_t to,
+                     int64_t& redone) {
+    EXPECT_LE(problem.stepBudget, problem.siblingBudget);
+    const std::vector<uint32_t> key(prefix.begin(), prefix.end());
+    const auto known = first.emplace(key, problem.siblingBudget).first;
+    EXPECT_LE(problem.stepBudget, known->second);
+    finite += problem.stepBudget != TRELLIS_UNREACHABLE ? 1U : 0U;
+    return inner(prefix, to, redone);
+  };
+  const auto budgeted = solveChainAStar(problem);
+  EXPECT_EQ(budgeted.chosen, plain.chosen);
+  EXPECT_EQ(budgeted.cost, plain.cost);
+  EXPECT_GT(finite, 0U);
+}
+
+TEST(ChainSearch, TheSiblingKeysNameTheStepsStillToBePriced) {
+  // Every step priced later under a prefix was listed, at its key, by the
+  // steps priced before it under that prefix; a step listed as never to be
+  // priced is not priced; and no listed key is below the step's own.
+  auto chain =
+      chainOf(5, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>((((from * 7) + (to * 3)) % 11) + 2);
+      });
+  for (auto& block : chain.hint) {
+    for (auto& row : block) {
+      for (auto& value : row) {
+        value /= 2;
+      }
+    }
+  }
+  auto problem = chain.problem();
+  const auto inner = problem.step;
+  std::map<std::vector<uint32_t>, std::vector<uint64_t>> listed;
+  std::size_t checked = 0;
+  problem.step = [&](const std::span<const uint32_t> prefix, const uint32_t to,
+                     int64_t& redone) {
+    const std::vector<uint32_t> key(prefix.begin(), prefix.end());
+    EXPECT_EQ(problem.siblingKeys.size(), chain.width[prefix.size()]);
+    EXPECT_EQ(problem.siblingKeys[to], TRELLIS_UNREACHABLE);
+    for (const auto f : problem.siblingKeys) {
+      EXPECT_TRUE(f == TRELLIS_UNREACHABLE || f >= problem.stepKey);
+    }
+    if (const auto before = listed.find(key); before != listed.end()) {
+      ++checked;
+      EXPECT_EQ(before->second[to], problem.stepKey);
+    }
+    listed[key] = problem.siblingKeys;
+    return inner(prefix, to, redone);
+  };
+  const auto plain = solveChainAStar(chain.problem());
+  const auto listedRun = solveChainAStar(problem);
+  EXPECT_EQ(listedRun.chosen, plain.chosen);
+  EXPECT_EQ(listedRun.cost, plain.cost);
+  EXPECT_GT(checked, 0U);
+}
+
+TEST(ChainSearch, WeightedAStarStaysWithinItsWeightAndExpandsNoMore) {
+  // Weighted A* at 1.5 on chains whose bound is half the price of a step:
+  // its answer costs at most 1.5 times the optimum, its lower bound is at
+  // most the optimum, it says it proved nothing, and it grows no more
+  // prefixes than plain A*.
+  for (const uint32_t seed : {3U, 7U, 11U}) {
+    auto chain = chainOf(
+        6, 4,
+        [seed](std::size_t layer, const uint32_t from, const uint32_t to) {
+          return static_cast<uint64_t>(
+              (((from * seed) + (to * 5) + layer) % 9) + 1);
+        });
+    for (auto& block : chain.hint) {
+      for (auto& row : block) {
+        for (auto& value : row) {
+          value /= 2;
+        }
+      }
+    }
+    const auto plain = solveChainAStar(chain.problem());
+    ASSERT_TRUE(plain.solved);
+    ASSERT_TRUE(plain.optimal);
+    EXPECT_EQ(plain.lowerBound, TRELLIS_UNREACHABLE);
+    auto problem = chain.problem();
+    problem.weightThousandths = 1500;
+    const auto weighted = solveChainAStar(problem);
+    ASSERT_TRUE(weighted.solved);
+    EXPECT_FALSE(weighted.optimal);
+    EXPECT_EQ(chain.priceOf(weighted.chosen), weighted.cost);
+    EXPECT_LE(weighted.cost * 2, plain.cost * 3) << "seed " << seed;
+    EXPECT_LE(weighted.lowerBound, plain.cost) << "seed " << seed;
+    EXPECT_LE(weighted.expansions, plain.expansions) << "seed " << seed;
+  }
+}
+
+TEST(ChainSearch, WeightOneIsPlainAStar) {
+  auto chain =
+      chainOf(5, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>(((from * 13) ^ (to * 5)) + 1);
+      });
+  blind(chain);
+  const auto plain = solveChainAStar(chain.problem());
+  auto problem = chain.problem();
+  problem.weightThousandths = 1000;
+  const auto same = solveChainAStar(problem);
+  EXPECT_EQ(same.chosen, plain.chosen);
+  EXPECT_EQ(same.cost, plain.cost);
+  EXPECT_EQ(same.expansions, plain.expansions);
+  EXPECT_EQ(same.routed, plain.routed);
+  EXPECT_TRUE(same.optimal);
+}
+
+TEST(ChainSearch, ATestPutOffUntilAPrefixIsTakenChangesNothing) {
+  // A test that refuses some steps, asked once in `step` and once through
+  // `admit` when the prefix comes off the list: the same answer, the same
+  // prefixes expanded, the same steps priced. The step that completes a run
+  // is tested in `step` either way, as the coupler insertion does.
+  for (const uint32_t seed : {2U, 5U, 9U}) {
+    auto chain = chainOf(
+        6, 4,
+        [seed](std::size_t layer, const uint32_t from, const uint32_t to) {
+          return static_cast<uint64_t>(
+              (((from * seed) + (to * 3) + layer) % 7) + 1);
+        });
+    for (auto& block : chain.hint) {
+      for (auto& row : block) {
+        for (auto& value : row) {
+          value /= 2;
+        }
+      }
+    }
+    const auto refuses = [seed](const std::span<const uint32_t> prefix,
+                                const uint32_t to) {
+      return ((prefix.size() * 7) + (prefix.back() * seed) + to) % 5 == 0;
+    };
+    const auto layers = chain.width.size();
+    auto eager = chain.problem();
+    eager.step = [&](const std::span<const uint32_t> prefix, const uint32_t to,
+                     int64_t& redone) {
+      redone = 0;
+      return refuses(prefix, to) ? TRELLIS_UNREACHABLE
+                                 : chain.stepOf(prefix, to);
+    };
+    auto lazy = chain.problem();
+    uint32_t admitted = 0;
+    lazy.step = [&](const std::span<const uint32_t> prefix, const uint32_t to,
+                    int64_t& redone) {
+      redone = 0;
+      return prefix.size() + 1 == layers && refuses(prefix, to)
+                 ? TRELLIS_UNREACHABLE
+                 : chain.stepOf(prefix, to);
+    };
+    lazy.admit = [&](const std::span<const uint32_t> run) {
+      ++admitted;
+      return run.size() == layers ||
+             !refuses(run.first(run.size() - 1), run.back());
+    };
+    const auto first = solveChainAStar(eager);
+    const auto second = solveChainAStar(lazy);
+    EXPECT_EQ(second.solved, first.solved) << "seed " << seed;
+    EXPECT_EQ(second.chosen, first.chosen) << "seed " << seed;
+    EXPECT_EQ(second.cost, first.cost) << "seed " << seed;
+    EXPECT_EQ(second.expansions, first.expansions) << "seed " << seed;
+    EXPECT_EQ(second.optimal, first.optimal) << "seed " << seed;
+    EXPECT_GT(admitted, 0U);
+  }
+}
+
+TEST(ChainSearch, ClassesOfInterchangeableChoicesKeepTheAnswer) {
+  // Choices 2k and 2k + 1 of every layer cost alike to everything, so they
+  // form a class. A test refuses some prefixes by their exact choices,
+  // which tells the members apart: the search with classes must still find
+  // a run of the optimum's price, offering members where representatives
+  // are refused, and it may not expand more prefixes than without.
+  for (const uint32_t seed : {1U, 4U, 6U}) {
+    auto chain = chainOf(
+        6, 6, [](std::size_t layer, const uint32_t from, const uint32_t to) {
+          return static_cast<uint64_t>(
+              ((((from / 2) * 3) + ((to / 2) * 5) + layer) % 7) + 1);
+        });
+    for (auto& block : chain.hint) {
+      for (auto& row : block) {
+        for (auto& value : row) {
+          value /= 2;
+        }
+      }
+    }
+    const auto refuses = [seed](const std::span<const uint32_t> prefix,
+                                const uint32_t to) {
+      return ((prefix.size() * 3) + (prefix.back() * seed) + (to * 7)) % 4 == 0;
+    };
+    const auto withRefusals = [&](ChainProblem problem) {
+      problem.step = [&](const std::span<const uint32_t> prefix,
+                         const uint32_t to, int64_t& redone) {
+        redone = 0;
+        return refuses(prefix, to) ? TRELLIS_UNREACHABLE
+                                   : chain.stepOf(prefix, to);
+      };
+      return problem;
+    };
+    const auto plain = solveChainAStar(withRefusals(chain.problem()));
+    auto classed = withRefusals(chain.problem());
+    classed.classOf.assign(chain.width.size(), {});
+    for (std::size_t layer = 0; layer < chain.width.size(); ++layer) {
+      for (uint32_t choice = 0; choice < chain.width[layer]; ++choice) {
+        classed.classOf[layer].push_back(choice - (choice % 2));
+      }
+    }
+    const auto result = solveChainAStar(classed);
+    EXPECT_EQ(result.solved, plain.solved) << "seed " << seed;
+    EXPECT_EQ(result.cost, plain.cost) << "seed " << seed;
+    EXPECT_LE(result.expansions, plain.expansions) << "seed " << seed;
+    if (result.solved) {
+      for (std::size_t layer = 0; layer + 1 < result.chosen.size(); ++layer) {
+        EXPECT_FALSE(refuses(std::span(result.chosen).first(layer + 1),
+                             result.chosen[layer + 1]))
+            << "seed " << seed;
+      }
+    }
+  }
+}
+
+TEST(ChainSearch, ProgressReportsWithoutChangingTheAnswer) {
+  // The report after every second priced step sees the steps priced so far
+  // and the same answer comes back as without it.
+  auto chain =
+      chainOf(5, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>(((from * 13) ^ (to * 5)) + 1);
+      });
+  blind(chain);
+  const auto plain = solveChainAStar(chain.problem());
+  auto problem = chain.problem();
+  std::vector<uint32_t> seen;
+  problem.progressEvery = 2;
+  problem.progress = [&](const ChainSolution& sofar, std::size_t) {
+    seen.push_back(sofar.routed);
+  };
+  const auto reported = solveChainAStar(problem);
+  EXPECT_EQ(reported.chosen, plain.chosen);
+  EXPECT_EQ(reported.cost, plain.cost);
+  EXPECT_EQ(reported.routed, plain.routed);
+  ASSERT_EQ(seen.size(), plain.routed / 2);
+  for (std::size_t at = 0; at < seen.size(); ++at) {
+    EXPECT_EQ(seen[at], 2 * (at + 1));
+  }
 }
 
 TEST(ChainSearch, IsDeterministicUnderTies) {

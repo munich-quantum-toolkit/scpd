@@ -17,20 +17,146 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <format>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace mqt::scpd::grid {
+
+/// The entries of a `ProfileMemo`. Each remembers the call that last used
+/// it; once the memo holds more than `LARGEST` entries of a kind, those no
+/// call used for `KEEP` calls go.
+struct ProfileMemo::State {
+  static constexpr std::uint64_t KEEP = 64;
+  static constexpr std::size_t LARGEST = 4096;
+
+  /// The grid and the options the entries hold for.
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::optional<ProfileOptions> options;
+  /// The calls so far.
+  std::uint64_t call = 0;
+
+  /// The traces of a wall's cells, before the cells beside no free cell are
+  /// left out of them.
+  struct Traces {
+    std::vector<std::size_t> cells;
+    std::vector<std::vector<std::size_t>> loops;
+    std::uint64_t used = 0;
+  };
+  std::unordered_map<std::uint64_t, std::vector<Traces>> traces;
+  std::size_t traceCount = 0;
+
+  /// A wall's dense line and the simplified line made of it, numbered: a
+  /// pair of numbers names a pair of lines.
+  struct Line {
+    std::vector<std::pair<double, double>> dense;
+    bool closed = false;
+    double radius = 0.0;
+    std::vector<std::pair<double, double>> simple;
+    std::uint32_t id = 0;
+    std::uint64_t used = 0;
+  };
+  std::unordered_map<std::uint64_t, std::vector<Line>> lines;
+  std::size_t lineCount = 0;
+  std::uint32_t nextLine = 0;
+
+  /// The narrowings of the gap from one line to another: the place on the
+  /// first line and the foot on the second, by the numbers of the lines.
+  struct Pair {
+    std::vector<std::pair<std::size_t, std::pair<double, double>>> found;
+    std::uint64_t used = 0;
+  };
+  std::unordered_map<std::uint64_t, Pair> pairs;
+
+  Counts counts;
+
+  void clear() {
+    traces.clear();
+    traceCount = 0;
+    lines.clear();
+    lineCount = 0;
+    pairs.clear();
+    options.reset();
+  }
+
+  /// Start a call on a grid with options; a change forgets every entry.
+  void begin(const std::uint32_t gridWidth, const std::uint32_t gridHeight,
+             const ProfileOptions& given) {
+    const auto same = [&given](const ProfileOptions& kept) {
+      return kept.widest == given.widest &&
+             kept.minimumRise == given.minimumRise &&
+             kept.sameNarrowing == given.sameNarrowing &&
+             kept.narrowest == given.narrowest &&
+             kept.clearance == given.clearance &&
+             kept.dropCrossing == given.dropCrossing &&
+             kept.keepEdgeWedges == given.keepEdgeWedges;
+    };
+    if (gridWidth != width || gridHeight != height || !options.has_value() ||
+        !same(*options)) {
+      clear();
+      width = gridWidth;
+      height = gridHeight;
+      options = given;
+    }
+    ++call;
+  }
+
+  /// Drop the entries no call used for `KEEP` calls, of a kind that holds
+  /// more than `LARGEST`.
+  void sweep() {
+    const auto stale = [this](const std::uint64_t used) {
+      return used + KEEP < call;
+    };
+    if (traceCount > LARGEST) {
+      for (auto& [hash, bucket] : traces) {
+        traceCount -= std::erase_if(
+            bucket, [&](const Traces& entry) { return stale(entry.used); });
+      }
+      std::erase_if(traces,
+                    [](const auto& item) { return item.second.empty(); });
+    }
+    if (lineCount > LARGEST) {
+      for (auto& [hash, bucket] : lines) {
+        lineCount -= std::erase_if(
+            bucket, [&](const Line& entry) { return stale(entry.used); });
+      }
+      std::erase_if(lines,
+                    [](const auto& item) { return item.second.empty(); });
+    }
+    if (pairs.size() > LARGEST * 16) {
+      std::erase_if(pairs,
+                    [&](const auto& item) { return stale(item.second.used); });
+    }
+  }
+};
+
 namespace {
+
+/// The start of a hash of the content of a memo entry.
+constexpr std::uint64_t HASH_SEED = 0x9e3779b97f4a7c15ULL;
+
+/// A hash with one more value mixed in.
+[[nodiscard]] std::uint64_t mixed(std::uint64_t hash,
+                                  const std::uint64_t value) {
+  hash ^= value + HASH_SEED + (hash << 6U) + (hash >> 2U);
+  hash *= 0xbf58476d1ce4e5b9ULL;
+  return hash ^ (hash >> 31U);
+}
 
 /// The eight steps around a cell, in turning order.
 constexpr std::array<int, 8> TURN_DX = {1, 1, 0, -1, -1, -1, 0, 1};
@@ -43,6 +169,21 @@ constexpr std::size_t START_FROM = 4;
 
 /// How far a simplified line may stray from the cells it stands for.
 constexpr double SIMPLIFY_TOLERANCE = 1.0;
+
+/// Whether `profileCuts` times its parts (`takeProfileCutsSplit`):
+/// `SCPD_STEP_PROFILE`, off.
+[[nodiscard]] bool stepProfileOfEnvironment() {
+  const char* text = std::getenv("SCPD_STEP_PROFILE");
+  return text != nullptr && std::string_view(text) != "0" &&
+         std::string_view(text) != "";
+}
+
+/// The split of the calls of this thread since the last
+/// `takeProfileCutsSplit`.
+[[nodiscard]] ProfileCutsSplit& profileCutsSplit() {
+  thread_local ProfileCutsSplit split;
+  return split;
+}
 
 using Point = std::pair<double, double>;
 
@@ -59,6 +200,8 @@ struct DynamicWall {
   std::vector<Point> simple;
   bool closed = false;
   double radius = 0.0;
+  /// The number of the line in the memo (`ProfileMemo::State::Line`).
+  std::uint32_t line = 0;
   double minX = INFINITE;
   double minY = INFINITE;
   double maxX = -INFINITE;
@@ -282,18 +425,34 @@ std::vector<Point> simplify(const std::vector<Point>& line) {
 
 class Search {
 public:
-  Search(const ProfileScene& scene, const ProfileOptions& options)
+  Search(const ProfileScene& scene, const ProfileOptions& options,
+         ProfileMemo::State* memo = nullptr)
       : scene_(scene), options_(options),
         width_(static_cast<std::int64_t>(scene.width)),
-        height_(static_cast<std::int64_t>(scene.height)) {}
+        height_(static_cast<std::int64_t>(scene.height)), memo_(memo) {}
 
   std::vector<Bottleneck> run() {
+    // The seconds of each part under `SCPD_STEP_PROFILE`; read only for the
+    // split, never for a result.
+    const bool timed = stepProfileOfEnvironment();
+    auto lapStart = std::chrono::steady_clock::now();
+    const auto lap = [&](double ProfileCutsSplit::* part) {
+      if (!timed) {
+        return;
+      }
+      const auto now = std::chrono::steady_clock::now();
+      profileCutsSplit().*part +=
+          std::chrono::duration<double>(now - lapStart).count();
+      lapStart = now;
+    };
     collectWalls();
-    traced_ = BitGrid(scene_.width, scene_.height);
+    lap(&ProfileCutsSplit::walls);
     for (auto& wall : walls_) {
       traceOutlines(wall);
     }
+    lap(&ProfileCutsSplit::outlines);
     drawLines();
+    lap(&ProfileCutsSplit::lines);
     for (const auto& wall : walls_) {
       for (const auto& outline : wall.outlines) {
         for (std::size_t field = 0; field < scene_.fields.size(); ++field) {
@@ -301,6 +460,7 @@ public:
         }
       }
     }
+    lap(&ProfileCutsSplit::fields);
     for (const auto& one : walls_) {
       for (const auto& other : walls_) {
         if (&one != &other) {
@@ -308,9 +468,17 @@ public:
         }
       }
     }
+    lap(&ProfileCutsSplit::pairs);
     closeMouths();
+    lap(&ProfileCutsSplit::mouths);
     dropWedges();
-    return oneCutPerNarrowing();
+    lap(&ProfileCutsSplit::wedges);
+    auto cuts = oneCutPerNarrowing();
+    lap(&ProfileCutsSplit::narrowings);
+    if (timed) {
+      ++profileCutsSplit().calls;
+    }
+    return cuts;
   }
 
 private:
@@ -348,26 +516,100 @@ private:
 
   void collectWalls() {
     std::vector<std::size_t> index(scene_.roles.size(), NO_INDEX);
-    for (std::size_t cell = 0; cell < scene_.wallOf.size(); ++cell) {
+    const auto take = [&](const std::size_t cell) {
       const auto wall = wallAt(cell);
       if (!dynamic(wall)) {
-        continue;
+        return;
       }
       if (index[wall] == NO_INDEX) {
         index[wall] = walls_.size();
         walls_.push_back({.wall = wall});
       }
       walls_[index[wall]].cells.push_back(cell);
+    };
+    if (scene_.walls != nullptr) {
+      // The cells in the same order, a word of the mask at a time.
+      const auto& words = scene_.walls->words();
+      for (std::size_t word = 0; word < words.size(); ++word) {
+        for (auto bits = words[word]; bits != 0U; bits &= bits - 1U) {
+          const auto cell =
+              (word << 6U) + static_cast<std::size_t>(std::countr_zero(bits));
+          if (cell < scene_.wallOf.size()) {
+            take(cell);
+          }
+        }
+      }
+    } else {
+      for (std::size_t cell = 0; cell < scene_.wallOf.size(); ++cell) {
+        take(cell);
+      }
     }
     indexOf_ = std::move(index);
   }
 
-  /// The outlines of a wall, one per piece: Moore tracing from the first
-  /// cell of every piece, which has no cell of the wall to its left.
+  /// The outlines of a wall, one per piece: the traces of its cells
+  /// (`traceLoops`), each without the cells beside no free cell. The traces
+  /// depend on the wall's cells alone, and the memo keeps them by those.
   void traceOutlines(DynamicWall& wall) {
+    std::vector<std::vector<std::size_t>> fresh;
+    const std::vector<std::vector<std::size_t>>* loops = &fresh;
+    if (memo_ != nullptr) {
+      auto hash = HASH_SEED;
+      for (const auto cell : wall.cells) {
+        hash = mixed(hash, cell);
+      }
+      auto& bucket = memo_->traces[hash];
+      const auto found = std::ranges::find_if(
+          bucket, [&](const ProfileMemo::State::Traces& entry) {
+            return entry.cells == wall.cells;
+          });
+      if (found != bucket.end()) {
+        found->used = memo_->call;
+        ++memo_->counts.tracesKept;
+        loops = &found->loops;
+      } else {
+        bucket.push_back({.cells = wall.cells,
+                          .loops = traceLoops(wall),
+                          .used = memo_->call});
+        ++memo_->traceCount;
+        ++memo_->counts.tracesMade;
+        loops = &bucket.back().loops;
+      }
+    } else {
+      fresh = traceLoops(wall);
+    }
+    // The outline is the cells beside a free cell.
+    for (const auto& loop : *loops) {
+      std::vector<std::size_t> outline;
+      for (const auto cell : loop) {
+        bool open = false;
+        for (std::size_t k = 0; k < 8 && !open; k += 2) {
+          const auto nx = xOf(cell) + TURN_DX[k];
+          const auto ny = yOf(cell) + TURN_DY[k];
+          open = inside(nx, ny) && wallAt(cellAt(nx, ny)) == NO_WALL;
+        }
+        if (open && (outline.empty() || outline.back() != cell)) {
+          outline.push_back(cell);
+        }
+      }
+      if (outline.size() >= 3) {
+        wall.outlines.push_back(std::move(outline));
+      }
+    }
+  }
+
+  /// The traces of a wall, one per piece: Moore tracing from the first cell
+  /// of every piece, which has no cell of the wall to its left. A trace
+  /// passes the wall's own cells alone.
+  [[nodiscard]] std::vector<std::vector<std::size_t>>
+  traceLoops(const DynamicWall& wall) {
+    if (traced_.width() != scene_.width || traced_.height() != scene_.height) {
+      traced_ = BitGrid(scene_.width, scene_.height);
+    }
     const auto own = [&](const std::int64_t x, const std::int64_t y) {
       return inside(x, y) && wallAt(cellAt(x, y)) == wall.wall;
     };
+    std::vector<std::vector<std::size_t>> loops;
     for (const auto start : wall.cells) {
       const auto sx = xOf(start);
       const auto sy = yOf(start);
@@ -421,23 +663,9 @@ private:
           second = cellAt(x, y);
         }
       }
-      // The outline is the cells beside a free cell.
-      std::vector<std::size_t> outline;
-      for (const auto cell : loop) {
-        bool open = false;
-        for (std::size_t k = 0; k < 8 && !open; k += 2) {
-          const auto nx = xOf(cell) + TURN_DX[k];
-          const auto ny = yOf(cell) + TURN_DY[k];
-          open = inside(nx, ny) && wallAt(cellAt(nx, ny)) == NO_WALL;
-        }
-        if (open && (outline.empty() || outline.back() != cell)) {
-          outline.push_back(cell);
-        }
-      }
-      if (outline.size() >= 3) {
-        wall.outlines.push_back(std::move(outline));
-      }
+      loops.push_back(std::move(loop));
     }
+    return loops;
   }
 
   /// The line of every dynamic wall: the given middle line of an inflated
@@ -478,10 +706,7 @@ private:
         }
         wall.closed = true;
       }
-      wall.simple = simplify(wall.dense);
-      if (wall.closed && !wall.dense.empty()) {
-        wall.simple.push_back(wall.dense.front());
-      }
+      simplifyLine(wall);
       for (const auto& [x, y] : wall.dense) {
         wall.minX = std::min(wall.minX, x - wall.radius);
         wall.minY = std::min(wall.minY, y - wall.radius);
@@ -489,6 +714,52 @@ private:
         wall.maxY = std::max(wall.maxY, y + wall.radius);
       }
     }
+  }
+
+  /// The simplified line of a wall's dense line, closed again when the
+  /// wall's line is closed. The memo keeps it by the dense line, whether it
+  /// is closed and the wall's radius, and numbers it (`DynamicWall::line`).
+  void simplifyLine(DynamicWall& wall) {
+    const auto made = [&wall] {
+      auto simple = simplify(wall.dense);
+      if (wall.closed && !wall.dense.empty()) {
+        simple.push_back(wall.dense.front());
+      }
+      return simple;
+    };
+    if (memo_ == nullptr) {
+      wall.simple = made();
+      return;
+    }
+    auto hash = mixed(mixed(HASH_SEED, wall.closed ? 1U : 0U),
+                      std::bit_cast<std::uint64_t>(wall.radius));
+    for (const auto& [x, y] : wall.dense) {
+      hash = mixed(mixed(hash, std::bit_cast<std::uint64_t>(x)),
+                   std::bit_cast<std::uint64_t>(y));
+    }
+    auto& bucket = memo_->lines[hash];
+    const auto found = std::ranges::find_if(
+        bucket, [&](const ProfileMemo::State::Line& entry) {
+          return entry.closed == wall.closed && entry.radius == wall.radius &&
+                 entry.dense == wall.dense;
+        });
+    if (found != bucket.end()) {
+      found->used = memo_->call;
+      ++memo_->counts.linesKept;
+      wall.simple = found->simple;
+      wall.line = found->id;
+      return;
+    }
+    wall.simple = made();
+    wall.line = memo_->nextLine++;
+    bucket.push_back({.dense = wall.dense,
+                      .closed = wall.closed,
+                      .radius = wall.radius,
+                      .simple = wall.simple,
+                      .id = wall.line,
+                      .used = memo_->call});
+    ++memo_->lineCount;
+    ++memo_->counts.linesMade;
   }
 
   /// The cut from a cell of one wall towards a cell of another: along the
@@ -564,7 +835,9 @@ private:
   }
 
   /// The gap from every point of one dynamic wall's line to the line of
-  /// another: their distance less both radii.
+  /// another: their distance less both radii. Its narrowings depend on the
+  /// two lines alone, and the memo keeps them by the lines' numbers; the
+  /// cuts at them are drawn on the chip as it is.
   void againstWall(const DynamicWall& one, const DynamicWall& other) {
     const auto reach = options_.widest;
     if (one.dense.empty() || other.simple.size() < 2 ||
@@ -572,6 +845,41 @@ private:
         other.minY > one.maxY + reach || other.maxY < one.minY - reach) {
       return;
     }
+    const auto cutAt =
+        [&](const std::vector<std::pair<std::size_t, Point>>& found) {
+          for (const auto& [at, foot] : found) {
+            const auto [px, py] = one.dense[at];
+            const auto [qx, qy] = foot;
+            if (const auto cut =
+                    cutBetween(std::lround(px), std::lround(py), one.wall,
+                               std::lround(qx), std::lround(qy), other.wall)) {
+              cuts_.push_back(*cut);
+            }
+          }
+        };
+    if (memo_ == nullptr) {
+      cutAt(gapNarrowings(one, other));
+      return;
+    }
+    const auto key = (static_cast<std::uint64_t>(one.line) << 32U) |
+                     static_cast<std::uint64_t>(other.line);
+    auto [entry, made] = memo_->pairs.try_emplace(key);
+    if (made) {
+      entry->second.found = gapNarrowings(one, other);
+      ++memo_->counts.pairsMade;
+    } else {
+      ++memo_->counts.pairsKept;
+    }
+    entry->second.used = memo_->call;
+    cutAt(entry->second.found);
+  }
+
+  /// The narrowings of the gap from one dynamic wall's line to another's:
+  /// the place on the first line and the foot of its gap on the second.
+  [[nodiscard]] std::vector<std::pair<std::size_t, Point>>
+  gapNarrowings(const DynamicWall& one, const DynamicWall& other) const {
+    const auto reach = options_.widest;
+    std::vector<std::pair<std::size_t, Point>> found;
     const auto n = one.dense.size();
     Profile profile{.gap = std::vector<double>(n, INFINITE),
                     .partner = std::vector<std::uint32_t>(n, NO_WALL),
@@ -617,18 +925,13 @@ private:
       }
     }
     if (!any) {
-      return;
+      return found;
     }
     for (const auto at :
          narrowings(profile, options_.minimumRise, options_.clearance)) {
-      const auto [px, py] = one.dense[at];
-      const auto [qx, qy] = foot[at];
-      if (const auto cut =
-              cutBetween(std::lround(px), std::lround(py), one.wall,
-                         std::lround(qx), std::lround(qy), other.wall)) {
-        cuts_.push_back(*cut);
-      }
+      found.emplace_back(at, foot[at]);
     }
+    return found;
   }
 
   /// A cut from the open end of every flank to the nearest wall ahead:
@@ -943,6 +1246,7 @@ private:
   const ProfileOptions& options_;
   std::int64_t width_;
   std::int64_t height_;
+  ProfileMemo::State* memo_;
   std::vector<DynamicWall> walls_;
   std::vector<std::size_t> indexOf_;
   /// The cells a trace has passed.
@@ -956,8 +1260,10 @@ private:
 
 } // namespace
 
-std::vector<Bottleneck> profileCuts(const ProfileScene& scene,
-                                    const ProfileOptions& options) {
+namespace {
+
+/// Throws when the labels or a field of a scene do not cover its grid.
+void checkScene(const ProfileScene& scene) {
   const auto cells = static_cast<std::size_t>(scene.width) * scene.height;
   if (scene.wallOf.size() != cells) {
     throw std::invalid_argument(
@@ -970,7 +1276,38 @@ std::vector<Bottleneck> profileCuts(const ProfileScene& scene,
       throw std::invalid_argument("a static field does not cover the grid");
     }
   }
+}
+
+} // namespace
+
+std::vector<Bottleneck> profileCuts(const ProfileScene& scene,
+                                    const ProfileOptions& options) {
+  checkScene(scene);
   return Search(scene, options).run();
+}
+
+std::vector<Bottleneck> profileCuts(const ProfileScene& scene,
+                                    const ProfileOptions& options,
+                                    ProfileMemo& memo) {
+  checkScene(scene);
+  auto& state = memo.state();
+  state.begin(scene.width, scene.height, options);
+  auto cuts = Search(scene, options, &state).run();
+  state.sweep();
+  return cuts;
+}
+
+ProfileMemo::ProfileMemo() : state_(std::make_unique<State>()) {}
+ProfileMemo::~ProfileMemo() = default;
+ProfileMemo::ProfileMemo(ProfileMemo&& other) noexcept = default;
+ProfileMemo& ProfileMemo::operator=(ProfileMemo&& other) noexcept = default;
+
+void ProfileMemo::clear() { state_->clear(); }
+
+ProfileMemo::Counts ProfileMemo::counts() const { return state_->counts; }
+
+ProfileCutsSplit takeProfileCutsSplit() {
+  return std::exchange(profileCutsSplit(), ProfileCutsSplit{});
 }
 
 } // namespace mqt::scpd::grid

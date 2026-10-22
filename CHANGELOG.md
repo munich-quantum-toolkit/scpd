@@ -12,6 +12,146 @@ releases may include breaking changes.
 
 ### Added
 
+- ⚡ Keep the work of the profile cuts on the walls from step check to step
+  check (`grid::ProfileMemo`, `SCPD_PROFILE_MEMO`, on): the outline traces of
+  a wall's cells, the simplified line of a wall and the narrowings between
+  two walls' lines are found again by their content, and the cuts are drawn
+  on every pass. The profile cuts gather the dynamic walls from the cells the
+  pass drew, not from every wall cell. The bottlenecks stay the same; on 45q
+  the saddles lap of a step check falls from 10.8 ms to 5.6 ms.
+  `SCPD_REUSE_VERIFY=1` computes every pass in full as well and stops on a
+  difference. Under `SCPD_STEP_PROFILE=1` every chain search also says in
+  `[Profile Split]` and `[Chambers Split]` what the parts of the profile cuts
+  and of the chamber labelling took.
+- ⚡ Bound the turns a router state still owes by the analytic Dubins bound in
+  the edge searches of the coupler insertion, with `SCPD_ROUTER_TURN_BOUND=1`
+  (off). The Dubins router adds the bend penalty times
+  `AnalyticDubins::minTurns` from the state to the goal state to its
+  heuristic, and under a turn bound drops a move whose way cannot end within
+  it (`DubinsRouter::setTurnLowerBound`). The heuristic stays admissible and
+  consistent; `route` and `routeMulti` use it, `routeResumable` does not. On
+  45q the edge searches of chain 6 expand 92 M states instead of 362 M, the
+  coupler insertion takes 93 s instead of 115 s and the Final stage 207 s
+  instead of 231 s, with the same chain costs, global SAT result, fails and
+  feedline angle cost. `AnalyticDubins::minTurns` answers about twice as
+  fast: it reads the direction class from a table of signs and tries only
+  turn budgets of the parity every way has.
+- ⚡ Price the steps under a prefix with one Dubins search that pauses after
+  each step and resumes for the next, with `SCPD_RESUMABLE_ROUTE=1` (off). The
+  router keeps a paused search (`DubinsRouter::routeResumable`) and keys its
+  open list again for each target; a target closed on the way is answered at
+  once. Each answer is held to its step's own budget and corridor, and routed
+  alone where it is not. `SCPD_RESUME_REKEY` picks how a resumed search orders
+  its open list: `heapify` (every entry keyed for the new target), `min` (the
+  minimum over the targets of the search, never keyed again) or `offset` (the
+  old keys lowered by the distance between the targets and set right when
+  popped). At most `SCPD_RESUMABLE_ROUTE_CAP` (32) paused searches are kept,
+  the least recently used evicted first. `SCPD_RESUMABLE_AUDIT=1` routes every
+  answered step alone as well and compares the states expanded and the price.
+  `[Edge Split]` lines count the states the searches expanded.
+- ⚡ Price the steps into several options of a layer with one router search
+  with `SCPD_MULTI_TARGET_ROUTE=1` (off). The Dubins router searches from one
+  source to several targets at once (`DubinsRouter::routeMulti`), in the union
+  of the options' corridors and under the largest step budget of the options;
+  each step takes its own way and holds it to its own budget. A search takes
+  along the options whose steps wait under the same prefix at a key at most
+  `SCPD_MULTI_TARGET_EPS` eighth turns (0) above the key of the step being
+  priced, so the chain search prices the same steps in the same order. A way
+  that leaves the option's own corridor or crosses itself is routed alone.
+  `SCPD_MULTI_TARGET_AUDIT=1` routes every answered step alone as well, counts
+  where the price or the way differs, and times every search against the
+  single searches to its targets.
+- ⚡ Offer one coupler option per class of interchangeable options in the
+  chain search with `SCPD_OPTION_CLASSES=1` (off). Every pair of open options
+  is routed once in free space; options whose prices to both neighbour layers
+  are the same form a class, and the search offers its first member, the next
+  ones only where a prefix through a member is refused, finds no way or
+  prices off the class. The free-space ways are kept as the pair memo keeps
+  them.
+- ⚡ Route every pair of options of a chain once in free space with
+  `SCPD_PAIR_MEMO=1` (off): the prefix search takes that way and its price
+  wherever a prefix leaves the way open, and routes under the prefix fence
+  only where it does not. The memo lives for one go of one chain's search.
+  `SCPD_PAIR_MEMO_AUDIT=1` routes every hit under the fence as well and
+  counts where the price or the way differs.
+- ⚡ Check a step's capacity when the chain search takes its prefix instead
+  of when it prices the step, with `SCPD_LAZY_STEP_CHECK=1` (off). The check
+  only refuses, so the search takes the same prefixes and settles every chain
+  as before; the steps it prices and never takes are not checked. The step
+  that completes a run is checked when priced.
+- ✨ Measure the free-space bound of the chain search with
+  `SCPD_FREESPACE_PROBE=1`: before a chain is searched, every pair of its
+  options is routed once with no fence of the chain's own edges, and a
+  `[Free-Space Probe]` line compares those prices with the analytic bound and
+  with every price the search pays. It changes no result.
+  `SCPD_FREESPACE_BOUND=1` replays the search with those prices as its bound,
+  to count prefixes; that bound is not proved a lower bound.
+- ✨ Search a chain by weighted A\* with `SCPD_CHAIN_ASTAR_WEIGHT` (1, plain
+  A\* as before). Above 1 the prefix search of the coupler insertion orders
+  its open list by `g + w * h` and takes the first complete run, which costs
+  at most `w` times the optimum; the chain line says `within <w> of the
+  optimum` and the least `g + h` left in the open list as a lower bound. The
+  segment search and the trellis stay exact.
+- ✨ Price the length of a feedline edge's way in the chain searches with
+  `SCPD_CHAIN_LENGTH_COST=1` (off). An edge then costs 1000000 per eighth
+  turn plus its length in tenths of a cell (10 a step along an axis, 14 a
+  diagonal step), so the turns still decide first and the length breaks the
+  ties between runs of equal turns. The bound of a pair of options adds the
+  octile distance between its ports with the forced runs folded in, which
+  no way undercuts; `SCPD_CHAIN_LENGTH_AUDIT=1` checks it against every
+  priced pair. The chain lines say the turns and the length of the run.
+- ✨ Choose the offsets the coupler options turn a pad by with
+  `SCPD_COUPLER_OFFSETS`, a comma list of offsets from 0 to 7. On 4q to 45q
+  offsets 3 and 4 took 35 % of the priced steps of the chain search and were
+  never chosen. A coupler that no allowed offset fits takes every offset and
+  says so; the settings line counts them.
+- ✨ Weigh the edges between a launcher and its coupler in the chain searches
+  with `SCPD_CHAIN_END_EDGE_WEIGHT`. The trellis, the prefix
+  search and the segment search price and bound such an edge at the weight
+  times its price, rounded to the nearest whole number; the edge is still
+  routed, fences the later edges and stands in every step check. The chain
+  lines say what the run costs at weight 1. The feedline routing draws these
+  edges again.
+- ✨ Write how the coupler insertion used every coupler option with
+  `SCPD_OPTION_DUMP=1`: `mqt-scpd plan` writes `<run>/option-stats.jsonl`, one
+  line per coupler with its chain, waypoint, option count, the option chosen
+  at the commit and after the global SAT search, and per option what the
+  generator varied (orientation, offset, coupler orientation and its heading
+  to the feedline, second port, second dogleg, place, shift, run, depth) and
+  how often the chain search priced, expanded and checked it (SAT or UNSAT),
+  how often the segment search priced it, and in how many kept global SAT
+  states it stands. The dump changes no result.
+- ✨ Split the seconds of the fast slot check into its parts under
+  `SCPD_STEP_PROFILE=1`: a `[Slot Split]` line per chain search and one for
+  the global SAT search give the seconds per check of the setup, the slot
+  placement, the self-bottlenecks, the stub rooms, the escape ways, the search
+  graph, the shortest ways and the negotiation. The clock changes no result.
+
+- ✨ Try the states of a chain at an edge over as soon as a segment finds
+  them (`SCPD_GLOBAL_SAT_EARLY=1`, off). The lazy global SAT search then tries
+  each state on its own after the segment search that found it, and stops at
+  the first SAT one, before the rest of the chain is collected. It tries the
+  states in the order the segments find them, so it can stop on another state
+  than the search without the switch.
+- ✨ Add switches to measure and shorten the capacity checks of the coupler
+  insertion. `SCPD_STEP_PROFILE=1` prints a `[Capacity Split]` line per check
+  with the seconds of the stretch pass, the slot-graph build and the slot
+  check. `SCPD_CHAIN_END_PROBE=1` lays the last edge of a chain alone once the
+  capacity rule has refused it `SCPD_CHAIN_END_PROBE_AFTER` times (8) and
+  carried it never; when no option of the last coupler carries, the rule
+  search keeps `SCPD_CHAIN_END_PROBE_BUDGET` seconds more by the wall clock,
+  a quarter of `SCPD_CHAIN_ASTAR_SECONDS` by default. `SCPD_SEGMENT_MEMO=1`
+  keeps the ways of the segment search by their corridor within one segment.
+  `SCPD_SLOT_GRAPH_VERIFY=1` builds every slot graph of a check twice and
+  compares the two. Under `SCPD_STEP_PROFILE=1` every chain search also says
+  in `[Edge Split]` how long its edge searches built corridors and routed, and
+  in `[Saddle Split]` what the parts of its passes' saddles lap took.
+  `SCPD_CHAIN_RULE_FIRST_RUN_SECONDS` stops a capacity-rule search that no run
+  of options has joined in that many seconds by the wall clock, the time of
+  its checks included, and the chain is searched without the rule.
+  `SCPD_CHAIN_WALL_SECONDS` limits the whole capacity-rule search of a chain
+  by the wall clock in the same way; a search that found a run keeps the
+  cheapest one. All of these are off by default.
 - ✨ Judge the whole chip after the coupler insertion by its crossing slots
   (`pipeline::slotCheck`, `SCPD_SLOT_CHECK`, on). The check keeps the gates of
   the capacity graph and replaces the stretches of every feedline edge by the
@@ -543,6 +683,12 @@ releases may include breaking changes.
 
 ### Fixed
 
+- 🐛 Let the global SAT search move the chain beside a gate over at a
+  terminal edge. A gate between a wire's port and a chain's terminal edge
+  (17q: wire 9 and `f0 at its coupler`) named no chain, because the search
+  named only the chains of non-terminal feedline edges, and the chip stayed
+  UNSAT. The terminal edge now names its chain, and a gate over that names
+  no chain at all names the chain of the nearest coupler pad.
 - 🐛 Keep each coupler option that the segment search of the targeted repair
   chooses a clearance from the feedline edges it has laid before: the option's
   body, its feedline ports and its lead, and the other way round for a new edge
@@ -636,6 +782,80 @@ releases may include breaking changes.
 
 ### Changed
 
+- ⚡ Price the end edges of a chain at a tenth and leave out coupler offsets
+  3 and 4 by default (`SCPD_CHAIN_END_EDGE_WEIGHT=0.1`,
+  `SCPD_COUPLER_OFFSETS=0,1,2,5,6,7`). The Final stage of 4q to 57q takes
+  634 s instead of 1843 s (45q 519 → 214 s, 57q 1132 → 244 s), and every
+  chip ends globally SAT. 57q ends with 2 short wires instead of 0, and the
+  feedline angle cost rises on 17q (49 → 53), 21q (52 → 54) and 57q
+  (134 → 140).
+- ♻️ Open no second-dogleg option of a coupler by default
+  (`SCPD_SECOND_DOGLEG`, off). No search of the coupler insertion offers or
+  prices an option with a second dogleg, and a coupler starts on its first
+  option without one. On 45q the opened jogs cost chain 2 its plain optimum
+  and made chain 6 search 2977 prefixes. `SCPD_SECOND_DOGLEG=1` opens them as
+  before: where a chain does not reach past a coupler on plain options, and
+  in the segment search (`SCPD_RESEARCH_JOGS`).
+- ♻️ Give the coupler insertion no time limits, so that its result does not
+  depend on the speed of the machine. The chain search, the segment search of
+  the targeted repair and the global SAT search run until they prove an
+  optimum, see every run of options, or reach a count
+  (`SCPD_GLOBAL_SAT_TRIES`, `repair_trials`). `SCPD_CHAIN_ASTAR_SECONDS`,
+  `SCPD_RESEARCH_SECONDS`, `SCPD_LOCAL_AGREEMENT_SECONDS`,
+  `SCPD_CAPACITY_SECONDS`, `SCPD_GLOBAL_SAT_SECONDS`,
+  `SCPD_GLOBAL_SAT_COLLECT_SECONDS`, `SCPD_CHAIN_WALL_SECONDS`,
+  `SCPD_CHAIN_RULE_FIRST_RUN_SECONDS` and the end probe of the last edge
+  (`SCPD_CHAIN_END_PROBE`, `SCPD_CHAIN_END_PROBE_AFTER`,
+  `SCPD_CHAIN_END_PROBE_BUDGET`) are gone. A `[Chain Progress]` line every
+  `SCPD_CHAIN_PROGRESS_STEPS` priced steps (100) says how far a chain or
+  segment search has come.
+- ♻️ Try the combinations of the global SAT search in a fixed order, with no
+  random generator. After the states of each chain at an edge over on their
+  own, the search starts from the failed combination with the fewest lost
+  wires and edges over and moves one more chain per round: a chain at its
+  edges over, a chain whose feedline holds a lost wire, or, for an edge with
+  no way, its own chain and the chains whose ways reach into its box. Fewer
+  moved chains come first, then the smaller sum of the state numbers, then
+  the chain and the state with the smaller index. The lazy search collects a
+  chain only when a round first needs its states, and every coupler leaves
+  the search with the second-dogleg flag it came with.
+- ⚡ Put back only what the last combination changed in the global SAT search.
+  The search built the field again from every wire before each combination.
+  It now builds it once and then copies back the wires of the couplers the
+  last combination moved, the ways of their chains, and the rows of the field
+  it wrote, so the chip is the same cell for cell. `SCPD_GLOBAL_SAT_VERIFY=1`
+  builds every combination once more from a full restore and stops with an
+  error when the two chips differ. A new line gives the seconds the
+  combinations spent going back to the commit, moving couplers and checking
+  the whole chip, and how many random picks repeated a combination.
+- ⚡ Collect the chains at an edge over first in the global SAT search of the
+  coupler insertion (`SCPD_GLOBAL_SAT_LAZY`, on). The search collects such a
+  chain, tries each of its states on its own, and collects the next chain
+  only when none is SAT; the other chains follow only when no state of a
+  chain at an edge over is SAT on its own. The search tries the same
+  combinations in the same order as before and stops at the same one. On
+  17q, 45q and 69q the answer was such a state, and the collection of the
+  other chains took most of the search. `SCPD_GLOBAL_SAT_SECONDS` counts only
+  the seconds of the combinations, and `SCPD_GLOBAL_SAT_COLLECT_SECONDS` only
+  those of the collection. `SCPD_GLOBAL_SAT_LAZY=0` collects every chain
+  first.
+- 🔧 Price the steps of the chain search by the stub bound by default
+  (`SCPD_CHAIN_BOUND=4`). The new mode folds the straight runs that an edge is
+  forced to make at its two ends (`runsOfEdge`) into the analytic answer: the
+  target moves back by both runs before `AnalyticDubins::minTurns` is asked. It
+  stays a lower bound, so the layered search stays exact; it is sharper, so the
+  search prices fewer steps. Measured on 17q/33q/45q over three runs each, it
+  never changed a chain's cost or the fail count and cut the insertion time by
+  38/16/15 %. `SCPD_CHAIN_BOUND=1` gives the earlier bound; the audit keeps to
+  modes 2 and 3. The mode is read once per run, not once per process, so one
+  process can compare modes across runs.
+- 🔧 Run the faster slot check by default (`SCPD_SLOT_CHECK_FAST`, on). It
+  gives the same results as the plain check on every graph of the golden file
+  — verdict, lost wires, edges over, loads, ways, slots and the JSON graph —
+  with less work per check: footprints and ways out shared between places,
+  room fills over words of 64 cells, and memos in the way search. One check is
+  9 to 14 times faster, and the Final stage of the benchmarks 1.06 to 1.34
+  times. `SCPD_SLOT_CHECK_FAST=0` runs the plain check as before.
 - 🔧 Place a crossing slot only where a wire can get away from it
   (`SCPD_SLOT_ESCAPE`, on). At each end of a slot a way out is one of the
   router's turns and five cells straight on (`SCPD_ESCAPE_STRAIGHT`), every

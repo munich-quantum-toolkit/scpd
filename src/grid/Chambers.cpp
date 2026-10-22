@@ -16,13 +16,18 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <format>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::grid {
@@ -58,6 +63,20 @@ bool pointOnSegment(const double px, const double py, const double x0,
   }
   return px >= std::min(x0, x1) - EPSILON && px <= std::max(x0, x1) + EPSILON &&
          py >= std::min(y0, y1) - EPSILON && py <= std::max(y0, y1) + EPSILON;
+}
+
+/// Whether `chambersOf` times its parts (`takeChambersSplit`):
+/// `SCPD_STEP_PROFILE`, off.
+[[nodiscard]] bool stepProfileOfEnvironment() {
+  const char* text = std::getenv("SCPD_STEP_PROFILE");
+  return text != nullptr && std::string_view(text) != "0" &&
+         std::string_view(text) != "";
+}
+
+/// The split of the calls of this thread since the last `takeChambersSplit`.
+[[nodiscard]] ChambersSplit& chambersSplit() {
+  thread_local ChambersSplit split;
+  return split;
 }
 
 } // namespace
@@ -164,21 +183,39 @@ void chambersOf(const BitGrid& blocked,
         "the mask is {}x{} cells and the grid {}x{}", blocked.width(),
         blocked.height(), grid.width, grid.height));
   }
+  // The seconds of each part under `SCPD_STEP_PROFILE`; read only for the
+  // split, never for a result.
+  const bool timed = stepProfileOfEnvironment();
+  auto lapStart = std::chrono::steady_clock::now();
+  const auto lap = [&](double ChambersSplit::* part) {
+    if (!timed) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    chambersSplit().*part +=
+        std::chrono::duration<double>(now - lapStart).count();
+    lapStart = now;
+  };
   const auto width = static_cast<std::int64_t>(grid.width);
   const auto height = static_cast<std::int64_t>(grid.height);
   const auto moves = bottleneckMoves(bottlenecks, grid);
+  lap(&ChambersSplit::moves);
 
   // The directions a gate refuses out of each cell, one bit each. The bits
   // are kept per thread from call to call and cleared where they were set:
   // a grid of millions of cells is labelled many times, and fresh memory
   // costs more than the labelling itself.
+  // The same cells as a bit each, for the scan of the rows below.
   thread_local std::vector<std::uint8_t> refused;
+  thread_local std::vector<std::uint64_t> refusedBits;
   if (refused.size() != grid.cells()) {
     refused.assign(grid.cells(), 0);
+    refusedBits.assign((grid.cells() + 63) / 64, 0);
   }
   for (const auto& gate : moves) {
     for (const auto& move : gate) {
       refused[move.cell] |= static_cast<std::uint8_t>(1U << move.direction);
+      refusedBits[move.cell >> 6U] |= std::uint64_t{1} << (move.cell & 63U);
     }
   }
   // A cell every one of whose steps is refused lies on a line.
@@ -251,28 +288,49 @@ void chambersOf(const BitGrid& blocked,
     }
     return static_cast<std::uint32_t>(std::prev(found) - runs.begin());
   };
+  // The first cell in [from, to) whose bit `wordAt` sets, or `to`: the
+  // rows are scanned 64 cells at a time.
+  const auto& blockedWords = blocked.words();
+  const auto firstSet = [](const auto& wordAt, std::size_t from,
+                           const std::size_t to) {
+    while (from < to) {
+      const auto word = from >> 6U;
+      const auto bits = wordAt(word) >> (from & 63U);
+      if (bits != 0U) {
+        return std::min<std::size_t>(
+            from + static_cast<std::size_t>(std::countr_zero(bits)), to);
+      }
+      from = (word + 1) << 6U;
+    }
+    return to;
+  };
+  const auto freeWord = [&](const std::size_t word) {
+    return ~blockedWords[word];
+  };
+  const auto stopWord = [&](const std::size_t word) {
+    return blockedWords[word] | refusedBits[word];
+  };
   for (std::int64_t y = 0; y < height; ++y) {
     rowStart[y] = runs.size();
-    for (std::int64_t x = 0; x < width;) {
-      const auto cell = static_cast<std::size_t>((y * width) + x);
-      if (blocked.test(cell)) {
-        ++x;
-        continue;
-      }
+    const auto rowFirst = static_cast<std::size_t>(y * width);
+    const auto rowEnd = rowFirst + static_cast<std::size_t>(width);
+    for (auto cell = firstSet(freeWord, rowFirst, rowEnd); cell < rowEnd;
+         cell = firstSet(freeWord, cell, rowEnd)) {
+      const auto x = static_cast<std::int64_t>(cell - rowFirst);
       if (refused[cell] != 0U) {
         if (!onALine(x, y)) {
           runs.push_back({.from = x, .to = x, .single = true});
         }
-        ++x;
+        ++cell;
         continue;
       }
-      auto to = x;
-      while (to + 1 < width && free(to + 1, y) &&
-             refused[static_cast<std::size_t>((y * width) + to + 1)] == 0U) {
-        ++to;
-      }
-      runs.push_back({.from = x, .to = to, .single = false});
-      x = to + 1;
+      // A plain run: up to the next cell that is a wall or has a refused
+      // step.
+      const auto end = firstSet(stopWord, cell, rowEnd);
+      runs.push_back({.from = x,
+                      .to = static_cast<std::int64_t>(end - rowFirst) - 1,
+                      .single = false});
+      cell = end;
     }
     rowStart[y + 1] = runs.size();
     for (auto index = rowStart[y]; index < rowStart[y + 1]; ++index) {
@@ -329,6 +387,7 @@ void chambersOf(const BitGrid& blocked,
       }
     }
   }
+  lap(&ChambersSplit::runs);
   chambers.count = 0;
   chambers.of.resize(grid.cells());
   chambers.beside.clear();
@@ -349,6 +408,7 @@ void chambersOf(const BitGrid& blocked,
     }
     std::fill(row + x, row + width, NO_CHAMBER);
   }
+  lap(&ChambersSplit::labels);
 
   // The chambers beside each gate. A cell beside a gate's line that lies on
   // the line of another gate is in no chamber; the chamber behind that line
@@ -385,8 +445,17 @@ void chambersOf(const BitGrid& blocked,
   for (const auto& gate : moves) {
     for (const auto& move : gate) {
       refused[move.cell] = 0;
+      refusedBits[move.cell >> 6U] = 0;
     }
   }
+  lap(&ChambersSplit::beside);
+  if (timed) {
+    ++chambersSplit().calls;
+  }
+}
+
+ChambersSplit takeChambersSplit() {
+  return std::exchange(chambersSplit(), ChambersSplit{});
 }
 
 } // namespace mqt::scpd::grid
