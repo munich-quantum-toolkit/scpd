@@ -54,6 +54,12 @@ ports of one capacity chain that can carry an inner wire when the points
 `[design_rules] min_straight_length` in front of them coincide, since both would
 meet the lattice of their chain at one node. `doctor` does not check this.
 
+Launcher-order validation also applies to chips translated far from the origin.
+An input with launchers listed in the wrong order is refused at every position.
+
+GDS/OASIS planning exports preserve holes in the port-keepout layer. Export
+existing plans again with `mqt-scpd render` to update these files.
+
 An inner routable port that the `component` pattern does not match ends a wire
 of the inner circuit, as a port of an inner qubit does.
 

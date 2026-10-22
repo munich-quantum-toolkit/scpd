@@ -82,25 +82,37 @@ def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> Non
     assert top.shapes(layout.layer(*OBSTACLE_LAYER)).size() == 4
 
 
-def test_a_partition_with_a_hole_is_one_shape_with_the_hole_open(tmp_path: Path) -> None:
-    """The rings of a partition make one polygon, and the inner ring is its hole, not a filled square."""
+@pytest.mark.parametrize("suffix", [".gds", ".oas"])
+@pytest.mark.parametrize(
+    ("layer_name", "area", "hole_empty"),
+    [("partitions", 80000.0, True), ("keepout", 80000.0, True), ("blocked", 90000.0, False)],
+)
+def test_nested_planning_rings_preserve_holes_and_filled_regions(
+    tmp_path: Path, suffix: str, layer_name: str, area: float, *, hole_empty: bool
+) -> None:
+    """Partitions and keepout preserve holes; overlapping blocked rectangles stay filled."""
     config_path = FIXTURE / "config.toml"
     chip = decode_chip(load_chip(load_config(config_path), config_path))
     outer = [(0.0, 0.0), (300.0, 0.0), (300.0, 300.0), (0.0, 300.0)]
     hole = [(100.0, 100.0), (200.0, 100.0), (200.0, 200.0), (100.0, 200.0)]
-    geometry = PlanningGeometry(partitions=[[outer, hole]])
+    geometry = PlanningGeometry()
+    if layer_name == "partitions":
+        geometry.partitions = [[outer, hole]]
+    elif layer_name == "keepout":
+        geometry.keepout = [outer, hole]
+    else:
+        geometry.blocked = [outer, hole]
 
-    summary = write_layout(chip, tmp_path / "hole.gds", planning=geometry)
+    summary = write_layout(chip, tmp_path / f"hole{suffix}", planning=geometry)
 
-    assert summary.planning == 1
     layout = kdb.Layout()
     layout.read(str(summary.path))
-    number, datatype, _ = PLANNING_LAYERS["partitions"]
-    region = kdb.Region(layout.top_cell().begin_shapes_rec(layout.layer(number, datatype)))
+    number, datatype, _ = PLANNING_LAYERS[layer_name]
+    region = kdb.Region(layout.top_cell().begin_shapes_rec(layout.layer(number, datatype))).merged()
     assert region.count() == 1
-    assert region.area() * layout.dbu**2 == pytest.approx(300.0 * 300.0 - 100.0 * 100.0)
+    assert region.area() * layout.dbu**2 == pytest.approx(area)
     inside_hole = kdb.Region(kdb.DBox(140.0, 140.0, 160.0, 160.0).to_itype(layout.dbu))
-    assert (region & inside_hole).is_empty()
+    assert (region & inside_hole).is_empty() == hole_empty
 
 
 def test_every_feedline_chain_is_one_path_on_the_feedline_layer(tmp_path: Path) -> None:

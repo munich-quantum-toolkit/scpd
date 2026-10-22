@@ -74,12 +74,18 @@ LinearExpr& LinearExpr::add(const double constant) {
 }
 
 LinearExpr& LinearExpr::add(const LinearExpr& other) {
+  if (this == &other) {
+    return add(LinearExpr(other));
+  }
   termList.insert(termList.end(), other.termList.begin(), other.termList.end());
   constantTerm += other.constantTerm;
   return *this;
 }
 
 LinearExpr& LinearExpr::operator-=(const LinearExpr& other) {
+  if (this == &other) {
+    return *this -= LinearExpr(other);
+  }
   for (const auto& [index, coefficient] : other.termList) {
     termList.emplace_back(index, -coefficient);
   }

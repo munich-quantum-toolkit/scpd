@@ -189,36 +189,49 @@ ConfigT squareConfig() {
   return config;
 }
 
-std::string
-orderProblemOf(const std::vector<std::array<double, 2>>& launchers) {
-  return launcherOrderProblem(squareChip(launchers), squareConfig())
-      .value_or("");
+std::string orderProblemOf(const std::vector<std::array<double, 2>>& launchers,
+                           const double offset = 0.0) {
+  auto chip = squareChip(launchers);
+  for (auto& port : chip.ports) {
+    port->center = {port->center.x() + offset, port->center.y() + offset};
+  }
+  return launcherOrderProblem(chip, squareConfig()).value_or("");
 }
 
 TEST(LauncherOrder, AcceptsLaunchersListedAgainstTheRing) {
   // The ring runs clockwise, so the launchers run counterclockwise: left,
   // bottom, right, top. Any of them may come first.
-  EXPECT_EQ(orderProblemOf(
-                {{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}}),
-            "");
-  EXPECT_EQ(orderProblemOf(
-                {{110.0, 50.0}, {50.0, 110.0}, {-10.0, 50.0}, {50.0, -10.0}}),
-            "");
+  for (const double offset : {0.0, 1.0e7, -1.0e7}) {
+    EXPECT_EQ(orderProblemOf(
+                  {{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}},
+                  offset),
+              "");
+    EXPECT_EQ(orderProblemOf(
+                  {{110.0, 50.0}, {50.0, 110.0}, {-10.0, 50.0}, {50.0, -10.0}},
+                  offset),
+              "");
+  }
 }
 
 TEST(LauncherOrder, RefusesLaunchersListedWithTheRing) {
-  EXPECT_NE(orderProblemOf(
-                {{-10.0, 50.0}, {50.0, 110.0}, {110.0, 50.0}, {50.0, -10.0}})
-                .find("in the direction of the port ring"),
-            std::string::npos);
+  for (const double offset : {0.0, 1.0e7, -1.0e7}) {
+    EXPECT_NE(orderProblemOf(
+                  {{-10.0, 50.0}, {50.0, 110.0}, {110.0, 50.0}, {50.0, -10.0}},
+                  offset)
+                  .find("in the direction of the port ring"),
+              std::string::npos);
+  }
 }
 
 TEST(LauncherOrder, RefusesLaunchersListedOutOfOrder) {
   // Left, right, bottom, top: the walk crosses the chip twice.
-  EXPECT_NE(orderProblemOf(
-                {{-10.0, 50.0}, {110.0, 50.0}, {50.0, -10.0}, {50.0, 110.0}})
-                .find("does not list the launcher ports in order"),
-            std::string::npos);
+  for (const double offset : {0.0, 1.0e7, -1.0e7}) {
+    EXPECT_NE(orderProblemOf(
+                  {{-10.0, 50.0}, {110.0, 50.0}, {50.0, -10.0}, {50.0, 110.0}},
+                  offset)
+                  .find("does not list the launcher ports in order"),
+              std::string::npos);
+  }
 }
 
 TEST(LauncherOrder, IsWhatTheStageRefuses) {

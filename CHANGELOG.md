@@ -156,6 +156,13 @@ releases may include breaking changes.
 - 💥 Require Python 3.11 or newer ([#89]) ([**@denialhaag**])
 - ⬆️ Update `nanobind` to version 3.0.1 ([#83]) ([**@denialhaag**])
 
+### Fixed
+
+- 🐛 Handle self-addition and self-subtraction of linear expressions, preserve
+  port-keepout holes in GDS/OASIS exports, and check launcher order
+  independently of the chip's position ([#140]) ([**@FeldmeierMichael**],
+  [**@marcelwa**])
+
 <!-- Version links -->
 
 [unreleased]: https://github.com/munich-quantum-toolkit/scpd

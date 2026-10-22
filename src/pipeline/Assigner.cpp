@@ -154,8 +154,9 @@ int windingOf(const std::vector<geometry::Point>& points) {
   double area = 0.0;
   double extent = 0.0;
   for (std::size_t index = 0; index < points.size(); ++index) {
-    const auto& here = points[index];
-    const auto& next = points[(index + 1) % points.size()];
+    const auto here = geometry::subtract(points[index], points.front());
+    const auto next =
+        geometry::subtract(points[(index + 1) % points.size()], points.front());
     area += geometry::cross(here, next);
     extent = std::max({extent, std::abs(here.x()), std::abs(here.y())});
   }

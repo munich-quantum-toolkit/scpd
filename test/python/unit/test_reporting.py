@@ -18,6 +18,7 @@ from __future__ import annotations
 import functools
 import itertools
 import signal
+import sys
 from pathlib import Path
 
 import pytest
@@ -92,9 +93,10 @@ def test_an_interrupt_during_a_solve_reaches_python(inputs: tuple[bytes, bytes, 
     assert pyscpd.assign(chip, capacity, routing, packed, "test") == untouched
 
 
-@pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="the platform has no interval timer")
 def test_an_interrupt_stops_a_stage_without_a_reporter(inputs: tuple[bytes, bytes, bytes, bytes]) -> None:
     """Ctrl-C stops a stage that has no reporter, inside the stage and not after it."""
+    if sys.platform == "win32" or not hasattr(signal, "setitimer"):
+        pytest.skip("the platform has no interval timer")
     chip, packed, capacity, routing = inputs
     untouched = pyscpd.assign(chip, capacity, routing, packed, "test")
     calls = 100

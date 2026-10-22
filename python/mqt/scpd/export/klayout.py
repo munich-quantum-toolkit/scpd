@@ -168,13 +168,14 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
         return kdb.DPolygon(kdb.DBox(x - radius, y - radius, x + radius, y + radius))
 
     written = 0
-    for name, rings in (
-        ("keepout", planning.keepout),
-        ("blocked", planning.blocked),
-    ):
-        for ring in rings:
-            top.shapes(layer(name)).insert(kdb.DPolygon(list(starmap(kdb.DPoint, ring))))
-            written += 1
+    keepout = kdb.Region()
+    for ring in planning.keepout:
+        keepout ^= kdb.Region(kdb.DPolygon(list(starmap(kdb.DPoint, ring))).to_itype(layout.dbu))
+    top.shapes(layer("keepout")).insert(keepout)
+    written += keepout.count()
+    for ring in planning.blocked:
+        top.shapes(layer("blocked")).insert(kdb.DPolygon(list(starmap(kdb.DPoint, ring))))
+        written += 1
     for partition in planning.partitions:
         # The rings of a partition are combined even-odd, so a ring inside another one is a hole.
         region = kdb.Region()

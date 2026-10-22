@@ -57,6 +57,41 @@ TEST(MilpModel, AddsTheTermsOfAVariableInTheOrderTheyCame) {
   EXPECT_DOUBLE_EQ(combined.front().second, 2.0);
 }
 
+TEST(MilpModel, AddsAnExpressionToItself) {
+  for (const bool useOperator : {false, true}) {
+    LinearExpr expression(7.0);
+    for (std::size_t index = 0; index < 16; ++index) {
+      expression.add(Var{index}, static_cast<double>(index + 1));
+    }
+    const auto terms = expression.terms();
+
+    if (useOperator) {
+      expression += expression;
+    } else {
+      expression.add(expression);
+    }
+
+    EXPECT_DOUBLE_EQ(expression.constant(), 14.0);
+    ASSERT_EQ(expression.terms().size(), 2 * terms.size());
+    for (std::size_t index = 0; index < terms.size(); ++index) {
+      EXPECT_EQ(expression.terms()[index], terms[index]);
+      EXPECT_EQ(expression.terms()[index + terms.size()], terms[index]);
+    }
+  }
+}
+
+TEST(MilpModel, SubtractsAnExpressionFromItself) {
+  LinearExpr expression(7.0);
+  for (std::size_t index = 0; index < 16; ++index) {
+    expression.add(Var{index}, static_cast<double>(index + 1));
+  }
+
+  expression -= expression;
+
+  EXPECT_DOUBLE_EQ(expression.constant(), 0.0);
+  EXPECT_TRUE(expression.combined().empty());
+}
+
 TEST(MilpModel, MovesTheConstantOfAnExpressionToTheBound) {
   Model model("shift");
   const auto x = model.addContinuous("x", 0.0, 10.0);
