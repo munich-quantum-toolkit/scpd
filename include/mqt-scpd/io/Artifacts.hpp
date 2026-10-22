@@ -12,6 +12,7 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/io/mqt_scpd_io_export.hpp"
 
 #include <cstdint>
@@ -25,13 +26,43 @@ using design::Problems;
 
 /**
  * @brief Validates a stage artifact.
+ *
+ * Besides the components that the output carries, the check covers what the
+ * later stages and the write rely on: the output type is one this version
+ * knows; no required table of a capacity plan and no entry of a vector of
+ * tables is missing; the capacity nodes link without a cycle and only to
+ * nodes of the plan, a capacity chain is a tree, a target lies on one chain
+ * only, and a gate names a bottleneck of the plan and has its capacity; the
+ * lattice of a Global routing names only its own points and edges; an
+ * Assignment has one connection, launcher and feed per ring node, connection
+ * i targets the port of ring node i, and every chain runs through one ring
+ * node at least, each of them on that chain only; a corridor names one more
+ * partition than it has crossings, or neither for a connection without a
+ * way, and a corridor with a way has a source and a target.
+ *
  * @param artifact The artifact to check.
- * @return A problem for an empty producer, one for a missing output, and every
- * problem of the components the output carries, empty when the artifact is
- * valid.
+ * @return A problem for an empty producer, one for a missing output or an
+ * unknown output type, and every other problem found, empty when the artifact
+ * is valid.
  */
 [[nodiscard]] MQT_SCPD_IO_EXPORT Problems
 validate(const flatbuffers::artifacts::ArtifactT& artifact);
+
+/**
+ * @brief Checks that a stage artifact fits a chip.
+ *
+ * An artifact names ports by their index into the chip. An artifact that was
+ * made from another chip can name a port this chip does not have, and a
+ * stage that read it would read past the end of the port list.
+ *
+ * @param artifact The artifact to check.
+ * @param chip The chip a stage reads the artifact with.
+ * @return A problem for every port the artifact names that @p chip does not
+ * have, empty when the artifact fits.
+ */
+[[nodiscard]] MQT_SCPD_IO_EXPORT Problems
+validate(const flatbuffers::artifacts::ArtifactT& artifact,
+         const flatbuffers::design::ChipT& chip);
 
 /**
  * @brief Serializes a stage artifact as a run directory stores it.

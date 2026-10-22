@@ -46,6 +46,12 @@ std::vector<CompiledPattern> compile(const PortPatternsT& patterns) {
   add("launcher", UnassignedRole::Launcher, patterns.launcher);
   add("resonator", UnassignedRole::Resonator, patterns.resonator);
   add("conventional", UnassignedRole::Conventional, patterns.conventional);
+  // The bridge pattern is optional. A chip whose components carry no
+  // crossing declares none, and an empty expression stands for a role the
+  // chip does not have, not for a pattern that matches nothing.
+  if (!patterns.bridge_pair.empty()) {
+    add("bridge_pair", UnassignedRole::BridgePair, patterns.bridge_pair);
+  }
   return compiled;
 }
 
@@ -61,6 +67,8 @@ std::string_view roleName(const UnassignedRole role) {
     return "conventional";
   case UnassignedRole::Coupler:
     return "coupler";
+  case UnassignedRole::BridgePair:
+    return "bridge_pair";
   case UnassignedRole::Unset:
     break;
   }
@@ -69,7 +77,8 @@ std::string_view roleName(const UnassignedRole role) {
 
 bool isRoutable(const UnassignedRole role) {
   return role == UnassignedRole::Resonator ||
-         role == UnassignedRole::Conventional;
+         role == UnassignedRole::Conventional ||
+         role == UnassignedRole::BridgePair;
 }
 
 Problems classifyPorts(ChipT& chip, const PortPatternsT& patterns) {
@@ -78,9 +87,20 @@ Problems classifyPorts(ChipT& chip, const PortPatternsT& patterns) {
     return problems;
   }
   const auto compiled = compile(patterns);
+  // The component comes from the one capture group of the configured
+  // pattern, and from nowhere else: no algorithm reads a label itself.
+  const auto hasComponents = !patterns.component.empty();
+  const std::regex component(hasComponents ? patterns.component : "",
+                             std::regex::ECMAScript);
   for (auto& port : chip.ports) {
     if (port == nullptr) {
       continue;
+    }
+    if (std::smatch capture;
+        hasComponents && std::regex_match(port->label, capture, component)) {
+      port->component = capture[1].str();
+    } else {
+      port->component.clear();
     }
     std::vector<std::string_view> matched;
     UnassignedRole role = UnassignedRole::Unset;

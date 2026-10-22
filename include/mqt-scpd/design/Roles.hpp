@@ -22,18 +22,23 @@ namespace mqt::scpd::design {
 /**
  * @brief Names a port role as the configuration keys spell it.
  * @param role The role to name.
- * @return One of "launcher", "resonator", "conventional", "coupler", or
- * "unset" for any other value. The result refers to a string literal and
- * stays valid for the life of the program.
+ * @return One of "launcher", "resonator", "conventional", "bridge_pair",
+ * "coupler", or "unset" for any other value. The result refers to a string
+ * literal and stays valid for the life of the program.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT std::string_view
 roleName(flatbuffers::design::UnassignedRole role);
 
 /**
- * @brief Reports whether a wire may end at a port of the given role.
+ * @brief Reports whether a wire runs to a port of the given role.
+ *
+ * A wire ends at a @c Resonator or @c Conventional port. It runs to a
+ * @c BridgePair port too, crosses the component there and leaves through the
+ * paired port, so the grid, the ring and the lattices carry it as well.
+ *
  * @param role The role to test.
- * @return @c true for the roles @c Resonator and @c Conventional, @c false
- * for every other role.
+ * @return @c true for the roles @c Resonator, @c Conventional and
+ * @c BridgePair, @c false for every other role.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT bool
 isRoutable(flatbuffers::design::UnassignedRole role);
@@ -44,8 +49,13 @@ isRoutable(flatbuffers::design::UnassignedRole role);
  * Each label is matched against one regular expression per role. A port must
  * match exactly one pattern; a port that matches none, or more than one,
  * keeps the role @c Unset and is reported with its label and the patterns
- * involved. The patterns themselves are validated first, and no port is
+ * involved. The @c bridge_pair pattern is optional and takes part only when
+ * it is set. The patterns themselves are validated first, and no port is
  * classified while a pattern is empty or does not compile.
+ *
+ * When the configuration declares a component pattern, each port whose label
+ * it matches takes the capture of its one group as its component; every
+ * other port, and every port without a component pattern, has none.
  *
  * @param chip The chip whose ports are classified. Its ports are modified in
  * place.

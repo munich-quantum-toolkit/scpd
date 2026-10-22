@@ -92,13 +92,24 @@ TEST(ArtifactSchema, EveryStageOutputIsAnArtifact) {
                "DetailRouting");
   EXPECT_STREQ(EnumNameStageOutput(StageOutput::FinalRouting), "FinalRouting");
   EXPECT_STREQ(EnumNameStageOutput(StageOutput::Geometry), "Geometry");
-  EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 6U);
+  EXPECT_STREQ(EnumNameStageOutput(StageOutput::CorridorRouting),
+               "CorridorRouting");
+  EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 7U);
+}
+
+/// A capacity plan that carries nothing, but carries every field the schema
+/// requires. A stage that produced nothing still writes a complete artifact.
+CapacityPlanT emptyPlan() {
+  CapacityPlanT plan;
+  plan.capacity_grid = std::make_unique<GridExtentT>();
+  plan.detail_grid = std::make_unique<GridExtentT>();
+  return plan;
 }
 
 TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   // The outputs of the stages that are not implemented yet are empty tables.
   // Each still travels behind the Artifact root with its own tag.
-  const ArtifactT capacity = readArtifact(writeArtifact(wrap(CapacityPlanT{})));
+  const ArtifactT capacity = readArtifact(writeArtifact(wrap(emptyPlan())));
   EXPECT_EQ(capacity.output.type, StageOutput::CapacityPlan);
   EXPECT_NE(capacity.output.AsCapacityPlan(), nullptr);
   EXPECT_EQ(capacity.producer, "mqt-scpd test");
@@ -113,6 +124,419 @@ TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
 }
 
+TEST(ArtifactSchema, CorridorRoutingRoundTrips) {
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4, 7, 9};
+  corridor->crossings.emplace_back(10.5, 20.25);
+  corridor->crossings.emplace_back(30.75, 40.0);
+  corridor->source = std::make_unique<Point>(0.5, 1.5);
+  corridor->target = std::make_unique<Point>(50.0, 60.0);
+  routing.corridors.push_back(std::move(corridor));
+  // A connection that found no way carries no partitions, which is how a
+  // reader counts the failures.
+  routing.corridors.push_back(std::make_unique<CorridorT>());
+  auto slots = std::make_unique<BorderSlotsT>();
+  slots->border = 2;
+  slots->positions.emplace_back(10.5, 20.25);
+  routing.slots.push_back(std::move(slots));
+
+  const ArtifactT back = readArtifact(writeArtifact(wrap(std::move(routing))));
+
+  ASSERT_EQ(back.output.type, StageOutput::CorridorRouting);
+  const auto& read = *back.output.AsCorridorRouting();
+  ASSERT_EQ(read.corridors.size(), 2U);
+  EXPECT_EQ(read.corridors[0]->partitions,
+            (std::vector<std::uint32_t>{4, 7, 9}));
+  EXPECT_EQ(read.corridors[0]->crossings.size(), 2U);
+  EXPECT_EQ(read.corridors[0]->source->x(), 0.5);
+  EXPECT_TRUE(read.corridors[1]->partitions.empty());
+  ASSERT_EQ(read.slots.size(), 1U);
+  EXPECT_EQ(read.slots[0]->border, 2U);
+}
+
+TEST(ArtifactSchema, RefusesACorridorThatNamesTheWrongNumberOfPartitions) {
+  // A crossing carries a wire from one partition into the next, so a corridor
+  // names one more partition than it has crossings.
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4, 7};
+  corridor->source = std::make_unique<Point>(0.0, 0.0);
+  corridor->target = std::make_unique<Point>(1.0, 0.0);
+  routing.corridors.push_back(std::move(corridor));
+
+  const auto problems = validate(wrap(std::move(routing)));
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_EQ(problems[0], "corridor 0 names 2 partitions and 0 crossings");
+}
+
+TEST(ArtifactSchema, RefusesARoutedCorridorWithoutItsEnds) {
+  // A way runs from the feed to the target, so a corridor with partitions
+  // has both ends.
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4};
+  routing.corridors.push_back(std::move(corridor));
+  corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4};
+  corridor->source = std::make_unique<Point>(0.0, 0.0);
+  routing.corridors.push_back(std::move(corridor));
+
+  EXPECT_EQ(validate(wrap(std::move(routing))),
+            (std::vector<std::string>{"corridor 0 has a way but no source",
+                                      "corridor 0 has a way but no target",
+                                      "corridor 1 has a way but no target"}));
+}
+
+/// A connection of the assignment to a resonator, with both of its roles.
+std::unique_ptr<ConnectionT> resonatorConnection() {
+  auto connection = std::make_unique<ConnectionT>();
+  connection->source_role = AssignedRole::ResonatorSource;
+  connection->target_role = AssignedRole::ResonatorTarget;
+  return connection;
+}
+
+TEST(ArtifactSchema, RefusesCrossingsOfACorridorWithoutPartitions) {
+  // A corridor without partitions is a connection without a way, so it
+  // crosses no border either.
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->crossings.emplace_back(1.0, 2.0);
+  routing.corridors.push_back(std::move(corridor));
+
+  const auto problems = validate(wrap(std::move(routing)));
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_EQ(problems[0], "corridor 0 names 0 partitions and 1 crossing");
+}
+
+TEST(ArtifactSchema, RefusesAnAssignmentWhoseListsDoNotFollowTheRing) {
+  // The connections, the launchers and the feeds hold one entry per ring
+  // node, and the Corridor stage reads them by the index of the node.
+  AssignmentT assignment;
+  assignment.ring = {PortRef(1), PortRef(2)};
+  assignment.connections.push_back(resonatorConnection());
+  assignment.connections.back()->target = PortRef(1);
+  assignment.launchers = {PortRef(0), PortRef(3)};
+  assignment.feeds.emplace_back(0.0, 0.0);
+  assignment.feeds.emplace_back(1.0, 0.0);
+  assignment.feeds.emplace_back(2.0, 0.0);
+
+  EXPECT_EQ(validate(wrap(std::move(assignment))),
+            (std::vector<std::string>{"1 connection for 2 ring nodes",
+                                      "3 feeds for 2 ring nodes"}));
+}
+
+TEST(ArtifactSchema, RefusesAFeedlineChainThatLeavesTheRing) {
+  // A chain names ring nodes, so each of them has to be a node of the ring.
+  AssignmentT assignment;
+  assignment.connections.push_back(resonatorConnection());
+  assignment.connections.back()->target = PortRef(3);
+  assignment.ring.emplace_back(3);
+  assignment.launchers.emplace_back(9);
+  assignment.feeds.emplace_back(0.0, 0.0);
+  auto chain = std::make_unique<FeedlineChainT>();
+  chain->nodes = {0, 1};
+  assignment.chains.push_back(std::move(chain));
+
+  const auto problems = validate(wrap(std::move(assignment)));
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_EQ(problems[0], "chain 0 names ring node 1 of 1");
+}
+
+TEST(ArtifactSchema,
+     RefusesAnAssignmentWhoseChainsOrTargetsDisagreeWithTheRing) {
+  // Connection i reaches ring node i, a chain runs through one resonator at
+  // least, and one feedline drives each resonator.
+  AssignmentT assignment;
+  assignment.ring = {PortRef(1), PortRef(2), PortRef(5)};
+  for (const std::uint32_t port : {1U, 4U, 5U}) {
+    assignment.connections.push_back(resonatorConnection());
+    assignment.connections.back()->target = PortRef(port);
+  }
+  assignment.launchers = {PortRef(0), PortRef(0), PortRef(3)};
+  assignment.feeds = {Point(0.0, 0.0), Point(1.0, 0.0), Point(2.0, 0.0)};
+  for (const auto& nodes :
+       std::vector<std::vector<std::uint32_t>>{{0, 1}, {}, {1, 2, 2}}) {
+    auto chain = std::make_unique<FeedlineChainT>();
+    chain->nodes = nodes;
+    assignment.chains.push_back(std::move(chain));
+  }
+
+  EXPECT_EQ(validate(wrap(std::move(assignment))),
+            (std::vector<std::string>{
+                "connection 1 targets port 4, not port 2 of ring node 1",
+                "chain 1 runs through no ring node",
+                "chains 0 and 2 both name ring node 1",
+                "chain 2 names ring node 2 twice"}));
+}
+
+TEST(ArtifactSchema, RefusesAGlobalRoutingThatAPictureCannotDraw) {
+  // A picture draws a lattice by index, and the Assignment stage reads the
+  // role of each connection.
+  GlobalRoutingT routing;
+  routing.connections.push_back(resonatorConnection());
+  routing.connections.push_back(std::make_unique<ConnectionT>());
+  routing.connections.back()->target = PortRef(1);
+  auto odd = std::make_unique<LatticeT>();
+  odd->points = {Point(0.0, 0.0), Point(1.0, 0.0)};
+  odd->edges = {0, 1, 0};
+  routing.lattices.push_back(std::move(odd));
+  auto outside = std::make_unique<LatticeT>();
+  outside->points = {Point(0.0, 0.0), Point(1.0, 0.0)};
+  outside->edges = {0, 2};
+  outside->selected = {1};
+  routing.lattices.push_back(std::move(outside));
+
+  EXPECT_EQ(
+      validate(wrap(std::move(routing))),
+      (std::vector<std::string>{
+          "connection 1: source role is unset",
+          "connection 1: target role is unset",
+          "lattice 0 holds 3 edge indices, not two per edge",
+          "lattice 1 names point 2 of 2", "lattice 1 selects edge 1 of 1"}));
+}
+
+TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {
+  // The later stages walk a chain by index, so an index outside the nodes, a
+  // link back to an earlier node or a second path to one node would make the
+  // walk read past the end, never stop or count a subtree twice.
+  // Each target node names a port of its own.
+  std::uint32_t port = 0;
+  const auto node = [&port](const std::vector<std::uint32_t>& next) {
+    auto entry = std::make_unique<CapacityNodeT>();
+    entry->kind = CapacityElement::Target;
+    entry->id = port++;
+    entry->next = next;
+    return entry;
+  };
+  const auto launcher = [] {
+    auto entry = std::make_unique<CapacityNodeT>();
+    entry->kind = CapacityElement::Launcher;
+    return entry;
+  };
+
+  CapacityPlanT shared = emptyPlan();
+  shared.nodes.push_back(node({2}));
+  shared.nodes.push_back(node({2}));
+  shared.nodes.push_back(launcher());
+  shared.chains = {0, 1};
+  // Two chains may share a subtree without a target.
+  EXPECT_TRUE(validate(wrap(std::move(shared))).empty());
+
+  CapacityPlanT diamond = emptyPlan();
+  diamond.nodes.push_back(node({1, 2}));
+  diamond.nodes.push_back(node({2}));
+  diamond.nodes.push_back(launcher());
+  diamond.chains = {0};
+  // One chain may not reach a node twice: the walk would count it twice.
+  EXPECT_EQ(
+      validate(wrap(std::move(diamond))),
+      (std::vector<std::string>{"capacity chain 0 reaches node 2 twice"}));
+
+  CapacityPlanT outside = emptyPlan();
+  outside.nodes.push_back(node({3}));
+  outside.chains = {2};
+  EXPECT_EQ(
+      validate(wrap(std::move(outside))),
+      (std::vector<std::string>{"capacity node 0 links to node 3 of 1",
+                                "capacity chain 0 starts at node 2 of 1"}));
+
+  CapacityPlanT cycle = emptyPlan();
+  cycle.nodes.push_back(node({1}));
+  cycle.nodes.push_back(node({0}));
+  cycle.chains = {0};
+  EXPECT_EQ(validate(wrap(std::move(cycle))),
+            (std::vector<std::string>{
+                "capacity nodes link in a cycle: 2 of 2 nodes lie on or "
+                "behind one"}));
+
+  CapacityPlanT loop = emptyPlan();
+  loop.nodes.push_back(node({0}));
+  loop.chains = {0};
+  EXPECT_EQ(validate(wrap(std::move(loop))),
+            (std::vector<std::string>{
+                "capacity nodes link in a cycle: 1 of 1 node lies on or "
+                "behind one"}));
+}
+
+TEST(ArtifactSchema, RefusesATargetOnTwoCapacityChains) {
+  // The Global stage asks one wire of each target over its chain, so a
+  // target on two chains, or twice on one, would ask for its wire twice.
+  const auto target = [](const std::uint32_t port,
+                         const std::vector<std::uint32_t>& next) {
+    auto entry = std::make_unique<CapacityNodeT>();
+    entry->kind = CapacityElement::Target;
+    entry->id = port;
+    entry->next = next;
+    return entry;
+  };
+
+  CapacityPlanT sharedTarget = emptyPlan();
+  sharedTarget.nodes.push_back(target(0, {2}));
+  sharedTarget.nodes.push_back(target(1, {2}));
+  sharedTarget.nodes.push_back(target(2, {}));
+  sharedTarget.chains = {0, 1};
+  EXPECT_EQ(
+      validate(wrap(std::move(sharedTarget))),
+      (std::vector<std::string>{"capacity chains 0 and 1 both reach port 2"}));
+
+  CapacityPlanT twoNodes = emptyPlan();
+  twoNodes.nodes.push_back(target(0, {}));
+  twoNodes.nodes.push_back(target(0, {}));
+  twoNodes.chains = {0, 1};
+  EXPECT_EQ(
+      validate(wrap(std::move(twoNodes))),
+      (std::vector<std::string>{"capacity chains 0 and 1 both reach port 0"}));
+
+  CapacityPlanT twice = emptyPlan();
+  twice.nodes.push_back(target(0, {1}));
+  twice.nodes.push_back(target(0, {}));
+  twice.chains = {0};
+  EXPECT_EQ(
+      validate(wrap(std::move(twice))),
+      (std::vector<std::string>{"capacity chain 0 reaches port 0 twice"}));
+}
+
+TEST(ArtifactSchema, RefusesAGateNodeThatDisagreesWithItsBottleneck) {
+  // The Global stage reads the capacity of a gate from each of its nodes, so
+  // a node that says more than the bottleneck would let more wires through.
+  CapacityPlanT plan = emptyPlan();
+  auto bottleneck = std::make_unique<BottleneckT>();
+  bottleneck->capacity = 2;
+  plan.bottlenecks.push_back(std::move(bottleneck));
+  for (const std::uint32_t capacity : {2U, 3U}) {
+    auto gate = std::make_unique<CapacityNodeT>();
+    gate->kind = CapacityElement::Bottleneck;
+    gate->id = 0;
+    gate->capacity = capacity;
+    plan.nodes.push_back(std::move(gate));
+    plan.chains.push_back(static_cast<std::uint32_t>(plan.nodes.size() - 1));
+  }
+  EXPECT_EQ(validate(wrap(std::move(plan))),
+            (std::vector<std::string>{"capacity node 1 lets 3 wires through "
+                                      "bottleneck 0, which lets 2 wires "
+                                      "through"}));
+}
+
+TEST(ArtifactSchema, RefusesAGateNodeWithoutItsBottleneck) {
+  // The Global stage reads the capacity of a gate from its bottleneck, so a
+  // gate has to name one of the plan.
+  CapacityPlanT plan = emptyPlan();
+  plan.bottlenecks.push_back(std::make_unique<BottleneckT>());
+  auto gate = std::make_unique<CapacityNodeT>();
+  gate->kind = CapacityElement::Bottleneck;
+  gate->id = 1;
+  plan.nodes.push_back(std::move(gate));
+  plan.chains.push_back(0);
+
+  EXPECT_EQ(
+      validate(wrap(std::move(plan))),
+      (std::vector<std::string>{"capacity node 0 names bottleneck 1 of 1"}));
+}
+
+TEST(ArtifactSchema, RefusesAMissingEntryOfEveryOutput) {
+  // Writing an artifact packs every entry of a vector of tables, so a missing
+  // entry is refused before the write reads it.
+  CapacityPlanT plan = emptyPlan();
+  plan.partitions.push_back(std::make_unique<PartitionT>());
+  plan.partitions.back()->outlines.push_back(nullptr);
+  plan.partitions.push_back(nullptr);
+  plan.borders.push_back(nullptr);
+  plan.bottlenecks.push_back(nullptr);
+  plan.launchers.push_back(nullptr);
+  plan.port_keepout.push_back(nullptr);
+  plan.nodes.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(plan))),
+            (std::vector<std::string>{
+                "partition 1: missing", "partition 0 outline 0: missing",
+                "border 0: missing", "bottleneck 0: missing",
+                "launcher slot 0: missing", "port keepout 0: missing",
+                "capacity node 0: missing"}));
+
+  AssignmentT assignment;
+  assignment.chains.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(assignment))),
+            (std::vector<std::string>{"chain 0: missing"}));
+
+  GlobalRoutingT global;
+  global.lattices.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(global))),
+            (std::vector<std::string>{"lattice 0: missing"}));
+
+  CorridorRoutingT corridors;
+  corridors.slots.push_back(nullptr);
+  corridors.corridors.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(corridors))),
+            (std::vector<std::string>{"border slots 0: missing",
+                                      "corridor 0: missing"}));
+
+  CapacityPlanT unwritable = emptyPlan();
+  unwritable.bottlenecks.push_back(nullptr);
+  EXPECT_THROW(static_cast<void>(writeArtifact(wrap(std::move(unwritable)))),
+               std::invalid_argument);
+
+  // The two grids are required tables, which the write cannot leave out.
+  CapacityPlanT withoutGrids = emptyPlan();
+  withoutGrids.capacity_grid.reset();
+  withoutGrids.detail_grid.reset();
+  EXPECT_EQ(validate(wrap(std::move(withoutGrids))),
+            (std::vector<std::string>{"capacity grid: missing",
+                                      "detail grid: missing"}));
+}
+
+TEST(ArtifactSchema, RefusesAPortTheChipDoesNotHave) {
+  // An artifact names ports by index, so one made from another chip can name
+  // a port past the end of this chip's port list.
+  ChipT chip;
+  chip.ports.push_back(std::make_unique<PortT>());
+  chip.ports.push_back(std::make_unique<PortT>());
+
+  GlobalRoutingT routing;
+  routing.outer_ring = {PortRef(0), PortRef(2)};
+  routing.resonators = {PortRef(1)};
+  routing.connections.push_back(std::make_unique<ConnectionT>());
+  routing.connections.back()->source = std::make_unique<PortRef>(5);
+  routing.connections.back()->target = PortRef(1);
+  EXPECT_EQ(validate(wrap(std::move(routing)), chip),
+            (std::vector<std::string>{"connection 0 source names port 5 of 2",
+                                      "ring node 1 names port 2 of 2"}));
+
+  AssignmentT assignment;
+  assignment.ring = {PortRef(1)};
+  assignment.launchers = {PortRef(3)};
+  auto chain = std::make_unique<FeedlineChainT>();
+  chain->start = std::make_unique<PortRef>(0);
+  chain->end = std::make_unique<PortRef>(4);
+  assignment.chains.push_back(std::move(chain));
+  EXPECT_EQ(validate(wrap(std::move(assignment)), chip),
+            (std::vector<std::string>{"launcher 0 names port 3 of 2",
+                                      "chain 0 names port 4 of 2"}));
+
+  CapacityPlanT plan;
+  auto slot = std::make_unique<LauncherSlotT>();
+  slot->port = PortRef(2);
+  plan.launchers.push_back(std::move(slot));
+  auto target = std::make_unique<CapacityNodeT>();
+  target->kind = CapacityElement::Target;
+  target->id = 9;
+  plan.nodes.push_back(std::move(target));
+  auto gate = std::make_unique<CapacityNodeT>();
+  gate->kind = CapacityElement::Bottleneck;
+  gate->id = 9;
+  plan.nodes.push_back(std::move(gate));
+  // A gate names a bottleneck and no port.
+  EXPECT_EQ(validate(wrap(std::move(plan)), chip),
+            (std::vector<std::string>{"launcher slot 0 names port 2 of 2",
+                                      "capacity node 0 names port 9 of 2"}));
+
+  GlobalRoutingT fitting;
+  fitting.outer_ring = {PortRef(0), PortRef(1)};
+  EXPECT_TRUE(validate(wrap(std::move(fitting)), chip).empty());
+}
+
 TEST(ArtifactSchema, AssignmentRoundTrips) {
   AssignmentT assignment;
   assignment.connections.push_back(std::make_unique<ConnectionT>());
@@ -120,6 +544,14 @@ TEST(ArtifactSchema, AssignmentRoundTrips) {
   assignment.connections.back()->source_role = AssignedRole::ResonatorSource;
   assignment.connections.back()->target_role = AssignedRole::ResonatorTarget;
   assignment.objective = 132.68;
+  assignment.ring.emplace_back(3);
+  assignment.launchers.emplace_back(9);
+  // A feed that is not on its launcher: the point a feedline end starts at.
+  assignment.feeds.emplace_back(120.5, -40.25);
+  auto chain = std::make_unique<FeedlineChainT>();
+  chain->nodes = {0};
+  chain->start = std::make_unique<PortRef>(9);
+  assignment.chains.push_back(std::move(chain));
 
   const ArtifactT back = readArtifact(writeArtifact(wrap(assignment)));
   ASSERT_NE(back.output.AsAssignment(), nullptr);
@@ -193,6 +625,9 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnUnsetRole) {
   AssignmentT assignment;
   assignment.connections.push_back(std::make_unique<ConnectionT>());
   assignment.connections.back()->target = PortRef(1);
+  assignment.ring = {PortRef(1)};
+  assignment.launchers = {PortRef(0)};
+  assignment.feeds.emplace_back(0.0, 0.0);
   const auto bytes = packUnchecked(wrap(assignment));
 
   EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
@@ -225,7 +660,14 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnArtifactWithoutItsProducer) {
   for (const bool withProducer : {true, false}) {
     flatbuffers::FlatBufferBuilder builder;
     const auto producer = builder.CreateString("mqt-scpd test");
-    const auto output = CreateGlobalRouting(builder);
+    // Every required vector is present, so that the producer is the only
+    // thing the artifact lacks. A null vector would leave the field out,
+    // which is a different problem.
+    const std::vector<::flatbuffers::Offset<Lattice>> noLattices;
+    const std::vector<::flatbuffers::Offset<Connection>> noConnections;
+    const std::vector<PortRef> noPorts;
+    const auto output = CreateGlobalRoutingDirect(
+        builder, &noLattices, &noConnections, &noPorts, &noPorts);
     const auto table = builder.StartTable();
     if (withProducer) {
       builder.AddOffset(Artifact::VT_PRODUCER, producer);
@@ -261,6 +703,36 @@ TEST(ArtifactSchema, ReadArtifactRejectsForeignAndTruncatedBuffers) {
 
   bytes.resize(bytes.size() / 2);
   EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
+}
+
+TEST(ArtifactSchema, RefusesAnOutputTypeOfANewerSchema) {
+  // A newer schema may append an output type under the same identifier. The
+  // verifier lets it pass, so the read has to refuse it.
+  flatbuffers::FlatBufferBuilder builder;
+  const auto producer = builder.CreateString("mqt-scpd newer");
+  const flatbuffers::Offset<void> output(
+      builder.EndTable(builder.StartTable()));
+  // The tag is written as a plain byte, because the enum of this schema has
+  // no value for it.
+  const auto start = builder.StartTable();
+  builder.AddOffset(Artifact::VT_OUTPUT, output);
+  builder.AddOffset(Artifact::VT_PRODUCER, producer);
+  builder.AddElement<std::uint8_t>(
+      Artifact::VT_OUTPUT_TYPE, static_cast<std::uint8_t>(StageOutput::MAX) + 1,
+      0);
+  FinishArtifactBuffer(builder,
+                       flatbuffers::Offset<Artifact>(builder.EndTable(start)));
+  const std::vector<std::uint8_t> bytes(
+      builder.GetBufferPointer(),
+      std::next(builder.GetBufferPointer(), builder.GetSize()));
+
+  try {
+    static_cast<void>(readArtifact(bytes));
+    FAIL() << "the read accepted an unknown output type";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_STREQ(error.what(), "artifact is not valid: output type 8 is "
+                               "unknown to this version of mqt-scpd");
+  }
 }
 
 } // namespace
