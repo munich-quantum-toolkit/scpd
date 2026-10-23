@@ -215,11 +215,6 @@ public:
                                              const Report& report) const = 0;
 };
 
-/// Where a routing stage says what it does, one line at a time. The two
-/// routing stages report through this callback until they report through
-/// the Report every planning stage takes.
-using Progress = std::function<void(std::string_view)>;
-
 /// Where the Final stage hands out records of what it is doing, when asked
 /// to: a record kind and its JSON text, for the pages of the `[debug]`
 /// section. Nothing is written from the core, and nothing is recorded that
@@ -250,14 +245,14 @@ public:
    * @param assignment The assignment of the run.
    * @param corridor The corridors of the run.
    * @param config The run configuration.
-   * @param progress Where the stage says what it does, or nothing.
+   * @param report Where the stage reports what it does.
    * @return One path per connection, and one per inner connection.
    */
   [[nodiscard]] virtual DetailRoutingT
   run(const ChipT& chip, const CapacityPlanT& capacity,
       const GlobalRoutingT& global, const AssignmentT& assignment,
       const CorridorRoutingT& corridor, const ConfigT& config,
-      const Progress& progress = {}) const = 0;
+      const Report& report = {}) const = 0;
 };
 
 /**
@@ -288,18 +283,15 @@ public:
    * @param assignment The assignment of the run.
    * @param detail The detail routing of the run, the seed of every wire.
    * @param config The run configuration.
-   * @param progress Where the stage says what it does, or nothing.
+   * @param report Where the stage reports what it does.
    * @param debug Where the stage hands out its debug records, or nothing.
-   * @param verbosity 0 for one line per round, 1 for one per wire and
-   * search as well.
    * @return The final routing, with one snapshot per phase.
    */
   [[nodiscard]] virtual FinalRoutingT
   run(const ChipT& chip, const CapacityPlanT& capacity,
       const GlobalRoutingT& global, const AssignmentT& assignment,
       const DetailRoutingT& detail, const ConfigT& config,
-      const Progress& progress = {}, const Debug& debug = {},
-      std::uint32_t verbosity = 0) const = 0;
+      const Report& report = {}, const Debug& debug = {}) const = 0;
 };
 
 } // namespace mqt::scpd::pipeline

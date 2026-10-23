@@ -1278,12 +1278,10 @@ using Cell = std::pair<std::int64_t, std::int64_t>;
 /// differ only in their parameters.
 class Driver {
 public:
-  Driver(const Scene& scene, const Tuning& tuning, Progress progress = {},
-         Debug debug = {}, DebugRecords wanted = {},
-         const std::uint32_t verbosity = 0)
-      : scene_(scene), tuning_(tuning), progress_(std::move(progress)),
+  Driver(const Scene& scene, const Tuning& tuning, Report report = {},
+         Debug debug = {}, DebugRecords wanted = {})
+      : scene_(scene), tuning_(tuning), report_(std::move(report)),
         debug_(std::move(debug)), wanted_(std::move(wanted)),
-        verbosity_(verbosity),
         primitives_(std::make_shared<const MovePrimitives>(BEND_RADIUS)),
         analytic_(*primitives_),
         scratch_(scene.router.width, scene.router.height),
@@ -1318,36 +1316,25 @@ public:
   [[nodiscard]] const Field& field() const { return field_; }
   [[nodiscard]] const Tuning& tuning() const { return tuning_; }
 
-  /// Say one line, when anybody is listening. The seconds since the driver
-  /// was built are on every line, so a slow round is visible as one.
-  void say(const std::string& line) const {
-    if (!progress_) {
-      return;
-    }
-    const auto seconds =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - began_)
-            .count();
-    progress_(std::format("[final] {:8.2f}s  {}", seconds, line));
-  }
+  /// Report one line of what the stage does, at the level of its steps.
+  void say(const std::string& line) const { report_.line(Detail::Steps, line); }
 
-  /// Say one line of detail: what one wire's search came to. Only at the
-  /// second level of verbosity, where a run says one line per search.
+  /// Report one line of detail: what one wire's search came to. Only at the
+  /// level of the items, where a run says one line per search.
   void tell(const std::string& line) const {
-    if (verbosity_ >= 1) {
-      say("  " + line);
-    }
+    report_.line(Detail::Items, line);
   }
 
-  /// Say one line of the coupler insertion's own reasoning: every option a
-  /// coupler had, whether it survived being built and what the greedy
-  /// priced it at. Only at the third level of verbosity — it is 64 lines
-  /// per coupler, which is one chip under a lens and not a run's log.
+  /// Report one line of the coupler insertion's own reasoning: every option
+  /// a coupler had, whether it survived being built and what the greedy
+  /// priced it at. Only at the deepest level — it is 64 lines per coupler,
+  /// which is one chip under a lens and not a run's log.
   void explain(const std::string& line) const {
-    if (verbosity_ >= 2) {
-      say("    " + line);
-    }
+    report_.line(Detail::Solver, line);
   }
-  [[nodiscard]] bool explaining() const { return verbosity_ >= 2; }
+  [[nodiscard]] bool explaining() const {
+    return report_.wants(Detail::Solver);
+  }
 
   /// Whether a page asks for records of `kind`.
   [[nodiscard]] bool wants(const std::string& kind) const {
@@ -1728,6 +1715,8 @@ public:
     ++sweepSerial_;
     for (std::uint32_t round = 0; round < pass.rounds; ++round) {
       const bool forward = (round % 2) == 0;
+      const auto roundName = std::format("round {} {}", round + 1,
+                                         forward ? "forward" : "backward");
       frame_.pass = passTag(pass.name);
       frame_.round = round;
       frame_.forward = forward;
@@ -1735,6 +1724,7 @@ public:
       std::uint32_t tried = 0;
       std::uint32_t won = 0;
       for (std::uint32_t at = 0; at < total; ++at) {
+        report_.progress(pass.name, roundName, at, total);
         const auto slot = forward ? at : (total - 1 - at);
         auto& wire = wires[members[slot]];
         if (!wire.feasible || (wire.routed && pass.keepDrawn)) {
@@ -1772,11 +1762,13 @@ public:
                     : 0;
       }
       const auto fails = unrouted + open + tooShort;
-      say(std::format("{} round {} {}: tried {}, routed {}, unrouted {}, "
-                      "open {}, short {} | Fails: {} | Bad: {}",
-                      pass.name, round, forward ? "forward " : "backward",
-                      tried, won, unrouted, open, tooShort, tooShort,
-                      unrouted + open));
+      report_.progress(pass.name, roundName, total, total);
+      report_.entry(Detail::Steps, roundName,
+                    {{.text = std::format("tried {}", tried)},
+                     {.text = std::format("routed {}", won)},
+                     verdict("unrouted", unrouted),
+                     verdict("open", open),
+                     verdict("short", tooShort)});
       if (fails == 0) {
         break;
       }
@@ -1811,7 +1803,7 @@ public:
     // The second level of verbosity ends the pass on what every round came
     // to, wire by wire: how many found a way in phase 1, how many only after
     // relaxation, and which found none.
-    if (verbosity_ >= 1) {
+    if (report_.wants(Detail::Items)) {
       for (std::size_t round = 0; round < rounds_.size(); ++round) {
         const auto& record = rounds_[round];
         std::string failed;
@@ -1821,7 +1813,7 @@ public:
         say(std::format(
             "{} round {} {}: {} found a way in phase 1, {} after "
             "relaxation, {} failed{}{}",
-            pass.name, round, record.forward ? "forward " : "backward",
+            pass.name, round + 1, record.forward ? "forward" : "backward",
             record.normal, record.relaxed, record.failed.size(),
             record.failed.empty() ? "" : ":" + failed,
             record.tooShort == 0 ? ""
@@ -1918,7 +1910,7 @@ public:
       lift(wire);
       const bool open =
           conflictsOf(wire, wires) != 0 || crossesItsChain(wire, wires);
-      if (open && verbosity_ >= 1) {
+      if (open && report_.wants(Detail::Items)) {
         say(std::format("  {} is open in the room of {}", wireId(wire),
                         whoBlocks(wire, wires)));
       }
@@ -1935,7 +1927,7 @@ public:
            breaksAFeedlineRule(wire, wire.way,
                                startStubOf(wire, tuning_.straightStart),
                                wires));
-      if (crossing && verbosity_ >= 1) {
+      if (crossing && report_.wants(Detail::Items)) {
         say(std::format("  {} crosses at {}", wireId(wire),
                         whereItCrosses(wire, wires)));
       }
@@ -2235,7 +2227,7 @@ public:
         hit.names += std::format("{}{} at {:.1f}", n == 0 ? "" : ", ",
                                  wireId(wires[near[n].second]), near[n].first);
       }
-      if (verbosity_ >= 1) {
+      if (report_.wants(Detail::Items)) {
         tell(std::format(
             "length point of {} at ({},{}), band {} cells, "
             "nearest: {}",
@@ -2323,27 +2315,112 @@ public:
         exact_ ? std::format(" by more than {:.0f}", toleranceUnits()) : ""));
   }
 
-  /// The summary line of a pass, or of the stage. `Fails` counts the
-  /// resonators of the wrong length (short or long); `Bad` counts the wires
-  /// with no usable way (unrouted, open, crossing a feedline or meeting
-  /// itself), each wire once.
+  /// The figure of how many wires have a way.
+  [[nodiscard]] static Figure drawnFigure(const Fails& fails,
+                                          const std::uint32_t total) {
+    return {.text = std::format("drawn {}/{}", fails.drawn, total)};
+  }
+
+  /// The figures a pass ends on: how many wires have a way, and the verdicts
+  /// against the rest. `short` and `long` count the resonators of the wrong
+  /// length; `bad` counts the wires with no usable way (unrouted, open,
+  /// crossing a feedline or meeting itself), each wire once.
+  [[nodiscard]] std::vector<Figure>
+  verdictFigures(const Fails& fails, const std::uint32_t total) const {
+    std::vector<Figure> figures{drawnFigure(fails, total),
+                                verdict("unrouted", fails.unrouted)};
+    if (fails.feedlinesUnrouted != 0) {
+      figures.push_back({.text = std::format("{} of them feedline edges",
+                                             fails.feedlinesUnrouted)});
+    }
+    figures.push_back(verdict("open", fails.open));
+    figures.push_back(verdict("short", fails.tooShort));
+    if (exact_) {
+      figures.push_back(verdict("long", fails.tooLong));
+    }
+    if (feedlinePass_) {
+      figures.push_back(verdict("crossing", fails.crossing));
+    }
+    if (fails.loops != 0) {
+      figures.push_back(verdict("meeting itself", fails.loops));
+    }
+    figures.push_back(verdict("bad", fails.broken));
+    return figures;
+  }
+
+  /// The figures of the coupler insertion: its edges, their angle cost and
+  /// the verdict of the capacity check on the chip, where the check judged
+  /// it.
+  [[nodiscard]] std::vector<Figure> insertionFigures() const {
+    std::vector<Figure> figures{
+        {.text = std::format("edges {}/{}", insertionDrawn_, edges_.size())},
+        {.text = std::format("angle cost {}", insertionAngle_)}};
+    if (sat_.has_value()) {
+      figures.push_back({.text = *sat_ ? "SAT" : "UNSAT",
+                         .tone = *sat_ ? Tone::Good : Tone::Bad});
+    } else if (!tuning_.capacityCheck) {
+      figures.push_back({.text = "capacity check off"});
+    }
+    return figures;
+  }
+
+  /// The figures of one phase of the stage, by its index in `PHASES`, over
+  /// `members`.
+  [[nodiscard]] std::vector<Figure>
+  phaseFigures(const std::size_t phase, std::vector<Wire>& wires,
+               const std::vector<std::uint32_t>& members) {
+    if (phase == 2) {
+      return insertionFigures();
+    }
+    // The count says nothing: the entry carries the figures.
+    const auto loud = std::exchange(report_, Report{});
+    const auto fails = failsOf(wires, members);
+    report_ = loud;
+    const auto total = static_cast<std::uint32_t>(members.size());
+    switch (phase) {
+    case 0:
+      return {drawnFigure(fails, total), verdict("short", fails.tooShort),
+              verdict("bad", fails.broken)};
+    case 1:
+      return {verdict("short", fails.tooShort), verdict("long", fails.tooLong)};
+    case 3:
+      return {drawnFigure(fails, total), verdict("short", fails.tooShort),
+              verdict("long", fails.tooLong),
+              verdict("crossing", fails.crossing),
+              verdict("bad", fails.broken)};
+    default:
+      return {verdict("short", fails.tooShort), verdict("long", fails.tooLong),
+              verdict("bad", fails.broken)};
+    }
+  }
+
+  /// Report the result of the stage, once: every wire of the plan, and as
+  /// its fails the wires with no usable way. A resonator of the wrong length
+  /// is a verdict of its own and not a fail: a run that ends with one still
+  /// made a plan, and its exit code says so.
+  void reportResult(const Fails& fails, const std::uint32_t total) const {
+    std::vector<Figure> figures{
+        drawnFigure(fails, total), verdict("short", fails.tooShort),
+        verdict("long", fails.tooLong), verdict("bad", fails.broken)};
+    if (insertionDone_) {
+      const auto insertion = insertionFigures();
+      figures.insert(figures.end(), insertion.begin() + 1, insertion.end());
+    }
+    report_.result(figures, fails.broken);
+    tellFails("final routing", fails);
+  }
+
+  /// The entry a pass ends on, and at the level of the items the wires
+  /// behind each of its verdicts.
   void sayFails(const std::string& name, const Fails& fails,
                 const std::uint32_t total) const {
-    say(std::format(
-        "{}: {} of {} drawn, {} unrouted{}, {} open, {} short{}{}{} "
-        "| Fails: {} | Bad: {}",
-        name, fails.drawn, total, fails.unrouted,
-        fails.feedlinesUnrouted == 0
-            ? std::string{}
-            : std::format(" ({} feedline edges)", fails.feedlinesUnrouted),
-        fails.open, fails.tooShort,
-        exact_ ? std::format(", {} long", fails.tooLong) : std::string{},
-        feedlinePass_ ? std::format(", {} crossing a feedline", fails.crossing)
-                      : std::string{},
-        fails.loops == 0 ? std::string{}
-                         : std::format(", {} meeting itself", fails.loops),
-        fails.tooShort + fails.tooLong, fails.broken));
-    if (verbosity_ >= 1 && fails.total() != 0) {
+    report_.entry(Detail::Steps, name, verdictFigures(fails, total));
+    tellFails(name, fails);
+  }
+
+  /// The wires behind each verdict, at the level of the items.
+  void tellFails(const std::string& name, const Fails& fails) const {
+    if (report_.wants(Detail::Items) && fails.total() != 0) {
       const auto join = [](const std::vector<std::string>& ids) {
         std::string joined;
         for (const auto& id : ids) {
@@ -2389,6 +2466,8 @@ public:
       frame_.forward = forward;
       std::uint32_t moved = 0;
       for (std::uint32_t at = 0; at < total; ++at) {
+        report_.progress(pass.name, std::format("round {}", round + 1), at,
+                         total);
         const auto slot = forward ? at : (total - 1 - at);
         auto& wire = wires[members[slot]];
         if (!wire.drawn || !wire.feasible) {
@@ -2889,7 +2968,7 @@ public:
         // None of the allowed offsets fits this coupler: it takes every
         // offset, as without `couplerOffsets`.
         ++offsetFallbacks_;
-        say(std::format("[Coupler Insertion] coupler for resonator {}: no "
+        say(std::format("coupler insertion: coupler for resonator {}: no "
                         "option on the allowed offsets {} fits — every "
                         "offset is allowed for it",
                         wireId(wire), offsetsText(offsets)));
@@ -2987,7 +3066,7 @@ public:
         // (`atLauncher`).
         if (points.front().fixed != points.back().fixed) {
           say(std::format(
-              "[Coupler Insertion] chain {}: one launcher, a reflector at its "
+              "coupler insertion: chain {}: one launcher, a reflector at its "
               "{} end — its {} edge runs between couplers",
               chains_.size(), points.front().fixed ? "last" : "first",
               points.front().fixed ? "last" : "first"));
@@ -3041,7 +3120,7 @@ public:
       for (std::size_t at = 0; at < edges; ++at) {
         bridgers_[chain][at] = bridgersOf(wires, chain, at);
         if (!bridgers_[chain][at].empty()) {
-          tell(std::format("[Coupler Insertion] chain {} edge {}->{}: {} plain "
+          tell(std::format("coupler insertion: chain {} edge {}->{}: {} plain "
                            "wire{} must cross it ({})",
                            chain, at, at + 1, bridgers_[chain][at].size(),
                            bridgers_[chain][at].size() == 1 ? "" : "s",
@@ -3053,7 +3132,7 @@ public:
     recordCouplerOptions(wires);
 
     say(std::format(
-        "[Coupler Insertion] settings: end edge weight {:g}, coupler offsets "
+        "coupler insertion: settings: end edge weight {:g}, coupler offsets "
         "{}{}, shortfall {:.0f}%, moved into the box by up to {} cells; room: "
         "pitch {}, margin {}, channel reach {}",
         tuning_.chainEndEdgeWeight, offsetsText(tuning_.couplerOffsets),
@@ -3173,7 +3252,7 @@ public:
             prior.way = std::move(again);
             chainEdgePaths_[edge.chain][before->from] = prior.way;
             say(std::format(
-                "[Coupler Insertion] edge f{} chain {} ({}->{}): no way after "
+                "coupler insertion: edge f{} chain {} ({}->{}): no way after "
                 "f{}, but both fit with f{} laid first — f{} routed again",
                 wire.slot, edge.chain, edge.from, edge.to, prior.slot,
                 wire.slot, prior.slot));
@@ -3220,7 +3299,7 @@ public:
         place(wire);
       }
       tell(std::format(
-          "[Coupler Insertion] edge f{} chain {} ({}->{}): {}", wire.slot,
+          "coupler insertion: edge f{} chain {} ({}->{}): {}", wire.slot,
           edge.chain, edge.from, edge.to,
           wire.drawn ? std::format(
                            "{} cells, angle {}{}", wire.way.size(),
@@ -3244,6 +3323,9 @@ public:
         }
       }
     }
+    insertionDone_ = true;
+    insertionDrawn_ = drawn;
+    insertionAngle_ = angle;
     for (std::uint32_t index = 0; index < couplers_.size(); ++index) {
       sayCoupler(wires, index);
     }
@@ -3409,7 +3491,7 @@ public:
               continue;
             }
             explain(std::format(
-                "[Coupler Insertion]   '{}' offset {} port {}{}: option {} at "
+                "coupler insertion:   '{}' offset {} port {}{}: option {} at "
                 "place {} of {} ({:.0f} of {:.0f} cells to the port), "
                 "angle {}°, centre ({},{}), {} priced cells",
                 wireId(resonator), offset, secondPort ? 2 : 1,
@@ -3430,7 +3512,7 @@ public:
           }
           if (!got && explaining()) {
             explain(std::format(
-                "[Coupler Insertion]   '{}' offset {} port {}{}: no place of "
+                "coupler insertion:   '{}' offset {} port {}{}: no place of "
                 "{} tried fits — last refusal: {}",
                 wireId(resonator), offset, secondPort ? 2 : 1,
                 secondStraight == 0
@@ -5452,7 +5534,7 @@ public:
     auto forward = walk(from->second, to->second);
     auto backward = walk(to->second, from->second);
     if (backward.size() < forward.size()) {
-      tell(std::format("[Coupler Insertion] chain {} edge {}->{}: the ring "
+      tell(std::format("coupler insertion: chain {} edge {}->{}: the ring "
                        "runs the other way round it ({} wires forward, {} "
                        "back); the shorter arc is taken",
                        chain, at, at + 1, forward.size(), backward.size()));
@@ -5697,7 +5779,7 @@ public:
         loose += routing::lanesOf(run, pitch, 0);
       }
       tell(std::format(
-          "[Coupler Insertion] room R1 chain {} edge {}->{} (f{}): {} plain "
+          "coupler insertion: room R1 chain {} edge {}->{} (f{}): {} plain "
           "wire{} must cross it ({}); its straights carry {} lane{} over {} "
           "run{} of {} cells (pitch {}, margin {}; {} at margin 0) — {}",
           edge.chain, edge.from, edge.to, wire.slot, need.size(),
@@ -5731,7 +5813,7 @@ public:
       ++room_.couplerChannels;
       if (!found.narrows) {
         tell(std::format(
-            "[Coupler Insertion] room R2 chain {} coupler '{}' option {}: "
+            "coupler insertion: room R2 chain {} coupler '{}' option {}: "
             "the arms of f{} and f{} do not come closer than at the pad "
             "({:.1f} cells, {}) — silent",
             chain, wireId(wires[coupler.wire]), coupler.chosen, in.slot,
@@ -5752,7 +5834,7 @@ public:
         ++room_.committedTightAlong;
       }
       tell(std::format(
-          "[Coupler Insertion] room R2 chain {} coupler '{}' option {}: "
+          "coupler insertion: room R2 chain {} coupler '{}' option {}: "
           "channel between f{} and f{} narrows to {:.1f} cells at ({},{}), "
           "{} cells past the pad (from {:.1f} at the pad), {}; {} wire{} in "
           "it ({}{}), {} running along it ({}); need {} — {}; along-runners "
@@ -5861,7 +5943,7 @@ public:
           room_.r3Near[3] += own_.distance <= 19.0 ? 1 : 0;
         }
         tell(std::format(
-            "[Coupler Insertion] room R3 chain {} coupler '{}' option {}: {}"
+            "coupler insertion: room R3 chain {} coupler '{}' option {}: {}"
             "{}; {}",
             chain, wireId(wires[coupler.wire]), coupler.chosen,
             said(own_, "pad or lead"),
@@ -6054,7 +6136,7 @@ public:
           static_cast<std::size_t>(wire.endStub + BEND_RADIUS), wire.key);
       if (worst > 0.0) {
         marked.push_back(std::format("f{} ({})", wire.slot, found.note));
-        tell(std::format("[Coupler Insertion] squeeze chain {} edge {}->{} "
+        tell(std::format("coupler insertion: squeeze chain {} edge {}->{} "
                          "(f{}): {}, short by {:.0f}, the line ends at ({},{})",
                          edge.chain, edge.from, edge.to, wire.slot, found.note,
                          worst, found.to.x, found.to.y));
@@ -7375,7 +7457,7 @@ public:
         gates.push_back(mouth);
       }
       for (const auto& note : mouths.notes) {
-        say("[Capacity] " + note);
+        say("capacity: " + note);
       }
     }
     auto slotsFrom = gates.size();
@@ -7458,7 +7540,7 @@ public:
     for (const auto at : order) {
       const auto& one = measured[at];
       tell(std::format(
-          "[Bottleneck] {} · {}: {:.1f} cells from ({},{}) to ({},{}), holds "
+          "bottleneck: {} · {}: {:.1f} cells from ({},{}) to ({},{}), holds "
           "{}, "
           "crossed now by {} ({})",
           endName(walls, one.gate.first), endName(walls, one.gate.second),
@@ -8479,7 +8561,7 @@ public:
       const auto& stretch = graph[index];
       const auto& way = wires[stretch.id].way;
       tell(std::format(
-          "[Capacity] stretch {} cells {}..{} from ({},{}) to ({},{}), "
+          "capacity: stretch {} cells {}..{} from ({},{}) to ({},{}), "
           "{:.0f} cells, chambers c{} and c{}, takes {}, open to {}",
           wireId(wires[stretch.id]), stretch.first, stretch.last,
           way[stretch.first].x, way[stretch.first].y, way[stretch.last].x,
@@ -8531,7 +8613,7 @@ public:
       }
       const auto& feedlines = crossesOf[demand];
       tell(std::format(
-          "[Capacity] {}{}: {}", wireId(wires[wireOf[demand]]),
+          "capacity: {}{}: {}", wireId(wires[wireOf[demand]]),
           feedlines.empty()
               ? std::string()
               : std::format(", crossing {}", namesOf(wires, feedlines)),
@@ -8562,7 +8644,7 @@ public:
         const auto one = std::format(
             "{} +{} ({}/{}: {})", nameOf(edge), check.overflow[index],
             edge.through.size(), edge.capacity, namesOf(wires, edge.through));
-        tell(std::format("[Capacity] over: {}", one));
+        tell(std::format("capacity: over: {}", one));
         overList += (overList.empty() ? "" : " · ") + one;
       }
     }
@@ -9521,7 +9603,7 @@ public:
                    std::format("chain {} {}->{}{}", edge.chain, edge.from,
                                edge.to, found.empty() ? ", no way" : ""));
     }
-    if (found.empty() && verbosity_ >= 1) {
+    if (found.empty() && report_.wants(Detail::Items)) {
       const auto describe = [&](const PathPoint& point, const bool isTarget) {
         const auto moved = router_.sanitize(point, isTarget);
         const bool inGrid =
@@ -9967,13 +10049,13 @@ public:
       open.push_back(static_cast<std::uint32_t>(option));
     }
     if (open.empty() && !all.empty()) {
-      tell(std::format("[Coupler Insertion]   chain {} waypoint {}: every "
+      tell(std::format("coupler insertion:   chain {} waypoint {}: every "
                        "option lies on a feedline; the guard stands down",
                        chain, at));
       return all;
     }
     if (feedlines != nullptr && open.size() != all.size()) {
-      tell(std::format("[Coupler Insertion]   chain {} waypoint {}: {} of {} "
+      tell(std::format("coupler insertion:   chain {} waypoint {}: {} of {} "
                        "options closed, their body on a feedline",
                        chain, at, all.size() - open.size(), all.size()));
     }
@@ -10236,7 +10318,7 @@ public:
                           points[at].fixed ? std::string("launcher")
                                            : std::to_string(open[at][run[at]]));
         }
-        tell(std::format("[Coupler Insertion]   chain {}: every feedline edge "
+        tell(std::format("coupler insertion:   chain {}: every feedline edge "
                          "drawn on options {} -> cost {}",
                          chain, options, cost));
       };
@@ -10247,7 +10329,7 @@ public:
       problem.progress = [&](const routing::ChainSolution& sofar,
                              const std::size_t queued) {
         say(std::format(
-            "[Chain Progress] chain {} go {}{}: {} steps priced, {} edge "
+            "chain progress: chain {} go {}{}: {} steps priced, {} edge "
             "searches, {} prefixes expanded, {} left unpriced, {} open, "
             "deepest layer {} of {}, {}; {:.1f}s",
             chain, go, stepRefuses_ ? " under the capacity rule" : "",
@@ -10339,7 +10421,7 @@ public:
         const std::vector<std::uint32_t> lost(verdict.lost.begin(),
                                               verdict.lost.end());
         tell(std::format(
-            "[Capacity Step] chain {} f{} ({}->{}) on options {}: {}{}; "
+            "capacity step: chain {} f{} ({}->{}) on options {}: {}{}; "
             "{}{}{}; {:.3f}s",
             chain, firstSlot + at, at, at + 1, named,
             lost.empty() ? std::string("SAT") : std::string("UNSAT"),
@@ -10501,7 +10583,7 @@ public:
                        static_cast<std::int64_t>(
                            weighted(wasTurning, edgeWeight(chain, at - 1)));
               tell(std::format(
-                  "[Coupler Insertion]   chain {} edge {}: no way after edge "
+                  "coupler insertion:   chain {} edge {}: no way after edge "
                   "{}, but both fit with edge {} laid first — edge {} redone "
                   "at {} instead of {}",
                   chain, at, at - 1, at, at - 1, nowTurning, wasTurning));
@@ -10577,7 +10659,7 @@ public:
         coupler.jogsUnlocked = true;
         widened = true;
         tell(std::format(
-            "[Coupler Insertion]   '{}' chain {}: no prefix reaches past it "
+            "coupler insertion:   '{}' chain {}: no prefix reaches past it "
             "on plain options — opening the second-dogleg options",
             wireId(wires[coupler.wire]), chain));
       };
@@ -10600,7 +10682,7 @@ public:
       const std::vector<std::uint32_t> lost(unchained.lost.begin(),
                                             unchained.lost.end());
       say(std::format(
-          "[Capacity Step] chain {}: {} steps checked in {:.1f}s ({:.3f}s "
+          "capacity step: chain {}: {} steps checked in {:.1f}s ({:.3f}s "
           "each), {} of them SAT, {} closed a wire, {} refused for it; "
           "without the chain {} wire{} without a way ({}){}",
           chain, stepChecks, stepSeconds,
@@ -10619,7 +10701,7 @@ public:
                               CAPACITY_STEPS.at(step),
                               fastLaps_.at(step) / fastPasses_);
         }
-        say(std::format("[Capacity Fast] chain {}: {} passes, seconds per "
+        say(std::format("capacity check: chain {}: {} passes, seconds per "
                         "pass: {}",
                         chain, fastPasses_, laps));
         fastLaps_ = {};
@@ -10633,7 +10715,7 @@ public:
             answer.chosen.begin() + static_cast<std::ptrdiff_t>(e + 2));
         const auto found = checked.find(run);
         if (found == checked.end()) {
-          say(std::format("[Capacity Step] chain {} f{}: not checked", chain,
+          say(std::format("capacity step: chain {} f{}: not checked", chain,
                           firstSlot + e));
           continue;
         }
@@ -10641,7 +10723,7 @@ public:
         const std::vector<std::uint32_t> edgeLost(one.verdict.lost.begin(),
                                                   one.verdict.lost.end());
         say(std::format(
-            "[Capacity Step] chain {} f{}: {}{}", chain, firstSlot + e,
+            "capacity step: chain {} f{}: {}{}", chain, firstSlot + e,
             edgeLost.empty()
                 ? std::string("SAT")
                 : std::format("UNSAT — {} wire{} without a way ({}), short "
@@ -11110,7 +11192,7 @@ public:
               for (const auto& name : ownLost) {
                 lostText += " " + name;
               }
-              tell(std::format("[Global SAT] chain {} segment {}: locally "
+              tell(std::format("global SAT: chain {} segment {}: locally "
                                "UNSAT on options{} (lost{})",
                                chain, lo, named, lostText));
             }
@@ -11123,7 +11205,7 @@ public:
             for (const auto option : options) {
               named += std::format(" {}", option);
             }
-            tell(std::format("[Global SAT] chain {} segment {}: locally SAT "
+            tell(std::format("global SAT: chain {} segment {}: locally SAT "
                              "on options{}{}",
                              chain, lo, named,
                              fits ? "" : " with the chain alone"));
@@ -11171,7 +11253,7 @@ public:
       if (!atOver && kept.size() > tuning_.globalSatStates) {
         kept.resize(tuning_.globalSatStates);
       }
-      say(std::format("[Global SAT] chain {}: {} runs of {} segment{}, {} "
+      say(std::format("global SAT: chain {}: {} runs of {} segment{}, {} "
                       "locally SAT on other options ({} with the other chains "
                       "standing){}; {} state{} kept, {} end pair{}; {:.1f}s, "
                       "{:.1f}s of it in slot checks",
@@ -11227,7 +11309,8 @@ public:
     std::vector<std::array<double, 2>> gatesAtCommit;
     auto lost = wholeChipLost(wires, &touching, &gatesAtCommit);
     if (lost.empty() && complete) {
-      say("[Global SAT] the chip is SAT after the commit; nothing to search");
+      sat_ = true;
+      say("global SAT: the chip is SAT after the commit; nothing to search");
       recordNoSearch("SAT after the commit");
       return false;
     }
@@ -11239,7 +11322,7 @@ public:
     for (const auto& name : lost) {
       named += (named.empty() ? "" : " ") + name;
     }
-    say(std::format("[Global SAT] the chip is UNSAT ({}); searching locally "
+    say(std::format("global SAT: the chip is UNSAT ({}); searching locally "
                     "SAT chain states",
                     named));
     record("global-sat", {{"event", "start"}, {"lost", lost}});
@@ -11260,7 +11343,7 @@ public:
       }
     }
     if (!focusText.empty()) {
-      say(std::format("[Global SAT] the edges over lie on {}", focusText));
+      say(std::format("global SAT: the edges over lie on {}", focusText));
     }
     // The chains at an edge over are collected one at a time, and the states
     // of each are tried on their own before the next chain is collected;
@@ -11461,6 +11544,9 @@ public:
                              const std::string_view stage) {
       const auto tryBegan = std::chrono::steady_clock::now();
       ++checks;
+      report_.progress("global SAT search",
+                       std::format("combination {}", checks), checks,
+                       tuning_.globalSatTries);
       backToStart();
       const auto moveBegan = std::chrono::steady_clock::now();
       restoring += moveBegan - tryBegan;
@@ -11497,7 +11583,7 @@ public:
       if (against.empty()) {
         for (std::uint32_t chain = 0; chain < chains; ++chain) {
           if (pick[chain] != 0) {
-            tell(std::format("[Global SAT] chain {} state {} stands on "
+            tell(std::format("global SAT: chain {} state {} stands on "
                              "options{}",
                              chain, pick[chain],
                              optionsText(chainStates_[chain][pick[chain]])));
@@ -11510,7 +11596,7 @@ public:
       for (const auto& name : against) {
         lostText += (lostText.empty() ? "" : " ") + name;
       }
-      tell(std::format("[Global SAT] combination {} ({}{}): UNSAT ({})", checks,
+      tell(std::format("global SAT: combination {} ({}{}): UNSAT ({})", checks,
                        stage, moved, lostText));
       failed.push_back(
           {.pick = pick,
@@ -11539,10 +11625,11 @@ public:
       return false;
     };
     const auto saySat = [&]() {
+      sat_ = true;
       const auto seconds = std::chrono::duration<double>(
                                std::chrono::steady_clock::now() - began)
                                .count();
-      say(std::format("[Global SAT] SAT after {} combination{}: {}; {:.1f}s",
+      say(std::format("global SAT: SAT after {} combination{}: {}; {:.1f}s",
                       checks, checks == 1 ? "" : "s", satMoved, seconds));
       record("global-sat", {{"event", "result"},
                             {"searched", true},
@@ -11555,23 +11642,24 @@ public:
     const auto sayCombined = [&]() {
       field_.untrack();
       say(std::format(
-          "[Global SAT] {} combination{} in {:.1f}s: {:.1f}s back to the "
+          "global SAT: {} combination{} in {:.1f}s: {:.1f}s back to the "
           "commit, {:.1f}s moving couplers, {:.1f}s in whole-chip checks; {} "
           "combination{} skipped as tried before",
           checks, checks == 1 ? "" : "s", combined.count(), restoring.count(),
           moving.count(), judging.count(), repeated, repeated == 1 ? "" : "s"));
     };
     const auto sayCollected = [&]() {
-      say(std::format("[Global SAT] states collected in {:.1f}s",
+      say(std::format("global SAT: states collected in {:.1f}s",
                       collecting.count()));
     };
     const auto sayNone = [&]() {
+      sat_ = false;
       backToStart();
       sayCombined();
       const auto seconds = std::chrono::duration<double>(
                                std::chrono::steady_clock::now() - began)
                                .count();
-      say(std::format("[Global SAT] no SAT combination in {} checked; the "
+      say(std::format("global SAT: no SAT combination in {} checked; the "
                       "chip as the commit left it; {:.1f}s",
                       checks, seconds));
       record("global-sat", {{"event", "result"},
@@ -11610,7 +11698,7 @@ public:
       for (std::size_t k = 1; k < kept.size(); ++k) {
         picks.emplace_back(chains, 0)[chain] = k;
       }
-      say(std::format("[Global SAT] stage 1: chain {} alone on its {} "
+      say(std::format("global SAT: stage 1: chain {} alone on its {} "
                       "state{}",
                       chain, picks.size(), picks.size() == 1 ? "" : "s"));
       if (tryAll(picks, "stage 1: ")) {
@@ -11621,7 +11709,7 @@ public:
       }
       if (checks >= tuning_.globalSatTries) {
         sayCollected();
-        say("[Global SAT] out of combinations after stage 1");
+        say("global SAT: out of combinations after stage 1");
         sayNone();
         return true;
       }
@@ -11655,7 +11743,7 @@ public:
           tried);
       if (!next.has_value()) {
         sayCollected();
-        say(std::format("[Global SAT] stage 2 round {}: no failed combination "
+        say(std::format("global SAT: stage 2 round {}: no failed combination "
                         "names a chain to move",
                         round));
         sayNone();
@@ -11667,7 +11755,7 @@ public:
       for (const auto chain : next->movable) {
         chainList += std::format("{}{}", chainList.empty() ? "" : " ", chain);
       }
-      say(std::format("[Global SAT] stage 2 round {}: on combination {} ({}; "
+      say(std::format("global SAT: stage 2 round {}: on combination {} ({}; "
                       "{} against it), moving one of chains {}; {} "
                       "combination{}",
                       round, base.check,
@@ -11685,7 +11773,7 @@ public:
       }
       if (checks >= tuning_.globalSatTries) {
         sayCollected();
-        say(std::format("[Global SAT] out of combinations in stage 2 round {}",
+        say(std::format("global SAT: out of combinations in stage 2 round {}",
                         round));
         sayNone();
         return true;
@@ -11702,6 +11790,8 @@ public:
     // own chip, judged by its own feedline's wires.
     const std::vector<bool> none(chains_.size(), false);
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      report_.progress("coupler insertion", std::format("chain {}", chain + 1),
+                       chain, chains_.size());
       soloChain_ = chain;
       const auto own = chainWires(wires, chain);
       localWires_ = &own;
@@ -11710,7 +11800,7 @@ public:
       auto answer = solveChainAStar(wires, chain);
       if (!answer.solved && stepRefuses_) {
         say(answer.refusalLimit
-                ? std::format("[Coupler Insertion] chain {}: the capacity rule "
+                ? std::format("coupler insertion: chain {}: the capacity rule "
                               "refused {} step{} before a run of options "
                               "joined the chain (chain_rule_refusals, {} "
                               "steps routed) — searched again without the "
@@ -11718,7 +11808,7 @@ public:
                               chain, answer.refusedBeforeRun,
                               answer.refusedBeforeRun == 1 ? "" : "s",
                               answer.routed)
-                : std::format("[Coupler Insertion] chain {}: no run of options "
+                : std::format("coupler insertion: chain {}: no run of options "
                               "joins the chain without closing a wire ({} "
                               "steps routed) — searched again without the "
                               "capacity rule",
@@ -11735,7 +11825,7 @@ public:
       if (!answer.solved) {
         // **The chain is left as it stands**, and the edges it cannot draw
         // are reported by the commit.
-        say(std::format("[Coupler Insertion] chain {}: no run of options "
+        say(std::format("coupler insertion: chain {}: no run of options "
                         "joins the chain — leaving it as it stands ({} steps "
                         "routed)",
                         chain, answer.routed));
@@ -11752,7 +11842,7 @@ public:
           chainEdgePaths_[chain][at] = answer.ways[at];
         }
       }
-      say(std::format("[Coupler Insertion] chain {}: {} {} over {} layers, "
+      say(std::format("coupler insertion: chain {}: {} {} over {} layers, "
                       "{} prefixes expanded, {} steps routed",
                       chain, answerWord(answer), answer.cost, points.size(),
                       answer.expansions, answer.routed) +
@@ -11764,7 +11854,7 @@ public:
     // counted here is an edge the commit will route again from scratch.
     const auto faults = stateFaults(wires);
     say(std::format(
-        "[Coupler Insertion] {} of {} chains settled{}{}, {} edge{} "
+        "coupler insertion: {} of {} chains settled{}{}, {} edge{} "
         "would not survive this state",
         settled, chains_.size(), " each on its own chip",
         tuning_.capacityCheck ? ", each checked against itself alone" : "",
@@ -12039,7 +12129,7 @@ public:
         verdict.shortBy = static_cast<std::uint32_t>(result.over.size());
         verdict.over = result.over;
       } catch (const std::invalid_argument& error) {
-        tell(std::format("[Capacity Step] the slot check failed ({}); the "
+        tell(std::format("capacity step: the slot check failed ({}); the "
                          "check by stretches decides",
                          error.what()));
       }
@@ -12414,7 +12504,7 @@ public:
                        {"drawn", wire.drawn},
                        {"cells", wire.way.size()},
                        {"way", laid}});
-      say(std::format("[Coupler Session] '{}' on option {}: edge {} {}",
+      say(std::format("coupler session: '{}' on option {}: edge {} {}",
                       wireId(wires[coupler.wire]), option, wireId(wire),
                       wire.drawn
                           ? std::format("drawn, {} cells", wire.way.size())
@@ -12520,7 +12610,7 @@ public:
                     {"graph", std::move(judged)}}
             .dump();
       } catch (const std::invalid_argument& error) {
-        say(std::format("[Coupler Session] the slot check failed ({}); the "
+        say(std::format("coupler session: the slot check failed ({}); the "
                         "verdict of the stretches stands",
                         error.what()));
       }
@@ -12734,7 +12824,7 @@ public:
                            : std::string("?");
     const auto way = lengthInUnits(wire.way);
     tell(std::format(
-        "[Coupler Insertion] Coupler for '{} -> {}' inserted at ({}, {}) "
+        "coupler insertion: Coupler for '{} -> {}' inserted at ({}, {}) "
         "with angle {}°, resonator leaves on {}° ({}), search starts on "
         "{}°, offset {} of the nearest launcher, resonator "
         "port {} at ({},{}), "
@@ -12836,7 +12926,7 @@ public:
                     "runs guarded by {} cells more, {} pair{} fenced",
                     tuning_.terminalStubExtra, tuning_.fencePairs,
                     tuning_.fencePairs == 1 ? "" : "s"));
-    if (feedlinePass_ && verbosity_ >= 1) {
+    if (feedlinePass_ && report_.wants(Detail::Items)) {
       std::string order;
       for (const auto member : members) {
         const auto& wire = wires[member];
@@ -13808,7 +13898,7 @@ public:
     problem.progress = [&](const routing::ChainSolution& sofar,
                            const std::size_t queued) {
       say(std::format(
-          "[Chain Progress] {}: {} steps priced, {} prefixes expanded, {} "
+          "chain progress: {}: {} steps priced, {} prefixes expanded, {} "
           "left unpriced, {} open, deepest layer {} of {}, {} runs reached, "
           "{} refused; {:.1f}s",
           name, sofar.routed, sofar.expansions, sofar.pruned, queued,
@@ -14190,14 +14280,10 @@ public:
     local.rounds = tuning_.researchRounds;
     local.name = "targeted repair";
     local.onlyUnsettled = true;
-    const auto verbosity = verbosity_;
-    const auto quiet = progress_;
-    verbosity_ = 0;
-    progress_ = {};
+    const auto loud = std::exchange(report_, Report{});
     sweep(wires, ring, local);
     out.after = failsOf(wires, ignoreOutside ? ring : every);
-    progress_ = quiet;
-    verbosity_ = verbosity;
+    report_ = loud;
     // Which window wires found no way in the last round of the local pass
     // and kept what they had: a wire that fails the window because it was
     // never redrawn reads differently from one redrawn into a fail.
@@ -14509,7 +14595,7 @@ public:
                                  ? std::string("launcher")
                                  : std::to_string(open[k][run[k]]));
     }
-    const auto label = std::format("[Local Agreement] {} run {} (cost {})",
+    const auto label = std::format("local agreement: {} run {} (cost {})",
                                    segmentName(wires, segment), options, cost);
     applyRun(wires, segment, open, run, ways);
     const auto chains = static_cast<std::uint32_t>(chains_.size());
@@ -14626,10 +14712,9 @@ public:
                         {"pad", padCorners(coupler.options[coupler.chosen])}});
       }
       // `routedJson` counts the fails again; its lines stay out of the log.
-      const auto verbosity = verbosity_;
-      verbosity_ = 0;
+      const auto loud = std::exchange(report_, Report{});
       auto routed = json::parse(routedJson(wires));
-      verbosity_ = verbosity;
+      report_ = loud;
       json out{{"id", id},
                {"chain", segment.chain},
                {"lo", segment.lo},
@@ -14666,7 +14751,7 @@ public:
                       const std::vector<std::uint32_t>& every, const Pass& pass,
                       const std::uint32_t runs, const std::size_t spanAsked) {
     const auto began = std::chrono::steady_clock::now();
-    say(std::format("[Local Agreement] {} run{} a segment of {} edges", runs,
+    say(std::format("local agreement: {} run{} a segment of {} edges", runs,
                     runs == 1 ? "" : "s", spanAsked));
     agreement_ = Agreement{.on = true};
     const auto chains = static_cast<std::uint32_t>(chains_.size());
@@ -14682,7 +14767,7 @@ public:
       }
     }
     if (const auto checks = slotCheckNow(wires, agreement_.windowNames,
-                                         "[Local Agreement] as begun");
+                                         "local agreement: as begun");
         checks.has_value()) {
       for (std::uint32_t chain = 0; chain < chains; ++chain) {
         agreement_.baseSat[chain] =
@@ -14701,7 +14786,7 @@ public:
             ripFeedline(wires, members, every, pass, agreement_.windows[chain]);
         restore(wires, taken);
         foreignRoomStale_ = true;
-        say(std::format("[Local Agreement] as begun: feedline {} {}, rip-up "
+        say(std::format("local agreement: as begun: feedline {} {}, rip-up "
                         "{}{}",
                         chain, agreement_.baseSat[chain] ? "SAT" : "UNSAT",
                         agreement_.baseRip[chain].clean ? "clean" : "fails",
@@ -14731,7 +14816,7 @@ public:
     }
     const auto& w = agreement_.whole;
     say(std::format(
-        "==> [Local Agreement] {} segments; feedlines judged: {} SAT and "
+        "==> local agreement: {} segments; feedlines judged: {} SAT and "
         "clean, {} SAT but failing, {} UNSAT but clean, {} UNSAT and "
         "failing; {} not judged; {:.0f}s in the slot check, {:.0f}s "
         "rerouting, {:.0f}s in all",
@@ -14814,21 +14899,19 @@ public:
       ++retriaged;
       // The triage again on the new state, its fail lines silenced; the
       // summary says what remains.
-      const auto verbosity = verbosity_;
-      verbosity_ = 0;
+      const auto loud = std::exchange(report_, Report{});
       fails = failsOf(wires, every);
       segments = blameFails(wires, members, fails);
-      verbosity_ = verbosity;
+      report_ = loud;
       at = 0;
     }
     // Everything down again, so that the field says what the canvas holds.
     for (auto& wire : wires) {
       place(wire);
     }
-    const auto verbosity = verbosity_;
-    verbosity_ = 0;
+    const auto loud = std::exchange(report_, Report{});
     const auto after = failsOf(wires, every);
-    verbosity_ = verbosity;
+    report_ = loud;
     // The fourth guarantee as the stage leaves it: the pass redraws the
     // terminal edges and the repair moves couplers, so the insertion's line
     // is not the last word on it. Only here, under the switch, so that
@@ -15133,12 +15216,12 @@ private:
     } else {
       // Asked before `whatBlocks`, which puts the corridor back without the
       // second pair of neighbours and would misreport an open start.
-      const auto arrival = verbosity_ >= 1
+      const auto arrival = report_.wants(Detail::Items)
                                ? deadOnArrival(wire, wires, pass.straightStart)
                                : std::string{};
       tell(std::format("wire {} · {} · normal: {}, relaxing{}{}", id, where,
                        outcome(),
-                       verbosity_ >= 1 && pass.feedlines
+                       report_.wants(Detail::Items) && pass.feedlines
                            ? whatBlocks(wire, wires, before, after, pass)
                            : std::string{},
                        arrival));
@@ -15261,7 +15344,7 @@ private:
                        level, wireId(ripped),
                        fenced.empty() ? std::string("nothing") : fenced,
                        outcome(),
-                       found.empty() && verbosity_ >= 1
+                       found.empty() && report_.wants(Detail::Items)
                            ? deadOnArrival(wire, wires, pass.straightStart)
                            : std::string{}));
     }
@@ -17551,13 +17634,13 @@ private:
       return;
     }
     const auto width = static_cast<std::int64_t>(scene_.router.width);
-    alongDisc(
-        way, stencilFor(radius),
-        [&](const std::int64_t x, const std::int64_t y) {
-          auto& cell = proximity_[static_cast<std::size_t>((y * width) + x)];
-          cell = static_cast<std::uint16_t>(std::min<std::uint32_t>(
-              CEILING, static_cast<std::uint32_t>(cell) + price));
-        });
+    alongDisc(way, stencilFor(radius),
+              [&](const std::int64_t x, const std::int64_t y) {
+                auto& cell =
+                    proximity_[static_cast<std::size_t>((y * width) + x)];
+                cell = static_cast<std::uint16_t>(std::min<std::uint32_t>(
+                    CEILING, static_cast<std::uint32_t>(cell) + price));
+              });
   }
 
   /// The halo of a released way: a flat disc of `reach` at `peak`, and in
@@ -18492,7 +18575,15 @@ public:
 private:
   const Scene& scene_;
   Tuning tuning_;
-  Progress progress_;
+  Report report_;
+  /// What the coupler insertion came to, for the figures of its phase and of
+  /// the stage: whether it ran, how many of its edges it drew and at what
+  /// angle cost, and whether the chip is SAT by the capacity check, nothing
+  /// while the check has not judged it.
+  bool insertionDone_ = false;
+  std::uint32_t insertionDrawn_ = 0;
+  std::uint32_t insertionAngle_ = 0;
+  std::optional<bool> sat_;
   Debug debug_;
   /// The record kinds the `[debug]` section asks for.
   DebugRecords wanted_;
@@ -18501,7 +18592,6 @@ private:
   /// The capacity graph as data, kept for `capacityGraphJson` while
   /// `graphOnly_` holds.
   std::string capturedGraph_;
-  std::uint32_t verbosity_ = 0;
   DebugFrame frame_;
   /// Per chain, the options of every waypoint of its locally SAT states,
   /// the state it stands on first (`collectChainStates`).
@@ -18528,8 +18618,6 @@ private:
     std::vector<std::pair<std::string, Path>> ways;
   };
   std::vector<RoundRecord> rounds_;
-  std::chrono::steady_clock::time_point began_ =
-      std::chrono::steady_clock::now();
   std::shared_ptr<const MovePrimitives> primitives_;
   routing::AnalyticDubins analytic_;
   routing::SearchScratch scratch_;
@@ -19066,9 +19154,8 @@ public:
   [[nodiscard]] FinalRoutingT
   run(const ChipT& chip, const CapacityPlanT& /*capacity*/,
       const GlobalRoutingT& global, const AssignmentT& assignment,
-      const DetailRoutingT& detail, const ConfigT& config,
-      const Progress& progress, const Debug& debug,
-      const std::uint32_t verbosity) const override {
+      const DetailRoutingT& detail, const ConfigT& config, const Report& report,
+      const Debug& debug) const override {
     if (config.grid == nullptr || config.rules == nullptr) {
       throw std::invalid_argument(
           "the configuration carries no grid section or no design rules");
@@ -19090,8 +19177,7 @@ public:
       (wire.inner ? inner : outer).push_back(wire.key);
     }
 
-    Driver driver(field, tuning, progress, debug, recordsWantedBy(config),
-                  verbosity);
+    Driver driver(field, tuning, report, debug, recordsWantedBy(config));
     driver.attachPorts(portMarksOf(chip, field));
     driver.recordGrid(wires);
     const Measure measure = [&driver](const Path& way) {
@@ -19126,6 +19212,19 @@ public:
     // steer around, so it takes no straight stubs and a band a fraction of
     // the ring's. Then the ring, against the inner circuit and against
     // itself.
+    // Every wire of the plan, counted from the list as it is at the time,
+    // because the coupler insertion appends the edges of the chains to it.
+    const auto everyWire = [&wires]() {
+      std::vector<std::uint32_t> all(wires.size());
+      std::iota(all.begin(), all.end(), 0U);
+      return all;
+    };
+    // Each phase ends on one entry of the summary.
+    const auto endPhase = [&](const std::size_t phase) {
+      report.entry(Detail::Summary, PHASES[phase],
+                   driver.phaseFigures(phase, wires, everyWire()));
+    };
+
     driver.sayTheSetting();
     driver.enterPhase(PHASES[0]);
     driver.sweep(wires, inner, innerPassOf(tuning));
@@ -19133,6 +19232,7 @@ public:
     routing.phases.push_back(snapshotOf(std::string(PHASES[0]), wires, ring,
                                         global.connections.size(), measure));
     driver.recordPhase(PHASES[0], wires);
+    endPhase(0);
 
     // Phase 2. The refinement of the ring.
     if (runs(1)) {
@@ -19141,20 +19241,14 @@ public:
       routing.phases.push_back(snapshotOf(std::string(PHASES[1]), wires, ring,
                                           global.connections.size(), measure));
       driver.recordPhase(PHASES[1], wires);
+      endPhase(1);
     }
 
     // What the tail writes, whatever the run stops after: the edges of the
-    // chains and the couplers as they stand. Every wire is counted from the
-    // list as it is at the time, because the coupler insertion appends the
-    // edges of the chains to it.
+    // chains and the couplers as they stand.
     std::vector<std::uint32_t> edges;
     const auto couplersNow = [&]() {
       return couplersOf(driver, wires, chip, field);
-    };
-    const auto everyWire = [&wires]() {
-      std::vector<std::uint32_t> all(wires.size());
-      std::iota(all.begin(), all.end(), 0U);
-      return all;
     };
 
     // Phase 3. The feedline insertion: the couplers, and the feedline chains
@@ -19169,6 +19263,7 @@ public:
           std::string(PHASES[2]), wires, ring, global.connections.size(),
           measure, edges, couplersNow(), nullptr, &driver.squeezed()));
       driver.recordPhase(PHASES[2], wires);
+      endPhase(2);
     }
 
     // Phase 4. Every wire again under the feedline constraints, in the ring
@@ -19182,6 +19277,7 @@ public:
           std::string(PHASES[3]), wires, ring, global.connections.size(),
           measure, edges, couplersNow(), nullptr, &driver.squeezed()));
       driver.recordPhase(PHASES[3], wires);
+      endPhase(3);
 
       // Phase 5. The refinement of the feedline routing.
       if (runs(4)) {
@@ -19199,6 +19295,7 @@ public:
             std::string(PHASES[4]), wires, ring, global.connections.size(),
             measure, edges, couplersNow(), nullptr, &driver.squeezed()));
         driver.recordPhase(PHASES[4], wires);
+        endPhase(4);
       }
     }
 
@@ -19211,8 +19308,7 @@ public:
     }
     driver.sayResonatorLengths(wires, outer);
     const auto fails = driver.failsOf(wires, everyWire());
-    driver.sayFails("final routing", fails,
-                    static_cast<std::uint32_t>(wires.size()));
+    driver.reportResult(fails, static_cast<std::uint32_t>(wires.size()));
 
     // The end state carries the verdict against every wire, so that a
     // picture of the run marks what the last line counted.
@@ -19265,8 +19361,7 @@ struct CouplerSession::State {
 CouplerSession::CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
                                const AssignmentT& assignment,
                                const DetailRoutingT& detail,
-                               const ConfigT& config, const Progress& progress,
-                               const std::uint32_t verbosity) {
+                               const ConfigT& config, const Report& report) {
   if (config.grid == nullptr || config.rules == nullptr) {
     throw std::invalid_argument(
         "the configuration carries no grid section or no design rules");
@@ -19286,9 +19381,8 @@ CouplerSession::CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
   for (const auto& wire : wires) {
     (wire.inner ? inner : outer).push_back(wire.key);
   }
-  state_->driver =
-      std::make_unique<Driver>(state_->field, state_->tuning, progress, Debug{},
-                               recordsWantedBy(config), verbosity);
+  state_->driver = std::make_unique<Driver>(
+      state_->field, state_->tuning, report, Debug{}, recordsWantedBy(config));
   auto& driver = *state_->driver;
   driver.attachPorts(portMarksOf(chip, state_->field));
   driver.sayTheSetting();

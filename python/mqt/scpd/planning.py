@@ -866,11 +866,11 @@ def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: f
     geometry.clearance = blockade(wire_spacing, min(float(grid.cellWidth), float(grid.cellHeight)))
 
     def to_layout(x: int, y: int) -> Point:
-        # A cell is named by its corner in the frame the partition geometry uses, so the middle of
-        # the cell is half a step on, where the corridor stage puts its own places.
+        # A cell of the detail grid is a point: cell (0, 0) sits on the corner of the chip box, where
+        # the corridor stage puts the centre of its own first cell.
         return (
-            float(grid.origin.x) + (x + 0.5) * float(grid.cellWidth),
-            float(grid.origin.y) + (y + 0.5) * float(grid.cellHeight),
+            float(grid.origin.x) + x * float(grid.cellWidth),
+            float(grid.origin.y) + y * float(grid.cellHeight),
         )
 
     for index, wire in enumerate(_entries(routing.wires)):

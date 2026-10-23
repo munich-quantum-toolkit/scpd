@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -391,8 +390,10 @@ public:
               owner_[first] == owner_[second] ? owner_[first] : NO_OWNER;
           if (crossed != NO_OWNER) {
             // Its own diagonal is never crossed, whatever the search is
-            // allowed to pay: that is a short in one wire.
-            if (crossed == query.wire || query.displacement == 0) {
+            // allowed to pay: that is a short in one wire. Nor is the
+            // diagonal of a wire that is pinned where it is.
+            if (crossed == query.wire || query.displacement == 0 ||
+                guard_[first] != 0 || guard_[second] != 0) {
               continue;
             }
             charge += query.displacement;
@@ -467,6 +468,14 @@ public:
   void occupy(const std::uint32_t cell, const std::uint32_t wire) {
     take(cell, wire);
     guard(cell);
+  }
+
+  /// Keep every search out of one cell, whatever it may displace, or let
+  /// searches in again. A pinned cell counts as guarded, with or without a
+  /// clearance rule.
+  void pin(const std::uint32_t cell, const bool on) {
+    guard_[cell] = static_cast<std::uint16_t>(static_cast<int>(guard_[cell]) +
+                                              (on ? 1 : -1));
   }
 
   /// Charge the clearance of one cell, once.
@@ -732,26 +741,6 @@ struct Mask {
   return std::abs(value - std::round(value)) < 0.25;
 }
 
-/// The cell a place of the plan lies in.
-///
-/// The corridor stage works in the frame the partition geometry uses, where a
-/// whole number is a cell corner and the centre of a cell is a half; a place is
-/// written out as the layout point of that number. Reading it back is therefore
-/// the floor of the snapped cell coordinate, and **not** a rounding: a centre
-/// that comes back as 202.5 rounds to either cell depending on the last bit of
-/// the conversion, and the two answers are two different cells of the chip.
-[[nodiscard]] std::uint32_t cellAt(const grid::GridMetrics& detail,
-                                   const fbg::Point& place) {
-  const auto cell = detail.toCell(place);
-  const auto x = static_cast<std::int64_t>(std::floor(onGrid(cell.x())));
-  const auto y = static_cast<std::int64_t>(std::floor(onGrid(cell.y())));
-  if (!detail.contains(x, y)) {
-    return NOWHERE;
-  }
-  return static_cast<std::uint32_t>(
-      (y * static_cast<std::int64_t>(detail.width)) + x);
-}
-
 /// The labels of the plan's partitions, back on the detail grid.
 ///
 /// A label grid is derived state and appears in no artifact, but every search
@@ -769,7 +758,7 @@ labelsOf(const CapacityPlanT& plan, const grid::GridMetrics& detail) {
           .label = static_cast<PartitionLabel>(partition->label), .ring = {}};
       outline.ring.reserve(ring->vertices.size());
       for (const auto& vertex : ring->vertices) {
-        outline.ring.push_back(detail.toCell(vertex));
+        outline.ring.push_back(grid::layoutToCorner(detail, vertex));
       }
       outlines.push_back(std::move(outline));
     }
@@ -784,7 +773,7 @@ public:
   run(const ChipT& chip, const CapacityPlanT& capacity,
       const GlobalRoutingT& global, const AssignmentT& assignment,
       const CorridorRoutingT& corridor, const ConfigT& config,
-      const Progress& progress) const override {
+      const Report& report) const override {
     const auto scene = buildScene(chip, config);
     const auto tuning = tuningOf(config);
 
@@ -797,23 +786,17 @@ public:
     // and nothing more — the corridor stage's route is a coarse way and not a
     // constraint, and the pass that follows is free to move a wire off it
     // entirely.
-    const auto began = std::chrono::steady_clock::now();
-    const auto say = [&progress, &began](const std::string& line) {
-      if (progress) {
-        progress(std::format("[detail] {:8.2f}s  {}",
-                             std::chrono::duration<double>(
-                                 std::chrono::steady_clock::now() - began)
-                                 .count(),
-                             line));
-      }
+    const auto say = [&report](const std::string& line) {
+      report.line(Detail::Steps, line);
     };
 
     auto wires = wiresOf(canvas, corridor, assignment.connections.size());
     const auto ring = static_cast<std::uint32_t>(wires.size());
-    say(std::format("grid {}x{} cells | {} connections of the ring | {} of the "
-                    "inner circuit",
-                    scene.detail.width, scene.detail.height, ring,
-                    global.connections.size()));
+    say(std::format(
+        "grid {}{}{} cells{}{}{}{}", scene.detail.width, TIMES,
+        scene.detail.height, FIGURE_SEPARATOR,
+        counted(ring, "connection of the ring"), FIGURE_SEPARATOR,
+        counted(global.connections.size(), "connection of the inner circuit")));
     auto drawing = drawInsidePartitions(canvas, wires, tuning);
     say(std::format("pass 1, inside the partitions: {} pieces left undrawn",
                     drawing.undrawn()));
@@ -846,7 +829,22 @@ public:
     const auto reach =
         std::max(1U, tuning.corridorSpacings *
                          grid::cellsFor(rule.spacing, scene.detail));
-    crossBoundaryRouting(canvas, wires, tuning, ring, reach, say);
+    const auto rounds =
+        crossBoundaryRouting(canvas, wires, tuning, ring, reach, report);
+    // The result: a fail is a wire without a way, or a wire whose way comes
+    // within the rule of another, counted with every wire down.
+    const auto fails = recount(canvas, wires);
+    const auto unrouted = static_cast<std::uint32_t>(
+        std::ranges::count_if(wires, [](const Wire& wire) {
+          return wire.planned && (!wire.drawn || wire.path.empty());
+        }));
+    const auto drawn = std::ranges::count_if(
+        wires, [](const Wire& wire) { return wire.drawn; });
+    report.result({{.text = std::format("drawn {}/{}", drawn, wires.size())},
+                   {.text = counted(rounds, "round")},
+                   verdict("unrouted", unrouted),
+                   verdict("too close", fails - unrouted)},
+                  fails);
 
     return artifactOf(scene.detail, wires, ring, global.connections.size());
   }
@@ -865,6 +863,17 @@ private:
   /// deeper chain costs a search per wire per level and placed nothing more.
   static constexpr std::uint32_t DISPLACEMENT_CHAIN = 1;
 
+  /// How many times over a wire the rescue of the first pass takes out may
+  /// take out wires in turn.
+  ///
+  /// Two, because of what the rescue meets: a fan of wires entering a
+  /// passage, drawn in the wrong order. The wire nearest the wall comes
+  /// first and takes out the three beside it; the first of those finds no
+  /// room and takes out the two beside it; the first of those finds no room
+  /// and takes out the one beside it, which then fits. One level short of
+  /// that, the swap is undone and the wire stays undrawn.
+  static constexpr std::uint32_t RESCUE_CHAIN = 2;
+
   /// How far from the place the plan names a wire may be fed, in cells.
   ///
   /// A place the plan names is a place on the grid, and almost always a cell a
@@ -873,31 +882,18 @@ private:
   /// lands on a cell the sweep blocked.
   static constexpr std::uint32_t PLACE_REACH = 4;
 
-  /// The two cells a place of the plan sits between, or the one it sits on.
-  ///
-  /// A crossing on a partition border is a cell edge, so either of the two
-  /// cells it separates will do: the piece before it and the piece after it
-  /// share the cell, and it is the one cell of a wire's way that belongs to no
-  /// partition in particular. A feed, a target and a way out of a port's own
-  /// pocket are cell centres and name their cell outright.
+  /// The two cells a place of the plan sits between, or the one it sits on,
+  /// as indices of the canvas.
   [[nodiscard]] static std::array<std::uint32_t, 2>
   cellsAt(const grid::GridMetrics& detail, const fbg::Point& place) {
-    const auto cell = detail.toCell(place);
-    const auto here = cellAt(detail, place);
-    if (here == NOWHERE) {
+    const auto cells = cellsOfPlace(detail, place);
+    if (!cells.has_value()) {
       return {NOWHERE, NOWHERE};
     }
-    // A vertical edge separates the cell to its left from the one it is the
-    // left edge of; a horizontal edge separates the cells above and below.
-    if (onEdge(onGrid(cell.x())) && !onEdge(onGrid(cell.y()))) {
-      const auto left = here % detail.width == 0 ? NOWHERE : here - 1;
-      return {left, here};
-    }
-    if (!onEdge(onGrid(cell.x())) && onEdge(onGrid(cell.y()))) {
-      const auto above = here < detail.width ? NOWHERE : here - detail.width;
-      return {above, here};
-    }
-    return {here, here};
+    const auto indexOf = [&detail](const fbg::DCoord& cell) {
+      return (cell.y() * detail.width) + cell.x();
+    };
+    return {indexOf((*cells)[0]), indexOf((*cells)[1])};
   }
 
   /// Read the corridor routing into the wires this stage draws.
@@ -1249,18 +1245,11 @@ private:
         continue;
       }
       for (std::uint32_t attempt = 0; attempt < tuning.rounds; ++attempt) {
-        const auto blockers = blockersOf(canvas, drawing, wire);
-        if (blockers.empty()) {
-          break;
-        }
         const auto before = drawing;
         const auto left = drawing.undrawn();
-        for (const auto blocker : blockers) {
-          giveUp(canvas, drawing, blocker);
-        }
-        static_cast<void>(draw(canvas, drawing, wire));
-        for (const auto blocker : blockers) {
-          static_cast<void>(draw(canvas, drawing, blocker));
+        std::vector<std::uint32_t> busy;
+        if (!swapIn(canvas, drawing, wire, RESCUE_CHAIN, busy)) {
+          break;
         }
         // A wire the swap freed room for takes it, whoever it is.
         for (std::uint32_t other = 0; other < drawing.pieces.size(); ++other) {
@@ -1275,6 +1264,61 @@ private:
         if (drawing.whole(wire)) {
           break;
         }
+      }
+    }
+  }
+
+  /// Take the wires in one wire's way out, draw it, and give them a way again.
+  ///
+  /// The wires that come out are drawn again one by one, and each takes the
+  /// shortest way it finds, which can be the room the next one needed: where
+  /// a fan of wires enters a passage, the wire nearest the wall has to go in
+  /// first, and the order they come back in is not that order. A wire that
+  /// finds no way may therefore take its own blockers out in turn, `chain`
+  /// times over, as the whole-wire pass does. The wires on the way in are
+  /// busy: taking one of them out would undo the swap that is being tried.
+  ///
+  /// @returns Whether anything stood in the way.
+  [[nodiscard]] static bool swapIn(Canvas& canvas, Drawing& drawing,
+                                   const std::uint32_t wire,
+                                   const std::uint32_t chain,
+                                   std::vector<std::uint32_t>& busy) {
+    // The busy wires stay, so the way the blockers are read off may not run
+    // through them either: fenced, the search names the wires that can move.
+    for (const auto other : busy) {
+      fence(canvas, drawing, other, true);
+    }
+    auto blockers = blockersOf(canvas, drawing, wire);
+    for (const auto other : busy) {
+      fence(canvas, drawing, other, false);
+    }
+    std::erase_if(blockers, [&busy](const std::uint32_t blocker) {
+      return std::ranges::find(busy, blocker) != busy.end();
+    });
+    if (blockers.empty()) {
+      return false;
+    }
+    busy.push_back(wire);
+    for (const auto blocker : blockers) {
+      giveUp(canvas, drawing, blocker);
+    }
+    static_cast<void>(draw(canvas, drawing, wire));
+    for (const auto blocker : blockers) {
+      if (draw(canvas, drawing, blocker) || chain == 0) {
+        continue;
+      }
+      static_cast<void>(swapIn(canvas, drawing, blocker, chain - 1, busy));
+    }
+    busy.pop_back();
+    return true;
+  }
+
+  /// Pin the cells of one wire's pieces, or let them go again.
+  static void fence(Canvas& canvas, const Drawing& drawing,
+                    const std::uint32_t wire, const bool on) {
+    for (const auto& path : drawing.paths[wire]) {
+      for (const auto cell : path) {
+        canvas.pin(cell, on);
       }
     }
   }
@@ -1577,19 +1621,24 @@ private:
   /// it — its clearance stops standing in the way, and the wire is marked as
   /// one still to be drawn — with its copper left where it is, so that no two
   /// wires ever share a cell while the sweep is running.
-  template <typename Say>
-  static void crossBoundaryRouting(Canvas& canvas, std::vector<Wire>& wires,
-                                   const Tuning& tuning,
-                                   const std::uint32_t ring,
-                                   const std::uint32_t reach, const Say& say) {
+  /// @returns How many rounds ran.
+  static std::uint32_t
+  crossBoundaryRouting(Canvas& canvas, std::vector<Wire>& wires,
+                       const Tuning& tuning, const std::uint32_t ring,
+                       const std::uint32_t reach, const Report& report) {
     Mask mask(canvas.cells());
     std::vector<std::uint8_t> steering(canvas.cells(), 0);
     std::vector<std::uint8_t> settled(wires.size(), 0);
 
+    std::uint32_t rounds = 0;
     for (std::uint32_t round = 0; round < tuning.rounds; ++round) {
+      ++rounds;
       const auto forward = (round % 2) == 0;
+      const auto name = std::format("round {} {}", round + 1,
+                                    forward ? "forward" : "backward");
       std::size_t failed = 0;
       for (std::size_t step = 0; step < wires.size(); ++step) {
+        report.progress(name, "", step, wires.size());
         const auto index = static_cast<std::uint32_t>(
             forward ? step : wires.size() - 1 - step);
         if (settled[index] != 0 || !wires[index].planned) {
@@ -1602,24 +1651,15 @@ private:
           ++failed;
         }
       }
-      say(std::format("round {} {}: {} of {} wires still to settle", round,
-                      forward ? "forward " : "backward", failed, wires.size()));
+      report.progress(name, "", wires.size(), wires.size());
+      report.entry(
+          Detail::Steps, name,
+          {{.text = std::format("to settle {}/{}", failed, wires.size())}});
       if (failed == 0) {
         break;
       }
     }
-    // The stage's summary: a fail is a wire without a way, or a wire whose
-    // way comes within the rule of another, counted with every wire down.
-    const auto fails = recount(canvas, wires);
-    const auto unrouted = static_cast<std::size_t>(
-        std::ranges::count_if(wires, [](const Wire& wire) {
-          return wire.planned && (!wire.drawn || wire.path.empty());
-        }));
-    say(std::format("{} of {} wires drawn, {} unrouted, {} within the rule of "
-                    "another | Fails: {}",
-                    std::ranges::count_if(
-                        wires, [](const Wire& wire) { return wire.drawn; }),
-                    wires.size(), unrouted, fails - unrouted, fails));
+    return rounds;
   }
 
   /// Draw one wire again: the prototype's two phases.
@@ -2079,6 +2119,35 @@ private:
 };
 
 } // namespace
+
+std::optional<std::array<fbg::DCoord, 2>>
+cellsOfPlace(const grid::GridMetrics& detail, const fbg::Point& place) {
+  // Reading the cell back is the floor of the snapped corner coordinate, and
+  // not a rounding: a centre that comes back as 202.5 rounds to either cell
+  // depending on the last bit of the conversion, and the two answers are two
+  // different cells of the chip.
+  const auto corner = grid::layoutToCorner(detail, place);
+  const auto x = onGrid(corner.x());
+  const auto y = onGrid(corner.y());
+  const auto column = static_cast<std::int64_t>(std::floor(x));
+  const auto row = static_cast<std::int64_t>(std::floor(y));
+  if (!detail.contains(column, row)) {
+    return std::nullopt;
+  }
+  const fbg::DCoord here(static_cast<std::uint32_t>(column),
+                         static_cast<std::uint32_t>(row));
+  // A vertical edge separates the cell on its left from the one it is the
+  // left edge of; a horizontal edge separates the cells above and below.
+  if (onEdge(x) && !onEdge(y)) {
+    const auto left = column == 0 ? here : fbg::DCoord(here.x() - 1, here.y());
+    return std::array{left, here};
+  }
+  if (!onEdge(x) && onEdge(y)) {
+    const auto above = row == 0 ? here : fbg::DCoord(here.x(), here.y() - 1);
+    return std::array{above, here};
+  }
+  return std::array{here, here};
+}
 
 std::unique_ptr<IDetailRouter> makePixelAStarRouter() {
   return std::make_unique<PixelAStarRouter>();

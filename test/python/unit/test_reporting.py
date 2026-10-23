@@ -93,6 +93,51 @@ def test_an_interrupt_during_a_solve_reaches_python(inputs: tuple[bytes, bytes, 
     assert pyscpd.assign(chip, capacity, routing, packed, "test") == untouched
 
 
+@pytest.fixture(scope="module")
+def planned(inputs: tuple[bytes, bytes, bytes, bytes]) -> tuple[bytes, bytes, bytes]:
+    """The artifacts the routing stages read after the first two.
+
+    Returns:
+        The assignment, the corridor routing and the detail routing.
+    """
+    chip, packed, capacity, routing = inputs
+    assignment = pyscpd.assign(chip, capacity, routing, packed, "test")
+    corridor = pyscpd.route_corridor(chip, capacity, assignment, packed, "test")
+    detail = pyscpd.route_detail(chip, capacity, routing, assignment, corridor, packed, "test")
+    return assignment, corridor, detail
+
+
+def test_an_interrupt_during_the_detail_stage_reaches_python(
+    inputs: tuple[bytes, bytes, bytes, bytes], planned: tuple[bytes, bytes, bytes]
+) -> None:
+    """Ctrl-C while the Detail stage draws a round stops the stage and reaches the caller."""
+    chip, packed, capacity, routing = inputs
+    assignment, corridor, detail = planned
+    reporter = Raising("round 1 forward", KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        pyscpd.route_detail(chip, capacity, routing, assignment, corridor, packed, "test", reporter, 0)
+
+    assert reporter.raised
+    assert pyscpd.route_detail(chip, capacity, routing, assignment, corridor, packed, "test") == detail
+
+
+def test_an_interrupt_during_the_final_stage_reaches_python(
+    inputs: tuple[bytes, bytes, bytes, bytes], planned: tuple[bytes, bytes, bytes]
+) -> None:
+    """Ctrl-C while the Final stage routes the ring stops the stage and reaches the caller."""
+    chip, packed, capacity, routing = inputs
+    assignment, _, detail = planned
+    untouched = pyscpd.route_final(chip, capacity, routing, assignment, detail, packed, "test")
+    reporter = Raising("outer routing", KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        pyscpd.route_final(chip, capacity, routing, assignment, detail, packed, "test", reporter, None, 0)
+
+    assert reporter.raised
+    assert pyscpd.route_final(chip, capacity, routing, assignment, detail, packed, "test") == untouched
+
+
 def test_an_interrupt_stops_a_stage_without_a_reporter(inputs: tuple[bytes, bytes, bytes, bytes]) -> None:
     """Ctrl-C stops a stage that has no reporter, inside the stage and not after it."""
     if sys.platform == "win32" or not hasattr(signal, "setitimer"):

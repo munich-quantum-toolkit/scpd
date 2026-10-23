@@ -62,9 +62,10 @@ def route_detail(
     corridor: bytes,
     config: bytes,
     producer: str,
-    progress: object | None = None,
+    reporter: object | None = None,
+    verbosity: int = 0,
 ) -> bytes:
-    """Run the Detail stage. Returns 05-detail.fb as bytes. progress, when given, is called with one line per pass while the stage runs."""
+    """Run the Detail stage. Returns 05-detail.fb as bytes. The stage reports through reporter as plan_capacity."""
 
 def route_final(
     chip: bytes,
@@ -74,11 +75,11 @@ def route_final(
     detail: bytes,
     config: bytes,
     producer: str,
-    progress: object | None = None,
+    reporter: object | None = None,
     debug: object | None = None,
     verbosity: int = 0,
 ) -> bytes:
-    """Run the Final stage. Returns 06-final.fb as bytes. progress, when given, is called with one line per round while the stage runs, and with verbosity 1 with one line per wire and search as well; debug, when given, is called with the kind and the JSON text of every record a page of the [debug] section asks for."""
+    """Run the Final stage. Returns 06-final.fb as bytes. The stage reports through reporter as plan_capacity; debug, when given, is called with the kind and the JSON text of every record a page of the [debug] section asks for."""
 
 class CouplerSession:
     """The Final stage held after its coupler insertion, to move couplers by hand and look at the capacity graph again: a debugging aid."""
@@ -90,10 +91,10 @@ class CouplerSession:
         assignment: bytes,
         detail: bytes,
         config: bytes,
-        progress: object | None = None,
+        reporter: object | None = None,
         verbosity: int = 0,
     ) -> None:
-        """Run the Final stage up to and with the coupler insertion and keep it. progress, when given, is called with every line the stage says, now and on every later call."""
+        """Run the Final stage up to and with the coupler insertion and keep it. The stage reports through reporter as plan_capacity, now and on every later call."""
 
     def couplers(self) -> str:
         """The couplers as they stand and every option of each, as JSON."""

@@ -26,6 +26,7 @@ from mqt.scpd.flatbuffers.config.DebugParams import DebugParamsT
 from mqt.scpd.run import RunDirectory
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from typing import Any
 
 BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
@@ -454,7 +455,7 @@ class FakeSession:
             msg = f"coupler {coupler} has no option {option}"
             raise ValueError(msg)
         self.chosen = option
-        self.lines.append(f"[Coupler Session] '7' on option {option}: edge f0 NO WAY")
+        self.lines.append(f"coupler session: '7' on option {option}: edge f0 NO WAY")
         return json.dumps({"coupler": 0, "option": option, "edges": [{"edge": "f0", "drawn": False, "cells": 0}]})
 
     def graph(self) -> str:
@@ -504,7 +505,7 @@ def test_the_server_moves_a_coupler_and_answers_the_new_graph() -> None:
         assert answer["action"] == "coupler 0 on option 1"
         assert answer["edges"] == [{"edge": "f0", "drawn": False, "cells": 0}]
         assert answer["lines"] == [
-            "[Coupler Session] '7' on option 1: edge f0 NO WAY",
+            "coupler session: '7' on option 1: edge f0 NO WAY",
             "coupler insertion: CAPACITY GRAPH UNSAT — option 1",
         ]
 
@@ -524,13 +525,41 @@ def test_the_server_moves_a_coupler_and_answers_the_new_graph() -> None:
         httpd.server_close()
 
 
+class LinesInto:
+    """A reporter that keeps every line a stage says."""
+
+    def __init__(self, lines: list[str]) -> None:
+        """Append to ``lines``."""
+        self.lines = lines
+
+    def line(self, level: int, text: str) -> None:
+        """Keep a line."""
+        del level
+        self.lines.append(text)
+
+    @staticmethod
+    def entry(level: int, label: str, figures: Sequence[tuple[str, str]]) -> None:
+        """Drop an entry."""
+        del level, label, figures
+
+    @staticmethod
+    def result(figures: Sequence[tuple[str, str]], fails: int | None) -> None:
+        """Drop the result."""
+        del figures, fails
+
+    @staticmethod
+    def progress(task: str, detail: str, done: int, total: int) -> None:
+        """Drop the progress."""
+        del task, detail, done, total
+
+
 def test_a_coupler_session_holds_the_final_stage_of_a_run(tmp_path: Path) -> None:
     """The session runs to the coupler insertion; a coupler moved there stands on its new option."""
     run = tmp_path / "run"
     assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run)]) == 0
     directory = RunDirectory(run)
     lines: list[str] = []
-    session = directory.coupler_session(directory.load(), lines.append)
+    session = directory.coupler_session(directory.load(), LinesInto(lines), 1)
 
     listed = json.loads(session.couplers())["couplers"]
     coupler = next(c for c in listed if len(c["options"]) > 1)

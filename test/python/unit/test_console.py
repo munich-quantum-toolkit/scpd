@@ -85,6 +85,24 @@ def test_a_run_prints_one_block_per_stage() -> None:
     ]
 
 
+def test_the_final_block_aligns_its_figures_after_its_phase_names() -> None:
+    """The entries of the final block are labelled with its phases, so its label column is wider."""
+    console, out, clock = make()
+    with console.stage("final") as stage:
+        clock.now += 0.5
+        stage.entry(0, "pre-feedline-routing", [Figure("drawn 5/5"), Figure("bad 0", "good")])
+        stage.entry(0, "feedline-constrained-refinement", [Figure("short 2", "bad")])
+        stage.result([Figure("drawn 6/6"), Figure("bad 0", "good")], fails=0)
+    lines = out.getvalue().splitlines()
+
+    def timed(label: str, figures: str) -> str:
+        text = "   " + label.ljust(32) + " " + figures
+        return text + " " * (72 - len(text) - len("0.50s")) + "0.50s"
+
+    assert lines[1] == timed("pre-feedline-routing", "drawn 5/5 · bad 0")
+    assert lines[2] == timed("feedline-constrained-refinement", "short 2")
+
+
 def test_a_line_shows_only_up_to_the_verbosity() -> None:
     """-v adds the steps, dimmed and indented deeper; -vv adds the items."""
     for verbosity, expected in ((0, 0), (1, 1), (2, 2)):

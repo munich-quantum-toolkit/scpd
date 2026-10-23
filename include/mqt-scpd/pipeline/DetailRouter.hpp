@@ -10,12 +10,36 @@
 
 #pragma once
 
+#include "mqt-scpd/flatbuffers/geometry.hpp"
+#include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
+#include <array>
 #include <memory>
+#include <optional>
 
 namespace mqt::scpd::pipeline {
+
+/// The two cells a place of the corridor plan lies between, or one cell twice.
+///
+/// The Corridor stage writes its places as layout points of the corner frame,
+/// in which a cell is the unit square from its corner: a feed, a target and a
+/// slot of a border sit at the centre of their cell, and a crossing on the
+/// edge between two cells, so either of the two will do. The detail grid
+/// names a cell by its centre, half a cell on, which is why the frame is
+/// converted before the cell is read.
+///
+/// @param detail The metrics of the detail grid.
+/// @param place The layout point the corridor wrote.
+/// @return For a crossing, the cell on its left or above it and the cell on
+/// its right or below it; for a place inside a cell, or a crossing on the
+/// first row or column, that one cell twice; nothing for a place beyond the
+/// grid.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT
+    std::optional<std::array<flatbuffers::geometry::DCoord, 2>>
+    cellsOfPlace(const grid::GridMetrics& detail,
+                 const flatbuffers::geometry::Point& place);
 
 /// The detail router of the first release.
 ///

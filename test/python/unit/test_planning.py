@@ -647,6 +647,24 @@ def test_the_detail_routing_carries_a_drawn_wire_per_connection(run: RunDirector
     assert geometry.partitions
 
 
+def test_the_detail_picture_starts_every_wire_where_the_corridor_feeds_it(run: RunDirectory) -> None:
+    """A cell of the detail grid is a point, so the first point of a wire is the corridor's source point."""
+    chip = chip_of(run)
+    capacity = run.artifact("capacity").read_bytes()
+    detail = planning_geometry(
+        run.artifact("detail").read_bytes(), chip, "detail", capacity, run.artifact("assign").read_bytes()
+    )
+    corridor = planning_geometry(run.artifact("corridor").read_bytes(), chip, "corridor", capacity)
+    starts = [wire[0] for wire in detail.wires + detail.resonators]
+    assert corridor.corridors
+    for route in corridor.corridors:
+        source = route[0]
+        assert any(
+            math.isclose(start[0], source[0], abs_tol=1e-6) and math.isclose(start[1], source[1], abs_tol=1e-6)
+            for start in starts
+        ), f"no wire starts at the corridor's source {source}"
+
+
 def test_the_detail_picture_draws_the_clearance_the_router_keeps(run: RunDirectory) -> None:
     """The band is the design rule as the router converted it to whole cells, not the rule itself."""
     chip = chip_of(run)
@@ -655,7 +673,10 @@ def test_the_detail_picture_draws_the_clearance_the_router_keeps(run: RunDirecto
     assert "l-clearance" not in layout_svg(chip, planning=without)
 
     with_rule = planning_geometry(run.artifact("detail").read_bytes(), chip, "detail", clearance=185.0)
-    grid = read_artifact(run.artifact("detail").read_bytes()).output.grid
+    routing = read_artifact(run.artifact("detail").read_bytes()).output
+    assert routing is not None
+    grid = routing.grid
+    assert grid is not None
     cell = min(float(grid.cellWidth), float(grid.cellHeight))
     assert with_rule.clearance == blockade(185.0, cell)
     assert 0 < with_rule.clearance < 185.0

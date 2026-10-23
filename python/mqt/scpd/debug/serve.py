@@ -150,7 +150,7 @@ class CouplerServer:
         self.last = {
             "action": f"coupler {coupler} on option {option}",
             "edges": edges["edges"],
-            "lines": [line for line in moved if "[Coupler Session]" in line] + said,
+            "lines": [line for line in moved if "coupler session:" in line] + said,
         }
         return self.last
 

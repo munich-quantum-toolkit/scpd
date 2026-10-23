@@ -448,7 +448,9 @@ def test_the_routing_pictures_draw_the_copper_as_waveguides_with_bridges() -> No
     assert [path.get("class") for path in groups["l-signal cpw"].findall(f"{SVG}path")] == ["edge", "gap", "core"]
     assert [path.get("class") for path in groups["l-feedline cpw"].findall(f"{SVG}path")] == ["edge", "gap", "core"]
     # Two landing pads, one either side of the feedline.
-    assert (groups["l-bridge"].find(f"{SVG}path").get("d") or "").count("M") == 2
+    bridge = groups["l-bridge"].find(f"{SVG}path")
+    assert bridge is not None
+    assert (bridge.get("d") or "").count("M") == 2
     assert "l-clearance" in groups
     style = root.find(f"{SVG}style")
     assert style is not None

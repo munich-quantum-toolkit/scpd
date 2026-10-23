@@ -18,6 +18,7 @@
 // `mqt-scpd drc` reports cannot drift apart.
 
 #include "Benchmarks.hpp"
+#include "MiniFixture.hpp"
 #include "mqt-scpd/drc/Rules.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/drc.hpp"
@@ -26,6 +27,7 @@
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/CouplerSession.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
+#include "mqt-scpd/pipeline/Report.hpp"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -80,19 +82,19 @@ Planned plan(const Benchmark& benchmark) {
   Planned planned;
   planned.capacity = capacityPlanners()
                          .make("watershed")
-                         ->run(benchmark.chip, benchmark.config);
+                         ->run(benchmark.chip, benchmark.config, {});
   planned.global =
       globalRouters()
           .make("hanan-milp")
-          ->run(benchmark.chip, planned.capacity, benchmark.config);
+          ->run(benchmark.chip, planned.capacity, benchmark.config, {});
   planned.assignment = assigners()
                            .make("ordered-milp")
                            ->run(benchmark.chip, planned.capacity,
-                                 planned.global, benchmark.config);
+                                 planned.global, benchmark.config, {});
   planned.corridor = corridorRouters()
                          .make("partition-astar")
                          ->run(benchmark.chip, planned.capacity,
-                               planned.assignment, benchmark.config);
+                               planned.assignment, benchmark.config, {});
   planned.detail =
       detailRouters()
           .make("pixel-astar")
@@ -122,6 +124,26 @@ Benchmark withOldPrices(Benchmark benchmark) {
   final.chain_end_edge_weight = 1.0;
   final.coupler_offsets = "0,1,2,3,4,5,6,7";
   return benchmark;
+}
+
+/// A report that keeps every line a stage says down to `level`: the steps
+/// of the stage, as a run without `-v` shows them, unless asked for more.
+Report linesInto(std::vector<std::string>& lines,
+                 const Detail level = Detail::Steps) {
+  return {
+      level,
+      {.line = [&lines](const Detail /*level*/, const std::string_view text) {
+        lines.emplace_back(text);
+      }}};
+}
+
+/// A report that hands every line a stage says to `listen`.
+Report hearing(std::function<void(std::string_view)> listen) {
+  return {Detail::Solver,
+          {.line = [listen = std::move(listen)](const Detail /*level*/,
+                                                const std::string_view text) {
+            listen(text);
+          }}};
 }
 
 FinalRoutingT routeFinal(const Benchmark& benchmark, const Planned& planned) {
@@ -493,6 +515,66 @@ TEST(FinalRouter, EveryPhaseLeavesASnapshot) {
   }
 }
 
+/// What a report of the stage receives: its entries, its result and how
+/// often the progress moved.
+struct Spoken {
+  std::vector<std::pair<Detail, std::string>> entries;
+  std::vector<std::vector<Figure>> results;
+  std::vector<std::optional<std::uint64_t>> fails;
+  std::uint64_t progressed = 0;
+
+  [[nodiscard]] Report report() {
+    return {
+        Detail::Items,
+        {.entry =
+             [this](const Detail level, const std::string_view label,
+                    const std::vector<Figure>& /*figures*/) {
+               entries.emplace_back(level, std::string(label));
+             },
+         .result =
+             [this](const std::vector<Figure>& figures,
+                    const std::optional<std::uint64_t> failed) {
+               results.push_back(figures);
+               fails.push_back(failed);
+             },
+         .progress = [this](const std::string_view /*task*/,
+                            const std::string_view /*detail*/,
+                            const std::uint64_t /*done*/,
+                            const std::uint64_t /*total*/) { ++progressed; }}};
+  }
+
+  /// The labels of the entries of one level, in order.
+  [[nodiscard]] std::vector<std::string> labels(const Detail level) const {
+    std::vector<std::string> found;
+    for (const auto& [at, label] : entries) {
+      if (at == level) {
+        found.push_back(label);
+      }
+    }
+    return found;
+  }
+};
+
+/// The value of the figure `name <value>`, or nothing.
+std::optional<std::uint64_t> valueOf(const std::vector<Figure>& figures,
+                                     const std::string_view name) {
+  for (const auto& figure : figures) {
+    if (figure.text.starts_with(name) && figure.text.size() > name.size() + 1 &&
+        figure.text[name.size()] == ' ') {
+      return std::stoull(figure.text.substr(name.size() + 1));
+    }
+  }
+  return std::nullopt;
+}
+
+/// The mini chip, as the stages take it.
+Benchmark miniBenchmark() {
+  Benchmark benchmark;
+  benchmark.config = test::miniConfig();
+  benchmark.chip = test::miniChip(benchmark.config);
+  return benchmark;
+}
+
 /// Every pass starts every wire on the way the Detail stage drew and ends on
 /// a line that says how many wires are unrouted, open, short, long, crossing
 /// a feedline or meeting themselves, and the stage ends on one over every
@@ -505,10 +587,29 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
   std::vector<std::string> lines;
+  std::vector<std::string> passes;
+  std::vector<std::vector<Figure>> results;
+  std::vector<std::optional<std::uint64_t>> failed;
+  const Report report{
+      Detail::Steps,
+      {.line =
+           [&lines](const Detail /*level*/, const std::string_view text) {
+             lines.emplace_back(text);
+           },
+       .entry =
+           [&passes](const Detail /*level*/, const std::string_view label,
+                     const std::vector<Figure>& /*figures*/) {
+             passes.emplace_back(label);
+           },
+       .result =
+           [&](const std::vector<Figure>& figures,
+               const std::optional<std::uint64_t> fails) {
+             results.push_back(figures);
+             failed.push_back(fails);
+           }}};
   const auto routing = finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
+      planned.detail, benchmark.config, report);
 
   const auto lineWith = [&lines](const std::string_view first,
                                  const std::string_view second) {
@@ -522,13 +623,20 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   const std::string_view seeded = "start on the way the Detail stage drew";
   EXPECT_FALSE(lineWith("inner routing:", seeded).empty());
   EXPECT_FALSE(lineWith("outer routing:", seeded).empty());
-  EXPECT_FALSE(lineWith("inner routing:", "Fails:").empty());
-  EXPECT_FALSE(lineWith("outer routing:", "Fails:").empty());
-  const auto total = lineWith("final routing:", "Fails:");
-  ASSERT_FALSE(total.empty());
-  const auto fails = std::stoul(total.substr(total.find("Fails:") + 6));
-  ASSERT_NE(total.find("Bad:"), std::string::npos) << total;
-  const auto bad = std::stoul(total.substr(total.find("Bad:") + 4));
+  // Every pass ends on an entry of its own.
+  EXPECT_NE(std::ranges::find(passes, "inner routing"), passes.end());
+  EXPECT_NE(std::ranges::find(passes, "outer routing"), passes.end());
+  // The result comes once, with the wires without a usable way as its fails
+  // and the resonators of the wrong length beside them.
+  ASSERT_EQ(results.size(), 1U);
+  ASSERT_TRUE(failed.front().has_value());
+  const auto& figures = results.front();
+  const auto tooShort = valueOf(figures, "short");
+  const auto tooLong = valueOf(figures, "long");
+  const auto bad = valueOf(figures, "bad");
+  ASSERT_TRUE(tooShort.has_value() && tooLong.has_value() && bad.has_value());
+  const auto lengths = *tooShort + *tooLong;
+  EXPECT_EQ(*failed.front(), *bad);
 
   // Every resonator's length is said, way plus the run to the port against
   // the target length, and a line sums them up.
@@ -550,11 +658,10 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   EXPECT_EQ(said, resonators);
   EXPECT_FALSE(lineWith("resonators:", "in all").empty());
 
-  EXPECT_EQ(fails + bad == 0, holdsEverywhere(benchmark, planned, routing))
-      << total;
+  EXPECT_EQ(lengths + *bad == 0, holdsEverywhere(benchmark, planned, routing));
 
   // The end state carries the verdict against every wire, and the count of
-  // the wires with one is the count the last line said. An undrawn wire is
+  // the wires with one is the count the result said. An undrawn wire is
   // `Unrouted` and nothing else; a drawn one is not. The phase snapshots are
   // not judged and carry none.
   std::size_t held = 0;
@@ -572,8 +679,8 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   }
   // A wire can be both of the wrong length and without a usable way, so it
   // counts in both figures but holds one verdict.
-  EXPECT_LE(std::max(fails, bad), held) << total;
-  EXPECT_LE(held, fails + bad) << total;
+  EXPECT_LE(std::max(lengths, *bad), held);
+  EXPECT_LE(held, lengths + *bad);
   for (const auto& phase : routing.phases) {
     for (const auto* list : {&phase->wires, &phase->inner, &phase->feedlines}) {
       for (const auto& wire : *list) {
@@ -581,6 +688,57 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
       }
     }
   }
+}
+
+/// The stage reports each phase as one entry of the summary, in the order
+/// the phases run, moves the progress while it searches, and reports its
+/// result once: the wires without a usable way are its fails, and the
+/// resonators of the wrong length are figures beside them.
+TEST(FinalRouter, ReportsOneEntryPerPhaseAndItsResultOnce) {
+  const auto benchmark = miniBenchmark();
+  const auto planned = plan(benchmark);
+  Spoken spoken;
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, spoken.report()));
+
+  EXPECT_EQ(spoken.labels(Detail::Summary),
+            (std::vector<std::string>{
+                "pre-feedline-routing", "pre-feedline-refinement",
+                "feedline-insertion", "feedline-constrained-routing",
+                "feedline-constrained-refinement"}));
+  EXPECT_GT(spoken.progressed, 0U);
+  ASSERT_EQ(spoken.results.size(), 1U);
+  const auto& figures = spoken.results.front();
+  ASSERT_TRUE(spoken.fails.front().has_value());
+  const auto tooShort = valueOf(figures, "short");
+  const auto tooLong = valueOf(figures, "long");
+  const auto bad = valueOf(figures, "bad");
+  ASSERT_TRUE(tooShort.has_value() && tooLong.has_value() && bad.has_value());
+  EXPECT_EQ(*spoken.fails.front(), *bad);
+  EXPECT_TRUE(valueOf(figures, "angle cost").has_value());
+  EXPECT_TRUE(std::ranges::any_of(figures, [](const Figure& figure) {
+    return figure.text.starts_with("drawn ");
+  }));
+}
+
+/// `[run] stop_after` ends the entries with the phase it names, and the
+/// result then carries no figure of the insertion.
+TEST(FinalRouter, StopsItsEntriesAtThePhaseTheRunStopsAfter) {
+  auto benchmark = miniBenchmark();
+  benchmark.config.run = std::make_unique<flatbuffers::config::RunParamsT>();
+  benchmark.config.run->stop_after = "pre-feedline-refinement";
+  const auto planned = plan(benchmark);
+  Spoken spoken;
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, spoken.report()));
+
+  EXPECT_EQ(spoken.labels(Detail::Summary),
+            (std::vector<std::string>{"pre-feedline-routing",
+                                      "pre-feedline-refinement"}));
+  ASSERT_EQ(spoken.results.size(), 1U);
+  EXPECT_FALSE(valueOf(spoken.results.front(), "angle cost").has_value());
 }
 
 /// The global SAT search starts from the slot check of the whole chip as the
@@ -592,16 +750,15 @@ TEST(FinalRouter, TheGlobalSatSearchFindsTheNineQubitChipSatAfterTheCommit) {
   std::vector<std::string> lines;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); }));
+      planned.detail, benchmark.config, linesInto(lines)));
 
   const auto said = std::ranges::count_if(lines, [](const std::string& line) {
-    return line.find("[Global SAT] the chip is SAT after the commit; nothing "
+    return line.find("global SAT: the chip is SAT after the commit; nothing "
                      "to search") != std::string::npos;
   });
   const auto searched =
       std::ranges::count_if(lines, [](const std::string& line) {
-        return line.find("[Global SAT] the chip is UNSAT") != std::string::npos;
+        return line.find("global SAT: the chip is UNSAT") != std::string::npos;
       });
   EXPECT_EQ(said, 1);
   EXPECT_EQ(searched, 0);
@@ -628,11 +785,10 @@ struct GlobalSatOutcome {
 GlobalSatOutcome globalSatOf(const Benchmark& benchmark,
                              const Planned& planned) {
   std::vector<std::string> lines;
-  // At verbosity 1, so that every combination says what it lost.
-  CouplerSession session(
-      benchmark.chip, planned.global, planned.assignment, planned.detail,
-      benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); }, 1);
+  // Down to the items, so that every combination says what it lost.
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config,
+                         linesInto(lines, Detail::Items));
   GlobalSatOutcome out;
   out.every = lines;
   out.couplers = session.couplers();
@@ -641,15 +797,15 @@ GlobalSatOutcome globalSatOf(const Benchmark& benchmark,
                     .get<std::string>();
   const std::regex seconds(R"(; [0-9.]+s(, [0-9.]+s of it in slot checks)?$)");
   for (const auto& line : lines) {
-    const auto at = line.find("[Global SAT]");
+    const auto at = line.find("global SAT:");
     if (at == std::string::npos) {
       continue;
     }
     out.lines.push_back(line);
     const auto text = std::regex_replace(line.substr(at), seconds, "");
-    if (text.starts_with("[Global SAT] combination ") ||
-        text.starts_with("[Global SAT] SAT after ") ||
-        text.starts_with("[Global SAT] no SAT combination ")) {
+    if (text.starts_with("global SAT: combination ") ||
+        text.starts_with("global SAT: SAT after ") ||
+        text.starts_with("global SAT: no SAT combination ")) {
       out.combinations.push_back(text);
     } else if (text.find(" runs of ") != std::string::npos) {
       out.chains.push_back(text);
@@ -741,8 +897,7 @@ TEST(FinalRouter, TheEndEdgeWeightChangesOnlyThePrice) {
     Outcome out;
     out.routing = finalRouters().make("dubins")->run(
         chip.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, chip.config,
-        [&out](const std::string_view line) { out.lines.emplace_back(line); });
+        planned.detail, chip.config, linesInto(out.lines));
     return out;
   };
   const auto plain = run(std::nullopt);
@@ -762,7 +917,7 @@ TEST(FinalRouter, TheEndEdgeWeightChangesOnlyThePrice) {
 
   const auto full = run(1.0);
   const std::regex optimum(
-      R"(\[Coupler Insertion\] chain (\d+): optimum (\d+) over \d+ layers)");
+      R"(coupler insertion: chain (\d+): optimum (\d+) over \d+ layers)");
   const std::regex unweighted(R"(, (\d+) at weight 1$)");
   const std::regex drawn(R"(coupler insertion: .* (\d+) of (\d+) edges drawn)");
   std::map<std::string, std::uint64_t> best;
@@ -802,13 +957,12 @@ TEST(FinalRouter, TheCapacityRuleLetsNoSettledEdgeCloseAWire) {
   std::vector<std::string> lines;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); }));
+      planned.detail, benchmark.config, linesInto(lines)));
 
   std::set<std::string> withoutTheRule;
   const std::regex againLine(
-      R"(\[Coupler Insertion\] chain (\d+): .* searched again without)");
-  const std::regex edgeLine(R"(\[Capacity Step\] chain (\d+) f\d+: )");
+      R"(coupler insertion: chain (\d+): .* searched again without)");
+  const std::regex edgeLine(R"(capacity step: chain (\d+) f\d+: )");
   std::size_t verdicts = 0;
   for (const auto& line : lines) {
     std::smatch match;
@@ -842,15 +996,14 @@ TEST(FinalRouter, TheRefusalLimitSearchesAChainAgainWithoutTheRule) {
   std::vector<std::string> lines;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); }));
+      planned.detail, benchmark.config, linesInto(lines)));
 
   const std::regex limit(
-      R"(\[Coupler Insertion\] chain (\d+): the capacity rule refused 1 step )"
+      R"(coupler insertion: chain (\d+): the capacity rule refused 1 step )"
       R"(before a run of options joined the chain \(chain_rule_refusals, )"
       R"(\d+ steps routed\) — searched again without the capacity rule)");
   const std::regex answer(
-      R"(\[Coupler Insertion\] chain (\d+): (optimum|best found|no run of )"
+      R"(coupler insertion: chain (\d+): (optimum|best found|no run of )"
       R"(options joins the chain — leaving it as it stands))");
   std::set<std::string> limited;
   std::set<std::string> answered;
@@ -890,13 +1043,12 @@ TEST(FinalRouter, TheCapacityRuleAndTheBottleneckReportAreOnByDefault) {
   bool graphWritten = false;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); },
+      planned.detail, benchmark.config, linesInto(lines),
       [&graphWritten](const std::string_view kind, const std::string_view) {
         graphWritten = graphWritten || kind == "capacity-graph";
       }));
 
-  const std::regex edgeLine(R"(\[Capacity Step\] chain \d+ f\d+: )");
+  const std::regex edgeLine(R"(capacity step: chain \d+ f\d+: )");
   EXPECT_TRUE(std::ranges::any_of(lines, [&](const std::string& line) {
     return std::regex_search(line, edgeLine);
   }));
@@ -911,8 +1063,7 @@ TEST(FinalRouter, TheChainBoundDefaultsToTheStubBound) {
   std::vector<std::string> lines;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); }));
+      planned.detail, benchmark.config, linesInto(lines)));
 
   EXPECT_TRUE(std::ranges::any_of(lines, [](const std::string& line) {
     return line.find("bound analytic with the end runs") != std::string::npos;
@@ -1896,10 +2047,8 @@ TEST(CouplerSession, SearchesEveryChainAgainstItselfAlone) {
   const auto benchmark = fourQubit();
   const auto planned = plan(benchmark);
   std::vector<std::string> lines;
-  CouplerSession session(
-      benchmark.chip, planned.global, planned.assignment, planned.detail,
-      benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); }, 1);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config, linesInto(lines));
   EXPECT_TRUE(std::ranges::any_of(lines, [](const std::string& line) {
     return line.find("each checked against itself alone") != std::string::npos;
   }));
@@ -2203,13 +2352,14 @@ TEST(FinalRouter, TheFourQubitChainMakesFourQuarterTurns) {
       R"(==> coupler insertion: (\d+) feedline edges NOT drawn, feedline angle cost (\d+))");
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config, [&](const std::string_view line) {
+      planned.detail, benchmark.config,
+      hearing([&](const std::string_view line) {
         std::match_results<std::string_view::const_iterator> match;
         if (std::regex_search(line.begin(), line.end(), match, said)) {
           undrawn = std::stol(match[1].str());
           cost = std::stol(match[2].str());
         }
-      }));
+      })));
 
   EXPECT_EQ(undrawn, 0);
   EXPECT_EQ(cost, 8);
@@ -2224,11 +2374,12 @@ TEST(FinalRouter, NoEdgeCrossesAnEdgeOfItsOwnChain) {
   std::vector<std::string> checks;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config, [&](const std::string_view line) {
+      planned.detail, benchmark.config,
+      hearing([&](const std::string_view line) {
         if (line.find("CHECK chain crossings") != std::string_view::npos) {
           checks.emplace_back(line);
         }
-      }));
+      })));
 
   ASSERT_GE(checks.size(), 2U);
   for (const auto& line : checks) {
@@ -2425,8 +2576,7 @@ TEST(FinalRouter, KeepsTheEdgesBetweenCouplersInsideTheCouplerBox) {
   std::vector<std::string> lines;
   const auto routing = finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
+      planned.detail, benchmark.config, linesInto(lines));
 
   const auto said = std::ranges::find_if(lines, [](const std::string& line) {
     return line.find("couplers sit inside x ") != std::string::npos;
@@ -2480,12 +2630,12 @@ TEST(FinalRouter, AnEdgeKeepsTheLauncherMarginClear) {
     static_cast<void>(finalRouters().make("dubins")->run(
         chip.chip, planned.capacity, planned.global, planned.assignment,
         planned.detail, chip.config,
-        [&seen](const std::string_view line) {
+        hearing([&seen](const std::string_view line) {
           const auto at = line.find("a feedline edge keeps ");
           if (at != std::string_view::npos) {
             seen.run = std::stol(std::string(line.substr(at + 22)));
           }
-        },
+        }),
         [&seen](const std::string_view kind, const std::string_view record) {
           if (kind == "capacity-graph") {
             seen.graph = nlohmann::json::parse(record);
@@ -2563,13 +2713,13 @@ TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
     static_cast<void>(finalRouters().make("dubins")->run(
         chip.chip, planned.capacity, planned.global, planned.assignment,
         planned.detail, chip.config,
-        [&seen](const std::string_view line) {
+        hearing([&seen](const std::string_view line) {
           if (line.find("couplers sit inside x ") != std::string_view::npos) {
             seen.box = std::string(line.substr(line.find("couplers sit")));
           }
           seen.said = seen.said || line.find("coupler_box_margin_cells") !=
                                        std::string_view::npos;
-        },
+        }),
         [&seen](const std::string_view kind, const std::string_view record) {
           if (kind == "capacity-graph") {
             seen.graph = nlohmann::json::parse(record);

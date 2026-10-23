@@ -40,6 +40,8 @@ from .solvers import register as register_external_solver
 from .steps import FINAL_PHASES, STEPS
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .console import StageBlock
     from .flatbuffers.config.Config import ConfigT
 
@@ -218,13 +220,33 @@ def command_debug(args: argparse.Namespace) -> int:
     config = directory.load()
     lines: list[str] = []
 
-    def say(line: str) -> None:
-        lines.append(line)
-        if args.verbose or "CAPACITY GRAPH" in line or "[Coupler Session]" in line:
-            write_out(line)
+    class Spoken:
+        """Keeps every line the session says for the server, and shows the ones a terminal wants."""
+
+        @staticmethod
+        def line(level: int, text: str) -> None:
+            del level
+            lines.append(text)
+            if args.verbose or "CAPACITY GRAPH" in text or "coupler session:" in text:
+                write_out(text)
+
+        @staticmethod
+        def entry(level: int, label: str, figures: Sequence[tuple[str, str]]) -> None:
+            del level
+            lines.append(f"{label}: " + " · ".join(text for text, _ in figures))
+
+        @staticmethod
+        def result(figures: Sequence[tuple[str, str]], fails: int | None) -> None:
+            del fails
+            lines.append(" · ".join(text for text, _ in figures))
+
+        @staticmethod
+        def progress(task: str, detail: str, done: int, total: int) -> None:
+            del task, detail, done, total
 
     write_out(f"running the Final stage of {args.run_dir} to the end of the coupler insertion ...")
-    session = directory.coupler_session(config, say, max(args.verbose - 1, 0))
+    # The steps of the stage are what the server reads; -v adds the items.
+    session = directory.coupler_session(config, Spoken(), args.verbose + 1)
     server = CouplerServer(session, lines)
     write_out(f"capacity graph with the coupler tab on http://127.0.0.1:{args.serve}/ (Ctrl-C ends it)")
     serve(server, args.serve)
@@ -281,9 +303,7 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
     over_plan = args.stage in {"global", "assign", "corridor", "detail"}
     capacity = plan.read_bytes() if over_plan and plan.is_file() else None
     chosen = directory.artifact("assign")
-    assignment = (
-        chosen.read_bytes() if args.stage in {"corridor", "detail", "final"} and chosen.is_file() else None
-    )
+    assignment = chosen.read_bytes() if args.stage in {"corridor", "detail", "final"} and chosen.is_file() else None
     solved = directory.artifact("global")
     routing = solved.read_bytes() if args.stage in {"assign", "corridor"} and solved.is_file() else None
     # The routing pictures draw the room every wire keeps, which is the design rule as the stage

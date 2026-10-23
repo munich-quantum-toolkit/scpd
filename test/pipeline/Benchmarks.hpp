@@ -157,10 +157,6 @@ inline Benchmark load(const std::string& chip, const std::string& resonator,
   config.grid->capacity_cells_x =
       readScalar(configText, "capacity_cells_x", 50);
   config.grid->capacity_cells_y = readScalar(configText, "capacity_cells_y", 0);
-  config.grid->launcher_offset_x =
-      readScalar(configText, "launcher_offset_x", 15);
-  config.grid->launcher_offset_y =
-      readScalar(configText, "launcher_offset_y", 15);
   config.grid->detail_factor = 30;
 
   config.stages = std::make_unique<fbc::StageParamsT>();

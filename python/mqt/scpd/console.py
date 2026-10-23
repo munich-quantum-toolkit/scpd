@@ -68,8 +68,10 @@ _TONES: dict[str, str] = {"plain": "", "good": "green", "bad": "red"}
 _INDENT = 3
 _DEEP_INDENT = 5
 
-#: The width of the label column of an entry.
+#: The width of the label column of an entry, and the width in the blocks whose labels are longer:
+#: the final stage labels its entries with the names of its phases.
 _LABEL_WIDTH = 18
+_LABEL_WIDTHS: dict[str, int] = {"final": 32}
 
 #: The width the time column ends at in a file, and the widest it gets on a terminal.
 _FILE_WIDTH = 72
@@ -228,7 +230,7 @@ class StageBlock:
         if level > self.console.verbosity:
             return
         indent = _INDENT if level == 0 else _DEEP_INDENT
-        text = Text(" " * indent + self.console.plain(label).ljust(_LABEL_WIDTH) + " ")
+        text = Text(" " * indent + self.console.plain(label).ljust(_LABEL_WIDTHS.get(self.name, _LABEL_WIDTH)) + " ")
         text.append_text(self.console.figures(figures))
         self._write(self.console.timed(text, self.elapsed, dim=level > 0))
 

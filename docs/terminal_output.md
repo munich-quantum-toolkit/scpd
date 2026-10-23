@@ -30,6 +30,29 @@ mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.11.0
 ✓ 4 stages · 1.14s · stopped after corridor · fails 0
 ```
 
+A run that goes on to the routing stages adds two blocks before the blank line.
+On the fixture chip of the tests they read:
+
+```text
+🧵 detail
+   drawn 5/5 · 1 round · unrouted 0 · too close 0                  0.01s
+   ✓ 05-detail.fb  3.2 kB · fails 0
+🧷 final
+   pre-feedline-routing             drawn 5/5 · short 2 · bad 0    0.04s
+   pre-feedline-refinement          short 1 · long 0               0.05s
+   feedline-insertion               edges 1/1 · angle cost 1       0.14s
+   feedline-constrained-routing     drawn 6/6 · short 2 · long 0 · crossing 0 · bad 0  0.24s
+   feedline-constrained-refinement  short 2 · long 0 · bad 0       0.32s
+   drawn 6/6 · short 2 · long 0 · bad 0 · angle cost 1             0.32s
+   ✓ 06-final.fb  30.4 kB · fails 0
+```
+
+The final block has one entry per phase, named as `[run] stop_after` names them,
+and its result counts every wire of the plan. A chip with more than one feedline
+chain ends the `feedline-insertion` entry and the result with the verdict of the
+capacity check, `SAT` or `UNSAT`, or with `capacity check off` when
+`[stages.final] capacity_check` is off.
+
 The run has four parts:
 
 - The header names the command, the chip, the run directory and the solver.
@@ -62,7 +85,8 @@ Warnings and failures show at every level.
   the terminal, but not after column 100. A line too long for the column carries
   its time after two spaces. A solver log line carries no time.
 - An entry, such as a round, has a label and figures. The label fills a column
-  of 18 characters, and the figures start after it.
+  of 18 characters, and the figures start after it. In the final block the
+  labels are the names of its phases, and the column is 32 characters wide.
 - The artifact line is `✓ <file>  <size>`, followed by `· fails <n>` for a stage
   that reports fails. The assign stage reports them too, and its count is always
   zero.
@@ -101,18 +125,20 @@ stage. A run that ends with fails exits with code 1.
 | global   | An inner port that no wire of the circuit reaches, a ring port that the gates of its chain have no room for, or a ring port without a bridge that its chain does not carry to a launcher |
 | assign   | None: the stage gives every ring port a launcher, or it stops with an error. Its artifact line shows `fails 0`                                                                           |
 | corridor | A connection without a way through the partitions                                                                                                                                        |
+| detail   | A wire without a way, or a wire whose way comes within the design rule of another                                                                                                        |
+| final    | A wire with no usable way: unrouted, open, crossing a feedline, or meeting itself. A resonator short of or over its target length is a red figure of the result, not a fail              |
 
 ## Stage Marks
 
 Each step has a mark, a plain form and a color.
 
-| Step     | Mark | Plain form | Color   |
-| -------- | ---- | ---------- | ------- |
-| capacity | 🧩   | `[#]`      | cyan    |
-| global   | 🔳   | `[+]`      | blue    |
-| assign   | 📌   | `[>]`      | magenta |
-| corridor | 🧭   | `[~]`      | yellow  |
-| detail   | 🧵   | `[-]`      | green   |
+| Step     | Mark | Plain form | Color       |
+| -------- | ---- | ---------- | ----------- |
+| capacity | 🧩   | `[#]`      | cyan        |
+| global   | 🔳   | `[+]`      | blue        |
+| assign   | 📌   | `[>]`      | magenta     |
+| corridor | 🧭   | `[~]`      | yellow      |
+| detail   | 🧵   | `[-]`      | green       |
 | final    | 🧷   | `[=]`      | bright_blue |
 
 A mark is one emoji with the Unicode property `Emoji_Presentation=Yes` and

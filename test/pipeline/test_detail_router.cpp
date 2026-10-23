@@ -14,18 +14,25 @@
 // two wires meet at all — neither on a cell nor between two of them.
 
 #include "Benchmarks.hpp"
+#include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
+#include "mqt-scpd/grid/Partitions.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
+#include "mqt-scpd/pipeline/DetailRouter.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
+#include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/routing/SelfIntersection.hpp"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -53,19 +60,19 @@ Planned plan(const Benchmark& benchmark) {
   Planned planned;
   planned.capacity = capacityPlanners()
                          .make("watershed")
-                         ->run(benchmark.chip, benchmark.config);
+                         ->run(benchmark.chip, benchmark.config, {});
   planned.global =
       globalRouters()
           .make("hanan-milp")
-          ->run(benchmark.chip, planned.capacity, benchmark.config);
+          ->run(benchmark.chip, planned.capacity, benchmark.config, {});
   planned.assignment = assigners()
                            .make("ordered-milp")
                            ->run(benchmark.chip, planned.capacity,
-                                 planned.global, benchmark.config);
+                                 planned.global, benchmark.config, {});
   planned.corridor = corridorRouters()
                          .make("partition-astar")
                          ->run(benchmark.chip, planned.capacity,
-                               planned.assignment, benchmark.config);
+                               planned.assignment, benchmark.config, {});
   return planned;
 }
 
@@ -316,7 +323,7 @@ void expectWiresRunFromFeedToTarget(const DetailRoutingT& routing,
     // corner. The check is made in layout units so that it states what the two
     // artifacts agree on rather than repeating either one's conversion.
     const auto centreOf = [&detail](const auto& cell) {
-      return detail.toLayout(cell.x() + 0.5, cell.y() + 0.5);
+      return grid::cornerToLayout(detail, cell.x() + 0.5, cell.y() + 0.5);
     };
     const auto same = [](const auto& a, const auto& b) {
       return std::abs(a.x() - b.x()) < 1.0e-6 &&
@@ -423,6 +430,97 @@ INSTANTIATE_TEST_SUITE_P(EveryChip, SpacedDetail,
 
 /// Two runs of the same input give the same answer, which is what makes a
 /// resumed run equal to an uninterrupted one.
+/// A place of the corridor plan is read in the frame the corridor wrote it
+/// in.
+///
+/// The Corridor stage writes layout points of the corner frame, in which a
+/// cell is the unit square from its corner: a feed or a target sits at the
+/// centre of its cell and a crossing on the edge between two cells. The detail
+/// grid names a cell by its centre, half a cell on, so a crossing read without
+/// the conversion lands on two cells across the other axis.
+TEST(DetailRouter, ReadsThePlacesOfTheCorridorInTheCornerFrame) {
+  const auto detail = buildScene(test::miniChip(), test::miniConfig()).detail;
+  const auto cells = [&detail](const double x, const double y) {
+    return cellsOfPlace(detail, grid::cornerToLayout(detail, x, y));
+  };
+  using flatbuffers::geometry::DCoord;
+  // A feed at the centre of a cell names that cell, twice.
+  EXPECT_EQ(cells(123.5, 12.5), (std::array{DCoord(123, 12), DCoord(123, 12)}));
+  // A crossing on the vertical edge between two cells names the left one and
+  // the right one; on a horizontal edge, the one above and the one below.
+  EXPECT_EQ(cells(151.0, 43.5), (std::array{DCoord(150, 43), DCoord(151, 43)}));
+  EXPECT_EQ(cells(150.5, 44.0), (std::array{DCoord(150, 43), DCoord(150, 44)}));
+  // On the first column there is no cell to the left: the one cell, twice.
+  EXPECT_EQ(cells(0.0, 7.5), (std::array{DCoord(0, 7), DCoord(0, 7)}));
+  // A place beyond the grid names no cell.
+  EXPECT_FALSE(cells(-3.0, 5.5).has_value());
+  EXPECT_FALSE(cells(0.5, 300.5).has_value());
+}
+
+/// What a report of the stage receives: its entries and its result.
+struct Spoken {
+  std::vector<std::pair<Detail, std::string>> entries;
+  std::vector<std::vector<Figure>> results;
+  std::vector<std::optional<std::uint64_t>> fails;
+  std::uint64_t progressed = 0;
+
+  [[nodiscard]] Report report() {
+    return {
+        Detail::Items,
+        {.entry =
+             [this](const Detail level, const std::string_view label,
+                    const std::vector<Figure>& /*figures*/) {
+               entries.emplace_back(level, std::string(label));
+             },
+         .result =
+             [this](const std::vector<Figure>& figures,
+                    const std::optional<std::uint64_t> failed) {
+               results.push_back(figures);
+               fails.push_back(failed);
+             },
+         .progress = [this](const std::string_view /*task*/,
+                            const std::string_view /*detail*/,
+                            const std::uint64_t /*done*/,
+                            const std::uint64_t /*total*/) { ++progressed; }}};
+  }
+};
+
+/// The stage reports every round as an entry of its steps, moves the
+/// progress of the run while it draws, and reports its result exactly
+/// once, with the wires it could not draw as its fails.
+TEST(DetailRouter, ReportsItsRoundsAndItsResultOnce) {
+  Benchmark benchmark;
+  benchmark.config = test::miniConfig();
+  benchmark.chip = test::miniChip(benchmark.config);
+  const auto planned = plan(benchmark);
+  Spoken spoken;
+  const auto routing =
+      detailRouters()
+          .make("pixel-astar")
+          ->run(benchmark.chip, planned.capacity, planned.global,
+                planned.assignment, planned.corridor, benchmark.config,
+                spoken.report());
+
+  ASSERT_FALSE(spoken.entries.empty());
+  EXPECT_EQ(spoken.entries.front(),
+            (std::pair{Detail::Steps, std::string("round 1 forward")}));
+  EXPECT_GT(spoken.progressed, 0U);
+  ASSERT_EQ(spoken.results.size(), 1U);
+  ASSERT_TRUE(spoken.fails.front().has_value());
+  std::size_t undrawn = 0;
+  for (const auto& wire : routing.wires) {
+    undrawn += wire->path.empty() ? 1 : 0;
+  }
+  EXPECT_EQ(*spoken.fails.front(), undrawn);
+  const auto drawn =
+      std::ranges::find_if(spoken.results.front(), [&](const Figure& figure) {
+        return figure.text == std::format("drawn {}/{}",
+                                          routing.wires.size() - undrawn,
+                                          routing.wires.size());
+      });
+  EXPECT_NE(drawn, spoken.results.front().end());
+}
+
 TEST(DetailRouter, IsDeterministic) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);

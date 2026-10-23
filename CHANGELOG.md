@@ -13,8 +13,8 @@ releases may include breaking changes.
 ### Added
 
 - ✨ Add the routing stages ([#XXX]) ([**@FeldmeierMichael**]):
-  - The Detail stage draws every corridor as a path of cells on the detail
-    grid, with an eight-connected search inside the corridor.
+  - The Detail stage draws every corridor as a path of cells on the detail grid,
+    with an eight-connected search inside the corridor.
   - The Final stage draws every wire as curvature-constrained copper on the
     router grid, inserts the couplers, routes the feedline chains and refines
     them, in five phases: `pre-feedline-routing`, `pre-feedline-refinement`,
@@ -24,19 +24,24 @@ releases may include breaking changes.
     a step.
   - The coupler insertion checks every chain of feedline edges against a
     capacity graph of the free space, judges the whole chip by the crossing
-    slots of its feedline edges, and searches a globally satisfiable state
-    over the chains when the chip is not. `[stages.final] capacity_check`
-    turns the check off.
+    slots of its feedline edges, and searches a globally satisfiable state over
+    the chains when the chip is not. `[stages.final] capacity_check` turns the
+    check off.
   - `[stages.detail]` and `[stages.final]` hold the parameters of the two
     stages; `docs/routing.md` describes the stages and `docs/configuration.md`
     every key.
+  - Both stages report as the planning stages do: the Detail stage one entry per
+    round and its result, the Final stage one entry per phase and a result that
+    counts every wire, with the wires without a usable way as its fails and the
+    resonators off their length as figures beside them;
+    `docs/terminal_output.md` shows the two blocks.
 - ✨ Add `[debug]`, a configuration section that names the debug pages a run
-  writes under `<run>/debug`, and `mqt-scpd plan -d`, which turns every page
-  on ([#XXX]) ([**@FeldmeierMichael**]):
-  - A dashboard per routing phase, the coupler options with the capacity
-    graph, every step check of the chain search and the course of the global
-    SAT search, linked from `index.html`. The Final stage records what the
-    pages need as JSON, one record at a time, and writes no file itself.
+  writes under `<run>/debug`, and `mqt-scpd plan -d`, which turns every page on
+  ([#XXX]) ([**@FeldmeierMichael**]):
+  - A dashboard per routing phase, the coupler options with the capacity graph,
+    every step check of the chain search and the course of the global SAT
+    search, linked from `index.html`. The Final stage records what the pages
+    need as JSON, one record at a time, and writes no file itself.
   - `mqt-scpd debug <run>` builds the pages again from the records, and
     `mqt-scpd debug <run> --serve` serves the capacity graph on a local page
     whose tab moves a coupler to another of its options.
@@ -45,9 +50,9 @@ releases may include breaking changes.
 - 🎨 Draw the routing stages with `plot` and `render` ([#XXX])
   ([**@FeldmeierMichael**]):
   - Every wire is a coplanar waveguide in the colors of the figures: the
-    feedline edges dark, the plain wires gray and the resonators light, with
-    the room every wire keeps as a translucent band, the couplers as pads and
-    an air bridge where a wire crosses a feedline edge.
+    feedline edges dark, the plain wires gray and the resonators light, with the
+    room every wire keeps as a translucent band, the couplers as pads and an air
+    bridge where a wire crosses a feedline edge.
   - The wires the Final stage left failing and the resonators off their length
     are marked on layers of their own and counted in the legend.
   - `--phase` draws the snapshot of one phase of the Final stage; the GDS

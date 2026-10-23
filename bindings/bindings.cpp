@@ -196,59 +196,86 @@ nb::list figuresOf(const std::vector<mqt::scpd::pipeline::Figure>& figures) {
 /// The stage runs with the GIL released, so every call takes it back first.
 /// The callables only refer to the object, which the caller keeps alive for
 /// the whole call; copying it would touch its reference count without the GIL.
-mqt::scpd::pipeline::Report reportTo(const nb::object& reporter,
-                                     const int verbosity) {
+/// A report that only lets Ctrl-C through, for a stage run without a
+/// reporter.
+mqt::scpd::pipeline::Report signalsOnly() {
+  using mqt::scpd::pipeline::Detail;
+  return {Detail::Summary,
+          {.progress = [](const std::string_view /*task*/,
+                          const std::string_view /*detail*/,
+                          const std::uint64_t /*done*/,
+                          const std::uint64_t /*total*/) {
+            const nb::gil_scoped_acquire gil;
+            // Python.h, which nanobind includes, declares the call in a
+            // header of its own that an extension does not include itself.
+            // NOLINTNEXTLINE(misc-include-cleaner)
+            if (PyErr_CheckSignals() != 0) {
+              throw nb::python_error();
+            }
+          }}};
+}
+
+/// The report whose sinks hand every line, entry, result and progress update
+/// to the Python object `reporter()` gives, taking the GIL back first.
+template <typename Access>
+mqt::scpd::pipeline::Report reportThrough(Access reporter,
+                                          const int verbosity) {
   using mqt::scpd::pipeline::Detail;
   using mqt::scpd::pipeline::Figure;
-  if (reporter.is_none()) {
-    return {Detail::Summary,
-            {.progress = [](const std::string_view /*task*/,
-                            const std::string_view /*detail*/,
-                            const std::uint64_t /*done*/,
-                            const std::uint64_t /*total*/) {
-              const nb::gil_scoped_acquire gil;
-              // Python.h, which nanobind includes, declares the call in a
-              // header of its own that an extension does not include itself.
-              // NOLINTNEXTLINE(misc-include-cleaner)
-              if (PyErr_CheckSignals() != 0) {
-                throw nb::python_error();
-              }
-            }}};
-  }
   const auto level = static_cast<Detail>(std::clamp(verbosity, 0, 3));
-  return {
-      level,
-      {.line =
-           [&reporter](const Detail detail, const std::string_view text) {
-             const nb::gil_scoped_acquire gil;
-             reporter.attr("line")(static_cast<int>(detail),
-                                   nb::str(text.data(), text.size()));
-           },
-       .entry =
-           [&reporter](const Detail detail, const std::string_view label,
-                       const std::vector<Figure>& figures) {
-             const nb::gil_scoped_acquire gil;
-             reporter.attr("entry")(static_cast<int>(detail),
-                                    nb::str(label.data(), label.size()),
-                                    figuresOf(figures));
-           },
-       .result =
-           [&reporter](const std::vector<Figure>& figures,
-                       const std::optional<std::uint64_t> fails) {
-             const nb::gil_scoped_acquire gil;
-             reporter.attr("result")(figuresOf(figures), fails.has_value()
-                                                             ? nb::cast(*fails)
+  return {level,
+          {.line =
+               [reporter](const Detail detail, const std::string_view text) {
+                 const nb::gil_scoped_acquire gil;
+                 reporter().attr("line")(static_cast<int>(detail),
+                                         nb::str(text.data(), text.size()));
+               },
+           .entry =
+               [reporter](const Detail detail, const std::string_view label,
+                          const std::vector<Figure>& figures) {
+                 const nb::gil_scoped_acquire gil;
+                 reporter().attr("entry")(static_cast<int>(detail),
+                                          nb::str(label.data(), label.size()),
+                                          figuresOf(figures));
+               },
+           .result =
+               [reporter](const std::vector<Figure>& figures,
+                          const std::optional<std::uint64_t> fails) {
+                 const nb::gil_scoped_acquire gil;
+                 reporter().attr("result")(figuresOf(figures),
+                                           fails.has_value() ? nb::cast(*fails)
                                                              : nb::none());
-           },
-       .progress =
-           [&reporter](const std::string_view task,
-                       const std::string_view detail, const std::uint64_t done,
-                       const std::uint64_t total) {
-             const nb::gil_scoped_acquire gil;
-             reporter.attr("progress")(nb::str(task.data(), task.size()),
-                                       nb::str(detail.data(), detail.size()),
-                                       done, total);
-           }}};
+               },
+           .progress =
+               [reporter](const std::string_view task,
+                          const std::string_view detail,
+                          const std::uint64_t done, const std::uint64_t total) {
+                 const nb::gil_scoped_acquire gil;
+                 reporter().attr("progress")(
+                     nb::str(task.data(), task.size()),
+                     nb::str(detail.data(), detail.size()), done, total);
+               }}};
+}
+
+mqt::scpd::pipeline::Report reportTo(const nb::object& reporter,
+                                     const int verbosity) {
+  if (reporter.is_none()) {
+    return signalsOnly();
+  }
+  return reportThrough([&reporter]() -> const nb::object& { return reporter; },
+                       verbosity);
+}
+
+/// The same for an object that keeps the report after the call that made it
+/// returns: it holds its own reference, taken while the call holds the GIL.
+mqt::scpd::pipeline::Report keepReporting(const nb::object& reporter,
+                                          const int verbosity) {
+  if (reporter.is_none()) {
+    return signalsOnly();
+  }
+  const auto held = std::make_shared<const nb::object>(reporter);
+  return reportThrough([held]() -> const nb::object& { return *held; },
+                       verbosity);
 }
 
 /// The corridor routing an artifact carries.
@@ -259,27 +286,6 @@ corridorOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
     throw std::invalid_argument("the artifact is not a corridor routing");
   }
   return *output;
-}
-
-/// The Python callable a stage reports its progress to, or nothing.
-mqt::scpd::pipeline::Progress sayTo(const nb::object& progress) {
-  if (progress.is_none()) {
-    return {};
-  }
-  return [&progress](const std::string_view line) {
-    progress(nb::str(line.data(), line.size()));
-  };
-}
-
-/// The same for an object that keeps the callable after the call that made
-/// it returns: it holds its own reference.
-mqt::scpd::pipeline::Progress keepSaying(const nb::object& progress) {
-  if (progress.is_none()) {
-    return {};
-  }
-  return [progress](const std::string_view line) {
-    progress(nb::str(line.data(), line.size()));
-  };
 }
 
 /// The Python callable a stage hands its debug records to, or nothing.
@@ -484,7 +490,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       [](const nb::bytes& chip, const nb::bytes& capacity,
          const nb::bytes& global, const nb::bytes& assignment,
          const nb::bytes& corridor, const nb::bytes& config,
-         const std::string_view producer, const nb::object& progress) {
+         const std::string_view producer, const nb::object& reporter,
+         const int verbosity) {
         const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
         const auto design = mqt::scpd::io::readChip(asSpan(chip));
         const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
@@ -496,21 +503,21 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
         return asArtifact(mqt::scpd::pipeline::detailRouters().make(name)->run(
                               design, capacityOf(plan), globalOf(circuit),
                               assignmentOf(assigned), corridorOf(routed),
-                              configuration, sayTo(progress)),
+                              configuration, reportTo(reporter, verbosity)),
                           producer);
       },
       "chip"_a, "capacity"_a, "global_"_a, "assignment"_a, "corridor"_a,
-      "config"_a, "producer"_a, "progress"_a = nb::none(),
-      "Run the Detail stage. Returns 05-detail.fb as bytes. progress, when "
-      "given, is called with one line per pass while the stage runs.");
+      "config"_a, "producer"_a, "reporter"_a = nb::none(), "verbosity"_a = 0,
+      "Run the Detail stage. Returns 05-detail.fb as bytes. The stage reports "
+      "through reporter as plan_capacity.");
 
   m.def(
       "route_final",
       [](const nb::bytes& chip, const nb::bytes& capacity,
          const nb::bytes& global, const nb::bytes& assignment,
          const nb::bytes& detail, const nb::bytes& config,
-         const std::string_view producer, const nb::object& progress,
-         const nb::object& debug, const std::uint32_t verbosity) {
+         const std::string_view producer, const nb::object& reporter,
+         const nb::object& debug, const int verbosity) {
         const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
         const auto design = mqt::scpd::io::readChip(asSpan(chip));
         const auto plan = mqt::scpd::io::readArtifact(asSpan(capacity));
@@ -522,18 +529,17 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
         return asArtifact(mqt::scpd::pipeline::finalRouters().make(name)->run(
                               design, capacityOf(plan), globalOf(circuit),
                               assignmentOf(assigned), detailOf(drawn),
-                              configuration, sayTo(progress), recordTo(debug),
-                              verbosity),
+                              configuration, reportTo(reporter, verbosity),
+                              recordTo(debug)),
                           producer);
       },
       "chip"_a, "capacity"_a, "global_"_a, "assignment"_a, "detail"_a,
-      "config"_a, "producer"_a, "progress"_a = nb::none(),
+      "config"_a, "producer"_a, "reporter"_a = nb::none(),
       "debug"_a = nb::none(), "verbosity"_a = 0,
-      "Run the Final stage. Returns 06-final.fb as bytes. progress, when "
-      "given, is called with one line per round while the stage runs, and "
-      "with verbosity 1 with one line per wire and search as well; debug, "
-      "when given, is called with the kind and the JSON text of every record "
-      "a page of the [debug] section asks for.");
+      "Run the Final stage. Returns 06-final.fb as bytes. The stage reports "
+      "through reporter as plan_capacity; debug, when given, is called with "
+      "the kind and the JSON text of every record a page of the [debug] "
+      "section asks for.");
 
   nb::class_<mqt::scpd::pipeline::CouplerSession>(
       m, "CouplerSession",
@@ -544,7 +550,7 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
           [](mqt::scpd::pipeline::CouplerSession* self, const nb::bytes& chip,
              const nb::bytes& global, const nb::bytes& assignment,
              const nb::bytes& detail, const nb::bytes& config,
-             const nb::object& progress, const std::uint32_t verbosity) {
+             const nb::object& reporter, const int verbosity) {
             const auto configuration =
                 mqt::scpd::io::readConfig(asSpan(config));
             const auto design = mqt::scpd::io::readChip(asSpan(chip));
@@ -554,14 +560,14 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
             const auto drawn = mqt::scpd::io::readArtifact(asSpan(detail));
             new (self) mqt::scpd::pipeline::CouplerSession(
                 design, globalOf(circuit), assignmentOf(assigned),
-                detailOf(drawn), configuration, keepSaying(progress),
-                verbosity);
+                detailOf(drawn), configuration,
+                keepReporting(reporter, verbosity));
           },
           "chip"_a, "global_"_a, "assignment"_a, "detail"_a, "config"_a,
-          "progress"_a = nb::none(), "verbosity"_a = 0,
+          "reporter"_a = nb::none(), "verbosity"_a = 0,
           "Run the Final stage up to and with the coupler insertion and keep "
-          "it. progress, when given, is called with every line the stage "
-          "says, now and on every later call.")
+          "it. The stage reports through reporter as plan_capacity, now and "
+          "on every later call.")
       .def("couplers", &mqt::scpd::pipeline::CouplerSession::couplers,
            "The couplers as they stand and every option of each, as JSON.")
       .def("set_option", &mqt::scpd::pipeline::CouplerSession::setOption,

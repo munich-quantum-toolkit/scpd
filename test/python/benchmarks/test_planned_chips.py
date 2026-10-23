@@ -310,7 +310,7 @@ def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_pat
     fails = Fails()
     for step in STEPS:
         directory.run_stage(step, config, chip_bytes, BlockReporter(fails))
-    assert fails.counts == [None, 0, 0, 0]
+    assert fails.counts == [None, 0, 0, 0, 0, 0]
 
     model = decode_chip(chip_bytes)
     plan = read_artifact(directory.artifact("capacity").read_bytes()).output

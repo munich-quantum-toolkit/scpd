@@ -130,7 +130,7 @@ TEST(BenchmarkStages, PartitionsTheFourQubitChip) {
   const auto benchmark = fourQubit();
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
 
   ASSERT_NE(plan.capacity_grid, nullptr);
   EXPECT_EQ(plan.capacity_grid->width, 12U);
@@ -161,7 +161,7 @@ TEST(BenchmarkStages, KeepsOnlyTheBottlenecksItsChainsCross) {
   const auto benchmark = nineQubit();
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
 
   ASSERT_FALSE(plan.bottlenecks.empty());
   std::set<std::uint32_t> named;
@@ -193,7 +193,7 @@ TEST(BenchmarkStages, LeavesNoGateWithoutSomethingBeyondIt) {
   const auto benchmark = nineQubit();
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
 
   for (const auto& node : plan.nodes) {
     if (node->kind != flatbuffers::artifacts::CapacityElement::Bottleneck) {
@@ -215,7 +215,7 @@ TEST(BenchmarkStages, PartitionsMoreThanTheClearCapacityCellsAlone) {
   const auto benchmark = nineQubit();
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   const auto scene = buildScene(benchmark.chip, benchmark.config);
   const auto seeds =
       grid::freeCellSeeds(scene.blocked, scene.detail, scene.capacity);
@@ -227,7 +227,7 @@ TEST(BenchmarkStages, PartitionsTheNineQubitChip) {
   const auto benchmark = nineQubit();
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   EXPECT_FALSE(plan.partitions.empty());
   EXPECT_FALSE(plan.chains.empty());
   EXPECT_FALSE(plan.launchers.empty());
@@ -242,10 +242,10 @@ TEST(BenchmarkStages, TheFourQubitChipHasNoInnerCircuit) {
 
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   const auto global = globalRouters()
                           .make("hanan-milp")
-                          ->run(benchmark.chip, plan, benchmark.config);
+                          ->run(benchmark.chip, plan, benchmark.config, {});
   EXPECT_TRUE(global.lattices.empty());
   EXPECT_TRUE(global.connections.empty());
   EXPECT_FALSE(global.outer_ring.empty());
@@ -284,10 +284,10 @@ TEST(BenchmarkStages, ShutsTheInternalBridgesUnlessTheConfigurationOpensThem) {
 
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   const auto shut = globalRouters()
                         .make("hanan-milp")
-                        ->run(benchmark.chip, plan, benchmark.config);
+                        ->run(benchmark.chip, plan, benchmark.config, {});
   for (const auto& connection : shut.connections) {
     EXPECT_FALSE(internal.contains(connection->source->index()));
     EXPECT_FALSE(internal.contains(connection->target.index()));
@@ -296,8 +296,9 @@ TEST(BenchmarkStages, ShutsTheInternalBridgesUnlessTheConfigurationOpensThem) {
   // Opening them changes nothing on this chip: its circuit never wanted a
   // crossing, so the switch costs a solution only where one was being used.
   const auto opened = nineQubit(true);
-  const auto crossing =
-      globalRouters().make("hanan-milp")->run(opened.chip, plan, opened.config);
+  const auto crossing = globalRouters()
+                            .make("hanan-milp")
+                            ->run(opened.chip, plan, opened.config, {});
   EXPECT_EQ(crossing.connections.size(), shut.connections.size());
   EXPECT_DOUBLE_EQ(crossing.objective, shut.objective);
 }
@@ -318,7 +319,7 @@ TEST(BenchmarkStages, CarriesEveryTargetOnSomeCapacityChain) {
     const auto scene = buildScene(benchmark.chip, benchmark.config);
     const auto plan = capacityPlanners()
                           .make("watershed")
-                          ->run(benchmark.chip, benchmark.config);
+                          ->run(benchmark.chip, benchmark.config, {});
     ASSERT_FALSE(scene.targetPort.empty());
 
     std::set<std::uint32_t> named;
@@ -342,10 +343,10 @@ TEST(BenchmarkStages, ServesEveryInnerTarget) {
     const auto circuit = innerCircuitOf(benchmark.chip, benchmark.config);
     const auto plan = capacityPlanners()
                           .make("watershed")
-                          ->run(benchmark.chip, benchmark.config);
+                          ->run(benchmark.chip, benchmark.config, {});
     const auto global = globalRouters()
                             .make("hanan-milp")
-                            ->run(benchmark.chip, plan, benchmark.config);
+                            ->run(benchmark.chip, plan, benchmark.config, {});
 
     std::set<std::uint32_t> served;
     for (const auto& connection : global.connections) {
@@ -375,7 +376,7 @@ TEST(BenchmarkStages, KeepsTheGatesOfAChamberSeveralCorridorsMeet) {
   const auto benchmark = seventeenQubit();
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   ASSERT_FALSE(plan.chains.empty());
   for (const auto root : plan.chains) {
     EXPECT_FALSE(plan.nodes[root]->next.empty())
@@ -410,7 +411,7 @@ TEST(BenchmarkStages, ReportsWhatThePortsOwnApproachesKeepClear) {
 
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   ASSERT_FALSE(plan.port_keepout.empty());
   for (const auto& ring : plan.port_keepout) {
     EXPECT_GE(ring->vertices.size(), 4U);
@@ -427,10 +428,10 @@ TEST(BenchmarkStages, GivesATargetOneWireHoweverManyLatticesCarryIt) {
   const auto benchmark = seventeenQubit();
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   const auto global = globalRouters()
                           .make("hanan-milp")
-                          ->run(benchmark.chip, plan, benchmark.config);
+                          ->run(benchmark.chip, plan, benchmark.config, {});
   ASSERT_FALSE(global.connections.empty());
 
   std::set<std::uint32_t> served;
@@ -449,10 +450,10 @@ TEST(BenchmarkStages, KeepsTheInnerCircuitOffTheArtwork) {
   const auto benchmark = nineQubit();
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   const auto global = globalRouters()
                           .make("hanan-milp")
-                          ->run(benchmark.chip, plan, benchmark.config);
+                          ->run(benchmark.chip, plan, benchmark.config, {});
   ASSERT_FALSE(global.lattices.empty());
 
   /// Whether a point is inside a polygon, by ray casting. The first polygon
@@ -506,14 +507,14 @@ TEST(BenchmarkStages, AssignsTheFourQubitChip) {
   const auto benchmark = fourQubit();
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   const auto global = globalRouters()
                           .make("hanan-milp")
-                          ->run(benchmark.chip, plan, benchmark.config);
+                          ->run(benchmark.chip, plan, benchmark.config, {});
   const auto assignment =
       assigners()
           .make("ordered-milp")
-          ->run(benchmark.chip, plan, global, benchmark.config);
+          ->run(benchmark.chip, plan, global, benchmark.config, {});
 
   EXPECT_EQ(assignment.ring.size(),
             benchmark.config.ports->sequences->all_outer.size());
@@ -529,14 +530,14 @@ TEST_P(BenchmarkAssignment, FollowsTheRulesOfTheRing) {
   const auto benchmark = benchmarkOf(GetParam());
   const auto plan = capacityPlanners()
                         .make("watershed")
-                        ->run(benchmark.chip, benchmark.config);
+                        ->run(benchmark.chip, benchmark.config, {});
   const auto global = globalRouters()
                           .make("hanan-milp")
-                          ->run(benchmark.chip, plan, benchmark.config);
+                          ->run(benchmark.chip, plan, benchmark.config, {});
   const auto assignment =
       assigners()
           .make("ordered-milp")
-          ->run(benchmark.chip, plan, global, benchmark.config);
+          ->run(benchmark.chip, plan, global, benchmark.config, {});
 
   expectEveryRingNodeIsReached(benchmark, assignment);
   expectALauncherFeedsOneConventionalPort(benchmark, plan, global, assignment);

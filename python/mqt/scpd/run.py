@@ -191,6 +191,22 @@ class StageBlockLike(Protocol):
         """Take how far the stage has got."""
 
 
+class Reporter(Protocol):
+    """What a stage reports to: the four calls the core makes, as :class:`BlockReporter` takes them."""
+
+    def line(self, level: int, text: str) -> None:
+        """Take a line of free text and its level."""
+
+    def entry(self, level: int, label: str, figures: Sequence[tuple[str, str]]) -> None:
+        """Take an entry: a label and its figures as (text, tone) pairs."""
+
+    def result(self, figures: Sequence[tuple[str, str]], fails: int | None) -> None:
+        """Take the result of the stage and, for a stage that can fail on part of its work, its fails."""
+
+    def progress(self, task: str, detail: str, done: int, total: int) -> None:
+        """Take how far a task of the stage has got."""
+
+
 class BlockReporter:
     """Hands what the core reports to a stage block.
 
@@ -213,10 +229,6 @@ class BlockReporter:
         if self.log is not None:
             self.log.append(text)
         self.block.line(level, text)
-
-    def say(self, text: str) -> None:
-        """Hand a line a routing stage says to the block, as a step of the stage."""
-        self.line(1, text)
 
     def entry(self, level: int, label: str, figures: Sequence[tuple[str, str]]) -> None:
         """Hand an entry to the block."""
@@ -412,20 +424,16 @@ class RunDirectory:
         packed = write_config(config)
         producer = f"mqt-scpd {__version__}"
         level = min(max(verbosity, 0), 3)
-        # The two routing stages say what they do one line at a time: with -v one line per round,
-        # with -vv one per wire and search as well.
-        say = reporter.say if reporter is not None else None
-        routing_level = max(level - 1, 0)
         calls: dict[str, Callable[[], bytes]] = {
             "capacity": lambda: pyscpd.plan_capacity(chip, packed, producer, reporter, level),
             "global": lambda: pyscpd.route_global(chip, inputs[0], packed, producer, reporter, level),
             "assign": lambda: pyscpd.assign(chip, inputs[0], inputs[1], packed, producer, reporter, level),
             "corridor": lambda: pyscpd.route_corridor(chip, inputs[0], inputs[1], packed, producer, reporter, level),
             "detail": lambda: pyscpd.route_detail(
-                chip, inputs[0], inputs[1], inputs[2], inputs[3], packed, producer, say
+                chip, inputs[0], inputs[1], inputs[2], inputs[3], packed, producer, reporter, level
             ),
             "final": lambda: pyscpd.route_final(
-                chip, inputs[0], inputs[1], inputs[2], inputs[3], packed, producer, say, debug, routing_level
+                chip, inputs[0], inputs[1], inputs[2], inputs[3], packed, producer, reporter, debug, level
             ),
         }
         if stage not in calls:
@@ -455,7 +463,7 @@ class RunDirectory:
     def coupler_session(
         self,
         config: ConfigT,
-        progress: Callable[[str], None] | None = None,
+        reporter: Reporter | None = None,
         verbosity: int = 0,
     ) -> pyscpd.CouplerSession:
         """Run the Final stage up to and with the coupler insertion and keep it.
@@ -465,8 +473,8 @@ class RunDirectory:
 
         Args:
             config: The run configuration.
-            progress: Called with every line the stage says, now and later.
-            verbosity: 0 for one progress line per round, 1 for one per wire and search as well.
+            reporter: Where the stage reports what it does, now and on every later call, or None.
+            verbosity: How many times -v was given.
 
         Returns:
             The session.
@@ -478,8 +486,8 @@ class RunDirectory:
             self._read("assign"),
             self._read("detail"),
             write_config(config),
-            progress,
-            verbosity,
+            reporter,
+            min(max(verbosity, 0), 3),
         )
 
     def invalidate_after(self, stage: str) -> list[Path]:

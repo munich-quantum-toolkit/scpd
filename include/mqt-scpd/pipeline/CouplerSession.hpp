@@ -38,8 +38,7 @@ public:
   /// section or no design rules, or the detail routing no grid.
   CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
                  const AssignmentT& assignment, const DetailRoutingT& detail,
-                 const ConfigT& config, const Progress& progress = {},
-                 std::uint32_t verbosity = 0);
+                 const ConfigT& config, const Report& report = {});
   ~CouplerSession();
   CouplerSession(const CouplerSession&) = delete;
   CouplerSession& operator=(const CouplerSession&) = delete;
