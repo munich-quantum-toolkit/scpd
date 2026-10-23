@@ -295,6 +295,115 @@ table FinalParams {
   /// its search, its corridor and its room price all grow with the band.
   /// Zero takes `corridor_spacings`.
   refinement_corridor_spacings: uint32 = 6;
+  /// How much of `target_resonator_length` is left to run from the centre of
+  /// the coupler to the qubit, as a share of that figure. The meander can
+  /// lengthen a way but never shorten one, so a coupler cut short of the
+  /// figure hands the rest to the meander.
+  coupler_bias: double = 1.0;
+  /// How far below `target_resonator_length` a coupler may leave the
+  /// resonator, as a share of that figure. A place that leaves less is
+  /// refused.
+  coupler_max_shortfall: double = 0.30;
+  /// How many cells a coupler keeps off every side of the coupler box, the
+  /// room the launcher stubs leave open.
+  coupler_box_margin_cells: uint32 = 5;
+  /// How far an option that leaves the coupler box is moved into it, in
+  /// cells on an axis, before the place is given up.
+  coupler_shift_cells: uint32 = 20;
+  /// How many cells of straight run the coupler's lead keeps beyond
+  /// `min_straight_length`, so that the join with the resonator's way has
+  /// room to be a turn.
+  coupler_lead_margin_cells: uint32 = 5;
+  /// How much further than its own stub a launcher keeps the coupler box
+  /// away, in layout units.
+  launcher_lead: double = 10.0;
+  /// The offsets the option generator turns a pad by, off the heading the
+  /// resonator leaves on, as a comma list of eighth turns 0 to 7. Empty
+  /// means the default: every offset but 3 and 4, the pad turned 135 and
+  /// 180 degrees against the way.
+  coupler_offsets: string;
+  /// How many cells beyond the launcher's run and the clearance a feedline
+  /// edge keeps closed in front of every launcher but its own.
+  edge_launcher_margin_cells: uint32 = 6;
+  /// The slot a feedline edge keeps open at a coupler's feedline port: the
+  /// straight run it is forced to make off the port, in cells.
+  terminal_slot_cells: uint32 = 20;
+  /// The weight of an edge between a launcher and the coupler beside it in
+  /// the chain search, against 1 for every other edge.
+  chain_end_edge_weight: double = 0.1;
+  /// The bend price of a feedline edge, as a factor on `bend_penalty_norm`.
+  edge_bend_factor: double = 1.0;
+  /// The price of one cell of length in the chain search; 0 prices length
+  /// not at all.
+  chain_length_weight: uint32 = 0;
+  /// Whether the coupler insertion runs the capacity graph check: the step
+  /// checks of the chain search, the whole-chip check after the commit and
+  /// the global SAT search when that check says UNSAT. Off, the chains are
+  /// settled by cost alone.
+  capacity_check: bool = true;
+  /// The length-point clearance of the outer routing: the radius, in cells,
+  /// a wire keeps from the band of a resonator where that resonator reaches
+  /// its target length, and the half-width of that band as a percentage of
+  /// the target length. A radius of 0 turns the clearance off.
+  length_point_radius_cells: uint32 = 40;
+  length_point_band_percent: double = 10.0;
+  /// The band of lengths the feedline sweep accepts around the target
+  /// length, as a multiple of `resonator_length_tolerance`.
+  sweep_length_band: double = 5.0;
+  /// The spacing of the meander's legs, in cells.
+  meander_leg_spacing_cells: uint32 = 25;
+  /// How many cells at the start of a resonator the meander leaves as they
+  /// are; a negative value means the coupler's length plus four.
+  meander_start_margin_cells: int32 = -1;
+  /// The slot check: the safety factor on the clearance a wire takes in a
+  /// gap, from the gap size (in wires) the factor applies to; the narrowest
+  /// gap a resonator passes, as a share of the clearance.
+  capacity_margin: double = 1.06;
+  capacity_margin_from_wires: uint32 = 3;
+  resonator_passage: double = 0.8;
+  /// The band of cells beside a feedline edge where a wire may only cross
+  /// at a right angle, the spacing of the crossing points in clearances,
+  /// the cells closed at the ends of an edge, the straight run after an
+  /// escape turn and the clearance an escape keeps from a stub.
+  crossing_reach_cells: uint32 = 10;
+  crossing_spacing: double = 1.4142135623730951;
+  slot_pin_cells: uint32 = 10;
+  escape_straight_cells: uint32 = 5;
+  escape_stub_margin_cells: uint32 = 4;
+  /// The bottleneck analysis: the widest gap, in wires, still treated as a
+  /// bottleneck, and the least rise of a narrowing.
+  bottleneck_wires: uint32 = 10;
+  bottleneck_rise: double = 2.0;
+  /// The room rules: the dead length at both ends of a straight run and the
+  /// reach of the channel rule, in cells; the detour a wire may take through
+  /// a gap, as a factor on the direct way.
+  room_margin_cells: uint32 = 10;
+  room_channel_reach_cells: uint32 = 80;
+  detour_factor: double = 1.5;
+  /// How far a terminal edge's run is guarded past the coupler's pad, in
+  /// cells.
+  terminal_stub_extra_cells: uint32 = 5;
+  /// The budgets of the global SAT search: option runs per segment, locally
+  /// SAT states kept per chain and whole-chip combinations tried.
+  global_sat_runs: uint32 = 8;
+  global_sat_states: uint32 = 8;
+  global_sat_tries: uint32 = 200;
+  /// How many steps the capacity rule may refuse before a run of options
+  /// joins a chain; then the chain is searched again without the rule.
+  chain_rule_refusals: uint32 = 1500;
+  /// The targeted repair: how many ring members beside a segment are drawn
+  /// again and how many local rip-up rounds it runs.
+  research_ring_members: uint32 = 2;
+  research_rounds: uint32 = 2;
+  /// How many ring neighbours to either side a wire is fenced against in
+  /// the feedline pass and the refinements.
+  fence_pairs: uint32 = 3;
+  /// The halo of a wire let go of in a relaxation: its reach in clearances,
+  /// and past the wire, in the feedline pass, a price rising to `rise_peak`
+  /// times the flat price at `rise_reach` clearances.
+  halo_reach: uint32 = 1;
+  rise_reach: uint32 = 3;
+  rise_peak: uint32 = 3;
 }
 
 /// How the mixed-integer programs of the planning stages are solved.

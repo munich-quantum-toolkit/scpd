@@ -188,6 +188,49 @@ def test_the_refinement_band_is_six_spacings_unless_the_file_sets_it() -> None:
     assert config.stages.final.refinementCorridorSpacings == 0
 
 
+def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> None:
+    """The coupler insertion's knobs are keys of `[stages.final]` with the defaults of the schema."""
+    config = parse_config(MANUAL)
+    assert config.stages is not None
+    assert config.stages.final is not None
+    final = config.stages.final
+    assert final.couplerBias == 1.0
+    assert final.couplerMaxShortfall == 0.30
+    assert final.couplerBoxMarginCells == 5
+    assert final.couplerShiftCells == 20
+    assert final.couplerLeadMarginCells == 5
+    assert final.launcherLead == 10.0
+    assert final.couplerOffsets == ""
+    assert final.edgeLauncherMarginCells == 6
+    assert final.terminalSlotCells == 20
+    assert final.chainEndEdgeWeight == 0.1
+    assert final.edgeBendFactor == 1.0
+    assert final.chainLengthWeight == 0
+    assert final.capacityCheck is True
+    assert final.capacityMargin == 1.06
+    assert final.globalSatTries == 200
+    assert final.meanderStartMarginCells == -1
+
+    config = parse_config(
+        MANUAL
+        + "\n[stages.final]\ncoupler_box_margin_cells = 20\ncoupler_offsets = \"0,1,2,3,4,5,6,7\"\n"
+        + "chain_end_edge_weight = 1.0\ncapacity_check = false\nchain_rule_refusals = 1\n"
+    )
+    assert config.stages is not None
+    assert config.stages.final is not None
+    assert config.stages.final.couplerBoxMarginCells == 20
+    assert config.stages.final.couplerOffsets == "0,1,2,3,4,5,6,7"
+    assert config.stages.final.chainEndEdgeWeight == 1.0
+    back = read_config(write_config(config))
+    assert back.stages is not None
+    assert back.stages.final is not None
+    assert back.stages.final.couplerBoxMarginCells == 20
+    assert back.stages.final.couplerOffsets == "0,1,2,3,4,5,6,7"
+    assert back.stages.final.chainEndEdgeWeight == 1.0
+    assert back.stages.final.capacityCheck is False
+    assert back.stages.final.chainRuleRefusals == 1
+
+
 def test_shipped_configurations_carry_only_what_differs_from_the_defaults() -> None:
     """Strict loading rejects defaults written out, except the design rules."""
     assert shipped_config_problems({"ports": {}}) == []

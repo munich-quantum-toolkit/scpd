@@ -10,8 +10,6 @@
 
 #include "mqt-scpd/routing/ChainSearch.hpp"
 
-#include "mqt-scpd/routing/ChainTrellis.hpp"
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>

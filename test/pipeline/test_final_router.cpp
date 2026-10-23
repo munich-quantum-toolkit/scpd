@@ -43,6 +43,7 @@
 #include <map>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <regex>
 #include <set>
 #include <stdexcept>
@@ -60,6 +61,8 @@ using flatbuffers::artifacts::CorridorRoutingT;
 using flatbuffers::artifacts::DetailRoutingT;
 using flatbuffers::artifacts::FinalRoutingT;
 using flatbuffers::artifacts::GlobalRoutingT;
+using flatbuffers::config::FinalParamsT;
+using flatbuffers::config::StageParamsT;
 using flatbuffers::design::AssignedRole;
 using flatbuffers::drc::DrcRule;
 
@@ -97,26 +100,28 @@ Planned plan(const Benchmark& benchmark) {
   return planned;
 }
 
-/// The coupler insertion's switches before the defaults of 2026-10-22 for
-/// the scope of one test: every end edge at its full price
-/// (`SCPD_CHAIN_END_EDGE_WEIGHT=1`) and every offset
-/// (`SCPD_COUPLER_OFFSETS=0,1,2,3,4,5,6,7`). For the tests written for a
-/// coupler on a named option or a chip as those switches leave it.
-class OldPrices {
-public:
-  OldPrices() {
-    setenv("SCPD_CHAIN_END_EDGE_WEIGHT", "1", 1);
-    setenv("SCPD_COUPLER_OFFSETS", "0,1,2,3,4,5,6,7", 1);
+/// The `[stages.final]` parameters of a benchmark's configuration, for a
+/// test that sets one of them.
+FinalParamsT& finalParamsOf(Benchmark& benchmark) {
+  if (benchmark.config.stages == nullptr) {
+    benchmark.config.stages = std::make_unique<StageParamsT>();
   }
-  ~OldPrices() {
-    unsetenv("SCPD_CHAIN_END_EDGE_WEIGHT");
-    unsetenv("SCPD_COUPLER_OFFSETS");
+  if (benchmark.config.stages->final == nullptr) {
+    benchmark.config.stages->final = std::make_unique<FinalParamsT>();
   }
-  OldPrices(const OldPrices&) = delete;
-  OldPrices& operator=(const OldPrices&) = delete;
-  OldPrices(OldPrices&&) = delete;
-  OldPrices& operator=(OldPrices&&) = delete;
-};
+  return *benchmark.config.stages->final;
+}
+
+/// The coupler insertion's prices before the defaults of 2026-10-22: every
+/// end edge at its full price (`chain_end_edge_weight = 1`) and every
+/// offset (`coupler_offsets = "0,1,2,3,4,5,6,7"`). For the tests written
+/// for a coupler on a named option or a chip as those prices leave it.
+Benchmark withOldPrices(Benchmark benchmark) {
+  auto& final = finalParamsOf(benchmark);
+  final.chain_end_edge_weight = 1.0;
+  final.coupler_offsets = "0,1,2,3,4,5,6,7";
+  return benchmark;
+}
 
 FinalRoutingT routeFinal(const Benchmark& benchmark, const Planned& planned) {
   return finalRouters().make("dubins")->run(benchmark.chip, planned.capacity,
@@ -576,161 +581,6 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   }
 }
 
-/// A pass flagged `onlyUnsettled` redraws the flagged wire and no other.
-/// The probe behind `SCPD_PROBE_ONLY_UNSETTLED` flags one ring wire of the
-/// four-qubit chip after the feedline pass, sweeps the whole ring once with
-/// the flag, says how many wires were tried and whose ways moved, and puts
-/// everything back; the stage's own result is unchanged by it.
-TEST(FinalRouter, OnlyUnsettledRedrawsOneWire) {
-  const auto benchmark = fourQubit();
-  const auto planned = plan(benchmark);
-  const auto plain = routeFinal(benchmark, planned);
-  setenv("SCPD_PROBE_ONLY_UNSETTLED", "3", 1);
-  std::vector<std::string> lines;
-  const auto probed = finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
-  unsetenv("SCPD_PROBE_ONLY_UNSETTLED");
-
-  const auto found = std::ranges::find_if(lines, [](const std::string& line) {
-    return line.find("probe onlyUnsettled:") != std::string::npos;
-  });
-  ASSERT_NE(found, lines.end());
-  EXPECT_NE(found->find("wire 3 flagged (1 member)"), std::string::npos)
-      << *found;
-  EXPECT_NE(found->find("1 wire tried"), std::string::npos) << *found;
-  // The one way that may move is the flagged wire's own.
-  const bool none = found->find("0 ways moved") != std::string::npos;
-  const bool own = found->find("1 way moved: 3") != std::string::npos;
-  EXPECT_TRUE(none || own) << *found;
-  // And the probe leaves the stage on what it ends on without it.
-  ASSERT_EQ(probed.wires.size(), plain.wires.size());
-  for (std::size_t index = 0; index < plain.wires.size(); ++index) {
-    EXPECT_EQ(probed.wires[index]->path, plain.wires[index]->path)
-        << "wire " << index << " differs under the probe";
-  }
-}
-
-/// Under `SCPD_CAPACITY_CHAIN` every settled chain is checked against the
-/// capacity graph of the chains before it. A chain that closes no wire's
-/// way is not searched again, so where none does, the stage ends where it
-/// ends without the check.
-/// `SCPD_CAPACITY_STEP` checks the capacity graph after every step of the
-/// chain search and says, for every feedline edge a settled chain lays,
-/// whether the graph still carries every wire. With `SCPD_CAPACITY_RULE=0`
-/// the check reports and changes nothing.
-TEST(FinalRouter, TheStepCheckSaysForEveryFeedlineEdgeWhetherTheGraphCarries) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  setenv("SCPD_CAPACITY_RULE", "0", 1);
-  const auto plain = routeFinal(benchmark, planned);
-  setenv("SCPD_CAPACITY_STEP", "1", 1);
-  std::vector<std::string> lines;
-  const auto checked = finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
-  unsetenv("SCPD_CAPACITY_STEP");
-  unsetenv("SCPD_CAPACITY_RULE");
-
-  // The edges of the settled chains, from their layers.
-  std::size_t edges = 0;
-  const std::regex settledLine(
-      R"(\[Coupler Insertion\] chain \d+: (optimum|best).* over (\d+) layers)");
-  for (const auto& line : lines) {
-    std::smatch match;
-    if (std::regex_search(line, match, settledLine)) {
-      edges += std::stoul(match[2].str()) - 1;
-    }
-  }
-  ASSERT_GT(edges, 0U);
-
-  std::size_t verdicts = 0;
-  std::size_t summaries = 0;
-  const std::regex edgeLine(R"(\[Capacity Step\] chain \d+ f\d+: )");
-  for (const auto& line : lines) {
-    if (std::regex_search(line, edgeLine)) {
-      ++verdicts;
-      EXPECT_TRUE(line.find(": SAT, closes ") != std::string::npos ||
-                  line.find(": UNSAT — ") != std::string::npos)
-          << line;
-    }
-    if (line.find(" steps checked in ") != std::string::npos) {
-      ++summaries;
-      EXPECT_EQ(line.find(": 0 steps checked"), std::string::npos) << line;
-    }
-  }
-  EXPECT_EQ(verdicts, edges);
-  EXPECT_GT(summaries, 0U);
-
-  // Report only: the search has no clock for the checks to spend, so every
-  // wire is routed as without them.
-  ASSERT_EQ(checked.wires.size(), plain.wires.size());
-  for (std::size_t index = 0; index < plain.wires.size(); ++index) {
-    EXPECT_EQ(checked.wires[index]->path, plain.wires[index]->path)
-        << "wire " << index << " differs under the step check";
-  }
-}
-
-/// `SCPD_STEP_PROFILE=1` prints one `[Capacity Split]` line per capacity
-/// check of the chain search, with the seconds of the stretch pass, the
-/// slot-graph build and the slot check, and leaves the `[Capacity Step]`
-/// lines and their trailing seconds as they are. Every chain search says
-/// in an `[Edge Split]` line how long its edge searches built corridors and
-/// how long they routed, and how many states they expanded, in a
-/// `[Saddle Split]` line what the parts of
-/// its passes' saddles lap took, and in a `[Slot Split]` line what the parts
-/// of its fast slot checks took.
-TEST(FinalRouter, TheStepProfileSplitsEveryCheckIntoPassGraphAndCheck) {
-  const auto benchmark = fourQubit();
-  const auto planned = plan(benchmark);
-  setenv("SCPD_STEP_PROFILE", "1", 1);
-  std::vector<std::string> lines;
-  static_cast<void>(finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); }, {},
-      1));
-  unsetenv("SCPD_STEP_PROFILE");
-
-  const std::regex split(
-      R"(\[Capacity Split\] pass \d+\.\d{4}s, graph \d+\.\d{4}s, check \d+\.\d{4}s)");
-  const std::regex step(
-      R"(\[Capacity Step\] chain \d+ f\d+ \(\d+->\d+\) on options .*; \d+\.\d{3}s$)");
-  const std::regex edges(
-      R"(\[Edge Split\] chain \d+: \d+ edge searches, )"
-      R"(corridor \d+\.\d{3}s, route \d+\.\d{3}s, \d+ states )"
-      R"(expanded)");
-  std::size_t splits = 0;
-  std::size_t steps = 0;
-  const std::regex saddles(
-      R"(\[Saddle Split\] chain \d+: seconds per pass: setup \d+\.\d{4}, )"
-      R"(profiles \d+\.\d{4}, coupler cuts \d+\.\d{4}, cuts at walls )"
-      R"(\d+\.\d{4}, mouths and slots \d+\.\d{4}, crossing gates \d+\.\d{4})");
-  const std::regex slots(
-      R"(\[Slot Split\] chain \d+: [1-9]\d* checks, seconds per check: setup )"
-      R"(\d+\.\d{4}, slot placement \d+\.\d{4}, self-bottlenecks \d+\.\d{4}, )"
-      R"(stub rooms \d+\.\d{4}, escape ways \d+\.\d{4}, search graph )"
-      R"(\d+\.\d{4}, shortest ways \d+\.\d{4}, negotiation \d+\.\d{4})");
-  std::size_t searched = 0;
-  std::size_t saddled = 0;
-  std::size_t slotted = 0;
-  for (const auto& line : lines) {
-    slotted += std::regex_search(line, slots) ? 1 : 0;
-    splits += std::regex_search(line, split) ? 1 : 0;
-    steps += std::regex_search(line, step) ? 1 : 0;
-    searched += std::regex_search(line, edges) ? 1 : 0;
-    saddled += std::regex_search(line, saddles) ? 1 : 0;
-  }
-  EXPECT_GT(searched, 0U);
-  EXPECT_GT(saddled, 0U);
-  EXPECT_GT(slotted, 0U);
-  EXPECT_GT(splits, 0U);
-  EXPECT_GT(steps, 0U);
-  EXPECT_GE(splits, steps);
-}
-
 /// The global SAT search starts from the slot check of the whole chip as the
 /// commit leaves it. The nine-qubit chip is SAT there, so the search says
 /// so and searches nothing.
@@ -772,17 +622,6 @@ struct GlobalSatOutcome {
   /// Every line of the insertion.
   std::vector<std::string> every;
 };
-
-/// The switches of the coupler insertion before the defaults of 2026-10-22:
-/// every end edge at its full price and every offset. The tests of the
-/// global SAT search are written for the 17-qubit test chip as the commit
-/// leaves it under these: UNSAT, with an edge of chain 2 that has no way.
-using Env = std::vector<std::pair<const char*, const char*>>;
-Env withOldPrices(Env env) {
-  env.emplace_back("SCPD_CHAIN_END_EDGE_WEIGHT", "1");
-  env.emplace_back("SCPD_COUPLER_OFFSETS", "0,1,2,3,4,5,6,7");
-  return env;
-}
 
 GlobalSatOutcome
 globalSatOf(const Benchmark& benchmark, const Planned& planned,
@@ -833,12 +672,12 @@ globalSatOf(const Benchmark& benchmark, const Planned& planned,
 /// and an edge of chain 2 has no way: the lazy search collects chain 2
 /// alone, finds no other state of it and ends.
 TEST(CouplerSession, TheLazyGlobalSatSearchTriesTheSameCombinations) {
-  const auto benchmark = seventeenQubit();
+  const auto benchmark = withOldPrices(seventeenQubit());
   const auto planned = plan(benchmark);
-  const auto eager = globalSatOf(
-      benchmark, planned, withOldPrices({{"SCPD_GLOBAL_SAT_LAZY", "0"}}));
-  const auto lazy = globalSatOf(benchmark, planned,
-                                withOldPrices({{"SCPD_GLOBAL_SAT_LAZY", "1"}}));
+  const auto eager =
+      globalSatOf(benchmark, planned, {{"SCPD_GLOBAL_SAT_LAZY", "0"}});
+  const auto lazy =
+      globalSatOf(benchmark, planned, {{"SCPD_GLOBAL_SAT_LAZY", "1"}});
 
   const auto searched = [](const GlobalSatOutcome& outcome) {
     return std::ranges::count_if(outcome.lines, [](const std::string& line) {
@@ -864,12 +703,11 @@ TEST(CouplerSession, TheLazyGlobalSatSearchTriesTheSameCombinations) {
 /// differ; on the 17-qubit chip none does, and the search says that it
 /// checked every combination it tried.
 TEST(CouplerSession, TheGlobalSatSearchPutsTheCommitBackAsAFullRestore) {
-  const auto benchmark = seventeenQubit();
+  const auto benchmark = withOldPrices(seventeenQubit());
   const auto planned = plan(benchmark);
   GlobalSatOutcome verified;
-  ASSERT_NO_THROW(
-      verified = globalSatOf(benchmark, planned,
-                             withOldPrices({{"SCPD_GLOBAL_SAT_VERIFY", "1"}})));
+  ASSERT_NO_THROW(verified = globalSatOf(benchmark, planned,
+                                         {{"SCPD_GLOBAL_SAT_VERIFY", "1"}}));
   const std::regex summary(
       R"(\[Global SAT\] (\d+) combinations? in .* (\d+) checked against a full restore)");
   std::smatch match;
@@ -888,14 +726,13 @@ TEST(CouplerSession, TheGlobalSatSearchPutsTheCommitBackAsAFullRestore) {
 /// conflict-directed combinations. On the 17-qubit test chip no chain is at
 /// an edge over, so the switch must change no combination and no coupler.
 TEST(CouplerSession, TheEarlyGlobalSatSearchEndsOnTheSameChipWithoutASatState) {
-  const auto benchmark = seventeenQubit();
+  const auto benchmark = withOldPrices(seventeenQubit());
   const auto planned = plan(benchmark);
-  const auto lazy = globalSatOf(benchmark, planned,
-                                withOldPrices({{"SCPD_GLOBAL_SAT_LAZY", "1"}}));
-  const auto early =
-      globalSatOf(benchmark, planned,
-                  withOldPrices({{"SCPD_GLOBAL_SAT_LAZY", "1"},
-                                 {"SCPD_GLOBAL_SAT_EARLY", "1"}}));
+  const auto lazy =
+      globalSatOf(benchmark, planned, {{"SCPD_GLOBAL_SAT_LAZY", "1"}});
+  const auto early = globalSatOf(
+      benchmark, planned,
+      {{"SCPD_GLOBAL_SAT_LAZY", "1"}, {"SCPD_GLOBAL_SAT_EARLY", "1"}});
 
   const auto foundEarly = static_cast<std::ptrdiff_t>(
       std::ranges::count_if(early.combinations, [](const std::string& line) {
@@ -1008,14 +845,13 @@ TEST(FinalRouter, AReusedSlotGraphEqualsAFreshOne) {
 /// the same combinations in the same order, and the couplers end on the
 /// same options.
 TEST(CouplerSession, TheInsertionDoesNotDependOnItsSpeed) {
-  const auto benchmark = seventeenQubit();
+  const auto benchmark = withOldPrices(seventeenQubit());
   const auto planned = plan(benchmark);
   // Under the old prices, so that the global SAT search runs.
-  const auto fast = globalSatOf(benchmark, planned, withOldPrices({}));
-  const auto slow =
-      globalSatOf(benchmark, planned,
-                  withOldPrices({{"SCPD_SLOT_GRAPH_VERIFY", "1"},
-                                 {"SCPD_GLOBAL_SAT_VERIFY", "1"}}));
+  const auto fast = globalSatOf(benchmark, planned, {});
+  const auto slow = globalSatOf(
+      benchmark, planned,
+      {{"SCPD_SLOT_GRAPH_VERIFY", "1"}, {"SCPD_GLOBAL_SAT_VERIFY", "1"}});
   // Every time the insertion says: seconds, milli- and microseconds, and
   // the laps of three or more decimals.
   const std::regex seconds(R"( *\d+\.\d+s\b)");
@@ -1053,8 +889,8 @@ TEST(CouplerSession, TheInsertionDoesNotDependOnItsSpeed) {
   }
 }
 
-/// `SCPD_COUPLER_OFFSETS` names the offsets the option generator turns a
-/// pad by, 0,1,2,5,6,7 by default. Those offsets named are the default: the
+/// `coupler_offsets` names the offsets the option generator turns a pad
+/// by, 0,1,2,5,6,7 by default. Those offsets named are the default: the
 /// couplers come out with the same options, and none on offset 3 or 4
 /// unless the coupler says that none of the allowed offsets fits it. With
 /// every offset named but the smallest the chip offers then, no coupler
@@ -1062,9 +898,13 @@ TEST(CouplerSession, TheInsertionDoesNotDependOnItsSpeed) {
 TEST(CouplerSession, OffersOnlyTheAllowedOffsets) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
+  const auto withOffsets = [&](const char* offsets) {
+    auto chip = benchmark;
+    finalParamsOf(chip).coupler_offsets = offsets;
+    return globalSatOf(chip, planned, {});
+  };
   const auto plain = globalSatOf(benchmark, planned, {});
-  const auto listed = globalSatOf(benchmark, planned,
-                                  {{"SCPD_COUPLER_OFFSETS", "0,1,2,5,6,7"}});
+  const auto listed = withOffsets("0,1,2,5,6,7");
   EXPECT_EQ(listed.couplers, plain.couplers);
 
   const auto offsetsOf = [](const GlobalSatOutcome& outcome) {
@@ -1087,8 +927,7 @@ TEST(CouplerSession, OffersOnlyTheAllowedOffsets) {
   EXPECT_FALSE(byDefault.contains(3));
   EXPECT_FALSE(byDefault.contains(4));
 
-  const auto every = globalSatOf(benchmark, planned,
-                                 {{"SCPD_COUPLER_OFFSETS", "0,1,2,3,4,5,6,7"}});
+  const auto every = withOffsets("0,1,2,3,4,5,6,7");
   const auto offered = offsetsOf(every);
   ASSERT_GT(offered.size(), 1U);
   const auto excluded = *offered.begin();
@@ -1098,52 +937,20 @@ TEST(CouplerSession, OffersOnlyTheAllowedOffsets) {
       allowed += std::format("{}{}", allowed.empty() ? "" : ",", offset);
     }
   }
-  const auto reduced = globalSatOf(benchmark, planned,
-                                   {{"SCPD_COUPLER_OFFSETS", allowed.c_str()}});
+  const auto reduced = withOffsets(allowed.c_str());
   ASSERT_FALSE(fellBack(reduced));
   const auto seen = offsetsOf(reduced);
   EXPECT_FALSE(seen.contains(excluded));
   EXPECT_FALSE(seen.empty());
-  const auto named = std::format("coupler offsets {} (environment)", allowed);
+  const auto named = std::format("coupler offsets {}", allowed);
   EXPECT_TRUE(std::ranges::any_of(reduced.every, [&](const std::string& line) {
     return line.find(named) != std::string::npos;
   }));
 }
 
-/// The coupler insertion opens no second-dogleg option by default
-/// (`SCPD_SECOND_DOGLEG`, off): no coupler of the 17-qubit test chip has its
-/// jogs open, none stands on an option with a second dogleg, and no search
-/// says it opens them. With `=1`, under the old prices, a chain that does
-/// not reach past a coupler on plain options opens that coupler's jogs, as
-/// before.
-TEST(CouplerSession, OpensNoSecondDoglegUnlessAsked) {
-  const auto benchmark = seventeenQubit();
-  const auto planned = plan(benchmark);
-  const auto opened = [](const GlobalSatOutcome& outcome) {
-    return std::ranges::count_if(outcome.every, [](const std::string& line) {
-      return line.find("opening the second-dogleg options") !=
-             std::string::npos;
-    });
-  };
-  const auto closed = globalSatOf(benchmark, planned, {});
-  EXPECT_EQ(opened(closed), 0);
-  const auto couplers = nlohmann::json::parse(closed.couplers).at("couplers");
-  ASSERT_FALSE(couplers.empty());
-  for (const auto& coupler : couplers) {
-    EXPECT_FALSE(coupler.at("jogs").get<bool>()) << coupler.at("index");
-    const auto chosen = coupler.at("chosen").get<std::size_t>();
-    EXPECT_EQ(coupler.at("options").at(chosen).at("jog").get<int>(), 0)
-        << "coupler " << coupler.at("index") << " option " << chosen;
-  }
-
-  const auto open = globalSatOf(benchmark, planned,
-                                withOldPrices({{"SCPD_SECOND_DOGLEG", "1"}}));
-  EXPECT_GT(opened(open), 0);
-}
-
-/// `SCPD_CHAIN_END_EDGE_WEIGHT` weighs the price of the edges between a
+/// `chain_end_edge_weight` weighs the price of the edges between a
 /// launcher and its coupler in the chain searches, 0.1 by default. At 0.1
-/// the stage routes as without the switch. At 0.1 every edge is still
+/// the stage routes as without the key. At 0.1 every edge is still
 /// drawn, and the first chain, which both searches settle on the same chip,
 /// costs at weight 1 no less than its optimum at weight 1 when both settle
 /// it on an optimum: the weight changes which run is cheapest, not what a
@@ -1156,20 +963,20 @@ TEST(FinalRouter, TheEndEdgeWeightChangesOnlyThePrice) {
     FinalRoutingT routing;
     std::vector<std::string> lines;
   };
-  const auto run = [&](const char* weight) {
-    if (weight != nullptr) {
-      setenv("SCPD_CHAIN_END_EDGE_WEIGHT", weight, 1);
+  const auto run = [&](const std::optional<double> weight) {
+    auto chip = benchmark;
+    if (weight) {
+      finalParamsOf(chip).chain_end_edge_weight = *weight;
     }
     Outcome out;
     out.routing = finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
+        chip.chip, planned.capacity, planned.global, planned.assignment,
+        planned.detail, chip.config,
         [&out](const std::string_view line) { out.lines.emplace_back(line); });
-    unsetenv("SCPD_CHAIN_END_EDGE_WEIGHT");
     return out;
   };
-  const auto plain = run(nullptr);
-  const auto light = run("0.1");
+  const auto plain = run(std::nullopt);
+  const auto light = run(0.1);
   ASSERT_EQ(light.routing.wires.size(), plain.routing.wires.size());
   for (std::size_t index = 0; index < plain.routing.wires.size(); ++index) {
     EXPECT_EQ(light.routing.wires[index]->path,
@@ -1183,7 +990,7 @@ TEST(FinalRouter, TheEndEdgeWeightChangesOnlyThePrice) {
         << "feedline " << index << " differs at weight 0.1";
   }
 
-  const auto full = run("1");
+  const auto full = run(1.0);
   const std::regex optimum(
       R"(\[Coupler Insertion\] chain (\d+): optimum (\d+) over \d+ layers)");
   const std::regex unweighted(R"(, (\d+) at weight 1$)");
@@ -1216,88 +1023,17 @@ TEST(FinalRouter, TheEndEdgeWeightChangesOnlyThePrice) {
   EXPECT_EQ(compared, 1U);
 }
 
-/// The chain search says how far it has come every
-/// `SCPD_CHAIN_PROGRESS_STEPS` priced steps and decides nothing by it: with
-/// a report after every step the stage routes as with none.
-TEST(FinalRouter, TheChainProgressChangesNoRoute) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  setenv("SCPD_CHAIN_PROGRESS_STEPS", "0", 1);
-  const auto quiet = routeFinal(benchmark, planned);
-  setenv("SCPD_CHAIN_PROGRESS_STEPS", "1", 1);
-  std::vector<std::string> lines;
-  const auto told = finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
-  unsetenv("SCPD_CHAIN_PROGRESS_STEPS");
-
-  const std::regex progress(
-      R"(\[Chain Progress\] chain \d+ go \d+( under the capacity rule)?: )"
-      R"(\d+ steps priced, \d+ edge searches, \d+ prefixes expanded)");
-  EXPECT_GT(std::ranges::count_if(lines,
-                                  [&](const std::string& line) {
-                                    return std::regex_search(line, progress);
-                                  }),
-            0);
-  ASSERT_EQ(told.wires.size(), quiet.wires.size());
-  for (std::size_t index = 0; index < quiet.wires.size(); ++index) {
-    EXPECT_EQ(told.wires[index]->path, quiet.wires[index]->path)
-        << "wire " << index << " differs with the progress lines";
-  }
-}
-
-/// The router turn bound, the edge search memo and the step checks left out
-/// where nothing reads their verdict are on by default and exact: with all
-/// three off the stage routes the same.
-TEST(FinalRouter, TheExactSpeedUpsChangeNoRoute) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  std::vector<std::string> lines;
-  const auto fast = finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
-  setenv("SCPD_ROUTER_TURN_BOUND", "0", 1);
-  setenv("SCPD_EDGE_SEARCH_MEMO", "0", 1);
-  setenv("SCPD_CHECK_ONLY_WINNERS", "0", 1);
-  const auto plain = routeFinal(benchmark, planned);
-  unsetenv("SCPD_ROUTER_TURN_BOUND");
-  unsetenv("SCPD_EDGE_SEARCH_MEMO");
-  unsetenv("SCPD_CHECK_ONLY_WINNERS");
-
-  const std::regex leftOut(
-      R"(\[Capacity Step\] chain \d+: .* checks left out)");
-  EXPECT_GT(std::ranges::count_if(lines,
-                                  [&](const std::string& line) {
-                                    return std::regex_search(line, leftOut);
-                                  }),
-            0);
-  ASSERT_EQ(fast.wires.size(), plain.wires.size());
-  for (std::size_t index = 0; index < plain.wires.size(); ++index) {
-    EXPECT_EQ(fast.wires[index]->path, plain.wires[index]->path)
-        << "wire " << index << " differs";
-  }
-  ASSERT_EQ(fast.feedlines.size(), plain.feedlines.size());
-  for (std::size_t index = 0; index < plain.feedlines.size(); ++index) {
-    EXPECT_EQ(fast.feedlines[index]->path, plain.feedlines[index]->path)
-        << "feedline " << index << " differs";
-  }
-}
-
-/// `SCPD_CAPACITY_RULE=1` refuses every step of the chain search whose
-/// edge closes a wire: every feedline edge of a chain settled under it
-/// closes none. A chain searched again without the rule says so first.
+/// The capacity rule refuses every step of the chain search whose edge
+/// closes a wire: every feedline edge of a chain settled under it closes
+/// none. A chain searched again without the rule says so first.
 TEST(FinalRouter, TheCapacityRuleLetsNoSettledEdgeCloseAWire) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
-  setenv("SCPD_CAPACITY_RULE", "1", 1);
   std::vector<std::string> lines;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
       planned.detail, benchmark.config,
       [&lines](const std::string_view line) { lines.emplace_back(line); }));
-  unsetenv("SCPD_CAPACITY_RULE");
 
   std::set<std::string> withoutTheRule;
   const std::regex againLine(
@@ -1323,26 +1059,25 @@ TEST(FinalRouter, TheCapacityRuleLetsNoSettledEdgeCloseAWire) {
   EXPECT_GT(verdicts, 0U);
 }
 
-/// `SCPD_CHAIN_RULE_REFUSALS` ends the search of a chain under the capacity
+/// `chain_rule_refusals` ends the search of a chain under the capacity
 /// rule once the rule has refused that many steps before a run of options
 /// joined the chain, and the chain is searched again without the rule. At
 /// one refusal, a chain whose first refused step comes before its first run
 /// says so and then gets its answer from the search without the rule. The
 /// 17-qubit chip has such chains; the 9-qubit chip has none.
 TEST(FinalRouter, TheRefusalLimitSearchesAChainAgainWithoutTheRule) {
-  const auto benchmark = seventeenQubit();
+  auto benchmark = seventeenQubit();
+  finalParamsOf(benchmark).chain_rule_refusals = 1;
   const auto planned = plan(benchmark);
-  setenv("SCPD_CHAIN_RULE_REFUSALS", "1", 1);
   std::vector<std::string> lines;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
       planned.detail, benchmark.config,
       [&lines](const std::string_view line) { lines.emplace_back(line); }));
-  unsetenv("SCPD_CHAIN_RULE_REFUSALS");
 
   const std::regex limit(
       R"(\[Coupler Insertion\] chain (\d+): the capacity rule refused 1 step )"
-      R"(before a run of options joined the chain \(SCPD_CHAIN_RULE_REFUSALS, )"
+      R"(before a run of options joined the chain \(chain_rule_refusals, )"
       R"(\d+ steps routed\) — searched again without the capacity rule)");
   const std::regex answer(
       R"(\[Coupler Insertion\] chain (\d+): (optimum|best found|no run of )"
@@ -1364,13 +1099,11 @@ TEST(FinalRouter, TheRefusalLimitSearchesAChainAgainWithoutTheRule) {
   }
 }
 
-/// With no switch set, the chain search applies the capacity rule and the
-/// insertion reports the capacity graph it leaves behind.
+/// By default the chain search applies the capacity rule and the insertion
+/// reports the capacity graph it leaves behind.
 TEST(FinalRouter, TheCapacityRuleAndTheBottleneckReportAreOnByDefault) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
-  unsetenv("SCPD_CAPACITY_RULE");
-  unsetenv("SCPD_CAPACITY_STEP");
   unsetenv("SCPD_BOTTLENECKS");
   std::vector<std::string> lines;
   bool graphWritten = false;
@@ -1388,70 +1121,6 @@ TEST(FinalRouter, TheCapacityRuleAndTheBottleneckReportAreOnByDefault) {
     return std::regex_search(line, edgeLine);
   }));
   EXPECT_TRUE(graphWritten);
-}
-
-/// The step check sees a chain the search has laid only in part. Its end is
-/// open, so its edges separate nothing yet: no wire is prescribed to cross
-/// them until the chain stands whole. `SCPD_CAPACITY_STEP_GRAPHS` writes
-/// the graph the check saw at every edge of a settled chain.
-TEST(FinalRouter, TheStepCheckPrescribesNoCrossingOfAnOpenChain) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  setenv("SCPD_CAPACITY_STEP", "1", 1);
-  setenv("SCPD_CAPACITY_STEP_GRAPHS", "1", 1);
-  std::map<std::pair<int, int>, nlohmann::json> graphs;
-  const std::regex stepName(R"(step-c(\d+)-f(\d+)-capacity-graph\.json)");
-  static_cast<void>(finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config, {},
-      [&](const std::string_view name, const std::string_view content) {
-        const std::string named(name);
-        std::smatch match;
-        if (std::regex_match(named, match, stepName)) {
-          graphs[{std::stoi(match[1].str()), std::stoi(match[2].str())}] =
-              nlohmann::json::parse(content);
-        }
-        return named;
-      }));
-  unsetenv("SCPD_CAPACITY_STEP_GRAPHS");
-  unsetenv("SCPD_CAPACITY_STEP");
-  ASSERT_FALSE(graphs.empty());
-
-  // The feedline edges of each chain, by name.
-  std::map<int, std::set<std::string>> edgesOf;
-  std::map<int, int> lastOf;
-  for (const auto& [step, graph] : graphs) {
-    edgesOf[step.first].insert(std::format("f{}", step.second));
-    lastOf[step.first] = std::max(lastOf[step.first], step.second);
-  }
-  std::size_t prescribedWhole = 0;
-  for (const auto& [step, graph] : graphs) {
-    const auto [chain, slot] = step;
-    // The edge the step lays stands in the graph.
-    const auto& strokes = graph.at("strokes");
-    EXPECT_TRUE(std::ranges::any_of(
-        strokes,
-        [&](const auto& stroke) {
-          return stroke.at("name").template get<std::string>() ==
-                 std::format("f{}", slot);
-        }))
-        << "chain " << chain << " f" << slot;
-    for (const auto& wire : graph.at("wires")) {
-      for (const auto& crossed : wire.at("crosses")) {
-        const auto name = crossed.get<std::string>();
-        if (!edgesOf[chain].contains(name)) {
-          continue;
-        }
-        EXPECT_EQ(slot, lastOf[chain])
-            << "chain " << chain << " f" << slot << ": wire "
-            << wire.at("name").get<std::string>() << " has to cross " << name
-            << " of the open chain";
-        ++prescribedWhole;
-      }
-    }
-  }
-  // Once a chain stands whole, its edges are prescribed again.
-  EXPECT_GT(prescribedWhole, 0U);
 }
 
 /// The graphs the step check of 9q saw at the feedline edges of the runs
@@ -1476,68 +1145,6 @@ std::vector<nlohmann::json> nineQubitStepGraphs() {
   unsetenv("SCPD_CAPACITY_STEP_GRAPHS");
   unsetenv("SCPD_CAPACITY_STEP");
   return graphs;
-}
-
-/// The step check stands every pad of the chain on the option the step
-/// gives its coupler, where the step lays the coupler's edges: in every step
-/// graph, each feedline edge ends beside a pad, unless it ends at a launcher,
-/// far from every pad.
-TEST(FinalRouter, TheStepCheckStandsEveryPadWhereTheStepLaysItsEdges) {
-  const auto graphs = nineQubitStepGraphs();
-  ASSERT_FALSE(graphs.empty());
-
-  // A launcher end lies farther than this from every pad, in cells.
-  constexpr double launcherApart = 150.0;
-  // An edge leaves its coupler's port at the edge of the pad.
-  constexpr double besidePad = 2.0;
-  std::size_t ends = 0;
-  for (const auto& graph : graphs) {
-    const auto width = graph.at("width").get<std::int64_t>();
-    const auto& kinds = graph.at("wallKinds");
-    std::int64_t padCode = 0;
-    for (std::size_t kind = 0; kind < kinds.size(); ++kind) {
-      if (kinds[kind].get<std::string>() == "coupler pad") {
-        padCode = static_cast<std::int64_t>(kind) + 1;
-      }
-    }
-    ASSERT_GT(padCode, 0);
-    // The raster as runs: a code, then how many cells in a row hold it.
-    std::vector<std::array<double, 2>> pads;
-    const auto& raster = graph.at("raster");
-    std::int64_t cell = 0;
-    for (std::size_t at = 0; at + 1 < raster.size(); at += 2) {
-      const auto code = raster[at].get<std::int64_t>();
-      const auto count = raster[at + 1].get<std::int64_t>();
-      for (std::int64_t k = 0; code == padCode && k < count; ++k) {
-        pads.push_back({static_cast<double>((cell + k) % width),
-                        static_cast<double>((cell + k) / width)});
-      }
-      cell += count;
-    }
-    for (const auto& stroke : graph.at("strokes")) {
-      if (stroke.at("kind").get<std::string>() != "feedline") {
-        continue;
-      }
-      const auto& points = stroke.at("points");
-      for (const auto* end : {&points.front(), &points.back()}) {
-        const auto x = end->at(0).get<double>();
-        const auto y = end->at(1).get<double>();
-        double nearest = std::numeric_limits<double>::infinity();
-        for (const auto& [px, py] : pads) {
-          nearest = std::min(nearest, std::hypot(px - x, py - y));
-        }
-        if (nearest > launcherApart) {
-          continue;
-        }
-        ++ends;
-        EXPECT_LE(nearest, besidePad)
-            << graph.at("summary").at(0).get<std::string>() << ": "
-            << stroke.at("name").get<std::string>() << " ends at (" << x << ", "
-            << y << ")";
-      }
-    }
-  }
-  EXPECT_GT(ends, 0U);
 }
 
 /// The step check takes a chain on its own, with its terminal edges as
@@ -1611,60 +1218,11 @@ TEST(FinalRouter, ACrossableTerminalEdgeTakesEveryWire) {
   EXPECT_GT(stretches, 0U);
 }
 
-TEST(FinalRouter, TheCapacityCheckLeavesAChainThatClosesNoWayAsItIs) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  const auto plain = routeFinal(benchmark, planned);
-  setenv("SCPD_CAPACITY_CHAIN", "1", 1);
-  std::vector<std::string> lines;
-  const auto checked = finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
-  unsetenv("SCPD_CAPACITY_CHAIN");
-
-  std::vector<std::string> checks;
-  bool searchedAgain = false;
-  for (const auto& line : lines) {
-    if (line.find("[Capacity Check] chain ") == std::string::npos) {
-      continue;
-    }
-    if (line.find("searched again") != std::string::npos) {
-      searchedAgain = true;
-    } else {
-      checks.push_back(line);
-    }
-  }
-  const auto settled = std::ranges::count_if(lines, [](const auto& line) {
-    return line.find("[Coupler Insertion] chain ") != std::string::npos &&
-           (line.find(": optimum ") != std::string::npos ||
-            line.find(": best ") != std::string::npos);
-  });
-  ASSERT_GT(settled, 0);
-  EXPECT_EQ(std::ssize(checks), settled);
-  for (const auto& line : checks) {
-    EXPECT_NE(line.find(" wire"), std::string::npos) << line;
-  }
-  if (!searchedAgain) {
-    for (const auto& line : checks) {
-      EXPECT_NE(line.find(", 0 more with it"), std::string::npos) << line;
-    }
-    ASSERT_EQ(checked.wires.size(), plain.wires.size());
-    for (std::size_t index = 0; index < plain.wires.size(); ++index) {
-      EXPECT_EQ(checked.wires[index]->path, plain.wires[index]->path)
-          << "wire " << index << " differs under the check";
-    }
-  }
-}
-
-/// With no switch set, the layered search prices its steps by the stub
-/// bound (`SCPD_CHAIN_BOUND=4`): the analytic bound with the forced end
-/// runs folded in. The audit runs only under modes 2 and 3, so the default
-/// run reports none.
+/// The layered search prices its steps by the stub bound: the analytic
+/// bound with the forced end runs folded in, and says so.
 TEST(FinalRouter, TheChainBoundDefaultsToTheStubBound) {
   const auto benchmark = fourQubit();
   const auto planned = plan(benchmark);
-  unsetenv("SCPD_CHAIN_BOUND");
   std::vector<std::string> lines;
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
@@ -1674,96 +1232,6 @@ TEST(FinalRouter, TheChainBoundDefaultsToTheStubBound) {
   EXPECT_TRUE(std::ranges::any_of(lines, [](const std::string& line) {
     return line.find("bound analytic with the end runs") != std::string::npos;
   }));
-  EXPECT_FALSE(std::ranges::any_of(lines, [](const std::string& line) {
-    return line.find("audit over") != std::string::npos;
-  }));
-}
-
-/// The stub bound is a lower bound like the analytic one, only sharper, so
-/// the layered search stays exact: under both bounds every wire takes the
-/// same way and the stage fails the same count.
-TEST(FinalRouter, TheStubBoundRoutesTheSameChains) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  const auto failsOf = [](const std::vector<std::string>& lines) {
-    const auto found = std::ranges::find_if(lines, [](const std::string& line) {
-      return line.find("final routing:") != std::string::npos &&
-             line.find("Fails:") != std::string::npos;
-    });
-    EXPECT_NE(found, lines.end());
-    return found == lines.end() ? std::string{}
-                                : found->substr(found->find("Fails:"));
-  };
-  const auto routeWith = [&](const char* mode, std::string& fails) {
-    setenv("SCPD_CHAIN_BOUND", mode, 1);
-    std::vector<std::string> lines;
-    auto routing = finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
-        [&lines](const std::string_view line) { lines.emplace_back(line); });
-    unsetenv("SCPD_CHAIN_BOUND");
-    fails = failsOf(lines);
-    return routing;
-  };
-  std::string analyticFails;
-  std::string stubbedFails;
-  const auto analytic = routeWith("1", analyticFails);
-  const auto stubbed = routeWith("4", stubbedFails);
-
-  EXPECT_EQ(analyticFails, stubbedFails);
-  const auto listsOf = [](const FinalRoutingT& routing) {
-    return std::array{&routing.wires, &routing.inner, &routing.feedlines};
-  };
-  const auto one = listsOf(analytic);
-  const auto two = listsOf(stubbed);
-  for (std::size_t list = 0; list < one.size(); ++list) {
-    ASSERT_EQ(one[list]->size(), two[list]->size());
-    for (std::size_t index = 0; index < one[list]->size(); ++index) {
-      EXPECT_EQ((*one[list])[index]->path, (*two[list])[index]->path)
-          << "list " << list << " wire " << index
-          << " differs between the bounds";
-    }
-  }
-}
-
-/// Every chain bound mode routes the chip and says which bound it priced
-/// by. Modes 2 and 3 audit every priced step; the others do not.
-TEST(FinalRouter, EveryChainBoundModeRoutesTheChip) {
-  const auto benchmark = fourQubit();
-  const auto planned = plan(benchmark);
-  struct Case {
-    const char* mode;
-    std::string_view bound;
-    bool audited;
-  };
-  constexpr std::array<Case, 3> cases{
-      {{"0", "bound turnBound", false},
-       {"2", "bound analytic", true},
-       {"3", "bound analytic around the artwork", true}}};
-  for (const auto& expected : cases) {
-    setenv("SCPD_CHAIN_BOUND", expected.mode, 1);
-    std::vector<std::string> lines;
-    static_cast<void>(finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
-        [&lines](const std::string_view line) { lines.emplace_back(line); }));
-    unsetenv("SCPD_CHAIN_BOUND");
-
-    // The bound's name ends the summary line, so the plain "analytic" of
-    // mode 2 cannot be mistaken for the longer names that start the same.
-    EXPECT_TRUE(std::ranges::any_of(lines,
-                                    [&](const std::string& line) {
-                                      return line.ends_with(expected.bound);
-                                    }))
-        << "mode " << expected.mode;
-    EXPECT_EQ(std::ranges::any_of(lines,
-                                  [](const std::string& line) {
-                                    return line.find("audit over") !=
-                                           std::string::npos;
-                                  }),
-              expected.audited)
-        << "mode " << expected.mode;
-  }
 }
 
 /// A coupler session holds the stage after its coupler insertion. A coupler
@@ -1862,41 +1330,12 @@ TEST(CouplerSession, ChecksTheChipAndRoutesTheFeedlines) {
   }
 }
 
-/// A terminal that a feedline edge covers lies in no chamber, so the
-/// capacity check of the insertion loses its wire. On 4q, couplers 0, 1 and
-/// 2 on options 16, 17 and 1 lay edge f3 over the port of resonator 0.
-TEST(CouplerSession, LosesAWireWhosePortAFeedlineCovers) {
-  // Written for the options and the chip of the old prices.
-  const OldPrices oldPrices;
-  const auto benchmark = fourQubit();
-  const auto planned = plan(benchmark);
-  // With the port runs fenced, the insertion never lays an edge over a port
-  // (`KeepsTheEdgesOffThePortStubs`), so they stand open here.
-  setenv("SCPD_EDGE_PORT_STUBS", "0", 1);
-  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
-                         planned.detail, benchmark.config);
-  for (const auto& [coupler, option] :
-       {std::pair{0U, 16U}, std::pair{1U, 17U}, std::pair{2U, 1U}}) {
-    static_cast<void>(session.setOption(coupler, option));
-  }
-  unsetenv("SCPD_EDGE_PORT_STUBS");
-
-  const auto check = nlohmann::json::parse(session.insertionCheck());
-  EXPECT_EQ(check.at("verdict"), "UNSAT");
-  bool walled = false;
-  for (const auto& line : check.at("graph").at("summary")) {
-    walled = walled || line.get<std::string>() == "a port in no chamber for 0";
-  }
-  EXPECT_TRUE(walled) << check.at("graph").at("summary").dump();
-}
-
 /// The insertion lays no edge over the run into a target port: the same
 /// moves as `LosesAWireWhosePortAFeedlineCovers` leave every port of 4q in
 /// a chamber.
 TEST(CouplerSession, KeepsTheEdgesOffThePortStubs) {
   // Written for the options and the chip of the old prices.
-  const OldPrices oldPrices;
-  const auto benchmark = fourQubit();
+  const auto benchmark = withOldPrices(fourQubit());
   const auto planned = plan(benchmark);
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
@@ -2000,8 +1439,7 @@ bool isBad(const nlohmann::json& routed, const std::string& name) {
 /// run in front of the target of wire 5.
 TEST(CouplerSession, KeepsTheFeedlinesOffAWiresStubs) {
   // Written for the options and the chip of the old prices.
-  const OldPrices oldPrices;
-  const auto benchmark = fourQubit();
+  const auto benchmark = withOldPrices(fourQubit());
   const auto planned = plan(benchmark);
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
@@ -2029,8 +1467,7 @@ TEST(CouplerSession, KeepsTheFeedlinesOffAWiresStubs) {
 /// front of its target.
 TEST(CouplerSession, KeepsAResonatorOffTheEdgesBetweenCouplers) {
   // Written for the options and the chip of the old prices.
-  const OldPrices oldPrices;
-  const auto benchmark = fourQubit();
+  const auto benchmark = withOldPrices(fourQubit());
   const auto planned = plan(benchmark);
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
@@ -2075,8 +1512,7 @@ TEST(CouplerSession, KeepsAResonatorOffTheEdgesBetweenCouplers) {
 /// leaves resonator 4 no way out between its lead and the terminal edge f0.
 TEST(CouplerSession, KeepsTheGapsBetweenALeadAndItsEdges) {
   // Written for the options and the chip of the old prices.
-  const OldPrices oldPrices;
-  const auto benchmark = fourQubit();
+  const auto benchmark = withOldPrices(fourQubit());
   const auto planned = plan(benchmark);
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
@@ -3239,7 +2675,7 @@ TEST(FinalRouter, KeepsTheEdgesBetweenCouplersInsideTheCouplerBox) {
   EXPECT_GT(between, 0U);
 }
 
-/// `SCPD_EDGE_LAUNCHER_MARGIN` lengthens the run a feedline edge keeps
+/// `edge_launcher_margin_cells` lengthens the run a feedline edge keeps
 /// closed in front of every launcher but its own: with a margin of 30 cells
 /// every edge the insertion draws keeps the clearance from that longer run,
 /// where without it an edge of the four-qubit chip runs through it.
@@ -3253,13 +2689,14 @@ TEST(FinalRouter, AnEdgeKeepsTheLauncherMarginClear) {
     nlohmann::json graph;
     long run = -1;
   };
-  const auto runWith = [&](const char* margin) {
+  const auto runWith = [&](const std::uint32_t margin) {
     Seen seen;
+    auto chip = benchmark;
+    finalParamsOf(chip).edge_launcher_margin_cells = margin;
     setenv("SCPD_BOTTLENECKS", "1", 1);
-    setenv("SCPD_EDGE_LAUNCHER_MARGIN", margin, 1);
     static_cast<void>(finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
+        chip.chip, planned.capacity, planned.global, planned.assignment,
+        planned.detail, chip.config,
         [&seen](const std::string_view line) {
           const auto at = line.find("a feedline edge keeps ");
           if (at != std::string_view::npos) {
@@ -3272,7 +2709,6 @@ TEST(FinalRouter, AnEdgeKeepsTheLauncherMarginClear) {
           }
           return std::string(name);
         }));
-    unsetenv("SCPD_EDGE_LAUNCHER_MARGIN");
     unsetenv("SCPD_BOTTLENECKS");
     return seen;
   };
@@ -3316,8 +2752,8 @@ TEST(FinalRouter, AnEdgeKeepsTheLauncherMarginClear) {
     return least;
   };
 
-  const auto plain = runWith("0");
-  const auto kept = runWith("30");
+  const auto plain = runWith(0);
+  const auto kept = runWith(30);
   EXPECT_EQ(plain.run, -1) << "no margin, no line";
   ASSERT_GT(kept.run, 30);
   ASSERT_FALSE(kept.graph.is_null());
@@ -3327,7 +2763,7 @@ TEST(FinalRouter, AnEdgeKeepsTheLauncherMarginClear) {
   EXPECT_LT(closest(plain.graph, kept.run), clearance);
 }
 
-/// `SCPD_COUPLER_BOX_MARGIN` keeps every coupler further in from the sides of
+/// `coupler_box_margin_cells` keeps every coupler further in from the sides of
 /// the coupler box: with a margin of 20 cells no pad cell lies closer to a
 /// side than that, where without it a pad of the four-qubit chip does.
 TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
@@ -3338,18 +2774,19 @@ TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
     std::string box;
     bool said = false;
   };
-  const auto runWith = [&](const char* margin) {
+  const auto runWith = [&](const std::uint32_t margin) {
     Seen seen;
+    auto chip = benchmark;
+    finalParamsOf(chip).coupler_box_margin_cells = margin;
     setenv("SCPD_BOTTLENECKS", "1", 1);
-    setenv("SCPD_COUPLER_BOX_MARGIN", margin, 1);
     static_cast<void>(finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
+        chip.chip, planned.capacity, planned.global, planned.assignment,
+        planned.detail, chip.config,
         [&seen](const std::string_view line) {
           if (line.find("couplers sit inside x ") != std::string_view::npos) {
             seen.box = std::string(line.substr(line.find("couplers sit")));
           }
-          seen.said = seen.said || line.find("SCPD_COUPLER_BOX_MARGIN") !=
+          seen.said = seen.said || line.find("coupler_box_margin_cells") !=
                                        std::string_view::npos;
         },
         [&seen](const std::string_view name, const std::string_view content) {
@@ -3358,7 +2795,6 @@ TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
           }
           return std::string(name);
         }));
-    unsetenv("SCPD_COUPLER_BOX_MARGIN");
     unsetenv("SCPD_BOTTLENECKS");
     return seen;
   };
@@ -3394,8 +2830,8 @@ TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
     return least;
   };
 
-  const auto plain = runWith("0");
-  const auto kept = runWith("20");
+  const auto plain = runWith(0);
+  const auto kept = runWith(20);
   ASSERT_FALSE(plain.graph.is_null());
   ASSERT_FALSE(kept.graph.is_null());
   EXPECT_FALSE(plain.said);

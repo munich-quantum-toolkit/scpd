@@ -9,7 +9,6 @@
  */
 
 #include "mqt-scpd/routing/ChainSearch.hpp"
-#include "mqt-scpd/routing/ChainTrellis.hpp"
 
 #include <gtest/gtest.h>
 
@@ -77,18 +76,6 @@ struct Chain {
       redone = 0;
       return stepOf(prefix, to);
     };
-    return out;
-  }
-
-  /// The same chain as a trellis, which can only be told the table price —
-  /// the approximation whose error this whole search is here to remove.
-  [[nodiscard]] TrellisProblem asTrellis() const {
-    TrellisProblem out;
-    out.width = width;
-    out.bound = [this](const std::size_t layer, const uint32_t from,
-                       const uint32_t to) { return hint[layer][from][to]; };
-    out.evaluate = [this](const std::size_t layer, const uint32_t from,
-                          const uint32_t to) { return price[layer][from][to]; };
     return out;
   }
 
@@ -210,96 +197,6 @@ TEST(ChainSearch, APrefixThatBlocksItselfCostsAnother) {
   ASSERT_EQ(optimum, 21U);
   EXPECT_EQ(exact.cost, optimum);
   EXPECT_EQ(chain.priceOf(exact.chosen), optimum);
-
-  // And the trellis, told the only thing it can be told, answers a run of
-  // choices that cannot be built at all.
-  const auto approximate = solveTrellis(chain.asTrellis());
-  ASSERT_TRUE(approximate.solved);
-  EXPECT_EQ(approximate.cost, 3U) << "the trellis under-prices";
-  EXPECT_EQ(approximate.chosen, (std::vector<uint32_t>{0, 1, 2, 2}));
-  EXPECT_EQ(chain.priceOf(approximate.chosen), TRELLIS_UNREACHABLE)
-      << "the run the trellis named is one that blocks itself";
-}
-
-TEST(ChainSearch, BeatsTheTrellisOnRandomChainsThatBlockThemselves) {
-  // The same thing over a batch rather than one hand-built case: small
-  // chains, random table prices, and a random rule that makes a handful of
-  // pairs of choices refuse to stand together.
-  //
-  // The prefix search must return the optimum of every one of them. The
-  // trellis must fail some of them, which is the whole claim; where it
-  // happens to agree that is no fault of its own, so only the batch is
-  // asserted on.
-  std::mt19937 rng(20260928);
-  std::uniform_int_distribution<uint32_t> layerCount(3, 5);
-  std::uniform_int_distribution<uint32_t> choiceCount(2, 4);
-  std::uniform_int_distribution<uint64_t> weight(1, 40);
-  std::uniform_int_distribution<uint64_t> slack(0, 20);
-  std::uniform_int_distribution<uint32_t> pick(0, 3);
-
-  uint32_t trellisWorse = 0;
-  uint32_t solvedBoth = 0;
-  for (int trial = 0; trial < 300; ++trial) {
-    const auto layers = layerCount(rng);
-    const auto choices = choiceCount(rng);
-    auto chain = chainOf(layers, choices, [&](std::size_t, uint32_t, uint32_t) {
-      return weight(rng);
-    });
-    // A bound that is a genuine lower bound and usually not a tight one.
-    // With a conflict rule on top, the table price is itself a lower bound
-    // on the real step, so undercutting it keeps the bound admissible.
-    for (auto& block : chain.hint) {
-      for (auto& row : block) {
-        for (auto& value : row) {
-          const auto off = slack(rng);
-          value = off > value ? 0 : value - off;
-        }
-      }
-    }
-    // Two choices that cannot both stand. Held as a table so the rule is
-    // the same however often it is asked.
-    std::vector<std::vector<bool>> blocks(choices,
-                                          std::vector<bool>(choices, false));
-    for (uint32_t held = 0; held < choices; ++held) {
-      for (uint32_t later = 0; later < choices; ++later) {
-        blocks[held][later] = pick(rng) == 0;
-      }
-    }
-    chain.conflict = [blocks](const std::span<const uint32_t> prefix,
-                              const uint32_t to) {
-      for (const auto held : prefix) {
-        if (blocks[held][to]) {
-          return TRELLIS_UNREACHABLE;
-        }
-      }
-      return uint64_t{0};
-    };
-
-    const auto optimum = chain.exhaustive();
-    const auto exact = solveChainAStar(chain.problem());
-    ASSERT_EQ(exact.solved, optimum != TRELLIS_UNREACHABLE)
-        << "trial " << trial;
-    EXPECT_EQ(exact.cost, optimum) << "trial " << trial;
-    if (exact.solved) {
-      EXPECT_EQ(chain.priceOf(exact.chosen), optimum) << "trial " << trial;
-    }
-
-    const auto approximate = solveTrellis(chain.asTrellis());
-    if (!approximate.solved) {
-      continue;
-    }
-    ++solvedBoth;
-    // What the trellis named, priced honestly.
-    const auto real = chain.priceOf(approximate.chosen);
-    EXPECT_GE(real, optimum) << "trial " << trial;
-    trellisWorse += (real != optimum) ? 1U : 0U;
-  }
-  EXPECT_GT(solvedBoth, 0U);
-  // The claim: on chains whose steps block each other the trellis is wrong,
-  // and not rarely.
-  EXPECT_GT(trellisWorse, solvedBoth / 10)
-      << "the trellis answered " << trellisWorse << " of " << solvedBoth
-      << " wrongly";
 }
 
 TEST(ChainSearch, AnExactBoundPricesOnlyTheAnswer) {
@@ -388,60 +285,6 @@ TEST(ChainSearch, AnEmptyLayerShutsTheChain) {
   const auto result = solveChainAStar(chain.problem());
   EXPECT_FALSE(result.solved);
   EXPECT_EQ(result.routed, 0U);
-}
-
-TEST(ChainSearch, MatchesTheTrellisWhereNothingBlocks) {
-  // Without a conflict rule the two searches solve the same problem, so they
-  // must agree — on the price, and on the run of choices, since both break
-  // ties towards the lowest index.
-  std::mt19937 rng(20260928);
-  std::uniform_int_distribution<uint32_t> layerCount(2, 6);
-  std::uniform_int_distribution<uint32_t> choiceCount(1, 5);
-  std::uniform_int_distribution<uint64_t> weight(0, 40);
-  std::uniform_int_distribution<uint32_t> broken(0, 9);
-  std::uniform_int_distribution<uint64_t> slack(0, 40);
-
-  for (int trial = 0; trial < 200; ++trial) {
-    Chain chain;
-    const auto layers = layerCount(rng);
-    for (uint32_t layer = 0; layer < layers; ++layer) {
-      chain.width.push_back(choiceCount(rng));
-    }
-    for (std::size_t layer = 0; layer + 1 < layers; ++layer) {
-      std::vector<std::vector<uint64_t>> block(
-          chain.width[layer], std::vector<uint64_t>(chain.width[layer + 1], 0));
-      for (auto& row : block) {
-        for (auto& value : row) {
-          value = broken(rng) == 0 ? TRELLIS_UNREACHABLE : weight(rng);
-        }
-      }
-      chain.price.push_back(block);
-    }
-    chain.hint = chain.price;
-    for (auto& block : chain.hint) {
-      for (auto& row : block) {
-        for (auto& value : row) {
-          if (value == TRELLIS_UNREACHABLE) {
-            value = weight(rng);
-          } else {
-            const auto off = slack(rng);
-            value = off > value ? 0 : value - off;
-          }
-        }
-      }
-    }
-
-    const auto expected = chain.exhaustive();
-    const auto result = solveChainAStar(chain.problem());
-    ASSERT_EQ(result.solved, expected != TRELLIS_UNREACHABLE)
-        << "trial " << trial;
-    EXPECT_EQ(result.cost, expected) << "trial " << trial;
-    const auto trellis = solveTrellis(chain.asTrellis());
-    EXPECT_EQ(result.cost, trellis.cost) << "trial " << trial;
-    if (result.solved) {
-      EXPECT_EQ(chain.priceOf(result.chosen), expected) << "trial " << trial;
-    }
-  }
 }
 
 TEST(ChainSearch, ARedonePriceIsCountedAndCostsTheProof) {

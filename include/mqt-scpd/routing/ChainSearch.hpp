@@ -10,27 +10,29 @@
 
 #pragma once
 
-#include "mqt-scpd/routing/ChainTrellis.hpp"
-
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <span>
 #include <vector>
 
 namespace mqt::scpd::routing {
 
+/// The price of a step or a run that cannot be built at all.
+inline constexpr uint64_t TRELLIS_UNREACHABLE =
+    std::numeric_limits<uint64_t>::max();
+
 /// The exact cheapest run of choices along a chain whose steps block each
 /// other.
 ///
-/// `solveTrellis` beside this one solves the same chain far more cheaply,
-/// and it rests on an assumption this one drops: that the price of a step
-/// depends on the choice at both of its ends and on nothing else. For the
-/// feedline chain of the coupler insertion that assumption is false. Two
-/// feedline edges that meet at a coupler can block each other, so what a
-/// step costs depends on what was laid before it — the trellis prices a pair
-/// that cannot both be built as though it could, and the commit is where an
-/// edge is lost.
+/// A layered search that prices a step by the choice at both of its ends
+/// alone solves the same chain far more cheaply, and it rests on an
+/// assumption this one drops. For the feedline chain of the coupler
+/// insertion that assumption is false: two feedline edges that meet at a
+/// coupler can block each other, so what a step costs depends on what was
+/// laid before it, and such a search prices a pair that cannot both be built
+/// as though it could, so the commit is where an edge is lost.
 ///
 /// So a node here is a **prefix**: the choices made for layers `0..k`. The
 /// search asks `step` for the real price of laying the next one against the
@@ -50,7 +52,7 @@ namespace mqt::scpd::routing {
 /// on the queue. Only a node popped with its own step already real is
 /// expanded. The placeholder is a lower bound, so this changes nothing about
 /// the answer, and it means a step is routed exactly when the search commits
-/// to looking at it. `solveTrellis` defers its own pricing the same way.
+/// to looking at it.
 ///
 /// Nothing is merged. The node count is therefore exponential in the worst
 /// case. The search has no time limit: it runs until it proves an optimum,

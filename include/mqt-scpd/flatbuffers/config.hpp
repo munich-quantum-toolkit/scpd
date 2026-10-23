@@ -1267,6 +1267,48 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   uint32_t repair_trials = 100;
   std::string stop_after{};
   uint32_t refinement_corridor_spacings = 6;
+  double coupler_bias = 1.0;
+  double coupler_max_shortfall = 0.30;
+  uint32_t coupler_box_margin_cells = 5;
+  uint32_t coupler_shift_cells = 20;
+  uint32_t coupler_lead_margin_cells = 5;
+  double launcher_lead = 10.0;
+  std::string coupler_offsets{};
+  uint32_t edge_launcher_margin_cells = 6;
+  uint32_t terminal_slot_cells = 20;
+  double chain_end_edge_weight = 0.1;
+  double edge_bend_factor = 1.0;
+  uint32_t chain_length_weight = 0;
+  bool capacity_check = true;
+  uint32_t length_point_radius_cells = 40;
+  double length_point_band_percent = 10.0;
+  double sweep_length_band = 5.0;
+  uint32_t meander_leg_spacing_cells = 25;
+  int32_t meander_start_margin_cells = -1;
+  double capacity_margin = 1.06;
+  uint32_t capacity_margin_from_wires = 3;
+  double resonator_passage = 0.8;
+  uint32_t crossing_reach_cells = 10;
+  double crossing_spacing = 1.4142135623730951;
+  uint32_t slot_pin_cells = 10;
+  uint32_t escape_straight_cells = 5;
+  uint32_t escape_stub_margin_cells = 4;
+  uint32_t bottleneck_wires = 10;
+  double bottleneck_rise = 2.0;
+  uint32_t room_margin_cells = 10;
+  uint32_t room_channel_reach_cells = 80;
+  double detour_factor = 1.5;
+  uint32_t terminal_stub_extra_cells = 5;
+  uint32_t global_sat_runs = 8;
+  uint32_t global_sat_states = 8;
+  uint32_t global_sat_tries = 200;
+  uint32_t chain_rule_refusals = 1500;
+  uint32_t research_ring_members = 2;
+  uint32_t research_rounds = 2;
+  uint32_t fence_pairs = 3;
+  uint32_t halo_reach = 1;
+  uint32_t rise_reach = 3;
+  uint32_t rise_peak = 3;
 };
 
 /// What the Final stage is allowed to do.
@@ -1299,7 +1341,49 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_COUPLER_HEIGHT = 32,
     VT_REPAIR_TRIALS = 34,
     VT_STOP_AFTER = 36,
-    VT_REFINEMENT_CORRIDOR_SPACINGS = 38
+    VT_REFINEMENT_CORRIDOR_SPACINGS = 38,
+    VT_COUPLER_BIAS = 40,
+    VT_COUPLER_MAX_SHORTFALL = 42,
+    VT_COUPLER_BOX_MARGIN_CELLS = 44,
+    VT_COUPLER_SHIFT_CELLS = 46,
+    VT_COUPLER_LEAD_MARGIN_CELLS = 48,
+    VT_LAUNCHER_LEAD = 50,
+    VT_COUPLER_OFFSETS = 52,
+    VT_EDGE_LAUNCHER_MARGIN_CELLS = 54,
+    VT_TERMINAL_SLOT_CELLS = 56,
+    VT_CHAIN_END_EDGE_WEIGHT = 58,
+    VT_EDGE_BEND_FACTOR = 60,
+    VT_CHAIN_LENGTH_WEIGHT = 62,
+    VT_CAPACITY_CHECK = 64,
+    VT_LENGTH_POINT_RADIUS_CELLS = 66,
+    VT_LENGTH_POINT_BAND_PERCENT = 68,
+    VT_SWEEP_LENGTH_BAND = 70,
+    VT_MEANDER_LEG_SPACING_CELLS = 72,
+    VT_MEANDER_START_MARGIN_CELLS = 74,
+    VT_CAPACITY_MARGIN = 76,
+    VT_CAPACITY_MARGIN_FROM_WIRES = 78,
+    VT_RESONATOR_PASSAGE = 80,
+    VT_CROSSING_REACH_CELLS = 82,
+    VT_CROSSING_SPACING = 84,
+    VT_SLOT_PIN_CELLS = 86,
+    VT_ESCAPE_STRAIGHT_CELLS = 88,
+    VT_ESCAPE_STUB_MARGIN_CELLS = 90,
+    VT_BOTTLENECK_WIRES = 92,
+    VT_BOTTLENECK_RISE = 94,
+    VT_ROOM_MARGIN_CELLS = 96,
+    VT_ROOM_CHANNEL_REACH_CELLS = 98,
+    VT_DETOUR_FACTOR = 100,
+    VT_TERMINAL_STUB_EXTRA_CELLS = 102,
+    VT_GLOBAL_SAT_RUNS = 104,
+    VT_GLOBAL_SAT_STATES = 106,
+    VT_GLOBAL_SAT_TRIES = 108,
+    VT_CHAIN_RULE_REFUSALS = 110,
+    VT_RESEARCH_RING_MEMBERS = 112,
+    VT_RESEARCH_ROUNDS = 114,
+    VT_FENCE_PAIRS = 116,
+    VT_HALO_REACH = 118,
+    VT_RISE_REACH = 120,
+    VT_RISE_PEAK = 122
   };
   /// The implementation, by the name it is registered under.
   const ::flatbuffers::String *router() const {
@@ -1423,6 +1507,199 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t refinement_corridor_spacings() const {
     return GetField<uint32_t>(VT_REFINEMENT_CORRIDOR_SPACINGS, 6);
   }
+  /// How much of `target_resonator_length` is left to run from the centre of
+  /// the coupler to the qubit, as a share of that figure. The meander can
+  /// lengthen a way but never shorten one, so a coupler cut short of the
+  /// figure hands the rest to the meander.
+  double coupler_bias() const {
+    return GetField<double>(VT_COUPLER_BIAS, 1.0);
+  }
+  /// How far below `target_resonator_length` a coupler may leave the
+  /// resonator, as a share of that figure. A place that leaves less is
+  /// refused.
+  double coupler_max_shortfall() const {
+    return GetField<double>(VT_COUPLER_MAX_SHORTFALL, 0.30);
+  }
+  /// How many cells a coupler keeps off every side of the coupler box, the
+  /// room the launcher stubs leave open.
+  uint32_t coupler_box_margin_cells() const {
+    return GetField<uint32_t>(VT_COUPLER_BOX_MARGIN_CELLS, 5);
+  }
+  /// How far an option that leaves the coupler box is moved into it, in
+  /// cells on an axis, before the place is given up.
+  uint32_t coupler_shift_cells() const {
+    return GetField<uint32_t>(VT_COUPLER_SHIFT_CELLS, 20);
+  }
+  /// How many cells of straight run the coupler's lead keeps beyond
+  /// `min_straight_length`, so that the join with the resonator's way has
+  /// room to be a turn.
+  uint32_t coupler_lead_margin_cells() const {
+    return GetField<uint32_t>(VT_COUPLER_LEAD_MARGIN_CELLS, 5);
+  }
+  /// How much further than its own stub a launcher keeps the coupler box
+  /// away, in layout units.
+  double launcher_lead() const {
+    return GetField<double>(VT_LAUNCHER_LEAD, 10.0);
+  }
+  /// The offsets the option generator turns a pad by, off the heading the
+  /// resonator leaves on, as a comma list of eighth turns 0 to 7. Empty
+  /// means the default: every offset but 3 and 4, the pad turned 135 and
+  /// 180 degrees against the way.
+  const ::flatbuffers::String *coupler_offsets() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_COUPLER_OFFSETS);
+  }
+  /// How many cells beyond the launcher's run and the clearance a feedline
+  /// edge keeps closed in front of every launcher but its own.
+  uint32_t edge_launcher_margin_cells() const {
+    return GetField<uint32_t>(VT_EDGE_LAUNCHER_MARGIN_CELLS, 6);
+  }
+  /// The slot a feedline edge keeps open at a coupler's feedline port: the
+  /// straight run it is forced to make off the port, in cells.
+  uint32_t terminal_slot_cells() const {
+    return GetField<uint32_t>(VT_TERMINAL_SLOT_CELLS, 20);
+  }
+  /// The weight of an edge between a launcher and the coupler beside it in
+  /// the chain search, against 1 for every other edge.
+  double chain_end_edge_weight() const {
+    return GetField<double>(VT_CHAIN_END_EDGE_WEIGHT, 0.1);
+  }
+  /// The bend price of a feedline edge, as a factor on `bend_penalty_norm`.
+  double edge_bend_factor() const {
+    return GetField<double>(VT_EDGE_BEND_FACTOR, 1.0);
+  }
+  /// The price of one cell of length in the chain search; 0 prices length
+  /// not at all.
+  uint32_t chain_length_weight() const {
+    return GetField<uint32_t>(VT_CHAIN_LENGTH_WEIGHT, 0);
+  }
+  /// Whether the coupler insertion runs the capacity graph check: the step
+  /// checks of the chain search, the whole-chip check after the commit and
+  /// the global SAT search when that check says UNSAT. Off, the chains are
+  /// settled by cost alone.
+  bool capacity_check() const {
+    return GetField<uint8_t>(VT_CAPACITY_CHECK, 1) != 0;
+  }
+  /// The length-point clearance of the outer routing: the radius, in cells,
+  /// a wire keeps from the band of a resonator where that resonator reaches
+  /// its target length, and the half-width of that band as a percentage of
+  /// the target length. A radius of 0 turns the clearance off.
+  uint32_t length_point_radius_cells() const {
+    return GetField<uint32_t>(VT_LENGTH_POINT_RADIUS_CELLS, 40);
+  }
+  double length_point_band_percent() const {
+    return GetField<double>(VT_LENGTH_POINT_BAND_PERCENT, 10.0);
+  }
+  /// The band of lengths the feedline sweep accepts around the target
+  /// length, as a multiple of `resonator_length_tolerance`.
+  double sweep_length_band() const {
+    return GetField<double>(VT_SWEEP_LENGTH_BAND, 5.0);
+  }
+  /// The spacing of the meander's legs, in cells.
+  uint32_t meander_leg_spacing_cells() const {
+    return GetField<uint32_t>(VT_MEANDER_LEG_SPACING_CELLS, 25);
+  }
+  /// How many cells at the start of a resonator the meander leaves as they
+  /// are; a negative value means the coupler's length plus four.
+  int32_t meander_start_margin_cells() const {
+    return GetField<int32_t>(VT_MEANDER_START_MARGIN_CELLS, -1);
+  }
+  /// The slot check: the safety factor on the clearance a wire takes in a
+  /// gap, from the gap size (in wires) the factor applies to; the narrowest
+  /// gap a resonator passes, as a share of the clearance.
+  double capacity_margin() const {
+    return GetField<double>(VT_CAPACITY_MARGIN, 1.06);
+  }
+  uint32_t capacity_margin_from_wires() const {
+    return GetField<uint32_t>(VT_CAPACITY_MARGIN_FROM_WIRES, 3);
+  }
+  double resonator_passage() const {
+    return GetField<double>(VT_RESONATOR_PASSAGE, 0.8);
+  }
+  /// The band of cells beside a feedline edge where a wire may only cross
+  /// at a right angle, the spacing of the crossing points in clearances,
+  /// the cells closed at the ends of an edge, the straight run after an
+  /// escape turn and the clearance an escape keeps from a stub.
+  uint32_t crossing_reach_cells() const {
+    return GetField<uint32_t>(VT_CROSSING_REACH_CELLS, 10);
+  }
+  double crossing_spacing() const {
+    return GetField<double>(VT_CROSSING_SPACING, 1.4142135623730951);
+  }
+  uint32_t slot_pin_cells() const {
+    return GetField<uint32_t>(VT_SLOT_PIN_CELLS, 10);
+  }
+  uint32_t escape_straight_cells() const {
+    return GetField<uint32_t>(VT_ESCAPE_STRAIGHT_CELLS, 5);
+  }
+  uint32_t escape_stub_margin_cells() const {
+    return GetField<uint32_t>(VT_ESCAPE_STUB_MARGIN_CELLS, 4);
+  }
+  /// The bottleneck analysis: the widest gap, in wires, still treated as a
+  /// bottleneck, and the least rise of a narrowing.
+  uint32_t bottleneck_wires() const {
+    return GetField<uint32_t>(VT_BOTTLENECK_WIRES, 10);
+  }
+  double bottleneck_rise() const {
+    return GetField<double>(VT_BOTTLENECK_RISE, 2.0);
+  }
+  /// The room rules: the dead length at both ends of a straight run and the
+  /// reach of the channel rule, in cells; the detour a wire may take through
+  /// a gap, as a factor on the direct way.
+  uint32_t room_margin_cells() const {
+    return GetField<uint32_t>(VT_ROOM_MARGIN_CELLS, 10);
+  }
+  uint32_t room_channel_reach_cells() const {
+    return GetField<uint32_t>(VT_ROOM_CHANNEL_REACH_CELLS, 80);
+  }
+  double detour_factor() const {
+    return GetField<double>(VT_DETOUR_FACTOR, 1.5);
+  }
+  /// How far a terminal edge's run is guarded past the coupler's pad, in
+  /// cells.
+  uint32_t terminal_stub_extra_cells() const {
+    return GetField<uint32_t>(VT_TERMINAL_STUB_EXTRA_CELLS, 5);
+  }
+  /// The budgets of the global SAT search: option runs per segment, locally
+  /// SAT states kept per chain and whole-chip combinations tried.
+  uint32_t global_sat_runs() const {
+    return GetField<uint32_t>(VT_GLOBAL_SAT_RUNS, 8);
+  }
+  uint32_t global_sat_states() const {
+    return GetField<uint32_t>(VT_GLOBAL_SAT_STATES, 8);
+  }
+  uint32_t global_sat_tries() const {
+    return GetField<uint32_t>(VT_GLOBAL_SAT_TRIES, 200);
+  }
+  /// How many steps the capacity rule may refuse before a run of options
+  /// joins a chain; then the chain is searched again without the rule.
+  uint32_t chain_rule_refusals() const {
+    return GetField<uint32_t>(VT_CHAIN_RULE_REFUSALS, 1500);
+  }
+  /// The targeted repair: how many ring members beside a segment are drawn
+  /// again and how many local rip-up rounds it runs.
+  uint32_t research_ring_members() const {
+    return GetField<uint32_t>(VT_RESEARCH_RING_MEMBERS, 2);
+  }
+  uint32_t research_rounds() const {
+    return GetField<uint32_t>(VT_RESEARCH_ROUNDS, 2);
+  }
+  /// How many ring neighbours to either side a wire is fenced against in
+  /// the feedline pass and the refinements.
+  uint32_t fence_pairs() const {
+    return GetField<uint32_t>(VT_FENCE_PAIRS, 3);
+  }
+  /// The halo of a wire let go of in a relaxation: its reach in clearances,
+  /// and past the wire, in the feedline pass, a price rising to `rise_peak`
+  /// times the flat price at `rise_reach` clearances.
+  uint32_t halo_reach() const {
+    return GetField<uint32_t>(VT_HALO_REACH, 1);
+  }
+  uint32_t rise_reach() const {
+    return GetField<uint32_t>(VT_RISE_REACH, 3);
+  }
+  uint32_t rise_peak() const {
+    return GetField<uint32_t>(VT_RISE_PEAK, 3);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1446,6 +1723,49 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_STOP_AFTER) &&
            verifier.VerifyString(stop_after()) &&
            VerifyField<uint32_t>(verifier, VT_REFINEMENT_CORRIDOR_SPACINGS, 4) &&
+           VerifyField<double>(verifier, VT_COUPLER_BIAS, 8) &&
+           VerifyField<double>(verifier, VT_COUPLER_MAX_SHORTFALL, 8) &&
+           VerifyField<uint32_t>(verifier, VT_COUPLER_BOX_MARGIN_CELLS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_COUPLER_SHIFT_CELLS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_COUPLER_LEAD_MARGIN_CELLS, 4) &&
+           VerifyField<double>(verifier, VT_LAUNCHER_LEAD, 8) &&
+           VerifyOffset(verifier, VT_COUPLER_OFFSETS) &&
+           verifier.VerifyString(coupler_offsets()) &&
+           VerifyField<uint32_t>(verifier, VT_EDGE_LAUNCHER_MARGIN_CELLS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_TERMINAL_SLOT_CELLS, 4) &&
+           VerifyField<double>(verifier, VT_CHAIN_END_EDGE_WEIGHT, 8) &&
+           VerifyField<double>(verifier, VT_EDGE_BEND_FACTOR, 8) &&
+           VerifyField<uint32_t>(verifier, VT_CHAIN_LENGTH_WEIGHT, 4) &&
+           VerifyField<uint8_t>(verifier, VT_CAPACITY_CHECK, 1) &&
+           VerifyField<uint32_t>(verifier, VT_LENGTH_POINT_RADIUS_CELLS, 4) &&
+           VerifyField<double>(verifier, VT_LENGTH_POINT_BAND_PERCENT, 8) &&
+           VerifyField<double>(verifier, VT_SWEEP_LENGTH_BAND, 8) &&
+           VerifyField<uint32_t>(verifier, VT_MEANDER_LEG_SPACING_CELLS, 4) &&
+           VerifyField<int32_t>(verifier, VT_MEANDER_START_MARGIN_CELLS, 4) &&
+           VerifyField<double>(verifier, VT_CAPACITY_MARGIN, 8) &&
+           VerifyField<uint32_t>(verifier, VT_CAPACITY_MARGIN_FROM_WIRES, 4) &&
+           VerifyField<double>(verifier, VT_RESONATOR_PASSAGE, 8) &&
+           VerifyField<uint32_t>(verifier, VT_CROSSING_REACH_CELLS, 4) &&
+           VerifyField<double>(verifier, VT_CROSSING_SPACING, 8) &&
+           VerifyField<uint32_t>(verifier, VT_SLOT_PIN_CELLS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_ESCAPE_STRAIGHT_CELLS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_ESCAPE_STUB_MARGIN_CELLS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_BOTTLENECK_WIRES, 4) &&
+           VerifyField<double>(verifier, VT_BOTTLENECK_RISE, 8) &&
+           VerifyField<uint32_t>(verifier, VT_ROOM_MARGIN_CELLS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_ROOM_CHANNEL_REACH_CELLS, 4) &&
+           VerifyField<double>(verifier, VT_DETOUR_FACTOR, 8) &&
+           VerifyField<uint32_t>(verifier, VT_TERMINAL_STUB_EXTRA_CELLS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_GLOBAL_SAT_RUNS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_GLOBAL_SAT_STATES, 4) &&
+           VerifyField<uint32_t>(verifier, VT_GLOBAL_SAT_TRIES, 4) &&
+           VerifyField<uint32_t>(verifier, VT_CHAIN_RULE_REFUSALS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_RESEARCH_RING_MEMBERS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_RESEARCH_ROUNDS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_FENCE_PAIRS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_HALO_REACH, 4) &&
+           VerifyField<uint32_t>(verifier, VT_RISE_REACH, 4) &&
+           VerifyField<uint32_t>(verifier, VT_RISE_PEAK, 4) &&
            verifier.EndTable();
   }
   FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1511,6 +1831,132 @@ struct FinalParamsBuilder {
   void add_refinement_corridor_spacings(uint32_t refinement_corridor_spacings) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_REFINEMENT_CORRIDOR_SPACINGS, refinement_corridor_spacings, 6);
   }
+  void add_coupler_bias(double coupler_bias) {
+    fbb_.AddElement<double>(FinalParams::VT_COUPLER_BIAS, coupler_bias, 1.0);
+  }
+  void add_coupler_max_shortfall(double coupler_max_shortfall) {
+    fbb_.AddElement<double>(FinalParams::VT_COUPLER_MAX_SHORTFALL, coupler_max_shortfall, 0.30);
+  }
+  void add_coupler_box_margin_cells(uint32_t coupler_box_margin_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_COUPLER_BOX_MARGIN_CELLS, coupler_box_margin_cells, 5);
+  }
+  void add_coupler_shift_cells(uint32_t coupler_shift_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_COUPLER_SHIFT_CELLS, coupler_shift_cells, 20);
+  }
+  void add_coupler_lead_margin_cells(uint32_t coupler_lead_margin_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_COUPLER_LEAD_MARGIN_CELLS, coupler_lead_margin_cells, 5);
+  }
+  void add_launcher_lead(double launcher_lead) {
+    fbb_.AddElement<double>(FinalParams::VT_LAUNCHER_LEAD, launcher_lead, 10.0);
+  }
+  void add_coupler_offsets(::flatbuffers::Offset<::flatbuffers::String> coupler_offsets) {
+    fbb_.AddOffset(FinalParams::VT_COUPLER_OFFSETS, coupler_offsets);
+  }
+  void add_edge_launcher_margin_cells(uint32_t edge_launcher_margin_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_EDGE_LAUNCHER_MARGIN_CELLS, edge_launcher_margin_cells, 6);
+  }
+  void add_terminal_slot_cells(uint32_t terminal_slot_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_TERMINAL_SLOT_CELLS, terminal_slot_cells, 20);
+  }
+  void add_chain_end_edge_weight(double chain_end_edge_weight) {
+    fbb_.AddElement<double>(FinalParams::VT_CHAIN_END_EDGE_WEIGHT, chain_end_edge_weight, 0.1);
+  }
+  void add_edge_bend_factor(double edge_bend_factor) {
+    fbb_.AddElement<double>(FinalParams::VT_EDGE_BEND_FACTOR, edge_bend_factor, 1.0);
+  }
+  void add_chain_length_weight(uint32_t chain_length_weight) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CHAIN_LENGTH_WEIGHT, chain_length_weight, 0);
+  }
+  void add_capacity_check(bool capacity_check) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_CHECK, static_cast<uint8_t>(capacity_check), 1);
+  }
+  void add_length_point_radius_cells(uint32_t length_point_radius_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_LENGTH_POINT_RADIUS_CELLS, length_point_radius_cells, 40);
+  }
+  void add_length_point_band_percent(double length_point_band_percent) {
+    fbb_.AddElement<double>(FinalParams::VT_LENGTH_POINT_BAND_PERCENT, length_point_band_percent, 10.0);
+  }
+  void add_sweep_length_band(double sweep_length_band) {
+    fbb_.AddElement<double>(FinalParams::VT_SWEEP_LENGTH_BAND, sweep_length_band, 5.0);
+  }
+  void add_meander_leg_spacing_cells(uint32_t meander_leg_spacing_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_MEANDER_LEG_SPACING_CELLS, meander_leg_spacing_cells, 25);
+  }
+  void add_meander_start_margin_cells(int32_t meander_start_margin_cells) {
+    fbb_.AddElement<int32_t>(FinalParams::VT_MEANDER_START_MARGIN_CELLS, meander_start_margin_cells, -1);
+  }
+  void add_capacity_margin(double capacity_margin) {
+    fbb_.AddElement<double>(FinalParams::VT_CAPACITY_MARGIN, capacity_margin, 1.06);
+  }
+  void add_capacity_margin_from_wires(uint32_t capacity_margin_from_wires) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CAPACITY_MARGIN_FROM_WIRES, capacity_margin_from_wires, 3);
+  }
+  void add_resonator_passage(double resonator_passage) {
+    fbb_.AddElement<double>(FinalParams::VT_RESONATOR_PASSAGE, resonator_passage, 0.8);
+  }
+  void add_crossing_reach_cells(uint32_t crossing_reach_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CROSSING_REACH_CELLS, crossing_reach_cells, 10);
+  }
+  void add_crossing_spacing(double crossing_spacing) {
+    fbb_.AddElement<double>(FinalParams::VT_CROSSING_SPACING, crossing_spacing, 1.4142135623730951);
+  }
+  void add_slot_pin_cells(uint32_t slot_pin_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_SLOT_PIN_CELLS, slot_pin_cells, 10);
+  }
+  void add_escape_straight_cells(uint32_t escape_straight_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_ESCAPE_STRAIGHT_CELLS, escape_straight_cells, 5);
+  }
+  void add_escape_stub_margin_cells(uint32_t escape_stub_margin_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_ESCAPE_STUB_MARGIN_CELLS, escape_stub_margin_cells, 4);
+  }
+  void add_bottleneck_wires(uint32_t bottleneck_wires) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_BOTTLENECK_WIRES, bottleneck_wires, 10);
+  }
+  void add_bottleneck_rise(double bottleneck_rise) {
+    fbb_.AddElement<double>(FinalParams::VT_BOTTLENECK_RISE, bottleneck_rise, 2.0);
+  }
+  void add_room_margin_cells(uint32_t room_margin_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_ROOM_MARGIN_CELLS, room_margin_cells, 10);
+  }
+  void add_room_channel_reach_cells(uint32_t room_channel_reach_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_ROOM_CHANNEL_REACH_CELLS, room_channel_reach_cells, 80);
+  }
+  void add_detour_factor(double detour_factor) {
+    fbb_.AddElement<double>(FinalParams::VT_DETOUR_FACTOR, detour_factor, 1.5);
+  }
+  void add_terminal_stub_extra_cells(uint32_t terminal_stub_extra_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_TERMINAL_STUB_EXTRA_CELLS, terminal_stub_extra_cells, 5);
+  }
+  void add_global_sat_runs(uint32_t global_sat_runs) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GLOBAL_SAT_RUNS, global_sat_runs, 8);
+  }
+  void add_global_sat_states(uint32_t global_sat_states) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GLOBAL_SAT_STATES, global_sat_states, 8);
+  }
+  void add_global_sat_tries(uint32_t global_sat_tries) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GLOBAL_SAT_TRIES, global_sat_tries, 200);
+  }
+  void add_chain_rule_refusals(uint32_t chain_rule_refusals) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CHAIN_RULE_REFUSALS, chain_rule_refusals, 1500);
+  }
+  void add_research_ring_members(uint32_t research_ring_members) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_RESEARCH_RING_MEMBERS, research_ring_members, 2);
+  }
+  void add_research_rounds(uint32_t research_rounds) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_RESEARCH_ROUNDS, research_rounds, 2);
+  }
+  void add_fence_pairs(uint32_t fence_pairs) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_FENCE_PAIRS, fence_pairs, 3);
+  }
+  void add_halo_reach(uint32_t halo_reach) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_HALO_REACH, halo_reach, 1);
+  }
+  void add_rise_reach(uint32_t rise_reach) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_RISE_REACH, rise_reach, 3);
+  }
+  void add_rise_peak(uint32_t rise_peak) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_RISE_PEAK, rise_peak, 3);
+  }
   explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1541,8 +1987,62 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     double coupler_height = 26.0,
     uint32_t repair_trials = 100,
     ::flatbuffers::Offset<::flatbuffers::String> stop_after = 0,
-    uint32_t refinement_corridor_spacings = 6) {
+    uint32_t refinement_corridor_spacings = 6,
+    double coupler_bias = 1.0,
+    double coupler_max_shortfall = 0.30,
+    uint32_t coupler_box_margin_cells = 5,
+    uint32_t coupler_shift_cells = 20,
+    uint32_t coupler_lead_margin_cells = 5,
+    double launcher_lead = 10.0,
+    ::flatbuffers::Offset<::flatbuffers::String> coupler_offsets = 0,
+    uint32_t edge_launcher_margin_cells = 6,
+    uint32_t terminal_slot_cells = 20,
+    double chain_end_edge_weight = 0.1,
+    double edge_bend_factor = 1.0,
+    uint32_t chain_length_weight = 0,
+    bool capacity_check = true,
+    uint32_t length_point_radius_cells = 40,
+    double length_point_band_percent = 10.0,
+    double sweep_length_band = 5.0,
+    uint32_t meander_leg_spacing_cells = 25,
+    int32_t meander_start_margin_cells = -1,
+    double capacity_margin = 1.06,
+    uint32_t capacity_margin_from_wires = 3,
+    double resonator_passage = 0.8,
+    uint32_t crossing_reach_cells = 10,
+    double crossing_spacing = 1.4142135623730951,
+    uint32_t slot_pin_cells = 10,
+    uint32_t escape_straight_cells = 5,
+    uint32_t escape_stub_margin_cells = 4,
+    uint32_t bottleneck_wires = 10,
+    double bottleneck_rise = 2.0,
+    uint32_t room_margin_cells = 10,
+    uint32_t room_channel_reach_cells = 80,
+    double detour_factor = 1.5,
+    uint32_t terminal_stub_extra_cells = 5,
+    uint32_t global_sat_runs = 8,
+    uint32_t global_sat_states = 8,
+    uint32_t global_sat_tries = 200,
+    uint32_t chain_rule_refusals = 1500,
+    uint32_t research_ring_members = 2,
+    uint32_t research_rounds = 2,
+    uint32_t fence_pairs = 3,
+    uint32_t halo_reach = 1,
+    uint32_t rise_reach = 3,
+    uint32_t rise_peak = 3) {
   FinalParamsBuilder builder_(_fbb);
+  builder_.add_detour_factor(detour_factor);
+  builder_.add_bottleneck_rise(bottleneck_rise);
+  builder_.add_crossing_spacing(crossing_spacing);
+  builder_.add_resonator_passage(resonator_passage);
+  builder_.add_capacity_margin(capacity_margin);
+  builder_.add_sweep_length_band(sweep_length_band);
+  builder_.add_length_point_band_percent(length_point_band_percent);
+  builder_.add_edge_bend_factor(edge_bend_factor);
+  builder_.add_chain_end_edge_weight(chain_end_edge_weight);
+  builder_.add_launcher_lead(launcher_lead);
+  builder_.add_coupler_max_shortfall(coupler_max_shortfall);
+  builder_.add_coupler_bias(coupler_bias);
   builder_.add_coupler_height(coupler_height);
   builder_.add_coupler_length(coupler_length);
   builder_.add_obstacle_penalty_reach(obstacle_penalty_reach);
@@ -1550,6 +2050,35 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
   builder_.add_bend_penalty_norm(bend_penalty_norm);
   builder_.add_meander_length(meander_length);
+  builder_.add_rise_peak(rise_peak);
+  builder_.add_rise_reach(rise_reach);
+  builder_.add_halo_reach(halo_reach);
+  builder_.add_fence_pairs(fence_pairs);
+  builder_.add_research_rounds(research_rounds);
+  builder_.add_research_ring_members(research_ring_members);
+  builder_.add_chain_rule_refusals(chain_rule_refusals);
+  builder_.add_global_sat_tries(global_sat_tries);
+  builder_.add_global_sat_states(global_sat_states);
+  builder_.add_global_sat_runs(global_sat_runs);
+  builder_.add_terminal_stub_extra_cells(terminal_stub_extra_cells);
+  builder_.add_room_channel_reach_cells(room_channel_reach_cells);
+  builder_.add_room_margin_cells(room_margin_cells);
+  builder_.add_bottleneck_wires(bottleneck_wires);
+  builder_.add_escape_stub_margin_cells(escape_stub_margin_cells);
+  builder_.add_escape_straight_cells(escape_straight_cells);
+  builder_.add_slot_pin_cells(slot_pin_cells);
+  builder_.add_crossing_reach_cells(crossing_reach_cells);
+  builder_.add_capacity_margin_from_wires(capacity_margin_from_wires);
+  builder_.add_meander_start_margin_cells(meander_start_margin_cells);
+  builder_.add_meander_leg_spacing_cells(meander_leg_spacing_cells);
+  builder_.add_length_point_radius_cells(length_point_radius_cells);
+  builder_.add_chain_length_weight(chain_length_weight);
+  builder_.add_terminal_slot_cells(terminal_slot_cells);
+  builder_.add_edge_launcher_margin_cells(edge_launcher_margin_cells);
+  builder_.add_coupler_offsets(coupler_offsets);
+  builder_.add_coupler_lead_margin_cells(coupler_lead_margin_cells);
+  builder_.add_coupler_shift_cells(coupler_shift_cells);
+  builder_.add_coupler_box_margin_cells(coupler_box_margin_cells);
   builder_.add_refinement_corridor_spacings(refinement_corridor_spacings);
   builder_.add_stop_after(stop_after);
   builder_.add_repair_trials(repair_trials);
@@ -1561,6 +2090,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_inner_corridor_spacings(inner_corridor_spacings);
   builder_.add_corridor_spacings(corridor_spacings);
   builder_.add_router(router);
+  builder_.add_capacity_check(capacity_check);
   return builder_.Finish();
 }
 
@@ -1588,9 +2118,52 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     double coupler_height = 26.0,
     uint32_t repair_trials = 100,
     const char *stop_after = nullptr,
-    uint32_t refinement_corridor_spacings = 6) {
+    uint32_t refinement_corridor_spacings = 6,
+    double coupler_bias = 1.0,
+    double coupler_max_shortfall = 0.30,
+    uint32_t coupler_box_margin_cells = 5,
+    uint32_t coupler_shift_cells = 20,
+    uint32_t coupler_lead_margin_cells = 5,
+    double launcher_lead = 10.0,
+    const char *coupler_offsets = nullptr,
+    uint32_t edge_launcher_margin_cells = 6,
+    uint32_t terminal_slot_cells = 20,
+    double chain_end_edge_weight = 0.1,
+    double edge_bend_factor = 1.0,
+    uint32_t chain_length_weight = 0,
+    bool capacity_check = true,
+    uint32_t length_point_radius_cells = 40,
+    double length_point_band_percent = 10.0,
+    double sweep_length_band = 5.0,
+    uint32_t meander_leg_spacing_cells = 25,
+    int32_t meander_start_margin_cells = -1,
+    double capacity_margin = 1.06,
+    uint32_t capacity_margin_from_wires = 3,
+    double resonator_passage = 0.8,
+    uint32_t crossing_reach_cells = 10,
+    double crossing_spacing = 1.4142135623730951,
+    uint32_t slot_pin_cells = 10,
+    uint32_t escape_straight_cells = 5,
+    uint32_t escape_stub_margin_cells = 4,
+    uint32_t bottleneck_wires = 10,
+    double bottleneck_rise = 2.0,
+    uint32_t room_margin_cells = 10,
+    uint32_t room_channel_reach_cells = 80,
+    double detour_factor = 1.5,
+    uint32_t terminal_stub_extra_cells = 5,
+    uint32_t global_sat_runs = 8,
+    uint32_t global_sat_states = 8,
+    uint32_t global_sat_tries = 200,
+    uint32_t chain_rule_refusals = 1500,
+    uint32_t research_ring_members = 2,
+    uint32_t research_rounds = 2,
+    uint32_t fence_pairs = 3,
+    uint32_t halo_reach = 1,
+    uint32_t rise_reach = 3,
+    uint32_t rise_peak = 3) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
   auto stop_after__ = stop_after ? _fbb.CreateString(stop_after) : 0;
+  auto coupler_offsets__ = coupler_offsets ? _fbb.CreateString(coupler_offsets) : 0;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       router__,
@@ -1610,7 +2183,49 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       coupler_height,
       repair_trials,
       stop_after__,
-      refinement_corridor_spacings);
+      refinement_corridor_spacings,
+      coupler_bias,
+      coupler_max_shortfall,
+      coupler_box_margin_cells,
+      coupler_shift_cells,
+      coupler_lead_margin_cells,
+      launcher_lead,
+      coupler_offsets__,
+      edge_launcher_margin_cells,
+      terminal_slot_cells,
+      chain_end_edge_weight,
+      edge_bend_factor,
+      chain_length_weight,
+      capacity_check,
+      length_point_radius_cells,
+      length_point_band_percent,
+      sweep_length_band,
+      meander_leg_spacing_cells,
+      meander_start_margin_cells,
+      capacity_margin,
+      capacity_margin_from_wires,
+      resonator_passage,
+      crossing_reach_cells,
+      crossing_spacing,
+      slot_pin_cells,
+      escape_straight_cells,
+      escape_stub_margin_cells,
+      bottleneck_wires,
+      bottleneck_rise,
+      room_margin_cells,
+      room_channel_reach_cells,
+      detour_factor,
+      terminal_stub_extra_cells,
+      global_sat_runs,
+      global_sat_states,
+      global_sat_tries,
+      chain_rule_refusals,
+      research_ring_members,
+      research_rounds,
+      fence_pairs,
+      halo_reach,
+      rise_reach,
+      rise_peak);
 }
 
 ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -2490,7 +3105,49 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.coupler_height == rhs.coupler_height) &&
       (lhs.repair_trials == rhs.repair_trials) &&
       (lhs.stop_after == rhs.stop_after) &&
-      (lhs.refinement_corridor_spacings == rhs.refinement_corridor_spacings);
+      (lhs.refinement_corridor_spacings == rhs.refinement_corridor_spacings) &&
+      (lhs.coupler_bias == rhs.coupler_bias) &&
+      (lhs.coupler_max_shortfall == rhs.coupler_max_shortfall) &&
+      (lhs.coupler_box_margin_cells == rhs.coupler_box_margin_cells) &&
+      (lhs.coupler_shift_cells == rhs.coupler_shift_cells) &&
+      (lhs.coupler_lead_margin_cells == rhs.coupler_lead_margin_cells) &&
+      (lhs.launcher_lead == rhs.launcher_lead) &&
+      (lhs.coupler_offsets == rhs.coupler_offsets) &&
+      (lhs.edge_launcher_margin_cells == rhs.edge_launcher_margin_cells) &&
+      (lhs.terminal_slot_cells == rhs.terminal_slot_cells) &&
+      (lhs.chain_end_edge_weight == rhs.chain_end_edge_weight) &&
+      (lhs.edge_bend_factor == rhs.edge_bend_factor) &&
+      (lhs.chain_length_weight == rhs.chain_length_weight) &&
+      (lhs.capacity_check == rhs.capacity_check) &&
+      (lhs.length_point_radius_cells == rhs.length_point_radius_cells) &&
+      (lhs.length_point_band_percent == rhs.length_point_band_percent) &&
+      (lhs.sweep_length_band == rhs.sweep_length_band) &&
+      (lhs.meander_leg_spacing_cells == rhs.meander_leg_spacing_cells) &&
+      (lhs.meander_start_margin_cells == rhs.meander_start_margin_cells) &&
+      (lhs.capacity_margin == rhs.capacity_margin) &&
+      (lhs.capacity_margin_from_wires == rhs.capacity_margin_from_wires) &&
+      (lhs.resonator_passage == rhs.resonator_passage) &&
+      (lhs.crossing_reach_cells == rhs.crossing_reach_cells) &&
+      (lhs.crossing_spacing == rhs.crossing_spacing) &&
+      (lhs.slot_pin_cells == rhs.slot_pin_cells) &&
+      (lhs.escape_straight_cells == rhs.escape_straight_cells) &&
+      (lhs.escape_stub_margin_cells == rhs.escape_stub_margin_cells) &&
+      (lhs.bottleneck_wires == rhs.bottleneck_wires) &&
+      (lhs.bottleneck_rise == rhs.bottleneck_rise) &&
+      (lhs.room_margin_cells == rhs.room_margin_cells) &&
+      (lhs.room_channel_reach_cells == rhs.room_channel_reach_cells) &&
+      (lhs.detour_factor == rhs.detour_factor) &&
+      (lhs.terminal_stub_extra_cells == rhs.terminal_stub_extra_cells) &&
+      (lhs.global_sat_runs == rhs.global_sat_runs) &&
+      (lhs.global_sat_states == rhs.global_sat_states) &&
+      (lhs.global_sat_tries == rhs.global_sat_tries) &&
+      (lhs.chain_rule_refusals == rhs.chain_rule_refusals) &&
+      (lhs.research_ring_members == rhs.research_ring_members) &&
+      (lhs.research_rounds == rhs.research_rounds) &&
+      (lhs.fence_pairs == rhs.fence_pairs) &&
+      (lhs.halo_reach == rhs.halo_reach) &&
+      (lhs.rise_reach == rhs.rise_reach) &&
+      (lhs.rise_peak == rhs.rise_peak);
 }
 
 inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
@@ -2525,6 +3182,48 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = repair_trials(); _o->repair_trials = _e; }
   { auto _e = stop_after(); if (_e) _o->stop_after = _e->str(); }
   { auto _e = refinement_corridor_spacings(); _o->refinement_corridor_spacings = _e; }
+  { auto _e = coupler_bias(); _o->coupler_bias = _e; }
+  { auto _e = coupler_max_shortfall(); _o->coupler_max_shortfall = _e; }
+  { auto _e = coupler_box_margin_cells(); _o->coupler_box_margin_cells = _e; }
+  { auto _e = coupler_shift_cells(); _o->coupler_shift_cells = _e; }
+  { auto _e = coupler_lead_margin_cells(); _o->coupler_lead_margin_cells = _e; }
+  { auto _e = launcher_lead(); _o->launcher_lead = _e; }
+  { auto _e = coupler_offsets(); if (_e) _o->coupler_offsets = _e->str(); }
+  { auto _e = edge_launcher_margin_cells(); _o->edge_launcher_margin_cells = _e; }
+  { auto _e = terminal_slot_cells(); _o->terminal_slot_cells = _e; }
+  { auto _e = chain_end_edge_weight(); _o->chain_end_edge_weight = _e; }
+  { auto _e = edge_bend_factor(); _o->edge_bend_factor = _e; }
+  { auto _e = chain_length_weight(); _o->chain_length_weight = _e; }
+  { auto _e = capacity_check(); _o->capacity_check = _e; }
+  { auto _e = length_point_radius_cells(); _o->length_point_radius_cells = _e; }
+  { auto _e = length_point_band_percent(); _o->length_point_band_percent = _e; }
+  { auto _e = sweep_length_band(); _o->sweep_length_band = _e; }
+  { auto _e = meander_leg_spacing_cells(); _o->meander_leg_spacing_cells = _e; }
+  { auto _e = meander_start_margin_cells(); _o->meander_start_margin_cells = _e; }
+  { auto _e = capacity_margin(); _o->capacity_margin = _e; }
+  { auto _e = capacity_margin_from_wires(); _o->capacity_margin_from_wires = _e; }
+  { auto _e = resonator_passage(); _o->resonator_passage = _e; }
+  { auto _e = crossing_reach_cells(); _o->crossing_reach_cells = _e; }
+  { auto _e = crossing_spacing(); _o->crossing_spacing = _e; }
+  { auto _e = slot_pin_cells(); _o->slot_pin_cells = _e; }
+  { auto _e = escape_straight_cells(); _o->escape_straight_cells = _e; }
+  { auto _e = escape_stub_margin_cells(); _o->escape_stub_margin_cells = _e; }
+  { auto _e = bottleneck_wires(); _o->bottleneck_wires = _e; }
+  { auto _e = bottleneck_rise(); _o->bottleneck_rise = _e; }
+  { auto _e = room_margin_cells(); _o->room_margin_cells = _e; }
+  { auto _e = room_channel_reach_cells(); _o->room_channel_reach_cells = _e; }
+  { auto _e = detour_factor(); _o->detour_factor = _e; }
+  { auto _e = terminal_stub_extra_cells(); _o->terminal_stub_extra_cells = _e; }
+  { auto _e = global_sat_runs(); _o->global_sat_runs = _e; }
+  { auto _e = global_sat_states(); _o->global_sat_states = _e; }
+  { auto _e = global_sat_tries(); _o->global_sat_tries = _e; }
+  { auto _e = chain_rule_refusals(); _o->chain_rule_refusals = _e; }
+  { auto _e = research_ring_members(); _o->research_ring_members = _e; }
+  { auto _e = research_rounds(); _o->research_rounds = _e; }
+  { auto _e = fence_pairs(); _o->fence_pairs = _e; }
+  { auto _e = halo_reach(); _o->halo_reach = _e; }
+  { auto _e = rise_reach(); _o->rise_reach = _e; }
+  { auto _e = rise_peak(); _o->rise_peak = _e; }
 }
 
 inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -2553,6 +3252,48 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _repair_trials = _o->repair_trials;
   auto _stop_after = _o->stop_after.empty() ? 0 : _fbb.CreateString(_o->stop_after);
   auto _refinement_corridor_spacings = _o->refinement_corridor_spacings;
+  auto _coupler_bias = _o->coupler_bias;
+  auto _coupler_max_shortfall = _o->coupler_max_shortfall;
+  auto _coupler_box_margin_cells = _o->coupler_box_margin_cells;
+  auto _coupler_shift_cells = _o->coupler_shift_cells;
+  auto _coupler_lead_margin_cells = _o->coupler_lead_margin_cells;
+  auto _launcher_lead = _o->launcher_lead;
+  auto _coupler_offsets = _o->coupler_offsets.empty() ? 0 : _fbb.CreateString(_o->coupler_offsets);
+  auto _edge_launcher_margin_cells = _o->edge_launcher_margin_cells;
+  auto _terminal_slot_cells = _o->terminal_slot_cells;
+  auto _chain_end_edge_weight = _o->chain_end_edge_weight;
+  auto _edge_bend_factor = _o->edge_bend_factor;
+  auto _chain_length_weight = _o->chain_length_weight;
+  auto _capacity_check = _o->capacity_check;
+  auto _length_point_radius_cells = _o->length_point_radius_cells;
+  auto _length_point_band_percent = _o->length_point_band_percent;
+  auto _sweep_length_band = _o->sweep_length_band;
+  auto _meander_leg_spacing_cells = _o->meander_leg_spacing_cells;
+  auto _meander_start_margin_cells = _o->meander_start_margin_cells;
+  auto _capacity_margin = _o->capacity_margin;
+  auto _capacity_margin_from_wires = _o->capacity_margin_from_wires;
+  auto _resonator_passage = _o->resonator_passage;
+  auto _crossing_reach_cells = _o->crossing_reach_cells;
+  auto _crossing_spacing = _o->crossing_spacing;
+  auto _slot_pin_cells = _o->slot_pin_cells;
+  auto _escape_straight_cells = _o->escape_straight_cells;
+  auto _escape_stub_margin_cells = _o->escape_stub_margin_cells;
+  auto _bottleneck_wires = _o->bottleneck_wires;
+  auto _bottleneck_rise = _o->bottleneck_rise;
+  auto _room_margin_cells = _o->room_margin_cells;
+  auto _room_channel_reach_cells = _o->room_channel_reach_cells;
+  auto _detour_factor = _o->detour_factor;
+  auto _terminal_stub_extra_cells = _o->terminal_stub_extra_cells;
+  auto _global_sat_runs = _o->global_sat_runs;
+  auto _global_sat_states = _o->global_sat_states;
+  auto _global_sat_tries = _o->global_sat_tries;
+  auto _chain_rule_refusals = _o->chain_rule_refusals;
+  auto _research_ring_members = _o->research_ring_members;
+  auto _research_rounds = _o->research_rounds;
+  auto _fence_pairs = _o->fence_pairs;
+  auto _halo_reach = _o->halo_reach;
+  auto _rise_reach = _o->rise_reach;
+  auto _rise_peak = _o->rise_peak;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       _router,
@@ -2572,7 +3313,49 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _coupler_height,
       _repair_trials,
       _stop_after,
-      _refinement_corridor_spacings);
+      _refinement_corridor_spacings,
+      _coupler_bias,
+      _coupler_max_shortfall,
+      _coupler_box_margin_cells,
+      _coupler_shift_cells,
+      _coupler_lead_margin_cells,
+      _launcher_lead,
+      _coupler_offsets,
+      _edge_launcher_margin_cells,
+      _terminal_slot_cells,
+      _chain_end_edge_weight,
+      _edge_bend_factor,
+      _chain_length_weight,
+      _capacity_check,
+      _length_point_radius_cells,
+      _length_point_band_percent,
+      _sweep_length_band,
+      _meander_leg_spacing_cells,
+      _meander_start_margin_cells,
+      _capacity_margin,
+      _capacity_margin_from_wires,
+      _resonator_passage,
+      _crossing_reach_cells,
+      _crossing_spacing,
+      _slot_pin_cells,
+      _escape_straight_cells,
+      _escape_stub_margin_cells,
+      _bottleneck_wires,
+      _bottleneck_rise,
+      _room_margin_cells,
+      _room_channel_reach_cells,
+      _detour_factor,
+      _terminal_stub_extra_cells,
+      _global_sat_runs,
+      _global_sat_states,
+      _global_sat_tries,
+      _chain_rule_refusals,
+      _research_ring_members,
+      _research_rounds,
+      _fence_pairs,
+      _halo_reach,
+      _rise_reach,
+      _rise_peak);
 }
 
 
