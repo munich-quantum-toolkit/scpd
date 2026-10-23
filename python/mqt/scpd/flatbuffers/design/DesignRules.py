@@ -8,7 +8,7 @@ from typing import Any
 np = import_numpy()
 
 # The design rules. Every rule is a length in layout units, held once and
-# converted to cells only through cells_for.
+# converted to cells only through cellsFor.
 class DesignRules(object):
     __slots__ = ['_tab']
 

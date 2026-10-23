@@ -13,9 +13,9 @@ np = import_numpy()
 # Output of the Corridor stage.
 #
 # One entry per connection of the Assignment, in its order. A connection
-# the stage could not route carries no partitions, so a reader counts the
-# failures rather than being handed a separate list that can disagree with
-# the routes beside it.
+# that the stage could not route carries no partitions, so a reader counts
+# the failures instead of reading a separate list that can disagree with
+# the routes.
 class CorridorRouting(object):
     __slots__ = ['_tab']
 
@@ -62,9 +62,9 @@ class CorridorRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         return o == 0
 
-    # The slots of every border a wire could cross, so a picture can show
-    # which of them are taken. Parallel to nothing: a border with no free
-    # space on either side has no entry.
+    # The slots of every border a wire could cross, so that a picture can
+    # show which of them are taken. A border without a crossing slot, whose
+    # budget is zero, has no entry.
     # CorridorRouting
     def Slots(self, j: int) -> Optional[BorderSlots]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))

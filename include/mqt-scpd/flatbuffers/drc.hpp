@@ -39,6 +39,12 @@ bool operator!=(const DrcReportT &lhs, const DrcReportT &rhs);
 bool operator==(const DrcReportsT &lhs, const DrcReportsT &rhs);
 bool operator!=(const DrcReportsT &lhs, const DrcReportsT &rhs);
 
+inline const ::flatbuffers::TypeTable *DrcFindingTypeTable();
+
+inline const ::flatbuffers::TypeTable *DrcReportTypeTable();
+
+inline const ::flatbuffers::TypeTable *DrcReportsTypeTable();
+
 /// The eight design rules, in the order of the rule table.
 enum class DrcRule : uint8_t {
   Unset = 0,
@@ -212,6 +218,9 @@ struct DrcFinding FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef DrcFindingT NativeTableType;
   typedef DrcFindingBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return DrcFindingTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_RULE = 4,
     VT_SEVERITY = 6,
@@ -381,6 +390,9 @@ struct DrcReport FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef DrcReportT NativeTableType;
   typedef DrcReportBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return DrcReportTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_STAGE = 4,
     VT_FINDINGS = 6,
@@ -482,6 +494,9 @@ struct DrcReports FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef DrcReportsT NativeTableType;
   typedef DrcReportsBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return DrcReportsTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_REPORTS = 4
   };
@@ -713,6 +728,169 @@ inline ::flatbuffers::Offset<DrcReports> DrcReports::Pack(::flatbuffers::FlatBuf
   return mqt::scpd::flatbuffers::drc::CreateDrcReports(
       _fbb,
       _reports);
+}
+
+inline const ::flatbuffers::TypeTable *DrcRuleTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::drc::DrcRuleTypeTable
+  };
+  static const char * const names[] = {
+    "Unset",
+    "WireClearance",
+    "FeedlineOrthogonality",
+    "WireLoop",
+    "ObstacleClearance",
+    "ComponentOverlap",
+    "MinStraightLength",
+    "ResonatorLength",
+    "MinBendRadius"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 9, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DrcSeverityTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::drc::DrcSeverityTypeTable
+  };
+  static const char * const names[] = {
+    "Unset",
+    "Active",
+    "Advisory"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DrcStageTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::drc::DrcStageTypeTable
+  };
+  static const char * const names[] = {
+    "Unset",
+    "Final",
+    "Finalize"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ClearanceKindTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::drc::ClearanceKindTypeTable
+  };
+  static const char * const names[] = {
+    "Unset",
+    "NearMiss",
+    "Short"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DrcFindingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 3 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, 4 },
+    { ::flatbuffers::ET_STRING, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::drc::DrcRuleTypeTable,
+    mqt::scpd::flatbuffers::drc::DrcSeverityTypeTable,
+    mqt::scpd::flatbuffers::design::ConnectionRefTypeTable,
+    mqt::scpd::flatbuffers::geometry::PointTypeTable,
+    mqt::scpd::flatbuffers::drc::ClearanceKindTypeTable
+  };
+  static const char * const names[] = {
+    "rule",
+    "severity",
+    "wires",
+    "location",
+    "measured",
+    "limit",
+    "clearance_kind",
+    "message"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 8, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DrcReportTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::drc::DrcStageTypeTable,
+    mqt::scpd::flatbuffers::drc::DrcFindingTypeTable
+  };
+  static const char * const names[] = {
+    "stage",
+    "findings",
+    "feedlines_skipped"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DrcReportsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::drc::DrcReportTypeTable
+  };
+  static const char * const names[] = {
+    "reports"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 1, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
 }
 
 inline const mqt::scpd::flatbuffers::drc::DrcReports *GetDrcReports(const void *buf) {

@@ -1,0 +1,71 @@
+name: Benchmarks
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - ".github/workflows/benchmarks.yml"
+      - "bindings/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "include/**"
+      - "noxfile.py"
+      - "pyproject.toml"
+      - "python/**"
+      - "schemas/**"
+      - "src/**"
+      - "test/*/CMakeLists.txt"
+      - "test/CMakeLists.txt"
+      - "test/grid/**"
+      - "test/python/benchmarks/**"
+      - "test/python/conftest.py"
+      - "test/SplitMix.hpp"
+      - "uv.lock"
+  schedule:
+    - cron: "0 4 * * 1" # Mondays, so that a change of the data shows up within a week
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  benchmarks:
+    name: 📊 Benchmark chips
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out the benchmark chips
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: cda-tum/planar-superconducting-pd
+          # renovate: datasource=git-refs depName=https://github.com/cda-tum/planar-superconducting-pd branch=main
+          ref: f2ace2ee01ecde2ab71f03fd65e667db2f49a5e5
+          path: planar-superconducting-pd
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Check every chip
+        run: uvx nox -s benchmarks
+        env:
+          MQT_SCPD_BENCHMARKS: ${{ github.workspace }}/planar-superconducting-pd
+      - name: Check the grid on the benchmark chips
+        shell: bash
+        run: |
+          cmake --preset release
+          cmake --build --preset release --target mqt-scpd-grid-test
+          ctest --preset release --tests-regex '^BenchmarkRaster\.' --no-tests=error | tee "$RUNNER_TEMP/benchmark-raster.log"
+          # ctest counts a skipped test as passed, so a test that did not run fails the job here
+          if grep -q 'The following tests did not run:' "$RUNNER_TEMP/benchmark-raster.log"; then
+            echo "::error::A BenchmarkRaster test did not run on the benchmark chips"
+            exit 1
+          fi
+        env:
+          MQT_SCPD_BENCHMARKS: ${{ github.workspace }}/planar-superconducting-pd

@@ -19,18 +19,27 @@
 namespace mqt::scpd::grid {
 
 BitGrid::BitGrid(const uint32_t width, const uint32_t height, const bool value)
-    : width_(width), height_(height), words_((size() + 63U) / 64U, 0) {
+    : gridWidth(width), gridHeight(height),
+      packedWords((size() + 63U) / 64U, 0) {
   if (value) {
     fill(true);
   }
 }
 
 void BitGrid::fill(const bool value) {
-  std::fill(words_.begin(), words_.end(), value ? ~uint64_t{0} : uint64_t{0});
+  std::ranges::fill(packedWords, value ? ~uint64_t{0} : uint64_t{0});
   if (value && (size() % 64U) != 0U) {
     // Keep the bits past the last cell clear, so that count() stays exact.
-    words_.back() &= (uint64_t{1} << (size() % 64U)) - 1U;
+    packedWords.back() &= (uint64_t{1} << (size() % 64U)) - 1U;
   }
+}
+
+std::size_t BitGrid::count() const {
+  std::size_t total = 0;
+  for (const uint64_t word : packedWords) {
+    total += static_cast<std::size_t>(std::popcount(word));
+  }
+  return total;
 }
 
 void BitGrid::setRange(const std::size_t first, const std::size_t last) {
@@ -42,21 +51,14 @@ void BitGrid::setRange(const std::size_t first, const std::size_t last) {
   const auto low = ~uint64_t{0} << (first & 63U);
   const auto high = ~uint64_t{0} >> (63U - ((last - 1) & 63U));
   if (from == to) {
-    words_[from] |= low & high;
+    packedWords[from] |= low & high;
     return;
   }
-  words_[from] |= low;
-  std::fill(words_.begin() + static_cast<std::ptrdiff_t>(from + 1),
-            words_.begin() + static_cast<std::ptrdiff_t>(to), ~uint64_t{0});
-  words_[to] |= high;
-}
-
-std::size_t BitGrid::count() const {
-  std::size_t total = 0;
-  for (const uint64_t word : words_) {
-    total += static_cast<std::size_t>(std::popcount(word));
-  }
-  return total;
+  packedWords[from] |= low;
+  std::fill(packedWords.begin() + static_cast<std::ptrdiff_t>(from + 1),
+            packedWords.begin() + static_cast<std::ptrdiff_t>(to),
+            ~uint64_t{0});
+  packedWords[to] |= high;
 }
 
 } // namespace mqt::scpd::grid

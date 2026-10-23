@@ -17,18 +17,24 @@
 
 namespace mqt::scpd::milp {
 
-/// A model as free-form MPS text.
-///
-/// MPS is the format every mixed-integer solver reads, and it carries exactly
-/// what the model holds: bounds, a variable type, linear rows and one linear
-/// objective. That is why the model abstraction stops where it does. The text
-/// names rows and columns as the model does, so the solution comes back by
-/// name.
-///
-/// The objective is always written as a minimization, with the coefficients
-/// negated for a maximization, because MPS has no sense field that every
-/// reader honors. The objective offset is written as the right-hand side of
-/// the objective row, negated, which is how solvers read a constant.
+/**
+ * @brief Writes a model as free-form MPS text.
+ *
+ * Every mixed-integer solver reads MPS, and MPS carries what the model holds:
+ * bounds, a variable type, linear rows and one linear objective. The text
+ * names rows and columns as the model does, so a solution comes back by name.
+ *
+ * The objective is always written as a minimization, with the coefficients
+ * negated for a maximization, because MPS has no sense field that every
+ * reader honors. The objective offset is written as the right-hand side of
+ * the objective row, negated, which is how solvers read a constant.
+ *
+ * @param model The model.
+ * @return The MPS text.
+ * @throws std::invalid_argument When the model, a variable or a row has an
+ * empty name or a name with a space, or when a row is named "COST", which
+ * names the objective row.
+ */
 [[nodiscard]] MQT_SCPD_MILP_EXPORT std::string toMps(const Model& model);
 
 } // namespace mqt::scpd::milp

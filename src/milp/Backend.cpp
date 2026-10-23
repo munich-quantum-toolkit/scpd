@@ -13,6 +13,7 @@
 #include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/milp/Mps.hpp"
 
+#include <cmath>
 #include <format>
 #include <memory>
 #include <mutex>
@@ -26,8 +27,8 @@ namespace mqt::scpd::milp {
 namespace {
 
 /// The external backend of the process, and the lock that guards it. It is
-/// process state because it is installed once, by the Python layer at import
-/// time, and read by every stage afterwards.
+/// process state because the Python layer installs it once, before a run, and
+/// every stage of the run reads it.
 std::mutex& externalMutex() {
   static std::mutex mutex;
   return mutex;
@@ -42,38 +43,55 @@ std::shared_ptr<ISolverBackend>& externalSlot() {
 class MpsBackend final : public ISolverBackend {
 public:
   MpsBackend(std::string name, MpsSolveFunction solve)
-      : name_(std::move(name)), solve_(std::move(solve)) {}
+      : backendName(std::move(name)), solveFunction(std::move(solve)) {}
 
-  [[nodiscard]] std::string_view name() const override { return name_; }
+  [[nodiscard]] std::string_view name() const override { return backendName; }
 
-  [[nodiscard]] Solution solve(const Model& model, const SolveOptions& options) const override {
+  [[nodiscard]] Solution solve(const Model& model,
+                               const SolveOptions& options) const override {
     std::vector<std::string> names;
     names.reserve(model.variableCount());
     for (const auto& variable : model.variables()) {
       names.push_back(variable.name);
     }
 
-    auto solution = solve_(toMps(model), names, options);
+    auto solution = solveFunction(toMps(model), names, options);
     if (solution.backend.empty()) {
-      solution.backend = name_;
+      solution.backend = backendName;
     }
-    if (solution.hasValues() && solution.values.size() != model.variableCount()) {
+    // MPS states a minimization, so toMps() writes a maximization with its
+    // objective negated. The objective and the bound come back negated as
+    // well.
+    if (model.sense() == Sense::Maximize) {
+      if (!std::isnan(solution.objective)) {
+        solution.objective = -solution.objective;
+      }
+      if (!std::isnan(solution.bound)) {
+        solution.bound = -solution.bound;
+      }
+    }
+    if (solution.hasValues() &&
+        solution.values.size() != model.variableCount()) {
       return {.status = SolveStatus::Error,
-              .backend = name_,
-              .message = std::format("the backend returned {} values for {} variables",
-                                     solution.values.size(), model.variableCount())};
+              .nodes = {},
+              .values = {},
+              .backend = backendName,
+              .message =
+                  std::format("the backend returned {} values for {} variables",
+                              solution.values.size(), model.variableCount())};
     }
     return solution;
   }
 
 private:
-  std::string name_;
-  MpsSolveFunction solve_;
+  std::string backendName;
+  MpsSolveFunction solveFunction;
 };
 
 } // namespace
 
-std::unique_ptr<ISolverBackend> makeMpsBackend(std::string name, MpsSolveFunction solve) {
+std::unique_ptr<ISolverBackend> makeMpsBackend(std::string name,
+                                               MpsSolveFunction solve) {
   if (!solve) {
     throw std::invalid_argument("an MPS backend needs a solve function");
   }
@@ -81,9 +99,6 @@ std::unique_ptr<ISolverBackend> makeMpsBackend(std::string name, MpsSolveFunctio
 }
 
 BackendChoice backendChoiceFromName(const std::string_view name) {
-  if (name == "auto") {
-    return BackendChoice::Auto;
-  }
   if (name == "highs") {
     return BackendChoice::Highs;
   }
@@ -92,36 +107,41 @@ BackendChoice backendChoiceFromName(const std::string_view name) {
   if (name == "gurobi") {
     return BackendChoice::External;
   }
-  throw std::invalid_argument(
-      std::format("'{}' is no solver backend; use 'auto', 'highs' or 'gurobi'", name));
+  throw std::invalid_argument(std::format(
+      "'{}' is not a solver backend; use 'highs' or 'gurobi'", name));
 }
 
 void setExternalBackend(std::shared_ptr<ISolverBackend> backend) {
-  const std::lock_guard lock(externalMutex());
-  externalSlot() = std::move(backend);
+  // The previous backend is destroyed after the lock is released. Its
+  // destructor may run code of the caller, such as Python, that registers a
+  // backend in turn.
+  auto previous = std::move(backend);
+  {
+    const std::scoped_lock lock(externalMutex());
+    externalSlot().swap(previous);
+  }
 }
 
 std::shared_ptr<ISolverBackend> externalBackend() {
-  const std::lock_guard lock(externalMutex());
+  const std::scoped_lock lock(externalMutex());
   return externalSlot();
 }
 
 std::shared_ptr<ISolverBackend> resolveBackend(const BackendChoice choice) {
-  if (choice != BackendChoice::Highs) {
+  if (choice == BackendChoice::External) {
     if (auto external = externalBackend()) {
       return external;
     }
-    if (choice == BackendChoice::External) {
-      throw std::runtime_error(
-          "no external solver is registered; install gurobipy and a licence, or use 'highs'");
-    }
+    throw std::runtime_error("no external solver is registered; install "
+                             "gurobipy and a license, or use 'highs'");
   }
   // HiGHS is linked in, so this branch always has an answer. That is what
-  // makes an installation without a commercial licence fully functional.
+  // makes an installation without a commercial license fully functional.
   return makeHighsBackend();
 }
 
-Solution solve(const Model& model, const BackendChoice choice, const SolveOptions& options) {
+Solution solve(const Model& model, const BackendChoice choice,
+               const SolveOptions& options) {
   return resolveBackend(choice)->solve(model, options);
 }
 

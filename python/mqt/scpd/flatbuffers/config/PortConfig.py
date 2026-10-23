@@ -49,8 +49,8 @@ class PortConfig(object):
             return obj
         return None
 
-    # How the ports the bridge_pair pattern names pair off, in the order the
-    # rules are applied. Empty when the chip declares no bridge ports.
+    # How the ports of the bridge_pair pattern pair off, in the order the rules
+    # apply. Empty when the chip declares no bridge ports.
     # PortConfig
     def BridgePairs(self, j: int) -> Optional[BridgeRule]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))

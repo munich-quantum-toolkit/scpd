@@ -59,11 +59,6 @@ source_suffix = [".rst", ".md"]
 
 exclude_patterns = [
     "_build",
-    # Developer design documents. They use Mermaid, which is not among the
-    # extensions above, and they target contributors rather than users.
-    # They render on GitHub instead. Remove this exclusion together with the
-    # documents once the port of the prototype is complete.
-    "design/**",
     "**.ipynb_checkpoints",
     "**.jupyter_cache",
     "**jupyter_execute",
@@ -79,12 +74,11 @@ intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "qiskit": ("https://docs.quantum.ibm.com/api/qiskit", None),
-    "mqt": ("https://mqt.readthedocs.io/en/latest", None),
-    "ddsim": ("https://mqt.readthedocs.io/projects/ddsim/en/latest", None),
-    "qmap": ("https://mqt.readthedocs.io/projects/qmap/en/latest", None),
-    "core": ("https://mqt.readthedocs.io/projects/core/en/latest", None),
-    "qecc": ("https://mqt.readthedocs.io/projects/qecc/en/latest", None),
-    "syrec": ("https://mqt.readthedocs.io/projects/syrec/en/latest", None),
+    "mqt": ("https://mqt.readthedocs.io/en/stable", None),
+    "ddsim": ("https://mqt.readthedocs.io/projects/ddsim/en/stable", None),
+    "qmap": ("https://mqt.readthedocs.io/projects/qmap/en/stable", None),
+    "core": ("https://mqt.readthedocs.io/projects/core/en/stable", None),
+    "syrec": ("https://mqt.readthedocs.io/projects/syrec/en/stable", None),
 }
 
 myst_enable_extensions = [

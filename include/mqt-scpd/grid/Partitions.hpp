@@ -17,142 +17,194 @@
 #include "mqt-scpd/grid/mqt_scpd_grid_export.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <span>
 #include <vector>
 
 namespace mqt::scpd::grid {
 
-using geometry::Point;
-
-/// The outline of one partition, in cell coordinates. A partition may have
-/// more than one, when the watershed left it in pieces or with a hole.
+/// One outline of a partition, in cell coordinates. A partition has more than
+/// one when it has a hole. A partition whose cells are not four-connected may
+/// have more than one: pieces that touch only at a corner can share one
+/// outline (see extractPartitions() and separatePartitionPieces()).
 struct PartitionOutline {
+  /// The label of the partition.
   PartitionLabel label = LABEL_NONE;
   /// The corners of the ring, closed: the last point is the first.
   std::vector<Point> ring;
 };
 
-/// Where two partitions meet.
-///
-/// The border is what the capacity model budgets: every wire that leaves one
-/// partition for the other crosses it, so its length in layout units decides
-/// how many may. The samples are the individual cell edges it is made of,
-/// kept so that a renderer can draw the border as it actually runs rather
-/// than as a straight line between two partitions.
+/**
+ * @brief Where two partitions meet.
+ *
+ * Every wire that leaves one partition for the other crosses the border, so
+ * its length decides how many may. The samples are the cell edges the border
+ * is made of, so that a picture can draw the border as it runs.
+ */
 struct PartitionBorder {
+  /// The lower of the two labels.
   PartitionLabel first = LABEL_NONE;
+  /// The higher of the two labels.
   PartitionLabel second = LABEL_NONE;
-  /// The cell edges the border consists of. Its length in cells is their
-  /// count.
+  /// The cell edges of the border, as their midpoints in cell coordinates.
+  /// The length of the border in cells is their count.
   std::vector<Point> samples;
 
-  /// The mean of the samples: one point that stands for the border.
+  /**
+   * @brief Returns one point that stands for the border.
+   * @return The mean of the samples, or the origin when there is none.
+   */
   [[nodiscard]] MQT_SCPD_GRID_EXPORT Point center() const;
 };
 
-/// The geometry the watershed labels induce.
+/**
+ * @brief Converts a position in corner coordinates into a layout point.
+ *
+ * The partition geometry puts the corner of cell (0, 0) at the origin, so the
+ * center of cell (x, y) lies at (x + 0.5, y + 0.5). GridMetrics puts the
+ * center of a cell at its whole-number position, half a cell from there.
+ *
+ * @param grid The metrics of the grid.
+ * @param x The position along x, in corner coordinates.
+ * @param y The position along y, in corner coordinates.
+ * @return The layout point.
+ */
+[[nodiscard]] MQT_SCPD_GRID_EXPORT Point cornerToLayout(const GridMetrics& grid,
+                                                        double x, double y);
+
+/**
+ * @brief Converts a layout point into corner coordinates, the inverse of
+ * cornerToLayout().
+ *
+ * @param grid The metrics of the grid.
+ * @param point The layout point.
+ * @return The position in corner coordinates, not rounded.
+ */
+[[nodiscard]] MQT_SCPD_GRID_EXPORT Point layoutToCorner(const GridMetrics& grid,
+                                                        Point point);
+
+/// The geometry that the labels of a grid induce.
 struct Partitions {
+  /// The outlines, grouped by label in ascending order.
   std::vector<PartitionOutline> outlines;
+  /// The borders, ordered by their pair of labels.
   std::vector<PartitionBorder> borders;
-  /// The distinct border sample points, which are the candidate positions the
-  /// global router builds its lattice from.
-  std::vector<Point> lattice;
 };
 
-/// Trace the partition geometry out of a labeled grid.
-///
-/// A cell contributes an outline edge wherever its neighbor carries another
-/// label, and a border sample wherever that neighbor carries another *real*
-/// label rather than an obstacle. The outlines are then assembled by walking
-/// the edges of each label until they close, which is why a partition with a
-/// hole yields two rings rather than one bad one.
-///
-/// Coordinates are in cells, with the corner of cell `(0, 0)` at the origin,
-/// so a border sample at `(4.5, 7.0)` is on the edge between the cells
-/// `(4, 6)` and `(4, 7)`. `toLayout` on the grid converts them.
-///
-/// @throws std::invalid_argument when the labels or the mask do not fit the
-/// grid.
+/**
+ * @brief Traces the partitions out of a labeled grid.
+ *
+ * A cell contributes an outline edge wherever its neighbor carries another
+ * label, and a border sample wherever that neighbor carries another label of a
+ * partition rather than an obstacle. The outline edges of a label are joined
+ * into rings by walking them until they close, so a partition with a hole
+ * gives two rings. Each ring starts at its first corner in row order, the
+ * least y and then the least x, so the outlines depend only on the labels.
+ *
+ * Coordinates are in cells, with the corner of cell (0, 0) at the origin: a
+ * border sample at (4.5, 7.0) lies on the edge between the cells (4, 6) and
+ * (4, 7). cornerToLayout() converts them into layout units.
+ *
+ * @param blocked The obstacle mask. A blocked cell counts as no label.
+ * @param labels The label of every cell, row-major. A label below
+ * FIRST_PARTITION_LABEL counts as no label, so a reserved cell is part of no
+ * partition.
+ * @param grid The metrics of the grid.
+ * @return The outlines and the borders.
+ * @throws std::invalid_argument When the mask or the labels do not have the
+ * size of the grid.
+ */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT Partitions extractPartitions(
     const BitGrid& blocked, std::span<const PartitionLabel> labels,
     const GridMetrics& grid);
 
-/// The seed cells of the watershed: the center of every capacity cell that is
-/// entirely free.
-///
-/// A cell with an obstacle in it is not a place a partition should grow from,
-/// because the partition would then straddle the obstacle. Taking only the
-/// clear ones puts one seed in the middle of every clear region and none
-/// anywhere else, and taking them in row-major order makes the labels the
-/// same on every run.
-///
-/// @param detail The detail grid the mask is on.
-/// @param coarse The capacity grid whose cells are tested.
-/// @throws std::invalid_argument when the detail grid is not a whole refinement
-/// of the coarse one.
+/**
+ * @brief Gives every piece of a partition that does not touch the rest of it
+ * a label of its own.
+ *
+ * A wire passes from one cell to the next across a cell edge, so a partition
+ * is one region only when its cells are four-connected. Cells that meet at a
+ * corner only are two pieces. The largest piece of a label keeps the label;
+ * of two pieces with as many cells, the one whose first cell comes first in
+ * row order keeps it. Every other piece takes the next free label, in the row
+ * order of its first cell, so the result depends only on the labels.
+ *
+ * @param blocked The obstacle mask. A blocked cell counts as no label and
+ * keeps the label it has.
+ * @param labels The label of every cell, row-major. A label below
+ * FIRST_PARTITION_LABEL counts as no label and stays as it is.
+ * @param grid The metrics of the grid.
+ * @param nextLabel The label of the first piece that needs one.
+ * @pre Every label in @p labels is below @p nextLabel.
+ * @return The label after the last one this call gave out. It equals
+ * @p nextLabel when every partition is one piece.
+ * @throws std::invalid_argument When the mask or the labels do not have the
+ * size of the grid.
+ * @throws std::length_error When the pieces need more labels than
+ * PartitionLabel holds.
+ */
+[[nodiscard]] MQT_SCPD_GRID_EXPORT PartitionLabel separatePartitionPieces(
+    const BitGrid& blocked, std::span<PartitionLabel> labels,
+    const GridMetrics& grid, PartitionLabel nextLabel);
+
+/**
+ * @brief Returns the seed cells of the watershed.
+ *
+ * The detail grid is cut into blocks of factor by factor cells, one block per
+ * capacity cell, in row-major order. A block sits close to its capacity cell
+ * but not on it, because a refined grid does not nest in the grid it refines
+ * (see GridMetrics::refined()); the blocks still tile the detail grid
+ * exactly. A block whose cells are all free contributes its middle cell, so
+ * every clear region gets a seed in its middle and no seed sits next to an
+ * obstacle. The row-major order keeps the labels the same on every run.
+ *
+ * @param blocked The obstacle mask, on the detail grid.
+ * @param detail The detail grid.
+ * @param coarse The capacity grid.
+ * @return The seed cells, as indices of the detail grid.
+ * @throws std::invalid_argument When the detail grid does not have a whole
+ * number of cells per capacity cell along each axis, or when the mask does not
+ * have the size of the detail grid.
+ */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<std::size_t>
 freeCellSeeds(const BitGrid& blocked, const GridMetrics& detail,
               const GridMetrics& coarse);
 
-/// How many wires may cross each edge of a capacity cell.
-struct CellCapacity {
-  std::uint16_t south = 0;
-  std::uint16_t north = 0;
-  std::uint16_t west = 0;
-  std::uint16_t east = 0;
-};
-
-/// The wire budget of every capacity cell's four edges.
-///
-/// An edge's budget is what its free fraction allows: the cell's extent
-/// divided by the pitch a wire occupies, scaled by how much of that edge is
-/// not obstructed. It is a coarse figure on purpose — the detail router
-/// decides where a wire actually goes, and this only has to keep the
-/// assignment from committing more wires to a corridor than it can hold.
-///
-/// @param wirePitch The layout distance one wire occupies across a corridor.
-/// @throws std::invalid_argument when the detail grid is not a whole refinement
-/// of the coarse one, or the pitch is not positive.
-[[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<CellCapacity>
-cellCapacities(const BitGrid& blocked, const GridMetrics& detail,
-               const GridMetrics& coarse, double wirePitch);
-
-/// Fill the cells of every partition back in from its outlines.
-///
-/// A label grid is derived state and appears in no artifact, but a stage
-/// that routes inside a partition needs one. The outlines carry it: they run
-/// along cell edges and a hole comes back as a ring of its own, so filling
-/// all the rings of one label by the even-odd rule gives exactly the cells
-/// that label had. That is a raster pass, where growing the partitions again
-/// would be the whole watershed.
-///
-/// A cell no ring encloses keeps `LABEL_NONE`, and so does a cell two labels
-/// claim, which cannot happen for outlines that came from one grid.
-///
-/// @param outlines The rings, in cell coordinates, as `extractPartitions`
-/// returned them.
-/// @param grid The grid the labels are counted on.
+/**
+ * @brief Fills the cells of every partition back in from its outlines.
+ *
+ * A label grid is derived state and no artifact carries it, but a stage that
+ * routes inside a partition needs one. The outlines run along cell edges, and
+ * a hole is a ring of its own, so filling the rings of one label by the
+ * even-odd rule gives the cells the label had.
+ *
+ * @param outlines The rings, in cell coordinates, as extractPartitions()
+ * returns them.
+ * @param grid The metrics of the grid.
+ * @return The label of every cell, row-major. A cell that no ring encloses
+ * keeps LABEL_NONE.
+ */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<PartitionLabel>
 rasterizePartitions(std::span<const PartitionOutline> outlines,
                     const GridMetrics& grid);
 
-/// The crossing slots of a partition border: the places a wire may cross it.
-///
-/// Two wires that cross the same border have to keep one wire spacing apart,
-/// so a slot is one of the border's own cell edges and no two slots are
-/// closer than that. How many there are is what the border can carry.
-///
-/// The samples are read in the order `extractPartitions` produced them, and
-/// a sample becomes a slot when it is at least `spacing` layout units away
-/// from every slot already taken. A border shorter than one spacing still
-/// carries one wire, which is why the first sample is always a slot.
-///
-/// Positions come back in cell coordinates, like the samples they are drawn
-/// from; `GridMetrics::toLayout` converts them.
-///
-/// @param spacing The layout distance two wires crossing one border keep.
-/// @throws std::invalid_argument when the spacing is not positive.
+/**
+ * @brief Returns the crossing slots of a border: the places a wire may cross
+ * it.
+ *
+ * Two wires that cross one border keep a spacing apart, so no two slots lie
+ * closer than one spacing. Each piece of the border is walked from one of its
+ * ends, from sample to nearest sample, and a sample becomes a slot when it
+ * lies at least one spacing from every slot taken so far. A closed piece has
+ * no end and is walked from its first sample. The first sample of the walk is
+ * always a slot, so a border shorter than one spacing still carries one wire.
+ *
+ * @param border The border.
+ * @param grid The metrics of the grid, which convert the samples to layout
+ * units.
+ * @param spacing The distance two crossing wires keep, in layout units.
+ * @return The slots, in cell coordinates, in the order of the walk.
+ * @throws std::invalid_argument When @p spacing is not positive.
+ */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<Point>
 borderSlots(const PartitionBorder& border, const GridMetrics& grid,
             double spacing);

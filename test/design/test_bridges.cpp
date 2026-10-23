@@ -9,7 +9,6 @@
  */
 
 #include "mqt-scpd/design/Bridges.hpp"
-
 #include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
@@ -18,7 +17,6 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -50,8 +48,10 @@ PortPatternsT patterns() {
 BridgeRules couplerRules() {
   BridgeRules rules;
   for (const auto& [first, second] :
-       {std::pair{R"(^(Coupler\d+_\d+)\.port1$)", R"(^(Coupler\d+_\d+)\.port2$)"},
-        std::pair{R"(^(Coupler\d+_\d+)\.port3$)", R"(^(Coupler\d+_\d+)\.port4$)"}}) {
+       {std::pair{R"(^(Coupler\d+_\d+)\.port1$)",
+                  R"(^(Coupler\d+_\d+)\.port2$)"},
+        std::pair{R"(^(Coupler\d+_\d+)\.port3$)",
+                  R"(^(Coupler\d+_\d+)\.port4$)"}}) {
     auto rule = std::make_unique<BridgeRuleT>();
     rule->first = first;
     rule->second = second;
@@ -79,16 +79,17 @@ ChipT chipWith(const std::vector<std::string>& labels) {
 }
 
 /// The bridges of one component, as label pairs.
-std::vector<std::pair<std::string, std::string>> bridgesOf(const ChipT& chip,
-                                                           const std::string& name,
-                                                           const BridgeRules& rules) {
+std::vector<std::pair<std::string, std::string>>
+bridgesOf(const ChipT& chip, const std::string& name,
+          const BridgeRules& rules) {
   std::vector<std::pair<std::string, std::string>> pairs;
   for (const auto& component : componentsOf(chip, rules)) {
     if (component.name != name) {
       continue;
     }
     for (const auto& bridge : component.bridges) {
-      pairs.emplace_back(chip.ports[bridge.first]->label, chip.ports[bridge.second]->label);
+      pairs.emplace_back(chip.ports[bridge.first]->label,
+                         chip.ports[bridge.second]->label);
     }
   }
   return pairs;
@@ -110,18 +111,20 @@ std::vector<std::string> endsOf(const ChipT& chip, const std::string& name,
 }
 
 TEST(Bridges, ARulePairsThePortsItsCapturesAgreeOn) {
-  const ChipT chip = chipWith({"Coupler1_2.port0", "Coupler1_2.port1", "Coupler1_2.port2",
-                               "Coupler1_2.port3", "Coupler1_2.port4"});
+  const ChipT chip =
+      chipWith({"Coupler1_2.port0", "Coupler1_2.port1", "Coupler1_2.port2",
+                "Coupler1_2.port3", "Coupler1_2.port4"});
   const auto rules = couplerRules();
 
   EXPECT_EQ(bridgesOf(chip, "Coupler1_2", rules),
-            (std::vector{std::pair<std::string, std::string>{"Coupler1_2.port1",
-                                                             "Coupler1_2.port2"},
-                         std::pair<std::string, std::string>{"Coupler1_2.port3",
-                                                             "Coupler1_2.port4"}}));
+            (std::vector{std::pair<std::string, std::string>{
+                             "Coupler1_2.port1", "Coupler1_2.port2"},
+                         std::pair<std::string, std::string>{
+                             "Coupler1_2.port3", "Coupler1_2.port4"}}));
   // The port no rule claims ends a wire. It is the one the inner circuit has
   // to reach.
-  EXPECT_EQ(endsOf(chip, "Coupler1_2", rules), (std::vector<std::string>{"Coupler1_2.port0"}));
+  EXPECT_EQ(endsOf(chip, "Coupler1_2", rules),
+            (std::vector<std::string>{"Coupler1_2.port0"}));
 }
 
 TEST(Bridges, ARuleNeverPairsAcrossComponents) {
@@ -132,14 +135,15 @@ TEST(Bridges, ARuleNeverPairsAcrossComponents) {
 
   EXPECT_TRUE(bridgesOf(chip, "Coupler1_2", rules).empty());
   EXPECT_TRUE(bridgesOf(chip, "Coupler3_4", rules).empty());
-  EXPECT_EQ(endsOf(chip, "Coupler1_2", rules), (std::vector<std::string>{"Coupler1_2.port1"}));
+  EXPECT_EQ(endsOf(chip, "Coupler1_2", rules),
+            (std::vector<std::string>{"Coupler1_2.port1"}));
 }
 
 TEST(Bridges, APortWhoseOtherSideIsAbsentEndsAWire) {
   // The 4-qubit chip's couplers carry three ports, so only one rule of a
   // two-rule configuration finds both of its sides.
-  const ChipT chip =
-      chipWith({"Coupler1_2.port0", "Coupler1_2.port1", "Coupler1_2.port2", "Coupler1_2.port3"});
+  const ChipT chip = chipWith({"Coupler1_2.port0", "Coupler1_2.port1",
+                               "Coupler1_2.port2", "Coupler1_2.port3"});
   const auto rules = couplerRules();
 
   EXPECT_EQ(bridgesOf(chip, "Coupler1_2", rules).size(), 1U);
@@ -153,17 +157,19 @@ TEST(Bridges, AQubitHasNoBridge) {
   const auto rules = couplerRules();
 
   EXPECT_TRUE(bridgesOf(chip, "Qb1", rules).empty());
-  EXPECT_EQ(endsOf(chip, "Qb1", rules), (std::vector<std::string>{"Qb1.port0", "Qb1.port1"}));
+  EXPECT_EQ(endsOf(chip, "Qb1", rules),
+            (std::vector<std::string>{"Qb1.port0", "Qb1.port1"}));
 }
 
 TEST(Bridges, ThePairingDoesNotDependOnTheOrderThePortsWereRead) {
-  const ChipT forward = chipWith({"Coupler1_2.port1", "Coupler1_2.port2", "Coupler1_2.port3",
-                                  "Coupler1_2.port4"});
-  const ChipT backward = chipWith({"Coupler1_2.port4", "Coupler1_2.port3", "Coupler1_2.port2",
-                                   "Coupler1_2.port1"});
+  const ChipT forward = chipWith({"Coupler1_2.port1", "Coupler1_2.port2",
+                                  "Coupler1_2.port3", "Coupler1_2.port4"});
+  const ChipT backward = chipWith({"Coupler1_2.port4", "Coupler1_2.port3",
+                                   "Coupler1_2.port2", "Coupler1_2.port1"});
   const auto rules = couplerRules();
 
-  EXPECT_EQ(bridgesOf(forward, "Coupler1_2", rules), bridgesOf(backward, "Coupler1_2", rules));
+  EXPECT_EQ(bridgesOf(forward, "Coupler1_2", rules),
+            bridgesOf(backward, "Coupler1_2", rules));
 }
 
 TEST(Bridges, WithoutRulesNothingBridges) {
@@ -172,11 +178,34 @@ TEST(Bridges, WithoutRulesNothingBridges) {
 
   EXPECT_TRUE(bridgesOf(chip, "Coupler1_2", none).empty());
   const auto bridging = bridgingPorts(chip, none);
-  EXPECT_TRUE(std::ranges::none_of(bridging, [](const bool value) { return value; }));
+  EXPECT_TRUE(
+      std::ranges::none_of(bridging, [](const bool value) { return value; }));
+}
+
+TEST(Bridges, AMissingRuleMatchesNothingAndKeepsItsPosition) {
+  // A match names its rule by its position in the configuration, which is
+  // how the configuration check reports it, so a rule the configuration
+  // lacks must not move the rules after it.
+  const ChipT chip = chipWith({"Coupler1_2.port1", "Coupler1_2.port2"});
+  BridgeRules rules = couplerRules();
+  rules.insert(rules.begin(), nullptr);
+
+  const auto matches = mqt::scpd::design::bridgeMatchesOf(chip, rules);
+
+  ASSERT_EQ(matches.size(), 2U);
+  ASSERT_EQ(matches[0].size(), 1U);
+  EXPECT_EQ(matches[0][0].rule, 1U);
+  EXPECT_TRUE(matches[0][0].first);
+  EXPECT_EQ(matches[0][0].key, "Coupler1_2");
+  ASSERT_EQ(matches[1].size(), 1U);
+  EXPECT_EQ(matches[1][0].rule, 1U);
+  EXPECT_FALSE(matches[1][0].first);
+  EXPECT_EQ(bridgesOf(chip, "Coupler1_2", rules).size(), 1U);
 }
 
 TEST(Bridges, EveryBridgePortIsMarkedAsOne) {
-  const ChipT chip = chipWith({"Coupler1_2.port0", "Coupler1_2.port1", "Coupler1_2.port2"});
+  const ChipT chip =
+      chipWith({"Coupler1_2.port0", "Coupler1_2.port1", "Coupler1_2.port2"});
   const auto bridging = bridgingPorts(chip, couplerRules());
 
   EXPECT_FALSE(bridging[0]);

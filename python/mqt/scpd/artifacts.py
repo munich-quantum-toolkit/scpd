@@ -11,9 +11,10 @@
 The generated FlatBuffers code neither enforces the required fields when Python writes a buffer nor
 verifies a buffer when Python reads one; a buffer without a producer or an output passes through it
 silently. The functions here check the identifier and every field the schema marks as required, so
-an artifact that Python writes is one that the core accepts, and an artifact that Python reads is
-complete. Checking the values themselves, such as a role left unset or a dimension of zero, is the
-core's job.
+an artifact that Python writes or reads is complete. They also check that the lists of an assignment
+hold one entry per ring node and that a corridor names one more partition than it has crossings.
+Checking the other values, such as a role left unset, a dimension of zero or a connection that does
+not end at its ring node, is the core's job: the core refuses such an artifact when it reads it.
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ from .flatbuffers.artifacts.Artifact import Artifact, ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
-from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
@@ -37,8 +37,15 @@ from .flatbuffers.geometry.Line import LineT
 
 if TYPE_CHECKING:
     from .flatbuffers.artifacts.BorderSlots import BorderSlotsT
+    from .flatbuffers.artifacts.Bottleneck import BottleneckT
+    from .flatbuffers.artifacts.CapacityNode import CapacityNodeT
     from .flatbuffers.artifacts.Corridor import CorridorT
-    from .flatbuffers.artifacts.DetailWire import DetailWireT
+    from .flatbuffers.artifacts.FeedlineChain import FeedlineChainT
+    from .flatbuffers.artifacts.GridExtent import GridExtentT
+    from .flatbuffers.artifacts.Lattice import LatticeT
+    from .flatbuffers.artifacts.LauncherSlot import LauncherSlotT
+    from .flatbuffers.artifacts.Partition import PartitionT
+    from .flatbuffers.artifacts.PartitionBorder import PartitionBorderT
     from .flatbuffers.artifacts.Wire import WireT
     from .flatbuffers.design.Bridge import BridgeT
     from .flatbuffers.design.Connection import ConnectionT
@@ -51,10 +58,9 @@ IDENTIFIER = b"SCP1"
 
 _OUTPUT_TYPES: dict[int, type] = {
     StageOutput.CapacityPlan: CapacityPlanT,
-    StageOutput.Assignment: AssignmentT,
     StageOutput.GlobalRouting: GlobalRoutingT,
+    StageOutput.Assignment: AssignmentT,
     StageOutput.CorridorRouting: CorridorRoutingT,
-    StageOutput.DetailRouting: DetailRoutingT,
     StageOutput.FinalRouting: FinalRoutingT,
     StageOutput.Geometry: GeometryT,
 }
@@ -129,35 +135,34 @@ def _problems(artifact: ArtifactT) -> list[str]:
     if expected is not None and not isinstance(artifact.output, expected):
         problems.append("output does not match its type tag")
         return problems
-    if isinstance(artifact.output, CapacityPlanT):
-        problems.extend(
-            f"{name} is missing" for name in ("capacityGrid", "detailGrid") if getattr(artifact.output, name) is None
-        )
-        problems.extend(
-            f"{name} is missing"
-            for name in ("partitions", "borders", "bottlenecks", "launchers", "nodes", "chains")
-            if getattr(artifact.output, name) is None
-        )
-    elif isinstance(artifact.output, GlobalRoutingT):
-        problems.extend(
-            f"{name} is missing"
-            for name in ("lattices", "outerRing", "resonators")
-            if getattr(artifact.output, name) is None
-        )
-        _check_list(artifact.output.connections, "connections", _connection_problems, problems)
-    elif isinstance(artifact.output, AssignmentT):
-        _check_list(artifact.output.connections, "connections", _connection_problems, problems)
-        problems.extend(
-            f"{name} is missing" for name in ("ring", "launchers") if getattr(artifact.output, name) is None
-        )
-    elif isinstance(artifact.output, CorridorRoutingT):
-        _check_list(artifact.output.corridors, "corridors", _corridor_problems, problems)
-        _check_list(artifact.output.slots, "slots", _border_slots_problems, problems)
-    elif isinstance(artifact.output, DetailRoutingT):
-        if artifact.output.grid is None:
-            problems.append("grid is missing")
-        _check_list(artifact.output.wires, "wires", _detail_wire_problems, problems)
-        _check_list(artifact.output.inner, "inner", _detail_wire_problems, problems)
+    output = artifact.output
+    if isinstance(output, CapacityPlanT):
+        for grid, name in ((output.capacityGrid, "capacity_grid"), (output.detailGrid, "detail_grid")):
+            if grid is None:
+                problems.append(f"{name} is missing")
+            else:
+                problems.extend(f"{name}: {problem}" for problem in _grid_problems(grid))
+        _check_list(output.partitions, "partitions", _partition_problems, problems)
+        _check_list(output.borders, "borders", _border_problems, problems)
+        _check_list(output.bottlenecks, "bottlenecks", _bottleneck_problems, problems)
+        _check_list(output.launchers, "launchers", _launcher_problems, problems)
+        _check_list(output.nodes, "nodes", _node_problems, problems)
+        _require(output.chains, "chains", problems)
+    elif isinstance(output, GlobalRoutingT):
+        _check_list(output.lattices, "lattices", _lattice_problems, problems)
+        _check_list(output.connections, "connections", _connection_problems, problems)
+        _require(output.outerRing, "outer_ring", problems)
+        _require(output.resonators, "resonators", problems)
+    elif isinstance(output, AssignmentT):
+        _check_list(output.connections, "connections", _connection_problems, problems)
+        _require(output.ring, "ring", problems)
+        _require(output.launchers, "launchers", problems)
+        _require(output.feeds, "feeds", problems)
+        _check_list(output.chains, "chains", _chain_problems, problems)
+        problems.extend(_parallel_problems(output))
+    elif isinstance(output, CorridorRoutingT):
+        _check_list(output.corridors, "corridors", _corridor_problems, problems)
+        _check_list(output.slots, "slots", _border_slots_problems, problems)
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)
@@ -170,38 +175,102 @@ def _problems(artifact: ArtifactT) -> list[str]:
     return problems
 
 
+def _require(value: object, name: str, problems: list[str]) -> None:
+    """Report a required field that is missing."""
+    if value is None:
+        problems.append(f"{name} is missing")
+
+
+def _missing(item: object, fields: tuple[tuple[str, str], ...]) -> list[str]:
+    """The required fields of one table that are missing, by the names the schema gives them.
+
+    Returns:
+        One message per missing field.
+    """
+    return [f"{name} is missing" for attribute, name in fields if getattr(item, attribute) is None]
+
+
+def _grid_problems(grid: GridExtentT) -> list[str]:
+    return _missing(grid, (("origin", "origin"),))
+
+
+def _partition_problems(partition: PartitionT) -> list[str]:
+    return _missing(partition, (("outlines", "outlines"),))
+
+
+def _border_problems(border: PartitionBorderT) -> list[str]:
+    return _missing(border, (("samples", "samples"), ("center", "center")))
+
+
+def _bottleneck_problems(bottleneck: BottleneckT) -> list[str]:
+    return _missing(bottleneck, (("from_", "from"), ("to", "to")))
+
+
+def _launcher_problems(slot: LauncherSlotT) -> list[str]:
+    return _missing(slot, (("port", "port"), ("position", "position")))
+
+
+def _node_problems(node: CapacityNodeT) -> list[str]:
+    return _missing(node, (("next", "next"),))
+
+
+def _lattice_problems(lattice: LatticeT) -> list[str]:
+    return _missing(lattice, (("points", "points"), ("edges", "edges"), ("selected", "selected")))
+
+
+def _counted(count: int, noun: str) -> str:
+    """A count and its noun, singular only for a count of one.
+
+    Returns:
+        The count and the noun, such as ``1 crossing`` or ``2 crossings``.
+    """
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _parallel_problems(assignment: AssignmentT) -> list[str]:
+    """The lists of an assignment that do not hold one entry per ring node.
+
+    Returns:
+        One message per list whose length differs from that of the ring.
+    """
+    if assignment.ring is None:
+        return []
+    ring = len(assignment.ring)
+    lists = (
+        (assignment.connections, "connection"),
+        (assignment.launchers, "launcher"),
+        (assignment.feeds, "feed"),
+    )
+    return [
+        f"{_counted(len(items), name)} for {_counted(ring, 'ring node')}"
+        for items, name in lists
+        if items is not None and len(items) != ring
+    ]
+
+
+def _chain_problems(chain: FeedlineChainT) -> list[str]:
+    return _missing(chain, (("nodes", "nodes"),))
+
+
 def _corridor_problems(corridor: CorridorT) -> list[str]:
-    """The required fields one corridor is missing.
-
-    Returns:
-        One message per missing field.
-    """
-    problems = [name for name in ("partitions", "crossings") if getattr(corridor, name) is None]
-    if corridor.partitions is not None and corridor.crossings is not None and corridor.partitions:
-        if len(corridor.crossings) + 1 != len(corridor.partitions):
-            problems.append("crossings")
-    return [f"{name} is missing" for name in problems]
-
-
-def _detail_wire_problems(wire: DetailWireT) -> list[str]:
-    """The required fields one drawn wire is missing.
-
-    Returns:
-        One message per missing field.
-    """
-    return ["path is missing"] if wire.path is None else []
+    if corridor.partitions is None or corridor.crossings is None:
+        return _missing(corridor, (("partitions", "partitions"), ("crossings", "crossings")))
+    # The partitions may be a NumPy array, which has no single truth value, so only their number
+    # is read.
+    partitions = len(corridor.partitions)
+    crossings = len(corridor.crossings)
+    # A wire crosses one border fewer than it runs through partitions, and a wire without a way
+    # names neither.
+    if partitions != crossings + 1 and (partitions, crossings) != (0, 0):
+        return [f"names {_counted(partitions, 'partition')} and {_counted(crossings, 'crossing')}"]
+    return []
 
 
 def _border_slots_problems(slots: BorderSlotsT) -> list[str]:
-    """The required fields one border's slots are missing.
-
-    Returns:
-        One message per missing field.
-    """
-    return ["positions is missing"] if slots.positions is None else []
+    return _missing(slots, (("positions", "positions"),))
 
 
-def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # noqa: ANN001
+def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # ruff: ignore[missing-type-function-argument]
     """Report a missing list, then the problems of each of its items with the item's index."""
     if items is None:
         problems.append(f"{name} is missing")

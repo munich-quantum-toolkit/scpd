@@ -20,8 +20,6 @@ namespace geometry {
 
 struct Point;
 
-struct GCoord;
-
 struct DCoord;
 
 struct RCoord;
@@ -48,8 +46,6 @@ struct PathT;
 
 bool operator==(const Point &lhs, const Point &rhs);
 bool operator!=(const Point &lhs, const Point &rhs);
-bool operator==(const GCoord &lhs, const GCoord &rhs);
-bool operator!=(const GCoord &lhs, const GCoord &rhs);
 bool operator==(const DCoord &lhs, const DCoord &rhs);
 bool operator!=(const DCoord &lhs, const DCoord &rhs);
 bool operator==(const RCoord &lhs, const RCoord &rhs);
@@ -64,6 +60,22 @@ bool operator==(const SegmentT &lhs, const SegmentT &rhs);
 bool operator!=(const SegmentT &lhs, const SegmentT &rhs);
 bool operator==(const PathT &lhs, const PathT &rhs);
 bool operator!=(const PathT &lhs, const PathT &rhs);
+
+inline const ::flatbuffers::TypeTable *PointTypeTable();
+
+inline const ::flatbuffers::TypeTable *DCoordTypeTable();
+
+inline const ::flatbuffers::TypeTable *RCoordTypeTable();
+
+inline const ::flatbuffers::TypeTable *PolygonTypeTable();
+
+inline const ::flatbuffers::TypeTable *LineTypeTable();
+
+inline const ::flatbuffers::TypeTable *ArcTypeTable();
+
+inline const ::flatbuffers::TypeTable *SegmentTypeTable();
+
+inline const ::flatbuffers::TypeTable *PathTypeTable();
 
 /// The two analytic shapes a routed wire consists of.
 enum class SegmentShape : uint8_t {
@@ -209,6 +221,9 @@ FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(8) Point FLATBUFFERS_FINAL_CLASS {
 
  public:
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PointTypeTable();
+  }
   Point()
       : x_(0),
         y_(0) {
@@ -241,47 +256,9 @@ struct Point::Traits {
   using type = Point;
 };
 
-/// A cell of the coarse capacity grid.
-FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) GCoord FLATBUFFERS_FINAL_CLASS {
- private:
-  uint32_t x_;
-  uint32_t y_;
-
- public:
-  struct Traits;
-  GCoord()
-      : x_(0),
-        y_(0) {
-  }
-  GCoord(uint32_t _x, uint32_t _y)
-      : x_(::flatbuffers::EndianScalar(_x)),
-        y_(::flatbuffers::EndianScalar(_y)) {
-  }
-  uint32_t x() const {
-    return ::flatbuffers::EndianScalar(x_);
-  }
-  uint32_t y() const {
-    return ::flatbuffers::EndianScalar(y_);
-  }
-};
-FLATBUFFERS_STRUCT_END(GCoord, 8);
-
-inline bool operator==(const GCoord &lhs, const GCoord &rhs) {
-  return
-      (lhs.x() == rhs.x()) &&
-      (lhs.y() == rhs.y());
-}
-
-inline bool operator!=(const GCoord &lhs, const GCoord &rhs) {
-    return !(lhs == rhs);
-}
-
-
-struct GCoord::Traits {
-  using type = GCoord;
-};
-
-/// A pixel of the detail grid.
+/// A cell of a grid: its column and its row. The capacity grid, the detail
+/// grid and the router grid all give their cells as DCoord, so the type does
+/// not say which grid a cell belongs to.
 FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) DCoord FLATBUFFERS_FINAL_CLASS {
  private:
   uint32_t x_;
@@ -289,6 +266,9 @@ FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) DCoord FLATBUFFERS_FINAL_CLASS {
 
  public:
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return DCoordTypeTable();
+  }
   DCoord()
       : x_(0),
         y_(0) {
@@ -321,7 +301,7 @@ struct DCoord::Traits {
   using type = DCoord;
 };
 
-/// A state of the router grid: a cell of the final grid and the eight-way
+/// A state of the router grid: a cell of the router grid and the eight-way
 /// heading 0..7 of the wire in it. A wire leaves a heading-0 state toward
 /// negative y, and the headings continue clockwise in eighth turns when y
 /// points up: heading 2 travels toward negative x, heading 4 toward positive
@@ -335,6 +315,9 @@ FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) RCoord FLATBUFFERS_FINAL_CLASS {
 
  public:
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return RCoordTypeTable();
+  }
   RCoord()
       : x_(0),
         y_(0),
@@ -391,6 +374,9 @@ struct Polygon FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PolygonT NativeTableType;
   typedef PolygonBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PolygonTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_VERTICES = 4
   };
@@ -463,6 +449,9 @@ struct Line FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef LineT NativeTableType;
   typedef LineBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return LineTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_START = 4,
     VT_END = 6
@@ -539,6 +528,9 @@ struct Arc FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ArcT NativeTableType;
   typedef ArcBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ArcTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CENTER = 4,
     VT_RADIUS = 6,
@@ -630,6 +622,9 @@ struct Segment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef SegmentT NativeTableType;
   typedef SegmentBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return SegmentTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SHAPE_TYPE = 4,
     VT_SHAPE = 6
@@ -721,6 +716,9 @@ struct Path FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PathT NativeTableType;
   typedef PathBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PathTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SEGMENTS = 4
   };
@@ -1089,6 +1087,167 @@ inline void SegmentShapeUnion::Reset() {
   }
   value = nullptr;
   type = SegmentShape::NONE;
+}
+
+inline const ::flatbuffers::TypeTable *SegmentShapeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::LineTypeTable,
+    mqt::scpd::flatbuffers::geometry::ArcTypeTable
+  };
+  static const char * const names[] = {
+    "NONE",
+    "Line",
+    "Arc"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_UNION, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PointTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const int64_t values[] = { 0, 8, 16 };
+  static const char * const names[] = {
+    "x",
+    "y"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_STRUCT, 2, type_codes, nullptr, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DCoordTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const int64_t values[] = { 0, 4, 8 };
+  static const char * const names[] = {
+    "x",
+    "y"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_STRUCT, 2, type_codes, nullptr, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *RCoordTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 }
+  };
+  static const int64_t values[] = { 0, 4, 8, 12 };
+  static const char * const names[] = {
+    "x",
+    "y",
+    "heading"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_STRUCT, 3, type_codes, nullptr, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PolygonTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "vertices"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 1, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *LineTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "start",
+    "end"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ArcTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "center",
+    "radius",
+    "start_angle",
+    "sweep"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *SegmentTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UTYPE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::SegmentShapeTypeTable
+  };
+  static const char * const names[] = {
+    "shape_type",
+    "shape"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PathTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::SegmentTypeTable
+  };
+  static const char * const names[] = {
+    "segments"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 1, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
 }
 
 }  // namespace geometry

@@ -34,10 +34,11 @@ from .flatbuffers.config.GridParams import GridParamsT
 from .flatbuffers.config.PortConfig import PortConfigT
 from .flatbuffers.config.PortPatterns import PortPatternsT
 from .flatbuffers.config.PortSequences import PortSequencesT
+from .flatbuffers.config.RunParams import RunParamsT
 from .flatbuffers.config.SolverParams import SolverParamsT
 from .flatbuffers.config.StageParams import StageParamsT
 from .flatbuffers.design.DesignRules import DesignRulesT
-from .planning import FINAL_PHASES
+from .steps import FINAL_PHASES, STEPS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,6 +46,11 @@ if TYPE_CHECKING:
 
 class ConfigError(ValueError):
     """A configuration that cannot be loaded. The message names every problem."""
+
+
+#: Every integer of the schema is a ``uint32``.
+INT32_LIMIT = 2**31
+UINT32_MAX = 2**32 - 1
 
 
 T = TypeVar("T")
@@ -63,36 +69,26 @@ DESIGN_RULES: dict[str, type] = {
 }
 
 #: The keys of ``[grid]`` with the defaults of the schema, which the loader applies to absent keys.
-#: ``router_cell_size`` is a length in layout units; every other key is a count.
 GRID_DEFAULTS: dict[str, float] = {
     "capacity_cells_x": 50,
     "capacity_cells_y": 0,
-    "launcher_offset_x": 15,
-    "launcher_offset_y": 15,
     "detail_factor": 30,
     "router_cell_size": 10.0,
 }
 
-#: The defaults of the stage sections, by section and key. A shipped configuration carries only
-#: what differs from them, the same rule the grid section follows.
-#: The keys of ``[debug]``: the pages a run writes under ``<run>/debug``, every one off by default.
-#: The key names the page; ``html`` is the index that links them.
-DEBUG_PAGES: tuple[str, ...] = (
-    "html",
-    "pre_feedline_routing_dashboard",
-    "pre_feedline_refinement_dashboard",
-    "feedline_insertion",
-    "local_sat",
-    "global_sat",
-    "feedline_constrained_routing_dashboard",
-    "feedline_constrained_refinement_dashboard",
-)
+#: The keys that no stage reads any more, by section. The loader still accepts them, and
+#: ``removed_keys`` names each one, so that a configuration can drop them before a later version
+#: refuses them.
+REMOVED_KEYS: dict[str, tuple[str, ...]] = {"grid": ("launcher_offset_x", "launcher_offset_y")}
 
+#: The keys of each ``[stages.*]`` section with the defaults of the schema. A shipped configuration
+#: carries only what differs from them, the rule the grid section follows.
 STAGE_DEFAULTS: dict[str, dict[str, object]] = {
     "capacity": {"planner": "", "bottleneck_clearance": 1.5, "crossing_pitch": 165.0},
     "global": {"router": "", "internal_bridges": False},
     "assignment": {"assigner": "", "launcher_target": 0},
-    "corridor": {"router": "", "rounds": 12, "max_relaxation": 30},
+    "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0, "threads": 0},
+    "corridor": {"router": "", "rounds": 12, "max_relaxation": 4},
     "detail": {
         "router": "",
         "corridor_spacings": 4,
@@ -119,7 +115,6 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "coupler_length": 200.0,
         "coupler_height": 26.0,
         "repair_trials": 100,
-        "stop_after_phase": "",
         "coupler_bias": 1.0,
         "coupler_max_shortfall": 0.30,
         "coupler_box_margin_cells": 5,
@@ -163,8 +158,23 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "rise_reach": 3,
         "rise_peak": 3,
     },
-    "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0},
 }
+
+#: The keys of ``[debug]``: the pages a run writes under ``<run>/debug``, every one off by default.
+#: The key names the page; ``html`` is the index that links them.
+DEBUG_PAGES: tuple[str, ...] = (
+    "html",
+    "pre_feedline_routing_dashboard",
+    "pre_feedline_refinement_dashboard",
+    "feedline_insertion",
+    "local_sat",
+    "global_sat",
+    "feedline_constrained_routing_dashboard",
+    "feedline_constrained_refinement_dashboard",
+)
+
+#: The keys of ``[run]`` with the defaults of the schema.
+RUN_DEFAULTS: dict[str, object] = {"stop_after": ""}
 
 
 class _Section:
@@ -176,8 +186,15 @@ class _Section:
         self.problems = problems
         self.seen: set[str] = set()
 
-    def take(self, key: str, kind: type[T], *, default: T, required: bool = False) -> T:
+    def take(self, key: str, kind: type[T], *, default: T, required: bool = False, signed: bool = False) -> T:
         """Read one value, checking its type; report a missing required key or a wrong type.
+
+        Args:
+            key: The key.
+            kind: The kind of value the key holds.
+            default: What an absent key reads as.
+            required: Whether an absent key is a problem.
+            signed: Whether a number may be negative; a count may not.
 
         Returns:
             The value, or ``default`` when the key is absent or holds the wrong type.
@@ -191,7 +208,19 @@ class _Section:
         if not _is_kind(value, kind):
             self.problems.append(f"[{self.name}] {key} must be {_kind_name(kind)}")
             return default
-        return cast("T", float(value) if kind is float else value)
+        if kind is int and not signed and not 0 <= value <= UINT32_MAX:
+            self.problems.append(f"[{self.name}] {key} must be between 0 and {UINT32_MAX}")
+            return default
+        if kind is int and signed and not -INT32_LIMIT <= value < INT32_LIMIT:
+            self.problems.append(f"[{self.name}] {key} must be between {-INT32_LIMIT} and {INT32_LIMIT - 1}")
+            return default
+        if kind is float:
+            try:
+                return cast("T", float(value))
+            except OverflowError:
+                self.problems.append(f"[{self.name}] {key} is too large for a number")
+                return default
+        return cast("T", value)
 
     def subtable(self, key: str) -> dict[str, Any] | None:
         """Read a nested table.
@@ -256,7 +285,6 @@ def _kind_name(kind: type) -> str:
 def _read_ports(table: dict[str, Any], problems: list[str]) -> PortConfigT:
     ports = _Section("ports", table, problems)
     config = PortConfigT()
-    config.bridgePairs = []
 
     patterns_table = ports.subtable("patterns")
     if patterns_table is None:
@@ -267,11 +295,9 @@ def _read_ports(table: dict[str, Any], problems: list[str]) -> PortConfigT:
         config.patterns.launcher = patterns.take("launcher", str, required=True, default="")
         config.patterns.resonator = patterns.take("resonator", str, required=True, default="")
         config.patterns.conventional = patterns.take("conventional", str, required=True, default="")
-        # The component grouping is declared rather than parsed out of a label. It is optional
-        # because a chip whose planning stages need no grouping does not have to state one.
-        # A bridge port is one a wire crosses the component at rather than ends at. The pattern
-        # says which ports those are; [[ports.bridge_pairs]] below says which two of them pair.
-        # Both are optional, because a chip whose components carry no crossing declares neither.
+        # Both are optional. A bridge port is one where a wire crosses a component rather than ends,
+        # and [[ports.bridge_pairs]] says which two of them pair. The component pattern declares
+        # which part of a label names the component, so no algorithm reads a label itself.
         config.patterns.bridgePair = patterns.take("bridge_pair", str, default="")
         config.patterns.component = patterns.take("component", str, default="")
         patterns.finish()
@@ -286,6 +312,7 @@ def _read_ports(table: dict[str, Any], problems: list[str]) -> PortConfigT:
         config.sequences.fixedOuter = list(sequences.take("fixed_outer", list, required=True, default=[]))
         sequences.finish()
 
+    config.bridgePairs = []
     for index, rule_table in enumerate(ports.subtables("bridge_pairs")):
         rule_section = _Section(f"ports.bridge_pairs[{index}]", rule_table, problems)
         rule = BridgeRuleT()
@@ -293,7 +320,6 @@ def _read_ports(table: dict[str, Any], problems: list[str]) -> PortConfigT:
         rule.second = rule_section.take("second", str, required=True, default="")
         rule_section.finish()
         config.bridgePairs.append(rule)
-
     ports.finish()
     return config
 
@@ -318,82 +344,69 @@ def _read_grid(table: dict[str, Any], problems: list[str]) -> GridParamsT:
     grid = GridParamsT()
     grid.capacityCellsX = section.take("capacity_cells_x", int, default=int(GRID_DEFAULTS["capacity_cells_x"]))
     grid.capacityCellsY = section.take("capacity_cells_y", int, default=int(GRID_DEFAULTS["capacity_cells_y"]))
-    grid.launcherOffsetX = section.take("launcher_offset_x", int, default=int(GRID_DEFAULTS["launcher_offset_x"]))
-    grid.launcherOffsetY = section.take("launcher_offset_y", int, default=int(GRID_DEFAULTS["launcher_offset_y"]))
+    section.seen.update(REMOVED_KEYS["grid"])
     grid.detailFactor = section.take("detail_factor", int, default=int(GRID_DEFAULTS["detail_factor"]))
+    # A length in layout units: the size of a router cell, which the routing stages work on.
     grid.routerCellSize = section.take("router_cell_size", float, default=GRID_DEFAULTS["router_cell_size"])
     section.finish()
     return grid
 
 
-def _read_debug(table: dict[str, Any], problems: list[str]) -> DebugParamsT:
-    section = _Section("debug", table, problems)
-    debug = DebugParamsT()
-    for key in DEBUG_PAGES:
-        setattr(debug, _camel(key), section.take(key, bool, default=False))
-    section.finish()
-    return debug
-
-
-def _camel(key: str) -> str:
-    """The attribute name the generated object API gives a schema field.
-
-    Returns:
-        ``pre_feedline_routing_dashboard`` as ``preFeedlineRoutingDashboard``.
-    """
-    first, *rest = key.split("_")
-    return first + "".join(word.capitalize() for word in rest)
-
-
 def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
-    """Read the stage sections, applying the defaults to everything a file leaves out.
+    """Read the stage sections, with the defaults for everything the file leaves out.
 
-    Every section is built whether or not the file carries it, so that an absent section behaves
-    exactly like one that states only defaults. A stage that reads a parameter therefore never has
-    to know whether the file mentioned it.
+    Every section is built whether or not the file carries it, so an absent section behaves exactly
+    like one that states only defaults, and a stage never has to know whether the file named it.
 
     Returns:
         The stage parameters.
     """
     section = _Section("stages", table, problems)
     stages = StageParamsT()
-    defaults = STAGE_DEFAULTS
 
-    capacity = _Section("stages.capacity", section.subtable("capacity") or {}, problems)
+    def part(name: str) -> _Section:
+        return _Section(f"stages.{name}", section.subtable(name) or {}, problems)
+
+    def take(sub: _Section, key: str, kind: type[T]) -> T:
+        return sub.take(key, kind, default=cast("T", STAGE_DEFAULTS[sub.name.removeprefix("stages.")][key]))
+
+    capacity = part("capacity")
     stages.capacity = CapacityParamsT()
-    stages.capacity.planner = capacity.take("planner", str, default="")
-    stages.capacity.crossingPitch = capacity.take(
-        "crossing_pitch", float, default=defaults["capacity"]["crossing_pitch"]
-    )
-    stages.capacity.bottleneckClearance = capacity.take(
-        "bottleneck_clearance", float, default=defaults["capacity"]["bottleneck_clearance"]
-    )
+    stages.capacity.planner = take(capacity, "planner", str)
+    stages.capacity.bottleneckClearance = take(capacity, "bottleneck_clearance", float)
+    stages.capacity.crossingPitch = take(capacity, "crossing_pitch", float)
     capacity.finish()
 
-    router = _Section("stages.global", section.subtable("global") or {}, problems)
+    inner = part("global")
     stages.global_ = GlobalParamsT()
-    stages.global_.router = router.take("router", str, default="")
-    stages.global_.internalBridges = router.take(
-        "internal_bridges", bool, default=defaults["global"]["internal_bridges"]
-    )
-    router.finish()
+    stages.global_.router = take(inner, "router", str)
+    stages.global_.internalBridges = take(inner, "internal_bridges", bool)
+    inner.finish()
 
-    assignment = _Section("stages.assignment", section.subtable("assignment") or {}, problems)
+    assignment = part("assignment")
     stages.assignment = AssignmentParamsT()
-    stages.assignment.assigner = assignment.take("assigner", str, default="")
-    stages.assignment.launcherTarget = assignment.take("launcher_target", int, default=0)
+    stages.assignment.assigner = take(assignment, "assigner", str)
+    stages.assignment.launcherTarget = take(assignment, "launcher_target", int)
     assignment.finish()
 
-    corridor = _Section("stages.corridor", section.subtable("corridor") or {}, problems)
+    solver = part("solver")
+    stages.solver = SolverParamsT()
+    stages.solver.backend = take(solver, "backend", str)
+    stages.solver.timeLimit = take(solver, "time_limit", float)
+    stages.solver.relativeGap = take(solver, "relative_gap", float)
+    stages.solver.threads = take(solver, "threads", int)
+    solver.finish()
+
+    corridor = part("corridor")
     stages.corridor = CorridorParamsT()
-    stages.corridor.router = corridor.take("router", str, default="")
-    stages.corridor.rounds = corridor.take("rounds", int, default=defaults["corridor"]["rounds"])
-    stages.corridor.maxRelaxation = corridor.take("max_relaxation", int, default=defaults["corridor"]["max_relaxation"])
+    stages.corridor.router = take(corridor, "router", str)
+    stages.corridor.rounds = take(corridor, "rounds", int)
+    stages.corridor.maxRelaxation = take(corridor, "max_relaxation", int)
     corridor.finish()
 
-    detail = _Section("stages.detail", section.subtable("detail") or {}, problems)
+    detail = part("detail")
     stages.detail = DetailParamsT()
-    stages.detail.router = detail.take("router", str, default="")
+    stages.detail.router = take(detail, "router", str)
     for key, field in (
         ("corridor_spacings", "corridorSpacings"),
         ("rounds", "rounds"),
@@ -401,17 +414,15 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("obstacle_penalty", "obstaclePenalty"),
         ("orderings", "orderings"),
     ):
-        setattr(stages.detail, field, detail.take(key, int, default=defaults["detail"][key]))
+        setattr(stages.detail, field, take(detail, key, int))
     # A length in layout units, unlike everything else here, because what it bounds is a
     # distance on the chip and not a count of anything.
-    stages.detail.obstaclePenaltyReach = detail.take(
-        "obstacle_penalty_reach", float, default=defaults["detail"]["obstacle_penalty_reach"]
-    )
+    stages.detail.obstaclePenaltyReach = take(detail, "obstacle_penalty_reach", float)
     detail.finish()
 
-    final = _Section("stages.final", section.subtable("final") or {}, problems)
+    final = part("final")
     stages.final = FinalParamsT()
-    stages.final.router = final.take("router", str, default="")
+    stages.final.router = take(final, "router", str)
     for key, field in (
         ("corridor_spacings", "corridorSpacings"),
         ("inner_corridor_spacings", "innerCorridorSpacings"),
@@ -430,7 +441,6 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("chain_length_weight", "chainLengthWeight"),
         ("length_point_radius_cells", "lengthPointRadiusCells"),
         ("meander_leg_spacing_cells", "meanderLegSpacingCells"),
-        ("meander_start_margin_cells", "meanderStartMarginCells"),
         ("capacity_margin_from_wires", "capacityMarginFromWires"),
         ("crossing_reach_cells", "crossingReachCells"),
         ("slot_pin_cells", "slotPinCells"),
@@ -451,7 +461,7 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("rise_reach", "riseReach"),
         ("rise_peak", "risePeak"),
     ):
-        setattr(stages.final, field, final.take(key, int, default=defaults["final"][key]))
+        setattr(stages.final, field, take(final, key, int))
     # Lengths in layout units and prices against the grid extent. None of them is a cell
     # count: the same count is a different distance on every one of the eight grids.
     for key, field in (
@@ -474,25 +484,114 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("bottleneck_rise", "bottleneckRise"),
         ("detour_factor", "detourFactor"),
     ):
-        setattr(stages.final, field, final.take(key, float, default=defaults["final"][key]))
-    stages.final.capacityCheck = final.take("capacity_check", bool, default=True)
-    stages.final.couplerOffsets = final.take("coupler_offsets", str, default="")
-    stages.final.stopAfterPhase = final.take("stop_after_phase", str, default="")
-    if stages.final.stopAfterPhase and stages.final.stopAfterPhase not in FINAL_PHASES:
-        named = ", ".join(f"'{phase}'" for phase in FINAL_PHASES)
-        problems.append(f"[stages.final] stop_after_phase must be empty or one of {named}")
-        stages.final.stopAfterPhase = ""
+        setattr(stages.final, field, take(final, key, float))
+    # A margin in cells, or -1 for the coupler length plus four: the one key below zero.
+    margin = final.take("meander_start_margin_cells", int, default=-1, signed=True)
+    stages.final.meanderStartMarginCells = margin
+    stages.final.capacityCheck = take(final, "capacity_check", bool)
+    stages.final.couplerOffsets = take(final, "coupler_offsets", str)
     final.finish()
-
-    solver = _Section("stages.solver", section.subtable("solver") or {}, problems)
-    stages.solver = SolverParamsT()
-    stages.solver.backend = solver.take("backend", str, default="")
-    stages.solver.timeLimit = solver.take("time_limit", float, default=0.0)
-    stages.solver.relativeGap = solver.take("relative_gap", float, default=0.0)
-    solver.finish()
 
     section.finish()
     return stages
+
+
+def _read_debug(table: dict[str, Any], problems: list[str]) -> DebugParamsT:
+    """Read which debug pages a run writes; every page is off unless the file turns it on.
+
+    Returns:
+        The debug parameters.
+    """
+    section = _Section("debug", table, problems)
+    debug = DebugParamsT()
+    for key in DEBUG_PAGES:
+        setattr(debug, _camel(key), section.take(key, bool, default=False))
+    section.finish()
+    return debug
+
+
+def _camel(key: str) -> str:
+    """The attribute name the generated object API gives a schema field.
+
+    Returns:
+        ``pre_feedline_routing_dashboard`` as ``preFeedlineRoutingDashboard``.
+    """
+    first, *rest = key.split("_")
+    return first + "".join(word.capitalize() for word in rest)
+
+
+def _read_run(table: dict[str, Any], problems: list[str]) -> RunParamsT:
+    """Read how far a run goes; the step must be one this release runs, or a phase of the Final stage.
+
+    Returns:
+        The run parameters.
+    """
+    section = _Section("run", table, problems)
+    run = RunParamsT()
+    run.stopAfter = section.take("stop_after", str, default="")
+    if run.stopAfter and run.stopAfter not in STEPS and run.stopAfter not in FINAL_PHASES:
+        named = ", ".join(f"'{step}'" for step in STEPS + FINAL_PHASES)
+        problems.append(f"[run] stop_after must be empty or one of {named}")
+        run.stopAfter = ""
+    section.finish()
+    return run
+
+
+def _toml(value: object) -> str:
+    """A default as the file would spell it.
+
+    Returns:
+        The value in TOML.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return f'"{value}"'
+    return str(value)
+
+
+def _is_default(value: object, default: object) -> bool:
+    """Whether a value written in the file is the default, compared as the key's kind.
+
+    A whole number in a key that holds a number is that number, and a flag is never a number.
+
+    Returns:
+        True when the value is the default.
+    """
+    if isinstance(default, bool) or isinstance(value, bool):
+        return isinstance(value, bool) and isinstance(default, bool) and value == default
+    if isinstance(default, float):
+        return isinstance(value, (int, float)) and value == default
+    return type(value) is type(default) and value == default
+
+
+def _defaults_problems(name: str, section: dict[str, Any], defaults: dict[str, object]) -> list[str]:
+    problems = [
+        f"[{name}] {key} is set to its default {_toml(defaults[key])}; remove it"
+        for key, value in section.items()
+        if key in defaults and _is_default(value, defaults[key])
+    ]
+    if not section:
+        problems.append(f"[{name}] is empty; remove it")
+    return problems
+
+
+def removed_keys(document: dict[str, Any]) -> list[str]:
+    """The keys of a parsed file that no stage reads any more.
+
+    Returns:
+        One message per key, empty when the file carries none.
+    """
+    messages: list[str] = []
+    for name, keys in REMOVED_KEYS.items():
+        section = document.get(name)
+        if isinstance(section, dict):
+            messages.extend(
+                f"[{name}] {key} has no effect, and a later version will refuse it; remove it"
+                for key in keys
+                if key in section
+            )
+    return messages
 
 
 def shipped_config_problems(document: dict[str, Any]) -> list[str]:
@@ -514,22 +613,18 @@ def shipped_config_problems(document: dict[str, Any]) -> list[str]:
         )
         if not grid:
             problems.append("[grid] is empty; remove it")
-
     stages = document.get("stages")
     if isinstance(stages, dict):
-        for name, defaults in STAGE_DEFAULTS.items():
-            section = stages.get(name)
-            if not isinstance(section, dict):
-                continue
-            problems.extend(
-                f"[stages.{name}] {key} is set to its default {defaults[key]}; remove it"
-                for key, value in section.items()
-                if key in defaults and value == defaults[key]
-            )
-            if not section:
-                problems.append(f"[stages.{name}] is empty; remove it")
+        for name in sorted(stages):
+            section = stages[name]
+            if name in STAGE_DEFAULTS and isinstance(section, dict):
+                problems.extend(_defaults_problems(f"stages.{name}", section, STAGE_DEFAULTS[name]))
         if not stages:
             problems.append("[stages] is empty; remove it")
+    run = document.get("run")
+    if isinstance(run, dict):
+        problems.extend(_defaults_problems("run", run, RUN_DEFAULTS))
+    problems.extend(removed_keys(document))
     return problems
 
 
@@ -577,20 +672,36 @@ def parse_config(text: str, *, source: str = "config.toml", strict: bool = False
     else:
         config.rules = _read_rules(rules, problems)
 
-    config.grid = _read_grid(root.subtable("grid") or {}, problems)
-
-    # The stage sections are always built, so an absent one is the defaults rather than nothing.
+    grid = root.subtable("grid")
+    config.grid = _read_grid(grid, problems) if grid is not None else None
     config.stages = _read_stages(root.subtable("stages") or {}, problems)
+    config.run = _read_run(root.subtable("run") or {}, problems)
     config.debug = _read_debug(root.subtable("debug") or {}, problems)
 
-    known = {"chip", "ports", "design_rules", "grid", "stages", "debug"}
-    problems.extend(f"unknown section [{key}]" for key in document if key not in known)
+    problems.extend(
+        f"unknown section [{key}]"
+        for key in document
+        if key not in {"chip", "ports", "design_rules", "grid", "stages", "run", "debug"}
+    )
     if strict:
         problems.extend(shipped_config_problems(document))
     if problems:
         msg = f"{source}: " + "; ".join(problems)
         raise ConfigError(msg)
     return config
+
+
+def removed_keys_in(path: Path) -> list[str]:
+    """The keys of a ``config.toml`` file that no stage reads any more, as ``removed_keys`` names them.
+
+    Returns:
+        One message per key, empty when the file carries none or cannot be read as TOML.
+    """
+    try:
+        document = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return []
+    return removed_keys(document)
 
 
 def load_config(path: Path, *, strict: bool = False) -> ConfigT:
@@ -610,6 +721,9 @@ def load_config(path: Path, *, strict: bool = False) -> ConfigT:
         text = path.read_text(encoding="utf-8")
     except OSError as error:
         msg = f"cannot read {path}: {error}"
+        raise ConfigError(msg) from error
+    except UnicodeDecodeError as error:
+        msg = f"cannot read {path}: it is not UTF-8 ({error.reason} at byte {error.start})"
         raise ConfigError(msg) from error
     return parse_config(text, source=str(path), strict=strict)
 

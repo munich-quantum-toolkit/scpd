@@ -22,17 +22,17 @@
 
 namespace mqt::scpd::grid {
 
-/// The narrowest place in a corridor: the two obstacle cells that face each
-/// other across it, and the point on the medial axis between them.
-///
-/// A bottleneck is a line, and how many wires fit through the corridor is
-/// what that line's length allows. Every later stage treats it as the gate a
-/// wire has to pass, which is what makes the capacity model a tree of gates
-/// rather than a distance.
+/**
+ * @brief The narrowest place of a corridor: the two obstacle cells that face
+ * each other across it, and the cell of the medial axis between them.
+ *
+ * A bottleneck is a line, and its length decides how many wires fit through
+ * the corridor. The later stages treat it as a gate that a wire has to pass.
+ */
 struct Bottleneck {
   /// The obstacle cell on one side.
   std::size_t first = 0;
-  /// The obstacle cell on the other.
+  /// The obstacle cell on the other side.
   std::size_t second = 0;
   /// The cell of the medial axis the two were found from.
   std::size_t saddle = 0;
@@ -41,121 +41,93 @@ struct Bottleneck {
 /// How bottlenecks are found.
 struct BottleneckOptions {
   /// A cell of the axis is a candidate only when its squared distance to the
-  /// nearest wall, in cells, is below this. A place with room to spare is
-  /// not a bottleneck however local a minimum it is.
-  ///
-  /// The value is in the squared cells the distance transform produces, so
-  /// the default of 150 admits a clearance below about 12.2 cells.
+  /// nearest wall, in cells, is below this value. A place with room to spare
+  /// is not a bottleneck, however local a minimum it is. The default admits a
+  /// clearance below about 12.2 cells.
   std::uint32_t maximumSquaredClearance = 150;
   /// How far apart two cuts of one narrowing may end and still be one gate,
   /// in layout units.
   ///
-  /// The saddle search reports a candidate wherever the clearance stops
-  /// falling, so a narrowing whose clearance is flat over a few cells comes
-  /// back as several lines that share a wall and end a cell or two apart on
-  /// the other. They are one place, and the model reads them as several
-  /// corridors: a chamber that two of them lead out of is credited with twice
-  /// the room the chip has. The wire pitch is the length to give here, being
-  /// the distance in which the count of wires can change at all.
-  ///
-  /// Zero keeps every candidate the search found.
+  /// The raster can break one narrowing into several minima of the clearance
+  /// a cell or two apart, and their lines share a wall and end a cell or two
+  /// apart on the other. They are one place. The wire pitch is the length to
+  /// give here, being the distance within which the count of wires can change
+  /// at all. Zero keeps every candidate.
   double sameNarrowing = 0.0;
-  /// How far the clearance must rise on both sides of a candidate, in
-  /// cells, before it falls below the candidate's own.
-  ///
-  /// A wall that does not run along an axis is a staircase on the raster,
-  /// and every step of it is a local minimum of the clearance a cell deep.
-  /// On a whole chip those steps outnumber the narrowings by far. Walking
-  /// the axis away from a candidate, a side counts once the clearance has
-  /// risen by this much; it fails where it first falls below the
-  /// candidate's, because then a lower minimum stands for the same
-  /// narrowing, and where the axis forks or ends before either. This is
-  /// the persistence of the minimum. Where the clearance holds its minimum
-  /// over a stretch of the axis, as between two parallel walls, the
-  /// stretch is one narrowing and one cut is kept, from its middle.
-  ///
-  /// Zero keeps every local minimum and every cell of such a stretch.
-  double minimumRise = 0.0;
-  /// Cells that no bottleneck may cross, because a port is not a wall that
-  /// capacity divides around. The targets of the run.
+  /// Cells that no bottleneck may cross, because the space around a port is
+  /// not a wall that capacity divides around: the targets of the run.
   std::span<const std::size_t> targets;
-  /// The free cells of the slots terminals lie in: a slot is a notch in the
-  /// wall a terminal stands in front of, open towards the free space, and
-  /// the medial axis runs into it. Walking the axis away from a candidate,
-  /// a fork one of whose arms runs into a slot counts as the rise: the
-  /// narrowing in front of a terminal ends at its slot, so it splits into
-  /// one on either side of the terminal. Every other arm of that fork, up
-  /// to the next fork, is cut at its narrowest cell when no cut of the
-  /// search lies on it — next to the fork where the fork itself is the
-  /// narrowest — so that every side of a terminal is closed. No bottleneck
-  /// crosses a slot.
-  std::span<const std::size_t> slots;
-  /// The wall every blocked cell belongs to, by a label of the caller's, or
-  /// empty. Two cuts are one narrowing (`sameNarrowing`) only when their
-  /// ends lie on the same two walls, so the two flanks of a slot keep a
-  /// cut each; and two cuts between the same two walls whose ends lie
-  /// within `sameNarrowing` of each other on both are one narrowing even
-  /// where they share no cell.
-  std::span<const std::uint32_t> wallOf;
 };
 
-/// The bottlenecks of a rasterized chip.
-///
-/// A candidate is a cell of the medial axis whose clearance is a local
-/// minimum along the axis, or the edge of a plateau of one. From it the free
-/// space splits into shores — the connected groups of off-axis neighbors —
-/// and a bottleneck exists where there are two. Each shore is then walked
-/// downhill in the distance transform until it reaches a wall, and the two
-/// walls it reaches are the ends of the bottleneck.
-///
-/// The shores are kept apart during the walk, so the two ends are always on
-/// different sides of the corridor. Without that the descent from one shore
-/// can round a corner and land on the wall the other shore came from, which
-/// yields a line along a corridor rather than across it.
-///
-/// @param blocked The obstacle mask.
-/// @param axis The rasterized medial axis of the same mask.
-/// @param squaredDistance The squared distance transform of the same mask.
-/// @throws std::invalid_argument when the three do not describe one grid.
+/**
+ * @brief Finds the bottlenecks of a rasterized chip.
+ *
+ * A candidate is a stretch of one arm of the medial axis with constant
+ * clearance whose bounding cells on both sides are at least as wide, so that a
+ * corridor of constant width gives one candidate and a corridor that widens
+ * step by step gives one at its narrow end. The middle cell of the stretch
+ * stands for it. A junction or a dead end of the axis is never a candidate.
+ *
+ * A corridor of constant width gives one candidate only when it runs along a
+ * grid axis or a diagonal. At any other angle the raster makes the clearance
+ * step between two values, such as 9 and 8 squared cells, and every lower
+ * step is a candidate: about one every two cells along the corridor. The
+ * cuts of these candidates differ in length by a cell or so, and
+ * BottleneckOptions::sameNarrowing does not merge them, because the
+ * staircase of the wall gives no two of them a wall cell in common.
+ *
+ * Around the middle cell the free space splits into shores, the connected
+ * groups of its off-axis neighbors, and a bottleneck exists where there are
+ * two. Each shore is walked downhill in the distance transform until it
+ * reaches a wall, and the two walls reached are the ends of the bottleneck.
+ * The shores are kept apart during the walk, so the two ends lie on different
+ * sides of the corridor.
+ *
+ * Cells outside the grid are not a wall. A passage between the artwork and an
+ * open edge of the grid is therefore not found, and the caller blocks a border
+ * of cells where the edge has to act as a wall.
+ *
+ * @param blocked The obstacle mask.
+ * @param axis The rasterized medial axis of the mask.
+ * @param squaredDistance The squared distance transform of the mask.
+ * @param grid The metrics of the grid of the mask.
+ * @param options How the bottlenecks are found.
+ * @return The bottlenecks, ordered by the cell of their candidate.
+ * @throws std::invalid_argument When the mask, the axis and the distance
+ * transform do not describe one grid.
+ */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<Bottleneck>
 findBottlenecks(const BitGrid& blocked, const MedialAxis& axis,
                 std::span<const std::uint32_t> squaredDistance,
                 const GridMetrics& grid, const BottleneckOptions& options = {});
 
-/// How many wires fit through a bottleneck.
-///
-/// The gap is the length of the bottleneck in layout units, and a wire needs
-/// its own width plus the clearance to the next one. A gap that does not even
-/// reach one wire spacing carries nothing.
-///
-/// @param wireSpacing The clearance two wires must keep.
-/// @param obstacleSpacing The clearance a wire must keep to an obstacle.
-/// @param roundDown Whether the count rounds down rather than up, which it
-/// does when either end of the bottleneck sits on a cell reserved for a port
-/// rather than on chip artwork.
+/**
+ * @brief Counts the wires that a bottleneck lets through.
+ *
+ * The gap is the length of the bottleneck in layout units, with each axis
+ * counted in its own cell step. Every wire takes one pitch: a wire spacing
+ * plus an obstacle spacing. A gap no longer than the obstacle spacing carries
+ * nothing, and a gap shorter than a wire spacing carries no whole wire either.
+ *
+ * Between two ends on chip artwork, the count is the gap in pitches rounded
+ * up, as in the research prototype, so it can be one wire more than the gap
+ * holds. Where an end sits on a cell reserved for a port, the count rounds
+ * down. The count is the capacity of the gate that the Global stage checks,
+ * so a gate rounded up can pass one ring port more than fits. The crossing
+ * slots of the Corridor stage, not this count, decide how many wires cross a
+ * partition border.
+ *
+ * @param bottleneck The bottleneck.
+ * @param grid The metrics of the grid it was found on.
+ * @param wireSpacing The clearance two wires keep.
+ * @param obstacleSpacing The clearance a wire keeps to an obstacle.
+ * @param roundDown Whether the count rounds down rather than up, which it does
+ * when an end of the bottleneck sits on a cell reserved for a port rather than
+ * on chip artwork.
+ * @return The number of wires.
+ */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::uint32_t
 bottleneckCapacity(const Bottleneck& bottleneck, const GridMetrics& grid,
                    double wireSpacing, double obstacleSpacing, bool roundDown);
-
-/// Which bottlenecks stay when none may meet another in the middle of either
-/// (user, 2026-10-14). Two meet so when their lines cross more than `near`
-/// cells from the ends of both, or when one ends within `near` cells of the
-/// other's middle: on the raster they share cells or run a cell apart, and
-/// the chambers they cut lie beside both, so that a wire passes the one
-/// through the other unpaid. The one of the lower `rank` goes; of equal rank
-/// the longer, and of equal length the later. Each bottleneck is set against
-/// the ones that stay, in that order, so one that meets only a bottleneck
-/// that went itself stays.
-///
-/// @param rank One rank per bottleneck; the higher stays over the lower.
-/// @param width The width of the grid the cells index.
-/// @param near How many cells from an end the middle of a line begins.
-/// @return Per bottleneck, whether it stays.
-/// @throws std::invalid_argument when `rank` has not one entry per
-/// bottleneck.
-[[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<bool>
-uncrossedBottlenecks(const std::vector<Bottleneck>& bottlenecks,
-                     std::span<const std::uint32_t> rank, std::uint32_t width,
-                     double near = 1.5);
 
 } // namespace mqt::scpd::grid

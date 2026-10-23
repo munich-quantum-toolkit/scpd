@@ -10,7 +10,6 @@
 
 // The medial axis, on masks whose axis is known by construction.
 
-#include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/Voronoi.hpp"
@@ -53,12 +52,12 @@ TEST(MedialAxis, RunsAlongTheMiddleOfAStraightCorridor) {
   const auto edges = medialAxis(mask);
   ASSERT_FALSE(edges.empty());
 
-  // Every surviving edge has to sit near the centre line of the corridor,
+  // Every surviving edge has to sit near the center line of the corridor,
   // which is the row halfway between the two walls.
-  constexpr double CENTER = 10.0;
+  constexpr double center = 10.0;
   for (const auto& edge : edges) {
-    EXPECT_NEAR(edge.y0, CENTER, 1.5);
-    EXPECT_NEAR(edge.y1, CENTER, 1.5);
+    EXPECT_NEAR(edge.y0, center, 1.5);
+    EXPECT_NEAR(edge.y1, center, 1.5);
   }
 }
 
@@ -75,7 +74,8 @@ TEST(MedialAxis, DropsTheEdgesOfOneWallAgainstItself) {
   // Whatever survives runs between the wall and the border of the grid, and
   // therefore away from the wall itself rather than along it.
   for (const auto& edge : edges) {
-    const auto onWall = std::abs(edge.y0 - 15.0) < 0.5 && std::abs(edge.y1 - 15.0) < 0.5;
+    const auto onWall =
+        std::abs(edge.y0 - 15.0) < 0.5 && std::abs(edge.y1 - 15.0) < 0.5;
     EXPECT_FALSE(onWall);
   }
 }
@@ -149,8 +149,36 @@ TEST(MedialAxis, MarksAJunctionWhereThreeCorridorsMeet) {
 
 TEST(MedialAxis, RefusesAMaskOfTheWrongSize) {
   const BitGrid mask(10, 10);
-  EXPECT_THROW(static_cast<void>(rasterizeMedialAxis(mask, squareGrid(12, 10), {})),
-               std::invalid_argument);
+  EXPECT_THROW(
+      static_cast<void>(rasterizeMedialAxis(mask, squareGrid(12, 10), {})),
+      std::invalid_argument);
+}
+
+TEST(MedialAxis, JoinsNoCellsAcrossABlockedCell) {
+  // A single blocked cell on an edge splits it: the free cells on either side
+  // are not neighbors.
+  BitGrid mask(10, 3);
+  mask.setCell(5, 1);
+  const auto grid = squareGrid(10, 3);
+  const auto axis = rasterizeMedialAxis(
+      mask, grid, {{.x0 = 1.0, .y0 = 1.0, .x1 = 8.0, .y1 = 1.0}});
+  const auto left = grid.index(4, 1);
+  const auto right = grid.index(6, 1);
+  ASSERT_TRUE(axis.onAxis(left));
+  ASSERT_TRUE(axis.onAxis(right));
+  EXPECT_FALSE(axis.onAxis(grid.index(5, 1)));
+  EXPECT_EQ(axis.neighbors.at(left).size(), 1U);
+  EXPECT_EQ(axis.neighbors.at(right).size(), 1U);
+  EXPECT_EQ(axis.cells[left], AxisCell::Endpoint);
+  EXPECT_EQ(axis.cells[right], AxisCell::Endpoint);
+}
+
+TEST(MedialAxis, MarksNoCellWithoutAnEdge) {
+  const auto mask = corridor(20, 9, 2);
+  const auto axis = rasterizeMedialAxis(mask, squareGrid(20, 9), {});
+  EXPECT_TRUE(std::ranges::all_of(axis.cells, [](const AxisCell state) {
+    return state == AxisCell::None;
+  }));
 }
 
 } // namespace

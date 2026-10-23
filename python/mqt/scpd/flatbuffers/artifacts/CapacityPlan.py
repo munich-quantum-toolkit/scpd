@@ -178,7 +178,7 @@ class CapacityPlan(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
         return o == 0
 
-    # The index in `nodes` of each chain's root.
+    # The index in `nodes` of the root of each chain.
     # CapacityPlan
     def Chains(self, j: int):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
@@ -206,16 +206,16 @@ class CapacityPlan(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
         return o == 0
 
-    # What the ports' own approaches keep clear, as closed rings in layout
+    # What the approaches of the ports keep clear, as closed rings in layout
     # units: the strip a wire leaves each routable port along, extended
-    # forward and backward, and the square each launcher sweeps.
+    # forward and backward.
     #
     # These are obstacles to everything the stages route, and they are not
-    # chip artwork, which is why they are a layer of their own rather than
-    # more polygons in the chip. Only the cells that were free before a band
-    # took them are here; where a band merely covered artwork the artwork is
-    # already drawn. The rings follow the cells, so a band along a diagonal
-    # is the staircase the grid actually blocks.
+    # chip artwork, so they are a layer of their own rather than more
+    # polygons of the chip. Only the cells that were free before a band took
+    # them are here; where a band covers artwork, the artwork is already
+    # drawn. The rings follow the cells, so a band along a diagonal is the
+    # staircase the grid blocks.
     # CapacityPlan
     def PortKeepout(self, j: int) -> Optional[Polygon]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))

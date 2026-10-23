@@ -48,9 +48,9 @@ class PortPatterns(object):
             return self._tab.String(o + self._tab.Pos)
         return None
 
-    # The ports a wire crosses a component at, rather than ends at. Optional:
-    # a chip whose components carry no crossing declares none. Which two of
-    # these ports pair is PortConfig.bridge_pairs.
+    # The ports where a wire crosses a component, rather than ends at it.
+    # Optional: a chip whose components carry no crossing declares none.
+    # PortConfig.bridge_pairs says which two of these ports pair.
     # PortPatterns
     def BridgePair(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))

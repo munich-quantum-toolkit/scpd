@@ -6,424 +6,602 @@
 #
 # Licensed under the MIT License
 
-"""What a planning artifact turns into, and how the two renderers draw it."""
+"""Tests of the shapes that the planning artifacts describe."""
 
 from __future__ import annotations
 
-import itertools
+import math
+from itertools import pairwise
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from mqt.scpd.artifacts import read_artifact, write_artifact
 from mqt.scpd.chip import decode_chip
-from mqt.scpd.export.klayout import PLANNING_LAYERS, write_layout
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
+from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
+from mqt.scpd.flatbuffers.artifacts.Bottleneck import BottleneckT
+from mqt.scpd.flatbuffers.artifacts.CapacityElement import CapacityElement
+from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
-from mqt.scpd.flatbuffers.artifacts.FinalPhase import FinalPhaseT
-from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
-from mqt.scpd.flatbuffers.artifacts.FinalVerdict import FinalVerdict
-from mqt.scpd.flatbuffers.artifacts.FinalWire import FinalWireT
+from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
+from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
+from mqt.scpd.flatbuffers.artifacts.Lattice import LatticeT
+from mqt.scpd.flatbuffers.artifacts.Partition import PartitionT
+from mqt.scpd.flatbuffers.artifacts.PartitionBorder import PartitionBorderT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
+from mqt.scpd.flatbuffers.design.Connection import ConnectionT
+from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
-from mqt.scpd.flatbuffers.geometry.RCoord import RCoordT
-from mqt.scpd.planning import (
-    BAD_VERDICTS,
-    FINAL_PHASES,
-    LENGTH_VERDICTS,
-    PLANNING_STAGES,
-    PlanningError,
-    blockade,
-    planning_geometry,
-    verdict_names,
-)
-from mqt.scpd.plot import layout_svg
-from mqt.scpd.run import IMPLEMENTED, RunDirectory
+from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
+from mqt.scpd.planning import Feedline, PlanningError, PlanningGeometry, planning_geometry
+from mqt.scpd.run import RunDirectory
+from mqt.scpd.steps import STEPS
 
-BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
+if TYPE_CHECKING:
+    from mqt.scpd.flatbuffers.design.Chip import ChipT
 
-klayout = pytest.importorskip("klayout.db", reason="klayout is an optional extra")
+CONFIG = Path(__file__).resolve().parents[2] / "fixtures" / "mini" / "config.toml"
+
+# Every picture is drawn from artifacts read once with lists and once with NumPy arrays.
+pytestmark = pytest.mark.usefixtures("vector_type")
 
 
 @pytest.fixture(scope="module")
 def run(tmp_path_factory: pytest.TempPathFactory) -> RunDirectory:
-    """A finished planning run of the 9-qubit chip.
+    """The fixture planned through every step.
 
     Returns:
         The run directory.
     """
     directory = RunDirectory(tmp_path_factory.mktemp("run"))
-    config = directory.prepare(BENCHMARKS / "9q" / "config.toml")
-    for stage in IMPLEMENTED:
-        directory.run_stage(stage, config)
+    config = directory.prepare(CONFIG)
+    chip = directory.classified_chip(config)
+    for step in STEPS:
+        directory.run_stage(step, config, chip)
     return directory
 
 
-@pytest.fixture(scope="module")
-def chip(run: RunDirectory):  # ruff: ignore[missing-return-type-undocumented-public-function]
-    """The chip the run was made from.
+def chip_of(run: RunDirectory) -> ChipT:
+    """The chip of the run, decoded.
 
     Returns:
-        The classified chip.
+        The chip.
     """
-    from mqt.scpd.chip import classify_chip  # ruff: ignore[import-outside-top-level]
-
-    return decode_chip(classify_chip(run.chip.read_text(encoding="utf-8"), run.load()))
+    return decode_chip(run.classified_chip(run.load()))
 
 
-def test_the_capacity_plan_carries_the_partitioning(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """Everything the capacity stage decided is in the artifact, in layout units."""
-    geometry = planning_geometry(run.artifact("capacity").read_bytes(), chip, "capacity")
+def test_the_capacity_picture_holds_the_partitions_and_the_launchers(run: RunDirectory) -> None:
+    """A capacity plan draws its partitions, their borders and the launcher slots."""
+    geometry = planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "capacity")
 
     assert geometry.partitions
+    assert all(len(ring) >= 3 for partition in geometry.partitions for ring in partition)
     assert geometry.borders
-    assert geometry.bottlenecks
-    # What the ports' own approaches block is a layer of its own; it is not chip artwork.
-    assert geometry.keepout
-    for ring in geometry.keepout:
-        assert len(ring) >= 4
-        assert ring[0] == ring[-1]
-    assert geometry.launchers
-    assert geometry.chains
-    # A bottleneck is a line across a corridor and carries a wire budget.
-    for first, second, capacity in geometry.bottlenecks:
-        assert first != second
-        assert capacity >= 0
-    # Nothing of the other stages leaks into this one.
-    assert not geometry.lattice
-    assert not geometry.assignments
+    assert len(geometry.launchers) == 4
+    assert not geometry.corridors
+    # The grid blocks a border of cells along its edge.
+    assert geometry.blocked
+    assert len(geometry.partition_tones) == len(geometry.partitions)
 
 
-def test_the_global_picture_carries_the_gates_when_the_capacity_plan_is_given(
-    run: RunDirectory,
-    chip,  # ruff: ignore[missing-type-function-argument]
-) -> None:
-    """Where a wire may surface is decided by the free space behind the port, so the gates
-    that measure it are drawn with the circuit that paid for them.
+def test_the_assign_picture_marks_only_the_launcher_slots(run: RunDirectory) -> None:
+    """The feed of a conventional port is a launcher slot, and the feed of a resonator lies on its feedline.
+
+    Over the capacity plan, the assign picture marks the slots of the plan and no feed of a resonator.
     """
-    alone = planning_geometry(run.artifact("global").read_bytes(), chip, "global")
-    assert not alone.bottlenecks
-    assert not alone.keepout
+    capacity = run.artifact("capacity").read_bytes()
+    slots = planning_geometry(capacity, chip_of(run), "capacity").launchers
 
-    withgates = planning_geometry(
-        run.artifact("global").read_bytes(),
-        chip,
-        "global",
-        run.artifact("capacity").read_bytes(),
-    )
-    assert withgates.bottlenecks
-    assert withgates.keepout
-    assert (
-        withgates.bottlenecks == planning_geometry(run.artifact("capacity").read_bytes(), chip, "capacity").bottlenecks
-    )
-    # Only the gates and the port keepout, not the rest of the capacity plan.
-    assert not withgates.partitions
-    assert not withgates.chains
+    geometry = planning_geometry(run.artifact("assign").read_bytes(), chip_of(run), "assign", capacity)
+
+    assert sorted(geometry.launchers) == sorted(slots)
+    assert all(not set(feedline.terminals) & set(geometry.launchers) for feedline in geometry.feedlines)
 
 
-def test_a_capacity_plan_is_the_only_thing_the_global_picture_takes_gates_from(
-    run: RunDirectory,
-    chip,  # ruff: ignore[missing-type-function-argument]
-) -> None:
-    """An artifact of another stage passed as the capacity plan is a problem, not a picture."""
-    with pytest.raises(PlanningError, match="not a capacity plan"):
-        planning_geometry(
-            run.artifact("global").read_bytes(),
-            chip,
-            "global",
-            run.artifact("global").read_bytes(),
-        )
-
-
-def test_the_global_routing_carries_its_lattice(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """The lattice and the edges the inner circuit selected are both drawable."""
-    geometry = planning_geometry(run.artifact("global").read_bytes(), chip, "global")
-
-    assert geometry.lattice
-    # What was selected is a subset of what was offered.
-    assert set(geometry.inner) <= set(geometry.lattice)
-    assert not geometry.partitions
-
-
-def test_the_assignment_carries_a_chord_per_ring_node(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """Each ring node is drawn joined to the launcher it was given."""
-    geometry = planning_geometry(run.artifact("assign").read_bytes(), chip, "assign")
-
-    assert geometry.ring
-    assert len(geometry.assignments) == len(geometry.ring)
-    assert not geometry.bottlenecks
-
-
-def test_the_corridor_routing_carries_a_way_per_connection(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """Each wire is drawn from its feed through its crossings to its target."""
-    geometry = planning_geometry(
-        run.artifact("corridor").read_bytes(), chip, "corridor", run.artifact("capacity").read_bytes()
-    )
-
-    assert geometry.corridors
-    # A way names at least where it starts and where it ends.
-    assert all(len(route) >= 2 for route in geometry.corridors)
-    # Every crossing of every way is one of the slots the borders offer.
-    slots = set(geometry.slots)
-    assert all(point in slots for route in geometry.corridors for point in route[1:-1])
-    # The partitions are drawn under it, because a way through them is what it is.
-    assert geometry.partitions
-
-
-def test_the_corridor_picture_draws_nothing_of_the_partitions_without_a_plan(
-    run: RunDirectory,
-    chip,  # ruff: ignore[missing-type-function-argument]
-) -> None:
-    """The capacity artifact is what carries the partitions; without it the ways stand alone."""
-    geometry = planning_geometry(run.artifact("corridor").read_bytes(), chip, "corridor")
-
-    assert geometry.corridors
-    assert not geometry.partitions
-
-
-def test_the_detail_routing_carries_a_drawn_wire_per_connection(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """Each wire is the polyline of its bends, from its feed to its target."""
-    geometry = planning_geometry(
-        run.artifact("detail").read_bytes(), chip, "detail", run.artifact("capacity").read_bytes()
-    )
-
-    assert geometry.wires
-    # A wire names at least where it starts and where it ends, and no bend repeats its neighbour.
-    for wire in geometry.wires:
-        assert len(wire) >= 2
-        assert all(before != after for before, after in itertools.pairwise(wire))
-    # The way the corridor planned is what the wire had to follow, so the two ends agree.
-    corridor = planning_geometry(
-        run.artifact("corridor").read_bytes(), chip, "corridor", run.artifact("capacity").read_bytes()
-    )
-    assert len(geometry.wires) == len(corridor.corridors)
-
-    def same(here: tuple[float, float], there: tuple[float, float]) -> bool:
-        # The two artifacts reach the same place by different arithmetic — one stores the layout
-        # point, the other multiplies the cell out again — so they agree to the last bit but one.
-        return abs(here[0] - there[0]) < 1e-6 and abs(here[1] - there[1]) < 1e-6
-
-    for wire, route in zip(geometry.wires, corridor.corridors, strict=True):
-        assert same(wire[0], route[0])
-        assert same(wire[-1], route[-1])
-    # The partitions are drawn under it, because a way through them is what it is.
-    assert geometry.partitions
-
-
-def test_the_detail_picture_draws_the_clearance_the_router_actually_keeps(
-    run: RunDirectory,
-    chip,  # ruff: ignore[missing-type-function-argument]
-) -> None:
-    """The band is the design rule as the router converted it to whole cells, not the rule itself.
-
-    A router that works in cells cannot keep 185 layout units; it keeps
-    ``ceil(185 / cell) - 1`` cells, which is a little less. Drawing the rule would draw a clearance
-    nothing keeps.
-    """
-    without = planning_geometry(run.artifact("detail").read_bytes(), chip, "detail")
-    assert without.clearance == 0.0
-    assert "l-clearance" not in layout_svg(chip, planning=without)
-
-    with_rule = planning_geometry(run.artifact("detail").read_bytes(), chip, "detail", clearance=185.0)
-    grid = read_artifact(run.artifact("detail").read_bytes()).output.grid
-    cell = min(float(grid.cellWidth), float(grid.cellHeight))
-    assert with_rule.clearance == blockade(185.0, cell)
-    assert 0 < with_rule.clearance < 185.0
-    assert with_rule.clearance % cell == pytest.approx(0.0, abs=1e-9)
-
-    svg = layout_svg(chip, planning=with_rule)
-    assert "l-clearance" in svg
-    assert f"stroke-width:{with_rule.clearance:.3f}".rstrip("0").rstrip(".") in svg
-
-
-def test_an_artifact_of_the_wrong_stage_is_refused(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """Reading a capacity plan as an assignment says so rather than drawing nothing."""
-    with pytest.raises(PlanningError, match="not an assignment"):
-        planning_geometry(run.artifact("capacity").read_bytes(), chip, "assign")
-
-
-def test_the_final_routing_carries_a_snapshot_of_every_phase(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """Each of the five phases draws what it had at its end, and the two that are built carry wires."""
-    data = run.artifact("final").read_bytes()
-    geometry = planning_geometry(data, chip, "final", clearance=185.0)
-
-    assert set(geometry.phases) == set(FINAL_PHASES)
-    assert geometry.phases["pre-feedline-routing"], "the routing before the feedlines drew nothing"
-    # The end state is what a caller sees without naming a phase.
-    assert len(geometry.wires) + len(geometry.inner_wires) == len(geometry.phases["feedline-constrained-refinement"])
-    # The clearance drawn is the whole number of cells the rule spans on the router grid, which
-    # is a little more than the rule itself, because that is what the router keeps.
-    assert geometry.clearance > 185.0
-    assert geometry.clearance < 2 * 185.0
-
-
-def test_one_phase_of_the_final_routing_is_drawn_on_its_own(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """Each phase draws the state it left; the first two draw the ring without couplers."""
-    data = run.artifact("final").read_bytes()
-    routed = planning_geometry(data, chip, "final", phase="pre-feedline-routing")
-    outer = planning_geometry(data, chip, "final", phase="pre-feedline-refinement")
-
-    # The first phase draws the inner circuit and the ring.
-    assert routed.wires
-    assert routed.inner_wires
-    assert outer.wires
-
-    # The coupler insertion cuts every resonator back to its coupler, so the third phase draws
-    # the ring differently from the second, and it is the first to draw the couplers and the
-    # edges of the feedline chains.
-    couplers = planning_geometry(data, chip, "final", phase="feedline-insertion")
-    assert couplers.wires != outer.wires
-    assert len(couplers.wires) == len(outer.wires)
-    assert not outer.couplers
-    assert couplers.couplers
-    assert len(couplers.inner_wires) > len(outer.inner_wires)
-
-
-def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """The end state carries the stage's verdict per wire; a picture marks the unrouted, open and crossing ones."""
-
-    def wire(cells: list[tuple[int, int]], verdict: int = 0) -> FinalWireT:
-        return FinalWireT(path=[RCoordT(x, y, 6) for x, y in cells], length=100.0, verdict=verdict)
-
-    grid = GridExtentT(width=100, height=100, origin=PointT(0.0, 0.0), cellWidth=10.0, cellHeight=10.0)
-    end = {
-        "wires": [
-            wire([(1, 1), (5, 1)], FinalVerdict.Open),
-            wire([(1, 3), (5, 3)]),
-            # Off its length alone: on the length layer, not on the failing one.
-            wire([(1, 5), (5, 5)], FinalVerdict.Short),
-            wire([(1, 7), (5, 7)], FinalVerdict.Open | FinalVerdict.Long),
+def test_a_partition_keeps_its_rings_together(run: RunDirectory) -> None:
+    """A partition with a hole is one entry of two rings, with one tone."""
+    grid = GridExtentT(width=12, height=12, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
+    holed = PartitionT(
+        label=2,
+        outlines=[
+            PolygonT(vertices=[PointT(0.0, 0.0), PointT(12.0, 0.0), PointT(12.0, 12.0), PointT(0.0, 12.0)]),
+            PolygonT(vertices=[PointT(4.0, 4.0), PointT(8.0, 4.0), PointT(8.0, 8.0), PointT(4.0, 8.0)]),
         ],
-        "inner": [wire([(8, 1), (8, 5)], FinalVerdict.Crossing)],
-        "feedlines": [wire([], FinalVerdict.Unrouted), wire([(0, 9), (9, 9)])],
-    }
-    # An edge the insertion found squeezed: not a failure, carried with its note.
-    end["feedlines"][1].verdict = FinalVerdict.Squeezed
-    end["feedlines"][1].note = "squeezed at (4,9): 2 wires (3, 5) in 30 cells to the artwork, need 59"
-    end["feedlines"][1].marks = [RCoordT(4, 9, 6), RCoordT(4, 6, 6)]
-    # A phase snapshot is not judged and carries no verdict, whatever its wires hold.
-    snapshot = FinalPhaseT(
-        name="feedline-constrained-routing", wires=[wire([(1, 1), (5, 1)])], inner=[], feedlines=[], couplers=[]
     )
+    plan = CapacityPlanT(
+        capacityGrid=grid,
+        detailGrid=grid,
+        partitions=[holed],
+        borders=[],
+        bottlenecks=[],
+        launchers=[],
+        nodes=[],
+        chains=[],
+    )
+    data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
+
+    geometry = planning_geometry(data, chip_of(run), "capacity")
+
+    assert [len(partition) for partition in geometry.partitions] == [2]
+    assert len(geometry.partition_tones) == 1
+
+
+def test_a_border_runs_along_its_cell_edges(run: RunDirectory) -> None:
+    """Every step of a border run is one whole cell edge, and the runs use every edge of the plan once."""
+    raw = run.artifact("capacity").read_bytes()
+    plan = read_artifact(raw).output
+    assert isinstance(plan, CapacityPlanT)
+    width, height = plan.detailGrid.cellWidth, plan.detailGrid.cellHeight
+
+    geometry = planning_geometry(raw, chip_of(run), "capacity")
+
+    steps = [(abs(b[0] - a[0]), abs(b[1] - a[1])) for border in geometry.borders for a, b in pairwise(border)]
+    # The corners are joined on three decimals, the precision of the inputs.
+    tolerance = 2e-3
+    assert all(
+        (math.isclose(dx, width, abs_tol=tolerance) and dy < tolerance)
+        or (dx < tolerance and math.isclose(dy, height, abs_tol=tolerance))
+        for dx, dy in steps
+    )
+    assert len(steps) == sum(len(border.samples or []) for border in plan.borders or [] if border is not None)
+
+
+def test_the_pieces_of_a_border_close_together_are_one_run(run: RunDirectory) -> None:
+    """Two edges of a border two cells apart join into one run; a piece far away stays a run of its own."""
+    grid = GridExtentT(width=20, height=20, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
+    border = PartitionBorderT(
+        first=1,
+        second=2,
+        samples=[PointT(1.0, 0.5), PointT(1.0, 3.5), PointT(1.0, 12.5)],
+        center=PointT(1.0, 5.5),
+    )
+    plan = CapacityPlanT(
+        capacityGrid=grid,
+        detailGrid=grid,
+        partitions=[],
+        borders=[border],
+        bottlenecks=[],
+        launchers=[],
+        nodes=[],
+        chains=[],
+    )
+    data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
+
+    geometry = planning_geometry(data, chip_of(run), "capacity")
+
+    assert sorted(geometry.borders) == [[(1.0, 0.0), (1.0, 1.0), (1.0, 3.0), (1.0, 4.0)], [(1.0, 12.0), (1.0, 13.0)]]
+
+
+def _square(label: int, x0: float, y0: float, x1: float, y1: float) -> PartitionT:
+    corners = [PointT(x0, y0), PointT(x1, y0), PointT(x1, y1), PointT(x0, y1)]
+    return PartitionT(label=label, outlines=[PolygonT(vertices=corners)])
+
+
+def test_the_blocked_cells_leave_out_what_is_too_thin_to_block(run: RunDirectory) -> None:
+    """A strip of one cell between two partitions is not a blockage; a block of four cells is."""
+    grid = GridExtentT(width=12, height=12, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
+    # Columns 0 to 4 and 6 to 11 are free, except a block of four by four cells at 7 to 10 and 4 to 7.
+    partitions = [
+        _square(2, 0.0, 0.0, 5.0, 12.0),
+        PartitionT(
+            label=3,
+            outlines=[
+                PolygonT(vertices=[PointT(6.0, 0.0), PointT(12.0, 0.0), PointT(12.0, 12.0), PointT(6.0, 12.0)]),
+                PolygonT(vertices=[PointT(7.0, 4.0), PointT(11.0, 4.0), PointT(11.0, 8.0), PointT(7.0, 8.0)]),
+            ],
+        ),
+    ]
+    plan = CapacityPlanT(
+        capacityGrid=grid,
+        detailGrid=grid,
+        partitions=partitions,
+        borders=[],
+        bottlenecks=[],
+        launchers=[],
+        nodes=[],
+        chains=[],
+    )
+    data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
+
+    geometry = planning_geometry(data, chip_of(run), "capacity")
+
+    cells = {
+        (x, y)
+        for ring in geometry.blocked
+        for x in range(int(ring[0][0]), int(ring[1][0]))
+        for y in range(int(ring[0][1]), int(ring[2][1]))
+    }
+    assert cells == {(x, y) for x in range(7, 11) for y in range(4, 8)}
+
+
+def test_the_borders_of_closed_in_partitions_are_kept_apart(run: RunDirectory) -> None:
+    """A group of partitions that no border joins to the outermost free cells is closed in."""
+    grid = GridExtentT(width=20, height=20, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
+    partitions = [
+        _square(1, 0.0, 0.0, 10.0, 20.0),
+        _square(2, 10.0, 0.0, 20.0, 20.0),
+        _square(3, 4.0, 4.0, 6.0, 6.0),
+        _square(4, 6.0, 4.0, 8.0, 6.0),
+    ]
+    borders = [
+        PartitionBorderT(first=1, second=2, samples=[PointT(10.0, 0.5)], center=PointT(10.0, 0.5)),
+        PartitionBorderT(first=3, second=4, samples=[PointT(6.0, 4.5)], center=PointT(6.0, 4.5)),
+    ]
+    plan = CapacityPlanT(
+        capacityGrid=grid,
+        detailGrid=grid,
+        partitions=partitions,
+        borders=borders,
+        bottlenecks=[],
+        launchers=[],
+        nodes=[],
+        chains=[],
+    )
+    data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
+
+    geometry = planning_geometry(data, chip_of(run), "capacity")
+
+    assert geometry.borders == [[(10.0, 0.0), (10.0, 1.0)]]
+    assert geometry.enclosed_borders == [[(6.0, 4.0), (6.0, 5.0)]]
+    # The two open partitions share a border, so their tones differ; the closed-in ones have none.
+    first, second, *closed = geometry.partition_tones
+    assert first is not None
+    assert second is not None
+    assert first != second
+    assert closed == [None, None]
+
+
+def test_the_global_picture_draws_the_lattice_and_the_selected_edges(run: RunDirectory) -> None:
+    """Every lattice edge is drawn, and the edges the circuit selected once more on their own layer."""
+    geometry = planning_geometry(solved_routing(), chip_of(run), "global")
+
+    assert geometry.lattice == [((0.0, 0.0), (100.0, 0.0)), ((100.0, 0.0), (100.0, 50.0))]
+    assert geometry.inner == [((100.0, 0.0), (100.0, 50.0))]
+
+
+def test_the_first_lattice_edge_can_be_selected(run: RunDirectory) -> None:
+    """Edge 0 is an edge like any other: when the circuit selects it, it is drawn as selected."""
+    lattice = LatticeT(points=[PointT(0.0, 0.0), PointT(100.0, 0.0)], edges=[0, 1], selected=[0])
     data = write_artifact(
         ArtifactT(
             producer="test",
-            outputType=StageOutput.FinalRouting,
-            output=FinalRoutingT(
-                grid=grid, **end, feedlineEdges=[], phases=[snapshot], couplers=[], bridges=[], unresolved=[]
+            outputType=StageOutput.GlobalRouting,
+            output=GlobalRoutingT(lattices=[lattice], connections=[], outerRing=[], resonators=[]),
+        )
+    )
+
+    geometry = planning_geometry(data, chip_of(run), "global")
+
+    assert geometry.lattice == [((0.0, 0.0), (100.0, 0.0))]
+    assert geometry.inner == [((0.0, 0.0), (100.0, 0.0))]
+
+
+def test_the_assignment_picture_draws_a_chord_from_every_ring_port_to_its_feed(run: RunDirectory) -> None:
+    """The ring is drawn through its ports, and each port is joined to the point it is fed from."""
+    geometry = planning_geometry(run.artifact("assign").read_bytes(), chip_of(run), "assign")
+
+    assert len(geometry.ring) == 5
+    assert len(geometry.assignments) == 5
+    assert {chord[0] for chord in geometry.assignments} == set(geometry.ring)
+    assert not geometry.borders
+
+
+def test_the_assignment_picture_lies_over_the_plan_of_its_run(run: RunDirectory) -> None:
+    """With the capacity plan, the chords are drawn over its partitions and blocked cells."""
+    geometry = planning_geometry(
+        run.artifact("assign").read_bytes(),
+        chip_of(run),
+        "assign",
+        capacity=run.artifact("capacity").read_bytes(),
+    )
+
+    assert geometry.assignments
+    assert geometry.borders
+    assert geometry.blocked
+    assert any(tone is not None for tone in geometry.partition_tones)
+
+
+def assignment_of(ring: list[int], feeds: list[PointT], chain: FeedlineChainT) -> bytes:
+    """An assignment artifact with one feedline chain.
+
+    Returns:
+        The bytes of the artifact.
+    """
+    return write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.Assignment,
+            output=AssignmentT(
+                connections=[ConnectionT(target=PortRefT(index)) for index in ring],
+                ring=[PortRefT(index) for index in ring],
+                launchers=[PortRefT(index) for index in ring],
+                feeds=feeds,
+                chains=[chain],
             ),
         )
     )
 
-    geometry = planning_geometry(data, chip, "final")
 
-    # One entry per failing wire, named as the stage's log names it, with every verdict against it.
-    assert [(name, verdicts) for name, verdicts, _ in geometry.failing] == [
-        ("0", ["open"]),
-        ("3", ["open", "long"]),
-        ("i0", ["crossing"]),
-        ("f0", ["unrouted"]),
+def test_a_feedline_runs_from_its_launcher_through_the_feeds_of_its_resonators(run: RunDirectory) -> None:
+    """A chain runs from its first launcher over the feed of each resonator to its last launcher.
+
+    Where the chain ends at a termination instead, it ends at the feed of its resonator there. A
+    resonator is named by its component where the configuration declares one, else by its label.
+    """
+    chip = chip_of(run)
+    assert chip.ports is not None
+    resonator = chip.ports[8]
+    assert resonator is not None
+    resonator.component = "Q2"
+    feeds = [PointT(250.0, 1600.0), PointT(1000.0, 1600.0)]
+
+    between = planning_geometry(
+        assignment_of([4, 8], feeds, FeedlineChainT(nodes=[0, 1], start=PortRefT(1), end=PortRefT(2))), chip, "assign"
+    )
+    stopped = planning_geometry(
+        assignment_of([4, 8], feeds, FeedlineChainT(nodes=[0, 1], end=PortRefT(3))), chip, "assign"
+    )
+
+    (feedline,) = between.feedlines
+    assert feedline.points == [(300.0, 1600.0), (250.0, 1600.0), (1000.0, 1600.0), (2000.0, 200.0)]
+    assert feedline.terminals == [(250.0, 1600.0), (1000.0, 1600.0)]
+    assert not feedline.terminations
+    assert feedline.label == "feedline 1: Chip.port1 → Q1.port0, Q2 → Chip.port2"
+    (feedline,) = stopped.feedlines
+    assert feedline.points == [(250.0, 1600.0), (1000.0, 1600.0), (700.0, -600.0)]
+    assert feedline.terminations == [(250.0, 1600.0)]
+    assert feedline.label == "feedline 1: termination → Q1.port0, Q2 → Chip.port3"
+
+
+def test_a_feedline_through_the_first_resonator_alone_is_drawn(run: RunDirectory) -> None:
+    """A chain that names ring node 0 alone runs through the feed of that node."""
+    geometry = planning_geometry(
+        assignment_of([4], [PointT(250.0, 1600.0)], FeedlineChainT(nodes=[0], start=PortRefT(1))),
+        chip_of(run),
+        "assign",
+    )
+
+    (feedline,) = geometry.feedlines
+    assert feedline.terminals == [(250.0, 1600.0)]
+
+
+def test_a_feedline_alone_is_something_to_draw() -> None:
+    """A stage that produced only feedlines still has a picture."""
+    assert not PlanningGeometry(feedlines=[Feedline(points=[(0.0, 0.0), (1.0, 0.0)])]).is_empty()
+
+
+def test_blocked_cells_alone_are_something_to_draw() -> None:
+    """A global step without an inner circuit still has a picture: the cells the grid blocked."""
+    square = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)]
+    assert not PlanningGeometry(blocked=[square]).is_empty()
+
+
+def test_the_corridor_picture_draws_the_feedlines_of_its_assignment(run: RunDirectory) -> None:
+    """The wires of the resonators start at the feeds the feedlines pass, so both are drawn together."""
+    chip = chip_of(run)
+    assignment = run.artifact("assign").read_bytes()
+    corridor = run.artifact("corridor").read_bytes()
+
+    assigned = planning_geometry(assignment, chip, "assign")
+    routed = planning_geometry(corridor, chip, "corridor", assignment=assignment)
+
+    assert assigned.feedlines
+    assert routed.feedlines == assigned.feedlines
+    assert not planning_geometry(corridor, chip, "corridor").feedlines
+    with pytest.raises(PlanningError, match="not an assignment"):
+        planning_geometry(corridor, chip, "corridor", assignment=run.artifact("capacity").read_bytes())
+
+
+def test_the_corridor_picture_draws_every_route_over_the_partitions(run: RunDirectory) -> None:
+    """A corridor runs from its feed over its crossings to its target, over the partitions it uses."""
+    geometry = planning_geometry(
+        run.artifact("corridor").read_bytes(),
+        chip_of(run),
+        "corridor",
+        capacity=run.artifact("capacity").read_bytes(),
+    )
+
+    assert len(geometry.corridors) == 5
+    assert all(len(route) >= 2 for route in geometry.corridors)
+    assert geometry.slots
+    assert geometry.partitions
+
+
+@pytest.mark.parametrize("partitions", [[0], [0, 1]], ids=["one", "two"])
+def test_a_corridor_through_the_first_partition_is_read_and_drawn(run: RunDirectory, partitions: list[int]) -> None:
+    """Partition 0 is a partition like any other, so a corridor through it is complete and drawn."""
+    crossings = [PointT(50.0, 0.0)] if len(partitions) == 2 else []
+    corridor = CorridorT(partitions=partitions, crossings=crossings, source=PointT(0.0, 0.0), target=PointT(100.0, 0.0))
+    data = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.CorridorRouting,
+            output=CorridorRoutingT(corridors=[corridor], slots=[]),
+        )
+    )
+
+    output = read_artifact(data).output
+    geometry = planning_geometry(data, chip_of(run), "corridor")
+
+    assert isinstance(output, CorridorRoutingT)
+    assert output.corridors is not None
+    (read,) = output.corridors
+    assert read is not None
+    assert read.partitions is not None
+    assert [int(partition) for partition in read.partitions] == partitions
+    assert geometry.corridors == [[(0.0, 0.0), *((point.x, point.y) for point in crossings), (100.0, 0.0)]]
+
+
+def test_every_routed_wire_approaches_its_target_port(run: RunDirectory) -> None:
+    """A stub runs from where a corridor ends to the port its connection targets, by connection order."""
+    chip = chip_of(run)
+    corridor = run.artifact("corridor").read_bytes()
+    assignment = run.artifact("assign").read_bytes()
+
+    geometry = planning_geometry(corridor, chip, "corridor", assignment=assignment)
+
+    chosen = read_artifact(assignment).output
+    assert isinstance(chosen, AssignmentT)
+    ports = chip.ports or []
+    targets = set()
+    for connection in chosen.connections or []:
+        assert connection is not None
+        assert connection.target is not None
+        center = ports[connection.target.index].center
+        assert center is not None
+        targets.add((center.x, center.y))
+    assert len(geometry.stubs) == len(geometry.corridors)
+    assert all(stub[0] == route[-1] for stub, route in zip(geometry.stubs, geometry.corridors, strict=True))
+    assert all(stub[-1] in targets for stub in geometry.stubs)
+    # The last leg runs along the direction of the port.
+    by_center = {(port.center.x, port.center.y): port for port in ports if port is not None and port.center is not None}
+    for stub in geometry.stubs:
+        if len(stub) == 3:
+            angle = math.radians(by_center[stub[-1]].orientation)
+            dx, dy = stub[1][0] - stub[2][0], stub[1][1] - stub[2][1]
+            assert abs(dx * math.sin(angle) - dy * math.cos(angle)) < 1e-6
+    # Without the assignment no corridor names its port.
+    assert not planning_geometry(corridor, chip, "corridor").stubs
+
+
+def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:
+    """The artifact has to be the one of the stage it is drawn as."""
+    with pytest.raises(PlanningError, match="not a global routing"):
+        planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "global")
+    with pytest.raises(PlanningError, match="not a planning stage"):
+        planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "detail")
+
+
+def capacity_plan(*, cyclic: bool = False, chains: list[int] | None = None) -> bytes:
+    """A capacity plan with one gate, one keep-out ring and one chain.
+
+    The chain runs from a launcher to the gate, and from the gate to port 1 and to an index that
+    names no port.
+
+    Args:
+        cyclic: Link port 1 back to the gate, so that the chain is a cycle.
+        chains: The nodes the chains start at; node 0, the launcher, when not given.
+
+    Returns:
+        The bytes of the artifact.
+    """
+    nodes = [
+        CapacityNodeT(kind=CapacityElement.Launcher, id=0, next=[1]),
+        CapacityNodeT(kind=CapacityElement.Bottleneck, id=0, next=[2, 3]),
+        CapacityNodeT(kind=CapacityElement.Target, id=1, next=[1] if cyclic else []),
+        CapacityNodeT(kind=CapacityElement.Target, id=99, next=[]),
     ]
-    # The mark is the wire's own polyline; an unrouted wire has none.
-    assert geometry.failing[0][2] == [(10.0, 10.0), (50.0, 10.0)]
-    assert geometry.failing[3][2] == []
-    # The length verdicts have their own layer: a wire that is only short is on it alone, a wire
-    # that is both is on both, and the failing layer is drawn over it.
-    assert [(name, verdicts) for name, verdicts, _ in geometry.off_length] == [
-        ("2", ["short"]),
-        ("3", ["open", "long"]),
-    ]
-    assert geometry.off_length[0][2] == [(10.0, 50.0), (50.0, 50.0)]
-    note = "squeezed at (4,9): 2 wires (3, 5) in 30 cells to the artwork, need 59"
-    assert geometry.squeezed == [("f1", note, [(0.0, 90.0), (90.0, 90.0)], [(40.0, 90.0), (40.0, 60.0)])]
-    assert not planning_geometry(data, chip, "final", phase="feedline-constrained-routing").failing
-    assert not planning_geometry(data, chip, "final", phase="feedline-constrained-routing").off_length
-    assert FinalVerdict.Unrouted | FinalVerdict.Open | FinalVerdict.Crossing == BAD_VERDICTS
-    assert FinalVerdict.Short | FinalVerdict.Long == LENGTH_VERDICTS
-    assert verdict_names(FinalVerdict.Short | FinalVerdict.Loop) == ["short", "meeting itself"]
-    assert verdict_names(0) == []
+    grid = GridExtentT(width=1, height=1, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
+    plan = CapacityPlanT(
+        capacityGrid=grid,
+        detailGrid=grid,
+        partitions=[],
+        borders=[],
+        bottlenecks=[BottleneckT(from_=PointT(0.0, 0.0), to=PointT(100.0, 0.0), capacity=2)],
+        launchers=[],
+        nodes=nodes,
+        chains=[0] if chains is None else chains,
+        portKeepout=[PolygonT(vertices=[PointT(0.0, 0.0), PointT(10.0, 0.0), PointT(0.0, 10.0)])],
+    )
+    return write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
 
 
-def test_a_stage_that_is_not_a_planning_stage_is_refused(chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """The message lists the stages that can be drawn."""
-    empty = write_artifact(
+def test_a_capacity_plan_without_chains_draws_none(run: RunDirectory) -> None:
+    """A plan whose chain list is empty draws no chain."""
+    geometry = planning_geometry(capacity_plan(chains=[]), chip_of(run), "capacity")
+
+    assert geometry.chains == []
+    assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
+
+
+def test_a_capacity_chain_joins_the_ports_and_the_gates_it_names(run: RunDirectory) -> None:
+    """A chain runs from the middle of each gate to the next port.
+
+    A link is left out where one of its nodes has no place on the chip.
+    """
+    geometry = planning_geometry(capacity_plan(), chip_of(run), "capacity")
+
+    assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
+    assert geometry.chains == [((50.0, 0.0), (300.0, 1600.0))]
+    assert geometry.keepout == [[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]]
+
+
+def test_a_cyclic_capacity_chain_is_drawn_once(run: RunDirectory) -> None:
+    """A chain that leads back to a node it passed draws each link once and ends."""
+    geometry = planning_geometry(capacity_plan(cyclic=True), chip_of(run), "capacity")
+
+    assert geometry.chains == [((50.0, 0.0), (300.0, 1600.0)), ((300.0, 1600.0), (50.0, 0.0))]
+
+
+def test_the_global_picture_lies_over_the_blocked_cells_of_its_capacity_plan(run: RunDirectory) -> None:
+    """The global stage is drawn over the cells its grid blocked, and keeps the gates and the keep-out."""
+    plan = capacity_plan()
+    geometry = planning_geometry(run.artifact("global").read_bytes(), chip_of(run), "global", capacity=plan)
+
+    assert geometry.blocked
+    assert geometry.blocked == planning_geometry(plan, chip_of(run), "capacity").blocked
+    assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
+    assert geometry.keepout == [[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]]
+
+
+def solved_routing() -> bytes:
+    """A global routing with one lattice of two edges, of which the circuit selected the second.
+
+    Returns:
+        The bytes of the artifact.
+    """
+    lattice = LatticeT(
+        points=[PointT(0.0, 0.0), PointT(100.0, 0.0), PointT(100.0, 50.0)],
+        edges=[0, 1, 1, 2],
+        selected=[1],
+    )
+    return write_artifact(
         ArtifactT(
             producer="test",
             outputType=StageOutput.GlobalRouting,
-            output=GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[]),
+            output=GlobalRoutingT(lattices=[lattice], connections=[], outerRing=[], resonators=[]),
         )
     )
-    with pytest.raises(PlanningError, match=", ".join(PLANNING_STAGES)):
-        planning_geometry(empty, chip, "aligned")
 
 
-def test_an_empty_plan_draws_nothing(chip) -> None:  # ruff: ignore[missing-type-function-argument]
-    """A stage that produced nothing is a valid artifact with an empty picture."""
-    empty = write_artifact(
-        ArtifactT(
-            producer="test",
-            outputType=StageOutput.CapacityPlan,
-            output=CapacityPlanT(
-                capacityGrid=GridExtentT(origin=PointT()),
-                detailGrid=GridExtentT(origin=PointT()),
-                partitions=[],
-                borders=[],
-                bottlenecks=[],
-                launchers=[],
-                nodes=[],
-                chains=[],
-            ),
+@pytest.mark.parametrize("stage", ["assign", "corridor"])
+def test_the_assign_and_corridor_pictures_draw_the_selected_edges_of_the_inner_circuit(
+    run: RunDirectory, stage: str
+) -> None:
+    """The inner wires show on the lattice edges the circuit selected; the rest of the lattice does not."""
+    data = run.artifact(stage).read_bytes()
+
+    geometry = planning_geometry(data, chip_of(run), stage, global_routing=solved_routing())
+
+    assert geometry.inner == [((100.0, 0.0), (100.0, 50.0))]
+    assert not geometry.lattice
+    assert not planning_geometry(data, chip_of(run), stage).inner
+    with pytest.raises(PlanningError, match="the global artifact is not a global routing"):
+        planning_geometry(data, chip_of(run), stage, global_routing=run.artifact("capacity").read_bytes())
+
+
+@pytest.mark.parametrize(
+    ("stage", "drawn", "expected"),
+    [
+        ("capacity", "global", "not a capacity plan"),
+        ("assign", "capacity", "not an assignment"),
+        ("corridor", "capacity", "not a corridor routing"),
+    ],
+)
+def test_every_stage_refuses_the_artifact_of_another(run: RunDirectory, stage: str, drawn: str, expected: str) -> None:
+    """Each planning stage draws its own artifact only."""
+    with pytest.raises(PlanningError, match=expected):
+        planning_geometry(run.artifact(drawn).read_bytes(), chip_of(run), stage)
+
+
+def test_a_capacity_artifact_has_to_be_a_capacity_plan(run: RunDirectory) -> None:
+    """The artifact that a stage is drawn over has to be the capacity plan of the run."""
+    with pytest.raises(PlanningError, match="the capacity artifact is not a capacity plan"):
+        planning_geometry(
+            run.artifact("global").read_bytes(), chip_of(run), "global", capacity=run.artifact("assign").read_bytes()
         )
-    )
-    assert planning_geometry(empty, chip, "capacity").is_empty()
-
-
-@pytest.mark.parametrize("stage", list(PLANNING_STAGES))
-def test_every_planning_stage_renders_to_svg(run: RunDirectory, chip, stage: str) -> None:  # ruff: ignore[missing-type-function-argument]
-    """Each stage draws over the artwork, on layers of its own, inside the snapshot budget."""
-    geometry = planning_geometry(run.artifact(stage).read_bytes(), chip, stage)
-    svg = layout_svg(chip, planning=geometry)
-
-    assert svg.startswith("<svg")
-    assert svg.endswith("</svg>\n")
-    # A gate carries its wire budget as a number beside it.
-    for _, _, capacity in geometry.bottlenecks:
-        assert f">{capacity}</text>" in svg
-    # Every layer that carries something is drawn as its own group.
-    for name, shapes in (
-        ("keepout", geometry.keepout),
-        ("partition", geometry.partitions),
-        ("bottleneck", geometry.bottlenecks),
-        ("inner", geometry.inner),
-        ("assignment", geometry.assignments),
-        ("corridor", geometry.corridors),
-        ("slot", geometry.slots),
-    ):
-        assert (f'class="l-{name}"' in svg) == bool(shapes)
-    assert len(svg.encode("utf-8")) < 10_000_000
-
-
-@pytest.mark.parametrize("stage", list(PLANNING_STAGES))
-def test_every_planning_stage_renders_to_gds(run: RunDirectory, chip, tmp_path: Path, stage: str) -> None:  # ruff: ignore[missing-type-function-argument]
-    """Each stage is written beside the artwork on the planning layers, which stay switchable."""
-    geometry = planning_geometry(run.artifact(stage).read_bytes(), chip, stage)
-    path = tmp_path / f"{stage}.gds"
-
-    summary = write_layout(chip, path, planning=geometry)
-
-    assert summary.planning > 0
-    assert summary.polygons > 0
-    layout = klayout.Layout()
-    layout.read(str(path))
-    # The artwork keeps the layers it has, and every planning shape is above them.
-    used = {layout.get_info(index).layer for index in layout.layer_indexes()}
-    assert 1 in used
-    assert used & {number for number, _, _ in PLANNING_LAYERS.values()}
-
-
-def test_the_chip_still_renders_without_a_planning_stage(chip, tmp_path: Path) -> None:  # ruff: ignore[missing-type-function-argument]
-    """`render` with no stage writes the unrouted chip exactly as it did before."""
-    summary = write_layout(chip, tmp_path / "chip.gds")
-    assert summary.planning == 0

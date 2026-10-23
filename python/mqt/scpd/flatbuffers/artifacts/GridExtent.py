@@ -10,8 +10,8 @@ from typing import Optional
 np = import_numpy()
 
 # A grid of a run, as the numbers that convert between its cells and layout
-# units. The grid itself is derived state and is rebuilt; these six numbers
-# are what a reader needs to place what the artifact does carry.
+# units. The grid itself is derived state and is rebuilt; these numbers are
+# what a reader needs to place what the artifact carries.
 class GridExtent(object):
     __slots__ = ['_tab']
 

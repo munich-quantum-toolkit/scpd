@@ -75,7 +75,7 @@ no cells in the artifact.
 
 The Final stage runs five phases. Each phase changes what the phase before it
 produced, so each one leaves its own snapshot in the artifact, and `plot` and
-`render` draw the one they are asked for. `[stages.final] stop_after_phase`
+`render` draw the one they are asked for. `[run] stop_after`
 names the last phase to run; the phases after it do not run, and the stage still
 counts what it came to and writes its artifact.
 
@@ -422,7 +422,6 @@ The routing passes:
 | Key                             | Default   | Meaning                                                                                                   |
 | ------------------------------- | --------- | --------------------------------------------------------------------------------------------------------- |
 | `router`                        | `""`      | The implementation of the stage; empty takes `dubins`                                                     |
-| `stop_after_phase`              | `""`      | The last phase to run, by its name; empty runs all five                                                   |
 | `corridor_spacings`             | `11`      | The band to either side of its way a ring wire may move in, in wire spacings                              |
 | `inner_corridor_spacings`       | `11`      | The same for the inner circuit                                                                            |
 | `refinement_corridor_spacings`  | `6`       | The band of both refinements, in wire spacings; `0` takes `corridor_spacings`                             |

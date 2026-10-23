@@ -120,6 +120,12 @@ TEST(ChipJson, RejectsWhatTheLoaderDoesNotRead) {
       "sampleSpacing is not a number");
   expectThrowMentioning(R"({"obstacles": [], "ports": {}, "nets": {}})",
                         "nets is not an array");
+  expectThrowMentioning(
+      R"({"obstacles": [{"polygon": [[-1e999, 0], [1, 0], [1, 1]]}], "ports": {}})",
+      "not JSON");
+  expectThrowMentioning(
+      R"({"obstacles": [], "ports": {"P": {"center": [0, 0]}, "P": {"center": [1, 1]}}})",
+      "key 'P' twice");
 }
 
 TEST(ChipJson, NamesTheOffendingObstacleOrPort) {

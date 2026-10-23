@@ -9,7 +9,7 @@ from mqt.scpd.flatbuffers.geometry.Polygon import Polygon
 from typing import Optional
 np = import_numpy()
 
-# One partition of the free space, as the watershed left it.
+# One partition of the free space.
 class Partition(object):
     __slots__ = ['_tab']
 
@@ -40,7 +40,8 @@ class Partition(object):
         return 0
 
     # Closed rings in layout units. More than one where the partition has a
-    # hole, or the watershed left it in pieces.
+    # hole. The cells of a partition are four-connected, so a wire can cross
+    # it from any of its borders to any other.
     # Partition
     def Outlines(self, j: int) -> Optional[Polygon]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))

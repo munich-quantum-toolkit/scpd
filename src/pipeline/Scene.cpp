@@ -8,22 +8,31 @@
  * Licensed under the MIT License
  */
 
+#include "mqt-scpd/design/Bridges.hpp"
 #include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
-#include "mqt-scpd/design/Bridges.hpp"
+#include "mqt-scpd/grid/Partitions.hpp"
 #include "mqt-scpd/grid/PortBands.hpp"
 #include "mqt-scpd/grid/Rasterize.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
+#include "mqt-scpd/pipeline/Stages.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <optional>
 #include <stdexcept>
+#include <string>
+#include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -35,33 +44,23 @@ using flatbuffers::design::UnassignedRole;
 /// How far a port band reaches back against the direction a wire leaves the
 /// port, as a multiple of the forward reach.
 ///
-/// The band exists so that no other wire runs through a port's approach. It
-/// reaches further backward than forward because backward is into the
-/// component's own artwork, where a wire has no business being at all.
-///
-/// The prototype used three, and six for a qubit's second routing port,
-/// which it selected by testing the port's label for a leading `Q` and a
-/// trailing `1`. That test is a component model recovered from a name, which
-/// this port does not have and does not want; the longer band covered
-/// artwork the obstacle raster already blocks, so one factor is used for
-/// every port. A chip that needs more gets a documented override rather than
-/// a label test.
+/// The band exists so that no other wire runs through the approach of a port.
+/// It reaches further backward than forward because backward is into the
+/// artwork of the component, where no wire belongs. One factor holds for every
+/// port: a longer band would only cover artwork that the obstacle raster
+/// blocks already.
 constexpr double BACKWARD_BAND_FACTOR = 3.0;
 
-/// How much further forward a bridge port's band reaches than an ordinary
-/// port's.
+/// How much further forward the band of a bridge port reaches than that of an
+/// ordinary port.
 ///
 /// A wire does not stop at a bridge port: it crosses the component and leaves
-/// through the port's partner. Its approach therefore has to clear the
-/// component's own artwork, which lies exactly one component width ahead,
-/// instead of merely leaving the port. A single reach puts the target on the
-/// artwork's edge, in a pocket the surrounding bands close off, and a target
-/// that no free space surrounds takes no part in the capacity chains.
+/// through the paired port. Its approach therefore has to clear the artwork of
+/// the component, which lies one component width ahead, instead of merely
+/// leaving the port. With a single reach the target lands on the edge of the
+/// artwork, in a pocket the surrounding bands close off, and a target that no
+/// free space surrounds takes no part in the capacity chains.
 constexpr double BRIDGE_FORWARD_FACTOR = 2.0;
-
-/// The crossing pitch a configuration that names none falls back to, which is
-/// the default the schema declares.
-constexpr double DEFAULT_CROSSING_PITCH = 165.0;
 
 /// The capacity grid a configuration asks for.
 grid::GridMetrics capacityGrid(const geometry::BoundingBox& box,
@@ -69,62 +68,186 @@ grid::GridMetrics capacityGrid(const geometry::BoundingBox& box,
   if (params.capacity_cells_y == 0) {
     return grid::GridMetrics::fitWidth(box, params.capacity_cells_x);
   }
-  return grid::GridMetrics::fit(box, params.capacity_cells_x, params.capacity_cells_y);
+  return grid::GridMetrics::fit(box, params.capacity_cells_x,
+                                params.capacity_cells_y);
+}
+
+/// The grid section of a configuration. A configuration leaves out [grid]
+/// when every value in it is a default, so an absent section is one of
+/// defaults.
+const flatbuffers::config::GridParamsT& gridParamsOf(const ConfigT& config) {
+  static const flatbuffers::config::GridParamsT DEFAULTS;
+  return config.grid != nullptr ? *config.grid : DEFAULTS;
+}
+
+/// The capacity grid and the detail grid a configuration asks for.
+std::pair<grid::GridMetrics, grid::GridMetrics> gridsOf(const ChipT& chip,
+                                                        const ConfigT& config) {
+  const auto& params = gridParamsOf(config);
+  if (params.detail_factor == 0) {
+    throw std::invalid_argument(
+        "a detail grid of zero cells per capacity cell has no cells");
+  }
+  if (auto problem = detailGridProblem(chip, config)) {
+    throw std::invalid_argument(*std::move(problem));
+  }
+  const auto capacity = capacityGrid(grid::chipBounds(chip), params);
+  return {capacity, capacity.refined(params.detail_factor)};
 }
 
 } // namespace
+
+bool hasLauncherSlot(const flatbuffers::design::PortT& port) {
+  const auto step = grid::orientationStep(port.orientation);
+  return port.role == UnassignedRole::Launcher && (step.x != 0 || step.y != 0);
+}
+
+std::optional<std::string> detailGridProblem(const ChipT& chip,
+                                             const ConfigT& config) {
+  const auto& params = gridParamsOf(config);
+  if (params.capacity_cells_x == 0 || params.detail_factor == 0) {
+    return std::nullopt;
+  }
+  // The figures stay in floating point, so that no product of two 32-bit
+  // figures wraps around. They are whole numbers, and every one at or below
+  // the limit is exact.
+  const double capacityWidth = params.capacity_cells_x;
+  double capacityHeight = params.capacity_cells_y;
+  if (params.capacity_cells_y == 0) {
+    geometry::BoundingBox box;
+    try {
+      box = grid::chipBounds(chip);
+    } catch (const std::invalid_argument&) {
+      return std::nullopt;
+    }
+    const auto ratio = box.height() / box.width();
+    if (!std::isfinite(ratio) || !(ratio > 0.0)) {
+      return std::nullopt;
+    }
+    // GridMetrics::fitWidth() rounds the same way.
+    capacityHeight = std::max(std::round(capacityWidth * ratio), 2.0);
+  }
+  const double factor = params.detail_factor;
+  const auto width = capacityWidth * factor;
+  const auto height = capacityHeight * factor;
+  const auto cells = width * height;
+  if (cells <= static_cast<double>(MAX_DETAIL_CELLS)) {
+    return std::nullopt;
+  }
+  return std::format("[grid] asks for a detail grid of {:.0f} × {:.0f} = "
+                     "{:.0f} cells, a capacity grid of {:.0f} × {:.0f} cells "
+                     "times detail_factor {:.0f}; the limit is {} cells",
+                     width, height, cells, capacityWidth, capacityHeight,
+                     factor, MAX_DETAIL_CELLS);
+}
+
+std::vector<geometry::Point> launcherSlotPositions(const ChipT& chip,
+                                                   const ConfigT& config) {
+  const auto detail = gridsOf(chip, config).second;
+  std::vector<geometry::Point> positions;
+  for (const auto& port : chip.ports) {
+    if (hasLauncherSlot(*port)) {
+      const auto cell = detail.clampToCell(port->center);
+      positions.push_back(detail.toLayout(cell.x(), cell.y()));
+    }
+  }
+  return positions;
+}
 
 double crossingPitch(const ConfigT& config) {
   if (config.stages != nullptr && config.stages->capacity != nullptr) {
     return config.stages->capacity->crossing_pitch;
   }
-  return DEFAULT_CROSSING_PITCH;
+  return flatbuffers::config::CapacityParamsT{}.crossing_pitch;
+}
+
+std::vector<grid::Point> crossingSlots(const grid::PartitionBorder& border,
+                                       const CapacityScene& scene,
+                                       const double pitch) {
+  // The rectangle runs through the centers of the outermost launcher cells.
+  auto minX = std::numeric_limits<double>::max();
+  auto minY = std::numeric_limits<double>::max();
+  auto maxX = std::numeric_limits<double>::lowest();
+  auto maxY = std::numeric_limits<double>::lowest();
+  for (const auto cell : scene.launcherCell) {
+    const auto coordinate = scene.detail.cell(cell);
+    const auto x = static_cast<double>(coordinate.x()) + 0.5;
+    const auto y = static_cast<double>(coordinate.y()) + 0.5;
+    minX = std::min(minX, x);
+    minY = std::min(minY, y);
+    maxX = std::max(maxX, x);
+    maxY = std::max(maxY, y);
+  }
+  // Launchers on one line span no interval along that axis. The chip bounds
+  // hold the port centers, so such a line lies on the edge of the chip, and
+  // the grid bounds the slots along that axis instead.
+  const auto width = static_cast<double>(scene.detail.width);
+  const auto height = static_cast<double>(scene.detail.height);
+  if (minX == maxX) {
+    minX = 0.0;
+    maxX = width;
+  }
+  if (minY == maxY) {
+    minY = 0.0;
+    maxY = height;
+  }
+  // A launcher sits on the edge of the grid nearest to it. Where no launcher
+  // sits on an edge, no launcher stands behind a slot near it, and the grid
+  // bounds the slots on that side too. Without that, launchers on two
+  // opposite edges would cut every slot beyond the outermost of them.
+  std::array<bool, 4> sides{}; // left, right, bottom, top
+  for (const auto cell : scene.launcherCell) {
+    const auto coordinate = scene.detail.cell(cell);
+    const auto x = static_cast<double>(coordinate.x()) + 0.5;
+    const auto y = static_cast<double>(coordinate.y()) + 0.5;
+    const std::array<double, 4> away{x, width - x, y, height - y};
+    sides.at(static_cast<std::size_t>(std::ranges::min_element(away) -
+                                      away.begin())) = true;
+  }
+  minX = sides[0] ? minX : 0.0;
+  maxX = sides[1] ? maxX : width;
+  minY = sides[2] ? minY : 0.0;
+  maxY = sides[3] ? maxY : height;
+  // The samples outside the rectangle are dropped before the slots are
+  // picked. A slot picked outside and dropped afterwards would still keep
+  // every sample within one pitch of it from becoming a slot.
+  auto inside = border;
+  std::erase_if(inside.samples, [&](const grid::Point& sample) {
+    return sample.x() <= minX || sample.x() >= maxX || sample.y() <= minY ||
+           sample.y() >= maxY;
+  });
+  return grid::borderSlots(inside, scene.detail, pitch);
 }
 
 CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
-  if (config.grid == nullptr) {
-    throw std::invalid_argument("the configuration carries no grid section");
-  }
   if (config.rules == nullptr) {
     throw std::invalid_argument("the configuration carries no design rules");
   }
-  const auto& params = *config.grid;
   const auto& rules = *config.rules;
-  if (params.detail_factor == 0) {
-    throw std::invalid_argument("a detail grid of zero cells per capacity cell has no cells");
-  }
 
   CapacityScene scene;
-  const auto box = grid::chipBounds(chip);
-  scene.capacity = capacityGrid(box, params);
-  scene.detail = scene.capacity.refined(params.detail_factor);
+  std::tie(scene.capacity, scene.detail) = gridsOf(chip, config);
 
-  // The keepout is baked into the mask rather than checked afterwards, so
-  // every cell a later search may enter already satisfies the obstacle
-  // clearance. The corridors keep the ports themselves reachable.
+  // The mask carries no obstacle keepout. The keepout makes the clearance a
+  // hard constraint on a search, and nothing searches on this grid: the stage
+  // partitions the free space and counts what fits through it. A keepout
+  // would narrow every corridor by a fraction of a cell and move the medial
+  // axis, which is what this grid exists to find. The routing grids of the
+  // later stages carry it.
   //
-  // The configured launcher offset is a border of detail cells that stays
-  // blocked along each axis. It is what keeps a launcher's wires off the very
-  // edge of the grid, and without it the free space runs right to the border
-  // and every corridor near it looks wider than it is.
-  // No obstacle keepout here. The keepout is what makes the clearance a hard
-  // constraint on a *search*, and nothing searches on the capacity grid: the
-  // stage partitions free space and counts what fits through it. Baking a
-  // clearance in would narrow every corridor by a fraction of a cell and move
-  // the medial axis, which is the one thing this grid exists to find. The
-  // routing grids of the later stages carry it.
-  const auto raster = grid::rasterizeObstacles(chip, scene.detail,
-                                               {.borderX = params.launcher_offset_x,
-                                                .borderY = params.launcher_offset_y});
+  // No border of the grid stays blocked: the launchers sit on the edge of the
+  // grid, and a blocked border would wall them in.
+  const auto raster =
+      grid::rasterizeObstacles(chip, scene.detail, {.keepoutExemptions = {}});
   scene.blocked = raster.blocked;
   scene.reserved = grid::BitGrid(scene.detail.width, scene.detail.height);
   scene.keepout = grid::BitGrid(scene.detail.width, scene.detail.height);
 
   // The mask before any band, so that a target can be placed on a cell that
-  // was free of chip artwork even where a band has since covered it.
+  // was free of chip artwork even where a band has covered it since.
   const auto beforeBands = scene.blocked;
 
-  // Which ports carry a wire on across their component rather than ending it.
+  // Which ports carry a wire on across their component rather than end it.
   const design::BridgeRules noRules;
   const auto& bridgeRules =
       config.ports != nullptr ? config.ports->bridge_pairs : noRules;
@@ -143,19 +266,22 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
     const grid::PortBand band{
         .center = center,
         .step = step,
-        .forward = grid::bandLength(
-            (bridging[index] ? BRIDGE_FORWARD_FACTOR : 1.0) * rules.min_straight_length,
-            scene.detail, step.diagonal()),
-        .backward = grid::bandLength(BACKWARD_BAND_FACTOR * rules.min_straight_length,
-                                     scene.detail, step.diagonal()),
+        .forward =
+            grid::bandLength((bridging[index] ? BRIDGE_FORWARD_FACTOR : 1.0) *
+                                 rules.min_straight_length,
+                             scene.detail, step),
+        .backward =
+            grid::bandLength(BACKWARD_BAND_FACTOR * rules.min_straight_length,
+                             scene.detail, step),
         .halfWidth =
-            grid::bandHalfWidth(rules.min_wire_spacing, scene.detail, step.diagonal())};
+            grid::bandHalfWidth(rules.min_wire_spacing, scene.detail, step)};
 
     const auto stamped = grid::stampBand(scene.blocked, band);
-    for (std::size_t position = 0; position < stamped.cells.size(); ++position) {
+    for (std::size_t position = 0; position < stamped.cells.size();
+         ++position) {
       // A cell the band blocked that was free before is reserved, not
-      // artwork. A bottleneck that ends on one is a division of the space
-      // around a port rather than a wall.
+      // artwork. A bottleneck that ends on one divides the space around a
+      // port rather than meets a wall.
       if (!stamped.wasBlocked[position]) {
         scene.reserved.set(stamped.cells[position], true);
         scene.keepout.set(stamped.cells[position], true);
@@ -171,27 +297,28 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
     }
   }
 
-  // A launcher's slot is the launcher, and nothing is blocked around it.
-  //
-  // It used to be neither. The slot was set a fixed number of cells along the
-  // orientation and then one half band width further, and the squares it swept
-  // on the way were blocked at the wire spacing — so every wire of the design
-  // started at a point some two hundred layout units in front of the port that
-  // feeds it, on a contour of its own, and the free space near the ring was
-  // the ring less those squares. Neither figure was a length: the sweep was
-  // six cells of the detail grid, which is 114 layout units on the 17-qubit
-  // chip and 240 on the 9-qubit one.
-  //
-  // The slot is the cell the port's centre rounds to. The cell is freed,
-  // because a wire has to be able to stand where it starts, and that is the
-  // only cell this loop touches.
+  // A chain reaches a target through its cell and puts the port of that cell
+  // on the chain. Two targets on one cell would leave one of the two ports on
+  // no chain, and the Global stage would never count its wire.
+  std::unordered_map<std::size_t, std::uint32_t> portAtCell;
+  for (std::size_t index = 0; index < scene.targetCell.size(); ++index) {
+    const auto [held, added] =
+        portAtCell.emplace(scene.targetCell[index], scene.targetPort[index]);
+    if (!added) {
+      throw std::invalid_argument(std::format(
+          "the targets of the ports {} and {} lie on one cell of the detail "
+          "grid; a larger [grid] detail_factor makes the cells smaller",
+          chip.ports[held->second]->label,
+          chip.ports[scene.targetPort[index]]->label));
+    }
+  }
+
+  // The slot of a launcher is the cell its center rounds to, and nothing is
+  // blocked around it. The cell is freed, because a wire has to be able to
+  // stand where it starts, and it is the only cell this loop touches.
   for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
     const auto& port = *chip.ports[index];
-    if (port.role != UnassignedRole::Launcher) {
-      continue;
-    }
-    const auto step = grid::orientationStep(port.orientation);
-    if (step.x == 0 && step.y == 0) {
+    if (!hasLauncherSlot(port)) {
       continue;
     }
     const auto center = scene.detail.clampToCell(port.center);
@@ -203,25 +330,18 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
   }
 
   if (scene.launcherCell.empty()) {
-    throw std::invalid_argument("the chip carries no launcher a wire could be routed to");
+    throw std::invalid_argument(
+        "the chip carries no launcher a wire could be routed to");
   }
 
   // A target has to be reachable, and the bands are stamped one port at a
-  // time: a port's band can cover a target that an earlier port already
-  // placed, and the two ports of a coupler bridge sit close enough together
-  // that it regularly does. A target buried like that starts no chain at all,
-  // so the whole region behind it drops out of the partitioning.
-  //
-  // Only band cells are freed. A target that landed on chip artwork is a
-  // different problem and is left alone, because opening artwork would let a
-  // wire route through a component.
+  // time: the band of a port can cover a target that an earlier port placed,
+  // and the two ports of a coupler bridge sit close enough together that it
+  // happens regularly. A target buried like that starts no chain, and the
+  // whole region behind it drops out of the partitioning. Only band cells are
+  // freed; a target on chip artwork stays blocked, because opening artwork
+  // would let a wire run through a component.
   for (const auto cell : scene.targetCell) {
-    if (scene.reserved.test(cell)) {
-      scene.blocked.set(cell, false);
-      scene.reserved.set(cell, false);
-    }
-  }
-  for (const auto cell : scene.launcherCell) {
     if (scene.reserved.test(cell)) {
       scene.blocked.set(cell, false);
       scene.reserved.set(cell, false);

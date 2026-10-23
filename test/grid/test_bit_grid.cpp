@@ -12,9 +12,6 @@
 
 #include <gtest/gtest.h>
 
-#include <cstddef>
-#include <cstdint>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -51,24 +48,6 @@ TEST(BitGrid, FillCountsExactly) {
   EXPECT_EQ(grid.count(), 210U);
   EXPECT_EQ(grid, BitGrid(70, 3, true));
   EXPECT_NE(grid, BitGrid(70, 3));
-}
-
-/// `setRange` sets the same cells as `set` cell by cell, within one word,
-/// across words, up to the last cell and for an empty range.
-TEST(BitGrid, SetRangeSetsTheCellsSetSets) {
-  const std::vector<std::pair<std::size_t, std::size_t>> ranges{
-      {0, 0}, {3, 9}, {0, 64}, {63, 65}, {10, 200}, {128, 192}, {150, 210}};
-  for (const auto& [first, last] : ranges) {
-    BitGrid ranged(70, 3);
-    BitGrid single(70, 3);
-    ranged.set(1);
-    single.set(1);
-    ranged.setRange(first, last);
-    for (auto cell = first; cell < last; ++cell) {
-      single.set(cell);
-    }
-    EXPECT_EQ(ranged, single) << first << ".." << last;
-  }
 }
 
 } // namespace

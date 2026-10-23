@@ -9,13 +9,12 @@ from typing import Optional
 np = import_numpy()
 
 # One rule that pairs the two ports a wire crosses a component between.
-# Each side is a regular expression with exactly one capture group, and two
+# Each side is a regular expression with exactly one capture group. Two
 # ports pair when they belong to one component and their captures are equal.
 #
 # The pairing is declared rather than measured. Opposite orientation and
-# shortest distance do pick the right two ports on the benchmark chips, but
-# they are a property of the artwork and not a statement of intent, and
-# nothing checked that the two agreed.
+# shortest distance pick the right two ports on the benchmark chips, but
+# they are a property of the artwork and not a statement of intent.
 class BridgeRule(object):
     __slots__ = ['_tab']
 

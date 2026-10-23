@@ -73,7 +73,7 @@ def _run_tests(
     pytest_run_args: Sequence[str] = (),
 ) -> None:
     env = {"UV_PROJECT_ENVIRONMENT": session.virtualenv.location}
-    if shutil.which("cmake") is None and shutil.which("cmake3") is None:
+    if shutil.which("cmake") is None:
         session.install("cmake")
     if shutil.which("ninja") is None:
         session.install("ninja")
@@ -121,6 +121,18 @@ def tests(session: nox.Session) -> None:
     _run_tests(session)
 
 
+@nox.session(python="3.14", reuse_venv=True)
+def benchmarks(session: nox.Session) -> None:
+    """Check the benchmark chips of planar-superconducting-pd.
+
+    Set ``MQT_SCPD_BENCHMARKS`` to a clone of https://github.com/cda-tum/planar-superconducting-pd.
+    CI checks out the commit that ``.github/workflows/benchmarks.yml`` pins.
+    """
+    if not os.environ.get("MQT_SCPD_BENCHMARKS"):
+        session.error("set MQT_SCPD_BENCHMARKS to a clone of https://github.com/cda-tum/planar-superconducting-pd")
+    _run_tests(session, pytest_run_args=["test/python/benchmarks"])
+
+
 @nox.session(python=PYTHON_ALL_VERSIONS, reuse_venv=True, venv_backend="uv", default=True)
 def minimums(session: nox.Session) -> None:
     """Test the minimum versions of dependencies."""
@@ -134,7 +146,7 @@ def minimums(session: nox.Session) -> None:
         session.run("uv", "tree", "--frozen", env=env)
 
 
-@nox.session(reuse_venv=True)
+@nox.session(python="3.14", reuse_venv=True)
 def docs(session: nox.Session) -> None:
     """Build the docs. Use "--non-interactive" to avoid serving. Pass "-b linkcheck" to check links."""
     parser = argparse.ArgumentParser()
@@ -227,7 +239,7 @@ def schemas(session: nox.Session) -> None:
     generator always matches the runtime. Pass ``--check`` to fail when the committed code is stale.
     """
     check = "--check" in session.posargs
-    if shutil.which("cmake") is None and shutil.which("cmake3") is None:
+    if shutil.which("cmake") is None:
         session.install("cmake")
     if shutil.which("ninja") is None:
         session.install("ninja")
@@ -264,6 +276,10 @@ def schemas(session: nox.Session) -> None:
             "--gen-object-api",
             "--gen-compare",
             "--scoped-enums",
+            # The type tables these emit let the core render an artifact as JSON from the schema
+            # itself, so that no second field list has to be kept in step with it.
+            "--reflect-types",
+            "--reflect-names",
             "--cpp-std",
             "c++17",
             "--filename-suffix",

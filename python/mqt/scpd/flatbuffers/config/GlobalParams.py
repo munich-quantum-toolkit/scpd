@@ -8,7 +8,7 @@ from typing import Any
 from typing import Optional
 np = import_numpy()
 
-# What the Global stage is allowed to do.
+# What the Global stage may do.
 class GlobalParams(object):
     __slots__ = ['_tab']
 
@@ -27,7 +27,8 @@ class GlobalParams(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # The implementation, by the name it is registered under.
+    # The implementation, by the name it is registered under. Empty selects
+    # the default.
     # GlobalParams
     def Router(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -35,13 +36,12 @@ class GlobalParams(object):
             return self._tab.String(o + self._tab.Pos)
         return None
 
-    # Whether an inner wire may cross a component the outer ring does not
+    # Whether an inner wire may cross a component that the outer ring does not
     # reach, through one of that component's own bridges.
     #
-    # Off by default. Such a crossing is a wire that enters a coupler the
-    # assignment never sees and leaves on the far side, so where it runs is
-    # decided by nothing the later stages can read back. The prototype allows
-    # it and has no way to say otherwise.
+    # Off by default. Such a wire enters a coupler that the assignment never
+    # sees and leaves on the far side, so nothing a later stage reads says
+    # where it runs.
     # GlobalParams
     def InternalBridges(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))

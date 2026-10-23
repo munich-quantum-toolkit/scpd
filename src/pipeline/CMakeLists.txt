@@ -6,8 +6,6 @@
 #
 # Licensed under the MIT License
 
-# The stage artifacts belong to MQT::ScpdIO, which owns artifacts.fbs; the pipeline reaches them
-# through that module rather than claiming the generated header a second time.
 add_mqt_scpd_library(
   pipeline
   LINK_LIBRARIES

@@ -8,8 +8,9 @@
 
 """The KLayout adapter: GDSII and OASIS from the chip model.
 
-KLayout is imported when a file is written, so that the package imports without it. Install
-``mqt-scpd[klayout]`` to render layouts.
+The module needs KLayout and therefore imports it, so importing the module fails without it.
+Ask :data:`mqt.scpd.export.HAS_KLAYOUT` before importing when the dependency may be absent;
+install ``mqt-scpd[klayout]`` to have it.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import starmap
 from typing import TYPE_CHECKING
+
+import klayout.db as kdb
 
 from ..chip import obstacles_of, ports_of, role_name, vertices_of
 
@@ -26,57 +29,42 @@ if TYPE_CHECKING:
     from ..flatbuffers.design.Chip import ChipT
     from ..planning import PlanningGeometry
 
-#: The layer that carries the obstacle polygons.
+#: The layer that carries the obstacle polygons, as in the published layouts of planar-superconducting-pd.
 OBSTACLE_LAYER = (1, 0)
 
-#: The layer of the port labels; the datatype is the port's role value.
-PORT_LAYER = 2
+#: The layer of the port labels; the datatype is the port's role value. The published layouts use layers 1 to 5
+#: for the obstacles and the routing result, so the labels stay clear of them.
+PORT_LAYER = 10
 
-#: The layer each planning shape goes on, with the name KLayout shows it under. They start at 10
-#: so that the artwork keeps the layers it has and the overlay can be switched off as a block.
+#: The layer of each kind of planning shape, with the name KLayout shows it under. The layers start
+#: at 20, so the artwork and the port labels keep theirs and the overlay can be switched off as a
+#: block.
 #:
-#: The planning stages are not manufacturable geometry and do not claim to be. They are here
-#: because a partition border that exists only in an SVG cannot be measured against the artwork it
-#: has to respect, and KLayout is where that measuring happens.
+#: The planning shapes are not geometry to manufacture. They are in the file because KLayout is
+#: where a partition border is measured against the artwork it has to respect.
 PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
-    "keepout": (9, 0, "plan.port-keepout"),
-    "partitions": (10, 0, "plan.partition"),
-    "borders": (11, 0, "plan.border"),
-    "bottlenecks": (12, 0, "plan.bottleneck"),
-    "launchers": (13, 0, "plan.launcher"),
-    "chains": (14, 0, "plan.chain"),
-    "lattice": (15, 0, "plan.lattice"),
-    "inner": (16, 0, "plan.inner-circuit"),
-    "assignments": (17, 0, "plan.assignment"),
-    "ring": (18, 0, "plan.ring"),
-    "corridors": (19, 0, "plan.corridor"),
-    "slots": (20, 0, "plan.slot"),
-    "wires": (21, 0, "plan.wire"),
-    "inner_wires": (22, 0, "plan.inner-wire"),
-    "clearance": (23, 0, "plan.clearance"),
-    # One layer per phase of the Final stage, so that a single GDS shows all five and each can be
-    # switched off on its own. A phase changes what the phase before it produced, so none of the
-    # five can be derived from another.
-    "phase.pre-feedline-routing": (24, 0, "final.pre-feedline-routing"),
-    "phase.pre-feedline-refinement": (25, 0, "final.pre-feedline-refinement"),
-    "phase.feedline-insertion": (26, 0, "final.feedline-insertion"),
-    "phase.feedline-constrained-routing": (27, 0, "final.feedline-constrained-routing"),
-    "phase.feedline-constrained-refinement": (28, 0, "final.feedline-constrained-refinement"),
-    # The wires the Final stage left failing at its end, by its own count, so that a boolean
-    # against `plan.wire` finds them without the log.
-    "failing": (29, 0, "final.failing"),
-    # The feedline edges the coupler insertion found leaving too little room beside them.
-    "squeezed": (30, 0, "final.squeezed"),
-    # The resonators the Final stage left off their target length, short or long, which is the
-    # second figure of the fifth phase and a layer of its own rather than a part of `failing`.
-    "offlength": (31, 0, "final.off-length"),
+    "keepout": (20, 0, "plan.port-keepout"),
+    "partitions": (21, 0, "plan.partition"),
+    "borders": (22, 0, "plan.border"),
+    "bottlenecks": (23, 0, "plan.bottleneck"),
+    "launchers": (24, 0, "plan.launcher"),
+    "chains": (25, 0, "plan.chain"),
+    "lattice": (26, 0, "plan.lattice"),
+    "inner": (27, 0, "plan.inner-circuit"),
+    "assignments": (28, 0, "plan.assignment"),
+    "ring": (29, 0, "plan.ring"),
+    "corridors": (30, 0, "plan.corridor"),
+    "slots": (31, 0, "plan.slot"),
+    "feedlines": (32, 0, "plan.feedline"),
+    "blocked": (33, 0, "plan.blocked"),
+    "budgets": (34, 0, "plan.budget"),
 }
 
-#: How wide a planning line is drawn, in layout units. A path needs a width to be a shape at all;
-#: this one is chosen to be visible beside the artwork and carries no design meaning.
+#: The width of a planning line, in layout units. A path needs a width to be a shape at all; this
+#: one is visible beside the artwork and carries no design meaning.
 PLANNING_LINE_WIDTH = 20.0
 
-#: The radius of a launcher marker, in layout units.
+#: The half width of a launcher marker, in layout units; a slot marker is a third of it.
 PLANNING_MARKER_RADIUS = 60.0
 
 #: The file suffixes KLayout writes, with the format each selects.
@@ -86,8 +74,8 @@ FORMATS: dict[str, str] = {".gds": "GDS2", ".gds2": "GDS2", ".oas": "OASIS"}
 DATABASE_UNIT = 0.001
 
 
-class ExportError(RuntimeError):
-    """A layout that cannot be written."""
+class ExportError(ValueError):
+    """A layout that cannot be written, because the file names no supported format."""
 
 
 @dataclass(frozen=True)
@@ -98,7 +86,7 @@ class ExportSummary:
     format: str
     polygons: int
     ports: int
-    #: The planning shapes written beside the artwork, zero when none were.
+    #: The planning shapes written beside the artwork, zero when there were none.
     planning: int = 0
 
 
@@ -111,10 +99,10 @@ def write_layout(
 ) -> ExportSummary:
     """Write the chip as GDSII or OASIS, chosen by the file suffix.
 
-    The obstacles go to layer 1 as polygons. Every port becomes a text with its label on layer 2,
+    The obstacles go to layer 1 as polygons. Every port becomes a text with its label on layer 10,
     with the role's value as the datatype, so that the roles can be shown and hidden separately.
     What a planning stage produced goes on the layers of ``PLANNING_LAYERS``, one per kind of
-    shape, above the artwork and switchable off.
+    shape.
 
     Args:
         chip: The classified chip.
@@ -126,17 +114,12 @@ def write_layout(
         A summary of what was written.
 
     Raises:
-        ExportError: If KLayout is not installed or the suffix names no supported format.
+        ExportError: If the suffix names no supported format.
     """
     suffix = path.suffix.lower()
     if suffix not in FORMATS:
         msg = f"{path}: the suffix must be one of {', '.join(FORMATS)}"
         raise ExportError(msg)
-    try:
-        import klayout.db as kdb  # ruff: ignore[import-outside-top-level]
-    except ImportError as error:
-        msg = "KLayout is not installed; install mqt-scpd[klayout] to write layouts"
-        raise ExportError(msg) from error
 
     layout = kdb.Layout()
     layout.dbu = DATABASE_UNIT
@@ -157,17 +140,18 @@ def write_layout(
         layer = layout.layer(PORT_LAYER, port.role, role_name(port.role))
         top.shapes(layer).insert(kdb.DText(port.label or "", kdb.DTrans(kdb.DVector(center.x, center.y))))
         ports += 1
-
-    shapes = _write_planning(kdb, layout, top, planning) if planning is not None else 0
+    shapes = _write_planning(layout, top, planning) if planning is not None else 0
     layout.write(str(path))
     return ExportSummary(path, FORMATS[suffix], polygons, ports, shapes)
 
 
-def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # ruff: ignore[missing-type-function-argument]
-    """Write the shapes of one planning stage onto their own layers.
+def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometry) -> int:
+    """Write the shapes of one planning stage onto their layers.
 
-    A partition is a polygon and everything else is a path, because that is what each of them
-    actually is: an area of the free space, or a line across or along it.
+    A partition, a keepout and a blocked cell are polygons, because they are areas of the grid. The
+    wire budget of a bottleneck is a text at the middle of its line, on a layer of its own. A
+    corridor and the approach to its target port are paths on the same layer. Everything else is a
+    path or a small square, because it is a line across or along the free space, or a point on it.
 
     Returns:
         How many shapes were written.
@@ -177,34 +161,39 @@ def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # ruf
         number, datatype, label = PLANNING_LAYERS[name]
         return layout.layer(number, datatype, label)
 
-    def path(points: list[tuple[float, float]]) -> object:
+    def path(points: list[tuple[float, float]]) -> kdb.DPath:
         return kdb.DPath(list(starmap(kdb.DPoint, points)), PLANNING_LINE_WIDTH)
 
+    def square(x: float, y: float, radius: float) -> kdb.DPolygon:
+        return kdb.DPolygon(kdb.DBox(x - radius, y - radius, x + radius, y + radius))
+
     written = 0
+    keepout = kdb.Region()
     for ring in planning.keepout:
-        top.shapes(layer("keepout")).insert(kdb.DPolygon(list(starmap(kdb.DPoint, ring))))
+        keepout ^= kdb.Region(kdb.DPolygon(list(starmap(kdb.DPoint, ring))).to_itype(layout.dbu))
+    top.shapes(layer("keepout")).insert(keepout)
+    written += keepout.count()
+    for ring in planning.blocked:
+        top.shapes(layer("blocked")).insert(kdb.DPolygon(list(starmap(kdb.DPoint, ring))))
         written += 1
-    for ring in planning.partitions:
-        top.shapes(layer("partitions")).insert(kdb.DPolygon(list(starmap(kdb.DPoint, ring))))
+    for partition in planning.partitions:
+        # The rings of a partition are combined even-odd, so a ring inside another one is a hole.
+        region = kdb.Region()
+        for ring in partition:
+            region ^= kdb.Region(kdb.DPolygon(list(starmap(kdb.DPoint, ring))).to_itype(layout.dbu))
+        top.shapes(layer("partitions")).insert(region)
         written += 1
-    for border in planning.borders:
+    for border in [*planning.borders, *planning.enclosed_borders]:
         if len(border) >= 2:
             top.shapes(layer("borders")).insert(path(border))
             written += 1
-    for first, second, _ in planning.bottlenecks:
+    for first, second, budget in planning.bottlenecks:
         top.shapes(layer("bottlenecks")).insert(path([first, second]))
-        written += 1
+        middle = kdb.DVector((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
+        top.shapes(layer("budgets")).insert(kdb.DText(str(budget), kdb.DTrans(middle)))
+        written += 2
     for x, y in planning.launchers:
-        top.shapes(layer("launchers")).insert(
-            kdb.DPolygon(
-                kdb.DBox(
-                    x - PLANNING_MARKER_RADIUS,
-                    y - PLANNING_MARKER_RADIUS,
-                    x + PLANNING_MARKER_RADIUS,
-                    y + PLANNING_MARKER_RADIUS,
-                )
-            )
-        )
+        top.shapes(layer("launchers")).insert(square(x, y, PLANNING_MARKER_RADIUS))
         written += 1
     for name, segments in (
         ("chains", planning.chains),
@@ -212,72 +201,22 @@ def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # ruf
         ("inner", planning.inner),
         ("assignments", planning.assignments),
     ):
-        target = layer(name)
         for first, second in segments:
             if first != second:
-                top.shapes(target).insert(path([first, second]))
+                top.shapes(layer(name)).insert(path([first, second]))
                 written += 1
     if len(planning.ring) >= 2:
         top.shapes(layer("ring")).insert(path([*planning.ring, planning.ring[0]]))
         written += 1
-    for route in planning.corridors:
+    for route in [*planning.corridors, *planning.stubs]:
         if len(route) >= 2:
             top.shapes(layer("corridors")).insert(path(route))
             written += 1
-    for name, drawn in planning.phases.items():
-        key = f"phase.{name}"
-        if key not in PLANNING_LAYERS:
-            continue
-        target = layer(key)
-        for route in drawn:
-            if len(route) >= 2:
-                top.shapes(target).insert(path(route))
-                written += 1
-    for name, routes in (("wires", planning.wires), ("inner_wires", planning.inner_wires)):
-        target = layer(name)
-        for route in routes:
-            if len(route) >= 2:
-                top.shapes(target).insert(path(route))
-                written += 1
-    if planning.failing:
-        target = layer("failing")
-        for _, _, route in planning.failing:
-            if len(route) >= 2:
-                top.shapes(target).insert(path(route))
-                written += 1
-    if planning.off_length:
-        target = layer("offlength")
-        for _, _, route in planning.off_length:
-            if len(route) >= 2:
-                top.shapes(target).insert(path(route))
-                written += 1
-    if planning.squeezed:
-        target = layer("squeezed")
-        for _, _, route, line in planning.squeezed:
-            for shape in (route, line):
-                if len(shape) >= 2:
-                    top.shapes(target).insert(path(shape))
-                    written += 1
-    # The room every wire is entitled to, as a path one clearance wide — the design rule as the
-    # router converted it to whole cells, not the rule itself. Two wires closer than that are two
-    # of these that overlap, which is what a boolean on this layer finds; the layer carries no
-    # manufacturing intent, like the rest of the overlay.
-    if planning.clearance > 0:
-        target = layer("clearance")
-        for route in (*planning.wires, *planning.inner_wires):
-            if len(route) >= 2:
-                top.shapes(target).insert(kdb.DPath(list(starmap(kdb.DPoint, route)), planning.clearance))
-                written += 1
     for x, y in planning.slots:
-        top.shapes(layer("slots")).insert(
-            kdb.DPolygon(
-                kdb.DBox(
-                    x - PLANNING_MARKER_RADIUS / 3,
-                    y - PLANNING_MARKER_RADIUS / 3,
-                    x + PLANNING_MARKER_RADIUS / 3,
-                    y + PLANNING_MARKER_RADIUS / 3,
-                )
-            )
-        )
+        top.shapes(layer("slots")).insert(square(x, y, PLANNING_MARKER_RADIUS / 3))
         written += 1
+    for feedline in planning.feedlines:
+        if len(feedline.points) >= 2:
+            top.shapes(layer("feedlines")).insert(path(feedline.points))
+            written += 1
     return written

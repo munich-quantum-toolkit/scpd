@@ -25,108 +25,237 @@
 
 namespace mqt::scpd::pipeline {
 
-/// The implementations of one stage interface, by name.
-///
-/// Swapping an algorithm is a stated requirement of a research tool, and this
-/// is the whole mechanism: a name, a factory, and a list. There is no plugin
-/// loading and no configuration language. The first release registers one
-/// implementation per stage, which is expected rather than a smell — the
-/// second one becomes a new file rather than a refactor.
+/**
+ * @brief The implementations of one stage interface, by name.
+ *
+ * Swapping an algorithm is a stated requirement of a research tool, and this
+ * is the whole mechanism: a name, a factory and a list. The first release
+ * registers one implementation per stage; a second one becomes a new file
+ * rather than a refactor.
+ *
+ * @tparam Interface The stage interface.
+ */
 template <typename Interface> class Registry {
 public:
+  /// What builds an implementation.
   using Factory = std::function<std::unique_ptr<Interface>()>;
 
-  /// Register a factory under a name.
-  ///
-  /// @throws std::invalid_argument when the name is empty or taken.
+  /**
+   * @brief Registers a factory under a name.
+   * @param name The name.
+   * @param factory The factory.
+   * @throws std::invalid_argument When the name is empty or taken.
+   */
   void add(std::string name, Factory factory) {
     if (name.empty()) {
       throw std::invalid_argument("a registered implementation needs a name");
     }
-    if (factories_.contains(name)) {
+    if (factoryByName.contains(name)) {
       throw std::invalid_argument(
           std::format("'{}' is already registered", name));
     }
-    factories_.emplace(std::move(name), std::move(factory));
+    factoryByName.emplace(std::move(name), std::move(factory));
   }
 
-  /// Build the implementation a name stands for.
-  ///
-  /// @throws std::invalid_argument when the name is not registered. The
-  /// message lists what is.
+  /**
+   * @brief Builds the implementation a name stands for.
+   * @param name The name.
+   * @return The implementation.
+   * @throws std::invalid_argument When the name is not registered. The message
+   * lists the names that are.
+   */
   [[nodiscard]] std::unique_ptr<Interface>
   make(const std::string_view name) const {
-    const auto found = factories_.find(std::string(name));
-    if (found == factories_.end()) {
+    const auto found = factoryByName.find(std::string(name));
+    if (found == factoryByName.end()) {
       std::string known;
-      for (const auto& [registered, _] : factories_) {
+      for (const auto& [registered, factory] : factoryByName) {
         known += known.empty() ? "" : ", ";
         known += registered;
       }
       throw std::invalid_argument(std::format(
-          "'{}' is no known implementation; the registered ones are {}", name,
-          known.empty() ? "none" : known));
+          "'{}' is not a known implementation; the registered ones are {}",
+          name, known.empty() ? "none" : known));
     }
     return found->second();
   }
 
-  /// The registered names, in order.
+  /**
+   * @brief Lists the registered names.
+   * @return The names, sorted, so that a listing is the same on every run.
+   */
   [[nodiscard]] std::vector<std::string> names() const {
     std::vector<std::string> registered;
-    registered.reserve(factories_.size());
-    for (const auto& [name, _] : factories_) {
+    registered.reserve(factoryByName.size());
+    for (const auto& [name, factory] : factoryByName) {
       registered.push_back(name);
     }
     return registered;
   }
 
+  /**
+   * @brief Checks whether a name is registered.
+   * @param name The name.
+   * @return @c true when a factory is registered under it.
+   */
   [[nodiscard]] bool contains(const std::string_view name) const {
-    return factories_.contains(std::string(name));
+    return factoryByName.contains(std::string(name));
   }
 
 private:
-  // Ordered, so `names()` is the same on every run and every platform.
-  std::map<std::string, Factory> factories_;
+  std::map<std::string, Factory> factoryByName;
 };
 
-/// The implementations this build ships, one registry per stage.
+/**
+ * @brief Returns the capacity planners this build ships.
+ * @return The registry.
+ */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<ICapacityPlanner>&
 capacityPlanners();
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IGlobalRouter>&
-globalRouters();
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IAssigner>& assigners();
 
-/// The corridor routers this build ships.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<ICorridorRouter>&
-corridorRouters();
-
-/// The detail routers this build ships.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IDetailRouter>&
-detailRouters();
-
-/// The final routers this build ships.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IFinalRouter>&
-finalRouters();
-
-/// The name a configuration selects for a stage, or the stage's default when
-/// the configuration names none.
+/**
+ * @brief Returns the capacity planner a configuration selects.
+ * @param config The run configuration.
+ * @return The configured name, or the default when the configuration names
+ * none.
+ */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
 selectedCapacityPlanner(const ConfigT& config);
+
+/**
+ * @brief Returns the global routers this build ships.
+ * @return The registry.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IGlobalRouter>&
+globalRouters();
+
+/**
+ * @brief Returns the global router a configuration selects.
+ * @param config The run configuration.
+ * @return The configured name, or the default when the configuration names
+ * none.
+ */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
 selectedGlobalRouter(const ConfigT& config);
+
+/**
+ * @brief Returns the assigners this build ships.
+ * @return The registry.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IAssigner>& assigners();
+
+/**
+ * @brief Returns the assigner a configuration selects.
+ * @param config The run configuration.
+ * @return The configured name, or the default when the configuration names
+ * none.
+ */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
 selectedAssigner(const ConfigT& config);
 
-/// The corridor router a configuration selects, or the default.
+/**
+ * @brief Returns the corridor routers this build ships.
+ * @return The registry.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<ICorridorRouter>&
+corridorRouters();
+
+/**
+ * @brief Returns the corridor router a configuration selects.
+ * @param config The run configuration.
+ * @return The configured name, or the default when the configuration names
+ * none.
+ */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
 selectedCorridorRouter(const ConfigT& config);
 
-/// The detail router a configuration selects, or the default.
+/**
+ * @brief Returns the detail routers this build ships.
+ * @return The registry.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IDetailRouter>&
+detailRouters();
+
+/**
+ * @brief Returns the detail router a configuration selects.
+ * @param config The run configuration.
+ * @return The configured name, or the default when the configuration names
+ * none.
+ */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
 selectedDetailRouter(const ConfigT& config);
 
-/// The final router a configuration selects, or the default.
+/**
+ * @brief Returns the final routers this build ships.
+ * @return The registry.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IFinalRouter>&
+finalRouters();
+
+/**
+ * @brief Returns the final router a configuration selects.
+ * @param config The run configuration.
+ * @return The configured name, or the default when the configuration names
+ * none.
+ */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
 selectedFinalRouter(const ConfigT& config);
+
+/**
+ * @brief Lists what would stop a run of the planning stages, before any stage
+ * runs.
+ *
+ * A stage refuses these configurations too, but only once the stages before
+ * it have run. The check reads only the chip and the configuration:
+ *
+ * - every step names an implementation this build registers;
+ * - a run through the capacity, assignment or corridor step asks for a detail
+ *   grid of at most MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
+ * - a run through the global step has a ring that innerCircuitOf() accepts;
+ * - a run through the assignment sets `[stages.assignment] launcher_target`;
+ * - `launcher_target` plus `[design_rules] feedline_terminations` is even,
+ *   since every feedline chain has two ends;
+ * - the chip input lists its launchers against the direction of the port
+ *   ring, as launcherOrderProblem() checks;
+ * - a chip with a resonator has at least three launchers that do not all lie
+ *   on one line, as launcherPlacesProblem() checks;
+ * - every ring that the global step can leave has counts that the assignment
+ *   accepts, as ringCountProblem() checks.
+ *
+ * @param chip The classified chip.
+ * @param config The run configuration.
+ * @param steps The steps the run takes: `capacity`, `global`, `assign` or
+ * `corridor`. The check skips any other name.
+ * @return The problems, empty when there are none.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<std::string>
+planProblems(const ChipT& chip, const ConfigT& config,
+             const std::vector<std::string>& steps);
+
+/**
+ * @brief Lists the steps of a run that solve a mixed-integer program, and so
+ * need the solver backend.
+ *
+ * The function names the solving steps from the implementations that
+ * globalRouters() and assigners() register: the global router `hanan-milp`
+ * and the assigner `ordered-milp`. Each of them is the only implementation of
+ * its stage, and each of them solves a mixed-integer program. An implementation
+ * that solves no program has to change this function.
+ *
+ * The assignment always solves. The global step solves only where the chip
+ * has an inner circuit, as innerCircuitOf() derives it. A global step whose
+ * capacity chains reach no inner target solves nothing either, but that is
+ * known only once the capacity step has run, so the list keeps such a step.
+ * A ring that innerCircuitOf() refuses stops the global step anyway, as
+ * planProblems() reports, and the list keeps that step too.
+ *
+ * @param chip The classified chip.
+ * @param config The run configuration.
+ * @param steps The steps the run takes, in the names of planProblems().
+ * @return The steps of @p steps that solve, in their order.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<std::string>
+solvingSteps(const ChipT& chip, const ConfigT& config,
+             const std::vector<std::string>& steps);
 
 } // namespace mqt::scpd::pipeline

@@ -59,7 +59,9 @@ class GlobalRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         return o == 0
 
-    # The inner-circuit connections the solved flow implies.
+    # The connections of the inner circuit that the solved flow implies. A
+    # wire that reaches no target or a closed loop over crossings, which only
+    # a solve that stops early keeps, is not among them.
     # GlobalRouting
     def Connections(self, j: int) -> Optional[Connection]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -84,9 +86,10 @@ class GlobalRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         return o == 0
 
-    # The outer port ring the Assignment stage consumes. The inner circuit
-    # extends the configured ring with the coupler ports it surfaces at, so
-    # this is what the assignment reads and not the configuration.
+    # The outer port ring that the Assignment stage consumes: the configured
+    # ring in its order, without the ring end of each outer bridge where no
+    # inner wire surfaces. The assignment reads this ring and not the
+    # configuration.
     # GlobalRouting
     def OuterRing(self, j: int) -> Optional[PortRef]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
@@ -110,7 +113,9 @@ class GlobalRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         return o == 0
 
-    # The resonator ports the assignment has to give a launcher.
+    # The resonator ports of the chip, and the ring ports where the inner
+    # wire of a resonator surfaces. The Assignment stage treats the ring
+    # nodes among them as resonators.
     # GlobalRouting
     def Resonators(self, j: int) -> Optional[PortRef]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
@@ -134,6 +139,8 @@ class GlobalRouting(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
         return o == 0
 
+    # The length of the lattice edges that the connections take, in layout
+    # units.
     # GlobalRouting
     def Objective(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))

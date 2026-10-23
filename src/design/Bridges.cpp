@@ -17,8 +17,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <regex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::design {
@@ -31,20 +33,22 @@ struct CompiledRule {
   std::regex second;
 };
 
-std::vector<CompiledRule> compile(const BridgeRules& rules) {
-  std::vector<CompiledRule> compiled;
+/// One entry per configured rule, so that a match names the rule by its
+/// position in the configuration. A rule that is missing or does not compile
+/// has no entry and matches nothing; design::validate reports it.
+std::vector<std::optional<CompiledRule>> compile(const BridgeRules& rules) {
+  std::vector<std::optional<CompiledRule>> compiled;
   compiled.reserve(rules.size());
   for (const auto& rule : rules) {
     if (rule == nullptr) {
+      compiled.emplace_back();
       continue;
     }
     try {
-      compiled.push_back(
-          {.first = std::regex(rule->first, std::regex::ECMAScript),
-           .second = std::regex(rule->second, std::regex::ECMAScript)});
+      compiled.emplace_back(CompiledRule{
+          .first = std::regex(rule->first, std::regex::ECMAScript),
+          .second = std::regex(rule->second, std::regex::ECMAScript)});
     } catch (const std::regex_error&) {
-      // A rule that does not compile pairs nothing. Which rule it was, and
-      // why, is what design::validate reports.
       compiled.emplace_back();
     }
   }
@@ -64,13 +68,16 @@ bridgeMatchesOf(const flatbuffers::design::ChipT& chip,
     }
     const auto& label = chip.ports[index]->label;
     for (std::size_t rule = 0; rule < compiled.size(); ++rule) {
+      if (!compiled[rule].has_value()) {
+        continue;
+      }
       if (std::smatch capture;
-          std::regex_match(label, capture, compiled[rule].first)) {
+          std::regex_match(label, capture, compiled[rule]->first)) {
         matches[index].push_back(
             {.rule = rule, .first = true, .key = capture[1].str()});
       }
       if (std::smatch capture;
-          std::regex_match(label, capture, compiled[rule].second)) {
+          std::regex_match(label, capture, compiled[rule]->second)) {
         matches[index].push_back(
             {.rule = rule, .first = false, .key = capture[1].str()});
       }
@@ -85,16 +92,13 @@ std::vector<ComponentPorts> componentsOf(const flatbuffers::design::ChipT& chip,
   // whatever order the ports were read in.
   std::map<std::string, ComponentPorts> byName;
   for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
-    const auto& port = *chip.ports[index];
-    if (port.component.empty() || !isRoutable(port.role)) {
+    const auto& port = chip.ports[index];
+    if (port == nullptr || port->component.empty() || !isRoutable(port->role)) {
       continue;
     }
-    auto& component = byName[port.component];
-    component.name = port.component;
+    auto& component = byName[port->component];
+    component.name = port->component;
     component.ports.push_back(index);
-    if (port.role == flatbuffers::design::UnassignedRole::Resonator) {
-      component.qubit = true;
-    }
   }
 
   const auto matches = bridgeMatchesOf(chip, rules);
@@ -105,31 +109,33 @@ std::vector<ComponentPorts> componentsOf(const flatbuffers::design::ChipT& chip,
     std::ranges::sort(component.ports);
     std::vector<bool> paired(component.ports.size(), false);
 
-    // The rules are applied in the order they are declared, and each rule
-    // over the component's ports in ascending order, so the pairing depends
-    // on the configuration alone.
+    // The rules apply in the order they are declared, and each rule over the
+    // ports of the component in ascending order, so the pairing depends on
+    // the configuration alone.
     for (std::size_t rule = 0; rule < rules.size(); ++rule) {
       for (std::size_t left = 0; left < component.ports.size(); ++left) {
         if (paired[left]) {
           continue;
         }
-        const auto side = std::ranges::find_if(
-            matches[component.ports[left]], [&](const BridgeMatch& match) {
+        const auto& leftMatches = matches[component.ports[left]];
+        const auto side =
+            std::ranges::find_if(leftMatches, [&](const BridgeMatch& match) {
               return match.rule == rule && match.first;
             });
-        if (side == matches[component.ports[left]].end()) {
+        if (side == leftMatches.end()) {
           continue;
         }
         for (std::size_t right = 0; right < component.ports.size(); ++right) {
           if (paired[right] || right == left) {
             continue;
           }
-          const auto other = std::ranges::find_if(
-              matches[component.ports[right]], [&](const BridgeMatch& match) {
+          const auto& rightMatches = matches[component.ports[right]];
+          const auto other =
+              std::ranges::find_if(rightMatches, [&](const BridgeMatch& match) {
                 return match.rule == rule && !match.first &&
                        match.key == side->key;
               });
-          if (other == matches[component.ports[right]].end()) {
+          if (other == rightMatches.end()) {
             continue;
           }
           paired[left] = true;

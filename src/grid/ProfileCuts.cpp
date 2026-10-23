@@ -14,6 +14,7 @@
 #include "mqt-scpd/grid/Bottlenecks.hpp"
 #include "mqt-scpd/grid/DistanceTransform.hpp"
 #include "mqt-scpd/grid/Rasterize.hpp"
+#include "mqt-scpd/grid/RoutingBottlenecks.hpp"
 
 #include <algorithm>
 #include <array>

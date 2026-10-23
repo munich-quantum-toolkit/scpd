@@ -65,6 +65,22 @@ bool operator!=(const CpwCouplerT &lhs, const CpwCouplerT &rhs);
 bool operator==(const BridgeT &lhs, const BridgeT &rhs);
 bool operator!=(const BridgeT &lhs, const BridgeT &rhs);
 
+inline const ::flatbuffers::TypeTable *PortRefTypeTable();
+
+inline const ::flatbuffers::TypeTable *ConnectionRefTypeTable();
+
+inline const ::flatbuffers::TypeTable *PortTypeTable();
+
+inline const ::flatbuffers::TypeTable *ChipTypeTable();
+
+inline const ::flatbuffers::TypeTable *ConnectionTypeTable();
+
+inline const ::flatbuffers::TypeTable *DesignRulesTypeTable();
+
+inline const ::flatbuffers::TypeTable *CpwCouplerTypeTable();
+
+inline const ::flatbuffers::TypeTable *BridgeTypeTable();
+
 /// What a port is, before anything is decided. Set at load, from the role
 /// patterns in the configuration, or by coupler insertion for a Coupler port.
 enum class UnassignedRole : uint8_t {
@@ -74,9 +90,9 @@ enum class UnassignedRole : uint8_t {
   Conventional = 3,
   /// Created by the Final stage's coupler insertion. No pattern produces it.
   Coupler = 4,
-  /// One end of a bridge: a port a wire crosses the component at, rather
-  /// than one a wire ends at. Which two of them pair is declared by the
-  /// bridge rules of the configuration.
+  /// One end of a bridge: a port where a wire crosses the component, rather
+  /// than one where a wire ends. The bridge rules of the configuration say
+  /// which two of them pair.
   BridgePair = 5,
   MIN = Unset,
   MAX = BridgePair
@@ -221,6 +237,9 @@ FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) PortRef FLATBUFFERS_FINAL_CLASS {
 
  public:
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PortRefTypeTable();
+  }
   PortRef()
       : index_(0) {
   }
@@ -254,6 +273,9 @@ FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) ConnectionRef FLATBUFFERS_FINAL_CLASS {
 
  public:
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ConnectionRefTypeTable();
+  }
   ConnectionRef()
       : index_(0) {
   }
@@ -295,6 +317,9 @@ struct Port FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PortT NativeTableType;
   typedef PortBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PortTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_LABEL = 4,
     VT_CENTER = 6,
@@ -316,13 +341,14 @@ struct Port FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return static_cast<mqt::scpd::flatbuffers::design::UnassignedRole>(GetField<uint8_t>(VT_ROLE, 0));
   }
   /// The component the port belongs to, as the configured component pattern
-  /// captures it. Empty for a port created during a run.
+  /// captures it. Empty for a port created during a run, and for every port
+  /// when the configuration declares no component pattern.
   ///
-  /// This is declared, never inferred: the pattern says which part of a
-  /// label names the component, and no algorithm reads a label itself. The
-  /// planning stages need the grouping because a coupler's opposite ports
-  /// let an inner wire cross its artwork, and because a qubit's own ports
-  /// are what the inner circuit has to reach.
+  /// The grouping is declared, never inferred: the pattern says which part of
+  /// a label names the component, and no algorithm reads a label itself. The
+  /// planning stages need it because the opposite ports of a coupler let an
+  /// inner wire cross its artwork, and because the inner circuit has to reach
+  /// the ports of a qubit.
   const ::flatbuffers::String *component() const {
     return GetPointer<const ::flatbuffers::String *>(VT_COMPONENT);
   }
@@ -431,6 +457,9 @@ struct Chip FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ChipT NativeTableType;
   typedef ChipBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ChipTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_OBSTACLES = 4,
     VT_PORTS = 6
@@ -526,6 +555,9 @@ struct Connection FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ConnectionT NativeTableType;
   typedef ConnectionBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ConnectionTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SOURCE = 4,
     VT_TARGET = 6,
@@ -622,11 +654,14 @@ struct DesignRulesT : public ::flatbuffers::NativeTable {
 };
 
 /// The design rules. Every rule is a length in layout units, held once and
-/// converted to cells only through cells_for.
+/// converted to cells only through cellsFor.
 struct DesignRules FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef DesignRulesT NativeTableType;
   typedef DesignRulesBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return DesignRulesTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_MIN_WIRE_SPACING = 4,
     VT_MIN_OBSTACLE_SPACING = 6,
@@ -767,6 +802,9 @@ struct CpwCoupler FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CpwCouplerT NativeTableType;
   typedef CpwCouplerBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CpwCouplerTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CONNECTION = 4,
     VT_PORT = 6,
@@ -890,6 +928,9 @@ struct Bridge FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef BridgeT NativeTableType;
   typedef BridgeBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return BridgeTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CENTER = 4,
     VT_ROTATION = 6,
@@ -1330,6 +1371,266 @@ inline ::flatbuffers::Offset<Bridge> Bridge::Pack(::flatbuffers::FlatBufferBuild
       _rotation,
       _width,
       _height);
+}
+
+inline const ::flatbuffers::TypeTable *UnassignedRoleTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::UnassignedRoleTypeTable
+  };
+  static const char * const names[] = {
+    "Unset",
+    "Launcher",
+    "Resonator",
+    "Conventional",
+    "Coupler",
+    "BridgePair"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 6, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *AssignedRoleTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::AssignedRoleTypeTable
+  };
+  static const char * const names[] = {
+    "Unset",
+    "FeedlineSource",
+    "FeedlineTarget",
+    "ResonatorSource",
+    "ResonatorTarget",
+    "ConventionalSource",
+    "ConventionalTarget"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 7, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *RotationTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::RotationTypeTable
+  };
+  static const char * const names[] = {
+    "Unset",
+    "R0",
+    "R45",
+    "R90",
+    "R135",
+    "R180",
+    "R225",
+    "R270",
+    "R315"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 9, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PortRefTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const int64_t values[] = { 0, 4 };
+  static const char * const names[] = {
+    "index"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_STRUCT, 1, type_codes, nullptr, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ConnectionRefTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const int64_t values[] = { 0, 4 };
+  static const char * const names[] = {
+    "index"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_STRUCT, 1, type_codes, nullptr, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PortTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, 1 },
+    { ::flatbuffers::ET_STRING, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable,
+    mqt::scpd::flatbuffers::design::UnassignedRoleTypeTable
+  };
+  static const char * const names[] = {
+    "label",
+    "center",
+    "orientation",
+    "role",
+    "component"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ChipTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PolygonTypeTable,
+    mqt::scpd::flatbuffers::design::PortTypeTable
+  };
+  static const char * const names[] = {
+    "obstacles",
+    "ports"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ConnectionTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 1 },
+    { ::flatbuffers::ET_UCHAR, 0, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::PortRefTypeTable,
+    mqt::scpd::flatbuffers::design::AssignedRoleTypeTable
+  };
+  static const char * const names[] = {
+    "source",
+    "target",
+    "source_role",
+    "target_role"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DesignRulesTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const char * const names[] = {
+    "min_wire_spacing",
+    "min_obstacle_spacing",
+    "min_bend_radius",
+    "min_straight_length",
+    "target_resonator_length",
+    "resonator_length_tolerance",
+    "max_feedline_utilization",
+    "feedline_terminations"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 8, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CpwCouplerTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 2 },
+    { ::flatbuffers::ET_UCHAR, 0, 3 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::ConnectionRefTypeTable,
+    mqt::scpd::flatbuffers::design::PortTypeTable,
+    mqt::scpd::flatbuffers::geometry::PointTypeTable,
+    mqt::scpd::flatbuffers::design::RotationTypeTable
+  };
+  static const char * const names[] = {
+    "connection",
+    "port",
+    "center",
+    "rotation",
+    "length",
+    "height"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 6, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *BridgeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable,
+    mqt::scpd::flatbuffers::design::RotationTypeTable
+  };
+  static const char * const names[] = {
+    "center",
+    "rotation",
+    "width",
+    "height"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
 }
 
 }  // namespace design

@@ -6,7 +6,7 @@
 //
 // Licensed under the MIT License
 
-// The seven stage artifacts of a run directory, 01-capacity.fb through
+// The stage artifacts of a run directory, 01-capacity.fb through
 // 07-geometry.fb. Owned by MQT::ScpdIO. Grids and router containers are
 // derived state and never appear here.
 //
@@ -14,13 +14,12 @@
 // so the tables of stages that do not exist yet are empty on purpose.
 
 include "design.fbs";
-include "geometry.fbs";
 
 namespace mqt.scpd.flatbuffers.artifacts;
 
 /// A grid of a run, as the numbers that convert between its cells and layout
-/// units. The grid itself is derived state and is rebuilt; these six numbers
-/// are what a reader needs to place what the artifact does carry.
+/// units. The grid itself is derived state and is rebuilt; these numbers are
+/// what a reader needs to place what the artifact carries.
 table GridExtent {
   width: uint32;
   height: uint32;
@@ -29,11 +28,12 @@ table GridExtent {
   cell_height: double;
 }
 
-/// One partition of the free space, as the watershed left it.
+/// One partition of the free space.
 table Partition {
   label: uint32;
   /// Closed rings in layout units. More than one where the partition has a
-  /// hole, or the watershed left it in pieces.
+  /// hole. The cells of a partition are four-connected, so a wire can cross
+  /// it from any of its borders to any other.
   outlines: [geometry.Polygon] (required);
 }
 
@@ -68,19 +68,20 @@ enum CapacityElement : ubyte {
   Target,
   /// A gate the wires beyond it have to pass.
   Bottleneck,
-  /// The launcher the chain is rooted at.
+  /// The launcher the chain starts at.
   Launcher,
 }
 
 /// One link of a capacity chain.
 ///
 /// A chain is a tree and FlatBuffers has no recursive table, so the nodes are
-/// stored flat and a link names its branches by index. That also lets two
-/// chains share a subtree without storing it twice.
+/// stored flat and a link names its branches by index. Two chains can then
+/// share a subtree without storing it twice. A target lies on one chain only,
+/// so a shared subtree holds no target.
 table CapacityNode {
   kind: CapacityElement;
-  /// The port for a Target and the index into `bottlenecks` for a
-  /// Bottleneck. Unused for a Launcher.
+  /// The port of a Target and the index into `bottlenecks` of a Bottleneck.
+  /// Unused for a Launcher.
   id: uint32;
   /// How many wires this link lets through. Only a Bottleneck limits.
   capacity: uint32;
@@ -97,67 +98,42 @@ table CapacityPlan {
   bottlenecks: [Bottleneck] (required);
   launchers: [LauncherSlot] (required);
   nodes: [CapacityNode] (required);
-  /// The index in `nodes` of each chain's root.
+  /// The index in `nodes` of the root of each chain.
   chains: [uint32] (required);
-  /// What the ports' own approaches keep clear, as closed rings in layout
+  /// What the approaches of the ports keep clear, as closed rings in layout
   /// units: the strip a wire leaves each routable port along, extended
-  /// forward and backward, and the square each launcher sweeps.
+  /// forward and backward.
   ///
   /// These are obstacles to everything the stages route, and they are not
-  /// chip artwork, which is why they are a layer of their own rather than
-  /// more polygons in the chip. Only the cells that were free before a band
-  /// took them are here; where a band merely covered artwork the artwork is
-  /// already drawn. The rings follow the cells, so a band along a diagonal
-  /// is the staircase the grid actually blocks.
+  /// chip artwork, so they are a layer of their own rather than more
+  /// polygons of the chip. Only the cells that were free before a band took
+  /// them are here; where a band covers artwork, the artwork is already
+  /// drawn. The rings follow the cells, so a band along a diagonal is the
+  /// staircase the grid blocks.
   port_keepout: [geometry.Polygon];
-}
-
-/// One lattice the inner circuit is solved on: the Hanan grid that the ports
-/// of one capacity chain induce.
-table Lattice {
-  points: [geometry.Point] (required);
-  /// Two point indices per edge, flat.
-  edges: [uint32] (required);
-  /// The edges the solution selected, as indices into `edges` divided by two.
-  selected: [uint32] (required);
-}
-
-/// Output of the Global stage. The lattices are empty when the chip has no
-/// inner circuit, which is a valid state rather than a skipped stage.
-table GlobalRouting {
-  lattices: [Lattice] (required);
-  /// The inner-circuit connections the solved flow implies.
-  connections: [design.Connection] (required);
-  /// The outer port ring the Assignment stage consumes. The inner circuit
-  /// extends the configured ring with the coupler ports it surfaces at, so
-  /// this is what the assignment reads and not the configuration.
-  outer_ring: [design.PortRef] (required);
-  /// The resonator ports the assignment has to give a launcher.
-  resonators: [design.PortRef] (required);
-  objective: double;
 }
 
 /// Output of the Assignment stage.
 table Assignment {
   /// One connection per node of `ring`, in the order of `ring`. A
   /// conventional port runs from the launcher it was given, as
-  /// `FeedlineSource` to `FeedlineTarget`. A resonator carries
-  /// `ResonatorSource` to `ResonatorTarget` and no source port, because the
-  /// port that feeds it is the coupler the Final stage inserts.
+  /// FeedlineSource to FeedlineTarget. A resonator carries ResonatorSource
+  /// to ResonatorTarget and no source port, because the port that feeds it is
+  /// the coupler that the Final stage inserts.
   connections: [design.Connection] (required);
   objective: double;
   /// The ring the model consumed, in the order it consumed it.
   ring: [design.PortRef] (required);
   /// The launcher each ring node was given, parallel to `ring`.
   launchers: [design.PortRef] (required);
-  /// Where each ring node is actually fed from, parallel to `ring`.
+  /// Where each ring node is fed from, parallel to `ring`.
   ///
-  /// A conventional port is fed at the launcher slot `launchers` names, and
-  /// no two of them share one. A resonator is fed at no launcher at all: the
-  /// wire that reaches it comes past the slot, so its feed sits on the
-  /// segment from its own launcher to the next launcher along. Where a
-  /// launcher was given n resonators they divide that segment evenly, in
-  /// ring order.
+  /// A conventional port is fed at the launcher slot that `launchers` names.
+  /// A resonator is fed at no launcher: the wire that reaches it comes past
+  /// the slot, so its feed sits on the segment between its own launcher and a
+  /// neighboring one. The resonators fed on one segment divide it evenly, in
+  /// the order the walk of the ring reaches them. No two feeds lie closer than
+  /// the wire spacing.
   feeds: [geometry.Point] (required);
   /// The feedline chains the model chose: which resonators one feedline
   /// drives, from one launcher to the next. The Final stage routes each of
@@ -170,10 +146,11 @@ table Assignment {
 ///
 /// The model gives every resonator degree two on the ring: a chord to the
 /// resonator before it, a chord to the one after it, or an end. An end is a
-/// launcher, or one of the permitted terminations where the feedline simply
-/// stops. A chain is a run of resonators joined by chords, and it is what the
-/// Final stage drives with one feedline: launcher, coupler, coupler, …,
-/// launcher.
+/// launcher, or one of the permitted terminations where the feedline stops.
+/// A chain is a run of resonators joined by chords, and the Final stage
+/// drives it with one feedline: launcher, coupler, coupler, …, launcher. A
+/// chain has a launcher at one end at least; its other end may be a
+/// termination.
 table FeedlineChain {
   /// The ring nodes the chain runs through, as indices into `ring` and
   /// `connections`, in ring order. Every one of them is a resonator.
@@ -186,58 +163,88 @@ table FeedlineChain {
   end: design.PortRef;
 }
 
+/// One lattice the inner circuit is solved on: the Hanan grid that the ports
+/// of one capacity chain induce.
+table Lattice {
+  points: [geometry.Point] (required);
+  /// Two point indices per edge, flat.
+  edges: [uint32] (required);
+  /// The edges of the connections, as indices into `edges` divided by two.
+  /// The edges of a wire that the connections leave out are not among them.
+  selected: [uint32] (required);
+}
+
+/// Output of the Global stage. The lattices are empty when the chip has no
+/// inner circuit, which is a valid state rather than a skipped stage.
+table GlobalRouting {
+  lattices: [Lattice] (required);
+  /// The connections of the inner circuit that the solved flow implies. A
+  /// wire that reaches no target or a closed loop over crossings, which only
+  /// a solve that stops early keeps, is not among them.
+  connections: [design.Connection] (required);
+  /// The outer port ring that the Assignment stage consumes: the configured
+  /// ring in its order, without the ring end of each outer bridge where no
+  /// inner wire surfaces. The assignment reads this ring and not the
+  /// configuration.
+  outer_ring: [design.PortRef] (required);
+  /// The resonator ports of the chip, and the ring ports where the inner
+  /// wire of a resonator surfaces. The Assignment stage treats the ring
+  /// nodes among them as resonators.
+  resonators: [design.PortRef] (required);
+  /// The length of the lattice edges that the connections take, in layout
+  /// units.
+  objective: double;
+}
+
 /// The crossing slots of one partition border.
 ///
 /// A wire leaves one partition for another at one of these, and no two wires
-/// take the same one. The slots sit one wire spacing apart along the border,
-/// so their count is what the border can carry, which is what
-/// `PartitionBorder.budget` reports.
+/// take the same one. The slots of one border lie at least one crossing pitch
+/// apart, so their count is the most wires that the border can carry, which is
+/// what PartitionBorder.budget reports. The crossings of two wires also lie at
+/// least one crossing pitch apart, so a wire that crosses another border within
+/// one crossing pitch of a slot blocks that slot. The border then carries fewer
+/// wires than its budget.
 table BorderSlots {
-  /// The border they belong to, as an index into CapacityPlan.borders, or
-  /// zero when `pocket` is set and they are on no border at all.
+  /// The border they belong to, as an index into CapacityPlan.borders.
   border: uint32;
-  /// The slots in layout units, in the order the border runs.
+  /// The slots in layout units, in the order of the walk that picked them.
+  /// The walk runs from sample to adjacent sample and starts again at another
+  /// end where it runs out, so the order can jump along the border.
   positions: [geometry.Point] (required);
-  /// Whether these are ways out of a port's own pocket rather than slots of a
-  /// border.
-  ///
-  /// The capacity grid places a target on the first cell beyond its port's
-  /// band that was free before the bands, and does not open the band. Where
-  /// the band and the artwork close around a port, the free space left is a
-  /// pocket that no border reaches; the band is that port's own approach, so
-  /// it is a way out, and it carries the one wire.
-  pocket: bool = false;
 }
 
 /// The coarse route of one connection: which partitions it passes through,
 /// and where it crosses from each into the next.
 table Corridor {
   /// The labels of the partitions, from the one the wire is fed in to the
-  /// one its target sits in. These are `Partition.label` values, not indices
-  /// into `CapacityPlan.partitions`.
+  /// one its target sits in. These are Partition.label values, not indices
+  /// into CapacityPlan.partitions.
   partitions: [uint32] (required);
   /// The crossing slots between them, in layout units. One shorter than
   /// `partitions`.
   crossings: [geometry.Point] (required);
   /// Where the wire starts: the cell the feed of the assignment was placed
-  /// at. Absent when the connection has no feed the grid can reach.
+  /// at. Absent when the connection has no feed, when the feed lies off the
+  /// grid, or when no partition lies within 8 detail cells of it.
   source: geometry.Point;
   /// Where it ends: the cell its target port is reached at. Absent when the
-  /// chip has no such cell.
+  /// port has no target cell, or when no partition lies within 8 detail
+  /// cells of it.
   target: geometry.Point;
 }
 
 /// Output of the Corridor stage.
 ///
 /// One entry per connection of the Assignment, in its order. A connection
-/// the stage could not route carries no partitions, so a reader counts the
-/// failures rather than being handed a separate list that can disagree with
-/// the routes beside it.
+/// that the stage could not route carries no partitions, so a reader counts
+/// the failures instead of reading a separate list that can disagree with
+/// the routes.
 table CorridorRouting {
   corridors: [Corridor] (required);
-  /// The slots of every border a wire could cross, so a picture can show
-  /// which of them are taken. Parallel to nothing: a border with no free
-  /// space on either side has no entry.
+  /// The slots of every border a wire could cross, so that a picture can
+  /// show which of them are taken. A border without a crossing slot, whose
+  /// budget is zero, has no entry.
   slots: [BorderSlots] (required);
 }
 
@@ -377,6 +384,7 @@ table FeedlineEdge {
   /// right angle, and the clearance rule leaves it out.
   terminal: bool;
 }
+
 
 /// One connection's wire in its exact analytic form.
 table Wire {

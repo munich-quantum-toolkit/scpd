@@ -13,7 +13,7 @@ macro(PACKAGE_ADD_TEST testname linklibs)
     add_executable(${testname} ${ARGN})
     # link the Google test infrastructure and a default main function to the test executable.
     target_link_libraries(${testname} PRIVATE ${linklibs} GTest::gmock GTest::gtest_main
-                                              MQT::ProjectOptions)
+                                              MQT::ProjectOptions mqt-scpd-fp-contract-off)
     # discover tests
     gtest_discover_tests(
       ${testname}

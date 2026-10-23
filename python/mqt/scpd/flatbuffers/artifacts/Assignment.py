@@ -37,9 +37,9 @@ class Assignment(object):
 
     # One connection per node of `ring`, in the order of `ring`. A
     # conventional port runs from the launcher it was given, as
-    # `FeedlineSource` to `FeedlineTarget`. A resonator carries
-    # `ResonatorSource` to `ResonatorTarget` and no source port, because the
-    # port that feeds it is the coupler the Final stage inserts.
+    # FeedlineSource to FeedlineTarget. A resonator carries ResonatorSource
+    # to ResonatorTarget and no source port, because the port that feeds it is
+    # the coupler that the Final stage inserts.
     # Assignment
     def Connections(self, j: int) -> Optional[Connection]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -119,14 +119,14 @@ class Assignment(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
         return o == 0
 
-    # Where each ring node is actually fed from, parallel to `ring`.
+    # Where each ring node is fed from, parallel to `ring`.
     #
-    # A conventional port is fed at the launcher slot `launchers` names, and
-    # no two of them share one. A resonator is fed at no launcher at all: the
-    # wire that reaches it comes past the slot, so its feed sits on the
-    # segment from its own launcher to the next launcher along. Where a
-    # launcher was given n resonators they divide that segment evenly, in
-    # ring order.
+    # A conventional port is fed at the launcher slot that `launchers` names.
+    # A resonator is fed at no launcher: the wire that reaches it comes past
+    # the slot, so its feed sits on the segment between its own launcher and a
+    # neighboring one. The resonators fed on one segment divide it evenly, in
+    # the order the walk of the ring reaches them. No two feeds lie closer than
+    # the wire spacing.
     # Assignment
     def Feeds(self, j: int) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))

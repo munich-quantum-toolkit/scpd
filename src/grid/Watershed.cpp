@@ -13,6 +13,7 @@
 #include "mqt-scpd/grid/BitGrid.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,8 @@
 #include <map>
 #include <queue>
 #include <span>
+#include <stdexcept>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -33,10 +36,17 @@ constexpr double INFINITE = std::numeric_limits<double>::infinity();
 constexpr double TIE_EPSILON = 1e-6;
 constexpr std::size_t NO_CELL = std::numeric_limits<std::size_t>::max();
 
+/// A cell on the front. The heap pops the earliest time first, then the lower
+/// seed index, then the lower cell index. So the pop order is the same on every
+/// standard library.
 struct FrontEntry {
   std::size_t cell;
   double time;
-  bool operator>(const FrontEntry& other) const { return time > other.time; }
+  uint32_t seed;
+  bool operator>(const FrontEntry& other) const {
+    return std::tie(time, seed, cell) >
+           std::tie(other.time, other.seed, other.cell);
+  }
 };
 
 } // namespace
@@ -55,27 +65,39 @@ PartitionLabel runWatershed(const BitGrid& blocked,
 
   std::vector<double> time(total, INFINITE);
   std::vector<PartitionLabel> tentativeLabel(total, LABEL_NONE);
-  std::vector<uint32_t> tentativeSeed(total, std::numeric_limits<uint32_t>::max());
+  std::vector<uint32_t> tentativeSeed(total,
+                                      std::numeric_limits<uint32_t>::max());
   std::vector<bool> finalized(total, false);
-  std::priority_queue<FrontEntry, std::vector<FrontEntry>, std::greater<>> front;
+  std::priority_queue<FrontEntry, std::vector<FrontEntry>, std::greater<>>
+      front;
 
   const auto isBarrier = [&](const std::size_t cell) {
     return blocked.test(cell) ||
            (labels[cell] != LABEL_NONE && labels[cell] < firstLabel);
   };
 
+  // Accept every seed first and write the labels after, so that a throw
+  // leaves the labels unchanged.
   for (std::size_t i = 0; i < seeds.size(); ++i) {
     const std::size_t seed = seeds[i];
-    if (seed >= total || blocked.test(seed) || labels[seed] != LABEL_NONE) {
+    if (seed >= total || blocked.test(seed) || labels[seed] != LABEL_NONE ||
+        finalized[seed]) {
       continue;
     }
+    if (nextLabel == std::numeric_limits<PartitionLabel>::max()) {
+      throw std::length_error("a watershed run ran out of partition labels");
+    }
     time[seed] = 0.0;
-    labels[seed] = nextLabel;
     tentativeLabel[seed] = nextLabel;
     tentativeSeed[seed] = static_cast<uint32_t>(i);
     finalized[seed] = true;
-    front.push({seed, 0.0});
+    front.push({.cell = seed, .time = 0.0, .seed = static_cast<uint32_t>(i)});
     ++nextLabel;
+  }
+  for (const std::size_t seed : seeds) {
+    if (seed < total && finalized[seed]) {
+      labels[seed] = tentativeLabel[seed];
+    }
   }
 
   // The arrival time of a cell from its finalized four-neighbors, and the
@@ -86,10 +108,20 @@ PartitionLabel runWatershed(const BitGrid& blocked,
     std::size_t aCell = NO_CELL;
     double b = INFINITE;
     std::size_t bCell = NO_CELL;
+    // Keeps the earliest time of the two neighbors along an axis. When the two
+    // times tie, the neighbor with the lower seed index is the one the cell
+    // arrives from, whichever neighbor comes first.
     const auto consider = [&](const std::size_t n, double& best,
                               std::size_t& bestCell) {
-      if (!blocked.test(n) && finalized[n] && time[n] < best) {
-        best = time[n];
+      if (blocked.test(n) || !finalized[n]) {
+        return;
+      }
+      const bool better = bestCell == NO_CELL ||
+                          (std::fabs(time[n] - best) < TIE_EPSILON
+                               ? tentativeSeed[n] < tentativeSeed[bestCell]
+                               : time[n] < best);
+      best = std::min(best, time[n]);
+      if (better) {
         bestCell = n;
       }
     };
@@ -139,24 +171,20 @@ PartitionLabel runWatershed(const BitGrid& blocked,
     if (finalized[cell] || isBarrier(cell)) {
       return;
     }
-    const auto [arrival, from] =
-        solve(static_cast<uint32_t>(cell % width),
-              static_cast<uint32_t>(cell / width));
+    const auto [arrival, from] = solve(static_cast<uint32_t>(cell % width),
+                                       static_cast<uint32_t>(cell / width));
     if (from == NO_CELL) {
       return;
     }
-    bool take = false;
-    if (time[cell] == INFINITE || arrival < time[cell] - TIE_EPSILON) {
-      take = true;
-    } else if (std::fabs(arrival - time[cell]) <= TIE_EPSILON &&
-               tentativeSeed[from] < tentativeSeed[cell]) {
-      take = true;
-    }
+    const bool take = time[cell] == INFINITE ||
+                      arrival < time[cell] - TIE_EPSILON ||
+                      (std::fabs(arrival - time[cell]) <= TIE_EPSILON &&
+                       tentativeSeed[from] < tentativeSeed[cell]);
     if (take) {
       time[cell] = arrival;
       tentativeLabel[cell] = tentativeLabel[from];
       tentativeSeed[cell] = tentativeSeed[from];
-      front.push({cell, arrival});
+      front.push({.cell = cell, .time = arrival, .seed = tentativeSeed[cell]});
     }
   };
 
@@ -197,9 +225,16 @@ PartitionLabel runWatershed(const BitGrid& blocked,
 }
 
 void smoothPartitionBorders(const BitGrid& blocked,
+                            const std::span<const std::size_t> seeds,
                             std::vector<PartitionLabel>& labels,
                             const PartitionLabel firstLabel, const int radius,
                             const int iterations) {
+  if (radius < 0) {
+    throw std::invalid_argument("the smoothing radius is negative");
+  }
+  if (iterations < 0) {
+    throw std::invalid_argument("the number of smoothing passes is negative");
+  }
   const uint32_t width = blocked.width();
   const uint32_t height = blocked.height();
   const std::size_t total = blocked.size();
@@ -209,24 +244,35 @@ void smoothPartitionBorders(const BitGrid& blocked,
   const auto ofThisRun = [&](const std::size_t cell) {
     return labels[cell] >= firstLabel;
   };
-  static constexpr int64_t DX4[4] = {1, -1, 0, 0};
-  static constexpr int64_t DY4[4] = {0, 0, 1, -1};
+  std::vector<bool> isSeed(total, false);
+  for (const std::size_t seed : seeds) {
+    if (seed < total) {
+      isSeed[seed] = true;
+    }
+  }
+  const auto reach = static_cast<uint32_t>(radius);
+  static constexpr std::array<int64_t, 4> DX4 = {1, -1, 0, 0};
+  static constexpr std::array<int64_t, 4> DY4 = {0, 0, 1, -1};
 
+  // Every pass reads the labels from before the pass, so the order of the
+  // cells does not matter. Such passes can move cells back and forth without
+  // end, so iterations caps their number.
   for (int iteration = 0; iteration < iterations; ++iteration) {
     std::vector<PartitionLabel> next = labels;
     bool changed = false;
     for (uint32_t y = 0; y < height; ++y) {
       for (uint32_t x = 0; x < width; ++x) {
         const std::size_t cell = (static_cast<std::size_t>(y) * width) + x;
-        if (blocked.test(cell) || !ofThisRun(cell)) {
+        if (blocked.test(cell) || !ofThisRun(cell) || isSeed[cell]) {
           continue;
         }
         const PartitionLabel own = labels[cell];
         bool border = false;
-        for (int k = 0; k < 4 && !border; ++k) {
+        for (std::size_t k = 0; k < 4 && !border; ++k) {
           const int64_t nx = static_cast<int64_t>(x) + DX4[k];
           const int64_t ny = static_cast<int64_t>(y) + DY4[k];
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+          if (nx < 0 || ny < 0 || std::cmp_greater_equal(nx, width) ||
+              std::cmp_greater_equal(ny, height)) {
             continue;
           }
           const std::size_t n = (static_cast<std::size_t>(ny) * width) +
@@ -241,17 +287,18 @@ void smoothPartitionBorders(const BitGrid& blocked,
         if (!border) {
           continue;
         }
-        std::map<PartitionLabel, int> counts;
-        int valid = 0;
-        for (int64_t oy = -radius; oy <= radius; ++oy) {
-          for (int64_t ox = -radius; ox <= radius; ++ox) {
-            const int64_t nx = static_cast<int64_t>(x) + ox;
-            const int64_t ny = static_cast<int64_t>(y) + oy;
-            if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
-              continue;
-            }
-            const std::size_t n = (static_cast<std::size_t>(ny) * width) +
-                                  static_cast<std::size_t>(nx);
+        // The window ends at the edge of the grid.
+        const uint32_t left = x - std::min(x, reach);
+        const uint32_t top = y - std::min(y, reach);
+        const auto right = static_cast<uint32_t>(
+            std::min<uint64_t>(uint64_t{x} + reach, width - 1));
+        const auto bottom = static_cast<uint32_t>(
+            std::min<uint64_t>(uint64_t{y} + reach, height - 1));
+        std::map<PartitionLabel, std::size_t> counts;
+        std::size_t valid = 0;
+        for (uint32_t ny = top; ny <= bottom; ++ny) {
+          for (uint32_t nx = left; nx <= right; ++nx) {
+            const std::size_t n = (static_cast<std::size_t>(ny) * width) + nx;
             if (blocked.test(n) || !ofThisRun(n)) {
               continue;
             }
@@ -263,15 +310,14 @@ void smoothPartitionBorders(const BitGrid& blocked,
           continue;
         }
         PartitionLabel best = own;
-        int bestCount = 0;
+        std::size_t bestCount = 0;
         for (const auto& [label, count] : counts) {
           if (count > bestCount) {
             bestCount = count;
             best = label;
           }
         }
-        // Only a clear majority moves a cell, so the pass cannot oscillate
-        // and does not eat real corners.
+        // Only a clear majority moves a cell, so the vote keeps real corners.
         if (best != own && bestCount * 2 > valid) {
           next[cell] = best;
           changed = true;

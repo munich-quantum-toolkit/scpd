@@ -10,23 +10,22 @@
 
 #include "mqt-scpd/grid/Partitions.hpp"
 
-#include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/Watershed.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <map>
 #include <limits>
+#include <map>
 #include <optional>
-#include <ranges>
+#include <span>
 #include <stdexcept>
-#include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -34,24 +33,22 @@ namespace mqt::scpd::grid {
 namespace {
 
 /// How far apart two samples of one border may be and still be one run of it.
-/// A sample sits on a cell edge, so neighbours are one cell apart and the
+/// A sample sits on a cell edge, so neighbors are one cell apart and the
 /// diagonal of that is the largest step a run makes.
 constexpr double ADJACENT_SAMPLE_SQUARED = 2.25;
 
-
 /// One edge of a cell, as the two corners it runs between. Corners are whole
-/// numbers in cell coordinates, so they key exactly.
+/// numbers in cell coordinates, so they key exactly. Corners order row by row,
+/// as the cells of the grid do.
 struct Corner {
   std::int32_t x = 0;
   std::int32_t y = 0;
   [[nodiscard]] bool operator==(const Corner&) const = default;
-};
-
-struct CornerHash {
-  [[nodiscard]] std::size_t operator()(const Corner& corner) const noexcept {
-    return (static_cast<std::size_t>(static_cast<std::uint32_t>(corner.x))
-            << 32U) ^
-           static_cast<std::uint32_t>(corner.y);
+  [[nodiscard]] auto operator<=>(const Corner& other) const {
+    if (const auto row = y <=> other.y; row != 0) {
+      return row;
+    }
+    return x <=> other.x;
   }
 };
 
@@ -72,6 +69,15 @@ refinement(const GridMetrics& detail, const GridMetrics& coarse) {
 }
 
 } // namespace
+
+Point cornerToLayout(const GridMetrics& grid, const double x, const double y) {
+  return grid.toLayout(x - 0.5, y - 0.5);
+}
+
+Point layoutToCorner(const GridMetrics& grid, const Point point) {
+  const auto cell = grid.toCell(point);
+  return {cell.x() + 0.5, cell.y() + 0.5};
+}
 
 Point PartitionBorder::center() const {
   if (samples.empty()) {
@@ -103,17 +109,22 @@ Partitions extractPartitions(const BitGrid& blocked,
     return partitions;
   }
 
-  /// The label of a cell, with an obstacle and everything off the grid
-  /// counting as no label at all.
+  /// The label of a cell, with an obstacle, a reserved cell and everything
+  /// off the grid counting as no label at all.
   const auto labelAt = [&](const std::int64_t x,
                            const std::int64_t y) -> PartitionLabel {
-    if (x < 0 || y < 0 || x >= static_cast<std::int64_t>(grid.width) ||
-        y >= static_cast<std::int64_t>(grid.height)) {
+    if (x < 0 || y < 0 || std::cmp_greater_equal(x, grid.width) ||
+        std::cmp_greater_equal(y, grid.height)) {
       return LABEL_NONE;
     }
     const auto index = (static_cast<std::size_t>(y) * grid.width) +
                        static_cast<std::size_t>(x);
-    return blocked.test(index) ? LABEL_NONE : labels[index];
+    // A reserved cell belongs to the approach of a port. It is part of no
+    // partition, even where no band blocks it.
+    if (blocked.test(index) || labels[index] < FIRST_PARTITION_LABEL) {
+      return LABEL_NONE;
+    }
+    return labels[index];
   };
 
   // The outline edges of each label, and the borders between labels. Both
@@ -121,7 +132,6 @@ Partitions extractPartitions(const BitGrid& blocked,
   // visited in, only on which cells carry which label.
   std::map<PartitionLabel, std::vector<std::pair<Corner, Corner>>> outlineEdges;
   std::map<std::uint32_t, PartitionBorder> borders;
-  std::unordered_set<std::uint64_t> latticeKeys;
 
   const auto addBorder = [&](const PartitionLabel a, const PartitionLabel b,
                              const double x, const double y) {
@@ -132,25 +142,16 @@ Partitions extractPartitions(const BitGrid& blocked,
     border.first = std::min(a, b);
     border.second = std::max(a, b);
     border.samples.emplace_back(x, y);
-
-    // A sample lies on a half-cell position, so doubling makes the key exact.
-    const auto qx = static_cast<std::uint32_t>(std::llround(x * 2.0));
-    const auto qy = static_cast<std::uint32_t>(std::llround(y * 2.0));
-    if (latticeKeys.insert((static_cast<std::uint64_t>(qx) << 32U) | qy)
-            .second) {
-      partitions.lattice.emplace_back(x, y);
-    }
   };
 
   for (std::uint32_t y = 0; y < grid.height; ++y) {
     for (std::uint32_t x = 0; x < grid.width; ++x) {
-      const auto index = grid.index(x, y);
-      const auto label = labels[index];
-      if (label == LABEL_NONE || blocked.test(index)) {
-        continue;
-      }
       const auto ix = static_cast<std::int64_t>(x);
       const auto iy = static_cast<std::int64_t>(y);
+      const auto label = labelAt(ix, iy);
+      if (label == LABEL_NONE) {
+        continue;
+      }
 
       // Only the right and the lower neighbor are consulted, so every border
       // between two cells is counted once rather than from both sides.
@@ -172,16 +173,20 @@ Partitions extractPartitions(const BitGrid& blocked,
       const auto cy = static_cast<std::int32_t>(y);
       auto& edges = outlineEdges[label];
       if (labelAt(ix, iy - 1) != label) {
-        edges.emplace_back(Corner{cx, cy}, Corner{cx + 1, cy});
+        edges.emplace_back(Corner{.x = cx, .y = cy},
+                           Corner{.x = cx + 1, .y = cy});
       }
       if (labelAt(ix + 1, iy) != label) {
-        edges.emplace_back(Corner{cx + 1, cy}, Corner{cx + 1, cy + 1});
+        edges.emplace_back(Corner{.x = cx + 1, .y = cy},
+                           Corner{.x = cx + 1, .y = cy + 1});
       }
       if (labelAt(ix, iy + 1) != label) {
-        edges.emplace_back(Corner{cx + 1, cy + 1}, Corner{cx, cy + 1});
+        edges.emplace_back(Corner{.x = cx + 1, .y = cy + 1},
+                           Corner{.x = cx, .y = cy + 1});
       }
       if (labelAt(ix - 1, iy) != label) {
-        edges.emplace_back(Corner{cx, cy + 1}, Corner{cx, cy});
+        edges.emplace_back(Corner{.x = cx, .y = cy + 1},
+                           Corner{.x = cx, .y = cy});
       }
     }
   }
@@ -191,15 +196,19 @@ Partitions extractPartitions(const BitGrid& blocked,
   }
 
   for (auto& [label, edges] : outlineEdges) {
-    std::unordered_map<Corner, std::vector<Corner>, CornerHash> outgoing;
-    outgoing.reserve(edges.size());
+    std::map<Corner, std::vector<Corner>> outgoing;
     for (const auto& [from, to] : edges) {
       outgoing[from].push_back(to);
     }
 
     // Each ring is walked by following one outgoing edge per corner and
-    // consuming it, so a corner where four cells meet contributes to two
-    // rings rather than joining them into one.
+    // consuming it. Where four cells meet at a corner, the corner has two
+    // outgoing edges, and the walk takes the one the row-major scan above
+    // found last. That choice decides whether the two rings through the
+    // corner come out as two or as one; the cells that the rings enclose are
+    // the same either way. Each ring starts at the first corner left in row
+    // order. Both rules depend only on the labels, so the outlines are the
+    // same on every platform.
     while (!outgoing.empty()) {
       auto start = outgoing.begin()->first;
       auto current = outgoing.begin()->second.back();
@@ -239,10 +248,98 @@ Partitions extractPartitions(const BitGrid& blocked,
     }
   }
 
-  std::ranges::sort(partitions.lattice, [](const Point& a, const Point& b) {
-    return std::pair{a.y(), a.x()} < std::pair{b.y(), b.x()};
-  });
   return partitions;
+}
+
+PartitionLabel separatePartitionPieces(const BitGrid& blocked,
+                                       const std::span<PartitionLabel> labels,
+                                       const GridMetrics& grid,
+                                       const PartitionLabel nextLabel) {
+  if (blocked.width() != grid.width || blocked.height() != grid.height ||
+      labels.size() != grid.cells()) {
+    throw std::invalid_argument(std::format(
+        "the mask is {}x{} cells and the labels {}, on a grid of {}x{}",
+        blocked.width(), blocked.height(), labels.size(), grid.width,
+        grid.height));
+  }
+
+  /// One four-connected piece of a label: its cells, the first of them in
+  /// row order.
+  struct Piece {
+    PartitionLabel label = LABEL_NONE;
+    std::vector<std::size_t> cells;
+  };
+
+  const auto counts = [&](const std::size_t cell) {
+    return !blocked.test(cell) && labels[cell] >= FIRST_PARTITION_LABEL;
+  };
+
+  // The pieces in the row order of their first cell, which is the order a
+  // scan of the grid finds them in.
+  std::vector<Piece> pieces;
+  std::vector<bool> seen(labels.size(), false);
+  std::vector<std::size_t> stack;
+  for (std::size_t start = 0; start < labels.size(); ++start) {
+    if (seen[start] || !counts(start)) {
+      continue;
+    }
+    Piece piece{.label = labels[start], .cells = {}};
+    seen[start] = true;
+    stack.push_back(start);
+    while (!stack.empty()) {
+      const auto cell = stack.back();
+      stack.pop_back();
+      piece.cells.push_back(cell);
+      const auto x = cell % grid.width;
+      const auto y = cell / grid.width;
+      const std::array<std::optional<std::size_t>, 4> neighbors = {
+          x > 0 ? std::optional{cell - 1} : std::nullopt,
+          x + 1 < grid.width ? std::optional{cell + 1} : std::nullopt,
+          y > 0 ? std::optional{cell - grid.width} : std::nullopt,
+          y + 1 < grid.height ? std::optional{cell + grid.width}
+                              : std::nullopt};
+      for (const auto& neighbor : neighbors) {
+        if (neighbor.has_value() && !seen[*neighbor] && counts(*neighbor) &&
+            labels[*neighbor] == piece.label) {
+          seen[*neighbor] = true;
+          stack.push_back(*neighbor);
+        }
+      }
+    }
+    pieces.push_back(std::move(piece));
+  }
+
+  // The piece of each label that keeps it: the largest, and of equal ones
+  // the first found.
+  std::map<PartitionLabel, std::size_t> keeper;
+  for (std::size_t index = 0; index < pieces.size(); ++index) {
+    const auto [entry, added] = keeper.try_emplace(pieces[index].label, index);
+    if (!added &&
+        pieces[index].cells.size() > pieces[entry->second].cells.size()) {
+      entry->second = index;
+    }
+  }
+
+  // Every label is checked before one changes, so a run that ran out of
+  // labels leaves the grid as it was.
+  const auto extra = pieces.size() - keeper.size();
+  if (extra >= static_cast<std::size_t>(
+                   std::numeric_limits<PartitionLabel>::max() - nextLabel) +
+                   1) {
+    throw std::length_error(std::format(
+        "{} pieces of partitions need labels from {} on", extra, nextLabel));
+  }
+  auto next = nextLabel;
+  for (std::size_t index = 0; index < pieces.size(); ++index) {
+    if (keeper.at(pieces[index].label) == index) {
+      continue;
+    }
+    for (const auto cell : pieces[index].cells) {
+      labels[cell] = next;
+    }
+    next = nextPartitionLabel(next);
+  }
+  return next;
 }
 
 std::vector<std::size_t> freeCellSeeds(const BitGrid& blocked,
@@ -250,10 +347,10 @@ std::vector<std::size_t> freeCellSeeds(const BitGrid& blocked,
                                        const GridMetrics& coarse) {
   const auto factors = refinement(detail, coarse);
   if (!factors.has_value()) {
-    throw std::invalid_argument(
-        std::format("a detail grid of {}x{} cells is no whole refinement of a "
-                    "coarse grid of {}x{}",
-                    detail.width, detail.height, coarse.width, coarse.height));
+    throw std::invalid_argument(std::format(
+        "a detail grid of {}x{} cells is not a whole refinement of a "
+        "coarse grid of {}x{}",
+        detail.width, detail.height, coarse.width, coarse.height));
   }
   if (blocked.width() != detail.width || blocked.height() != detail.height) {
     throw std::invalid_argument(std::format(
@@ -283,62 +380,6 @@ std::vector<std::size_t> freeCellSeeds(const BitGrid& blocked,
     }
   }
   return seeds;
-}
-
-std::vector<CellCapacity> cellCapacities(const BitGrid& blocked,
-                                         const GridMetrics& detail,
-                                         const GridMetrics& coarse,
-                                         const double wirePitch) {
-  const auto factors = refinement(detail, coarse);
-  if (!factors.has_value()) {
-    throw std::invalid_argument(
-        std::format("a detail grid of {}x{} cells is no whole refinement of a "
-                    "coarse grid of {}x{}",
-                    detail.width, detail.height, coarse.width, coarse.height));
-  }
-  if (wirePitch <= 0.0) {
-    throw std::invalid_argument(
-        std::format("a wire pitch of {} is not positive", wirePitch));
-  }
-  const auto [cellWidth, cellHeight] = *factors;
-
-  // How many wires a fully free edge of a capacity cell carries. The shorter
-  // side decides, so a cell that is wide and flat is budgeted by its height.
-  const auto full = std::min(coarse.cellWidth, coarse.cellHeight) / wirePitch;
-
-  const auto budget = [&](const std::uint32_t free, const std::uint32_t of) {
-    const auto fraction = static_cast<double>(free) / static_cast<double>(of);
-    return static_cast<std::uint16_t>(fraction * full);
-  };
-
-  std::vector<CellCapacity> capacities(coarse.cells());
-  for (std::uint32_t cy = 0; cy < coarse.height; ++cy) {
-    for (std::uint32_t cx = 0; cx < coarse.width; ++cx) {
-      const auto x0 = cx * cellWidth;
-      const auto y0 = cy * cellHeight;
-      const auto x1 = x0 + cellWidth - 1;
-      const auto y1 = y0 + cellHeight - 1;
-
-      std::uint32_t south = 0;
-      std::uint32_t north = 0;
-      for (std::uint32_t x = x0; x <= x1; ++x) {
-        south += blocked.test(detail.index(x, y0)) ? 0U : 1U;
-        north += blocked.test(detail.index(x, y1)) ? 0U : 1U;
-      }
-      std::uint32_t west = 0;
-      std::uint32_t east = 0;
-      for (std::uint32_t y = y0; y <= y1; ++y) {
-        west += blocked.test(detail.index(x0, y)) ? 0U : 1U;
-        east += blocked.test(detail.index(x1, y)) ? 0U : 1U;
-      }
-
-      capacities[coarse.index(cx, cy)] = {.south = budget(south, cellWidth),
-                                          .north = budget(north, cellWidth),
-                                          .west = budget(west, cellHeight),
-                                          .east = budget(east, cellHeight)};
-    }
-  }
-  return capacities;
 }
 
 std::vector<PartitionLabel>
@@ -401,25 +442,65 @@ rasterizePartitions(const std::span<const PartitionOutline> outlines,
   return labels;
 }
 
-std::vector<Point> borderSlots(const PartitionBorder& border, const GridMetrics& grid,
-                               const double spacing) {
+std::vector<Point> borderSlots(const PartitionBorder& border,
+                               const GridMetrics& grid, const double spacing) {
   if (spacing <= 0.0) {
-    throw std::invalid_argument(std::format("a wire spacing of {} is no distance", spacing));
+    throw std::invalid_argument(
+        std::format("a wire spacing of {} is not a distance", spacing));
   }
   if (border.samples.empty()) {
     return {};
   }
 
   // The samples come in the order the grid was scanned, which is not the order
-  // the border runs in. Walking it is what makes the spacing a distance along
-  // the border rather than a distance to everything taken so far: a border
-  // that bends back towards itself would otherwise lose the slots on its
-  // return leg, and those are the ones a wire coming from that side needs.
-  std::vector<bool> walked(border.samples.size(), false);
+  // the border runs in. The walk along the border sets the order in which the
+  // samples are offered as slots. Each piece is walked from one of its ends, so
+  // that the slots follow the run once instead of starting from its middle.
+  const auto count = border.samples.size();
+  const auto adjacent = [&](const std::size_t a, const std::size_t b) {
+    const auto dx = border.samples[a].x() - border.samples[b].x();
+    const auto dy = border.samples[a].y() - border.samples[b].y();
+    return (dx * dx) + (dy * dy) <= ADJACENT_SAMPLE_SQUARED;
+  };
+  // For each sample, how many adjacent samples the walk has not reached yet.
+  std::vector<std::size_t> open(count, 0);
+  for (std::size_t a = 0; a < count; ++a) {
+    for (std::size_t b = a + 1; b < count; ++b) {
+      if (adjacent(a, b)) {
+        ++open[a];
+        ++open[b];
+      }
+    }
+  }
+  std::vector<bool> walked(count, false);
+  const auto walk = [&](const std::size_t sample) {
+    walked[sample] = true;
+    for (std::size_t other = 0; other < count; ++other) {
+      if (!walked[other] && adjacent(sample, other)) {
+        --open[other];
+      }
+    }
+  };
+  // The first sample not yet walked that ends a run, or on a closed loop,
+  // which has no end, the first sample not yet walked.
+  const auto startOfPiece = [&] {
+    auto loop = count;
+    for (std::size_t i = 0; i < count; ++i) {
+      if (walked[i]) {
+        continue;
+      }
+      if (open[i] <= 1) {
+        return i;
+      }
+      loop = std::min(loop, i);
+    }
+    return loop;
+  };
+  // The nearest sample the walk has not reached, when it touches the sample.
   const auto step = [&](const std::size_t from) {
-    auto nearest = border.samples.size();
+    auto nearest = count;
     auto best = std::numeric_limits<double>::infinity();
-    for (std::size_t i = 0; i < border.samples.size(); ++i) {
+    for (std::size_t i = 0; i < count; ++i) {
       if (walked[i]) {
         continue;
       }
@@ -430,35 +511,40 @@ std::vector<Point> borderSlots(const PartitionBorder& border, const GridMetrics&
         nearest = i;
       }
     }
-    // Two samples of one border are cell edges that touch, so a step is about
-    // one cell. A longer one means the border is in pieces, and the walk
-    // starts again on the next of them.
-    return std::pair{nearest, best <= ADJACENT_SAMPLE_SQUARED};
+    return best <= ADJACENT_SAMPLE_SQUARED ? nearest : count;
   };
 
   const auto layout = [&](const std::size_t index) {
-    return grid.toLayout(border.samples[index].x(), border.samples[index].y());
+    return cornerToLayout(grid, border.samples[index].x(),
+                          border.samples[index].y());
   };
 
+  // A sample becomes a slot when it lies at least one spacing from every slot
+  // taken so far. The walk sets the order in which the samples are offered,
+  // and the distance to every slot, not only to the last one, keeps the
+  // spacing where the walk ends a piece early and starts another next to it,
+  // or where the border bends back towards itself.
   std::vector<Point> slots;
-  auto current = std::size_t{0};
-  walked[0] = true;
-  slots.push_back(border.samples[0]);
-  auto last = layout(0);
-  while (true) {
-    const auto [next, adjacent] = step(current);
-    if (next == border.samples.size()) {
-      break;
+  std::vector<Point> taken;
+  const auto offer = [&](const std::size_t index) {
+    const auto here = layout(index);
+    if (std::ranges::all_of(taken, [&](const Point& slot) {
+          return std::hypot(here.x() - slot.x(), here.y() - slot.y()) >=
+                 spacing;
+        })) {
+      slots.push_back(border.samples[index]);
+      taken.push_back(here);
     }
-    walked[next] = true;
-    const auto here = layout(next);
-    // The first sample of a new piece is a slot of its own; along one piece a
-    // sample becomes a slot once it is one spacing past the last.
-    if (!adjacent || std::hypot(here.x() - last.x(), here.y() - last.y()) >= spacing) {
-      slots.push_back(border.samples[next]);
-      last = here;
+  };
+  for (auto current = startOfPiece(); current != count;
+       current = startOfPiece()) {
+    walk(current);
+    offer(current);
+    for (auto next = step(current); next != count; next = step(current)) {
+      walk(next);
+      offer(next);
+      current = next;
     }
-    current = next;
   }
   return slots;
 }

@@ -62,13 +62,14 @@ class Port(object):
         return 0
 
     # The component the port belongs to, as the configured component pattern
-    # captures it. Empty for a port created during a run.
+    # captures it. Empty for a port created during a run, and for every port
+    # when the configuration declares no component pattern.
     #
-    # This is declared, never inferred: the pattern says which part of a
-    # label names the component, and no algorithm reads a label itself. The
-    # planning stages need the grouping because a coupler's opposite ports
-    # let an inner wire cross its artwork, and because a qubit's own ports
-    # are what the inner circuit has to reach.
+    # The grouping is declared, never inferred: the pattern says which part of
+    # a label names the component, and no algorithm reads a label itself. The
+    # planning stages need it because the opposite ports of a coupler let an
+    # inner wire cross its artwork, and because the inner circuit has to reach
+    # the ports of a qubit.
     # Port
     def Component(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))

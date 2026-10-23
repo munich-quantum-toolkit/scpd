@@ -12,9 +12,12 @@ np = import_numpy()
 # The crossing slots of one partition border.
 #
 # A wire leaves one partition for another at one of these, and no two wires
-# take the same one. The slots sit one wire spacing apart along the border,
-# so their count is what the border can carry, which is what
-# `PartitionBorder.budget` reports.
+# take the same one. The slots of one border lie at least one crossing pitch
+# apart, so their count is the most wires that the border can carry, which is
+# what PartitionBorder.budget reports. The crossings of two wires also lie at
+# least one crossing pitch apart, so a wire that crosses another border within
+# one crossing pitch of a slot blocks that slot. The border then carries fewer
+# wires than its budget.
 class BorderSlots(object):
     __slots__ = ['_tab']
 
@@ -37,8 +40,7 @@ class BorderSlots(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # The border they belong to, as an index into CapacityPlan.borders, or
-    # zero when `pocket` is set and they are on no border at all.
+    # The border they belong to, as an index into CapacityPlan.borders.
     # BorderSlots
     def Border(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -46,7 +48,9 @@ class BorderSlots(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
 
-    # The slots in layout units, in the order the border runs.
+    # The slots in layout units, in the order of the walk that picked them.
+    # The walk runs from sample to adjacent sample and starts again at another
+    # end where it runs out, so the order can jump along the border.
     # BorderSlots
     def Positions(self, j: int) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -70,23 +74,8 @@ class BorderSlots(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         return o == 0
 
-    # Whether these are ways out of a port's own pocket rather than slots of a
-    # border.
-    #
-    # The capacity grid places a target on the first cell beyond its port's
-    # band that was free before the bands, and does not open the band. Where
-    # the band and the artwork close around a port, the free space left is a
-    # pocket that no border reaches; the band is that port's own approach, so
-    # it is a way out, and it carries the one wire.
-    # BorderSlots
-    def Pocket(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
-        return False
-
 def BorderSlotsStart(builder: flatbuffers.Builder):
-    builder.StartObject(3)
+    builder.StartObject(2)
 
 def Start(builder: flatbuffers.Builder):
     BorderSlotsStart(builder)
@@ -109,12 +98,6 @@ def BorderSlotsStartPositionsVector(builder, numElems: int) -> int:
 def StartPositionsVector(builder, numElems: int) -> int:
     return BorderSlotsStartPositionsVector(builder, numElems)
 
-def BorderSlotsAddPocket(builder: flatbuffers.Builder, pocket: bool):
-    builder.PrependBoolSlot(2, pocket, 0)
-
-def AddPocket(builder: flatbuffers.Builder, pocket: bool):
-    BorderSlotsAddPocket(builder, pocket)
-
 def BorderSlotsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -134,11 +117,9 @@ class BorderSlotsT(object):
         self,
         border = 0,
         positions = None,
-        pocket = False,
     ):
         self.border = border  # type: int
         self.positions = positions  # type: Optional[List[mqt.scpd.flatbuffers.geometry.Point.PointT]]
-        self.pocket = pocket  # type: bool
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -170,7 +151,6 @@ class BorderSlotsT(object):
                 else:
                     point_ = mqt.scpd.flatbuffers.geometry.Point.PointT.InitFromObj(borderSlots.Positions(i))
                     self.positions.append(point_)
-        self.pocket = borderSlots.Pocket()
 
     # BorderSlotsT
     def Pack(self, builder):
@@ -183,6 +163,5 @@ class BorderSlotsT(object):
         BorderSlotsAddBorder(builder, self.border)
         if self.positions is not None:
             BorderSlotsAddPositions(builder, positions)
-        BorderSlotsAddPocket(builder, self.pocket)
         borderSlots = BorderSlotsEnd(builder)
         return borderSlots

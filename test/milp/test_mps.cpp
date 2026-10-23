@@ -8,88 +8,30 @@
  * Licensed under the MIT License
  */
 
-// The MPS text is the whole contract of the bring-your-own-licence path: the
+// The MPS text is the whole contract of the bring-your-own-license path: the
 // external solver never sees the model, only this. Every test here reads the
 // emitted text back with a solver and asks whether it describes the same
 // problem the in-process backend was handed.
 
-#include "Highs.h"
+#include "../MpsSolver.hpp"
 #include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/milp/Mps.hpp"
 
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <cstddef>
-#include <format>
-#include <filesystem>
-#include <fstream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace mqt::scpd::milp {
 namespace {
 
-/// The MPS text of a model, solved by reading it back as a file.
-///
-/// Going through a file rather than a string is the point: it is the same
-/// path `gurobipy` takes, so a syntax the reader would reject shows up here.
+/// A model solved through the backend that hands MPS text to an external
+/// solver.
 Solution solveThroughMps(const Model& model) {
-  // A counter rather than the process id, so the name is the same on every
-  // platform the tests run on.
-  static std::atomic<unsigned> counter{0};
-  const auto path =
-      std::filesystem::temp_directory_path() /
-      std::format("mqt-scpd-milp-{}-{}.mps", model.name(), counter.fetch_add(1));
-  {
-    std::ofstream file(path);
-    file << toMps(model);
-  }
-
-  Highs highs;
-  static_cast<void>(highs.setOptionValue("output_flag", false));
-  Solution solution;
-  solution.backend = "mps";
-  if (highs.readModel(path.string()) != HighsStatus::kOk) {
-    solution.message = "the emitted MPS text was rejected";
-    std::filesystem::remove(path);
-    return solution;
-  }
-  std::filesystem::remove(path);
-
-  if (highs.run() == HighsStatus::kError) {
-    solution.message = "the model read back from MPS failed to solve";
-    return solution;
-  }
-  const auto status = highs.getModelStatus();
-  if (status == HighsModelStatus::kInfeasible) {
-    solution.status = SolveStatus::Infeasible;
-    return solution;
-  }
-  if (status != HighsModelStatus::kOptimal) {
-    solution.message = "the model read back from MPS did not solve to optimality";
-    return solution;
-  }
-
-  solution.status = SolveStatus::Optimal;
-  // MPS carries a minimization, so a maximization comes back negated.
-  const auto sign = model.sense() == Sense::Maximize ? -1.0 : 1.0;
-  solution.objective = sign * highs.getInfo().objective_function_value;
-
-  // The round trip only preserves names, so the values are matched back by
-  // name rather than by position.
-  const auto& lp = highs.getLp();
-  solution.values.assign(model.variableCount(), 0.0);
-  for (std::size_t index = 0; index < model.variableCount(); ++index) {
-    const auto& wanted = model.variables()[index].name;
-    for (std::size_t column = 0; column < lp.col_names_.size(); ++column) {
-      if (lp.col_names_[column] == wanted) {
-        solution.values[index] = highs.getSolution().col_value[column];
-        break;
-      }
-    }
-  }
-  return solution;
+  return makeMpsBackend("mps", test::solveMpsText)->solve(model, {});
 }
 
 /// Assert that both paths agree on a model's optimum.
@@ -136,11 +78,64 @@ TEST(Mps, CarriesAnUnboundedIntegerVariable) {
   expectAgreement(model);
 }
 
+TEST(Mps, CarriesAnIntegerVariableWithOnlyALowerBound) {
+  // A reader that gives an integer column the bound of one on each side it
+  // finds no bound for would read [2, 1] without the open upper side.
+  Model model("lower");
+  const auto x = model.addInteger("x", 2.0, INFINITE_BOUND, 1.0);
+  const auto y = model.addInteger("y", -INFINITE_BOUND, INFINITE_BOUND, -1.0);
+  model.addLessOrEqual("cap", 1.0 * x, 7.0);
+  model.addGreaterOrEqual("floor", 1.0 * y, -3.0);
+  model.setSense(Sense::Maximize);
+  expectAgreement(model);
+
+  const auto text = toMps(model);
+  EXPECT_NE(text.find(" LO BND  x  2\n PL BND  x\n"), std::string::npos)
+      << text;
+}
+
+TEST(Mps, CarriesAnIntegerVariableWithOnlyAnUpperBound) {
+  // MI opens the lower side, and UP closes the upper one.
+  Model model("upper");
+  const auto x = model.addInteger("x", -INFINITE_BOUND, 4.0, 1.0);
+  model.addGreaterOrEqual("floor", 1.0 * x, -6.0);
+  model.setSense(Sense::Maximize);
+  expectAgreement(model);
+
+  const auto text = toMps(model);
+  EXPECT_NE(text.find(" MI BND  x\n UP BND  x  4\n"), std::string::npos)
+      << text;
+}
+
+TEST(Mps, CarriesAContinuousVariableBelowZero) {
+  // Some readers take a negative UP on a column without a lower bound as a
+  // bound of minus infinity below. The text states the lower bound first,
+  // so every reader reads [-5, -2].
+  Model model("negative");
+  static_cast<void>(model.addContinuous("x", -5.0, -2.0, 1.0));
+  static_cast<void>(model.addContinuous("y", -5.0, -2.0, -1.0));
+  expectAgreement(model);
+
+  const auto text = toMps(model);
+  EXPECT_NE(text.find(" LO BND  x  -5\n UP BND  x  -2\n"), std::string::npos)
+      << text;
+}
+
 TEST(Mps, CarriesAFreeContinuousVariable) {
   Model model("free");
   const auto x = model.addContinuous("x", -INFINITE_BOUND, INFINITE_BOUND, 1.0);
   model.addGreaterOrEqual("floor", 1.0 * x, -3.0);
   expectAgreement(model);
+}
+
+TEST(Mps, CountsTheSameBoundsAsInfiniteAsTheHighsBackend) {
+  // An MPS reader counts a bound as infinite from 1e20 on. The direct
+  // backend has to draw the line at the same value.
+  for (const double bound : {0.5 * INFINITE_BOUND, 1.0e25}) {
+    Model model("large");
+    static_cast<void>(model.addContinuous("x", 0.0, bound, -1.0));
+    expectAgreement(model);
+  }
 }
 
 TEST(Mps, CarriesARangeRow) {
@@ -194,6 +189,18 @@ TEST(Mps, NamesEveryRowAndColumnOfTheModel) {
   EXPECT_NE(text.find(" E  beta"), std::string::npos);
   EXPECT_NE(text.find("alpha"), std::string::npos);
   EXPECT_NE(text.find("ENDATA"), std::string::npos);
+}
+
+TEST(Mps, RefusesNamesTheTextCannotCarry) {
+  // A space would split the field, and COST is the objective row.
+  Model spaced("names");
+  static_cast<void>(spaced.addBinary("two words"));
+  EXPECT_THROW(static_cast<void>(toMps(spaced)), std::invalid_argument);
+
+  Model objective("names");
+  const auto x = objective.addBinary("x");
+  objective.addEqual("COST", 1.0 * x, 1.0);
+  EXPECT_THROW(static_cast<void>(toMps(objective)), std::invalid_argument);
 }
 
 } // namespace

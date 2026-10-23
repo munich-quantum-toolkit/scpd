@@ -12,33 +12,100 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/io/mqt_scpd_io_export.hpp"
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace mqt::scpd::io {
 
 using design::Problems;
 
-/// Problems of an artifact: an empty producer, a missing output, and the
-/// problems of the components its output carries.
+/**
+ * @brief Validates a stage artifact.
+ *
+ * Besides the components that the output carries, the check covers what the
+ * later stages and the write rely on: the output type is one this version
+ * knows; no required table of a capacity plan and no entry of a vector of
+ * tables is missing; the capacity nodes link without a cycle and only to
+ * nodes of the plan, a capacity chain is a tree, a target lies on one chain
+ * only, and a gate names a bottleneck of the plan and has its capacity; the
+ * lattice of a Global routing names only its own points and edges; an
+ * Assignment has one connection, launcher and feed per ring node, connection
+ * i targets the port of ring node i, and every chain runs through one ring
+ * node at least, each of them on that chain only; a corridor names one more
+ * partition than it has crossings, or neither for a connection without a
+ * way, and a corridor with a way has a source and a target.
+ *
+ * @param artifact The artifact to check.
+ * @return A problem for an empty producer, one for a missing output or an
+ * unknown output type, and every other problem found, empty when the artifact
+ * is valid.
+ */
 [[nodiscard]] MQT_SCPD_IO_EXPORT Problems
 validate(const flatbuffers::artifacts::ArtifactT& artifact);
 
-/// Serialize an artifact as a run directory stores it.
-///
-/// @throws std::invalid_argument when the artifact has a problem. The message
-/// lists every problem.
+/**
+ * @brief Checks that a stage artifact fits a chip.
+ *
+ * An artifact names ports by their index into the chip. An artifact that was
+ * made from another chip can name a port this chip does not have, and a
+ * stage that read it would read past the end of the port list.
+ *
+ * @param artifact The artifact to check.
+ * @param chip The chip a stage reads the artifact with.
+ * @return A problem for every port the artifact names that @p chip does not
+ * have, empty when the artifact fits.
+ */
+[[nodiscard]] MQT_SCPD_IO_EXPORT Problems
+validate(const flatbuffers::artifacts::ArtifactT& artifact,
+         const flatbuffers::design::ChipT& chip);
+
+/**
+ * @brief Serializes a stage artifact as a run directory stores it.
+ * @param artifact The artifact to serialize.
+ * @pre @p artifact is valid, so validate() reports no problem for it.
+ * @return The bytes of the artifact, beginning with the file identifier that
+ * records the schema version.
+ * @throws std::invalid_argument If @p artifact has a problem. The message
+ * names every problem.
+ */
 [[nodiscard]] MQT_SCPD_IO_EXPORT std::vector<std::uint8_t>
 writeArtifact(const flatbuffers::artifacts::ArtifactT& artifact);
 
-/// Verify stored bytes, structurally and then semantically, and unpack them.
-///
-/// @throws std::invalid_argument when the bytes are not a well-formed artifact
-/// with the identifier of this schema, or when the artifact has a problem.
+/**
+ * @brief Reads back the bytes that a run directory stores.
+ *
+ * The bytes are verified structurally, by the FlatBuffers verifier, and then
+ * semantically, by validate().
+ *
+ * @param bytes The stored artifact.
+ * @return The artifact.
+ * @throws std::invalid_argument If @p bytes is not a well-formed artifact with
+ * the identifier of this schema version, or if the artifact it holds has a
+ * problem.
+ */
 [[nodiscard]] MQT_SCPD_IO_EXPORT flatbuffers::artifacts::ArtifactT
 readArtifact(std::span<const std::uint8_t> bytes);
+
+/**
+ * @brief Renders a stored artifact as JSON.
+ *
+ * The field names, the enum names and the union tags come from the type tables
+ * that the schema compiler emits, so the JSON follows the schema without a
+ * second description of the model. Names are the ones the schema spells, which
+ * are snake_case.
+ *
+ * @param bytes The stored artifact.
+ * @return The artifact as indented JSON, ending in a newline.
+ * @throws std::invalid_argument If @p bytes is not a well-formed artifact with
+ * the identifier of this schema version, or if the artifact it holds has a
+ * problem.
+ */
+[[nodiscard]] MQT_SCPD_IO_EXPORT std::string
+artifactToJson(std::span<const std::uint8_t> bytes);
 
 } // namespace mqt::scpd::io

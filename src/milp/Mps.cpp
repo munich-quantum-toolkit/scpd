@@ -12,10 +12,15 @@
 
 #include "mqt-scpd/milp/Model.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <format>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::milp {
@@ -34,22 +39,52 @@ std::string number(const double value) { return std::format("{:.17g}", value); }
 bool isFinite(const double bound) { return std::abs(bound) < INFINITE_BOUND; }
 
 /// The column-major coefficients: for each variable, the rows it appears in.
-std::vector<std::vector<std::pair<std::size_t, double>>> byColumn(const Model& model) {
-  std::vector<std::vector<std::pair<std::size_t, double>>> columns(model.variableCount());
+std::vector<std::vector<std::pair<std::size_t, double>>>
+byColumn(const Model& model) {
+  std::vector<std::vector<std::pair<std::size_t, double>>> columns(
+      model.variableCount());
   for (std::size_t row = 0; row < model.constraints().size(); ++row) {
-    for (const auto& [column, coefficient] : model.constraints()[row].coefficients) {
+    for (const auto& [column, coefficient] :
+         model.constraints()[row].coefficients) {
       columns[column].emplace_back(row, coefficient);
     }
   }
   return columns;
 }
 
+/// Refuses a name that free-form MPS cannot carry: an empty one, or one with
+/// a space in it, since a space separates the fields of a line.
+void requireMpsName(const std::string& name, const std::string_view what) {
+  if (name.empty() ||
+      std::ranges::any_of(name, [](const unsigned char character) {
+        return std::isspace(character) != 0;
+      })) {
+    throw std::invalid_argument(std::format(
+        "the {} '{}' cannot be written as MPS: a name must be non-empty and "
+        "have no spaces",
+        what, name));
+  }
+}
+
 } // namespace
 
 std::string toMps(const Model& model) {
+  requireMpsName(model.name(), "model name");
+  for (const auto& variable : model.variables()) {
+    requireMpsName(variable.name, "variable name");
+  }
+  for (const auto& constraint : model.constraints()) {
+    requireMpsName(constraint.name, "row name");
+    if (constraint.name == OBJECTIVE_ROW) {
+      throw std::invalid_argument(std::format(
+          "the row name '{}' cannot be written as MPS: it names the objective",
+          OBJECTIVE_ROW));
+    }
+  }
+
   // MPS states a minimization, so a maximization is written with every
-  // objective coefficient negated and the sign undone when the value is read
-  // back.
+  // objective coefficient negated. The backend that hands the text to a
+  // solver negates the value that comes back.
   const double objectiveSign = model.sense() == Sense::Maximize ? -1.0 : 1.0;
 
   std::string text;
@@ -79,8 +114,8 @@ std::string toMps(const Model& model) {
     const auto& variable = model.variables()[column];
     const bool integral = variable.type != VarType::Continuous;
     if (integral != integerBlockOpen) {
-      text += std::format("    MARKER{:<4}  'MARKER'                 '{}'\n", markerCount++,
-                          integral ? "INTORG" : "INTEND");
+      text += std::format("    MARKER{:<4}  'MARKER'                 '{}'\n",
+                          markerCount++, integral ? "INTORG" : "INTEND");
       integerBlockOpen = integral;
     }
     if (variable.objective != 0.0) {
@@ -88,8 +123,8 @@ std::string toMps(const Model& model) {
                           number(objectiveSign * variable.objective));
     }
     for (const auto& [row, coefficient] : columns[column]) {
-      text += std::format("    {}  {}  {}\n", variable.name, model.constraints()[row].name,
-                          number(coefficient));
+      text += std::format("    {}  {}  {}\n", variable.name,
+                          model.constraints()[row].name, number(coefficient));
     }
     // A variable that appears nowhere still has to exist, or the reader will
     // not know its bounds and its type.
@@ -98,7 +133,8 @@ std::string toMps(const Model& model) {
     }
   }
   if (integerBlockOpen) {
-    text += std::format("    MARKER{:<4}  'MARKER'                 'INTEND'\n", markerCount);
+    text += std::format("    MARKER{:<4}  'MARKER'                 'INTEND'\n",
+                        markerCount);
   }
 
   text += "RHS\n";
@@ -109,12 +145,17 @@ std::string toMps(const Model& model) {
                         number(-objectiveSign * model.objectiveOffset()));
   }
   for (const auto& constraint : model.constraints()) {
-    if (constraint.lower == constraint.upper) {
-      text += std::format("    RHS  {}  {}\n", constraint.name, number(constraint.lower));
+    // An equality and a row bounded from below alone state their lower bound,
+    // every other row its upper bound, and a free row neither.
+    const bool statesLower =
+        constraint.lower == constraint.upper ||
+        (!isFinite(constraint.upper) && isFinite(constraint.lower));
+    if (statesLower) {
+      text += std::format("    RHS  {}  {}\n", constraint.name,
+                          number(constraint.lower));
     } else if (isFinite(constraint.upper)) {
-      text += std::format("    RHS  {}  {}\n", constraint.name, number(constraint.upper));
-    } else if (isFinite(constraint.lower)) {
-      text += std::format("    RHS  {}  {}\n", constraint.name, number(constraint.lower));
+      text += std::format("    RHS  {}  {}\n", constraint.name,
+                          number(constraint.upper));
     }
   }
 
@@ -137,7 +178,8 @@ std::string toMps(const Model& model) {
   for (const auto& variable : model.variables()) {
     const bool defaultLower = variable.lower == 0.0;
     const bool defaultUpper = !isFinite(variable.upper);
-    if (variable.type == VarType::Binary && variable.lower == 0.0 && variable.upper == 1.0) {
+    if (variable.type == VarType::Binary && variable.lower == 0.0 &&
+        variable.upper == 1.0) {
       text += std::format(" BV BND  {}\n", variable.name);
       continue;
     }
@@ -155,13 +197,19 @@ std::string toMps(const Model& model) {
     }
     if (!defaultLower) {
       if (isFinite(variable.lower)) {
-        text += std::format(" LO BND  {}  {}\n", variable.name, number(variable.lower));
+        text += std::format(" LO BND  {}  {}\n", variable.name,
+                            number(variable.lower));
       } else {
         text += std::format(" MI BND  {}\n", variable.name);
       }
     }
     if (!defaultUpper) {
-      text += std::format(" UP BND  {}  {}\n", variable.name, number(variable.upper));
+      text += std::format(" UP BND  {}  {}\n", variable.name,
+                          number(variable.upper));
+    } else if (variable.type != VarType::Continuous) {
+      // A reader may apply the bound of one per side, so an integer variable
+      // with only a lower bound states its open upper side as well.
+      text += std::format(" PL BND  {}\n", variable.name);
     }
   }
 

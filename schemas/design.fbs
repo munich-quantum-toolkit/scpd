@@ -14,7 +14,7 @@ include "geometry.fbs";
 namespace mqt.scpd.flatbuffers.design;
 
 // Every enum starts with Unset. It is the value an absent field reads as, so
-// a buffer that omits a role or a rotation is recognisable as incomplete and
+// a buffer that omits a role or a rotation is recognizable as incomplete and
 // fails validation instead of decoding as the first real member.
 
 /// What a port is, before anything is decided. Set at load, from the role
@@ -26,9 +26,9 @@ enum UnassignedRole : ubyte {
   Conventional,
   /// Created by the Final stage's coupler insertion. No pattern produces it.
   Coupler,
-  /// One end of a bridge: a port a wire crosses the component at, rather
-  /// than one a wire ends at. Which two of them pair is declared by the
-  /// bridge rules of the configuration.
+  /// One end of a bridge: a port where a wire crosses the component, rather
+  /// than one where a wire ends. The bridge rules of the configuration say
+  /// which two of them pair.
   BridgePair,
 }
 
@@ -78,13 +78,14 @@ table Port {
   orientation: double;
   role: UnassignedRole;
   /// The component the port belongs to, as the configured component pattern
-  /// captures it. Empty for a port created during a run.
+  /// captures it. Empty for a port created during a run, and for every port
+  /// when the configuration declares no component pattern.
   ///
-  /// This is declared, never inferred: the pattern says which part of a
-  /// label names the component, and no algorithm reads a label itself. The
-  /// planning stages need the grouping because a coupler's opposite ports
-  /// let an inner wire cross its artwork, and because a qubit's own ports
-  /// are what the inner circuit has to reach.
+  /// The grouping is declared, never inferred: the pattern says which part of
+  /// a label names the component, and no algorithm reads a label itself. The
+  /// planning stages need it because the opposite ports of a coupler let an
+  /// inner wire cross its artwork, and because the inner circuit has to reach
+  /// the ports of a qubit.
   component: string;
 }
 
@@ -105,7 +106,7 @@ table Connection {
 }
 
 /// The design rules. Every rule is a length in layout units, held once and
-/// converted to cells only through cells_for.
+/// converted to cells only through cellsFor.
 table DesignRules {
   min_wire_spacing: double;
   min_obstacle_spacing: double;

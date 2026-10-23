@@ -16,50 +16,53 @@ from pathlib import Path
 
 import pytest
 
-from mqt.scpd.chip import ChipError, chip_input_path, decode_chip, load_chip, obstacles_of, ports_of, role_name
+from mqt.scpd.chip import (
+    ROLE_NAMES,
+    ChipError,
+    chip_input_path,
+    decode_chip,
+    load_chip,
+    obstacles_of,
+    ports_of,
+    role_name,
+)
 from mqt.scpd.config import load_config
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 
-BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
+FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 
 
-def test_the_four_qubit_chip_loads_and_classifies() -> None:
-    """The committed 4-qubit input loads with its shipped configuration."""
-    config_path = BENCHMARKS / "4q" / "config.toml"
+def test_the_fixture_chip_loads_and_classifies() -> None:
+    """The fixture input loads with its configuration, and its sequences fit the chip."""
+    config_path = FIXTURE / "config.toml"
     config = load_config(config_path)
-    assert chip_input_path(config, config_path) == BENCHMARKS / "4q" / "routing_config.json"
+    assert chip_input_path(config, config_path) == FIXTURE / "routing_config.json"
 
     chip = decode_chip(load_chip(config, config_path))
 
-    assert len(obstacles_of(chip)) == 28
+    assert len(obstacles_of(chip)) == 4
     ports = ports_of(chip)
-    # Its couplers carry three ports, so one pair of each bridges and the third ends a wire.
-    assert Counter(role_name(port.role) for port in ports) == {
-        "launcher": 16,
-        "resonator": 4,
-        "conventional": 8,
-        "bridge_pair": 8,
-    }
-    assert ports[0].label
+    assert Counter(role_name(port.role) for port in ports) == {"launcher": 4, "resonator": 2, "conventional": 3}
+    assert ports[0].label == "Chip.port0"
     assert ports[0].center is not None
 
 
-def test_the_nine_qubit_chip_loads_with_its_sequences() -> None:
-    """The committed 9-qubit input classifies every port and accepts its sequences."""
-    config_path = BENCHMARKS / "9q" / "config.toml"
-    chip = decode_chip(load_chip(load_config(config_path), config_path))
+def test_a_chip_path_replaces_the_configured_input(tmp_path: Path) -> None:
+    """A chip named beside the configuration is read instead of the input the file names."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text((FIXTURE / "config.toml").read_text(encoding="utf-8"), encoding="utf-8")
+    config = load_config(config_path)
+    chip_path = FIXTURE / "routing_config.json"
 
-    assert Counter(role_name(port.role) for port in ports_of(chip)) == {
-        "launcher": 24,
-        "resonator": 9,
-        "conventional": 21,
-        "bridge_pair": 48,
-    }
+    assert chip_input_path(config, config_path, chip_path) == chip_path
+    assert len(ports_of(decode_chip(load_chip(config, config_path, chip_path)))) == 9
+    with pytest.raises(ChipError, match="cannot read the chip input"):
+        load_chip(config, config_path)
 
 
 def test_a_chip_that_does_not_fit_its_configuration_is_refused() -> None:
     """A pattern that leaves ports unmatched, and a sequence label the chip lacks, are named."""
-    config_path = BENCHMARKS / "4q" / "config.toml"
+    config_path = FIXTURE / "config.toml"
     config = load_config(config_path)
     assert config.ports is not None
     assert config.ports.patterns is not None
@@ -81,10 +84,30 @@ def test_a_chip_that_does_not_fit_its_configuration_is_refused() -> None:
         load_chip(config, config_path)
 
 
+def test_a_chip_input_that_is_not_utf8_is_named(tmp_path: Path) -> None:
+    """A chip input in another encoding is a ChipError that names the file."""
+    config_path = FIXTURE / "config.toml"
+    chip_path = tmp_path / "chip.json"
+    chip_path.write_bytes(b"\xff" + (FIXTURE / "routing_config.json").read_bytes())
+    with pytest.raises(ChipError, match=re.escape(f"cannot read the chip input {chip_path}: it is not UTF-8")):
+        load_chip(load_config(config_path), config_path, chip_path)
+
+
 def test_role_names_follow_the_schema() -> None:
     """Every role has the name the configuration keys use."""
     assert role_name(UnassignedRole.Launcher) == "launcher"
     assert role_name(UnassignedRole.Coupler) == "coupler"
-    # A name in more than one word is the configuration key, not the schema spelling.
-    assert role_name(UnassignedRole.BridgePair) == "bridge_pair"
     assert role_name(99) == "unset"
+
+
+def test_roles_are_named_as_the_configuration_keys_spell_them() -> None:
+    """Every role of the schema has the name of its configuration key, and nothing else has one."""
+    assert {
+        UnassignedRole.Unset: "unset",
+        UnassignedRole.Launcher: "launcher",
+        UnassignedRole.Resonator: "resonator",
+        UnassignedRole.Conventional: "conventional",
+        UnassignedRole.Coupler: "coupler",
+        UnassignedRole.BridgePair: "bridge_pair",
+    } == ROLE_NAMES
+    assert role_name(UnassignedRole.BridgePair) == "bridge_pair"

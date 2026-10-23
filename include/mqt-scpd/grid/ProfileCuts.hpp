@@ -13,6 +13,7 @@
 #include "mqt-scpd/grid/BitGrid.hpp"
 #include "mqt-scpd/grid/Bottlenecks.hpp"
 #include "mqt-scpd/grid/DistanceTransform.hpp"
+#include "mqt-scpd/grid/RoutingBottlenecks.hpp"
 #include "mqt-scpd/grid/mqt_scpd_grid_export.hpp"
 
 #include <cstddef>

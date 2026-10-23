@@ -13,54 +13,111 @@
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <vector>
 
 namespace mqt::scpd::pipeline {
 
-/// The two ports of a component that a wire may pass between.
-///
-/// A coupler's artwork has routable ports on opposite sides, and an inner
-/// wire that reaches one of them leaves through the other. Which two ports
-/// those are is declared by the configuration's bridge rules, and which
-/// component a port belongs to by its component pattern, so nothing reads a
-/// label to find either. `design::componentsOf` is what works the pairs out.
+/**
+ * @brief Two ports of one component that a wire passes between.
+ *
+ * A coupler has routable ports on opposite sides, and an inner wire that
+ * reaches one of them leaves through the other. The bridge rules of the
+ * configuration declare which two ports those are, and the component pattern
+ * which component a port belongs to, so no label is read to find either.
+ */
 struct PortBridge {
+  /// The port index of the inner end.
   std::uint32_t from = 0;
+  /// The port index of the other end.
   std::uint32_t to = 0;
 };
 
-/// What the inner circuit is solved over, derived from the chip, the
-/// configured ring and the component grouping.
+/**
+ * @brief What the inner circuit is solved over: the ports the configured ring
+ * does not carry, and how the bridges join them to it.
+ */
 struct MQT_SCPD_PIPELINE_EXPORT InnerCircuit {
-  /// The routable ports the configured ring does not carry.
+  /// The routable ports the configured ring does not carry, ascending.
   std::vector<std::uint32_t> innerPorts;
-  /// The inner ports that no bridge claims, which are the ports the inner
-  /// circuit has to reach: every port of an inner qubit, and the one port of
-  /// a coupler that is left over once its bridges are paired off.
+  /// The inner ports that no bridge claims, ascending. These are the ports the
+  /// inner circuit has to reach: every port of an inner qubit, the one port
+  /// of a coupler that is left once its bridges are paired off, and every
+  /// port of no component.
   std::vector<std::uint32_t> targets;
-  /// Every declared bridge, oriented so that `from` is the inner port.
+  /// Every declared bridge, oriented so that `from` is the inner end.
   std::vector<PortBridge> bridges;
   /// The bridges whose `to` port the configured ring carries. The ring keeps
-  /// such a port only where the solved circuit actually surfaces there. Every
-  /// other bridge is internal, and the Global stage shuts it unless
+  /// such a port only where the solved circuit surfaces there. Every other
+  /// bridge is internal, and the stage shuts it unless
   /// `[stages.global] internal_bridges` says otherwise.
   std::vector<PortBridge> outerBridges;
 };
 
-/// Derive the inner circuit of a chip.
-///
-/// @throws std::invalid_argument when the configuration carries no ring, a
-/// ring label is not a port of the chip, or the ring carries both ends of one
-/// bridge and so leaves that crossing no inside to come from.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT InnerCircuit innerCircuitOf(const ChipT& chip,
-                                                                   const ConfigT& config);
+/**
+ * @brief Derives the inner circuit of a chip.
+ * @param chip The classified chip.
+ * @param config The run configuration, which carries the ring and the bridge
+ * rules.
+ * @return The inner circuit.
+ * @throws std::invalid_argument When the configuration carries no ring, when
+ * a ring label is not a port of the chip, or when the ring carries both ends
+ * of one bridge and so leaves that bridge no inner end.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT InnerCircuit
+innerCircuitOf(const ChipT& chip, const ConfigT& config);
 
-/// The global router of the first release: a binary flow model on the Hanan
-/// lattice each capacity chain induces, solved as a mixed-integer program.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::unique_ptr<IGlobalRouter> makeHananMilpRouter();
+/**
+ * @brief Creates the global router of the first release.
+ *
+ * The router solves a flow model on the Hanan lattice of each capacity chain
+ * as one mixed-integer program: a binary variable selects an arc of a lattice,
+ * and an integer variable counts the wires along a link of a capacity chain.
+ *
+ * Every inner wire comes from the inner end of a ring bridge and surfaces at
+ * the ring end of that bridge. With `[stages.global] internal_bridges`, the
+ * wire may cross internal bridges on the way, and is then several connections
+ * long. A solve that stops early may keep wires that reach no target: a wire
+ * between the inner ends of two ring bridges, a closed loop through internal
+ * bridges, or a closed loop over crossings that touches no port. The artifact
+ * and its objective leave such wires out, and the ring does not keep the ring
+ * end of a bridge whose inner end starts such a wire. No ring port starts an
+ * inner wire: the assignment gives every ring port a wire of its own, and a
+ * second wire there would reach neither a launcher nor a feedline. The ring
+ * keeps the ring end of a bridge only where a wire surfaces there, and the ring
+ * end is a resonator of the assignment when the wire comes from an inner
+ * resonator.
+ *
+ * A target counts as reached when one connection ends at it. A target that no
+ * wire through a ring bridge can reach stays unreached and counts as a fail,
+ * an inner resonator included: the assignment places no feed for it.
+ *
+ * The wires to a launcher pass the gates of the capacity chains: the wires of
+ * the ring ports behind a gate and the inner wires that surface there. The
+ * ring ports take the room of a gate first. Where the inner wires find no room
+ * left, their targets stay unreached and count as fails. Where the gates have
+ * no room for the ring ports alone, the model has no solution. The router then
+ * solves a second model, in which a ring port may go without room at a
+ * penalty, and counts each ring port without room as a fail. A port lies
+ * on one chain, and a gate on several chains holds the wires of all of them.
+ * Only the model checks a gate with some room: a chip without an inner
+ * circuit, or without a lattice to solve it on, has no model, and the model
+ * leaves out every chain that carries an inner port. A gate there that has
+ * room for some of its ring ports but not for all gives no fail.
+ *
+ * A ring port that no bridge joins needs a way to a launcher on every chip.
+ * Where its chain has no launcher, or a gate without room between the port
+ * and the launcher, the port counts as a fail, also on a chip without an inner
+ * circuit. The ring end of a bridge may be cut off: it needs a way only where
+ * an inner wire surfaces there. The router checks only the ring ports that a
+ * chain carries. The Capacity stage leaves a port off every chain only where
+ * it finds no free cell for the target of the port, and the Corridor stage
+ * then counts the wire of the port as unrouted.
+ *
+ * @return The router.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::unique_ptr<IGlobalRouter>
+makeHananMilpRouter();
 
 } // namespace mqt::scpd::pipeline

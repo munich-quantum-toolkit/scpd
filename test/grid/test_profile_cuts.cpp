@@ -12,6 +12,7 @@
 #include "mqt-scpd/grid/Bottlenecks.hpp"
 #include "mqt-scpd/grid/DistanceTransform.hpp"
 #include "mqt-scpd/grid/ProfileCuts.hpp"
+#include "mqt-scpd/grid/RoutingBottlenecks.hpp"
 
 #include <gtest/gtest.h>
 

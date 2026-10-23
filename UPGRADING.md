@@ -6,147 +6,120 @@ of changes including minor and patch releases, please refer to the
 
 ## [Unreleased]
 
-### The chain search of the coupler insertion does less work for the same result
+### Routing a chip
 
-Three exact speed-ups of the chain search are now on by default: the analytic
-turn bound in the edge searches (`SCPD_ROUTER_TURN_BOUND`), the memo of edge
-searches with the same input (`SCPD_EDGE_SEARCH_MEMO`), and leaving out the step
-checks whose verdict nothing reads (`SCPD_CHECK_ONLY_WINNERS`). Every chain
-settles on the same run, and `06-final.fb` stays the same apart from the version
-string. On 45q the coupler insertion takes 40.5 s instead of 77.6 s and the
-Final stage 153.6 s instead of 190.5 s. The `[Capacity Step]` summary line of a
-chain counts the checks left out. Set a switch to `0` to give the earlier
-behavior of that part.
+A run now goes on from the corridors to the two routing stages, `detail` and
+`final`, unless `[run] stop_after` or `--stop-after` stops it before. Both
+stages read `[design_rules]` and `[grid]` as the planning stages do; the keys
+of `[stages.detail]` and `[stages.final]` are optional, and the Final stage
+takes `[grid] router_cell_size` for the size of its cells. `stop_after` also
+takes one of the five phases of the Final stage, so a run can stop after the
+routing before the feedlines or after the feedline insertion. The Final stage
+counts a resonator off its target length as a fail, as it counts a wire without
+a way, an open wire and a wire that crosses a feedline other than at a right
+angle; a run that ends with fails exits with code 1 as before.
 
-### The profile cuts keep their work on the walls between step checks
+### Planning a chip
 
-The step checks of the coupler insertion now keep the outline traces, the
-simplified lines and the narrowings between two walls from one pass to the next
-(`SCPD_PROFILE_MEMO`, on), and gather the walls they walk from the cells the
-pass drew. The bottlenecks, and so every result, stay the same; on 45q the chain
-search takes 78.0 s instead of 97.0 s. Over the whole insertion of 45q the memo
-made 959 traces and 15 528 pairs of walls. `SCPD_PROFILE_MEMO=0` gives the
-earlier behavior.
+`mqt-scpd plan` needs a few keys that a configuration for `plot` and `render`
+does not. `doctor` checks the configuration for the steps up to
+`[run] stop_after`, which are all four steps when the key is missing. A
+configuration without `launcher_target` therefore passes `doctor` only with
+`stop_after = "global"` or an earlier step. The keys are:
 
-### The coupler insertion prices end edges at a tenth and offers six offsets
+- `[stages.assignment] launcher_target`: how many feedline chain ends the
+  assignment puts on a launcher; every other chain end is a termination. It is a
+  figure of the chip and has no default.
+- A `component` pattern, which groups the ports by component, and, for a chip
+  whose couplers carry a wire across, a `bridge_pair` pattern with the
+  `[[ports.bridge_pairs]]` rules that pair those ports. The `component` pattern
+  has to match every `bridge_pair` port.
 
-Two defaults of the coupler insertion changed. An edge between a launcher and
-its coupler costs a tenth of its turns in the chain searches
-(`SCPD_CHAIN_END_EDGE_WEIGHT=0.1`; the feedline routing draws these edges
-again), and the option generator turns a pad by the offsets 0, 1, 2, 5, 6 and 7
-only (`SCPD_COUPLER_OFFSETS=0,1,2,5,6,7`; offsets 3 and 4 turn the pad 135° and
-180° against the way and were never chosen). Together they cut the Final stage
-of 4q to 57q from 1843 s to 634 s, and every chip ends globally SAT. The results
-change: other couplers and feedline edges are chosen, 57q ends with 2 short
-wires (40, 183) instead of none, and the feedline angle cost rises on 17q (49 →
-53), 21q (52 → 54) and 57q (134 → 140).
+The configurations of the benchmark chips in
+[planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd)
+carry these keys:
 
-`SCPD_CHAIN_END_EDGE_WEIGHT=1 SCPD_COUPLER_OFFSETS=0,1,2,3,4,5,6,7` restores the
-earlier behavior.
+```console
+mqt-scpd plan -c planar-superconducting-pd/inputs/17q/config.toml -o runs/17q
+```
 
-### The coupler insertion opens no second dogleg
+The assignment expects the chip input to list the launcher ports once around the
+chip, against the direction of the port ring, as on the benchmark chips. A chip
+with resonators needs at least three launchers that do not all lie on one line.
+With fewer, two resonators could share one feed point, and the assignment
+refuses the chip. The assignment also refuses a solution that puts two feeds, or
+a feed and its launcher, closer together than `[design_rules] min_wire_spacing`,
+or two feeds on one cell of the detail grid. `launcher_target` plus
+`[design_rules] feedline_terminations` has to be even, since every feedline
+chain has two ends. The counts of the ring set more limits: the conventional
+ports of the ring plus `launcher_target` need at most as many launchers as the
+chip has, `launcher_target` and `feedline_terminations` are each at most the
+resonators of the ring, `feedline_terminations` is at most `launcher_target`,
+since every feedline chain has a launcher at one end at least, and the
+resonators are at most the feedline chains times
+`[design_rules] max_feedline_utilization` (`docs/configuration.md` lists them).
+The global step refuses a ring that carries both ends of a bridge. `plan` checks
+these figures, the ring and the implementation names of the stages before its
+first stage, and refuses a run whose steps they would stop; the run directory
+then stays as it was. `doctor` reports the same problems for the steps that
+`[run] stop_after` configures. When it runs, the global step also refuses two
+ports of one capacity chain that can carry an inner wire when the points
+`[design_rules] min_straight_length` in front of them coincide, since both would
+meet the lattice of their chain at one node. `doctor` does not check this.
 
-A coupler of the coupler insertion now stands on an option without a second
-dogleg. The chain search, the greedy, the trellis, the segment search and the
-blind repair never offer an option with one. `SCPD_SECOND_DOGLEG=1` restores the
-earlier behavior, which opens a coupler's second-dogleg options when a chain
-does not reach past it on plain options and in the segment search
-(`SCPD_RESEARCH_JOGS`, which now acts only under `SCPD_SECOND_DOGLEG=1`).
+Launcher-order validation also applies to chips translated far from the origin.
+An input with launchers listed in the wrong order is refused at every position.
 
-### The coupler insertion has no time limits
+GDS/OASIS planning exports preserve holes in the port-keepout layer. Export
+existing plans again with `mqt-scpd render` to update these files.
 
-The coupler insertion now gives the same result on every machine and at every
-speed. Its searches stop on a count or when they are done, never on the clock:
-the chain search runs to its optimum, the segment search of the targeted repair
-ends after `repair_trials` tests or when it has seen every run, and the global
-SAT search tries at most `SCPD_GLOBAL_SAT_TRIES` (200) combinations in a fixed
-order, with no random stage, so its second stage tries other combinations than
-before. When the capacity rule has refused `SCPD_CHAIN_RULE_REFUSALS` (1500)
-steps of a chain before a run of options joins the chain, the chain is searched
-again without the rule; on 4q to 57q no chain comes near that limit. The log no
-longer says `best in the time given` or `out of time`. A `[Chain Progress]` line
-every `SCPD_CHAIN_PROGRESS_STEPS` (100) priced steps shows a chain or segment
-search that grows without end.
+An inner routable port that the `component` pattern does not match ends a wire
+of the inner circuit, as a port of an inner qubit does.
 
-### The run directory numbers seven artifacts
+No stage reads `[grid] launcher_offset_x` and `launcher_offset_y` any more: the
+capacity step blocks no border of its grid, since the launchers sit on the edge
+of the grid. A configuration that sets them still loads, and `doctor` and `plan`
+warn about each key. Remove them; a later version refuses them.
 
-The Corridor stage now stands between the assignment and the detail routing, so
-every artifact after `03-assign.fb` moves up by one:
+The detail grid, `[grid] capacity_cells_x` and `capacity_cells_y` times
+`detail_factor`, may have at most 25,000,000 cells. `plan` and `doctor` refuse a
+larger grid before the first stage; `docs/configuration.md` explains the limit.
+`capacity_cells_x` has to be at least two, and `capacity_cells_y` either `0` or
+at least two, since a grid needs two cells along each axis. The capacity step
+refuses a chip on which the targets of two ports lie on one cell of the detail
+grid; a larger `detail_factor` makes the cells smaller.
 
-| Before           | Now               |
-| ---------------- | ----------------- |
-| —                | `04-corridor.fb`  |
-| `04-detail.fb`   | `05-detail.fb`    |
-| `05-final.fb`    | `06-final.fb`     |
-| `06-geometry.fb` | `07-geometry.fb`  |
+Every step writes a record of its inputs beside its artifact, for example
+`01-capacity.inputs.json`: a digest of the chip and of each configuration
+section the step reads. `SCPD_SOLVER` is not an input: it chooses the backend of
+one invocation, and a step that resumes under another backend can give another
+artifact. `plan --stage <step>` refuses a step when the chip or such a section
+has changed since an earlier step wrote its artifact, and names the section and
+the step to run again. The run directory then stays as it was. `plot` and
+`render` with `--run-dir` refuse a stage in the same way, and also an artifact
+without a record, which a step that failed leaves behind. `inspect` prints such
+an artifact of a run directory after a warning on stderr.
 
-A run directory written by an earlier build is not read by this one. Run the
-pipeline again rather than renaming the files: the stages before the corridor
-also changed, because a partition border now reports the number of wires it can
-carry instead of its length in cells.
+The planning stages solve with HiGHS unless `[stages.solver] backend` or the
+environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and
+licensed `gurobipy`. `plan` also refuses before its first stage a backend name
+that the core does not know, and a Gurobi backend without a usable `gurobipy`
+when a step of the run solves. `doctor` reports the same problems for the steps
+that `[run] stop_after` configures.
 
-`plot --stage` and `render --stage` take the new name `corridor`; the other
-stage names are unchanged.
+### Output of the commands
 
-### The coupler insertion checks the capacity graph by default
-
-The chain search of the coupler insertion refuses every step whose feedline edge
-closes the way of an outer wire (`SCPD_CAPACITY_RULE`). It finds the bottlenecks
-of each step by profiles along the walls it moves (`SCPD_CAPACITY_FAST=1`), and
-it reports the capacity graph of the chip it leaves behind (`SCPD_BOTTLENECKS`).
-All three are on by default. With them every benchmark chip ends the feedline
-routing with no bad wire, but the insertion takes longer.
-`SCPD_CAPACITY_RULE=0`, `SCPD_CAPACITY_FAST=0` and `SCPD_BOTTLENECKS=0` give the
-earlier behavior.
-
-### The crossing slots judge the chip after the coupler insertion
-
-The verdict on the whole chip after the coupler insertion now comes from the
-check by crossing slots (`SCPD_SLOT_CHECK`, on). The log line
-`CAPACITY GRAPH SAT` or `CAPACITY GRAPH UNSAT` and `final-capacity-graph.json`
-carry its verdict; the line of the check by stretches now reads
-`CAPACITY GRAPH by the stretches, before the slot check:`, and the graph keeps
-that verdict as `previousVerdict`. In the graph the slot edges (`□ …`) take the
-place of the stretches (`× …`), and the self-bottlenecks (`S …`) join the gates.
-`CouplerSession.insertion_check` returns the slot check's `verdict`, `lost`,
-`over` and `graph`, and the earlier answer as `previousVerdict` and
-`previousLost`. The chain search keeps its own check. `SCPD_SLOT_CHECK=0` gives
-the earlier behavior.
-
-### The chain search prices its steps by the stub bound
-
-The layered search of the coupler insertion now bounds every step by the
-analytic answer with the forced end runs folded in (`SCPD_CHAIN_BOUND=4`). The
-bound stays a lower bound, so the search stays exact and the chains it settles
-cost the same; it is sharper, so the search prices fewer steps and the insertion
-is faster. `SCPD_CHAIN_BOUND=1` gives the earlier bound.
-
-### The global SAT search collects the chains at an edge over first
-
-The global SAT search of the coupler insertion now collects the states of the
-chains at an edge over first and tries each state on its own before it collects
-another chain (`SCPD_GLOBAL_SAT_LAZY`, on). It stops at the same combination as
-before, so the chip it leaves does not change; it collects fewer chains and says
-how many it left out. Set `SCPD_GLOBAL_SAT_LAZY=0` to collect every chain first.
-
-### The faster slot check is the default
-
-`slotCheck` and `slotCheckJson` now run the faster check of `SlotCheckFast.cpp`
-by default. It returns the same results as the plain check, down to the JSON
-graph, so nothing changes but the time. Set `SCPD_SLOT_CHECK_FAST=0` to run the
-plain check as before.
-
-### The refinements search a narrower band
-
-Both refinements of the Final stage now redraw a wire within
-`refinement_corridor_spacings` wire spacings of its way, 6 by default, instead
-of `corridor_spacings`. The routes the refinements leave change. Set
-`refinement_corridor_spacings = 0` under `[stages.final]` to give them the
-sweep's band again.
-
-### CMake 3.28
-
-Building from source now requires CMake 3.28 or newer.
+`plot`, `render` and `inspect -o` end with a line that starts with `✓`. Every
+command except `doctor` reports an error of an input or a stage (exit code 1) on
+a line that starts with `✗`. Both lines have the format of
+`docs/terminal_output.md`. A script that looked for `wrote` or `error:` looks
+for these lines instead. Wrong arguments still print the `argparse` usage
+message with `error:` and exit with code 2. `doctor` reports each problem on a
+line that starts with `PROBLEM:`, and each warning, such as a removed key, on a
+line that starts with `WARNING:`. It ends with `doctor: OK` or
+`doctor: <n> problem(s)`; a warning is not a problem. Every command exits with
+code 130 on Ctrl-C, and with code 1 and no message when the reader of its output
+goes away, as with `| head`.
 
 <!-- Version links -->
 

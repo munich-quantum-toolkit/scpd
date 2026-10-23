@@ -37,57 +37,49 @@ class ChipError(ValueError):
     """A chip input that cannot be loaded, or that does not fit its configuration."""
 
 
-def _role_key(name: str) -> str:
-    """One schema enum member as the configuration key that produces it.
-
-    Returns:
-        The name in snake case, so ``BridgePair`` reads as ``bridge_pair``.
-    """
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
-
-
-#: The names of the roles, by schema value. They are the keys of ``[ports.patterns]``.
+#: The name of each role, by schema value, as the configuration keys spell it: the enum name in snake
+#: case.
 ROLE_NAMES: dict[int, str] = {
-    value: _role_key(name) for name, value in vars(UnassignedRole).items() if isinstance(value, int)
+    value: re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+    for name, value in vars(UnassignedRole).items()
+    if not name.startswith("_") and isinstance(value, int)
 }
 
 
-def chip_input_path(config: ConfigT, config_path: Path) -> Path:
-    """The chip input a configuration names, resolved relative to the configuration file.
+#: The name of the chip copy in a run directory, beside the run's copy of the configuration.
+RUN_CHIP = "00-chip.json"
+
+
+def chip_input_path(config: ConfigT, config_path: Path, chip_path: Path | None = None) -> Path:
+    """The chip input of a run: the one given, else the copy of a run directory, else the configured one.
+
+    A run directory holds a copy of the configuration as ``config.toml`` and a copy of the chip as
+    ``00-chip.json``. The copied configuration still names the chip input relative to where it
+    came from, so a ``config.toml`` with a ``00-chip.json`` beside it takes that copy.
+
+    Args:
+        config: The loaded configuration.
+        config_path: The configuration file, which the configured chip input is relative to.
+        chip_path: A chip input that replaces the configured one, as ``--chip`` gives it.
 
     Returns:
         The path of the chip input.
     """
+    if chip_path is not None:
+        return chip_path
+    run_chip = config_path.parent / RUN_CHIP
+    if config_path.name == "config.toml" and run_chip.is_file():
+        return run_chip
     return config_path.parent / (config.chipInput or "")
 
 
-def classify_chip(text: str, config: ConfigT, source: str = "the chip input") -> bytes:
-    """Classify the text of a chip input against a configuration.
-
-    Args:
-        text: The chip input as JSON.
-        config: The loaded configuration.
-        source: How to name the input in a message.
-
-    Returns:
-        The classified chip as bytes of the ``design.fbs`` schema.
-
-    Raises:
-        ChipError: If the text is not a valid chip input, or does not fit the configuration.
-    """
-    try:
-        return pyscpd.load_chip(text, write_config(config))
-    except ValueError as error:
-        msg = f"{source}: {error}"
-        raise ChipError(msg) from error
-
-
-def load_chip(config: ConfigT, config_path: Path) -> bytes:
+def load_chip(config: ConfigT, config_path: Path, chip_path: Path | None = None) -> bytes:
     """Load and classify the chip input of a configuration.
 
     Args:
         config: The loaded configuration.
-        config_path: The configuration file, which the chip input is relative to.
+        config_path: The configuration file, which the configured chip input is relative to.
+        chip_path: A chip input that replaces the configured one, as ``--chip`` gives it.
 
     Returns:
         The classified chip as bytes of the ``design.fbs`` schema.
@@ -96,13 +88,20 @@ def load_chip(config: ConfigT, config_path: Path) -> bytes:
         ChipError: If the input cannot be read, is not a valid chip input, or does not fit the
             configuration. The message names every problem.
     """
-    path = chip_input_path(config, config_path)
+    path = chip_input_path(config, config_path, chip_path)
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as error:
         msg = f"cannot read the chip input {path}: {error}"
         raise ChipError(msg) from error
-    return classify_chip(text, config, str(path))
+    except UnicodeDecodeError as error:
+        msg = f"cannot read the chip input {path}: it is not UTF-8 ({error.reason} at byte {error.start})"
+        raise ChipError(msg) from error
+    try:
+        return pyscpd.load_chip(text, write_config(config))
+    except ValueError as error:
+        msg = f"{path}: {error}"
+        raise ChipError(msg) from error
 
 
 def decode_chip(data: bytes) -> ChipT:

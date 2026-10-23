@@ -8,7 +8,7 @@ from typing import Any
 from typing import Optional
 np = import_numpy()
 
-# What the Capacity stage is allowed to do.
+# What the Capacity stage may do.
 class CapacityParams(object):
     __slots__ = ['_tab']
 
@@ -27,7 +27,8 @@ class CapacityParams(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # The implementation, by the name it is registered under.
+    # The implementation, by the name it is registered under. Empty selects
+    # the default.
     # CapacityParams
     def Planner(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -36,15 +37,11 @@ class CapacityParams(object):
         return None
 
     # A place on the medial axis is a bottleneck only where the free radius
-    # around it is below this many wire pitches, a pitch being one wire
-    # spacing plus one obstacle spacing.
+    # around it is below this many wire pitches. A pitch is one wire spacing
+    # plus one obstacle spacing.
     #
-    # The prototype used a fixed count of grid cells here, which is not a
-    # length: the same literal admitted a radius of 235 layout units on the
-    # 4-qubit grid and 484 on the 9-qubit one, purely because the two grids
-    # have different cell sizes. The default below is the middle of that
-    # range as a physical distance, and reproduces the prototype's own
-    # bottleneck count on both.
+    # The default gives the bottleneck count of the research prototype on the
+    # 4-qubit and the 9-qubit chip.
     # CapacityParams
     def BottleneckClearance(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -52,19 +49,19 @@ class CapacityParams(object):
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 1.5
 
-    # How far apart the places a wire may cross a partition border sit, in
-    # layout units.
+    # How far apart the places sit where a wire may cross a partition border,
+    # in layout units.
     #
-    # This is a planning pitch and **not** a clearance rule. It decides how
-    # finely a border is divided for the Corridor stage and therefore how many
-    # wires `PartitionBorder.budget` says it carries; where a wire actually
-    # runs, and how far it keeps from its neighbour, the detail router decides
-    # and the design-rule check verifies.
+    # It decides how finely a border is divided for the Corridor stage, and so
+    # how many wires PartitionBorder.budget lets through. The Corridor stage
+    # keeps the crossings of two wires at least one crossing pitch apart, also
+    # where two borders meet. The pitch applies to crossings only: a wire may
+    # cross a border closer than one pitch to the target cell or the feed of
+    # another wire. Where a wire runs inside a partition, and the clearance of
+    # the drawn wire, the later routing stages decide.
     #
-    # The default is the prototype's own figure. It divides a border at its
-    # wire spacing less twenty units and records no reason for the twenty; on
-    # the 45-qubit chip the difference is one wire that has a way through and
-    # one that has none.
+    # The default is the figure of the research prototype: its wire spacing
+    # less 20 layout units.
     # CapacityParams
     def CrossingPitch(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))

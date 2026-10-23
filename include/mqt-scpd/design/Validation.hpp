@@ -19,68 +19,139 @@
 
 namespace mqt::scpd::design {
 
-/// The semantic problems of a value, empty when the value is valid.
-///
-/// The FlatBuffers verifier checks that a buffer is well formed and that its
-/// required fields are present. It cannot see an enum left at Unset or a
-/// dimension left at zero, because a scalar field always reads as a value.
-/// The validate functions check what the verifier cannot. Every function
-/// returns every problem it finds, so a caller can report them all at once.
+/**
+ * @brief The semantic problems of a value, empty when the value is valid.
+ *
+ * The FlatBuffers verifier checks that a buffer is well formed and that its
+ * required fields are present. It cannot see an enum left at @c Unset or a
+ * dimension left at zero, because a scalar field always reads as a value.
+ * The @c validate overloads check what the verifier cannot. Each of them
+ * collects every problem it finds instead of stopping at the first, so that a
+ * caller can report them all at once.
+ */
 using Problems = std::vector<std::string>;
 
-/// Problems of a port: an empty label or an unset role.
+/**
+ * @brief Validates a port.
+ * @param port The port to check.
+ * @return A problem for an empty label and one for an unset role, empty when
+ * the port is valid.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::PortT& port);
 
-/// Problems of a chip: an obstacle with fewer than three vertices, and the
-/// problems of its ports, each prefixed by the port's index.
+/**
+ * @brief Validates a chip and the ports it carries.
+ * @param chip The chip to check.
+ * @return A problem for every obstacle with fewer than three vertices, for
+ * every problem of every port and for every label that is not unique, each
+ * port problem prefixed by the port's index, empty when the chip is valid.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::ChipT& chip);
 
-/// Problems of a connection: an unset role at either end.
+/**
+ * @brief Validates one endpoint pair of the solved design.
+ * @param connection The connection to check.
+ * @return A problem for an unset role at either end, empty when the
+ * connection is valid.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::ConnectionT& connection);
 
-/// Problems of the design rules: a length that is not positive, or a feedline
-/// utilization of zero.
+/**
+ * @brief Validates the design rules.
+ * @param rules The rules to check.
+ * @return A problem for every length that is not positive and finite and one
+ * for a feedline utilization of zero, empty when the rules are valid.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::DesignRulesT& rules);
 
-/// Problems of a coupler: an unset rotation, a dimension that is not positive,
-/// a missing port, a port whose role is not Coupler, and the port's own
-/// problems.
+/**
+ * @brief Validates a coplanar-waveguide coupler.
+ * @param coupler The coupler to check.
+ * @return A problem for an unset rotation, for every dimension that is not
+ * positive and finite, for a missing port, for a port whose role is not @c
+ * Coupler, and for every problem of that port, empty when the coupler is valid.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::CpwCouplerT& coupler);
 
-/// Problems of a bridge: an unset rotation or a dimension that is not positive.
+/**
+ * @brief Validates an air bridge.
+ * @param bridge The bridge to check.
+ * @return A problem for an unset rotation and for every dimension that is not
+ * positive and finite, empty when the bridge is valid.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::design::BridgeT& bridge);
 
-/// Problems of the role patterns: an expression that is empty or does not
-/// compile, named by its key.
+/**
+ * @brief Validates the role patterns of a configuration.
+ *
+ * The @c bridge_pair and @c component patterns are optional and are checked
+ * only when they are set. The component pattern must also capture the name
+ * of the component in exactly one group.
+ *
+ * @param patterns The patterns to check.
+ * @return A problem for every expression that is empty or does not compile,
+ * named by its configuration key, and for a component pattern without
+ * exactly one capture group, empty when the patterns are valid.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::PortPatternsT& patterns);
 
-/// Problems of a bridge rule: a side that is empty, does not compile, or does
-/// not capture exactly the component name the two sides pair on.
+/**
+ * @brief Validates one bridge rule.
+ * @param rule The rule to check.
+ * @return A problem for every side that is empty, does not compile, or does
+ * not have exactly one capture group, the key the two sides pair on, named
+ * @c first or @c second, empty when the rule is valid.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::BridgeRuleT& rule);
 
-/// Problems of the port section: missing patterns and their problems, missing
-/// sequences, the problems of every bridge rule, and a bridge rule declared
-/// without a bridge_pair pattern to select the ports it may pair.
+/**
+ * @brief Validates the port section of a configuration.
+ * @param ports The section to check.
+ * @return A problem for missing patterns, for every problem of the patterns,
+ * for missing sequences, for every problem of a bridge rule, and for bridge
+ * rules declared without a @c bridge_pair pattern to select the ports they
+ * pair, empty when the section is valid.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::PortConfigT& ports);
 
-/// Problems of a configuration that can be seen without the chip: an empty
-/// chip input, a missing port section or rules, the problems of both, and a
-/// capacity grid without columns.
+/**
+ * @brief Validates what a configuration can be checked for without its chip.
+ * @param config The configuration to check.
+ * @return A problem for an empty chip input, for a missing port section or
+ * missing design rules, for every problem of both, for a capacity grid of
+ * fewer than two columns or of one row, for a detail grid of no cells, for
+ * a capacity stage whose bottleneck clearance or crossing pitch is not a
+ * finite positive number, for a solver section with an unknown backend, a
+ * time limit or relative gap that is negative or not finite, or more than
+ * 1024 threads, and for a corridor stage of no rounds, empty when the
+ * configuration is valid on its own.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::ConfigT& config);
 
-/// Problems of a configuration against the classified chip it names: a
-/// sequence label that is not a port of the chip, that is not routable, or
-/// that appears twice, and a fixed port that is not in all_outer.
+/**
+ * @brief Validates a configuration against the chip it names.
+ * @param config The configuration to check. A configuration without a port
+ * section has nothing to check here and yields no problem.
+ * @param chip The chip the configuration names, with its ports classified.
+ * @return A problem for every sequence label that is not a port of @p chip,
+ * that is not routable, or that appears twice, for every fixed port that is
+ * not in @c all_outer, and for every port on which the @c bridge_pair pattern
+ * and the bridge rules disagree: a bridge port no rule pairs, a port a rule
+ * pairs whose role is not @c BridgePair, a port several rule sides claim, a
+ * bridge port that the @c component pattern does not match, and a bridge port
+ * of a component whose rule finds no partner port in that component; empty
+ * when the configuration fits the chip.
+ */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::ConfigT& config,
          const flatbuffers::design::ChipT& chip);

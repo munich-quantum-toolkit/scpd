@@ -15,7 +15,10 @@
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <format>
 #include <regex>
 #include <string>
 #include <string_view>
@@ -35,10 +38,25 @@ using flatbuffers::design::ChipT;
 using flatbuffers::design::Rotation;
 using flatbuffers::design::UnassignedRole;
 
+/// The most threads a solve may ask for. It is the upper limit of the Gurobi
+/// parameter Threads, and far below the largest thread count of HiGHS.
+constexpr std::uint32_t MAX_SOLVER_THREADS = 1024;
+
 void requirePositive(const double value, const std::string& what,
                      Problems& problems) {
-  if (!(value > 0.0)) {
+  if (!std::isfinite(value)) {
+    problems.push_back(what + " must be finite");
+  } else if (!(value > 0.0)) {
     problems.push_back(what + " must be positive");
+  }
+}
+
+void requireNonNegative(const double value, const std::string& what,
+                        Problems& problems) {
+  if (!std::isfinite(value)) {
+    problems.push_back(what + " must be finite");
+  } else if (value < 0.0) {
+    problems.push_back(what + " must not be negative");
   }
 }
 
@@ -54,22 +72,6 @@ void append(Problems& into, const Problems& from, const std::string& prefix) {
   }
 }
 
-/// A pattern that names one thing has to capture it, or it says which labels
-/// have the thing without saying which one.
-void requireOneCapture(const std::string& expression, const std::string& key,
-                       Problems& problems) {
-  try {
-    const std::regex compiled(expression, std::regex::ECMAScript);
-    if (compiled.mark_count() != 1) {
-      problems.push_back(key +
-                         " pattern must have exactly one capture group, not " +
-                         std::to_string(compiled.mark_count()));
-    }
-  } catch (const std::regex_error&) {
-    // The compile failure is reported by requirePattern.
-  }
-}
-
 void requirePattern(const std::string& expression, const std::string& key,
                     Problems& problems) {
   if (expression.empty()) {
@@ -80,6 +82,23 @@ void requirePattern(const std::string& expression, const std::string& key,
     static_cast<void>(std::regex(expression, std::regex::ECMAScript));
   } catch (const std::regex_error& error) {
     problems.push_back(key + " pattern does not compile: " + error.what());
+  }
+}
+
+/// A pattern that names one thing has to capture it in exactly one group, or
+/// it says which labels have the thing without saying which one. A pattern
+/// that does not compile is left to requirePattern.
+void requireOneCapture(const std::string& expression, const std::string& key,
+                       Problems& problems) {
+  try {
+    const std::regex compiled(expression, std::regex::ECMAScript);
+    if (compiled.mark_count() != 1) {
+      problems.push_back(key +
+                         " pattern must have exactly one capture group, not " +
+                         std::to_string(compiled.mark_count()));
+    }
+  } catch (const std::regex_error&) {
+    return;
   }
 }
 
@@ -131,6 +150,8 @@ Problems validate(const flatbuffers::design::ChipT& chip) {
                          " has fewer than three vertices");
     }
   }
+  // Configuration sequences name ports by label, so a label must be unique.
+  std::unordered_set<std::string_view> labels;
   for (std::size_t i = 0; i < chip.ports.size(); ++i) {
     const std::string prefix = "port " + std::to_string(i) + ": ";
     const auto* const port = chip.ports[i].get();
@@ -139,6 +160,9 @@ Problems validate(const flatbuffers::design::ChipT& chip) {
       continue;
     }
     append(problems, validate(*port), prefix);
+    if (!port->label.empty() && !labels.insert(port->label).second) {
+      problems.push_back(prefix + "label '" + port->label + "' is not unique");
+    }
   }
   return problems;
 }
@@ -199,15 +223,12 @@ Problems validate(const PortPatternsT& patterns) {
   requirePattern(patterns.launcher, "launcher", problems);
   requirePattern(patterns.resonator, "resonator", problems);
   requirePattern(patterns.conventional, "conventional", problems);
-  // The bridge pattern is optional, like the component one: a chip whose
-  // components carry no crossing declares none.
+  // Both remaining patterns are optional: a chip whose components carry no
+  // crossing declares no bridge pattern, and a chip whose stages need no
+  // component grouping declares no component pattern.
   if (!patterns.bridge_pair.empty()) {
     requirePattern(patterns.bridge_pair, "bridge_pair", problems);
   }
-  // The component pattern is optional: a chip whose planning stages need no
-  // component grouping does not have to declare one. Where it is given it
-  // must capture the name, or it would say which labels have a component
-  // without saying what it is called.
   if (!patterns.component.empty()) {
     requirePattern(patterns.component, "component", problems);
     requireOneCapture(patterns.component, "component", problems);
@@ -235,16 +256,15 @@ Problems validate(const PortConfigT& ports) {
     problems.emplace_back("[ports.sequences] is missing");
   }
   for (std::size_t i = 0; i < ports.bridge_pairs.size(); ++i) {
-    const auto& rule = ports.bridge_pairs[i];
     const auto where = "bridge_pairs[" + std::to_string(i) + "]: ";
-    if (rule == nullptr) {
+    if (ports.bridge_pairs[i] == nullptr) {
       problems.push_back(where + "is missing");
       continue;
     }
-    append(problems, validate(*rule), where);
+    append(problems, validate(*ports.bridge_pairs[i]), where);
   }
-  // A rule may only pair ports the bridge_pair pattern selected, so a rule
-  // without that pattern can pair nothing and says the opposite.
+  // A rule pairs only ports the bridge_pair pattern selected, so a rule
+  // without that pattern can pair nothing.
   if (!ports.bridge_pairs.empty() && ports.patterns != nullptr &&
       ports.patterns->bridge_pair.empty()) {
     problems.emplace_back(
@@ -268,8 +288,46 @@ Problems validate(const ConfigT& config) {
   } else {
     append(problems, validate(*config.rules), "rules: ");
   }
-  if (config.grid != nullptr && config.grid->capacity_cells_x == 0) {
-    problems.emplace_back("grid: capacity_cells_x must be at least one");
+  // A grid needs two cells per axis to span the chip from edge to edge.
+  if (config.grid != nullptr && config.grid->capacity_cells_x < 2) {
+    problems.emplace_back("grid: capacity_cells_x must be at least two");
+  }
+  if (config.grid != nullptr && config.grid->capacity_cells_y == 1) {
+    problems.emplace_back(
+        "grid: capacity_cells_y must be 0, which takes the aspect ratio, or at "
+        "least two");
+  }
+  if (config.grid != nullptr && config.grid->detail_factor == 0) {
+    problems.emplace_back("grid: detail_factor must be at least one");
+  }
+  if (config.stages != nullptr) {
+    const auto& stages = *config.stages;
+    if (stages.capacity != nullptr) {
+      requirePositive(stages.capacity->bottleneck_clearance,
+                      "stages.capacity: bottleneck_clearance", problems);
+      requirePositive(stages.capacity->crossing_pitch,
+                      "stages.capacity: crossing_pitch", problems);
+    }
+    if (stages.solver != nullptr) {
+      const auto& backend = stages.solver->backend;
+      if (!backend.empty() && backend != "highs" && backend != "gurobi") {
+        problems.push_back(
+            "stages.solver: backend must be one of highs, gurobi, not '" +
+            backend + "'");
+      }
+      requireNonNegative(stages.solver->time_limit, "stages.solver: time_limit",
+                         problems);
+      requireNonNegative(stages.solver->relative_gap,
+                         "stages.solver: relative_gap", problems);
+      if (stages.solver->threads > MAX_SOLVER_THREADS) {
+        problems.push_back(
+            std::format("stages.solver: threads must be at most {}, not {}",
+                        MAX_SOLVER_THREADS, stages.solver->threads));
+      }
+    }
+    if (stages.corridor != nullptr && stages.corridor->rounds == 0) {
+      problems.emplace_back("stages.corridor: rounds must be at least one");
+    }
   }
   return problems;
 }
@@ -288,11 +346,24 @@ Problems validate(const ConfigT& config, const ChipT& chip) {
     }
   }
 
+  if (ports.sequences != nullptr) {
+    const auto& sequences = *ports.sequences;
+    checkSequence(sequences.all_outer, "all_outer", roleOf, problems);
+    checkSequence(sequences.fixed_outer, "fixed_outer", roleOf, problems);
+    const std::unordered_set<std::string_view> allOuter(
+        sequences.all_outer.begin(), sequences.all_outer.end());
+    for (std::size_t i = 0; i < sequences.fixed_outer.size(); ++i) {
+      if (!allOuter.contains(sequences.fixed_outer[i])) {
+        problems.push_back("fixed_outer[" + std::to_string(i) + "]: '" +
+                           sequences.fixed_outer[i] + "' is not in all_outer");
+      }
+    }
+  }
+
   // The two declarations of a bridge have to agree. The pattern says which
   // ports are ends of a crossing and the rules say which two of them pair, so
-  // a port either declaration knows and the other does not is a configuration
-  // that has drifted apart, and the pairing it produces is not the one it
-  // reads as.
+  // a port that one declaration knows and the other does not makes a pairing
+  // that is not the one the configuration reads as.
   const auto matches = bridgeMatchesOf(chip, ports.bridge_pairs);
   for (std::size_t index = 0; index < chip.ports.size(); ++index) {
     const auto& port = chip.ports[index];
@@ -314,18 +385,27 @@ Problems validate(const ConfigT& config, const ChipT& chip) {
     }
   }
 
-  if (ports.sequences != nullptr) {
-    const auto& sequences = *ports.sequences;
-    checkSequence(sequences.all_outer, "all_outer", roleOf, problems);
-    checkSequence(sequences.fixed_outer, "fixed_outer", roleOf, problems);
-    const std::unordered_set<std::string_view> allOuter(
-        sequences.all_outer.begin(), sequences.all_outer.end());
-    for (std::size_t i = 0; i < sequences.fixed_outer.size(); ++i) {
-      if (!allOuter.contains(sequences.fixed_outer[i])) {
-        problems.push_back("fixed_outer[" + std::to_string(i) + "]: '" +
-                           sequences.fixed_outer[i] + "' is not in all_outer");
-      }
+  // A rule pairs two ports of one component. A bridge port whose rule finds
+  // no partner there would end a wire inside the coupler, so it is a problem
+  // too. A bridge port that the component pattern does not match takes no
+  // part in the pairing at all, which is the same problem.
+  const auto bridging = bridgingPorts(chip, ports.bridge_pairs);
+  for (std::size_t index = 0; index < chip.ports.size(); ++index) {
+    const auto& port = chip.ports[index];
+    if (port == nullptr || port->role != UnassignedRole::BridgePair ||
+        matches[index].size() != 1 || bridging[index]) {
+      continue;
     }
+    if (port->component.empty()) {
+      problems.push_back("port '" + port->label +
+                         "' is a bridge_pair port that the component pattern "
+                         "does not match");
+      continue;
+    }
+    problems.push_back("port '" + port->label +
+                       "' is a bridge_pair port without a partner in "
+                       "component '" +
+                       port->component + "'");
   }
   return problems;
 }

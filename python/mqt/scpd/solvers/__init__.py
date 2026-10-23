@@ -6,16 +6,16 @@
 #
 # Licensed under the MIT License
 
-"""Solver backends the user brings themselves.
+"""Solver backends that the user brings.
 
-HiGHS is linked into the core and is always there, so an installation without a commercial licence
-is fully functional. Gurobi is reached at run time through ``gurobipy``, which the user installs
-and licenses; the core hands it the model as MPS text and reads the solution back by variable name,
-so nothing here is a build dependency of the package.
+HiGHS is linked into the core and is always there, so an installation without a commercial license
+works in full. Gurobi is reached at run time through ``gurobipy``, which the user installs and
+licenses. The core hands it the model as MPS text and reads the solution back by variable name, so
+nothing here is a build dependency of the package.
 """
 
 from __future__ import annotations
 
-from .gurobipy_backend import GUROBI_STATUS, available, register
+from .gurobipy_backend import GUROBI_STATUS, SolverUnavailableError, available, register, solve_mps
 
-__all__ = ["GUROBI_STATUS", "available", "register"]
+__all__ = ["GUROBI_STATUS", "SolverUnavailableError", "available", "register", "solve_mps"]

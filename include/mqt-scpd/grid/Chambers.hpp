@@ -23,31 +23,41 @@
 
 namespace mqt::scpd::grid {
 
-/// The eight steps around a cell, straight ones first: the numbering of
-/// `BlockedMove::direction`.
+/// The x part of the eight steps around a cell, straight steps first. The
+/// index of a step is the direction of a BlockedMove.
 inline constexpr std::array<int, 8> STEP_DX = {0, 0, 1, -1, 1, -1, 1, -1};
+/// The y part of the eight steps around a cell, in the order of STEP_DX.
 inline constexpr std::array<int, 8> STEP_DY = {1, -1, 0, 0, 1, 1, -1, -1};
 
 /// One move a gate refuses: leaving a cell in one of the eight directions.
 struct BlockedMove {
+  /// The cell the move leaves.
   std::size_t cell = 0;
+  /// The direction of the move, as an index into STEP_DX and STEP_DY.
   std::size_t direction = 0;
 };
 
-/// The moves each bottleneck refuses.
-///
-/// A gate is a **cut**, not a wall: it stops a wire from crossing the line
-/// between its two obstacle cells, and it consumes no free space of its own.
-/// What it blocks is therefore the move between two cells whose centre-to-
-/// centre segment crosses it, in both directions. A cell whose own centre lies
-/// on the line is enclosed entirely, because a wire there is already on the
-/// wrong side of every crossing.
-///
-/// Blocking the line's *cells* instead would be simpler and is wrong twice
-/// over: it takes free space away from the chambers on both sides, so the
-/// chambers come out smaller and more numerous than they are; and a Bresenham
-/// line is eight-connected, so a walk that also moves diagonally steps
-/// straight through it anyway.
+/**
+ * @brief Lists the moves each bottleneck refuses.
+ *
+ * A gate is a cut and not a wall: it stops a wire from crossing the line
+ * between its two obstacle cells. It refuses the move between two cells whose
+ * center-to-center segment crosses the line, in both directions. A cell whose
+ * own center lies on the line, other than the two ends, is enclosed: every
+ * move out of it and into it is refused, because a wire there is already on
+ * the wrong side of every crossing. Along an axis every cell between the two
+ * ends has its center on the line, so such a gate encloses all of them; a
+ * gate at another angle encloses only the cells its line meets at a center.
+ *
+ * Blocking every cell the line passes through instead would take more free
+ * space from the chambers on both sides, and a line of cells is
+ * eight-connected, so a walk that moves diagonally would step through it.
+ *
+ * @param bottlenecks The bottlenecks.
+ * @param grid The metrics of the grid they were found on.
+ * @return For each bottleneck, the moves it refuses. Every move comes with
+ * its reverse.
+ */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<std::vector<BlockedMove>>
 bottleneckMoves(const std::vector<Bottleneck>& bottlenecks,
                 const GridMetrics& grid);

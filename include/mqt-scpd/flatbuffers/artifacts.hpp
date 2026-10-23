@@ -14,7 +14,6 @@ static_assert(FLATBUFFERS_VERSION_MAJOR == 25 &&
              "Non-compatible flatbuffers version included");
 
 #include "mqt-scpd/flatbuffers/design.hpp"
-#include "mqt-scpd/flatbuffers/geometry.hpp"
 
 namespace mqt {
 namespace scpd {
@@ -49,14 +48,6 @@ struct CapacityPlan;
 struct CapacityPlanBuilder;
 struct CapacityPlanT;
 
-struct Lattice;
-struct LatticeBuilder;
-struct LatticeT;
-
-struct GlobalRouting;
-struct GlobalRoutingBuilder;
-struct GlobalRoutingT;
-
 struct Assignment;
 struct AssignmentBuilder;
 struct AssignmentT;
@@ -64,6 +55,14 @@ struct AssignmentT;
 struct FeedlineChain;
 struct FeedlineChainBuilder;
 struct FeedlineChainT;
+
+struct Lattice;
+struct LatticeBuilder;
+struct LatticeT;
+
+struct GlobalRouting;
+struct GlobalRoutingBuilder;
+struct GlobalRoutingT;
 
 struct BorderSlots;
 struct BorderSlotsBuilder;
@@ -127,14 +126,14 @@ bool operator==(const CapacityNodeT &lhs, const CapacityNodeT &rhs);
 bool operator!=(const CapacityNodeT &lhs, const CapacityNodeT &rhs);
 bool operator==(const CapacityPlanT &lhs, const CapacityPlanT &rhs);
 bool operator!=(const CapacityPlanT &lhs, const CapacityPlanT &rhs);
-bool operator==(const LatticeT &lhs, const LatticeT &rhs);
-bool operator!=(const LatticeT &lhs, const LatticeT &rhs);
-bool operator==(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
-bool operator!=(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
 bool operator==(const AssignmentT &lhs, const AssignmentT &rhs);
 bool operator!=(const AssignmentT &lhs, const AssignmentT &rhs);
 bool operator==(const FeedlineChainT &lhs, const FeedlineChainT &rhs);
 bool operator!=(const FeedlineChainT &lhs, const FeedlineChainT &rhs);
+bool operator==(const LatticeT &lhs, const LatticeT &rhs);
+bool operator!=(const LatticeT &lhs, const LatticeT &rhs);
+bool operator==(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
+bool operator!=(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
 bool operator==(const BorderSlotsT &lhs, const BorderSlotsT &rhs);
 bool operator!=(const BorderSlotsT &lhs, const BorderSlotsT &rhs);
 bool operator==(const CorridorT &lhs, const CorridorT &rhs);
@@ -160,6 +159,52 @@ bool operator!=(const GeometryT &lhs, const GeometryT &rhs);
 bool operator==(const ArtifactT &lhs, const ArtifactT &rhs);
 bool operator!=(const ArtifactT &lhs, const ArtifactT &rhs);
 
+inline const ::flatbuffers::TypeTable *GridExtentTypeTable();
+
+inline const ::flatbuffers::TypeTable *PartitionTypeTable();
+
+inline const ::flatbuffers::TypeTable *PartitionBorderTypeTable();
+
+inline const ::flatbuffers::TypeTable *BottleneckTypeTable();
+
+inline const ::flatbuffers::TypeTable *LauncherSlotTypeTable();
+
+inline const ::flatbuffers::TypeTable *CapacityNodeTypeTable();
+
+inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable();
+
+inline const ::flatbuffers::TypeTable *AssignmentTypeTable();
+
+inline const ::flatbuffers::TypeTable *FeedlineChainTypeTable();
+
+inline const ::flatbuffers::TypeTable *LatticeTypeTable();
+
+inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable();
+
+inline const ::flatbuffers::TypeTable *BorderSlotsTypeTable();
+
+inline const ::flatbuffers::TypeTable *CorridorTypeTable();
+
+inline const ::flatbuffers::TypeTable *CorridorRoutingTypeTable();
+
+inline const ::flatbuffers::TypeTable *DetailWireTypeTable();
+
+inline const ::flatbuffers::TypeTable *DetailRoutingTypeTable();
+
+inline const ::flatbuffers::TypeTable *FinalWireTypeTable();
+
+inline const ::flatbuffers::TypeTable *FinalPhaseTypeTable();
+
+inline const ::flatbuffers::TypeTable *FinalRoutingTypeTable();
+
+inline const ::flatbuffers::TypeTable *FeedlineEdgeTypeTable();
+
+inline const ::flatbuffers::TypeTable *WireTypeTable();
+
+inline const ::flatbuffers::TypeTable *GeometryTypeTable();
+
+inline const ::flatbuffers::TypeTable *ArtifactTypeTable();
+
 /// What one link of a capacity chain stands for.
 enum class CapacityElement : uint8_t {
   Unset = 0,
@@ -167,7 +212,7 @@ enum class CapacityElement : uint8_t {
   Target = 1,
   /// A gate the wires beyond it have to pass.
   Bottleneck = 2,
-  /// The launcher the chain is rooted at.
+  /// The launcher the chain starts at.
   Launcher = 3,
   MIN = Unset,
   MAX = Launcher
@@ -514,12 +559,15 @@ struct GridExtentT : public ::flatbuffers::NativeTable {
 };
 
 /// A grid of a run, as the numbers that convert between its cells and layout
-/// units. The grid itself is derived state and is rebuilt; these six numbers
-/// are what a reader needs to place what the artifact does carry.
+/// units. The grid itself is derived state and is rebuilt; these numbers are
+/// what a reader needs to place what the artifact carries.
 struct GridExtent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef GridExtentT NativeTableType;
   typedef GridExtentBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return GridExtentTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_WIDTH = 4,
     VT_HEIGHT = 6,
@@ -621,11 +669,14 @@ struct PartitionT : public ::flatbuffers::NativeTable {
   PartitionT &operator=(PartitionT o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// One partition of the free space, as the watershed left it.
+/// One partition of the free space.
 struct Partition FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PartitionT NativeTableType;
   typedef PartitionBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PartitionTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_LABEL = 4,
     VT_OUTLINES = 6
@@ -634,7 +685,8 @@ struct Partition FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetField<uint32_t>(VT_LABEL, 0);
   }
   /// Closed rings in layout units. More than one where the partition has a
-  /// hole, or the watershed left it in pieces.
+  /// hole. The cells of a partition are four-connected, so a wire can cross
+  /// it from any of its borders to any other.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *outlines() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *>(VT_OUTLINES);
   }
@@ -716,6 +768,9 @@ struct PartitionBorder FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef PartitionBorderT NativeTableType;
   typedef PartitionBorderBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return PartitionBorderTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_FIRST = 4,
     VT_SECOND = 6,
@@ -840,6 +895,9 @@ struct Bottleneck FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef BottleneckT NativeTableType;
   typedef BottleneckBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return BottleneckTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_FROM = 4,
     VT_TO = 6,
@@ -923,6 +981,9 @@ struct LauncherSlot FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef LauncherSlotT NativeTableType;
   typedef LauncherSlotBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return LauncherSlotTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PORT = 4,
     VT_POSITION = 6
@@ -996,12 +1057,16 @@ struct CapacityNodeT : public ::flatbuffers::NativeTable {
 /// One link of a capacity chain.
 ///
 /// A chain is a tree and FlatBuffers has no recursive table, so the nodes are
-/// stored flat and a link names its branches by index. That also lets two
-/// chains share a subtree without storing it twice.
+/// stored flat and a link names its branches by index. Two chains can then
+/// share a subtree without storing it twice. A target lies on one chain only,
+/// so a shared subtree holds no target.
 struct CapacityNode FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CapacityNodeT NativeTableType;
   typedef CapacityNodeBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CapacityNodeTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_KIND = 4,
     VT_ID = 6,
@@ -1011,8 +1076,8 @@ struct CapacityNode FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   mqt::scpd::flatbuffers::artifacts::CapacityElement kind() const {
     return static_cast<mqt::scpd::flatbuffers::artifacts::CapacityElement>(GetField<uint8_t>(VT_KIND, 0));
   }
-  /// The port for a Target and the index into `bottlenecks` for a
-  /// Bottleneck. Unused for a Launcher.
+  /// The port of a Target and the index into `bottlenecks` of a Bottleneck.
+  /// Unused for a Launcher.
   uint32_t id() const {
     return GetField<uint32_t>(VT_ID, 0);
   }
@@ -1125,6 +1190,9 @@ struct CapacityPlan FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CapacityPlanT NativeTableType;
   typedef CapacityPlanBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CapacityPlanTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CAPACITY_GRID = 4,
     VT_DETAIL_GRID = 6,
@@ -1157,20 +1225,20 @@ struct CapacityPlan FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>> *nodes() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>> *>(VT_NODES);
   }
-  /// The index in `nodes` of each chain's root.
+  /// The index in `nodes` of the root of each chain.
   const ::flatbuffers::Vector<uint32_t> *chains() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_CHAINS);
   }
-  /// What the ports' own approaches keep clear, as closed rings in layout
+  /// What the approaches of the ports keep clear, as closed rings in layout
   /// units: the strip a wire leaves each routable port along, extended
-  /// forward and backward, and the square each launcher sweeps.
+  /// forward and backward.
   ///
   /// These are obstacles to everything the stages route, and they are not
-  /// chip artwork, which is why they are a layer of their own rather than
-  /// more polygons in the chip. Only the cells that were free before a band
-  /// took them are here; where a band merely covered artwork the artwork is
-  /// already drawn. The rings follow the cells, so a band along a diagonal
-  /// is the staircase the grid actually blocks.
+  /// chip artwork, so they are a layer of their own rather than more
+  /// polygons of the chip. Only the cells that were free before a band took
+  /// them are here; where a band covers artwork, the artwork is already
+  /// drawn. The rings follow the cells, so a band along a diagonal is the
+  /// staircase the grid blocks.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *port_keepout() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *>(VT_PORT_KEEPOUT);
   }
@@ -1320,256 +1388,6 @@ inline ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlanDirect(
 
 ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlan(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityPlanT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
-struct LatticeT : public ::flatbuffers::NativeTable {
-  typedef Lattice TableType;
-  std::vector<mqt::scpd::flatbuffers::geometry::Point> points{};
-  std::vector<uint32_t> edges{};
-  std::vector<uint32_t> selected{};
-};
-
-/// One lattice the inner circuit is solved on: the Hanan grid that the ports
-/// of one capacity chain induce.
-struct Lattice FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef LatticeT NativeTableType;
-  typedef LatticeBuilder Builder;
-  struct Traits;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_POINTS = 4,
-    VT_EDGES = 6,
-    VT_SELECTED = 8
-  };
-  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *points() const {
-    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_POINTS);
-  }
-  /// Two point indices per edge, flat.
-  const ::flatbuffers::Vector<uint32_t> *edges() const {
-    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_EDGES);
-  }
-  /// The edges the solution selected, as indices into `edges` divided by two.
-  const ::flatbuffers::Vector<uint32_t> *selected() const {
-    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_SELECTED);
-  }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyOffsetRequired(verifier, VT_POINTS) &&
-           verifier.VerifyVector(points()) &&
-           VerifyOffsetRequired(verifier, VT_EDGES) &&
-           verifier.VerifyVector(edges()) &&
-           VerifyOffsetRequired(verifier, VT_SELECTED) &&
-           verifier.VerifyVector(selected()) &&
-           verifier.EndTable();
-  }
-  LatticeT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(LatticeT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<Lattice> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-};
-
-struct LatticeBuilder {
-  typedef Lattice Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_points(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> points) {
-    fbb_.AddOffset(Lattice::VT_POINTS, points);
-  }
-  void add_edges(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> edges) {
-    fbb_.AddOffset(Lattice::VT_EDGES, edges);
-  }
-  void add_selected(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> selected) {
-    fbb_.AddOffset(Lattice::VT_SELECTED, selected);
-  }
-  explicit LatticeBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<Lattice> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<Lattice>(end);
-    fbb_.Required(o, Lattice::VT_POINTS);
-    fbb_.Required(o, Lattice::VT_EDGES);
-    fbb_.Required(o, Lattice::VT_SELECTED);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<Lattice> CreateLattice(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> points = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> edges = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> selected = 0) {
-  LatticeBuilder builder_(_fbb);
-  builder_.add_selected(selected);
-  builder_.add_edges(edges);
-  builder_.add_points(points);
-  return builder_.Finish();
-}
-
-struct Lattice::Traits {
-  using type = Lattice;
-  static auto constexpr Create = CreateLattice;
-};
-
-inline ::flatbuffers::Offset<Lattice> CreateLatticeDirect(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *points = nullptr,
-    const std::vector<uint32_t> *edges = nullptr,
-    const std::vector<uint32_t> *selected = nullptr) {
-  auto points__ = points ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*points) : 0;
-  auto edges__ = edges ? _fbb.CreateVector<uint32_t>(*edges) : 0;
-  auto selected__ = selected ? _fbb.CreateVector<uint32_t>(*selected) : 0;
-  return mqt::scpd::flatbuffers::artifacts::CreateLattice(
-      _fbb,
-      points__,
-      edges__,
-      selected__);
-}
-
-::flatbuffers::Offset<Lattice> CreateLattice(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-
-struct GlobalRoutingT : public ::flatbuffers::NativeTable {
-  typedef GlobalRouting TableType;
-  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT>> lattices{};
-  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>> connections{};
-  std::vector<mqt::scpd::flatbuffers::design::PortRef> outer_ring{};
-  std::vector<mqt::scpd::flatbuffers::design::PortRef> resonators{};
-  double objective = 0.0;
-  GlobalRoutingT() = default;
-  GlobalRoutingT(const GlobalRoutingT &o);
-  GlobalRoutingT(GlobalRoutingT&&) FLATBUFFERS_NOEXCEPT = default;
-  GlobalRoutingT &operator=(GlobalRoutingT o) FLATBUFFERS_NOEXCEPT;
-};
-
-/// Output of the Global stage. The lattices are empty when the chip has no
-/// inner circuit, which is a valid state rather than a skipped stage.
-struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef GlobalRoutingT NativeTableType;
-  typedef GlobalRoutingBuilder Builder;
-  struct Traits;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_LATTICES = 4,
-    VT_CONNECTIONS = 6,
-    VT_OUTER_RING = 8,
-    VT_RESONATORS = 10,
-    VT_OBJECTIVE = 12
-  };
-  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *lattices() const {
-    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *>(VT_LATTICES);
-  }
-  /// The inner-circuit connections the solved flow implies.
-  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
-    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
-  }
-  /// The outer port ring the Assignment stage consumes. The inner circuit
-  /// extends the configured ring with the coupler ports it surfaces at, so
-  /// this is what the assignment reads and not the configuration.
-  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *outer_ring() const {
-    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_OUTER_RING);
-  }
-  /// The resonator ports the assignment has to give a launcher.
-  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *resonators() const {
-    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_RESONATORS);
-  }
-  double objective() const {
-    return GetField<double>(VT_OBJECTIVE, 0.0);
-  }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyOffsetRequired(verifier, VT_LATTICES) &&
-           verifier.VerifyVector(lattices()) &&
-           verifier.VerifyVectorOfTables(lattices()) &&
-           VerifyOffsetRequired(verifier, VT_CONNECTIONS) &&
-           verifier.VerifyVector(connections()) &&
-           verifier.VerifyVectorOfTables(connections()) &&
-           VerifyOffsetRequired(verifier, VT_OUTER_RING) &&
-           verifier.VerifyVector(outer_ring()) &&
-           VerifyOffsetRequired(verifier, VT_RESONATORS) &&
-           verifier.VerifyVector(resonators()) &&
-           VerifyField<double>(verifier, VT_OBJECTIVE, 8) &&
-           verifier.EndTable();
-  }
-  GlobalRoutingT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(GlobalRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<GlobalRouting> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-};
-
-struct GlobalRoutingBuilder {
-  typedef GlobalRouting Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_lattices(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>> lattices) {
-    fbb_.AddOffset(GlobalRouting::VT_LATTICES, lattices);
-  }
-  void add_connections(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections) {
-    fbb_.AddOffset(GlobalRouting::VT_CONNECTIONS, connections);
-  }
-  void add_outer_ring(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> outer_ring) {
-    fbb_.AddOffset(GlobalRouting::VT_OUTER_RING, outer_ring);
-  }
-  void add_resonators(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> resonators) {
-    fbb_.AddOffset(GlobalRouting::VT_RESONATORS, resonators);
-  }
-  void add_objective(double objective) {
-    fbb_.AddElement<double>(GlobalRouting::VT_OBJECTIVE, objective, 0.0);
-  }
-  explicit GlobalRoutingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<GlobalRouting> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<GlobalRouting>(end);
-    fbb_.Required(o, GlobalRouting::VT_LATTICES);
-    fbb_.Required(o, GlobalRouting::VT_CONNECTIONS);
-    fbb_.Required(o, GlobalRouting::VT_OUTER_RING);
-    fbb_.Required(o, GlobalRouting::VT_RESONATORS);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>> lattices = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> outer_ring = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> resonators = 0,
-    double objective = 0.0) {
-  GlobalRoutingBuilder builder_(_fbb);
-  builder_.add_objective(objective);
-  builder_.add_resonators(resonators);
-  builder_.add_outer_ring(outer_ring);
-  builder_.add_connections(connections);
-  builder_.add_lattices(lattices);
-  return builder_.Finish();
-}
-
-struct GlobalRouting::Traits {
-  using type = GlobalRouting;
-  static auto constexpr Create = CreateGlobalRouting;
-};
-
-inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRoutingDirect(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *lattices = nullptr,
-    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections = nullptr,
-    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *outer_ring = nullptr,
-    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *resonators = nullptr,
-    double objective = 0.0) {
-  auto lattices__ = lattices ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>(*lattices) : 0;
-  auto connections__ = connections ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>(*connections) : 0;
-  auto outer_ring__ = outer_ring ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*outer_ring) : 0;
-  auto resonators__ = resonators ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*resonators) : 0;
-  return mqt::scpd::flatbuffers::artifacts::CreateGlobalRouting(
-      _fbb,
-      lattices__,
-      connections__,
-      outer_ring__,
-      resonators__,
-      objective);
-}
-
-::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-
 struct AssignmentT : public ::flatbuffers::NativeTable {
   typedef Assignment TableType;
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>> connections{};
@@ -1589,6 +1407,9 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef AssignmentT NativeTableType;
   typedef AssignmentBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return AssignmentTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CONNECTIONS = 4,
     VT_OBJECTIVE = 6,
@@ -1599,9 +1420,9 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   /// One connection per node of `ring`, in the order of `ring`. A
   /// conventional port runs from the launcher it was given, as
-  /// `FeedlineSource` to `FeedlineTarget`. A resonator carries
-  /// `ResonatorSource` to `ResonatorTarget` and no source port, because the
-  /// port that feeds it is the coupler the Final stage inserts.
+  /// FeedlineSource to FeedlineTarget. A resonator carries ResonatorSource
+  /// to ResonatorTarget and no source port, because the port that feeds it is
+  /// the coupler that the Final stage inserts.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
   }
@@ -1616,14 +1437,14 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *launchers() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_LAUNCHERS);
   }
-  /// Where each ring node is actually fed from, parallel to `ring`.
+  /// Where each ring node is fed from, parallel to `ring`.
   ///
-  /// A conventional port is fed at the launcher slot `launchers` names, and
-  /// no two of them share one. A resonator is fed at no launcher at all: the
-  /// wire that reaches it comes past the slot, so its feed sits on the
-  /// segment from its own launcher to the next launcher along. Where a
-  /// launcher was given n resonators they divide that segment evenly, in
-  /// ring order.
+  /// A conventional port is fed at the launcher slot that `launchers` names.
+  /// A resonator is fed at no launcher: the wire that reaches it comes past
+  /// the slot, so its feed sits on the segment between its own launcher and a
+  /// neighboring one. The resonators fed on one segment divide it evenly, in
+  /// the order the walk of the ring reaches them. No two feeds lie closer than
+  /// the wire spacing.
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *feeds() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_FEEDS);
   }
@@ -1758,14 +1579,18 @@ struct FeedlineChainT : public ::flatbuffers::NativeTable {
 ///
 /// The model gives every resonator degree two on the ring: a chord to the
 /// resonator before it, a chord to the one after it, or an end. An end is a
-/// launcher, or one of the permitted terminations where the feedline simply
-/// stops. A chain is a run of resonators joined by chords, and it is what the
-/// Final stage drives with one feedline: launcher, coupler, coupler, …,
-/// launcher.
+/// launcher, or one of the permitted terminations where the feedline stops.
+/// A chain is a run of resonators joined by chords, and the Final stage
+/// drives it with one feedline: launcher, coupler, coupler, …, launcher. A
+/// chain has a launcher at one end at least; its other end may be a
+/// termination.
 struct FeedlineChain FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FeedlineChainT NativeTableType;
   typedef FeedlineChainBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return FeedlineChainTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_NODES = 4,
     VT_START = 6,
@@ -1857,47 +1682,305 @@ inline ::flatbuffers::Offset<FeedlineChain> CreateFeedlineChainDirect(
 
 ::flatbuffers::Offset<FeedlineChain> CreateFeedlineChain(::flatbuffers::FlatBufferBuilder &_fbb, const FeedlineChainT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct LatticeT : public ::flatbuffers::NativeTable {
+  typedef Lattice TableType;
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> points{};
+  std::vector<uint32_t> edges{};
+  std::vector<uint32_t> selected{};
+};
+
+/// One lattice the inner circuit is solved on: the Hanan grid that the ports
+/// of one capacity chain induce.
+struct Lattice FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef LatticeT NativeTableType;
+  typedef LatticeBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return LatticeTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_POINTS = 4,
+    VT_EDGES = 6,
+    VT_SELECTED = 8
+  };
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *points() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_POINTS);
+  }
+  /// Two point indices per edge, flat.
+  const ::flatbuffers::Vector<uint32_t> *edges() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_EDGES);
+  }
+  /// The edges of the connections, as indices into `edges` divided by two.
+  /// The edges of a wire that the connections leave out are not among them.
+  const ::flatbuffers::Vector<uint32_t> *selected() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_SELECTED);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_POINTS) &&
+           verifier.VerifyVector(points()) &&
+           VerifyOffsetRequired(verifier, VT_EDGES) &&
+           verifier.VerifyVector(edges()) &&
+           VerifyOffsetRequired(verifier, VT_SELECTED) &&
+           verifier.VerifyVector(selected()) &&
+           verifier.EndTable();
+  }
+  LatticeT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(LatticeT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<Lattice> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct LatticeBuilder {
+  typedef Lattice Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_points(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> points) {
+    fbb_.AddOffset(Lattice::VT_POINTS, points);
+  }
+  void add_edges(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> edges) {
+    fbb_.AddOffset(Lattice::VT_EDGES, edges);
+  }
+  void add_selected(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> selected) {
+    fbb_.AddOffset(Lattice::VT_SELECTED, selected);
+  }
+  explicit LatticeBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<Lattice> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<Lattice>(end);
+    fbb_.Required(o, Lattice::VT_POINTS);
+    fbb_.Required(o, Lattice::VT_EDGES);
+    fbb_.Required(o, Lattice::VT_SELECTED);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<Lattice> CreateLattice(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> points = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> edges = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> selected = 0) {
+  LatticeBuilder builder_(_fbb);
+  builder_.add_selected(selected);
+  builder_.add_edges(edges);
+  builder_.add_points(points);
+  return builder_.Finish();
+}
+
+struct Lattice::Traits {
+  using type = Lattice;
+  static auto constexpr Create = CreateLattice;
+};
+
+inline ::flatbuffers::Offset<Lattice> CreateLatticeDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *points = nullptr,
+    const std::vector<uint32_t> *edges = nullptr,
+    const std::vector<uint32_t> *selected = nullptr) {
+  auto points__ = points ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*points) : 0;
+  auto edges__ = edges ? _fbb.CreateVector<uint32_t>(*edges) : 0;
+  auto selected__ = selected ? _fbb.CreateVector<uint32_t>(*selected) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateLattice(
+      _fbb,
+      points__,
+      edges__,
+      selected__);
+}
+
+::flatbuffers::Offset<Lattice> CreateLattice(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct GlobalRoutingT : public ::flatbuffers::NativeTable {
+  typedef GlobalRouting TableType;
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT>> lattices{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>> connections{};
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> outer_ring{};
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> resonators{};
+  double objective = 0.0;
+  GlobalRoutingT() = default;
+  GlobalRoutingT(const GlobalRoutingT &o);
+  GlobalRoutingT(GlobalRoutingT&&) FLATBUFFERS_NOEXCEPT = default;
+  GlobalRoutingT &operator=(GlobalRoutingT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// Output of the Global stage. The lattices are empty when the chip has no
+/// inner circuit, which is a valid state rather than a skipped stage.
+struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef GlobalRoutingT NativeTableType;
+  typedef GlobalRoutingBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return GlobalRoutingTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_LATTICES = 4,
+    VT_CONNECTIONS = 6,
+    VT_OUTER_RING = 8,
+    VT_RESONATORS = 10,
+    VT_OBJECTIVE = 12
+  };
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *lattices() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *>(VT_LATTICES);
+  }
+  /// The connections of the inner circuit that the solved flow implies. A
+  /// wire that reaches no target or a closed loop over crossings, which only
+  /// a solve that stops early keeps, is not among them.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
+  }
+  /// The outer port ring that the Assignment stage consumes: the configured
+  /// ring in its order, without the ring end of each outer bridge where no
+  /// inner wire surfaces. The assignment reads this ring and not the
+  /// configuration.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *outer_ring() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_OUTER_RING);
+  }
+  /// The resonator ports of the chip, and the ring ports where the inner
+  /// wire of a resonator surfaces. The Assignment stage treats the ring
+  /// nodes among them as resonators.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *resonators() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_RESONATORS);
+  }
+  /// The length of the lattice edges that the connections take, in layout
+  /// units.
+  double objective() const {
+    return GetField<double>(VT_OBJECTIVE, 0.0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_LATTICES) &&
+           verifier.VerifyVector(lattices()) &&
+           verifier.VerifyVectorOfTables(lattices()) &&
+           VerifyOffsetRequired(verifier, VT_CONNECTIONS) &&
+           verifier.VerifyVector(connections()) &&
+           verifier.VerifyVectorOfTables(connections()) &&
+           VerifyOffsetRequired(verifier, VT_OUTER_RING) &&
+           verifier.VerifyVector(outer_ring()) &&
+           VerifyOffsetRequired(verifier, VT_RESONATORS) &&
+           verifier.VerifyVector(resonators()) &&
+           VerifyField<double>(verifier, VT_OBJECTIVE, 8) &&
+           verifier.EndTable();
+  }
+  GlobalRoutingT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(GlobalRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<GlobalRouting> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct GlobalRoutingBuilder {
+  typedef GlobalRouting Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_lattices(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>> lattices) {
+    fbb_.AddOffset(GlobalRouting::VT_LATTICES, lattices);
+  }
+  void add_connections(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections) {
+    fbb_.AddOffset(GlobalRouting::VT_CONNECTIONS, connections);
+  }
+  void add_outer_ring(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> outer_ring) {
+    fbb_.AddOffset(GlobalRouting::VT_OUTER_RING, outer_ring);
+  }
+  void add_resonators(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> resonators) {
+    fbb_.AddOffset(GlobalRouting::VT_RESONATORS, resonators);
+  }
+  void add_objective(double objective) {
+    fbb_.AddElement<double>(GlobalRouting::VT_OBJECTIVE, objective, 0.0);
+  }
+  explicit GlobalRoutingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<GlobalRouting> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<GlobalRouting>(end);
+    fbb_.Required(o, GlobalRouting::VT_LATTICES);
+    fbb_.Required(o, GlobalRouting::VT_CONNECTIONS);
+    fbb_.Required(o, GlobalRouting::VT_OUTER_RING);
+    fbb_.Required(o, GlobalRouting::VT_RESONATORS);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>> lattices = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> outer_ring = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> resonators = 0,
+    double objective = 0.0) {
+  GlobalRoutingBuilder builder_(_fbb);
+  builder_.add_objective(objective);
+  builder_.add_resonators(resonators);
+  builder_.add_outer_ring(outer_ring);
+  builder_.add_connections(connections);
+  builder_.add_lattices(lattices);
+  return builder_.Finish();
+}
+
+struct GlobalRouting::Traits {
+  using type = GlobalRouting;
+  static auto constexpr Create = CreateGlobalRouting;
+};
+
+inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRoutingDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *lattices = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *outer_ring = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *resonators = nullptr,
+    double objective = 0.0) {
+  auto lattices__ = lattices ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>(*lattices) : 0;
+  auto connections__ = connections ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>(*connections) : 0;
+  auto outer_ring__ = outer_ring ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*outer_ring) : 0;
+  auto resonators__ = resonators ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*resonators) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateGlobalRouting(
+      _fbb,
+      lattices__,
+      connections__,
+      outer_ring__,
+      resonators__,
+      objective);
+}
+
+::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct BorderSlotsT : public ::flatbuffers::NativeTable {
   typedef BorderSlots TableType;
   uint32_t border = 0;
   std::vector<mqt::scpd::flatbuffers::geometry::Point> positions{};
-  bool pocket = false;
 };
 
 /// The crossing slots of one partition border.
 ///
 /// A wire leaves one partition for another at one of these, and no two wires
-/// take the same one. The slots sit one wire spacing apart along the border,
-/// so their count is what the border can carry, which is what
-/// `PartitionBorder.budget` reports.
+/// take the same one. The slots of one border lie at least one crossing pitch
+/// apart, so their count is the most wires that the border can carry, which is
+/// what PartitionBorder.budget reports. The crossings of two wires also lie at
+/// least one crossing pitch apart, so a wire that crosses another border within
+/// one crossing pitch of a slot blocks that slot. The border then carries fewer
+/// wires than its budget.
 struct BorderSlots FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef BorderSlotsT NativeTableType;
   typedef BorderSlotsBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return BorderSlotsTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_BORDER = 4,
-    VT_POSITIONS = 6,
-    VT_POCKET = 8
+    VT_POSITIONS = 6
   };
-  /// The border they belong to, as an index into CapacityPlan.borders, or
-  /// zero when `pocket` is set and they are on no border at all.
+  /// The border they belong to, as an index into CapacityPlan.borders.
   uint32_t border() const {
     return GetField<uint32_t>(VT_BORDER, 0);
   }
-  /// The slots in layout units, in the order the border runs.
+  /// The slots in layout units, in the order of the walk that picked them.
+  /// The walk runs from sample to adjacent sample and starts again at another
+  /// end where it runs out, so the order can jump along the border.
   const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *positions() const {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_POSITIONS);
-  }
-  /// Whether these are ways out of a port's own pocket rather than slots of a
-  /// border.
-  ///
-  /// The capacity grid places a target on the first cell beyond its port's
-  /// band that was free before the bands, and does not open the band. Where
-  /// the band and the artwork close around a port, the free space left is a
-  /// pocket that no border reaches; the band is that port's own approach, so
-  /// it is a way out, and it carries the one wire.
-  bool pocket() const {
-    return GetField<uint8_t>(VT_POCKET, 0) != 0;
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -1905,7 +1988,6 @@ struct BorderSlots FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_BORDER, 4) &&
            VerifyOffsetRequired(verifier, VT_POSITIONS) &&
            verifier.VerifyVector(positions()) &&
-           VerifyField<uint8_t>(verifier, VT_POCKET, 1) &&
            verifier.EndTable();
   }
   BorderSlotsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1923,9 +2005,6 @@ struct BorderSlotsBuilder {
   void add_positions(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions) {
     fbb_.AddOffset(BorderSlots::VT_POSITIONS, positions);
   }
-  void add_pocket(bool pocket) {
-    fbb_.AddElement<uint8_t>(BorderSlots::VT_POCKET, static_cast<uint8_t>(pocket), 0);
-  }
   explicit BorderSlotsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1941,12 +2020,10 @@ struct BorderSlotsBuilder {
 inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t border = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions = 0,
-    bool pocket = false) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions = 0) {
   BorderSlotsBuilder builder_(_fbb);
   builder_.add_positions(positions);
   builder_.add_border(border);
-  builder_.add_pocket(pocket);
   return builder_.Finish();
 }
 
@@ -1958,14 +2035,12 @@ struct BorderSlots::Traits {
 inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlotsDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t border = 0,
-    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *positions = nullptr,
-    bool pocket = false) {
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *positions = nullptr) {
   auto positions__ = positions ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*positions) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateBorderSlots(
       _fbb,
       border,
-      positions__,
-      pocket);
+      positions__);
 }
 
 ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -1988,6 +2063,9 @@ struct Corridor FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CorridorT NativeTableType;
   typedef CorridorBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CorridorTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PARTITIONS = 4,
     VT_CROSSINGS = 6,
@@ -1995,8 +2073,8 @@ struct Corridor FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_TARGET = 10
   };
   /// The labels of the partitions, from the one the wire is fed in to the
-  /// one its target sits in. These are `Partition.label` values, not indices
-  /// into `CapacityPlan.partitions`.
+  /// one its target sits in. These are Partition.label values, not indices
+  /// into CapacityPlan.partitions.
   const ::flatbuffers::Vector<uint32_t> *partitions() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_PARTITIONS);
   }
@@ -2006,12 +2084,14 @@ struct Corridor FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_CROSSINGS);
   }
   /// Where the wire starts: the cell the feed of the assignment was placed
-  /// at. Absent when the connection has no feed the grid can reach.
+  /// at. Absent when the connection has no feed, when the feed lies off the
+  /// grid, or when no partition lies within 8 detail cells of it.
   const mqt::scpd::flatbuffers::geometry::Point *source() const {
     return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_SOURCE);
   }
   /// Where it ends: the cell its target port is reached at. Absent when the
-  /// chip has no such cell.
+  /// port has no target cell, or when no partition lies within 8 detail
+  /// cells of it.
   const mqt::scpd::flatbuffers::geometry::Point *target() const {
     return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_TARGET);
   }
@@ -2110,13 +2190,16 @@ struct CorridorRoutingT : public ::flatbuffers::NativeTable {
 /// Output of the Corridor stage.
 ///
 /// One entry per connection of the Assignment, in its order. A connection
-/// the stage could not route carries no partitions, so a reader counts the
-/// failures rather than being handed a separate list that can disagree with
-/// the routes beside it.
+/// that the stage could not route carries no partitions, so a reader counts
+/// the failures instead of reading a separate list that can disagree with
+/// the routes.
 struct CorridorRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CorridorRoutingT NativeTableType;
   typedef CorridorRoutingBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CorridorRoutingTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CORRIDORS = 4,
     VT_SLOTS = 6
@@ -2124,9 +2207,9 @@ struct CorridorRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> *corridors() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> *>(VT_CORRIDORS);
   }
-  /// The slots of every border a wire could cross, so a picture can show
-  /// which of them are taken. Parallel to nothing: a border with no free
-  /// space on either side has no entry.
+  /// The slots of every border a wire could cross, so that a picture can
+  /// show which of them are taken. A border without a crossing slot, whose
+  /// budget is zero, has no entry.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *slots() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *>(VT_SLOTS);
   }
@@ -2213,6 +2296,9 @@ struct DetailWire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef DetailWireT NativeTableType;
   typedef DetailWireBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return DetailWireTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PATH = 4
   };
@@ -2296,6 +2382,9 @@ struct DetailRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef DetailRoutingT NativeTableType;
   typedef DetailRoutingBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return DetailRoutingTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_GRID = 4,
     VT_WIRES = 6,
@@ -2410,6 +2499,9 @@ struct FinalWire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FinalWireT NativeTableType;
   typedef FinalWireBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return FinalWireTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PATH = 4,
     VT_LENGTH = 6,
@@ -2563,6 +2655,9 @@ struct FinalPhase FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FinalPhaseT NativeTableType;
   typedef FinalPhaseBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return FinalPhaseTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_NAME = 4,
     VT_WIRES = 6,
@@ -2714,6 +2809,9 @@ struct FinalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FinalRoutingT NativeTableType;
   typedef FinalRoutingBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return FinalRoutingTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_GRID = 4,
     VT_WIRES = 6,
@@ -2924,6 +3022,9 @@ struct FeedlineEdge FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef FeedlineEdgeT NativeTableType;
   typedef FeedlineEdgeBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return FeedlineEdgeTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CHAIN = 4,
     VT_FROM = 6,
@@ -3028,6 +3129,9 @@ struct Wire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef WireT NativeTableType;
   typedef WireBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return WireTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CONNECTION = 4,
     VT_PATH = 6
@@ -3107,6 +3211,9 @@ struct Geometry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef GeometryT NativeTableType;
   typedef GeometryBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return GeometryTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_WIRES = 4,
     VT_COUPLERS = 6,
@@ -3212,6 +3319,9 @@ struct Artifact FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ArtifactT NativeTableType;
   typedef ArtifactBuilder Builder;
   struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ArtifactTypeTable();
+  }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PRODUCER = 4,
     VT_OUTPUT_TYPE = 6,
@@ -3745,123 +3855,6 @@ inline ::flatbuffers::Offset<CapacityPlan> CapacityPlan::Pack(::flatbuffers::Fla
 }
 
 
-inline bool operator==(const LatticeT &lhs, const LatticeT &rhs) {
-  return
-      (lhs.points == rhs.points) &&
-      (lhs.edges == rhs.edges) &&
-      (lhs.selected == rhs.selected);
-}
-
-inline bool operator!=(const LatticeT &lhs, const LatticeT &rhs) {
-    return !(lhs == rhs);
-}
-
-
-inline LatticeT *Lattice::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::make_unique<LatticeT>();
-  UnPackTo(_o.get(), _resolver);
-  return _o.release();
-}
-
-inline void Lattice::UnPackTo(LatticeT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
-  (void)_o;
-  (void)_resolver;
-  { auto _e = points(); if (_e) { _o->points.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->points[_i] = *_e->Get(_i); } } else { _o->points.resize(0); } }
-  { auto _e = edges(); if (_e) { _o->edges.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->edges[_i] = _e->Get(_i); } } else { _o->edges.resize(0); } }
-  { auto _e = selected(); if (_e) { _o->selected.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->selected[_i] = _e->Get(_i); } } else { _o->selected.resize(0); } }
-}
-
-inline ::flatbuffers::Offset<Lattice> CreateLattice(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return Lattice::Pack(_fbb, _o, _rehasher);
-}
-
-inline ::flatbuffers::Offset<Lattice> Lattice::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  (void)_rehasher;
-  (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const LatticeT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _points = _fbb.CreateVectorOfStructs(_o->points);
-  auto _edges = _fbb.CreateVector(_o->edges);
-  auto _selected = _fbb.CreateVector(_o->selected);
-  return mqt::scpd::flatbuffers::artifacts::CreateLattice(
-      _fbb,
-      _points,
-      _edges,
-      _selected);
-}
-
-
-inline bool operator==(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs) {
-  return
-      (lhs.lattices.size() == rhs.lattices.size() && std::equal(lhs.lattices.cbegin(), lhs.lattices.cend(), rhs.lattices.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
-      (lhs.connections.size() == rhs.connections.size() && std::equal(lhs.connections.cbegin(), lhs.connections.cend(), rhs.connections.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
-      (lhs.outer_ring == rhs.outer_ring) &&
-      (lhs.resonators == rhs.resonators) &&
-      (lhs.objective == rhs.objective);
-}
-
-inline bool operator!=(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs) {
-    return !(lhs == rhs);
-}
-
-
-inline GlobalRoutingT::GlobalRoutingT(const GlobalRoutingT &o)
-      : outer_ring(o.outer_ring),
-        resonators(o.resonators),
-        objective(o.objective) {
-  lattices.reserve(o.lattices.size());
-  for (const auto &lattices_ : o.lattices) { lattices.emplace_back((lattices_) ? new mqt::scpd::flatbuffers::artifacts::LatticeT(*lattices_) : nullptr); }
-  connections.reserve(o.connections.size());
-  for (const auto &connections_ : o.connections) { connections.emplace_back((connections_) ? new mqt::scpd::flatbuffers::design::ConnectionT(*connections_) : nullptr); }
-}
-
-inline GlobalRoutingT &GlobalRoutingT::operator=(GlobalRoutingT o) FLATBUFFERS_NOEXCEPT {
-  std::swap(lattices, o.lattices);
-  std::swap(connections, o.connections);
-  std::swap(outer_ring, o.outer_ring);
-  std::swap(resonators, o.resonators);
-  std::swap(objective, o.objective);
-  return *this;
-}
-
-inline GlobalRoutingT *GlobalRouting::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::make_unique<GlobalRoutingT>();
-  UnPackTo(_o.get(), _resolver);
-  return _o.release();
-}
-
-inline void GlobalRouting::UnPackTo(GlobalRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
-  (void)_o;
-  (void)_resolver;
-  { auto _e = lattices(); if (_e) { _o->lattices.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->lattices[_i]) { _e->Get(_i)->UnPackTo(_o->lattices[_i].get(), _resolver); } else { _o->lattices[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->lattices.resize(0); } }
-  { auto _e = connections(); if (_e) { _o->connections.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->connections[_i]) { _e->Get(_i)->UnPackTo(_o->connections[_i].get(), _resolver); } else { _o->connections[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->connections.resize(0); } }
-  { auto _e = outer_ring(); if (_e) { _o->outer_ring.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->outer_ring[_i] = *_e->Get(_i); } } else { _o->outer_ring.resize(0); } }
-  { auto _e = resonators(); if (_e) { _o->resonators.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->resonators[_i] = *_e->Get(_i); } } else { _o->resonators.resize(0); } }
-  { auto _e = objective(); _o->objective = _e; }
-}
-
-inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return GlobalRouting::Pack(_fbb, _o, _rehasher);
-}
-
-inline ::flatbuffers::Offset<GlobalRouting> GlobalRouting::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  (void)_rehasher;
-  (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GlobalRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _lattices = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> (_o->lattices.size(), [](size_t i, _VectorArgs *__va) { return CreateLattice(*__va->__fbb, __va->__o->lattices[i].get(), __va->__rehasher); }, &_va );
-  auto _connections = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> (_o->connections.size(), [](size_t i, _VectorArgs *__va) { return CreateConnection(*__va->__fbb, __va->__o->connections[i].get(), __va->__rehasher); }, &_va );
-  auto _outer_ring = _fbb.CreateVectorOfStructs(_o->outer_ring);
-  auto _resonators = _fbb.CreateVectorOfStructs(_o->resonators);
-  auto _objective = _o->objective;
-  return mqt::scpd::flatbuffers::artifacts::CreateGlobalRouting(
-      _fbb,
-      _lattices,
-      _connections,
-      _outer_ring,
-      _resonators,
-      _objective);
-}
-
-
 inline bool operator==(const AssignmentT &lhs, const AssignmentT &rhs) {
   return
       (lhs.connections.size() == rhs.connections.size() && std::equal(lhs.connections.cbegin(), lhs.connections.cend(), rhs.connections.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
@@ -3998,11 +3991,127 @@ inline ::flatbuffers::Offset<FeedlineChain> FeedlineChain::Pack(::flatbuffers::F
 }
 
 
+inline bool operator==(const LatticeT &lhs, const LatticeT &rhs) {
+  return
+      (lhs.points == rhs.points) &&
+      (lhs.edges == rhs.edges) &&
+      (lhs.selected == rhs.selected);
+}
+
+inline bool operator!=(const LatticeT &lhs, const LatticeT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline LatticeT *Lattice::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<LatticeT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void Lattice::UnPackTo(LatticeT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = points(); if (_e) { _o->points.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->points[_i] = *_e->Get(_i); } } else { _o->points.resize(0); } }
+  { auto _e = edges(); if (_e) { _o->edges.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->edges[_i] = _e->Get(_i); } } else { _o->edges.resize(0); } }
+  { auto _e = selected(); if (_e) { _o->selected.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->selected[_i] = _e->Get(_i); } } else { _o->selected.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<Lattice> CreateLattice(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return Lattice::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<Lattice> Lattice::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const LatticeT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _points = _fbb.CreateVectorOfStructs(_o->points);
+  auto _edges = _fbb.CreateVector(_o->edges);
+  auto _selected = _fbb.CreateVector(_o->selected);
+  return mqt::scpd::flatbuffers::artifacts::CreateLattice(
+      _fbb,
+      _points,
+      _edges,
+      _selected);
+}
+
+
+inline bool operator==(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs) {
+  return
+      (lhs.lattices.size() == rhs.lattices.size() && std::equal(lhs.lattices.cbegin(), lhs.lattices.cend(), rhs.lattices.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.connections.size() == rhs.connections.size() && std::equal(lhs.connections.cbegin(), lhs.connections.cend(), rhs.connections.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.outer_ring == rhs.outer_ring) &&
+      (lhs.resonators == rhs.resonators) &&
+      (lhs.objective == rhs.objective);
+}
+
+inline bool operator!=(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline GlobalRoutingT::GlobalRoutingT(const GlobalRoutingT &o)
+      : outer_ring(o.outer_ring),
+        resonators(o.resonators),
+        objective(o.objective) {
+  lattices.reserve(o.lattices.size());
+  for (const auto &lattices_ : o.lattices) { lattices.emplace_back((lattices_) ? new mqt::scpd::flatbuffers::artifacts::LatticeT(*lattices_) : nullptr); }
+  connections.reserve(o.connections.size());
+  for (const auto &connections_ : o.connections) { connections.emplace_back((connections_) ? new mqt::scpd::flatbuffers::design::ConnectionT(*connections_) : nullptr); }
+}
+
+inline GlobalRoutingT &GlobalRoutingT::operator=(GlobalRoutingT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(lattices, o.lattices);
+  std::swap(connections, o.connections);
+  std::swap(outer_ring, o.outer_ring);
+  std::swap(resonators, o.resonators);
+  std::swap(objective, o.objective);
+  return *this;
+}
+
+inline GlobalRoutingT *GlobalRouting::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<GlobalRoutingT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void GlobalRouting::UnPackTo(GlobalRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = lattices(); if (_e) { _o->lattices.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->lattices[_i]) { _e->Get(_i)->UnPackTo(_o->lattices[_i].get(), _resolver); } else { _o->lattices[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->lattices.resize(0); } }
+  { auto _e = connections(); if (_e) { _o->connections.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->connections[_i]) { _e->Get(_i)->UnPackTo(_o->connections[_i].get(), _resolver); } else { _o->connections[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->connections.resize(0); } }
+  { auto _e = outer_ring(); if (_e) { _o->outer_ring.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->outer_ring[_i] = *_e->Get(_i); } } else { _o->outer_ring.resize(0); } }
+  { auto _e = resonators(); if (_e) { _o->resonators.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->resonators[_i] = *_e->Get(_i); } } else { _o->resonators.resize(0); } }
+  { auto _e = objective(); _o->objective = _e; }
+}
+
+inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return GlobalRouting::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<GlobalRouting> GlobalRouting::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GlobalRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _lattices = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> (_o->lattices.size(), [](size_t i, _VectorArgs *__va) { return CreateLattice(*__va->__fbb, __va->__o->lattices[i].get(), __va->__rehasher); }, &_va );
+  auto _connections = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> (_o->connections.size(), [](size_t i, _VectorArgs *__va) { return CreateConnection(*__va->__fbb, __va->__o->connections[i].get(), __va->__rehasher); }, &_va );
+  auto _outer_ring = _fbb.CreateVectorOfStructs(_o->outer_ring);
+  auto _resonators = _fbb.CreateVectorOfStructs(_o->resonators);
+  auto _objective = _o->objective;
+  return mqt::scpd::flatbuffers::artifacts::CreateGlobalRouting(
+      _fbb,
+      _lattices,
+      _connections,
+      _outer_ring,
+      _resonators,
+      _objective);
+}
+
+
 inline bool operator==(const BorderSlotsT &lhs, const BorderSlotsT &rhs) {
   return
       (lhs.border == rhs.border) &&
-      (lhs.positions == rhs.positions) &&
-      (lhs.pocket == rhs.pocket);
+      (lhs.positions == rhs.positions);
 }
 
 inline bool operator!=(const BorderSlotsT &lhs, const BorderSlotsT &rhs) {
@@ -4021,7 +4130,6 @@ inline void BorderSlots::UnPackTo(BorderSlotsT *_o, const ::flatbuffers::resolve
   (void)_resolver;
   { auto _e = border(); _o->border = _e; }
   { auto _e = positions(); if (_e) { _o->positions.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->positions[_i] = *_e->Get(_i); } } else { _o->positions.resize(0); } }
-  { auto _e = pocket(); _o->pocket = _e; }
 }
 
 inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -4034,12 +4142,10 @@ inline ::flatbuffers::Offset<BorderSlots> BorderSlots::Pack(::flatbuffers::FlatB
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const BorderSlotsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _border = _o->border;
   auto _positions = _fbb.CreateVectorOfStructs(_o->positions);
-  auto _pocket = _o->pocket;
   return mqt::scpd::flatbuffers::artifacts::CreateBorderSlots(
       _fbb,
       _border,
-      _positions,
-      _pocket);
+      _positions);
 }
 
 
@@ -4888,6 +4994,620 @@ inline void StageOutputUnion::Reset() {
   }
   value = nullptr;
   type = StageOutput::NONE;
+}
+
+inline const ::flatbuffers::TypeTable *CapacityElementTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::CapacityElementTypeTable
+  };
+  static const char * const names[] = {
+    "Unset",
+    "Target",
+    "Bottleneck",
+    "Launcher"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *FinalVerdictTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::FinalVerdictTypeTable
+  };
+  static const int64_t values[] = { 1, 2, 4, 8, 16, 32, 64 };
+  static const char * const names[] = {
+    "Unrouted",
+    "Open",
+    "Crossing",
+    "Short",
+    "Long",
+    "Loop",
+    "Squeezed"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 7, type_codes, type_refs, nullptr, values, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *StageOutputTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 3 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 4 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 5 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 6 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::CapacityPlanTypeTable,
+    mqt::scpd::flatbuffers::artifacts::AssignmentTypeTable,
+    mqt::scpd::flatbuffers::artifacts::GlobalRoutingTypeTable,
+    mqt::scpd::flatbuffers::artifacts::DetailRoutingTypeTable,
+    mqt::scpd::flatbuffers::artifacts::FinalRoutingTypeTable,
+    mqt::scpd::flatbuffers::artifacts::GeometryTypeTable,
+    mqt::scpd::flatbuffers::artifacts::CorridorRoutingTypeTable
+  };
+  static const char * const names[] = {
+    "NONE",
+    "CapacityPlan",
+    "Assignment",
+    "GlobalRouting",
+    "DetailRouting",
+    "FinalRouting",
+    "Geometry",
+    "CorridorRouting"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_UNION, 8, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *GridExtentTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "width",
+    "height",
+    "origin",
+    "cell_width",
+    "cell_height"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PartitionTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PolygonTypeTable
+  };
+  static const char * const names[] = {
+    "label",
+    "outlines"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PartitionBorderTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "first",
+    "second",
+    "samples",
+    "center",
+    "budget"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *BottleneckTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "from",
+    "to",
+    "capacity"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *LauncherSlotTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::PortRefTypeTable,
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "port",
+    "position"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CapacityNodeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 1, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::CapacityElementTypeTable
+  };
+  static const char * const names[] = {
+    "kind",
+    "id",
+    "capacity",
+    "next"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 3 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 4 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 5 },
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 6 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::GridExtentTypeTable,
+    mqt::scpd::flatbuffers::artifacts::PartitionTypeTable,
+    mqt::scpd::flatbuffers::artifacts::PartitionBorderTypeTable,
+    mqt::scpd::flatbuffers::artifacts::BottleneckTypeTable,
+    mqt::scpd::flatbuffers::artifacts::LauncherSlotTypeTable,
+    mqt::scpd::flatbuffers::artifacts::CapacityNodeTypeTable,
+    mqt::scpd::flatbuffers::geometry::PolygonTypeTable
+  };
+  static const char * const names[] = {
+    "capacity_grid",
+    "detail_grid",
+    "partitions",
+    "borders",
+    "bottlenecks",
+    "launchers",
+    "nodes",
+    "chains",
+    "port_keepout"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 9, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *AssignmentTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 3 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::ConnectionTypeTable,
+    mqt::scpd::flatbuffers::design::PortRefTypeTable,
+    mqt::scpd::flatbuffers::geometry::PointTypeTable,
+    mqt::scpd::flatbuffers::artifacts::FeedlineChainTypeTable
+  };
+  static const char * const names[] = {
+    "connections",
+    "objective",
+    "ring",
+    "launchers",
+    "feeds",
+    "chains"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 6, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *FeedlineChainTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::PortRefTypeTable
+  };
+  static const char * const names[] = {
+    "nodes",
+    "start",
+    "end"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *LatticeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_UINT, 1, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "points",
+    "edges",
+    "selected"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::LatticeTypeTable,
+    mqt::scpd::flatbuffers::design::ConnectionTypeTable,
+    mqt::scpd::flatbuffers::design::PortRefTypeTable
+  };
+  static const char * const names[] = {
+    "lattices",
+    "connections",
+    "outer_ring",
+    "resonators",
+    "objective"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *BorderSlotsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "border",
+    "positions"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CorridorTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "partitions",
+    "crossings",
+    "source",
+    "target"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CorridorRoutingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::CorridorTypeTable,
+    mqt::scpd::flatbuffers::artifacts::BorderSlotsTypeTable
+  };
+  static const char * const names[] = {
+    "corridors",
+    "slots"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DetailWireTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::DCoordTypeTable
+  };
+  static const char * const names[] = {
+    "path"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 1, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *DetailRoutingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::GridExtentTypeTable,
+    mqt::scpd::flatbuffers::artifacts::DetailWireTypeTable
+  };
+  static const char * const names[] = {
+    "grid",
+    "wires",
+    "inner"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *FinalWireTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, 1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::RCoordTypeTable,
+    mqt::scpd::flatbuffers::artifacts::FinalVerdictTypeTable
+  };
+  static const char * const names[] = {
+    "path",
+    "length",
+    "verdict",
+    "note",
+    "marks"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *FinalPhaseTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::FinalWireTypeTable,
+    mqt::scpd::flatbuffers::design::CpwCouplerTypeTable
+  };
+  static const char * const names[] = {
+    "name",
+    "wires",
+    "inner",
+    "feedlines",
+    "couplers"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *FinalRoutingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 3 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 4 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 5 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 6 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::GridExtentTypeTable,
+    mqt::scpd::flatbuffers::artifacts::FinalWireTypeTable,
+    mqt::scpd::flatbuffers::artifacts::FeedlineEdgeTypeTable,
+    mqt::scpd::flatbuffers::artifacts::FinalPhaseTypeTable,
+    mqt::scpd::flatbuffers::design::CpwCouplerTypeTable,
+    mqt::scpd::flatbuffers::design::BridgeTypeTable,
+    mqt::scpd::flatbuffers::design::ConnectionRefTypeTable
+  };
+  static const char * const names[] = {
+    "grid",
+    "wires",
+    "inner",
+    "feedlines",
+    "feedline_edges",
+    "phases",
+    "couplers",
+    "bridges",
+    "unresolved"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 9, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *FeedlineEdgeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_BOOL, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::PortRefTypeTable
+  };
+  static const char * const names[] = {
+    "chain",
+    "from",
+    "to",
+    "terminal"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *WireTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::ConnectionRefTypeTable,
+    mqt::scpd::flatbuffers::geometry::PathTypeTable
+  };
+  static const char * const names[] = {
+    "connection",
+    "path"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *GeometryTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::WireTypeTable,
+    mqt::scpd::flatbuffers::design::CpwCouplerTypeTable,
+    mqt::scpd::flatbuffers::design::BridgeTypeTable
+  };
+  static const char * const names[] = {
+    "wires",
+    "couplers",
+    "bridges"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ArtifactTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_UTYPE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::StageOutputTypeTable
+  };
+  static const char * const names[] = {
+    "producer",
+    "output_type",
+    "output"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
 }
 
 inline const mqt::scpd::flatbuffers::artifacts::Artifact *GetArtifact(const void *buf) {

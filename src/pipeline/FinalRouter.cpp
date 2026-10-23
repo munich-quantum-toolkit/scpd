@@ -23,6 +23,7 @@
 #include "mqt-scpd/grid/PortBands.hpp"
 #include "mqt-scpd/grid/ProfileCuts.hpp"
 #include "mqt-scpd/grid/Rasterize.hpp"
+#include "mqt-scpd/grid/RoutingBottlenecks.hpp"
 #include "mqt-scpd/grid/Voronoi.hpp"
 #include "mqt-scpd/pipeline/CapacityFlow.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
@@ -458,7 +459,9 @@ offsetsOf(const std::string& text) {
       static_cast<std::int64_t>(std::min(params.escape_straight_cells, 100U));
   tuning.escapeStubMargin =
       static_cast<double>(std::min(params.escape_stub_margin_cells, 100U));
-  tuning.stopAfter = params.stop_after_phase;
+  // Where the run ends: `[run] stop_after` names a step, and the five phases
+  // of this stage are steps.
+  tuning.stopAfter = config.run != nullptr ? config.run->stop_after : "";
   tuning.bendPenalty = static_cast<std::uint16_t>(
       std::min<std::uint32_t>(std::numeric_limits<std::uint16_t>::max(),
                               resolved(params.bend_penalty_norm, router)));
@@ -471,14 +474,14 @@ offsetsOf(const std::string& text) {
       static_cast<std::uint8_t>(std::min<std::uint32_t>(
           127U, resolved(params.static_proximity_penalty_norm, router)));
   tuning.obstacleReach = grid::cellsFor(params.obstacle_penalty_reach, router);
-  tuning.approachAxial =
-      grid::bandLength(rules.min_straight_length, router, false);
-  tuning.approachDiagonal =
-      grid::bandLength(rules.min_straight_length, router, true);
-  tuning.approachHalfAxial =
-      grid::bandHalfWidth(rules.min_wire_spacing, router, false);
-  tuning.approachHalfDiagonal =
-      grid::bandHalfWidth(rules.min_wire_spacing, router, true);
+  tuning.approachAxial = grid::bandLength(rules.min_straight_length, router,
+                                          grid::Step{.x = 1, .y = 0});
+  tuning.approachDiagonal = grid::bandLength(rules.min_straight_length, router,
+                                             grid::Step{.x = 1, .y = 1});
+  tuning.approachHalfAxial = grid::bandHalfWidth(rules.min_wire_spacing, router,
+                                                 grid::Step{.x = 1, .y = 0});
+  tuning.approachHalfDiagonal = grid::bandHalfWidth(
+      rules.min_wire_spacing, router, grid::Step{.x = 1, .y = 1});
   return tuning;
 }
 
@@ -686,13 +689,12 @@ void blockOutsideTheSources(const ChipT& chip, Scene& scene) {
     const grid::PortBand band{
         .center = centre,
         .step = step,
-        .forward = steps == 0
-                       ? grid::bandLength(reach, scene.router, step.diagonal())
-                       : steps - 1,
+        .forward = steps == 0 ? grid::bandLength(reach, scene.router, step)
+                              : steps - 1,
         .backward = grid::bandLength(back * rules.min_straight_length,
-                                     scene.router, step.diagonal()),
-        .halfWidth = grid::bandHalfWidth(rules.min_wire_spacing, scene.router,
-                                         step.diagonal())};
+                                     scene.router, step),
+        .halfWidth =
+            grid::bandHalfWidth(rules.min_wire_spacing, scene.router, step)};
     // The part behind the port seals the artwork too (user, 2026-10-14):
     // the feedline edges of the coupler insertion and the walls of the
     // capacity graph read `components`, and without it they see a passage
@@ -1140,7 +1142,7 @@ void connect(Path& way, const PathPoint& to) {
 // --------------------------------------------------------- The debug records
 
 /// The five phases of the stage, in the order they run and by the names
-/// their snapshots and `stop_after_phase` carry.
+/// their snapshots and `[run] stop_after` carry.
 constexpr std::array<std::string_view, 5> PHASES{
     "pre-feedline-routing", "pre-feedline-refinement", "feedline-insertion",
     "feedline-constrained-routing", "feedline-constrained-refinement"};
@@ -6752,25 +6754,24 @@ public:
   /// the border, the port runs of the plain wires — is there whatever the
   /// insertion does, and is left out, so the chambers on either side of it
   /// are one. No bottleneck joins the two walls of one port run:
-  /// its line would cross the slot between them, and `grid::findBottlenecks`
-  /// refuses every line that crosses a slot.
-  /// The mouths between the chains, closed (user, 2026-10-14). With the
-  /// terminal edges as wires (`terminalDemands`) every chain stands open at
-  /// its launcher ends, and the room outside one chain runs into the room
-  /// inside the next round their ends; the edges between couplers then have
-  /// one chamber on both sides and no stretch. So along the border, between
-  /// the ending terminal edge of one chain and the starting terminal edge of
-  /// the next, the outer lines between the slots of the two edges' runs at
-  /// their couplers close the mouth (`mouthLinesOf`): two where the runs
-  /// stand end to end, one where they stand side by side. Wherever a
-  /// line runs free, between two walls it meets or from a flank's tip to
-  /// the first, it is a bottleneck holding its length over the clearance;
-  /// the walls it crosses close the mouth there themselves. The strip
-  /// between the two lines, with the two slots the terminal edges end in,
-  /// is a chamber of its own: a terminal edge enters it over the outer
-  /// line from the launcher's side, a plain wire from a launcher between
-  /// the two chains passes both lines on its way in. The ends of the chains
-  /// are taken in the order of their launchers round the centre of the
+  /// its line would cross the slot between them, and
+  /// `grid::findRoutingBottlenecks` refuses every line that crosses a slot. The
+  /// mouths between the chains, closed (user, 2026-10-14). With the terminal
+  /// edges as wires (`terminalDemands`) every chain stands open at its launcher
+  /// ends, and the room outside one chain runs into the room inside the next
+  /// round their ends; the edges between couplers then have one chamber on both
+  /// sides and no stretch. So along the border, between the ending terminal
+  /// edge of one chain and the starting terminal edge of the next, the outer
+  /// lines between the slots of the two edges' runs at their couplers close the
+  /// mouth (`mouthLinesOf`): two where the runs stand end to end, one where
+  /// they stand side by side. Wherever a line runs free, between two walls it
+  /// meets or from a flank's tip to the first, it is a bottleneck holding its
+  /// length over the clearance; the walls it crosses close the mouth there
+  /// themselves. The strip between the two lines, with the two slots the
+  /// terminal edges end in, is a chamber of its own: a terminal edge enters it
+  /// over the outer line from the launcher's side, a plain wire from a launcher
+  /// between the two chains passes both lines on its way in. The ends of the
+  /// chains are taken in the order of their launchers round the centre of the
   /// chip; two ends of one chain next to each other enclose that chain's
   /// own pocket and close no mouth.
   /// The gates of the mouths, and one note for every mouth that could not
@@ -7296,7 +7297,7 @@ public:
   /// The options `reportBottlenecks` searches the bottlenecks with: gaps up
   /// to `bottleneckWires` wires, one narrowing per wire pitch, the rise of
   /// `bottleneckRise`, and the slots and walls of `wallsAfterInsertion`.
-  [[nodiscard]] grid::BottleneckOptions
+  [[nodiscard]] grid::RoutingBottleneckOptions
   bottleneckOptionsOf(const std::span<const std::size_t> slots,
                       const std::span<const std::uint32_t> wallOf) const {
     const auto pitch = static_cast<double>(roomPitch());
@@ -7316,12 +7317,12 @@ public:
   /// The bottlenecks of the chip the insertion leaves behind (user,
   /// 2026-10-07), report only. The medial axis is built over the obstacles
   /// of `wallsAfterInsertion` — a Voronoi diagram over their boundary
-  /// cells, as the capacity stage builds it — and `grid::findBottlenecks`
-  /// finds the cells of the axis where the clearance has a local minimum
-  /// or the edge of a plateau of one, and traces each of them down to the
-  /// two obstacle cells across it. Every such line is a bottleneck, and the
-  /// two obstacles at its ends say what it lies between: a feedline and a
-  /// launcher stub, a feedline and a qubit, two feedlines.
+  /// cells, as the capacity stage builds it — and
+  /// `grid::findRoutingBottlenecks` finds the cells of the axis where the
+  /// clearance has a local minimum or the edge of a plateau of one, and traces
+  /// each of them down to the two obstacle cells across it. Every such line is
+  /// a bottleneck, and the two obstacles at its ends say what it lies between:
+  /// a feedline and a launcher stub, a feedline and a qubit, two feedlines.
   ///
   /// Only gaps up to what `bottleneckWires` wires need are reported, and a
   /// local minimum counts only where the clearance rises by
@@ -19106,7 +19107,7 @@ public:
     extent->cell_height = field.router.cellHeight;
     routing.grid = std::move(extent);
 
-    // Where the run ends. `stop_after_phase` names the last phase to run,
+    // Where the run ends. `[run] stop_after` names the last phase to run,
     // by the name of its snapshot; what follows it is not run at all. An
     // unknown name runs every phase, because the loader has already refused
     // it.
@@ -19205,9 +19206,8 @@ public:
     // every wire down, so that the last line of a run says what the
     // design-rule check will find.
     if (lastPhase + 1 < PHASES.size()) {
-      driver.say(
-          std::format("the stage stops after {}, as stop_after_phase asks",
-                      PHASES[lastPhase]));
+      driver.say(std::format("the stage stops after {}, as stop_after asks",
+                             PHASES[lastPhase]));
     }
     driver.sayResonatorLengths(wires, outer);
     const auto fails = driver.failsOf(wires, everyWire());

@@ -35,7 +35,8 @@ std::vector<uint32_t> squaredDistanceTransform(const BitGrid& blocked) {
   }
 
   // Along each row: the distance to the nearest blocked cell of the row,
-  // then squared.
+  // then squared in 64 bits and capped at the public DISTANCE_UNBOUNDED
+  // sentinel before conversion to 32 bits.
   for (uint32_t y = 0; y < height; ++y) {
     const std::size_t row = static_cast<std::size_t>(y) * width;
     for (uint32_t x = 1; x < width; ++x) {
@@ -51,64 +52,70 @@ std::vector<uint32_t> squaredDistanceTransform(const BitGrid& blocked) {
       }
     }
     for (uint32_t x = 0; x < width; ++x) {
-      const uint32_t value = distance[row + x];
-      distance[row + x] =
-          (value >= DISTANCE_UNBOUNDED) ? DISTANCE_UNBOUNDED : value * value;
+      const uint64_t value = distance[row + x];
+      distance[row + x] = static_cast<uint32_t>(
+          std::min<uint64_t>(value * value, DISTANCE_UNBOUNDED));
     }
   }
 
-  // Down each column: the minimum over the rows of the row distance plus the
-  // squared row offset, as the lower envelope of one parabola per row
-  // (Felzenszwalb and Huttenlocher), in time linear in the column. A row
-  // without a blocked cell has no parabola. A cell whose own row has none
-  // keeps at most `DISTANCE_UNBOUNDED`, as the scan this replaces did.
-  std::vector<int64_t> rowCost(height);
-  std::vector<uint32_t> root(height);
-  std::vector<double> from(static_cast<std::size_t>(height) + 1);
+  // Down each column: the minimum over the rows s of the squared row distance
+  // of row s plus (y - s)^2. Every row s gives a parabola over y, and the
+  // lower envelope of the parabolas gives the minimum for every row at once
+  // (Felzenszwalb and Huttenlocher). The envelope lists the rows whose
+  // parabolas take part in it, bottom to top, and the first row at which each
+  // one is the lowest. These first rows are whole numbers, so the arithmetic
+  // is exact in int64 for every height below 2^31. The minimum of a row is at
+  // most its own squared row distance, which fits in 32 bits.
+  const auto rows = static_cast<int64_t>(height);
+  std::vector<int64_t> column(height);
+  std::vector<int64_t> apex(height);
+  std::vector<int64_t> first(height);
+  const auto offset = [&](const int64_t s) {
+    return column[static_cast<std::size_t>(s)];
+  };
+  const auto parabola = [&](const int64_t s, const int64_t y) {
+    return offset(s) + ((y - s) * (y - s));
+  };
   for (uint32_t x = 0; x < width; ++x) {
-    const auto at = [&](const uint32_t y) -> uint32_t& {
-      return distance[(static_cast<std::size_t>(y) * width) + x];
-    };
-    std::size_t parabolas = 0;
     for (uint32_t y = 0; y < height; ++y) {
-      const auto value = at(y);
-      rowCost[y] = value;
-      if (value >= DISTANCE_UNBOUNDED) {
+      column[y] = distance[(static_cast<std::size_t>(y) * width) + x];
+    }
+    std::size_t size = 1;
+    apex[0] = 0;
+    first[0] = 0;
+    for (int64_t s = 1; s < rows; ++s) {
+      // Drop every parabola that the new one undercuts at its first row.
+      while (size > 0 && parabola(apex[size - 1], first[size - 1]) >
+                             parabola(s, first[size - 1])) {
+        --size;
+      }
+      if (size == 0) {
+        apex[0] = s;
+        first[0] = 0;
+        size = 1;
         continue;
       }
-      const auto cost = [&](const uint32_t r) {
-        return static_cast<double>(rowCost[r]) +
-               (static_cast<double>(r) * static_cast<double>(r));
-      };
-      // Where the new parabola falls below the last one kept, dropping
-      // every parabola it hides.
-      double meets = 0.0;
-      while (parabolas > 0) {
-        const auto last = root[parabolas - 1];
-        meets = (cost(y) - cost(last)) /
-                (2.0 * (static_cast<double>(y) - static_cast<double>(last)));
-        if (parabolas == 1 || meets > from[parabolas - 1]) {
-          break;
-        }
-        --parabolas;
+      // The new parabola is the lowest from the first row after its
+      // intersection with the top parabola. The numerator is not negative,
+      // because the new parabola does not undercut the top one at its first
+      // row.
+      const int64_t top = apex[size - 1];
+      const int64_t numerator =
+          offset(s) - offset(top) + ((s - top) * (s + top));
+      const int64_t from = 1 + (numerator / (2 * (s - top)));
+      if (from < rows) {
+        apex[size] = s;
+        first[size] = from;
+        ++size;
       }
-      root[parabolas] = y;
-      from[parabolas] =
-          parabolas == 0 ? -std::numeric_limits<double>::infinity() : meets;
-      ++parabolas;
     }
-    if (parabolas == 0) {
-      continue;
-    }
-    std::size_t k = 0;
-    for (uint32_t y = 0; y < height; ++y) {
-      while (k + 1 < parabolas && from[k + 1] <= static_cast<double>(y)) {
-        ++k;
+    std::size_t k = size - 1;
+    for (int64_t y = rows - 1; y >= 0; --y) {
+      distance[(static_cast<std::size_t>(y) * width) + x] =
+          static_cast<uint32_t>(parabola(apex[k], y));
+      if (y == first[k] && k > 0) {
+        --k;
       }
-      const auto dy = static_cast<int64_t>(y) - static_cast<int64_t>(root[k]);
-      const auto best = static_cast<uint64_t>(rowCost[root[k]] + (dy * dy));
-      const auto own = static_cast<uint64_t>(rowCost[y]);
-      at(y) = static_cast<uint32_t>(std::min(best, own));
     }
   }
   return distance;

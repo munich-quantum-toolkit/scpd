@@ -30,6 +30,7 @@
 namespace mqt::scpd::grid {
 namespace {
 
+/// The index of the first diagonal step in STEP_DX and STEP_DY.
 constexpr std::size_t FIRST_DIAGONAL_STEP = 4;
 
 /// The direction that undoes each of the eight steps.
@@ -54,12 +55,12 @@ bool segmentsCrossStrictly(const double ax, const double ay, const double bx,
 /// Whether a point lies on a segment.
 bool pointOnSegment(const double px, const double py, const double x0,
                     const double y0, const double x1, const double y1) {
-  constexpr double EPSILON = 1.0e-6;
-  if (std::abs(((py - y0) * (x1 - x0)) - ((px - x0) * (y1 - y0))) > EPSILON) {
+  constexpr double epsilon = 1.0e-6;
+  if (std::abs(((py - y0) * (x1 - x0)) - ((px - x0) * (y1 - y0))) > epsilon) {
     return false;
   }
-  return px >= std::min(x0, x1) - EPSILON && px <= std::max(x0, x1) + EPSILON &&
-         py >= std::min(y0, y1) - EPSILON && py <= std::max(y0, y1) + EPSILON;
+  return px >= std::min(x0, x1) - epsilon && px <= std::max(x0, x1) + epsilon &&
+         py >= std::min(y0, y1) - epsilon && py <= std::max(y0, y1) + epsilon;
 }
 
 } // namespace
@@ -73,10 +74,12 @@ bottleneckMoves(const std::vector<Bottleneck>& bottlenecks,
 
   for (std::size_t index = 0; index < bottlenecks.size(); ++index) {
     const auto& gate = bottlenecks[index];
+    const std::size_t firstRow = gate.first / grid.width;
+    const std::size_t secondRow = gate.second / grid.width;
     const auto x0 = static_cast<double>(gate.first % grid.width) + 0.5;
-    const auto y0 = static_cast<double>(gate.first / grid.width) + 0.5;
+    const auto y0 = static_cast<double>(firstRow) + 0.5;
     const auto x1 = static_cast<double>(gate.second % grid.width) + 0.5;
-    const auto y1 = static_cast<double>(gate.second / grid.width) + 0.5;
+    const auto y1 = static_cast<double>(secondRow) + 0.5;
 
     const auto minX = std::max<std::int64_t>(
         0, static_cast<std::int64_t>(std::floor(std::min(x0, x1))) - 1);
@@ -87,33 +90,9 @@ bottleneckMoves(const std::vector<Bottleneck>& bottlenecks,
     const auto maxY = std::min<std::int64_t>(
         height - 1, static_cast<std::int64_t>(std::ceil(std::max(y0, y1))) + 1);
 
-    // Only a cell within two cells of the line can lie on it or step
-    // across it: per row, the cells beside the part of the line within two
-    // rows of it.
-    constexpr double NEAR = 2.0;
     auto& blocked = moves[index];
     for (std::int64_t y = minY; y <= maxY; ++y) {
-      const auto ay = static_cast<double>(y) + 0.5;
-      double from = 0.0;
-      double to = 1.0;
-      if (y1 != y0) {
-        const auto a = (ay - NEAR - y0) / (y1 - y0);
-        const auto b = (ay + NEAR - y0) / (y1 - y0);
-        from = std::max(0.0, std::min(a, b));
-        to = std::min(1.0, std::max(a, b));
-      } else if (std::abs(ay - y0) > NEAR) {
-        continue;
-      }
-      if (from > to) {
-        continue;
-      }
-      const auto xa = x0 + (from * (x1 - x0));
-      const auto xb = x0 + (to * (x1 - x0));
-      const auto firstX = std::max(minX, static_cast<std::int64_t>(std::floor(
-                                             std::min(xa, xb) - NEAR - 1.0)));
-      const auto lastX = std::min(
-          maxX, static_cast<std::int64_t>(std::ceil(std::max(xa, xb) + NEAR)));
-      for (std::int64_t x = firstX; x <= lastX; ++x) {
+      for (std::int64_t x = minX; x <= maxX; ++x) {
         const auto cell = grid.index(static_cast<std::uint32_t>(x),
                                      static_cast<std::uint32_t>(y));
         const auto ax = static_cast<double>(x) + 0.5;

@@ -8,7 +8,7 @@ from typing import Any
 from typing import Optional
 np = import_numpy()
 
-# What the Corridor stage is allowed to do.
+# What the Corridor stage may do.
 class CorridorParams(object):
     __slots__ = ['_tab']
 
@@ -27,7 +27,8 @@ class CorridorParams(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # The implementation, by the name it is registered under.
+    # The implementation, by the name it is registered under. Empty selects
+    # the default.
     # CorridorParams
     def Router(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -35,12 +36,15 @@ class CorridorParams(object):
             return self._tab.String(o + self._tab.Pos)
         return None
 
-    # Sweeps over the connection list, alternating forward and backward.
+    # Sweeps over the connections, alternating forward and backward.
     #
-    # A wire that routes stays where it is; the sweeps exist so that a wire
-    # which found no way through can take the room a later one has not
-    # claimed yet, and so that the order the connections are tried in does
-    # not decide the result on its own.
+    # The sweeps exist so that a connection without a way can take room that
+    # a later one has not claimed yet, and so that the order of the
+    # connections does not decide the result on its own. A sweep can take a
+    # way from a connection that had one; the stage keeps the round with the
+    # fewest connections without a way. One last pass then offers every
+    # connection still without a way the free slots of that round, and rips
+    # up nothing. It must be at least one.
     # CorridorParams
     def Rounds(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -48,14 +52,19 @@ class CorridorParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 12
 
-    # How many neighbouring connections a failed one may rip up, counted
-    # along the sweep direction.
+    # How many neighboring connections a failed one may rip up in a sweep,
+    # counted along the sweep direction, and how many wires in its way it may
+    # move aside. The step that moves them also raises the price of the slots
+    # in the way of the failed connection that another wire holds, so with
+    # zero no price rises. The stage uses a value below half the number of
+    # connections, however many this asks for, but at least one when there
+    # are two or more connections.
     # CorridorParams
     def MaxRelaxation(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 30
+        return 4
 
 def CorridorParamsStart(builder: flatbuffers.Builder):
     builder.StartObject(3)
@@ -76,7 +85,7 @@ def AddRounds(builder: flatbuffers.Builder, rounds: int):
     CorridorParamsAddRounds(builder, rounds)
 
 def CorridorParamsAddMaxRelaxation(builder: flatbuffers.Builder, maxRelaxation: int):
-    builder.PrependUint32Slot(2, maxRelaxation, 30)
+    builder.PrependUint32Slot(2, maxRelaxation, 4)
 
 def AddMaxRelaxation(builder: flatbuffers.Builder, maxRelaxation: int):
     CorridorParamsAddMaxRelaxation(builder, maxRelaxation)
@@ -95,7 +104,7 @@ class CorridorParamsT(object):
         self,
         router = None,
         rounds = 12,
-        maxRelaxation = 30,
+        maxRelaxation = 4,
     ):
         self.router = router  # type: Optional[str]
         self.rounds = rounds  # type: int

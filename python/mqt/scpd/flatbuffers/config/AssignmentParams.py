@@ -8,7 +8,7 @@ from typing import Any
 from typing import Optional
 np = import_numpy()
 
-# What the Assignment stage is allowed to do.
+# What the Assignment stage may do.
 class AssignmentParams(object):
     __slots__ = ['_tab']
 
@@ -27,7 +27,8 @@ class AssignmentParams(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # The implementation, by the name it is registered under.
+    # The implementation, by the name it is registered under. Empty selects
+    # the default.
     # AssignmentParams
     def Assigner(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -35,7 +36,9 @@ class AssignmentParams(object):
             return self._tab.String(o + self._tab.Pos)
         return None
 
-    # How many launchers the assignment activates. Per chip.
+    # How many feedline chain ends the assignment puts on a launcher; every
+    # other chain end is a termination. A figure per chip with no default:
+    # zero means the configuration does not set it.
     # AssignmentParams
     def LauncherTarget(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))

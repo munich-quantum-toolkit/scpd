@@ -18,15 +18,18 @@
 
 namespace mqt::scpd::io {
 
-/// Verify serialized configuration bytes, as the Python loader hands them
-/// to the core, and unpack them.
-///
-/// The configuration is checked for shape only. Its meaning is checked by
-/// the design module's validate, which a caller runs to report every
-/// problem at once.
-///
-/// @throws std::invalid_argument when the bytes are not a well-formed
-/// configuration buffer.
+/**
+ * @brief Reads a configuration as the Python loader hands it to the core.
+ *
+ * The bytes are verified for shape only. What the configuration means is
+ * checked by the @c validate overloads of the design module, which a caller
+ * runs to report every problem at once.
+ *
+ * @param bytes The serialized configuration.
+ * @return The configuration, with the schema's defaults on every absent field.
+ * @throws std::invalid_argument If @p bytes is not a well-formed configuration
+ * buffer.
+ */
 [[nodiscard]] MQT_SCPD_IO_EXPORT flatbuffers::config::ConfigT
 readConfig(std::span<const std::uint8_t> bytes);
 

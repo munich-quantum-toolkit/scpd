@@ -13,7 +13,11 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
+#include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/milp/Model.hpp"
+#include "mqt-scpd/pipeline/CapacityPlanner.hpp"
+#include "mqt-scpd/pipeline/GlobalRouter.hpp"
+#include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/Solver.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 
@@ -23,7 +27,12 @@
 #include <cstdint>
 #include <format>
 #include <memory>
+#include <numbers>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -34,27 +43,38 @@ namespace {
 namespace fba = flatbuffers::artifacts;
 namespace fbd = flatbuffers::design;
 
-/// How much a ring node's distance from its own nearest launcher counts
-/// against a crossing. It is small on purpose: the model minimizes crossings
-/// first and only prefers the nearer launcher between two assignments that
-/// cross equally often.
+/// How much the distance of a ring node from its nearest launcher counts
+/// against a crossing. The weight is small, so that the model mainly
+/// minimizes crossings and uses the distance to choose between assignments
+/// with as many crossings.
+///
+/// The order is not strict. The chord weights are whole numbers, and each of
+/// the n ring nodes adds at most `PROXIMITY_WEIGHT * L/2` for L launcher
+/// slots. When that sum can pass 1, the model may accept one more crossing
+/// to bring the launchers nearer. On every benchmark chip the model finds as
+/// few crossings as a model with a weight of 0.00001, which keeps the sum
+/// below 1. A smaller weight is not a fix: with it, the default relative gap of
+/// the solver ends the search before the distances are minimized.
 constexpr double PROXIMITY_WEIGHT = 0.01;
 
 /// The ring edges: one per pair of consecutive resonators, weighted by how
 /// many conventional ports lie between them.
 ///
 /// The ring is a cycle of every outer port, but only a resonator needs a
-/// launcher, so only a resonator is an endpoint of the assignment. What lies
-/// between two of them is the length of the chord that would join them, and
-/// that length is what the objective pays for.
+/// launcher, so only a resonator is an end of the assignment. The ports
+/// between two resonators are the length of the chord that would join them,
+/// and the objective pays for that length.
 struct RingEdges {
+  /// The ring nodes that are resonators, in ring order.
   std::vector<std::size_t> anchors;
+  /// Each edge, as two positions in `anchors`.
   std::vector<std::pair<std::size_t, std::size_t>> edges;
+  /// The weight of each edge.
   std::vector<double> weights;
   /// The edge that leaves each anchor, as an index into `edges`.
   std::vector<std::size_t> leaving;
-  /// Where each ring node stands in `anchors`, for the nodes that are in it.
-  /// A resonator's own launcher variable is found through this rather than
+  /// The position of each ring node in `anchors`, for the nodes that are in
+  /// it. The launcher variable of a resonator is found through this and not
   /// counted along the walk, which is off by one whenever the ring opens on
   /// a conventional port.
   std::vector<std::size_t> positionOf;
@@ -69,6 +89,8 @@ RingEdges ringEdgesOf(const AssignmentInputs& inputs) {
       ring.anchors.push_back(index);
     }
   }
+  // A single resonator has no other resonator to join. It is a chain of
+  // its own, with a launcher at one end and a termination at the other.
   if (ring.anchors.size() < 2) {
     return ring;
   }
@@ -78,7 +100,7 @@ RingEdges ringEdgesOf(const AssignmentInputs& inputs) {
     const auto from = ring.anchors[position];
     const auto to = ring.anchors[(position + 1) % ring.anchors.size()];
     // The ports between the two, walking forward around the cycle.
-    auto between =
+    const auto between =
         to > from ? to - from - 1 : inputs.ring.size() - from + to - 1;
     ring.leaving[position] = ring.edges.size();
     ring.edges.emplace_back(position, (position + 1) % ring.anchors.size());
@@ -87,30 +109,313 @@ RingEdges ringEdgesOf(const AssignmentInputs& inputs) {
   return ring;
 }
 
+/// The direction of a closed walk through the points around their centroid:
+/// +1 counterclockwise, -1 clockwise, and 0 when the walk does not go once
+/// around the centroid with every step turning the same way.
+int turnAroundCentroid(const std::vector<geometry::Point>& points) {
+  if (points.size() < 3) {
+    return 0;
+  }
+  double x = 0.0;
+  double y = 0.0;
+  for (const auto& point : points) {
+    x += point.x();
+    y += point.y();
+  }
+  const geometry::Point centroid(x / static_cast<double>(points.size()),
+                                 y / static_cast<double>(points.size()));
+  double total = 0.0;
+  int sign = 0;
+  for (std::size_t index = 0; index < points.size(); ++index) {
+    const auto from =
+        geometry::angleOf(geometry::subtract(points[index], centroid));
+    const auto to = geometry::angleOf(
+        geometry::subtract(points[(index + 1) % points.size()], centroid));
+    auto step = geometry::normalizeAngle(to - from);
+    if (step > std::numbers::pi) {
+      step -= 2.0 * std::numbers::pi;
+    }
+    if (step == 0.0) {
+      return 0;
+    }
+    const auto stepSign = step > 0.0 ? 1 : -1;
+    if (sign != 0 && stepSign != sign) {
+      return 0;
+    }
+    sign = stepSign;
+    total += step;
+  }
+  return std::abs(std::abs(total) - (2.0 * std::numbers::pi)) < 1e-6 ? sign : 0;
+}
+
+/// The direction of a closed walk through the points by its signed area:
+/// +1 counterclockwise, -1 clockwise, and 0 when the walk encloses no area.
+int windingOf(const std::vector<geometry::Point>& points) {
+  double area = 0.0;
+  double extent = 0.0;
+  for (std::size_t index = 0; index < points.size(); ++index) {
+    const auto here = geometry::subtract(points[index], points.front());
+    const auto next =
+        geometry::subtract(points[(index + 1) % points.size()], points.front());
+    area += geometry::cross(here, next);
+    extent = std::max({extent, std::abs(here.x()), std::abs(here.y())});
+  }
+  if (std::abs(area) <= 1e-9 * extent * extent) {
+    return 0;
+  }
+  return area > 0.0 ? 1 : -1;
+}
+
+/// Whether every point lies on one line. The line runs through the first
+/// point and the point farthest from it, so that points listed twice do not
+/// leave it without a direction.
+bool onOneLine(const std::vector<geometry::Point>& points) {
+  double extent = 0.0;
+  const geometry::Point* farthest = &points.front();
+  for (const auto& point : points) {
+    extent = std::max({extent, std::abs(point.x() - points.front().x()),
+                       std::abs(point.y() - points.front().y())});
+    if (geometry::distance(point, points.front()) >
+        geometry::distance(*farthest, points.front())) {
+      farthest = &point;
+    }
+  }
+  const auto along = geometry::subtract(*farthest, points.front());
+  return std::ranges::all_of(points, [&](const geometry::Point& point) {
+    return std::abs(geometry::cross(
+               along, geometry::subtract(point, points.front()))) <=
+           1e-9 * extent * extent;
+  });
+}
+
+/// What is wrong with the order of the launchers against the ring, or
+/// nothing.
+///
+/// The model treats launcher k+1 as the next launcher after k when it walks
+/// the ring, so the launchers have to go once around the chip in index order,
+/// and in the opposite direction to the ring. A chip that breaks this still
+/// solves, but with feeds between launchers that are not neighbors. Fewer
+/// than three launchers, launchers on one line, or a ring without area have
+/// no direction to check.
+std::optional<std::string>
+orderProblem(const std::vector<geometry::Point>& ring,
+             const std::vector<geometry::Point>& launchers) {
+  if (launchers.size() < 3 || ring.size() < 3) {
+    return std::nullopt;
+  }
+  const auto ringTurn = windingOf(ring);
+  if (ringTurn == 0 || onOneLine(launchers)) {
+    return std::nullopt;
+  }
+  const auto launcherTurn = turnAroundCentroid(launchers);
+  if (launcherTurn == 0) {
+    return "the chip input does not list the launcher ports in order around "
+           "the chip; the assignment needs them listed once around it, "
+           "against the direction of the port ring";
+  }
+  if (launcherTurn == ringTurn) {
+    return "the chip input lists the launcher ports in the direction of the "
+           "port ring; the assignment needs them listed against it";
+  }
+  return std::nullopt;
+}
+
+/// What keeps the launchers at @p launchers from feeding resonators, or
+/// nothing. The feeds of resonators lie on the segments between neighboring
+/// launchers, and those segments need to lie on more than one line.
+std::optional<std::string>
+placesProblem(const std::vector<geometry::Point>& launchers) {
+  constexpr std::string_view reason =
+      "feeding resonators needs at least three launchers that do not all lie "
+      "on one line; with fewer, two resonators can share one feed point";
+  if (launchers.size() < 3) {
+    return std::format("the chip has {} launcher {}; {}", launchers.size(),
+                       launchers.size() == 1 ? "port" : "ports", reason);
+  }
+  if (onOneLine(launchers)) {
+    return std::format("the launcher ports of the chip lie on one line; {}",
+                       reason);
+  }
+  return std::nullopt;
+}
+
+/// What the ring counts tell about the ring that the assignment consumes.
+///
+/// The Assignment stage knows the counts exactly. Before any stage runs, only
+/// bounds are known: the global step decides which ring ports at a bridge
+/// carry an inner wire, and so which of them stay in the ring and which of
+/// them are resonators.
+struct RingCounts {
+  /// The conventional ports in the ring, or a lower bound on them.
+  std::size_t conventional = 0;
+  /// The resonators in the ring, or a lower bound on them.
+  std::size_t fewestResonators = 0;
+  /// The resonators in the ring, or an upper bound on them.
+  std::size_t mostResonators = 0;
+  /// Whether the counts are exact and not bounds.
+  bool exact = true;
+};
+
+/// What the counts of the ring leave the model no solution for, or nothing.
+///
+/// Each condition is necessary, so a ring that breaks one has no assignment,
+/// and the stage can say why before it solves:
+///
+/// - the flow falls by one at every conventional port and at every resonator
+///   that takes a launcher, within one turn of the launcher ring, so the
+///   conventional ports and the launcher ends together need at most as many
+///   launchers as the chip has;
+/// - every resonator takes at most one launcher and one termination;
+/// - every chain has two ends, so the launcher ends and the terminations add
+///   up to an even number;
+/// - every chain has a launcher at one end at least, so there are no more
+///   terminations than launcher ends;
+/// - a chain carries at most `max_feedline_utilization` resonators.
+///
+/// A ring without a resonator takes no launcher end and meets the last three
+/// conditions. Where @p counts holds bounds, the function reports a condition
+/// only when every ring within the bounds breaks it, and it leaves the even
+/// sum to planProblems(), which checks it on its own. A ring that meets all
+/// of them can still have no solution.
+std::optional<std::string> countProblem(const RingCounts& counts,
+                                        const std::size_t launchers,
+                                        const std::uint32_t target,
+                                        const fbd::DesignRulesT& rules) {
+  const std::string_view atLeast = counts.exact ? "" : "at least ";
+  const std::size_t ends = counts.fewestResonators == 0 ? 0U : target;
+  if (counts.conventional + ends > launchers) {
+    return std::format(
+        "the ring carries {}{} and the assignment places {}, which need {}{} "
+        "launchers, but the chip has {}",
+        atLeast, counted(counts.conventional, "conventional port"),
+        counted(ends, "launcher end"), atLeast, counts.conventional + ends,
+        launchers);
+  }
+  if (counts.fewestResonators == 0) {
+    return std::nullopt;
+  }
+  const std::size_t terminations = rules.feedline_terminations;
+  if (target > counts.mostResonators || terminations > counts.mostResonators) {
+    return std::format(
+        "the ring carries {}{}, too few for [stages.assignment] "
+        "launcher_target {} and [design_rules] feedline_terminations {}; each "
+        "resonator ends at most one chain at a launcher and one at a "
+        "termination",
+        counts.exact ? "" : "at most ",
+        counted(counts.mostResonators, "resonator"), target, terminations);
+  }
+  if (terminations > target) {
+    return std::format(
+        "[design_rules] feedline_terminations {} is larger than "
+        "[stages.assignment] launcher_target {}; every feedline chain needs a "
+        "launcher at one end at least, so at most one termination per launcher "
+        "end",
+        terminations, target);
+  }
+  if ((target + terminations) % 2 != 0) {
+    if (!counts.exact) {
+      return std::nullopt;
+    }
+    return std::format(
+        "[stages.assignment] launcher_target {} plus [design_rules] "
+        "feedline_terminations {} is odd; every feedline chain has two ends, "
+        "so the sum has to be even",
+        target, terminations);
+  }
+  const auto chains = (target + terminations) / 2;
+  if (counts.fewestResonators > chains * rules.max_feedline_utilization) {
+    return std::format(
+        "the ring carries {}{}, but [design_rules] max_feedline_utilization {} "
+        "lets {} carry at most {}",
+        atLeast, counted(counts.fewestResonators, "resonator"),
+        rules.max_feedline_utilization, counted(chains, "feedline chain"),
+        chains * rules.max_feedline_utilization);
+  }
+  return std::nullopt;
+}
+
+/// The centers of the launchers that the capacity stage gives a slot: every
+/// launcher with a direction, in port order.
+std::vector<geometry::Point> slottedLaunchers(const ChipT& chip) {
+  std::vector<geometry::Point> launchers;
+  for (const auto& port : chip.ports) {
+    if (hasLauncherSlot(*port)) {
+      launchers.push_back(port->center);
+    }
+  }
+  return launchers;
+}
+
+/// The label of a port, or "termination" for a chain end without one.
+std::string endName(const ChipT& chip,
+                    const std::unique_ptr<fbd::PortRef>& port) {
+  return port != nullptr ? chip.ports[port->index()]->label : "termination";
+}
+
 /// The assigner of the first release.
 class OrderedMilpAssigner final : public IAssigner {
 public:
   [[nodiscard]] AssignmentT run(const ChipT& chip,
                                 const CapacityPlanT& capacity,
                                 const GlobalRoutingT& global,
-                                const ConfigT& config) const override {
+                                const ConfigT& config,
+                                const Report& report) const override {
+    report.progress("working out the inputs", "", 0, 0);
+    if (const auto problem = launcherOrderProblem(chip, config)) {
+      throw std::invalid_argument(*problem);
+    }
+    if (config.rules == nullptr) {
+      throw std::invalid_argument("the configuration carries no design rules");
+    }
     const auto inputs = assignmentInputs(chip, capacity, global);
+    if (std::ranges::find(inputs.isResonator, true) !=
+        inputs.isResonator.end()) {
+      if (const auto problem = placesProblem(inputs.launcherPosition)) {
+        throw std::invalid_argument(*problem);
+      }
+    }
+    const auto target = launcherTarget(config);
+    const auto resonators =
+        static_cast<std::size_t>(std::ranges::count(inputs.isResonator, true));
+    const RingCounts counts{.conventional = inputs.ring.size() - resonators,
+                            .fewestResonators = resonators,
+                            .mostResonators = resonators};
+    if (const auto problem = countProblem(counts, inputs.launchers.size(),
+                                          target, *config.rules)) {
+      throw std::invalid_argument(*problem);
+    }
     const auto ring = ringEdgesOf(inputs);
+    if (report.wants(Detail::Steps)) {
+      report.line(
+          Detail::Steps,
+          std::format(
+              "{}{}{}{}{}{}{}", counted(inputs.ring.size(), "ring port"),
+              FIGURE_SEPARATOR, counted(resonators, "resonator"),
+              FIGURE_SEPARATOR,
+              counted(inputs.ring.size() - resonators, "conventional port"),
+              FIGURE_SEPARATOR,
+              counted(inputs.launchers.size(), "launcher slot")));
+    }
 
     AssignmentT assignment;
     assignment.objective = 0.0;
     for (const auto port : inputs.ring) {
       assignment.ring.emplace_back(port);
     }
-    if (ring.anchors.size() < 2) {
-      // A ring with fewer than two resonators has nothing to assign. The
-      // artifact is written empty rather than the stage skipped.
-      return assignment;
+    if (report.wants(Detail::Steps)) {
+      const auto& rules = *config.rules;
+      report.line(Detail::Steps,
+                  std::format("launcher target {}{}max feedline utilization "
+                              "{}{}feedline terminations {}",
+                              target, FIGURE_SEPARATOR,
+                              rules.max_feedline_utilization, FIGURE_SEPARATOR,
+                              rules.feedline_terminations));
     }
-
+    report.progress("building the model", "", 0, 0);
     milp::Model model("assignment");
-    const auto variables = build(model, inputs, ring, config);
-    const auto solution = solveWith(model, config);
+    const auto variables = build(model, inputs, ring, config, target);
+    const auto solution =
+        solveWith(model, config, report, "solving the assignment");
     if (!solution.hasValues()) {
       throw std::runtime_error(
           std::format("the assignment did not solve: {}{}",
@@ -118,7 +423,27 @@ public:
                       solution.message.empty() ? "" : ", " + solution.message));
     }
     assignment.objective = solution.objective;
-    readBack(assignment, inputs, ring, variables, solution);
+    readBack(assignment, chip, inputs, ring, variables, solution,
+             config.rules->min_wire_spacing, capacity.detail_grid.get());
+
+    if (report.wants(Detail::Items)) {
+      for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
+        const auto& chain = *assignment.chains[index];
+        report.entry(
+            Detail::Items, std::format("chain {}", index + 1),
+            {{.text = std::format("{} {} {}", endName(chip, chain.start), ARROW,
+                                  endName(chip, chain.end))},
+             {.text = counted(chain.nodes.size(), "resonator")}});
+      }
+    }
+    report.line(Detail::Steps,
+                counted(assignment.chains.size(), "feedline chain"));
+    report.result(
+        {{.text = counted(inputs.ring.size(), "port")},
+         {.text = counted(ring.anchors.empty() ? 0U : target, "launcher end")},
+         {.text = std::format("objective {:.2f}", assignment.objective)},
+         {.text = std::string(milp::statusName(solution.status))}},
+        0U);
     return assignment;
   }
 
@@ -128,11 +453,12 @@ private:
     std::vector<milp::Var> flow;
     /// Whether each anchor is given a launcher.
     std::vector<milp::Var> launcher;
-    /// Whether each anchor terminates a feedline instead.
+    /// Whether each anchor ends a feedline at a termination instead.
     std::vector<milp::Var> termination;
     /// Whether each ring edge is used.
     std::vector<milp::Var> edge;
-    /// How many wires the corridor at each anchor already carries.
+    /// How many resonators the feedline chain of each anchor feeds from that
+    /// anchor to its end.
     std::vector<milp::Var> utilization;
     /// The rotation of the whole flow assignment.
     milp::Var offset;
@@ -141,42 +467,58 @@ private:
   [[nodiscard]] static Variables build(milp::Model& model,
                                        const AssignmentInputs& inputs,
                                        const RingEdges& ring,
-                                       const ConfigT& config) {
+                                       const ConfigT& config,
+                                       const std::uint32_t target) {
     const auto launchers = static_cast<double>(inputs.launchers.size());
     const auto& rules = *config.rules;
     const auto utilizationCap =
         static_cast<double>(rules.max_feedline_utilization);
     const auto terminations = static_cast<double>(rules.feedline_terminations);
-    const auto target = launcherTarget(config);
 
     Variables variables;
-    // The potential the ring is walked with: a place on the ring of launchers.
-    // Which launcher a value names is the value modulo the launcher count,
-    // which is how the stage reads it back.
+    // The potential that the ring is walked with: a place on the ring of
+    // launchers. The value modulo the launcher count names the launcher, and
+    // that is how the stage reads it back.
     //
-    // Its range is one turn of that ring, one short of the launcher count. The
-    // walk never rises and falls at least once at every conventional port, so
-    // one turn is what keeps two conventional ports off one launcher: they
+    // Its range is one turn of that ring, one short of the launcher count.
+    // The walk never rises and falls by at least one at every conventional
+    // port, so one turn keeps two conventional ports off one launcher: they
     // would have to lie a whole launcher ring apart, and no walk of one turn
-    // does that. It is also what leaves the launcher slots along the ring in
-    // their cyclic order, with the single rise where the turn closes.
+    // does that. It also leaves the launcher slots along the ring in their
+    // cyclic order, with the single rise where the turn closes.
     //
-    // A ring that carries more conventional ports than the chip has launchers
-    // therefore comes out infeasible. That is the chip saying it has no
-    // assignment, not the formulation capping the ring: one launcher feeds one
-    // conventional port.
+    // A ring that carries more conventional ports than the chip has
+    // launchers is therefore infeasible. That is the chip saying it has no
+    // assignment, since one launcher feeds one conventional port.
     //
-    // One turn exactly, with no room above it. Room would let a node skip to
-    // the launcher it is nearest to rather than the next one along, which is
-    // worth a little to the proximity term; a whole launcher ring of it
-    // improved that term by 0.05 on the 4-qubit chip and made the 45-qubit chip
-    // take minutes instead of seconds. The crossing count, which is what this
-    // stage is for, is the same either way.
+    // The range is one turn exactly, with no room above it. Room would let a
+    // node skip to the launcher nearest to it rather than the next one along.
+    // That is worth little to the proximity term and makes the solve of a
+    // large chip much slower, and the crossing count, which is what this
+    // stage is for, stays the same.
+    //
+    // The walk opens on the first ring node, and that node starts the turn.
+    // A resonator that takes no launcher holds no place of its own. The
+    // resonators the ring opens on, up to the first that takes a launcher,
+    // may therefore stand one above the turn, at the launcher count. That is
+    // the place where the walk closes, and it leaves the whole turn to the
+    // nodes after them. Without that, where the ring opens would decide
+    // whether the chip has an assignment, and at what cost. A resonator of
+    // that run that takes a launcher stands below the launcher count: the
+    // first resonator through the row `flow_start_top`, and every later one
+    // through its flow step.
     const auto span = launchers - 1.0;
+    const auto opensOnResonator = inputs.isResonator.front();
+    const auto opening =
+        static_cast<std::size_t>(std::ranges::find(inputs.isResonator, false) -
+                                 inputs.isResonator.begin());
+    const auto topOf = [&](const std::size_t index) {
+      return index < opening ? launchers : span;
+    };
     variables.flow.reserve(inputs.ring.size());
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
       variables.flow.push_back(
-          model.addInteger(std::format("flow_{}", index), 0.0, span));
+          model.addInteger(std::format("flow_{}", index), 0.0, topOf(index)));
     }
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
       variables.launcher.push_back(
@@ -193,7 +535,7 @@ private:
     variables.offset = model.addInteger("offset", 0.0, launchers);
 
     // Every anchor has degree two on the ring: two chords, or one chord and
-    // an end. An end is a launcher, or a permitted extra termination.
+    // an end. An end is a launcher or a permitted termination.
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
       milp::LinearExpr degree;
       for (std::size_t edge = 0; edge < ring.edges.size(); ++edge) {
@@ -207,17 +549,61 @@ private:
       model.addEqual(std::format("degree_{}", index), degree, 2.0);
     }
 
+    // Every chain has a launcher at one end at least, since nothing drives a
+    // chain with a termination at both ends. The target rows count ends, not
+    // chains, so they allow such a chain wherever two terminations are left
+    // to place. `fed` carries along the used chords whether the first anchor
+    // of the chain took a launcher, and the last anchor needs that or a
+    // launcher of its own. A single resonator takes both ends by its degree
+    // row, and with fewer than two terminations no chain can end at a
+    // termination on both sides.
+    if (!ring.leaving.empty() && rules.feedline_terminations >= 2) {
+      const auto anchors = ring.anchors.size();
+      std::vector<milp::Var> fed;
+      fed.reserve(anchors);
+      for (std::size_t index = 0; index < anchors; ++index) {
+        fed.push_back(model.addBinary(std::format("fed_{}", index)));
+      }
+      for (std::size_t index = 0; index < anchors; ++index) {
+        const auto before = (index + anchors - 1) % anchors;
+        const auto entering = variables.edge[ring.leaving[before]];
+        const auto leaving = variables.edge[ring.leaving[index]];
+        // Where the chain starts, `fed` needs the launcher of this anchor.
+        model.addLessOrEqual(std::format("fed_start_{}", index),
+                             milp::LinearExpr(fed[index]) -
+                                 variables.launcher[index] - entering,
+                             0.0);
+        // Further along the chain, it needs `fed` of the anchor before.
+        model.addLessOrEqual(
+            std::format("fed_along_{}", index),
+            milp::LinearExpr(fed[index]) - fed[before] + entering, 1.0);
+        // Where the chain ends, one of its two ends is a launcher.
+        model.addGreaterOrEqual(std::format("fed_end_{}", index),
+                                milp::LinearExpr(fed[index]) +
+                                    variables.launcher[index] + leaving,
+                                1.0);
+      }
+    }
+
     // The flow runs around the ring and never increases: a conventional port
-    // always consumes one step, a resonator only where it takes a launcher.
-    // That is what makes two assignments that cross also cross on the chip.
+    // always takes one step, and a resonator only where it takes a launcher.
+    // That makes two assignments that cross also cross on the chip.
     //
-    // Which anchor a resonator's step charges is looked up, not counted along
-    // the walk. Counting starts at the first resonator the walk meets, which is
-    // the second anchor whenever the ring opens on a conventional port; the
-    // constraint then held the wrong resonator's launcher on four of the eight
-    // benchmark chips.
-    model.addEqual("flow_start", milp::LinearExpr(variables.flow.front()),
-                   span);
+    // The anchor that the step of a resonator charges is looked up, not
+    // counted along the walk. A count starts at the first resonator the walk
+    // meets, which is the second anchor whenever the ring opens on a
+    // conventional port.
+    if (opensOnResonator) {
+      model.addGreaterOrEqual("flow_start",
+                              milp::LinearExpr(variables.flow.front()), span);
+      model.addLessOrEqual("flow_start_top",
+                           milp::LinearExpr(variables.flow.front()) +
+                               variables.launcher[ring.positionOf.front()],
+                           launchers);
+    } else {
+      model.addEqual("flow_start", milp::LinearExpr(variables.flow.front()),
+                     span);
+    }
     for (std::size_t index = 1; index < inputs.ring.size(); ++index) {
       const auto step =
           milp::LinearExpr(variables.flow[index]) - variables.flow[index - 1];
@@ -230,18 +616,29 @@ private:
                            0.0);
     }
 
-    // The utilization of a corridor counts up from every launcher and resets
-    // at the next one, which is what bounds how many wires one corridor
-    // carries. A big-M pair per anchor switches between the two.
+    // The utilization at an anchor counts the resonators from it to the end
+    // of its feedline chain: one at the last anchor, where the chain ends and
+    // the chord that leaves it is unused, and one more than at the next anchor
+    // everywhere else. Its upper bound limits how many resonators one chain
+    // feeds. A big-M pair per anchor switches between the two.
     const auto bigM = static_cast<double>(ring.anchors.size()) + 2.0;
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
-      const auto previous =
+      const auto next =
           variables.utilization[(index + 1) % ring.anchors.size()];
-      const auto leaving = variables.edge[ring.leaving[index]];
+      // A single resonator has no chord to leave it.
+      const auto leaving =
+          ring.leaving.empty()
+              ? milp::LinearExpr()
+              : milp::LinearExpr(variables.edge[ring.leaving[index]]);
       const auto starts = model.addBinary(std::format("starts_{}", index));
 
       // `starts` is one exactly where the anchor ends a chain and the chord
-      // leaving it is unused, which is where a new corridor begins.
+      // that leaves it is unused, which is where a new corridor begins. An
+      // anchor ends a chain where it takes a launcher, a termination, or
+      // both, and it takes both where it is a chain of its own. The first
+      // row keeps `starts` at zero at an anchor without an end, and the
+      // second where the leaving chord is used. The last two rows set it
+      // where either end is there and the leaving chord is unused.
       model.addLessOrEqual(std::format("starts_a_{}", index),
                            milp::LinearExpr(starts) -
                                variables.launcher[index] -
@@ -249,9 +646,11 @@ private:
                            0.0);
       model.addLessOrEqual(std::format("starts_b_{}", index),
                            milp::LinearExpr(starts) + leaving, 1.0);
-      model.addGreaterOrEqual(std::format("starts_c_{}", index),
+      model.addGreaterOrEqual(
+          std::format("starts_launcher_{}", index),
+          milp::LinearExpr(starts) - variables.launcher[index] + leaving, 0.0);
+      model.addGreaterOrEqual(std::format("starts_termination_{}", index),
                               milp::LinearExpr(starts) -
-                                  variables.launcher[index] -
                                   variables.termination[index] + leaving,
                               0.0);
 
@@ -263,11 +662,11 @@ private:
                               here - (bigM * milp::LinearExpr(starts)),
                               1.0 - bigM);
       model.addLessOrEqual(std::format("util_step_up_{}", index),
-                           here - previous - (bigM * milp::LinearExpr(starts)),
+                           here - next - (bigM * milp::LinearExpr(starts)),
                            1.0);
-      model.addGreaterOrEqual(
-          std::format("util_step_low_{}", index),
-          here - previous + (bigM * milp::LinearExpr(starts)), 1.0);
+      model.addGreaterOrEqual(std::format("util_step_low_{}", index),
+                              here - next + (bigM * milp::LinearExpr(starts)),
+                              1.0);
     }
 
     milp::LinearExpr activeLaunchers;
@@ -276,19 +675,22 @@ private:
       activeLaunchers.add(variables.launcher[index], 1.0);
       activeTerminations.add(variables.termination[index], 1.0);
     }
-    model.addEqual("launcher_target", activeLaunchers,
-                   static_cast<double>(target));
-    model.addEqual("termination_target", activeTerminations, terminations);
+    // A ring without a resonator has no chain, and so no chain end to place.
+    if (!ring.anchors.empty()) {
+      model.addEqual("launcher_target", activeLaunchers,
+                     static_cast<double>(target));
+      model.addEqual("termination_target", activeTerminations, terminations);
+    }
 
-    // Between two assignments that cross equally often, the one that sends
-    // each node to the launcher it is already nearest to is the better one.
-    // The ring of launchers is cyclic, so the distance is too.
+    // Between two assignments with as many crossings, the better one sends
+    // each node to the launcher nearest to it. The ring of launchers is
+    // cyclic, so the distance is too.
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
       const auto wanted = static_cast<double>(inputs.nearestLauncher[index]);
-      // How many turns of the launcher ring separate the potential from the
-      // launcher it is nearest to. The potential spans the whole ring, so this
-      // reaches as far as the ring is long.
-      const auto turns = std::ceil((span + launchers) / launchers);
+      // How many turns of the launcher ring lie between the potential and the
+      // launcher nearest to the node. The potential spans the whole ring, so
+      // this reaches as far as the ring is long.
+      const auto turns = std::ceil((topOf(index) + launchers) / launchers);
       const auto wrap =
           model.addInteger(std::format("wrap_{}", index), -turns, 1.0);
       const auto gap = model.addContinuous(std::format("gap_{}", index), 0.0,
@@ -309,6 +711,8 @@ private:
     return variables;
   }
 
+  /// How many feedline chain ends the model puts on a launcher; every other
+  /// chain end is a termination. It is a figure of the chip with no default.
   [[nodiscard]] static std::uint32_t launcherTarget(const ConfigT& config) {
     if (config.stages != nullptr && config.stages->assignment != nullptr &&
         config.stages->assignment->launcher_target > 0) {
@@ -319,12 +723,23 @@ private:
         "figure with no default");
   }
 
+  /// Whether the model uses the chord that leaves the anchor at @p position.
+  /// A single resonator has no chord.
+  [[nodiscard]] static bool leavingUsed(const RingEdges& ring,
+                                        const Variables& variables,
+                                        const milp::Solution& solution,
+                                        const std::size_t position) {
+    return !ring.leaving.empty() &&
+           std::llround(
+               solution.valueOf(variables.edge[ring.leaving[position]])) == 1;
+  }
+
   /// Which ring node is the last anchor of a chain that ends at a launcher.
   ///
-  /// The walk of `readBackChains`, run before the feeds are placed, because
-  /// where a resonator is fed depends on whether its chain ends on it: the
-  /// feed of such a node has to lie *before* its launcher along the walk,
-  /// or the chain runs past the launcher and has to come back to it.
+  /// This is the walk of `readBackChains`, run before the feeds are placed:
+  /// where a resonator is fed depends on whether its chain ends on it. The
+  /// feed of such a node has to lie before its launcher along the walk, or
+  /// the chain runs past the launcher and has to come back to it.
   [[nodiscard]] static std::vector<bool>
   endsAChain(const AssignmentInputs& inputs, const RingEdges& ring,
              const Variables& variables, const milp::Solution& solution) {
@@ -333,18 +748,13 @@ private:
     if (anchors == 0) {
       return ends;
     }
-    const auto used = [&](const std::size_t edge) {
-      return std::llround(solution.valueOf(variables.edge[edge])) == 1;
-    };
     const auto launcherAt = [&](const std::size_t position) {
       return std::llround(solution.valueOf(variables.launcher[position])) == 1;
     };
-    const auto entering = [&](const std::size_t position) {
-      return ring.leaving[(position + anchors - 1) % anchors];
-    };
     std::vector<bool> taken(anchors, false);
     for (std::size_t first = 0; first < anchors; ++first) {
-      if (taken[first] || used(entering(first))) {
+      if (taken[first] || leavingUsed(ring, variables, solution,
+                                      (first + anchors - 1) % anchors)) {
         continue;
       }
       auto position = first;
@@ -352,7 +762,7 @@ private:
       while (true) {
         taken[position] = true;
         ++count;
-        if (!used(ring.leaving[position])) {
+        if (!leavingUsed(ring, variables, solution, position)) {
           break;
         }
         const auto next = (position + 1) % anchors;
@@ -361,9 +771,9 @@ private:
         }
         position = next;
       }
-      // A chain of one anchor both starts and ends on it. The start wins:
-      // its feed has to leave the launcher the chain starts at, and there
-      // is no second launcher to arrive at.
+      // A chain of one anchor both starts and ends on it. The start wins: its
+      // feed has to leave the launcher the chain starts at, and there is no
+      // second launcher to arrive at.
       if (count > 1 && launcherAt(position)) {
         ends[ring.anchors[position]] = true;
       }
@@ -371,50 +781,64 @@ private:
     return ends;
   }
 
-  static void readBack(AssignmentT& assignment, const AssignmentInputs& inputs,
-                       const RingEdges& ring, const Variables& variables,
-                       const milp::Solution& solution) {
+  /// Reads the solution into the assignment and places the feeds.
+  /// @throws std::invalid_argument When two feeds would lie closer than
+  /// @p spacing, or would round onto one cell of @p detail.
+  static void readBack(AssignmentT& assignment, const ChipT& chip,
+                       const AssignmentInputs& inputs, const RingEdges& ring,
+                       const Variables& variables,
+                       const milp::Solution& solution, const double spacing,
+                       const fba::GridExtentT* detail) {
     const auto launchers = inputs.launchers.size();
-    const auto offset = std::llround(solution.valueOf(variables.offset));
+    const auto offset = static_cast<std::int64_t>(
+        std::llround(solution.valueOf(variables.offset)));
 
-    // Which launcher the walk gave each ring node. The potential is a place on
+    // The launcher the walk gave each ring node. The potential is a place on
     // the launcher ring, so the launcher is that place modulo the launcher
     // count.
     std::vector<std::size_t> slotOf(inputs.ring.size(), 0);
+    // Whether the node stands at the place where the walk closes, at the
+    // launcher count, above the turn. Only resonators of the run that the
+    // ring opens on can stand there, and only those before the first of the
+    // run that takes a launcher. The solver may also place them in the turn.
+    std::vector<bool> closing(inputs.ring.size(), false);
     assignment.launchers.reserve(inputs.ring.size());
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
-      const auto placed = std::llround(solution.valueOf(variables.flow[index]));
-      const auto count = static_cast<long long>(launchers);
+      const auto placed = static_cast<std::int64_t>(
+          std::llround(solution.valueOf(variables.flow[index])));
+      const auto count = static_cast<std::int64_t>(launchers);
+      closing[index] = placed == count;
       slotOf[index] = static_cast<std::size_t>(
           (((placed + offset) % count) + count) % count);
       assignment.launchers.emplace_back(inputs.launchers[slotOf[index]]);
     }
 
     // Where each node is fed from. A conventional port is fed at its launcher
-    // slot, and no two of them share one. A resonator is fed at no launcher at
-    // all: the wire that reaches it comes past the slot, so it moves onto one
-    // of the two segments its launcher lies between.
+    // slot, and no two of them share one. A resonator is fed at no launcher:
+    // the wire that reaches it comes past the slot, so its feed moves onto
+    // one of the two segments that its launcher lies between.
     //
-    // **Which segment depends on where its chain goes.** The ring is walked
-    // one way, and the launcher after a slot along that walk is the slot
-    // *below* by index, because the potential falls as the ring is walked.
+    // The segment depends on where the chain of the resonator goes. The ring
+    // is walked one way, and the potential falls along the walk, so the
+    // launcher after a slot is the slot below it by index.
     //
-    // - A resonator the chain runs *on past* is fed on the segment that
-    //   leaves its launcher, so the chain reaches its launcher first and its
-    //   feed after: the walk stays in one direction.
-    // - A resonator its chain **ends on** is fed on the segment that arrives
-    //   at its launcher, so the chain reaches its feed first and the launcher
-    //   after. Fed on the leaving segment instead, the chain would run past
-    //   its own launcher and have to turn back to it — on 4q that put the
-    //   coupler of the top-left qubit a whole launcher segment beyond
-    //   `Chip.port0`, and the feedline out of it had to hook back around the
-    //   coupler to reach the launcher it had already passed. The prototype
-    //   feeds an ending resonator before the last launcher for this reason.
+    // - A resonator that its chain runs on past is fed on the segment that
+    //   leaves its launcher. The chain reaches the launcher first and the
+    //   feed after it, so the walk keeps one direction.
+    // - A resonator that its chain ends on is fed on the segment that
+    //   arrives at its launcher. The chain reaches the feed first and the
+    //   launcher after it. Fed on the leaving segment, the chain would run
+    //   past its own launcher and have to turn back to it.
     //
-    // Where a launcher was given n resonators on one segment they land at
-    // 1/(n+1) ... n/(n+1) of it, ordered so that the one the walk reaches
-    // first is the one it reaches first on that segment too, and the wires of
-    // the group do not cross each other.
+    // Where n resonators are fed on one segment, they land at 1/(n+1) ...
+    // n/(n+1) of it. The one the walk reaches first lands first on the
+    // segment as well, so their wires do not cross. The stage assigns a ring
+    // with a resonator only on three or more launchers that do not all lie
+    // on one line, as placesProblem() checks, and only where each part of a
+    // segment is at least one wire spacing long. Where the launchers also go
+    // once around the chip, as orderProblem() checks for a ring with an
+    // area, their segments overlap nowhere and no two resonators share a
+    // feed point.
     const auto ends = endsAChain(inputs, ring, variables, solution);
     assignment.feeds.reserve(inputs.ring.size());
     std::vector<std::vector<std::size_t>> given(launchers);
@@ -422,49 +846,139 @@ private:
       assignment.feeds.push_back(inputs.launcherPosition[slotOf[index]]);
       given[slotOf[index]].push_back(index);
     }
+    // Each slot lists its nodes in the order the walk reaches them. That is
+    // ring order, except where the walk closes: the nodes at the end of the
+    // ring may stand at place zero, resonators of the run that the ring opens
+    // on may stand at the launcher count, and both places name one slot. The
+    // walk runs from the end of the ring on to its start, so the nodes at the
+    // launcher count come last.
+    for (auto& nodes : given) {
+      std::ranges::stable_partition(
+          nodes, [&](const std::size_t index) { return !closing[index]; });
+    }
+    const auto groupOf = [&](const std::size_t slot, const bool ending) {
+      std::vector<std::size_t> group;
+      for (const auto index : given[slot]) {
+        if (inputs.isResonator[index] && ends[index] == ending) {
+          group.push_back(index);
+        }
+      }
+      return group;
+    };
+    // Each segment runs from a slot to the slot after it along the walk. The
+    // resonators that leave the first slot and the ones that arrive at the
+    // second share it.
     for (std::size_t slot = 0; slot < launchers; ++slot) {
-      const auto& here = inputs.launcherPosition[slot];
-      // The segment that leaves the slot along the walk, and the one that
-      // arrives at it.
-      const auto& after =
-          inputs.launcherPosition[(slot + launchers - 1) % launchers];
-      const auto& before = inputs.launcherPosition[(slot + 1) % launchers];
-      for (const bool ending : {false, true}) {
-        std::vector<std::size_t> group;
-        for (const auto index : given[slot]) {
-          if (inputs.isResonator[index] && ends[index] == ending) {
-            group.push_back(index);
-          }
-        }
-        if (group.empty()) {
-          continue;
-        }
-        const auto& there = ending ? before : after;
-        if (geometry::distance(here, there) == 0.0) {
-          // The two slots are one point and there is nothing to interpolate.
-          continue;
-        }
-        // On the leaving segment the walk runs from the launcher outward, so
-        // the first of the group in ring order sits nearest it. On the
-        // arriving segment the walk runs toward the launcher, so the first in
-        // ring order sits farthest from it.
-        const auto count = group.size();
+      const auto next = (slot + launchers - 1) % launchers;
+      const auto& from = inputs.launcherPosition[slot];
+      const auto& to = inputs.launcherPosition[next];
+      const auto leaving = groupOf(slot, false);
+      const auto arriving = groupOf(next, true);
+      if (leaving.empty() && arriving.empty()) {
+        continue;
+      }
+      // Neighboring feeds, and the first and last feed and their launchers,
+      // lie one part of the segment apart. Closer than the wire spacing, the
+      // wires that reach them break it, and on a short segment two feeds can
+      // fall on one cell of the routing grid.
+      const auto parts = leaving.size() + arriving.size() + 1;
+      if (const auto part =
+              geometry::distance(from, to) / static_cast<double>(parts);
+          part <= 0.0 || part < spacing) {
+        throw std::invalid_argument(std::format(
+            "the launcher ports {} and {} lie {:.1f} apart, too close to feed "
+            "{} {} between them at the wire spacing of {}",
+            chip.ports[inputs.launchers[slot]]->label,
+            chip.ports[inputs.launchers[next]]->label,
+            geometry::distance(from, to), parts - 1,
+            parts == 2 ? "resonator" : "resonators", spacing));
+      }
+      const auto place = [&](const std::size_t index,
+                             const geometry::Point& here,
+                             const geometry::Point& there, const double ratio) {
+        assignment.feeds[index] =
+            geometry::Point(here.x() + (ratio * (there.x() - here.x())),
+                            here.y() + (ratio * (there.y() - here.y())));
+      };
+      // On the leaving segment the walk runs from the launcher outward, so
+      // the first of the group along the walk sits nearest to it. On the
+      // arriving segment the walk runs toward the launcher, so the first along
+      // the walk sits farthest from it. Where both groups share the
+      // segment, the leaving group comes first along the walk, and all of
+      // them divide it evenly.
+      const auto count = leaving.size() + arriving.size();
+      const auto ratioOf = [count](const std::size_t step) {
+        return static_cast<double>(step) / static_cast<double>(count + 1);
+      };
+      if (arriving.empty()) {
         for (std::size_t taken = 0; taken < count; ++taken) {
-          const auto step = ending ? (count - taken) : (taken + 1);
-          const auto ratio =
-              static_cast<double>(step) / static_cast<double>(count + 1);
-          assignment.feeds[group[taken]] =
-              geometry::Point(here.x() + (ratio * (there.x() - here.x())),
-                              here.y() + (ratio * (there.y() - here.y())));
+          place(leaving[taken], from, to, ratioOf(taken + 1));
+        }
+      } else if (leaving.empty()) {
+        for (std::size_t taken = 0; taken < count; ++taken) {
+          place(arriving[taken], to, from, ratioOf(count - taken));
+        }
+      } else {
+        auto walked = leaving;
+        walked.insert(walked.end(), arriving.begin(), arriving.end());
+        for (std::size_t taken = 0; taken < count; ++taken) {
+          place(walked[taken], from, to, ratioOf(taken + 1));
         }
       }
     }
 
-    // One connection per ring node: the assignment reaches every port the ring
-    // carries. The source of a resonator is the coupler the Final stage
-    // inserts, so it stays absent here; what the assignment decides is that the
-    // resonator is fed, and by which launcher. A conventional port is fed from
-    // that launcher itself, which is the end of a feedline chain.
+    // Two launcher slots may fall on one cell, and two feeds on the two
+    // segments of a sharp corner may lie closer than one part of either. The
+    // wires that reach two feeds that close break the wire spacing.
+    for (std::size_t first = 0; first < assignment.feeds.size(); ++first) {
+      for (std::size_t second = first + 1; second < assignment.feeds.size();
+           ++second) {
+        const auto apart = geometry::distance(assignment.feeds[first],
+                                              assignment.feeds[second]);
+        if (apart <= 0.0 || apart < spacing) {
+          throw std::invalid_argument(std::format(
+              "the feeds of {} and {} lie {:.1f} apart, closer than the wire "
+              "spacing of {}",
+              chip.ports[inputs.ring[first]]->label,
+              chip.ports[inputs.ring[second]]->label, apart, spacing));
+        }
+      }
+    }
+
+    // The Corridor stage starts each wire at the detail cell nearest its
+    // feed. Where a detail cell is wider than about 0.7 wire spacings, two
+    // feeds one spacing apart can round onto one cell, and the second wire
+    // would start on the first.
+    if (detail != nullptr) {
+      const grid::GridMetrics grid{.width = detail->width,
+                                   .height = detail->height,
+                                   .origin = detail->origin,
+                                   .cellWidth = detail->cell_width,
+                                   .cellHeight = detail->cell_height};
+      std::unordered_map<std::size_t, std::size_t> fedAt;
+      for (std::size_t index = 0; index < assignment.feeds.size(); ++index) {
+        const auto cell = grid.roundToCell(assignment.feeds[index]);
+        if (!cell.has_value()) {
+          continue;
+        }
+        const auto [first, fresh] =
+            fedAt.emplace(grid.index(cell->x(), cell->y()), index);
+        if (!fresh) {
+          throw std::invalid_argument(std::format(
+              "the feeds of {} and {} fall on one cell of the detail grid, "
+              "whose cells are {:.1f} by {:.1f}; raise [grid] detail_factor",
+              chip.ports[inputs.ring[first->second]]->label,
+              chip.ports[inputs.ring[index]]->label, grid.cellWidth,
+              grid.cellHeight));
+        }
+      }
+    }
+
+    // One connection per ring node: the assignment reaches every port of the
+    // ring. The source of a resonator is the coupler that a later stage
+    // inserts, so it stays absent here; the assignment decides that the
+    // resonator is fed, and by which launcher. A conventional port is fed
+    // from that launcher itself, which is the end of a feedline chain.
     assignment.connections.reserve(inputs.ring.size());
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
       auto connection = std::make_unique<fbd::ConnectionT>();
@@ -490,32 +1004,28 @@ private:
   /// Every anchor has degree two: a chord on either side, or a chord and an
   /// end. A chain is walked from an anchor whose entering chord is unused,
   /// along the used chords, to the anchor whose leaving chord is unused, so
-  /// it runs in ring order. Its launchers are the slots its two end anchors
-  /// were given: the first anchor's feed lies on the segment that leaves its
-  /// slot, so the chain starts there, and the last anchor's feed lies on the
-  /// segment that arrives at its slot, so the chain ends there without
-  /// turning back. `endsAChain` is what puts that last feed on the arriving
-  /// segment, and it runs this same walk. An end that is a termination has
-  /// no launcher.
+  /// it runs in ring order. Its launchers are the slots that its two end
+  /// anchors were given. The feed of the first anchor lies on the segment
+  /// that leaves its slot, so the chain starts there. The feed of a last
+  /// anchor that takes a launcher lies on the segment that arrives at its
+  /// slot, so the chain ends there without turning back; `endsAChain` places
+  /// that feed and runs the same walk. An end at a termination has no
+  /// launcher.
   static void readBackChains(AssignmentT& assignment,
                              const AssignmentInputs& inputs,
                              const RingEdges& ring, const Variables& variables,
                              const milp::Solution& solution,
                              const std::vector<std::size_t>& slotOf) {
     const auto anchors = ring.anchors.size();
-    const auto used = [&](const std::size_t edge) {
-      return std::llround(solution.valueOf(variables.edge[edge])) == 1;
-    };
     const auto launcherAt = [&](const std::size_t position) {
       return std::llround(solution.valueOf(variables.launcher[position])) == 1;
     };
-    // The chord entering an anchor is the one leaving the anchor before it.
-    const auto entering = [&](const std::size_t position) {
-      return ring.leaving[(position + anchors - 1) % anchors];
-    };
     std::vector<bool> taken(anchors, false);
     for (std::size_t first = 0; first < anchors; ++first) {
-      if (taken[first] || used(entering(first))) {
+      // The chord that enters an anchor is the one that leaves the anchor
+      // before it.
+      if (taken[first] || leavingUsed(ring, variables, solution,
+                                      (first + anchors - 1) % anchors)) {
         continue;
       }
       auto chain = std::make_unique<fba::FeedlineChainT>();
@@ -524,7 +1034,7 @@ private:
         taken[position] = true;
         chain->nodes.push_back(
             static_cast<std::uint32_t>(ring.anchors[position]));
-        if (!used(ring.leaving[position])) {
+        if (!leavingUsed(ring, variables, solution, position)) {
           break;
         }
         position = (position + 1) % anchors;
@@ -537,15 +1047,17 @@ private:
         chain->start = std::make_unique<fbd::PortRef>(
             inputs.launchers[slotOf[ring.anchors[first]]]);
       }
-      if (launcherAt(last)) {
+      // A chain of one anchor has one launcher at most, since its other end
+      // is a termination, and that launcher is where the chain starts.
+      if (last != first && launcherAt(last)) {
         chain->end = std::make_unique<fbd::PortRef>(
             inputs.launchers[slotOf[ring.anchors[last]]]);
       }
       assignment.chains.push_back(std::move(chain));
     }
     // A ring where every chord is used has no end at all, which the degree
-    // constraints forbid; it is written as one chain from the first anchor
-    // rather than dropped, so that nothing downstream is left without it.
+    // constraints forbid. It is written as one chain from the first anchor
+    // rather than dropped, so that no later stage is left without it.
     if (assignment.chains.empty() && anchors > 0) {
       auto chain = std::make_unique<fba::FeedlineChainT>();
       for (const auto anchor : ring.anchors) {
@@ -568,19 +1080,36 @@ AssignmentInputs assignmentInputs(const ChipT& chip,
     throw std::invalid_argument("the global routing carries no outer ring");
   }
 
+  // The stages before wrote these indices for this chip. Indices past its
+  // ports come from another chip or from an edited artifact.
+  const auto checkPort = [&chip](const std::uint32_t port,
+                                 const std::string_view artifact) {
+    if (port >= chip.ports.size()) {
+      throw std::invalid_argument(
+          std::format("the {} names port {}, but the chip has {} ports",
+                      artifact, port, chip.ports.size()));
+    }
+  };
+  for (const auto& port : global.outer_ring) {
+    checkPort(port.index(), "global routing");
+  }
+  for (const auto& port : global.resonators) {
+    checkPort(port.index(), "global routing");
+  }
+  for (const auto& slot : capacity.launchers) {
+    checkPort(slot->port.index(), "capacity plan");
+  }
+
   AssignmentInputs inputs;
   inputs.ring.reserve(global.outer_ring.size());
   for (const auto& port : global.outer_ring) {
     inputs.ring.push_back(port.index());
   }
 
-  const std::unordered_set<std::uint32_t> resonators = [&] {
-    std::unordered_set<std::uint32_t> set;
-    for (const auto& port : global.resonators) {
-      set.insert(port.index());
-    }
-    return set;
-  }();
+  std::unordered_set<std::uint32_t> resonators;
+  for (const auto& port : global.resonators) {
+    resonators.insert(port.index());
+  }
   inputs.isResonator.reserve(inputs.ring.size());
   for (const auto port : inputs.ring) {
     inputs.isResonator.push_back(resonators.contains(port));
@@ -594,10 +1123,8 @@ AssignmentInputs assignmentInputs(const ChipT& chip,
   }
   const auto& positions = inputs.launcherPosition;
 
-  // The launcher each node would reach most cheaply. In the prototype this
-  // ran a graph search over the capacity grid *during model construction*,
-  // which is what made the model inseparable from the geometry engine. It is
-  // a plain value here, worked out before the model exists.
+  // The launcher nearest to each node, by straight distance. The first of
+  // two equally near launchers wins.
   inputs.nearestLauncher.reserve(inputs.ring.size());
   for (const auto port : inputs.ring) {
     const auto& center = chip.ports[port]->center;
@@ -614,6 +1141,88 @@ AssignmentInputs assignmentInputs(const ChipT& chip,
   }
 
   return inputs;
+}
+
+std::optional<std::string> launcherOrderProblem(const ChipT& chip,
+                                                const ConfigT& config) {
+  std::unordered_map<std::string_view, std::uint32_t> byLabel;
+  for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
+    byLabel.emplace(chip.ports[index]->label, index);
+  }
+  // The stage checks the slots, which are these launchers in this order.
+  const auto launchers = slottedLaunchers(chip);
+  std::vector<geometry::Point> ring;
+  if (config.ports != nullptr && config.ports->sequences != nullptr) {
+    for (const auto& label : config.ports->sequences->all_outer) {
+      if (const auto found = byLabel.find(label); found != byLabel.end()) {
+        ring.push_back(chip.ports[found->second]->center);
+      }
+    }
+  }
+  return orderProblem(ring, launchers);
+}
+
+std::optional<std::string> launcherPlacesProblem(const ChipT& chip,
+                                                 const ConfigT& config) {
+  if (std::ranges::none_of(chip.ports, [](const auto& port) {
+        return port->role == fbd::UnassignedRole::Resonator;
+      })) {
+    return std::nullopt;
+  }
+  if (config.grid != nullptr && config.grid->detail_factor == 0) {
+    // A grid without cells places no slot. The configuration check reports
+    // it.
+    return std::nullopt;
+  }
+  if (detailGridProblem(chip, config).has_value()) {
+    // planProblems() reports a grid above the limit.
+    return std::nullopt;
+  }
+  return placesProblem(launcherSlotPositions(chip, config));
+}
+
+std::optional<std::string> ringCountProblem(const ChipT& chip,
+                                            const ConfigT& config) {
+  if (config.rules == nullptr || config.stages == nullptr ||
+      config.stages->assignment == nullptr ||
+      config.stages->assignment->launcher_target == 0) {
+    // planProblems() and the configuration check report these.
+    return std::nullopt;
+  }
+  InnerCircuit circuit;
+  try {
+    circuit = innerCircuitOf(chip, config);
+  } catch (const std::invalid_argument&) {
+    // planProblems() reports a ring that the global step refuses.
+    return std::nullopt;
+  }
+  // The ring end of a bridge is the one port whose part the global step
+  // decides: it leaves the ring when no inner wire surfaces there, and it is
+  // a resonator when the wire that surfaces comes from one. Every other ring
+  // port stays in the ring with the role the chip gives it.
+  std::unordered_set<std::uint32_t> decided;
+  for (const auto& bridge : circuit.outerBridges) {
+    decided.insert(bridge.to);
+  }
+  std::unordered_map<std::string_view, std::uint32_t> byLabel;
+  for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
+    byLabel.emplace(chip.ports[index]->label, index);
+  }
+  RingCounts counts{.exact = false};
+  for (const auto& label : config.ports->sequences->all_outer) {
+    const auto port = byLabel.at(label);
+    if (decided.contains(port)) {
+      ++counts.mostResonators;
+    } else if (chip.ports[port]->role == fbd::UnassignedRole::Resonator) {
+      ++counts.fewestResonators;
+      ++counts.mostResonators;
+    } else {
+      ++counts.conventional;
+    }
+  }
+  return countProblem(counts, slottedLaunchers(chip).size(),
+                      config.stages->assignment->launcher_target,
+                      *config.rules);
 }
 
 std::unique_ptr<IAssigner> makeOrderedMilpAssigner() {

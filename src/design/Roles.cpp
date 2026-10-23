@@ -46,9 +46,9 @@ std::vector<CompiledPattern> compile(const PortPatternsT& patterns) {
   add("launcher", UnassignedRole::Launcher, patterns.launcher);
   add("resonator", UnassignedRole::Resonator, patterns.resonator);
   add("conventional", UnassignedRole::Conventional, patterns.conventional);
-  // The bridge pattern is optional: a chip whose components carry no
-  // crossing declares none, and an empty expression is not a pattern that
-  // matches nothing but a role the chip does not have.
+  // The bridge pattern is optional. A chip whose components carry no
+  // crossing declares none, and an empty expression stands for a role the
+  // chip does not have, not for a pattern that matches nothing.
   if (!patterns.bridge_pair.empty()) {
     add("bridge_pair", UnassignedRole::BridgePair, patterns.bridge_pair);
   }
@@ -87,16 +87,20 @@ Problems classifyPorts(ChipT& chip, const PortPatternsT& patterns) {
     return problems;
   }
   const auto compiled = compile(patterns);
-  // The component is declared by a pattern rather than read out of a label,
-  // so the one capture group of that pattern is the only place a component
-  // name comes from.
+  // The component comes from the one capture group of the configured
+  // pattern, and from nowhere else: no algorithm reads a label itself.
   const auto hasComponents = !patterns.component.empty();
-  const std::regex component(hasComponents ? patterns.component : ".^",
+  const std::regex component(hasComponents ? patterns.component : "",
                              std::regex::ECMAScript);
-
   for (auto& port : chip.ports) {
     if (port == nullptr) {
       continue;
+    }
+    if (std::smatch capture;
+        hasComponents && std::regex_match(port->label, capture, component)) {
+      port->component = capture[1].str();
+    } else {
+      port->component.clear();
     }
     std::vector<std::string_view> matched;
     UnassignedRole role = UnassignedRole::Unset;
@@ -108,14 +112,6 @@ Problems classifyPorts(ChipT& chip, const PortPatternsT& patterns) {
     }
     if (matched.size() == 1) {
       port->role = role;
-      if (hasComponents) {
-        if (std::smatch capture;
-            std::regex_match(port->label, capture, component)) {
-          port->component = capture[1].str();
-        } else {
-          port->component.clear();
-        }
-      }
       continue;
     }
     port->role = UnassignedRole::Unset;

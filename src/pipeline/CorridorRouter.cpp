@@ -13,15 +13,15 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
+#include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/Partitions.hpp"
-#include "mqt-scpd/grid/PortBands.hpp"
 #include "mqt-scpd/grid/Watershed.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
+#include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +34,7 @@
 #include <queue>
 #include <ranges>
 #include <span>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -50,24 +51,20 @@ using grid::PartitionLabel;
 constexpr std::size_t NO_STATE = std::numeric_limits<std::size_t>::max();
 constexpr double UNREACHED = std::numeric_limits<double>::infinity();
 
-/// A point of the partition graph, in the cell coordinates the partition
-/// geometry uses: whole numbers on cell corners, so a slot on a cell edge
-/// lands on a half and the centre of a cell does too.
+/// A point of the partition graph, in the cell coordinates of the partition
+/// geometry: whole numbers on cell corners, so that a slot on a cell edge and
+/// the center of a cell both land on a half.
 struct Place {
   double x = 0.0;
   double y = 0.0;
 };
-
-/// A slot that is not on a border of the plan but on a port's own approach.
-constexpr std::uint32_t NO_BORDER = std::numeric_limits<std::uint32_t>::max();
 
 /// One crossing slot: where it is, and the two partitions it joins.
 struct Slot {
   Place place;
   PartitionLabel first = LABEL_NONE;
   PartitionLabel second = LABEL_NONE;
-  /// The border it is on, as an index into the plan's borders, or NO_BORDER
-  /// for the way out of a port's own pocket.
+  /// The border the slot is on, as an index into the borders of the plan.
   std::uint32_t border = 0;
 
   /// The partition on the far side of the one a wire arrives from.
@@ -83,31 +80,6 @@ struct Request {
   Place target;
   PartitionLabel feedPartition = LABEL_NONE;
   PartitionLabel targetPartition = LABEL_NONE;
-  /// Whether the assignment gave this wire a point to be fed at. A wire
-  /// without one is not routed, and its feed says nothing about where the ring
-  /// runs.
-  bool fed = false;
-};
-
-/// The rectangle the ports feed from.
-///
-/// Every wire starts at a point on the launcher ring, so the box those points
-/// span is the outside of the chip as far as this stage is concerned.
-struct Bounds {
-  double minX = 0.0;
-  double minY = 0.0;
-  double maxX = 0.0;
-  double maxY = 0.0;
-
-  /// Whether a place is inside the ring, and not on it.
-  ///
-  /// On it is not inside: a place on the rectangle sits beside some port's own
-  /// feed point, and a wire crossing there has slipped behind that port. The
-  /// prototype draws the line in the same place, refusing a border pixel that
-  /// reaches its launcher box rather than only one that passes it.
-  [[nodiscard]] bool hold(const Place& place) const {
-    return place.x > minX && place.x < maxX && place.y > minY && place.y < maxY;
-  }
 };
 
 /// The slots a wire crosses and the partitions it runs through. There is
@@ -126,12 +98,12 @@ struct Chord {
 
 /// A cell coordinate back on the grid it came from.
 ///
-/// The plan carries its border samples in layout units, and reading them back
-/// costs a bit: a sample that was exactly half a cell comes back a fraction of
-/// an ulp away from it. Every place the search works with is a whole number or
-/// a half, and the determinant below is only exact while that holds — a
-/// crossing slot a hair off its half turns a point that lies *on* a chord into
-/// one that lies just beside it, and two wires then meet without the search
+/// The plan carries its border samples in layout units, and the way back
+/// costs a little: a sample that was exactly half a cell comes back a
+/// fraction of an ulp away from it. Every place the search works with is a
+/// whole number or a half, and the determinant below is exact only while that
+/// holds. A slot a hair off its half turns a point that lies on a chord into
+/// one that lies beside it, and two wires then meet without the search
 /// seeing it.
 [[nodiscard]] double onGrid(const double value) {
   return std::round(value * 2.0) / 2.0;
@@ -159,16 +131,16 @@ struct Chord {
 /// Whether two chords lie along each other over a length rather than meeting
 /// at a point.
 ///
-/// Two wires that share a stretch of one corridor are one piece of copper: the
-/// detail router has nowhere to put the second one.
+/// Two wires that share a stretch of one corridor are one piece of copper:
+/// the later stage has no room for the second one.
 [[nodiscard]] bool overlaps(const Place& a, const Place& b, const Place& c,
                             const Place& d) {
   if (sideOf(a, b, c) != 0 || sideOf(a, b, d) != 0) {
     return false;
   }
-  // Collinear: the two run along one line, so they share a stretch when their
-  // spans overlap in more than an endpoint. The wider axis decides, so a
-  // vertical pair is compared on y and everything else on x.
+  // The two run along one line, so they share a stretch when their spans
+  // overlap in more than an end point. The wider axis decides: a vertical
+  // pair is compared on y and every other pair on x.
   const auto vertical = std::abs(b.x - a.x) < std::abs(b.y - a.y);
   const auto first = vertical
                          ? std::pair{std::min(a.y, b.y), std::max(a.y, b.y)}
@@ -180,40 +152,32 @@ struct Chord {
          std::max(first.first, second.first);
 }
 
-/// Whether two places are one place.
-[[nodiscard]] bool same(const Place& a, const Place& b) {
-  return a.x == b.x && a.y == b.y;
-}
-
-/// Whether the point `c` lies on the chord from `a` to `b`, past its ends.
+/// Whether the point `c` lies on the chord from `a` to `b`, between its ends.
 ///
-/// The three are known to be collinear; what is left is whether `c` falls
-/// between the two along the line.
+/// The three points are known to lie on one line, so what is left is whether
+/// `c` falls between the two along it.
 [[nodiscard]] bool between(const Place& a, const Place& b, const Place& c) {
   return std::min(a.x, b.x) <= c.x && c.x <= std::max(a.x, b.x) &&
          std::min(a.y, b.y) <= c.y && c.y <= std::max(a.y, b.y);
 }
 
-/// Whether one chord runs over a point the other one ends at.
+/// Whether one chord ends on the other, or the two share an end.
 ///
-/// The crossing test does not see this: a chord that stops on another one
-/// never gets to the far side of it, so the two never cross properly. Both
-/// kinds of end rule the second chord out:
+/// The crossing test does not see it: a chord that stops on another one never
+/// gets to its far side, so the two never cross properly. Every end of a chord
+/// is a fixed point that one wire passes: the point the wire is fed at, the
+/// cell of its target port, or a crossing slot. A second wire drawn over that
+/// point, or ending on it as well, puts two wires on one point of the chip. A
+/// wire could otherwise run along a whole line of feed points without one
+/// crossing.
 ///
-/// - The point a wire is fed at and the cell of its target port cannot be
-///   moved, so a second wire drawn over one is two wires on one point of the
-///   chip. That is how a wire comes to run down a whole line of feed points
-///   without a single crossing being reported.
-/// - A crossing slot lies on a border, and a straight chord inside a
-///   partition runs over a point of its border only where it lies along that
-///   border. The wire that crosses there comes from inside the partition and
-///   goes on into the neighbour on the far side of the chord, so the two wires
-///   cross.
+/// The rule is stricter than the drawing needs. In a partition that is not
+/// convex, a straight chord can run over a slot at an inward corner of the
+/// border, and the wire through that slot need not cross the other wire.
 [[nodiscard]] bool touches(const Chord& a, const Chord& b) {
   const auto over = [](const Chord& chord, const Place& end) {
     return sideOf(chord.from, chord.to, end) == 0 &&
-           between(chord.from, chord.to, end) && !same(chord.from, end) &&
-           !same(chord.to, end);
+           between(chord.from, chord.to, end);
   };
   const auto endsOn = [&over](const Chord& chord, const Chord& other) {
     return over(chord, other.from) || over(chord, other.to);
@@ -223,22 +187,31 @@ struct Chord {
 
 /// Whether two chords may not both be drawn.
 ///
-/// A proper crossing is what the plan has to rule out for the detail router to
-/// realise it, and it is what the prototype tests for. Running along each
-/// other is ruled out as well, because the crossing test says nothing about it
-/// and two wires in one place is what it would mean. So is a chord drawn over
-/// a point where another chord ends.
+/// A proper crossing is what the plan has to rule out, so that the later
+/// stage can draw it. Two chords that run along each other are ruled out as
+/// well, because they put two wires in one place, and so is a chord drawn
+/// over a point where another chord ends.
+///
+/// The chords are straight lines between where a wire enters and leaves a
+/// partition. They stand in for the wires, and they decide exactly only in a
+/// convex partition, where every chord stays inside.
 [[nodiscard]] bool meets(const Chord& a, const Chord& b) {
   return crosses(a.from, a.to, b.from, b.to) ||
          overlaps(a.from, a.to, b.from, b.to) || touches(a, b);
 }
 
-/// The partition graph of one run, together with the wires committed to it.
+/// The partition graph of one run, with the wires committed to it.
 class Corridors {
 public:
-  Corridors(const CapacityPlanT& plan, const grid::GridMetrics& detail,
-            const double wireSpacing, const Bounds& ring)
-      : detail_(detail) {
+  /// Builds the graph of a plan.
+  ///
+  /// @throws std::invalid_argument When a border of the plan offers another
+  /// number of slots than its budget, which a plan made with another
+  /// crossing pitch, or by a version that picks the slots another way, does.
+  Corridors(const CapacityPlanT& plan, const CapacityScene& scene,
+            const double pitch)
+      : detailGrid(scene.detail) {
+    const auto& detail = scene.detail;
     for (std::uint32_t index = 0; index < plan.borders.size(); ++index) {
       const auto& border = *plan.borders[index];
       grid::PartitionBorder geometry{
@@ -247,102 +220,61 @@ public:
           .samples = {}};
       geometry.samples.reserve(border.samples.size());
       for (const auto& sample : border.samples) {
-        const auto cell = detail.toCell(sample);
-        geometry.samples.emplace_back(onGrid(cell.x()), onGrid(cell.y()));
+        const auto corner = grid::layoutToCorner(detail, sample);
+        geometry.samples.emplace_back(onGrid(corner.x()), onGrid(corner.y()));
       }
-      for (const auto& slot :
-           grid::borderSlots(geometry, detail, wireSpacing)) {
-        // Outside the ring the ports feed from there is nothing to route: a
-        // wire crossing there leaves through the ring, runs along the back of
-        // it and comes in again behind another port.
-        if (!ring.hold({.x = slot.x(), .y = slot.y()})) {
-          continue;
-        }
-        of_[geometry.first].push_back(slots_.size());
-        of_[geometry.second].push_back(slots_.size());
-        slots_.push_back({.place = {.x = slot.x(), .y = slot.y()},
-                          .first = geometry.first,
-                          .second = geometry.second,
-                          .border = index});
+      const auto slots = crossingSlots(geometry, scene, pitch);
+      if (slots.size() != border.budget) {
+        throw std::invalid_argument(std::format(
+            "border {} between partitions {} and {} offers {} crossing slots "
+            "and the plan gives it a budget of {}; the plan was made with "
+            "another crossing pitch or by another version of mqt-scpd, so run "
+            "the capacity step again",
+            index, border.first, border.second, slots.size(), border.budget));
+      }
+      for (const auto& slot : slots) {
+        slotsByPartition[geometry.first].push_back(slotList.size());
+        slotsByPartition[geometry.second].push_back(slotList.size());
+        slotList.push_back({.place = {.x = slot.x(), .y = slot.y()},
+                            .first = geometry.first,
+                            .second = geometry.second,
+                            .border = index});
       }
     }
-    // Where three partitions meet, one point is a sample of more than one
-    // border and therefore a slot of each. They are one place on the chip, so
-    // one wire crosses there and no more; the slots of a place share what
-    // records that.
-    std::map<std::pair<double, double>, std::size_t> places;
-    place_.reserve(slots_.size());
-    for (const auto& slot : slots_) {
-      const auto [entry, added] =
-          places.try_emplace({slot.place.x, slot.place.y}, places.size());
-      place_.push_back(entry->second);
-    }
-    taken_.assign(places.size(), false);
-    owner_.assign(places.size(), NO_OWNER);
-    history_.assign(places.size(), 0.0);
+    findNearby(pitch);
+    slotOwner.assign(slotList.size(), NO_OWNER);
+    slotHistory.assign(slotList.size(), 0.0);
   }
 
-  [[nodiscard]] const std::vector<Slot>& slots() const { return slots_; }
+  [[nodiscard]] const std::vector<Slot>& slots() const { return slotList; }
 
-  /// The slots a partition has, which is empty for a pocket no border reaches.
-  [[nodiscard]] std::span<const std::size_t>
-  slotsOfPartition(const PartitionLabel p) const {
-    const auto found = of_.find(p);
-    return found == of_.end() ? std::span<const std::size_t>{}
-                              : std::span{found->second};
-  }
-
-  /// Add the way out of a port's own pocket.
-  ///
-  /// The capacity grid places a target on the first cell beyond its port's
-  /// band that was free before the bands were stamped; it does not open the
-  /// band itself, because nothing searches on that grid. Where the band and
-  /// the artwork close around the port, the free space left is a pocket that
-  /// no border reaches, and a wire could never leave it.
-  ///
-  /// The band is not artwork. It is the strip the port's own wire leaves
-  /// along, so it is a way out, and it carries exactly one wire — that port's.
-  /// This adds it as a slot of its own, on no border of the plan.
-  void addChannel(const Place& place, const PartitionLabel from,
-                  const PartitionLabel to) {
-    of_[from].push_back(slots_.size());
-    of_[to].push_back(slots_.size());
-    slots_.push_back(
-        {.place = place, .first = from, .second = to, .border = NO_BORDER});
-    place_.push_back(taken_.size());
-    taken_.push_back(false);
-    owner_.push_back(NO_OWNER);
-    history_.push_back(0.0);
-  }
-
-  /// What displacing one wire costs the search: more than the longest route
-  /// the chip can hold, so length never buys a displacement.
+  /// What one blocked step costs the search: the diagonal of the detail grid,
+  /// which is longer than most routes, so length rarely buys a displacement.
   [[nodiscard]] double displacementPrice() const {
-    const auto box = detail_.box();
+    const auto box = detailGrid.box();
     return std::hypot(box.maxX - box.minX, box.maxY - box.minY);
   }
 
-  /// Search one wire's way from its feed to its target, around everything
-  /// already committed.
-  /// Search one wire's way from its feed to its target.
+  /// Searches the way of one wire from its feed to its target, and searches
+  /// again when the cheapest way is one the wire may not take.
   ///
-  /// With no `displacement` the search only uses what is free. Given one, it
-  /// may take a slot another wire holds or cross a chord another wire drew,
-  /// and pays that price per wire it displaces. Set well above the length of
-  /// any route, the price makes the search prefer a free way wherever one
-  /// exists and displace as few wires as it can where none does.
-  /// Search one wire's way, and try again when the cheapest one is a way it
-  /// may not take.
+  /// With no `displacement` the search uses only what is free. Given one, it
+  /// may take a slot that another wire holds or cross a chord that another
+  /// wire drew, and pays that price once per step that does so, however many
+  /// wires the step displaces. The search therefore takes as few blocked
+  /// steps as it can. A sweep asks for a displacing route only for a wire
+  /// that the free search did not place, so the price never trades a free
+  /// way for a shorter blocked one.
   ///
-  /// A route that crosses itself or comes back to a place it already used is
-  /// a short, and it is a property of the whole route rather than of any one
-  /// step, so the search cannot rule it out as it goes. Throwing the search
-  /// away with it would leave the wire unrouted where a second-best way is
-  /// there for the taking, so the slots of the way that failed are set aside
-  /// and the search runs again.
+  /// A route that crosses itself or comes back to a slot it already used is
+  /// a short. That is a property of the whole route and not of one step, so
+  /// the search cannot rule it out as it goes. The slots of such a way are
+  /// set aside and the search runs again, at most UNSOUND_RETRIES times. This
+  /// often finds a second-best way, but not always: a slot that every way of
+  /// the wire needs is set aside too.
   [[nodiscard]] std::optional<Route>
   route(const Request& request, const double displacement = 0.0) const {
-    std::vector<bool> aside(slots_.size(), false);
+    std::vector<bool> aside(slotList.size(), false);
     for (std::uint32_t attempt = 0; attempt <= UNSOUND_RETRIES; ++attempt) {
       auto found = search(request, displacement, aside);
       if (!found.has_value()) {
@@ -358,10 +290,177 @@ public:
     return std::nullopt;
   }
 
+  /// Lays a route down: its slots are taken and its chords drawn.
+  void commit(const Request& request, const Route& route) {
+    for (const auto slot : route.slots) {
+      slotOwner[slot] = request.connection;
+    }
+    walk(request, route,
+         [&](const Chord& chord, const PartitionLabel partition) {
+           chordsByPartition[partition].push_back(chord);
+         });
+  }
+
+  /// Takes a route back out.
+  void withdraw(const Request& request, const Route& route) {
+    for (const auto slot : route.slots) {
+      slotOwner[slot] = NO_OWNER;
+    }
+    for (const auto partition : route.partitions) {
+      auto& chords = chordsByPartition[partition];
+      std::erase_if(chords, [&](const Chord& chord) {
+        return chord.owner == request.connection;
+      });
+    }
+  }
+
+  /// The wires in the way of a route that may displace others: the ones that
+  /// hold a slot it wants or a slot within one pitch of it, and the ones
+  /// whose chords it would have to cross.
+  [[nodiscard]] std::vector<std::size_t> blockersOf(const Request& request,
+                                                    const Route& wanted) const {
+    std::vector<std::size_t> owners;
+    for (const auto slot : wanted.slots) {
+      forEachHolder(slot, request.connection, [&](const std::size_t holder) {
+        owners.push_back(slotOwner[holder]);
+      });
+    }
+    walk(request, wanted,
+         [&](const Chord& mine, const PartitionLabel partition) {
+           const auto found = chordsByPartition.find(partition);
+           if (found == chordsByPartition.end()) {
+             return;
+           }
+           for (const auto& chord : found->second) {
+             if (meets(mine, chord)) {
+               owners.push_back(chord.owner);
+             }
+           }
+         });
+    std::ranges::sort(owners);
+    const auto duplicates = std::ranges::unique(owners);
+    owners.erase(duplicates.begin(), duplicates.end());
+    std::erase(owners, request.connection);
+    return owners;
+  }
+
+  /// Makes the slots that kept a wire from its route dearer for whoever
+  /// stands on them: the slots it wanted and the slots within one pitch of
+  /// them that another wire holds.
+  ///
+  /// Without this two wires trade one slot back and forth: each displaces
+  /// the other, each round undoes the last, and neither settles. The price
+  /// only rises, so the wire in the way often finds its own way cheaper
+  /// elsewhere and gives the slot up. The charge is a fraction of one
+  /// displacement, so a few rounds of wanting a slot add up to more than the
+  /// detour around it. Where the slots are too few for every wire, no price
+  /// settles the trade, and the stage keeps the best round instead.
+  void chargeFor(const Request& request, const Route& route) {
+    const auto amount = displacementPrice() / HISTORY_STEPS;
+    std::vector<std::size_t> held;
+    for (const auto slot : route.slots) {
+      forEachHolder(slot, request.connection,
+                    [&](const std::size_t holder) { held.push_back(holder); });
+    }
+    std::ranges::sort(held);
+    const auto duplicates = std::ranges::unique(held);
+    held.erase(duplicates.begin(), duplicates.end());
+    for (const auto slot : held) {
+      slotHistory[slot] += amount;
+    }
+  }
+
+  /// The layout position of a slot, for the artifact.
+  [[nodiscard]] fbg::Point layoutOf(const std::size_t slot) const {
+    return grid::cornerToLayout(detailGrid, slotList[slot].place.x,
+                                slotList[slot].place.y);
+  }
+
 private:
   /// How often a wire may be handed a second-best way when the cheapest one
   /// is a short.
   static constexpr std::uint32_t UNSOUND_RETRIES = 4;
+
+  /// How many rounds of wanting one slot add up to the price of displacing a
+  /// wire from it.
+  static constexpr double HISTORY_STEPS = 8.0;
+
+  static constexpr std::size_t NO_OWNER =
+      std::numeric_limits<std::size_t>::max();
+
+  /// Finds, for each slot, the other slots that lie closer than one crossing
+  /// pitch.
+  ///
+  /// The slots of one border keep the pitch apart, but the slots of two
+  /// borders do not: where partitions meet, the borders end next to one
+  /// another, and each has a slot near the corner. Two wires that crossed
+  /// there would run closer than the pitch. One wire may cross at both, as it
+  /// does when it passes the corner from one partition into the next.
+  void findNearby(const double pitch) {
+    nearbySlots.assign(slotList.size(), {});
+    // The slots, in layout units, binned into squares one pitch wide, so that
+    // a slot is compared only with the slots of its own square and the eight
+    // around it.
+    const auto squareOf = [pitch](const double coordinate) {
+      return static_cast<std::int64_t>(std::floor(coordinate / pitch));
+    };
+    std::vector<fbg::Point> layout;
+    layout.reserve(slotList.size());
+    std::map<std::pair<std::int64_t, std::int64_t>, std::vector<std::size_t>>
+        squares;
+    for (std::size_t slot = 0; slot < slotList.size(); ++slot) {
+      layout.push_back(layoutOf(slot));
+      squares[{squareOf(layout.back().x()), squareOf(layout.back().y())}]
+          .push_back(slot);
+    }
+    for (std::size_t slot = 0; slot < slotList.size(); ++slot) {
+      const auto& here = layout[slot];
+      const auto column = squareOf(here.x());
+      const auto row = squareOf(here.y());
+      for (std::int64_t dy = -1; dy <= 1; ++dy) {
+        for (std::int64_t dx = -1; dx <= 1; ++dx) {
+          const auto found = squares.find({column + dx, row + dy});
+          if (found == squares.end()) {
+            continue;
+          }
+          for (const auto other : found->second) {
+            const auto& there = layout[other];
+            if (other != slot && std::hypot(here.x() - there.x(),
+                                            here.y() - there.y()) < pitch) {
+              nearbySlots[slot].push_back(other);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// Hands `visit` every slot that keeps a wire other than `connection` from
+  /// taking `slot`: the slot itself or a slot within one pitch of it, when
+  /// another wire holds it.
+  template <typename Visitor>
+  void forEachHolder(const std::size_t slot, const std::size_t connection,
+                     const Visitor& visit) const {
+    const auto check = [&](const std::size_t candidate) {
+      if (slotOwner[candidate] != NO_OWNER &&
+          slotOwner[candidate] != connection) {
+        visit(candidate);
+      }
+    };
+    check(slot);
+    for (const auto other : nearbySlots[slot]) {
+      check(other);
+    }
+  }
+
+  /// Whether a wire other than `connection` holds `slot` or a slot within
+  /// one pitch of it.
+  [[nodiscard]] bool heldByAnother(const std::size_t slot,
+                                   const std::size_t connection) const {
+    auto held = false;
+    forEachHolder(slot, connection, [&](std::size_t) { held = true; });
+    return held;
+  }
 
   [[nodiscard]] std::optional<Route>
   search(const Request& request, const double displacement,
@@ -372,51 +471,50 @@ private:
     }
 
     // A state is a slot together with the partition the wire carries on
-    // into, because a slot joins two of them and which one a wire came from
+    // into, because a slot joins two partitions and the one a wire came from
     // decides where it may go next.
-    std::vector<double> best(slots_.size() * 2, UNREACHED);
-    std::vector<std::size_t> from(slots_.size() * 2, NO_STATE);
-    std::vector<bool> closed(slots_.size() * 2, false);
+    std::vector<double> best(slotList.size() * 2, UNREACHED);
+    std::vector<std::size_t> from(slotList.size() * 2, NO_STATE);
+    std::vector<bool> closed(slotList.size() * 2, false);
 
     using Entry = std::pair<double, std::size_t>;
     std::priority_queue<Entry, std::vector<Entry>, std::greater<>> queue;
 
     const auto expand = [&](const Place& place, const PartitionLabel partition,
                             const double cost, const std::size_t parent) {
-      // The partition the wire just left. Turning straight back into it is
-      // what lets a wire snake across one border and back over and over: the
-      // detour is short, so it costs the search almost nothing and costs the
-      // chip two slots every time. The prototype refuses the same move.
+      // The partition the wire just left. Turning straight back into it lets
+      // a wire snake across one border and back again and again: the detour
+      // is short, so it costs the search almost nothing and costs the chip
+      // two slots each time.
       const auto behind = parent == NO_STATE
                               ? LABEL_NONE
-                              : slots_[parent / 2].beyond(partition);
+                              : slotList[parent / 2].beyond(partition);
       for (const auto slot : slotsOf(partition)) {
-        if (aside[slot] || slots_[slot].beyond(partition) == behind) {
+        if (aside[slot] || slotList[slot].beyond(partition) == behind) {
           continue;
         }
-        const auto blocked =
-            taken_[place_[slot]] || !clear(Chord{.from = place,
-                                                 .to = slots_[slot].place,
-                                                 .owner = request.connection},
-                                           partition);
+        const auto blocked = heldByAnother(slot, request.connection) ||
+                             !clear(Chord{.from = place,
+                                          .to = slotList[slot].place,
+                                          .owner = request.connection},
+                                    partition);
         if (blocked && displacement <= 0.0) {
           continue;
         }
-        const auto state = stateOf(slot, slots_[slot].beyond(partition));
-        const auto step = cost + distance(place, slots_[slot].place) +
-                          history_[place_[slot]] +
-                          (blocked ? displacement : 0.0);
+        const auto state = stateOf(slot, slotList[slot].beyond(partition));
+        const auto step = cost + distance(place, slotList[slot].place) +
+                          slotHistory[slot] + (blocked ? displacement : 0.0);
         if (step < best[state]) {
           best[state] = step;
           from[state] = parent;
-          queue.emplace(step + distance(slots_[slot].place, request.target),
+          queue.emplace(step + distance(slotList[slot].place, request.target),
                         state);
         }
       }
     };
 
     // Reaching the target inside the partition the wire is fed in is a whole
-    // route, and it needs no slot at all.
+    // route, and it needs no slot.
     auto shortest = UNREACHED;
     auto arrival = NO_STATE;
     if (request.feedPartition == request.targetPartition) {
@@ -439,7 +537,7 @@ private:
       }
       closed[state] = true;
 
-      const auto& slot = slots_[state / 2];
+      const auto& slot = slotList[state / 2];
       const auto partition = partitionOf(state);
       if (partition == request.targetPartition) {
         const auto reaches = clear(Chord{.from = slot.place,
@@ -471,150 +569,51 @@ private:
     return route;
   }
 
-public:
-  void commit(const Request& request, const Route& route) {
-    for (const auto slot : route.slots) {
-      taken_[place_[slot]] = true;
-      owner_[place_[slot]] = request.connection;
-    }
-    walk(request, route,
-         [&](const Chord& chord, const PartitionLabel partition) {
-           chords_[partition].push_back(chord);
-         });
-  }
-
-  void withdraw(const Request& request, const Route& route) {
-    for (const auto slot : route.slots) {
-      taken_[place_[slot]] = false;
-      owner_[place_[slot]] = NO_OWNER;
-    }
-    for (const auto partition : route.partitions) {
-      auto& chords = chords_[partition];
-      std::erase_if(chords, [&](const Chord& chord) {
-        return chord.owner == request.connection;
-      });
-    }
-  }
-
-  /// The wires standing in the way of a route drawn as though the chip were
-  /// empty: the ones holding a slot it wants, and the ones whose chords it
-  /// would have to cross.
-  [[nodiscard]] std::vector<std::size_t> blockersOf(const Request& request,
-                                                    const Route& wanted) const {
-    std::vector<std::size_t> owners;
-    for (const auto slot : wanted.slots) {
-      if (owner_[place_[slot]] != NO_OWNER) {
-        owners.push_back(owner_[place_[slot]]);
-      }
-    }
-    walk(request, wanted,
-         [&](const Chord& mine, const PartitionLabel partition) {
-           const auto found = chords_.find(partition);
-           if (found == chords_.end()) {
-             return;
-           }
-           for (const auto& chord : found->second) {
-             if (meets(mine, chord)) {
-               owners.push_back(chord.owner);
-             }
-           }
-         });
-    std::ranges::sort(owners);
-    const auto duplicates = std::ranges::unique(owners);
-    owners.erase(duplicates.begin(), duplicates.end());
-    std::erase(owners, request.connection);
-    return owners;
-  }
-
-  /// Make the slots a wire wanted, and could not have, dearer for whoever is
-  /// standing on them.
-  ///
-  /// Without this two wires trade the same slot back and forth: each one
-  /// displaces the other, each round undoes the last, and neither ever
-  /// settles. The price only rises, so the wire in the way eventually finds
-  /// its own way cheaper elsewhere and gives the slot up. What is charged is
-  /// a fraction of one displacement, so a few rounds of wanting a slot add up
-  /// to more than the detour around it.
-  void chargeFor(const Route& route) {
-    const auto amount = displacementPrice() / HISTORY_STEPS;
-    for (const auto slot : route.slots) {
-      if (taken_[place_[slot]]) {
-        history_[place_[slot]] += amount;
-      }
-    }
-  }
-
-  /// Whether a route can be laid down as it stands: every slot still free,
-  /// and every chord clear of the ones already drawn.
-  [[nodiscard]] bool fits(const Request& request, const Route& route) const {
-    if (std::ranges::any_of(route.slots, [&](const std::size_t slot) {
-          return taken_[place_[slot]];
-        })) {
-      return false;
-    }
-    auto clearAll = true;
-    walk(request, route,
-         [&](const Chord& chord, const PartitionLabel partition) {
-           clearAll = clearAll && clear(chord, partition);
-         });
-    return clearAll;
-  }
-
-  /// The layout position of a slot, for the artifact.
-  [[nodiscard]] fbg::Point layoutOf(const std::size_t slot) const {
-    return detail_.toLayout(slots_[slot].place.x, slots_[slot].place.y);
-  }
-
-private:
   [[nodiscard]] std::size_t stateOf(const std::size_t slot,
                                     const PartitionLabel partition) const {
-    return (slot * 2) + (partition == slots_[slot].second ? 1U : 0U);
+    return (slot * 2) + (partition == slotList[slot].second ? 1U : 0U);
   }
 
   [[nodiscard]] PartitionLabel partitionOf(const std::size_t state) const {
-    const auto& slot = slots_[state / 2];
+    const auto& slot = slotList[state / 2];
     return (state % 2) == 1 ? slot.second : slot.first;
   }
 
   [[nodiscard]] std::span<const std::size_t>
   slotsOf(const PartitionLabel partition) const {
-    const auto found = of_.find(partition);
-    return found == of_.end() ? std::span<const std::size_t>{}
-                              : std::span{found->second};
+    const auto found = slotsByPartition.find(partition);
+    return found == slotsByPartition.end() ? std::span<const std::size_t>{}
+                                           : std::span{found->second};
   }
 
   [[nodiscard]] double distance(const Place& a, const Place& b) const {
-    const auto from = detail_.toLayout(a.x, a.y);
-    const auto to = detail_.toLayout(b.x, b.y);
+    const auto from = grid::cornerToLayout(detailGrid, a.x, a.y);
+    const auto to = grid::cornerToLayout(detailGrid, b.x, b.y);
     return std::hypot(from.x() - to.x(), from.y() - to.y());
   }
 
-  /// Whether a chord may be drawn across a partition without meeting one that
-  /// is already there.
+  /// Whether a chord can be drawn across a partition without meeting one
+  /// that is there already.
   [[nodiscard]] bool clear(const Chord& mine,
                            const PartitionLabel partition) const {
-    const auto found = chords_.find(partition);
-    if (found == chords_.end()) {
+    const auto found = chordsByPartition.find(partition);
+    if (found == chordsByPartition.end()) {
       return true;
     }
     return std::ranges::none_of(
         found->second, [&](const Chord& chord) { return meets(mine, chord); });
   }
 
-  /// Whether a route is one a wire may actually take.
+  /// Whether a route is one a wire may take.
   ///
-  /// The search sees only what other wires committed, so a wire that re-enters
-  /// a partition it already crossed can lay a chord over its own or come back
-  /// to a place it already used. Either is a short, and the route is thrown
-  /// away rather than drawn.
+  /// The search sees only what other wires committed, so a wire that enters a
+  /// partition it already crossed can lay a chord over its own, or come back
+  /// to a slot it already used. Either is a short, and the route is thrown
+  /// away.
   [[nodiscard]] bool sound(const Request& request, const Route& route) const {
-    std::vector<std::size_t> places;
-    places.reserve(route.slots.size());
-    for (const auto slot : route.slots) {
-      places.push_back(place_[slot]);
-    }
-    std::ranges::sort(places);
-    if (std::ranges::adjacent_find(places) != places.end()) {
+    auto slots = route.slots;
+    std::ranges::sort(slots);
+    if (std::ranges::adjacent_find(slots) != slots.end()) {
       return false;
     }
     return !selfCrossing(request, route);
@@ -622,36 +621,35 @@ private:
 
   /// Whether a wire lays a chord over one of its own.
   ///
-  /// Two chords that follow one another share the slot between them, which is
-  /// a corner and not a short; any other meeting is one.
+  /// Only chords in one partition are compared. Two chords that follow one
+  /// another share the slot between them, but they lie in the two partitions
+  /// on either side of its border, so any meeting of two chords in one
+  /// partition is a short.
   [[nodiscard]] bool selfCrossing(const Request& request,
                                   const Route& route) const {
-    std::unordered_map<PartitionLabel,
-                       std::vector<std::pair<std::size_t, Chord>>>
-        own;
-    std::size_t step = 0;
+    std::unordered_map<PartitionLabel, std::vector<Chord>> own;
     auto found = false;
     walk(
         request, route, [&](const Chord& mine, const PartitionLabel partition) {
           auto& chords = own[partition];
-          found = found || std::ranges::any_of(chords, [&](const auto& drawn) {
-                    return drawn.first + 1 != step && meets(mine, drawn.second);
+          found = found || std::ranges::any_of(chords, [&](const Chord& drawn) {
+                    return meets(mine, drawn);
                   });
-          chords.emplace_back(step, mine);
-          ++step;
+          chords.push_back(mine);
         });
     return found;
   }
 
-  /// Hand every chord of a route to `visit`, in order. A route of k slots
+  /// Hands every chord of a route to `visit`, in order. A route of k slots
   /// has k + 1 chords, one per partition it runs through.
   template <typename Visitor>
-  void walk(const Request& request, const Route& route, Visitor&& visit) const {
+  void walk(const Request& request, const Route& route,
+            const Visitor& visit) const {
     auto place = request.feed;
-    for (std::size_t i = 0; i < route.slots.size(); ++i) {
-      const auto& next = slots_[route.slots[i]].place;
+    for (std::size_t index = 0; index < route.slots.size(); ++index) {
+      const auto& next = slotList[route.slots[index]].place;
       visit(Chord{.from = place, .to = next, .owner = request.connection},
-            route.partitions[i]);
+            route.partitions[index]);
       place = next;
     }
     visit(
@@ -659,40 +657,106 @@ private:
         route.partitions.back());
   }
 
-  /// How many rounds of wanting one slot add up to the price of displacing a
-  /// wire from it.
-  static constexpr double HISTORY_STEPS = 8.0;
-  static constexpr std::size_t NO_OWNER =
-      std::numeric_limits<std::size_t>::max();
-
-  grid::GridMetrics detail_;
-  std::vector<Slot> slots_;
-  std::unordered_map<PartitionLabel, std::vector<std::size_t>> of_;
-  std::unordered_map<PartitionLabel, std::vector<Chord>> chords_;
-  /// The place each slot sits at, as an index shared by every slot on it.
-  std::vector<std::size_t> place_;
-  std::vector<bool> taken_;
-  std::vector<std::size_t> owner_;
-  std::vector<double> history_;
+  grid::GridMetrics detailGrid;
+  std::vector<Slot> slotList;
+  std::unordered_map<PartitionLabel, std::vector<std::size_t>> slotsByPartition;
+  std::unordered_map<PartitionLabel, std::vector<Chord>> chordsByPartition;
+  /// The wire that holds each slot, or NO_OWNER.
+  std::vector<std::size_t> slotOwner;
+  /// What wanting each slot has added to its price so far.
+  std::vector<double> slotHistory;
+  /// For each slot, the other slots that lie closer than one crossing pitch.
+  std::vector<std::vector<std::size_t>> nearbySlots;
 };
 
-/// The tuning the stage reads, with the prototype's own figures as defaults.
+/// The tuning the stage reads.
 struct Sweeps {
   std::uint32_t rounds = 12;
-  std::uint32_t maxRelaxation = 30;
+  /// The relaxation that the configuration asks for.
+  std::uint32_t askedRelaxation = 4;
+  /// The relaxation that the sweeps use: the asked one, but fewer than half
+  /// the connections, and at least one where two or more connections compete.
+  std::uint32_t maxRelaxation = 4;
 };
 
-[[nodiscard]] Sweeps sweepsOf(const ConfigT& config) {
+/// Reads the tuning and limits the relaxation to fewer than half of the
+/// `connections`, but to at least one when there are two or more.
+///
+/// A wire without a way rips up neighbors until it fits. When it may rip up
+/// all the others, it takes their room, they find no way back, and every
+/// round repeats this. Fewer than half leaves at least as many wires in place
+/// as the sweep takes out. Two connections still get one: otherwise neither
+/// could ever move the other aside, and a wire that takes the slot of the
+/// other would keep it in every round.
+[[nodiscard]] Sweeps sweepsOf(const ConfigT& config,
+                              const std::size_t connections) {
+  Sweeps sweeps;
   if (config.stages != nullptr && config.stages->corridor != nullptr) {
     const auto& params = *config.stages->corridor;
-    return {.rounds = params.rounds, .maxRelaxation = params.max_relaxation};
+    sweeps.rounds = params.rounds;
+    sweeps.askedRelaxation = params.max_relaxation;
   }
-  return {};
+  const auto limit =
+      connections < 2 ? 0 : std::max<std::size_t>(1, (connections - 1) / 2);
+  sweeps.maxRelaxation = static_cast<std::uint32_t>(
+      std::min<std::size_t>(sweeps.askedRelaxation, limit));
+  return sweeps;
 }
 
-/// The labels of the plan's partitions, back on the detail grid.
-[[nodiscard]] std::vector<PartitionLabel>
-labelsOf(const CapacityPlanT& plan, const grid::GridMetrics& detail) {
+/// Checks that every connection of an assignment names a port of the chip.
+///
+/// @throws std::invalid_argument When a connection is missing or names a port
+/// the chip does not carry.
+void requirePortsOfChip(const AssignmentT& assignment, const ChipT& chip) {
+  for (std::size_t index = 0; index < assignment.connections.size(); ++index) {
+    const auto* connection = assignment.connections[index].get();
+    if (connection == nullptr) {
+      throw std::invalid_argument(
+          std::format("the assignment has no connection {}", index));
+    }
+    if (connection->target.index() >= chip.ports.size()) {
+      throw std::invalid_argument(std::format(
+          "the assignment does not fit the chip: connection {} names port {} "
+          "of {}",
+          index, connection->target.index(), chip.ports.size()));
+    }
+  }
+}
+
+/// Checks that a plan was made on the detail grid that the stage rebuilds from
+/// the chip and the configuration.
+///
+/// The plan carries its geometry in layout units, so a plan from another grid
+/// still reads, but its outlines and borders no longer fall on cell edges.
+///
+/// @throws std::invalid_argument When the two grids differ.
+void requireSameGrid(const CapacityPlanT& plan,
+                     const grid::GridMetrics& detail) {
+  const auto* extent = plan.detail_grid.get();
+  if (extent == nullptr) {
+    throw std::invalid_argument("the capacity plan has no detail grid");
+  }
+  if (extent->width != detail.width || extent->height != detail.height ||
+      extent->origin != detail.origin ||
+      extent->cell_width != detail.cellWidth ||
+      extent->cell_height != detail.cellHeight) {
+    throw std::invalid_argument(std::format(
+        "the capacity plan was made on a detail grid of {}x{} cells of "
+        "{:.6g}x{:.6g} and the configuration asks for {}x{} cells of "
+        "{:.6g}x{:.6g}",
+        extent->width, extent->height, extent->cell_width, extent->cell_height,
+        detail.width, detail.height, detail.cellWidth, detail.cellHeight));
+  }
+}
+
+/// The labels of the partitions of the plan, back on the detail grid.
+///
+/// @throws std::invalid_argument When a partition falls apart into pieces
+/// that do not touch. The search treats a partition as one region, and would
+/// otherwise draw a chord from one piece to the other.
+[[nodiscard]] std::vector<PartitionLabel> labelsOf(const CapacityPlanT& plan,
+                                                   const CapacityScene& scene) {
+  const auto& detail = scene.detail;
   std::vector<grid::PartitionOutline> outlines;
   for (const auto& partition : plan.partitions) {
     for (const auto& ring : partition->outlines) {
@@ -700,22 +764,37 @@ labelsOf(const CapacityPlanT& plan, const grid::GridMetrics& detail) {
           .label = static_cast<PartitionLabel>(partition->label), .ring = {}};
       outline.ring.reserve(ring->vertices.size());
       for (const auto& vertex : ring->vertices) {
-        outline.ring.push_back(detail.toCell(vertex));
+        outline.ring.push_back(grid::layoutToCorner(detail, vertex));
       }
       outlines.push_back(std::move(outline));
     }
   }
-  return grid::rasterizePartitions(outlines, detail);
+  auto labels = grid::rasterizePartitions(outlines, detail);
+
+  auto highest = grid::FIRST_PARTITION_LABEL;
+  for (const auto label : labels) {
+    highest = std::max(highest, label);
+  }
+  auto pieces = labels;
+  if (grid::separatePartitionPieces(scene.blocked, pieces, detail,
+                                    grid::nextPartitionLabel(highest)) !=
+      grid::nextPartitionLabel(highest)) {
+    const auto cell = std::ranges::mismatch(labels, pieces).in1;
+    throw std::invalid_argument(
+        std::format("partition {} of the capacity plan falls apart into "
+                    "pieces that do not touch",
+                    *cell));
+  }
+  return labels;
 }
 
 /// The partition a cell lies in, or the nearest one when the cell itself
 /// carries no label.
 ///
-/// A feed sits between two launchers and a target was dug out of the band
-/// its port reserved, so either can land a cell short of the free space the
-/// partitions were traced from. The prototype leaves such a wire unroutable
-/// for good; here the search starts from the nearest cell that is in a
-/// partition, growing a square until it finds one.
+/// A feed sits between two launchers, and a target was placed beyond the
+/// band of its port, so either can land a cell short of the free space the
+/// partitions were traced from. The search then starts from the nearest cell
+/// that lies in a partition, in a square that grows until it finds one.
 [[nodiscard]] PartitionLabel
 partitionAt(const std::vector<PartitionLabel>& labels,
             const grid::GridMetrics& grid, const std::size_t cell,
@@ -723,7 +802,7 @@ partitionAt(const std::vector<PartitionLabel>& labels,
   if (labels[cell] != LABEL_NONE) {
     return labels[cell];
   }
-  const auto centre = grid.cell(cell);
+  const auto center = grid.cell(cell);
   for (std::uint32_t radius = 1; radius <= reach; ++radius) {
     const auto span = static_cast<std::int64_t>(radius);
     for (std::int64_t dy = -span; dy <= span; ++dy) {
@@ -731,8 +810,8 @@ partitionAt(const std::vector<PartitionLabel>& labels,
         if (std::max(std::abs(dx), std::abs(dy)) != span) {
           continue;
         }
-        const auto x = static_cast<std::int64_t>(centre.x()) + dx;
-        const auto y = static_cast<std::int64_t>(centre.y()) + dy;
+        const auto x = static_cast<std::int64_t>(center.x()) + dx;
+        const auto y = static_cast<std::int64_t>(center.y()) + dy;
         if (!grid.contains(x, y)) {
           continue;
         }
@@ -747,13 +826,26 @@ partitionAt(const std::vector<PartitionLabel>& labels,
   return LABEL_NONE;
 }
 
-/// The centre of a cell, in the corner coordinates the partition geometry
-/// and the crossing slots share.
+/// The center of a cell, in the corner coordinates that the partition
+/// geometry and the crossing slots share.
 [[nodiscard]] Place placeOf(const grid::GridMetrics& grid,
                             const std::size_t cell) {
   const auto coordinate = grid.cell(cell);
   return {.x = static_cast<double>(coordinate.x()) + 0.5,
           .y = static_cast<double>(coordinate.y()) + 0.5};
+}
+
+/// How many wires are still without a way.
+[[nodiscard]] std::size_t
+unrouted(const std::vector<std::optional<Route>>& routes) {
+  return static_cast<std::size_t>(std::ranges::count_if(
+      routes, [](const auto& route) { return !route.has_value(); }));
+}
+
+/// The figure of how many wires have a way, such as "routed 56/58".
+[[nodiscard]] Figure routedFigure(const std::size_t left,
+                                  const std::size_t total) {
+  return {.text = std::format("routed {}/{}", total - left, total)};
 }
 
 /// The corridor router of the first release.
@@ -763,89 +855,129 @@ public:
                                      const CapacityPlanT& capacity,
                                      const AssignmentT& assignment,
                                      const ConfigT& config,
-                                     const Progress& progress) const override {
+                                     const Report& report) const override {
+    report.progress("rasterizing the chip", "", 0, 0);
     const auto scene = buildScene(chip, config);
-    const auto labels = labelsOf(capacity, scene.detail);
+    report.progress("rasterizing the partitions", "", 0, 0);
+    requireSameGrid(capacity, scene.detail);
+    requirePortsOfChip(assignment, chip);
+    const auto labels = labelsOf(capacity, scene);
 
     const auto requests = requestsOf(scene, assignment, labels);
 
-    Corridors corridors(capacity, scene.detail, crossingPitch(config),
-                        ringOf(requests));
-    openPockets(corridors, chip, scene, labels);
+    Corridors corridors(capacity, scene, crossingPitch(config));
+
+    const auto sweeps = sweepsOf(config, requests.size());
+    if (report.wants(Detail::Steps)) {
+      report.line(
+          Detail::Steps,
+          std::format("{}{}{}{}{}", counted(requests.size(), "connection"),
+                      FIGURE_SEPARATOR,
+                      counted(capacity.partitions.size(), "partition"),
+                      FIGURE_SEPARATOR,
+                      counted(corridors.slots().size(), "crossing slot")));
+      report.line(
+          Detail::Steps,
+          std::format("rounds {}{}max relaxation {}{}", sweeps.rounds,
+                      FIGURE_SEPARATOR, sweeps.maxRelaxation,
+                      sweeps.maxRelaxation < sweeps.askedRelaxation
+                          ? std::format(" of {}", sweeps.askedRelaxation)
+                          : ""));
+    }
 
     std::vector<std::optional<Route>> routes(requests.size());
-    const auto sweeps = sweepsOf(config);
-    const auto began = std::chrono::steady_clock::now();
-    const auto say = [&progress, &began](const std::string& line) {
-      if (progress) {
-        progress(std::format("[corridor] {:8.2f}s  {}",
-                             std::chrono::duration<double>(
-                                 std::chrono::steady_clock::now() - began)
-                                 .count(),
-                             line));
-      }
-    };
-    say(std::format("{} connections over {} partitions, up to {} rounds, {} "
-                    "relaxations",
-                    requests.size(), capacity.partitions.size(), sweeps.rounds,
-                    sweeps.maxRelaxation));
+    // A round can rip up more wires than it places again, so the fails of
+    // the rounds go up and down, and on a crowded chip two rounds can undo
+    // each other until the last. The plan of the round with the fewest fails
+    // is kept, the latest of them on a tie. Its fails include the wires that
+    // the round ripped after its sweep had passed them, and so did not place
+    // again.
+    auto best = routes;
+    auto bestLeft = requests.size();
+    std::uint32_t bestRound = 0;
+    std::uint32_t rounds = 0;
     for (std::uint32_t round = 0; round < sweeps.rounds; ++round) {
       const auto forward = (round % 2) == 0;
+      const auto name = std::format("round {} {}", round + 1,
+                                    forward ? "forward" : "backward");
       for (std::size_t step = 0; step < requests.size(); ++step) {
+        report.progress(name, "", step, requests.size());
         const auto index = forward ? step : requests.size() - 1 - step;
         reroute(corridors, requests, routes, index, forward, sweeps);
       }
-      say(std::format(
-          "round {} {}: routed {} of {}", round,
-          forward ? "forward " : "backward",
-          std::ranges::count_if(
-              routes, [](const auto& route) { return route.has_value(); }),
-          requests.size()));
+      report.progress(name, "", requests.size(), requests.size());
+      ++rounds;
+      const auto left = unrouted(routes);
+      report.entry(
+          Detail::Summary, name,
+          {routedFigure(left, requests.size()), verdict("fails", left)});
+      if (left <= bestLeft) {
+        best = routes;
+        bestLeft = left;
+        bestRound = rounds;
+      }
       // Only a round that routes everything ends the sweeps. A round in which
       // nothing moved is not the end: a wire that found no way charged the
       // slots it wanted, and it takes several such rounds before the charge
-      // is high enough to move the wire standing on one.
-      if (std::ranges::all_of(
-              routes, [](const auto& route) { return route.has_value(); })) {
+      // is high enough to move the wire that stands on one.
+      if (left == 0) {
         break;
       }
     }
+    if (unrouted(routes) > bestLeft) {
+      restore(corridors, requests, routes, best);
+      report.entry(Detail::Summary, std::format("back to round {}", bestRound),
+                   {routedFigure(bestLeft, requests.size()),
+                    verdict("fails", bestLeft)});
+    }
 
-    // A wire the sweep ripped on its way past is left for the sweep to place
-    // again, and the last round has no sweep after it. Every wire still
-    // without a way is therefore offered the room the others left, and only
-    // that: this pass takes nothing from anyone, so it can be repeated until
-    // it places nothing more.
-    const auto beforeRescue = std::ranges::count_if(
-        routes, [](const auto& route) { return route.has_value(); });
-    for (auto placed = true; placed;) {
-      placed = false;
-      for (std::size_t index = 0; index < requests.size(); ++index) {
-        if (routes[index].has_value()) {
-          continue;
-        }
-        if (auto found = corridors.route(requests[index]); found.has_value()) {
-          corridors.commit(requests[index], *found);
-          routes[index] = std::move(found);
-          placed = true;
-        }
+    // A wire that a sweep ripped up after it had passed the wire can find
+    // free slots in the plan that the stage keeps, for example where the wire
+    // that took its way moved on later in the round. One last pass offers
+    // every wire without a way the free slots only. It rips up nothing, so it
+    // can only lower the fails.
+    std::size_t placed = 0;
+    for (std::size_t index = 0; index < requests.size(); ++index) {
+      report.progress("free slots", "", index, requests.size());
+      if (routes[index].has_value()) {
+        continue;
+      }
+      if (auto found = corridors.route(requests[index]); found.has_value()) {
+        corridors.commit(requests[index], *found);
+        routes[index] = std::move(found);
+        ++placed;
       }
     }
-
-    const auto afterRescue = std::ranges::count_if(
-        routes, [](const auto& route) { return route.has_value(); });
-    if (afterRescue != beforeRescue) {
-      say(std::format("the rescue placed {} more", afterRescue - beforeRescue));
+    report.progress("free slots", "", requests.size(), requests.size());
+    if (placed > 0) {
+      const auto after = unrouted(routes);
+      report.entry(
+          Detail::Summary, "free slots",
+          {routedFigure(after, requests.size()), verdict("fails", after)});
     }
-    exchange(corridors, requests, routes, sweeps);
-    const auto placed = std::ranges::count_if(
-        routes, [](const auto& route) { return route.has_value(); });
-    // The stage's summary. A corridor has no clearance to break, so its fails
-    // are the connections without a way.
-    const auto unrouted = requests.size() - static_cast<std::size_t>(placed);
-    say(std::format("{} of {} connections have a way through the partitions, "
-                    "{} unrouted | Fails: {}",
-                    placed, requests.size(), unrouted, unrouted));
+
+    // A corridor has no clearance to break, so the fails of the stage are the
+    // connections without a way.
+    const auto left = unrouted(routes);
+
+    if (report.wants(Detail::Items)) {
+      for (std::size_t index = 0; index < requests.size(); ++index) {
+        const auto& label =
+            chip.ports[assignment.connections[index]->target.index()]->label;
+        if (!routes[index].has_value()) {
+          report.entry(Detail::Items, label,
+                       {{.text = "unrouted", .tone = Tone::Bad}});
+          continue;
+        }
+        report.entry(
+            Detail::Items, label,
+            {{.text = counted(routes[index]->partitions.size(), "partition")},
+             {.text = counted(routes[index]->slots.size(), "crossing")}});
+      }
+    }
+    report.result({routedFigure(left, requests.size()),
+                   {.text = counted(rounds, "round")}},
+                  left);
     return artifactOf(corridors, capacity, requests, routes, scene.detail);
   }
 
@@ -853,183 +985,54 @@ private:
   /// How far from its own cell a feed or a target may look for a partition.
   static constexpr std::uint32_t LABEL_REACH = 8;
 
-  /// How far along its own approach a target may look for a way out of the
-  /// pocket its port's band closed around it, in cells of the detail grid.
-  static constexpr std::uint32_t POCKET_REACH = 64;
-
-  /// How many wires are still without a way.
-  [[nodiscard]] static std::size_t
-  unrouted(const std::vector<std::optional<Route>>& routes) {
-    return static_cast<std::size_t>(std::ranges::count_if(
-        routes, [](const auto& route) { return !route.has_value(); }));
-  }
-
-  /// Put the plan back exactly as it was.
+  /// Puts the plan back exactly as it was.
   static void restore(Corridors& corridors,
                       const std::vector<Request>& requests,
                       std::vector<std::optional<Route>>& routes,
                       const std::vector<std::optional<Route>>& before) {
-    for (std::size_t i = 0; i < routes.size(); ++i) {
-      if (routes[i].has_value()) {
-        corridors.withdraw(requests[i], *routes[i]);
-        routes[i].reset();
-      }
-    }
-    for (std::size_t i = 0; i < before.size(); ++i) {
-      if (before[i].has_value()) {
-        corridors.commit(requests[i], *before[i]);
-        routes[i] = before[i];
-      }
-    }
-  }
-
-  /// Offer every wire still without a way a swap with the wires in its own
-  /// way, and keep the swap only when fewer wires are left over.
-  static void exchange(Corridors& corridors,
-                       const std::vector<Request>& requests,
-                       std::vector<std::optional<Route>>& routes,
-                       const Sweeps& sweeps) {
-    for (std::size_t index = 0; index < requests.size(); ++index) {
+    for (std::size_t index = 0; index < routes.size(); ++index) {
       if (routes[index].has_value()) {
-        continue;
+        corridors.withdraw(requests[index], *routes[index]);
+        routes[index].reset();
       }
-      const auto wanted =
-          corridors.route(requests[index], corridors.displacementPrice());
-      if (!wanted.has_value()) {
-        continue;
-      }
-      const auto before = routes;
-      for (const auto blocker :
-           corridors.blockersOf(requests[index], *wanted)) {
-        if (routes[blocker].has_value()) {
-          corridors.withdraw(requests[blocker], *routes[blocker]);
-          routes[blocker].reset();
-        }
-      }
-      if (auto found = corridors.route(requests[index]); found.has_value()) {
-        corridors.commit(requests[index], *found);
-        routes[index] = std::move(found);
-      }
-      for (auto left = unrouted(routes) + 1; unrouted(routes) < left;) {
-        left = unrouted(routes);
-        for (std::size_t other = 0; other < requests.size(); ++other) {
-          if (!routes[other].has_value()) {
-            reroute(corridors, requests, routes, other, true, sweeps);
-          }
-        }
-      }
-      if (unrouted(routes) >= unrouted(before)) {
-        restore(corridors, requests, routes, before);
+    }
+    for (std::size_t index = 0; index < before.size(); ++index) {
+      if (before[index].has_value()) {
+        corridors.commit(requests[index], *before[index]);
+        routes[index] = before[index];
       }
     }
   }
 
-  /// Give every target that no border reaches a way out along its own port's
-  /// approach.
-  ///
-  /// The walk goes forward from the target the way the port faces, over the
-  /// cells the band took, until it reaches a cell that some partition holds.
-  /// That cell is the far side, and the last cell of the band before it is
-  /// where the wire crosses. A target the walk does not get out of stays
-  /// unreachable, which is then geometry rather than bookkeeping.
-  static void openPockets(Corridors& corridors, const ChipT& chip,
-                          const CapacityScene& scene,
-                          const std::vector<PartitionLabel>& labels) {
-    for (std::size_t i = 0; i < scene.targetCell.size(); ++i) {
-      const auto inside = labels[scene.targetCell[i]];
-      if (inside == LABEL_NONE || !corridors.slotsOfPartition(inside).empty()) {
-        continue;
-      }
-      const auto& port = *chip.ports[scene.targetPort[i]];
-      const auto step = grid::orientationStep(port.orientation);
-      auto cell = scene.detail.cell(scene.targetCell[i]);
-      auto x = static_cast<std::int64_t>(cell.x());
-      auto y = static_cast<std::int64_t>(cell.y());
-      auto lastX = x;
-      auto lastY = y;
-      for (std::uint32_t reach = 0; reach < POCKET_REACH; ++reach) {
-        lastX = x;
-        lastY = y;
-        x += step.x;
-        y += step.y;
-        if (!scene.detail.contains(x, y)) {
-          break;
-        }
-        const auto index = scene.detail.index(static_cast<std::uint32_t>(x),
-                                              static_cast<std::uint32_t>(y));
-        if (const auto beyond = labels[index];
-            beyond != LABEL_NONE && beyond != inside) {
-          corridors.addChannel({.x = static_cast<double>(lastX) + 0.5,
-                                .y = static_cast<double>(lastY) + 0.5},
-                               inside, beyond);
-          break;
-        }
-      }
-    }
-  }
-
-  /// The rectangle the ports feed from, in cells of the detail grid.
-  ///
-  /// A wire with no feed point says nothing about where the ring runs, and a
-  /// run in which no wire has one has nothing to route; the ring is then the
-  /// whole grid, which changes nothing.
-  [[nodiscard]] static Bounds ringOf(const std::vector<Request>& requests) {
-    auto found = false;
-    Bounds ring;
-    for (const auto& request : requests) {
-      if (!request.fed) {
-        continue;
-      }
-      if (!found) {
-        ring = {.minX = request.feed.x,
-                .minY = request.feed.y,
-                .maxX = request.feed.x,
-                .maxY = request.feed.y};
-        found = true;
-        continue;
-      }
-      ring.minX = std::min(ring.minX, request.feed.x);
-      ring.minY = std::min(ring.minY, request.feed.y);
-      ring.maxX = std::max(ring.maxX, request.feed.x);
-      ring.maxY = std::max(ring.maxY, request.feed.y);
-    }
-    if (!found) {
-      const auto limit = std::numeric_limits<double>::max();
-      return {.minX = -limit, .minY = -limit, .maxX = limit, .maxY = limit};
-    }
-    return ring;
-  }
-
+  /// One request per connection of the assignment, in its order.
   [[nodiscard]] static std::vector<Request>
   requestsOf(const CapacityScene& scene, const AssignmentT& assignment,
              const std::vector<PartitionLabel>& labels) {
     std::unordered_map<std::uint32_t, std::size_t> cellOfPort;
-    for (std::size_t i = 0; i < scene.targetPort.size(); ++i) {
-      cellOfPort.emplace(scene.targetPort[i], scene.targetCell[i]);
+    for (std::size_t index = 0; index < scene.targetPort.size(); ++index) {
+      cellOfPort.emplace(scene.targetPort[index], scene.targetCell[index]);
     }
 
     std::vector<Request> requests;
     requests.reserve(assignment.connections.size());
-    for (std::size_t i = 0; i < assignment.connections.size(); ++i) {
-      Request request{.connection = i};
+    for (std::size_t index = 0; index < assignment.connections.size();
+         ++index) {
+      Request request;
+      request.connection = index;
       const auto target =
-          cellOfPort.find(assignment.connections[i]->target.index());
-      if (target == cellOfPort.end()) {
-        requests.push_back(request);
-        continue;
+          cellOfPort.find(assignment.connections[index]->target.index());
+      if (target != cellOfPort.end()) {
+        request.target = placeOf(scene.detail, target->second);
+        request.targetPartition =
+            partitionAt(labels, scene.detail, target->second, LABEL_REACH);
       }
-      request.target = placeOf(scene.detail, target->second);
-      request.targetPartition =
-          partitionAt(labels, scene.detail, target->second, LABEL_REACH);
-
-      if (i < assignment.feeds.size()) {
-        if (const auto feed = scene.detail.roundToCell(assignment.feeds[i]);
+      if (index < assignment.feeds.size()) {
+        if (const auto feed = scene.detail.roundToCell(assignment.feeds[index]);
             feed.has_value()) {
           const auto cell = scene.detail.index(feed->x(), feed->y());
           request.feed = placeOf(scene.detail, cell);
           request.feedPartition =
               partitionAt(labels, scene.detail, cell, LABEL_REACH);
-          request.fed = true;
         }
       }
       requests.push_back(request);
@@ -1037,12 +1040,11 @@ private:
     return requests;
   }
 
-  /// Take one wire out, route it again, and rip up its neighbours when that
-  /// is what it takes.
+  /// Takes one wire out, routes it again, and rips up its neighbors when
+  /// that is what it takes.
   ///
-  /// A wire that fails puts every neighbour it ripped back exactly as it was,
-  /// so a failed attempt costs the plan nothing, and it keeps the way it had
-  /// when that still fits.
+  /// A wire that fails puts every neighbor it ripped back as it was, so a
+  /// failed attempt costs the plan nothing, and it keeps the way it had.
   static void reroute(Corridors& corridors,
                       const std::vector<Request>& requests,
                       std::vector<std::optional<Route>>& routes,
@@ -1061,23 +1063,23 @@ private:
     }
 
     // Nothing free reaches the target. The wires ahead of this one in the
-    // sweep are taken out one after another until it fits; they are the ones
-    // the sweep has not settled yet, so it gives each of them a new way
-    // before the round is over.
+    // sweep are taken out one after another until it fits. The sweep has not
+    // settled them yet, so it gives each of them a new way before the round
+    // is over. Near the end of the sweep the count runs on past the last wire
+    // to the first ones, which this round has passed; those wait for the
+    // next round or the free-slot pass. The relaxation stays below the number
+    // of connections, so the count never comes back to this wire.
     std::vector<std::pair<std::size_t, Route>> ripped;
     const auto total = static_cast<std::int64_t>(requests.size());
     for (std::uint32_t relax = 1; relax <= sweeps.maxRelaxation; ++relax) {
       const auto offset = static_cast<std::int64_t>(relax) * (forward ? 1 : -1);
-      const auto neighbour = static_cast<std::size_t>(
-          ((static_cast<std::int64_t>(index) + offset) % total + total) %
+      const auto neighbor = static_cast<std::size_t>(
+          (((static_cast<std::int64_t>(index) + offset) % total) + total) %
           total);
-      if (neighbour == index) {
-        break;
-      }
-      if (routes[neighbour].has_value()) {
-        corridors.withdraw(requests[neighbour], *routes[neighbour]);
-        ripped.emplace_back(neighbour, *routes[neighbour]);
-        routes[neighbour].reset();
+      if (routes[neighbor].has_value()) {
+        corridors.withdraw(requests[neighbor], *routes[neighbor]);
+        ripped.emplace_back(neighbor, *routes[neighbor]);
+        routes[neighbor].reset();
       }
       if (auto found = corridors.route(request); found.has_value()) {
         corridors.commit(request, *found);
@@ -1091,11 +1093,12 @@ private:
       routes[other] = route;
     }
 
-    // The sweep takes out whoever stands beside this wire in the ring, which
-    // is rarely who stands in its way. Ask instead: the route it would take on
-    // an empty chip names the wires holding a slot it wants and the ones whose
-    // chords it would have to cross. Those come out one at a time, and the
-    // sweep gives each of them a way of its own.
+    // The sweep takes out whoever stands beside this wire on the ring, which
+    // is rarely who stands in its way. The route with the fewest blocked
+    // steps names the wires that hold a slot it wants and the ones whose
+    // chords it would cross. Those come out one at a time. The sweep gives a
+    // way of its own to each of them that it has not passed yet; one that it
+    // has passed waits for the next round or the free-slot pass.
     std::vector<std::pair<std::size_t, Route>> displaced;
     std::optional<Route> wanted;
     for (std::uint32_t attempt = 0; attempt < sweeps.maxRelaxation; ++attempt) {
@@ -1112,6 +1115,10 @@ private:
           break;
         }
       }
+      // A way that no routed wire blocks is free, so the free search above
+      // finds it too unless it gave up on unsound ways first. The wire then
+      // keeps the way it had, and a later round or the free-slot pass tries
+      // again.
       if (!blocker.has_value()) {
         break;
       }
@@ -1129,13 +1136,13 @@ private:
       routes[other] = route;
     }
     if (wanted.has_value()) {
-      corridors.chargeFor(*wanted);
+      corridors.chargeFor(request, *wanted);
     }
 
-    // Nothing worked, so the wire keeps the way it had if that still fits. It
-    // was taken out at the top of the attempt, and a wire earlier in the
-    // sweep may have taken part of it since; only then is it left out.
-    if (before.has_value() && corridors.fits(request, *before)) {
+    // Nothing worked, so the wire gets back the way it had. Every wire that
+    // came out above went back to its own way, so the plan is the plan at
+    // the top of the attempt without this wire, and the old way fits again.
+    if (before.has_value()) {
       corridors.commit(request, *before);
       routes[index] = before;
     }
@@ -1147,24 +1154,25 @@ private:
              const std::vector<std::optional<Route>>& routes,
              const grid::GridMetrics& detail) {
     const auto layoutOf = [&detail](const Place& place) {
-      return std::make_unique<fbg::Point>(detail.toLayout(place.x, place.y));
+      return std::make_unique<fbg::Point>(
+          grid::cornerToLayout(detail, place.x, place.y));
     };
 
     CorridorRoutingT routing;
     routing.corridors.reserve(routes.size());
-    for (std::size_t i = 0; i < routes.size(); ++i) {
+    for (std::size_t index = 0; index < routes.size(); ++index) {
       auto corridor = std::make_unique<fba::CorridorT>();
-      if (requests[i].feedPartition != LABEL_NONE) {
-        corridor->source = layoutOf(requests[i].feed);
+      if (requests[index].feedPartition != LABEL_NONE) {
+        corridor->source = layoutOf(requests[index].feed);
       }
-      if (requests[i].targetPartition != LABEL_NONE) {
-        corridor->target = layoutOf(requests[i].target);
+      if (requests[index].targetPartition != LABEL_NONE) {
+        corridor->target = layoutOf(requests[index].target);
       }
-      if (routes[i].has_value()) {
-        for (const auto partition : routes[i]->partitions) {
+      if (routes[index].has_value()) {
+        for (const auto partition : routes[index]->partitions) {
           corridor->partitions.push_back(partition);
         }
-        for (const auto slot : routes[i]->slots) {
+        for (const auto slot : routes[index]->slots) {
           corridor->crossings.push_back(corridors.layoutOf(slot));
         }
       }
@@ -1173,17 +1181,8 @@ private:
 
     std::vector<std::unique_ptr<fba::BorderSlotsT>> perBorder(
         capacity.borders.size());
-    // The ways out of the pockets are on no border of the plan, so they are
-    // listed together and marked, rather than filed under a border they do
-    // not belong to.
-    auto pockets = std::make_unique<fba::BorderSlotsT>();
-    pockets->pocket = true;
     for (std::size_t id = 0; id < corridors.slots().size(); ++id) {
       const auto border = corridors.slots()[id].border;
-      if (border == NO_BORDER) {
-        pockets->positions.push_back(corridors.layoutOf(id));
-        continue;
-      }
       if (perBorder[border] == nullptr) {
         perBorder[border] = std::make_unique<fba::BorderSlotsT>();
         perBorder[border]->border = border;
@@ -1194,9 +1193,6 @@ private:
       if (slots != nullptr) {
         routing.slots.push_back(std::move(slots));
       }
-    }
-    if (!pockets->positions.empty()) {
-      routing.slots.push_back(std::move(pockets));
     }
     return routing;
   }

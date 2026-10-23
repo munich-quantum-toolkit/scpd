@@ -11,8 +11,8 @@
 // a shipped configuration carries only what differs from them, except
 // [design_rules], which is always written out in full.
 //
-// The component and DRC parameters of that section arrive with the stages
-// that read them, appended to Config.
+// The parameters of a stage arrive with the stage that reads them, appended to
+// StageParams; the design-rule check appends its own later.
 
 include "design.fbs";
 
@@ -23,9 +23,9 @@ table PortPatterns {
   launcher: string (required);
   resonator: string (required);
   conventional: string (required);
-  /// The ports a wire crosses a component at, rather than ends at. Optional:
-  /// a chip whose components carry no crossing declares none. Which two of
-  /// these ports pair is PortConfig.bridge_pairs.
+  /// The ports where a wire crosses a component, rather than ends at it.
+  /// Optional: a chip whose components carry no crossing declares none.
+  /// PortConfig.bridge_pairs says which two of these ports pair.
   bridge_pair: string;
   /// The component a port belongs to, as one capture group over the label.
   /// A port whose label the pattern does not match carries no component.
@@ -33,13 +33,12 @@ table PortPatterns {
 }
 
 /// One rule that pairs the two ports a wire crosses a component between.
-/// Each side is a regular expression with exactly one capture group, and two
+/// Each side is a regular expression with exactly one capture group. Two
 /// ports pair when they belong to one component and their captures are equal.
 ///
 /// The pairing is declared rather than measured. Opposite orientation and
-/// shortest distance do pick the right two ports on the benchmark chips, but
-/// they are a property of the artwork and not a statement of intent, and
-/// nothing checked that the two agreed.
+/// shortest distance pick the right two ports on the benchmark chips, but
+/// they are a property of the artwork and not a statement of intent.
 table BridgeRule {
   first: string (required);
   second: string (required);
@@ -56,8 +55,8 @@ table PortSequences {
 table PortConfig {
   patterns: PortPatterns (required);
   sequences: PortSequences (required);
-  /// How the ports the bridge_pair pattern names pair off, in the order the
-  /// rules are applied. Empty when the chip declares no bridge ports.
+  /// How the ports of the bridge_pair pattern pair off, in the order the rules
+  /// apply. Empty when the chip declares no bridge ports.
   bridge_pairs: [BridgeRule];
 }
 
@@ -65,12 +64,12 @@ table GridParams {
   capacity_cells_x: uint32 = 50;
   /// Zero derives the value from the chip aspect ratio.
   capacity_cells_y: uint32 = 0;
-  launcher_offset_x: uint32 = 15;
-  launcher_offset_y: uint32 = 15;
+  /// Read by no stage. A blocked border along the edge of the grid walls in
+  /// the launchers that sit there. The slots keep the table layout.
+  launcher_offset_x: uint32 = 15 (deprecated);
+  launcher_offset_y: uint32 = 15 (deprecated);
   /// Cells of the detail grid per cell of the capacity grid, along each axis.
   detail_factor: uint32 = 30;
-  /// How wide a cell of the router grid may be, in layout units.
-  ///
   /// Every capacity cell is divided into as many router cells as it holds
   /// steps of this size, rounded up, so a router cell is never wider than it.
   /// The prototype passes the same figure to `FinalGrid`'s constructor as
@@ -80,73 +79,57 @@ table GridParams {
   router_cell_size: double = 10.0;
 }
 
-/// What the Capacity stage is allowed to do.
+/// What the Capacity stage may do.
 table CapacityParams {
-  /// The implementation, by the name it is registered under.
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
   planner: string;
   /// A place on the medial axis is a bottleneck only where the free radius
-  /// around it is below this many wire pitches, a pitch being one wire
-  /// spacing plus one obstacle spacing.
+  /// around it is below this many wire pitches. A pitch is one wire spacing
+  /// plus one obstacle spacing.
   ///
-  /// The prototype used a fixed count of grid cells here, which is not a
-  /// length: the same literal admitted a radius of 235 layout units on the
-  /// 4-qubit grid and 484 on the 9-qubit one, purely because the two grids
-  /// have different cell sizes. The default below is the middle of that
-  /// range as a physical distance, and reproduces the prototype's own
-  /// bottleneck count on both.
+  /// The default gives the bottleneck count of the research prototype on the
+  /// 4-qubit and the 9-qubit chip.
   bottleneck_clearance: double = 1.5;
-  /// How far apart the places a wire may cross a partition border sit, in
-  /// layout units.
+  /// How far apart the places sit where a wire may cross a partition border,
+  /// in layout units.
   ///
-  /// This is a planning pitch and **not** a clearance rule. It decides how
-  /// finely a border is divided for the Corridor stage and therefore how many
-  /// wires `PartitionBorder.budget` says it carries; where a wire actually
-  /// runs, and how far it keeps from its neighbour, the detail router decides
-  /// and the design-rule check verifies.
+  /// It decides how finely a border is divided for the Corridor stage, and so
+  /// how many wires PartitionBorder.budget lets through. The Corridor stage
+  /// keeps the crossings of two wires at least one crossing pitch apart, also
+  /// where two borders meet. The pitch applies to crossings only: a wire may
+  /// cross a border closer than one pitch to the target cell or the feed of
+  /// another wire. Where a wire runs inside a partition, and the clearance of
+  /// the drawn wire, the later routing stages decide.
   ///
-  /// The default is the prototype's own figure. It divides a border at its
-  /// wire spacing less twenty units and records no reason for the twenty; on
-  /// the 45-qubit chip the difference is one wire that has a way through and
-  /// one that has none.
+  /// The default is the figure of the research prototype: its wire spacing
+  /// less 20 layout units.
   crossing_pitch: double = 165.0;
 }
 
-/// What the Global stage is allowed to do.
+/// What the Global stage may do.
 table GlobalParams {
-  /// The implementation, by the name it is registered under.
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
   router: string;
-  /// Whether an inner wire may cross a component the outer ring does not
+  /// Whether an inner wire may cross a component that the outer ring does not
   /// reach, through one of that component's own bridges.
   ///
-  /// Off by default. Such a crossing is a wire that enters a coupler the
-  /// assignment never sees and leaves on the far side, so where it runs is
-  /// decided by nothing the later stages can read back. The prototype allows
-  /// it and has no way to say otherwise.
+  /// Off by default. Such a wire enters a coupler that the assignment never
+  /// sees and leaves on the far side, so nothing a later stage reads says
+  /// where it runs.
   internal_bridges: bool = false;
 }
 
-/// What the Assignment stage is allowed to do.
+/// What the Assignment stage may do.
 table AssignmentParams {
-  /// The implementation, by the name it is registered under.
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
   assigner: string;
-  /// How many launchers the assignment activates. Per chip.
+  /// How many feedline chain ends the assignment puts on a launcher; every
+  /// other chain end is a termination. A figure per chip with no default:
+  /// zero means the configuration does not set it.
   launcher_target: uint32 = 0;
-}
-
-/// What the Corridor stage is allowed to do.
-table CorridorParams {
-  /// The implementation, by the name it is registered under.
-  router: string;
-  /// Sweeps over the connection list, alternating forward and backward.
-  ///
-  /// A wire that routes stays where it is; the sweeps exist so that a wire
-  /// which found no way through can take the room a later one has not
-  /// claimed yet, and so that the order the connections are tried in does
-  /// not decide the result on its own.
-  rounds: uint32 = 12;
-  /// How many neighbouring connections a failed one may rip up, counted
-  /// along the sweep direction.
-  max_relaxation: uint32 = 30;
 }
 
 /// What the Detail stage is allowed to do.
@@ -270,17 +253,6 @@ table FinalParams {
   /// of its options while the feedlines leave fails. The prototype's
   /// `max_repair_rounds`. Zero switches the repair off.
   repair_trials: uint32 = 100;
-  /// The last phase of the stage to run: "pre-feedline-routing",
-  /// "pre-feedline-refinement", "feedline-insertion",
-  /// "feedline-constrained-routing" or "feedline-constrained-refinement".
-  /// Empty runs the whole stage.
-  ///
-  /// The five phases are the five snapshots the artifact carries and the
-  /// five values `plot --phase` and `render --phase` take, so a run stopped
-  /// after a phase is drawn by the name it was stopped at. The stage still
-  /// says what it came to and still writes its artifact; the phases after
-  /// the one named are not run.
-  stop_after_phase: string;
   /// The band both refinements may redraw a wire in, in wire spacings, as
   /// `corridor_spacings` is for the sweep. A refinement moves a way that
   /// already stands, so it needs less room than a search that finds one, and
@@ -400,13 +372,41 @@ table FinalParams {
 
 /// How the mixed-integer programs of the planning stages are solved.
 table SolverParams {
-  /// "auto", "highs" or "gurobi". The environment variable SCPD_SOLVER
-  /// overrides it for one run.
+  /// "highs" or "gurobi". Empty means "highs". The environment variable
+  /// SCPD_SOLVER overrides it for one run.
   backend: string;
   /// Seconds one solve may take, or zero for no limit.
   time_limit: double = 0.0;
   /// The relative gap a solve may stop at, or zero for the backend's own.
   relative_gap: double = 0.0;
+  /// The threads one solve may use, or zero for the backend's own default.
+  /// At most 1024, the upper limit of the Gurobi parameter Threads.
+  threads: uint32 = 0;
+}
+
+/// What the Corridor stage may do.
+table CorridorParams {
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
+  router: string;
+  /// Sweeps over the connections, alternating forward and backward.
+  ///
+  /// The sweeps exist so that a connection without a way can take room that
+  /// a later one has not claimed yet, and so that the order of the
+  /// connections does not decide the result on its own. A sweep can take a
+  /// way from a connection that had one; the stage keeps the round with the
+  /// fewest connections without a way. One last pass then offers every
+  /// connection still without a way the free slots of that round, and rips
+  /// up nothing. It must be at least one.
+  rounds: uint32 = 12;
+  /// How many neighboring connections a failed one may rip up in a sweep,
+  /// counted along the sweep direction, and how many wires in its way it may
+  /// move aside. The step that moves them also raises the price of the slots
+  /// in the way of the failed connection that another wire holds, so with
+  /// zero no price rises. The stage uses a value below half the number of
+  /// connections, however many this asks for, but at least one when there
+  /// are two or more connections.
+  max_relaxation: uint32 = 4;
 }
 
 /// The parameters of the stages that are implemented.
@@ -418,6 +418,13 @@ table StageParams {
   corridor: CorridorParams;
   detail: DetailParams;
   final: FinalParams;
+}
+
+/// How far a run goes.
+table RunParams {
+  /// The last step to run: a stage, or a phase of a stage. Empty runs every
+  /// step this release implements. The command line can override it.
+  stop_after: string;
 }
 
 /// The pages a run writes under `<run>/debug`, each off unless asked for.
@@ -456,5 +463,6 @@ table Config {
   rules: design.DesignRules (required);
   grid: GridParams;
   stages: StageParams;
+  run: RunParams;
   debug: DebugParams;
 }

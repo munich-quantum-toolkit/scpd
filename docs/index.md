@@ -27,6 +27,8 @@ self
 
 installation
 routing
+benchmarks
+configuration
 references
 CHANGELOG
 UPGRADING
@@ -41,6 +43,7 @@ UPGRADING
 contributing
 ai_usage
 tooling
+terminal_output
 support
 ```
 

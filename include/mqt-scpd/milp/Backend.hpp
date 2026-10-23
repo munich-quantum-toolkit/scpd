@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -22,27 +23,79 @@
 
 namespace mqt::scpd::milp {
 
-/// What a solve may spend.
+/// One state of a branch-and-bound search, as a backend reports it while it
+/// solves.
+struct SolveProgress {
+  /// The objective of the best solution found so far, or NaN before the first.
+  double objective = std::numeric_limits<double>::quiet_NaN();
+  /// The best bound proved so far, or NaN when the backend has none yet.
+  double bound = std::numeric_limits<double>::quiet_NaN();
+  /// The relative gap between the two, or NaN when either is missing.
+  double gap = std::numeric_limits<double>::quiet_NaN();
+  /// The nodes explored so far.
+  std::uint64_t nodes = 0;
+  /// The seconds since the solve began.
+  double seconds = 0.0;
+};
+
+/**
+ * @brief Where a backend reports while it solves.
+ *
+ * Each member may be empty. A backend never writes to the process output: it
+ * writes its own log to @c log when that is set and nowhere when it is not.
+ * An exception thrown from any member ends the solve at the next chance; the
+ * backend throws it again once the solver has returned.
+ */
+struct SolveObserver {
+  /// Receives one line of the log of the backend, without the line break.
+  std::function<void(std::string_view)> log;
+  /// Receives the state of a mixed-integer search, now and then.
+  std::function<void(const SolveProgress&)> progress;
+  /// Called now and then while the backend solves a model without integer
+  /// variables, which has no search state to report. It receives nothing. A
+  /// caller throws from it, as from the other two, to stop the solve, for
+  /// example when Python has an interrupt pending. HiGHS calls neither check
+  /// nor progress during presolve and postsolve, while it solves the linear
+  /// relaxation of a mixed-integer model, or inside a sub-MIP of its
+  /// heuristics, so a pending interrupt waits until that step ends.
+  std::function<void()> check;
+};
+
+/// What a solve may spend, and where it reports.
 struct SolveOptions {
   /// Seconds of wall clock, or zero for no limit.
   double timeLimit = 0.0;
-  /// The relative gap at which a solve stops early, or zero for the
-  /// backend's own default.
+  /// The relative gap at which a solve stops early, or zero for the default of
+  /// the backend, which is 1e-4 for HiGHS and for Gurobi.
   double relativeGap = 0.0;
-  /// Whether the backend writes its own progress to the process output. Off,
-  /// because the core does not write to stdout.
-  bool verbose = false;
-  /// Threads the backend may use, or zero for its own default.
+  /// The threads the backend may use, or zero for its own default, which for
+  /// HiGHS is half the hardware threads. HiGHS keeps one pool of worker
+  /// threads per calling thread and restarts that pool when a solve asks for
+  /// another count than the solve before on the same calling thread. The
+  /// planning stages take the count from `[stages.solver] threads`. The MPS
+  /// backend that the Python package registers for Gurobi passes it on as the
+  /// Gurobi parameter Threads.
   std::uint32_t threads = 0;
+  /// Where the backend reports while it solves.
+  SolveObserver observer;
 };
 
-/// A solver behind the model abstraction.
-///
-/// The interface is what MPS carries, which is the whole point: a backend
-/// that solves in process and one that hands the model to another program
-/// see the same model and answer the same way.
+/**
+ * @brief A solver behind the model abstraction.
+ *
+ * The interface is what MPS carries. A backend that solves in the process and
+ * one that hands the model to another program see the same model. Two
+ * backends can report optimal solutions whose objectives differ by up to the
+ * relative gap, and between solutions of equal objective they can choose
+ * differently. For a MIP that has no optimum, Gurobi says
+ * whether it is infeasible or unbounded, while HiGHS can end with an error
+ * that names both.
+ */
 class MQT_SCPD_MILP_EXPORT ISolverBackend {
 public:
+  /**
+   * @brief Creates a backend.
+   */
   ISolverBackend() = default;
   ISolverBackend(const ISolverBackend&) = delete;
   ISolverBackend& operator=(const ISolverBackend&) = delete;
@@ -50,61 +103,122 @@ public:
   ISolverBackend& operator=(ISolverBackend&&) = delete;
   virtual ~ISolverBackend() = default;
 
-  /// What the backend calls itself in the metrics.
+  /**
+   * @brief Returns the name of the backend.
+   * @return The name, as a run reports it.
+   */
   [[nodiscard]] virtual std::string_view name() const = 0;
-  /// Solve a model. Never throws on an unsolvable model; the status says so.
-  [[nodiscard]] virtual Solution solve(const Model& model, const SolveOptions& options) const = 0;
+
+  /**
+   * @brief Solves a model.
+   * @param model The model.
+   * @param options What the solve may spend, and where it reports.
+   * @return The solution. A model that cannot be solved is a status, never an
+   * exception.
+   * @throws Whatever an observer of @p options throws. A backend that hands
+   * the model to another program also throws what that hand-over throws, as
+   * makeMpsBackend() says.
+   */
+  [[nodiscard]] virtual Solution solve(const Model& model,
+                                       const SolveOptions& options) const = 0;
 };
 
-/// The backend that links HiGHS into the process. Always available.
-[[nodiscard]] MQT_SCPD_MILP_EXPORT std::unique_ptr<ISolverBackend> makeHighsBackend();
+/**
+ * @brief Creates the backend that links HiGHS into the process.
+ * @return The backend. It is always available.
+ */
+[[nodiscard]] MQT_SCPD_MILP_EXPORT std::unique_ptr<ISolverBackend>
+makeHighsBackend();
 
-/// A backend that hands the model to a callable as MPS text and reads the
-/// solution back by variable name.
-///
-/// This is the seam the bring-your-own-licence path goes through: Python
-/// receives the MPS text, solves it with `gurobipy`, and returns the values
-/// it read back. The core neither knows nor links that solver.
-using MpsSolveFunction = std::function<Solution(std::string_view mpsText,
-                                                const std::vector<std::string>& variableNames,
-                                                const SolveOptions& options)>;
+/**
+ * @brief Returns the version of the HiGHS library that the process links.
+ * @return The version, as three numbers joined by dots, such as "1.11.0".
+ */
+[[nodiscard]] MQT_SCPD_MILP_EXPORT std::string highsVersion();
 
-/// The backend that round-trips a model through MPS text.
-///
-/// @throws std::invalid_argument when the function is empty.
+/**
+ * @brief Solves a model handed over as MPS text and returns the values by
+ * variable name.
+ *
+ * This is the seam of the bring-your-own-license path: Python receives the MPS
+ * text, solves it with gurobipy and returns the values it read back. The core
+ * neither knows nor links that solver.
+ */
+using MpsSolveFunction = std::function<Solution(
+    std::string_view mpsText, const std::vector<std::string>& variableNames,
+    const SolveOptions& options)>;
+
+/**
+ * @brief Creates a backend that round-trips a model through MPS text.
+ * @param name The name of the backend.
+ * @param solve The function that solves the MPS text.
+ * @return The backend. Its solve() throws std::invalid_argument for a model
+ * that MPS cannot carry, such as one with a space in a name, and passes on
+ * whatever @p solve throws, such as an error of the solver or an interrupt.
+ * @throws std::invalid_argument When @p solve is empty.
+ */
 [[nodiscard]] MQT_SCPD_MILP_EXPORT std::unique_ptr<ISolverBackend>
 makeMpsBackend(std::string name, MpsSolveFunction solve);
 
 /// Which backend a run uses.
+///
+/// HiGHS is the default, and an external backend is used only when it is
+/// asked for by name. A registered external backend never replaces HiGHS on
+/// its own, so whether a license is at hand does not change a result.
 enum class BackendChoice : std::uint8_t {
-  /// Prefer an external solver when one was registered, else HiGHS.
-  Auto,
+  /// HiGHS, whatever is registered.
   Highs,
   /// The registered external backend, and an error when there is none.
   External,
 };
 
-/// The choice a name stands for.
-///
-/// @throws std::invalid_argument on a name that is none of "auto", "highs"
-/// and "gurobi".
-[[nodiscard]] MQT_SCPD_MILP_EXPORT BackendChoice backendChoiceFromName(std::string_view name);
+/**
+ * @brief Reads the backend a name stands for.
+ * @param name One of "highs" and "gurobi".
+ * @return The choice.
+ * @throws std::invalid_argument On any other name.
+ */
+[[nodiscard]] MQT_SCPD_MILP_EXPORT BackendChoice
+backendChoiceFromName(std::string_view name);
 
-/// Register the external backend of this process, or clear it with a null
-/// pointer. Python installs the `gurobipy` backend here at import time.
-MQT_SCPD_MILP_EXPORT void setExternalBackend(std::shared_ptr<ISolverBackend> backend);
+/**
+ * @brief Registers the external backend of the process, or clears it.
+ *
+ * The Python layer installs the gurobipy backend here when it can be used.
+ *
+ * @param backend The backend, or a null pointer to clear it.
+ */
+MQT_SCPD_MILP_EXPORT void
+setExternalBackend(std::shared_ptr<ISolverBackend> backend);
 
-/// The external backend of this process, or nothing when none is registered.
-[[nodiscard]] MQT_SCPD_MILP_EXPORT std::shared_ptr<ISolverBackend> externalBackend();
+/**
+ * @brief Returns the external backend of the process.
+ * @return The backend, or a null pointer when none is registered.
+ */
+[[nodiscard]] MQT_SCPD_MILP_EXPORT std::shared_ptr<ISolverBackend>
+externalBackend();
 
-/// The backend a choice resolves to.
-///
-/// @throws std::runtime_error when External is asked for and no external
-/// backend is registered.
-[[nodiscard]] MQT_SCPD_MILP_EXPORT std::shared_ptr<ISolverBackend> resolveBackend(BackendChoice choice);
+/**
+ * @brief Resolves a choice to a backend.
+ * @param choice The choice.
+ * @return The backend.
+ * @throws std::runtime_error When @c External is chosen and no external
+ * backend is registered.
+ */
+[[nodiscard]] MQT_SCPD_MILP_EXPORT std::shared_ptr<ISolverBackend>
+resolveBackend(BackendChoice choice);
 
-/// Solve a model with the backend a choice resolves to.
-[[nodiscard]] MQT_SCPD_MILP_EXPORT Solution solve(const Model& model, BackendChoice choice,
-                                                  const SolveOptions& options = {});
+/**
+ * @brief Solves a model with the backend a choice resolves to.
+ * @param model The model.
+ * @param choice The choice.
+ * @param options What the solve may spend, and where it reports.
+ * @return The solution.
+ * @throws std::runtime_error When @c External is chosen and no external
+ * backend is registered.
+ * @throws Whatever the backend throws, as ISolverBackend::solve() says.
+ */
+[[nodiscard]] MQT_SCPD_MILP_EXPORT Solution solve(
+    const Model& model, BackendChoice choice, const SolveOptions& options = {});
 
 } // namespace mqt::scpd::milp

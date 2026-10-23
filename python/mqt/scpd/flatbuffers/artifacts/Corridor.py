@@ -34,8 +34,8 @@ class Corridor(object):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # The labels of the partitions, from the one the wire is fed in to the
-    # one its target sits in. These are `Partition.label` values, not indices
-    # into `CapacityPlan.partitions`.
+    # one its target sits in. These are Partition.label values, not indices
+    # into CapacityPlan.partitions.
     # Corridor
     def Partitions(self, j: int):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -89,7 +89,8 @@ class Corridor(object):
         return o == 0
 
     # Where the wire starts: the cell the feed of the assignment was placed
-    # at. Absent when the connection has no feed the grid can reach.
+    # at. Absent when the connection has no feed, when the feed lies off the
+    # grid, or when no partition lies within 8 detail cells of it.
     # Corridor
     def Source(self) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
@@ -101,7 +102,8 @@ class Corridor(object):
         return None
 
     # Where it ends: the cell its target port is reached at. Absent when the
-    # chip has no such cell.
+    # port has no target cell, or when no partition lies within 8 detail
+    # cells of it.
     # Corridor
     def Target(self) -> Optional[Point]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))

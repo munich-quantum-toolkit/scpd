@@ -13,10 +13,12 @@
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
+#include "mqt-scpd/pipeline/Report.hpp"
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <string_view>
 
 namespace mqt::scpd::pipeline {
@@ -30,46 +32,28 @@ using flatbuffers::artifacts::GlobalRoutingT;
 using flatbuffers::config::ConfigT;
 using flatbuffers::design::ChipT;
 
-/// Every stage has the same shape, and the shape is contractual.
-///
-/// `run` is `const` and takes its inputs by `const&`, so a stage can neither
-/// change its own state between runs nor reach into another stage's. It
-/// returns a new value rather than writing into a shared design database.
-/// Given the same inputs it produces the same output, which is what makes a
-/// resumed run equal to an uninterrupted one and what the later threading
-/// work needs.
-///
-/// The prototype held none of the three: it passed the chip by value into
-/// three stages, had the assignment write into the capacity stage's request
-/// queue while its own solver was running, and depended on hash iteration
-/// order in several places.
+// Every stage has the same shape, and the shape is part of the contract.
+// `run` is const and takes its inputs by const reference, so a stage can
+// neither change its own state between runs nor reach into the state of
+// another. It returns a new value rather than writing into a shared design
+// database. Given the same inputs it produces the same output, which is what
+// makes a resumed run equal to an uninterrupted one. There are two
+// exceptions. A solve that stops at `[stages.solver] time_limit` gives what it
+// has found by then, which depends on the speed of the machine. And with
+// `[stages.solver] threads` at 0, the thread count depends on the machine, so
+// between optimal solutions of equal objective the answer can differ from one
+// machine to the next. A stage reports what it does through the Report it is
+// given and never prints.
 
-/// Where a stage reports what it is doing while it runs.
-///
-/// The Final stage takes minutes on the largest chip, and what it does in that
-/// time — which wire found a way, which had to let a neighbour go, which is
-/// still open — is only useful while it runs. So it is a callback and not a
-/// report: the stage hands out one line at a time and the caller decides what
-/// to do with it. Nothing is printed from the core, which is what keeps every
-/// human-readable form of it in one place.
-using Progress = std::function<void(std::string_view)>;
-
-/// Where a stage hands out records of what it is doing, when asked to.
-///
-/// A debug run of the Final stage records what the pages of the `[debug]`
-/// section need: its grid, every search of a phase whose dashboard is on,
-/// the coupler options and the capacity graph, every step check, the course
-/// of the global SAT search and what each phase came to. Like the progress
-/// it is a callback and not a file: the stage names the kind of record and
-/// hands over its JSON text, and the caller decides where it goes. Nothing
-/// is written from the core, and nothing is recorded that no page asks for.
-using Debug =
-    std::function<void(std::string_view kind, std::string_view record)>;
-
-/// Partitions the free space and budgets how many wires may cross between
-/// the partitions.
+/**
+ * @brief Partitions the free space of the chip and budgets how many wires may
+ * cross between the partitions.
+ */
 class MQT_SCPD_PIPELINE_EXPORT ICapacityPlanner {
 public:
+  /**
+   * @brief Creates a planner.
+   */
   ICapacityPlanner() = default;
   ICapacityPlanner(const ICapacityPlanner&) = delete;
   ICapacityPlanner& operator=(const ICapacityPlanner&) = delete;
@@ -77,19 +61,37 @@ public:
   ICapacityPlanner& operator=(ICapacityPlanner&&) = delete;
   virtual ~ICapacityPlanner() = default;
 
-  [[nodiscard]] virtual CapacityPlanT run(const ChipT& chip,
-                                          const ConfigT& config) const = 0;
+  /**
+   * @brief Plans the capacity of a chip.
+   * @param chip The classified chip.
+   * @param config The run configuration.
+   * @param report Where the stage reports what it does.
+   * @return The capacity plan.
+   * @throws std::invalid_argument When the configuration carries no design
+   * rules, asks for a grid of fewer than two cells along an axis, a
+   * `detail_factor` of zero or a detail grid above MAX_DETAIL_CELLS, or when
+   * the chip carries no launcher or puts the targets of two ports on one cell
+   * of the detail grid.
+   * @throws std::length_error When the partitions need more labels than a
+   * plan holds.
+   */
+  [[nodiscard]] virtual CapacityPlanT
+  run(const ChipT& chip, const ConfigT& config, const Report& report) const = 0;
 };
 
-/// Solves the inner circuit on the lattice each capacity chain induces, and
-/// reports the outer port ring the assignment then consumes.
-///
-/// This runs **before** the assignment, not after it. The inner circuit
-/// decides which outer ports the inner wires surface at, and the ring the
-/// assignment works on is the configured one extended by exactly those. The
-/// prototype's own drivers run the two stages in this order for that reason.
+/**
+ * @brief Solves the inner circuit on the lattice each capacity chain induces,
+ * and reports the outer port ring the assignment consumes.
+ *
+ * The stage runs before the assignment. The inner circuit decides which
+ * outer ports the inner wires surface at, and the ring the assignment works
+ * on is the configured one extended by exactly those.
+ */
 class MQT_SCPD_PIPELINE_EXPORT IGlobalRouter {
 public:
+  /**
+   * @brief Creates a router.
+   */
   IGlobalRouter() = default;
   IGlobalRouter(const IGlobalRouter&) = delete;
   IGlobalRouter& operator=(const IGlobalRouter&) = delete;
@@ -97,15 +99,38 @@ public:
   IGlobalRouter& operator=(IGlobalRouter&&) = delete;
   virtual ~IGlobalRouter() = default;
 
+  /**
+   * @brief Solves the inner circuit of a chip.
+   * @param chip The classified chip.
+   * @param capacity The capacity plan of the run.
+   * @param config The run configuration.
+   * @param report Where the stage reports what it does.
+   * @return The global routing.
+   * @throws std::invalid_argument When the ring of the configuration does not
+   * fit the chip, or when the capacity plan does not fit the chip: an index
+   * names no node or no port, a chain leads back into itself or reaches a
+   * node twice, or a target lies on two chains or twice on one; when two
+   * ports of one lattice that can carry an inner wire meet it at one node; or
+   * when the backend name is neither "highs" nor "gurobi".
+   * @throws std::runtime_error When the solver gives no solution, or when
+   * "gurobi" is asked for and no external backend is registered.
+   * @throws Whatever the solve throws, as solveWith() says.
+   */
   [[nodiscard]] virtual GlobalRoutingT run(const ChipT& chip,
                                            const CapacityPlanT& capacity,
-                                           const ConfigT& config) const = 0;
+                                           const ConfigT& config,
+                                           const Report& report) const = 0;
 };
 
-/// Assigns resonators to launchers as a minimum-overlap problem on the ring
-/// of outer ports.
+/**
+ * @brief Assigns resonators and conventional ports to launchers, on the ring
+ * of outer ports.
+ */
 class MQT_SCPD_PIPELINE_EXPORT IAssigner {
 public:
+  /**
+   * @brief Creates an assigner.
+   */
   IAssigner() = default;
   IAssigner(const IAssigner&) = delete;
   IAssigner& operator=(const IAssigner&) = delete;
@@ -113,26 +138,49 @@ public:
   IAssigner& operator=(IAssigner&&) = delete;
   virtual ~IAssigner() = default;
 
+  /**
+   * @brief Assigns the ports of the ring to launchers.
+   * @param chip The classified chip.
+   * @param capacity The capacity plan of the run.
+   * @param global The global routing of the run, which carries the ring.
+   * @param config The run configuration.
+   * @param report Where the stage reports what it does.
+   * @return The assignment.
+   * @throws std::invalid_argument When the configuration or the chip cannot
+   * give an assignment: no design rules or no `launcher_target`, launchers
+   * listed in the direction of the ring, too few launchers off one line,
+   * counts of the ring that no assignment meets, a feed closer than
+   * `[design_rules] min_wire_spacing` to a neighboring feed or to a launcher
+   * at an end of its segment, or two feeds on one cell of the detail grid; when
+   * the capacity plan or the global routing does not fit the chip; or when the
+   * backend name is neither "highs" nor "gurobi".
+   * @throws std::runtime_error When the solver gives no solution, or when
+   * "gurobi" is asked for and no external backend is registered.
+   * @throws Whatever the solve throws, as solveWith() says.
+   */
   [[nodiscard]] virtual AssignmentT run(const ChipT& chip,
                                         const CapacityPlanT& capacity,
                                         const GlobalRoutingT& global,
-                                        const ConfigT& config) const = 0;
+                                        const ConfigT& config,
+                                        const Report& report) const = 0;
 };
 
-/// Routes every assigned connection through the partitions, coarsely.
-///
-/// This is where a wire is told which corridors it runs through and where it
-/// crosses from one into the next, and it is the stage that makes the wire
-/// budgets binding: a border is crossed at one of a fixed set of slots, one
-/// wire spacing apart, and no two wires take the same one. Inside a
-/// partition two wires may not cross each other either, so what comes out is
-/// a plan the detail router can follow without unpicking it again.
-///
-/// Only the connections of the assignment are routed here. The inner circuit
-/// paid for the free space it crosses while it was solved, so it goes to the
-/// detail router directly.
+/**
+ * @brief Routes every assigned connection through the partitions, coarsely.
+ *
+ * A wire is told which partitions it runs through and where it crosses from
+ * one into the next. A border is crossed at one of a fixed set of slots, no
+ * two wires take the same one, and the crossings of two wires lie at least
+ * one crossing pitch apart. Inside a partition two wires may not cross
+ * or meet either, judged by the straight chords between where they enter and
+ * leave it. Only the connections of the assignment are routed here;
+ * the inner circuit paid for the free space it crosses when it was solved.
+ */
 class MQT_SCPD_PIPELINE_EXPORT ICorridorRouter {
 public:
+  /**
+   * @brief Creates a router.
+   */
   ICorridorRouter() = default;
   ICorridorRouter(const ICorridorRouter&) = delete;
   ICorridorRouter& operator=(const ICorridorRouter&) = delete;
@@ -140,27 +188,53 @@ public:
   ICorridorRouter& operator=(ICorridorRouter&&) = delete;
   virtual ~ICorridorRouter() = default;
 
-  [[nodiscard]] virtual CorridorRoutingT
-  run(const ChipT& chip, const CapacityPlanT& capacity,
-      const AssignmentT& assignment, const ConfigT& config,
-      const Progress& progress = {}) const = 0;
+  /**
+   * @brief Routes the connections of an assignment through the partitions.
+   * @param chip The classified chip.
+   * @param capacity The capacity plan of the run.
+   * @param assignment The assignment of the run.
+   * @param config The run configuration.
+   * @param report Where the stage reports what it does.
+   * @return One corridor per connection.
+   * @throws std::invalid_argument When the capacity plan does not fit the
+   * configuration in a way the router can see: it was made on another detail
+   * grid, a border offers another number of slots than its budget, or a
+   * partition falls apart into pieces that do not touch; or when a connection
+   * of the assignment names a port the chip does not carry.
+   *
+   * The router takes the targets from the configuration and the partitions
+   * from the plan, and the plan does not record the design rules or the port
+   * rules it was made with. The caller passes the configuration the plan was
+   * made from; `mqt-scpd plan` refuses a step when a section that an earlier
+   * step read has changed since.
+   */
+  [[nodiscard]] virtual CorridorRoutingT run(const ChipT& chip,
+                                             const CapacityPlanT& capacity,
+                                             const AssignmentT& assignment,
+                                             const ConfigT& config,
+                                             const Report& report) const = 0;
 };
 
-/// Draws every wire on the detail grid, cell by cell.
-///
-/// The corridor stage said which partitions a wire runs through and where it
-/// crosses from one into the next; this is where the copper goes. A wire is
-/// cut at its crossings into one piece per partition, each piece is searched
-/// for inside that partition alone, the pieces are joined in corridor order,
-/// and the joined wire is then offered a way of its own through the same
-/// partitions.
-///
-/// It takes the global routing as well as the corridor routing because the
-/// inner circuit never entered the corridor stage: those connections paid for
-/// the free space they cross while the inner circuit was solved, so they come
-/// here unrouted and are drawn last, against the wires of the ring.
+/// Where a routing stage says what it does, one line at a time. The two
+/// routing stages report through this callback until they report through
+/// the Report every planning stage takes.
+using Progress = std::function<void(std::string_view)>;
+
+/// Where the Final stage hands out records of what it is doing, when asked
+/// to: a record kind and its JSON text, for the pages of the `[debug]`
+/// section. Nothing is written from the core, and nothing is recorded that
+/// no page asks for.
+using Debug =
+    std::function<void(std::string_view kind, std::string_view record)>;
+
+/**
+ * @brief Draws every corridor as a cell path on the detail grid.
+ */
 class MQT_SCPD_PIPELINE_EXPORT IDetailRouter {
 public:
+  /**
+   * @brief Creates a router.
+   */
   IDetailRouter() = default;
   IDetailRouter(const IDetailRouter&) = delete;
   IDetailRouter& operator=(const IDetailRouter&) = delete;
@@ -168,6 +242,17 @@ public:
   IDetailRouter& operator=(IDetailRouter&&) = delete;
   virtual ~IDetailRouter() = default;
 
+  /**
+   * @brief Draws the corridors of a run as cell paths.
+   * @param chip The classified chip.
+   * @param capacity The capacity plan of the run.
+   * @param global The global routing of the run.
+   * @param assignment The assignment of the run.
+   * @param corridor The corridors of the run.
+   * @param config The run configuration.
+   * @param progress Where the stage says what it does, or nothing.
+   * @return One path per connection, and one per inner connection.
+   */
   [[nodiscard]] virtual DetailRoutingT
   run(const ChipT& chip, const CapacityPlanT& capacity,
       const GlobalRoutingT& global, const AssignmentT& assignment,
@@ -175,28 +260,19 @@ public:
       const Progress& progress = {}) const = 0;
 };
 
-/// Draws every wire as curvature-constrained copper on the router grid, and
-/// completes the design the earlier stages planned.
-///
-/// The Detail stage's cell paths are a centre line on a grid and not geometry.
-/// This stage draws each of them again over Dubins primitives of one bend
-/// radius, on a grid whose cell is about ten layout units, and then finishes
-/// what the plan left open: it inserts the CPW coupler that carries a
-/// resonator's `ResonatorSource` port, routes the launcher-to-launcher
-/// feedline chains that drive the couplers, and refines them.
-///
-/// **Coupler placement and feedline routing are one fixpoint, not two steps.**
-/// The feedline repair loop turns an already-placed coupler around when that
-/// is what lets a chain route, so the stage cannot be cut into "place the
-/// couplers, then route the feedlines" without losing the mechanism that
-/// reaches zero failures. That is why one call does both.
-///
-/// The obstacle clearance is not checked here. It is baked into the raster
-/// mask before any search runs, so every cell a search may enter already keeps
-/// it; the design-rule check verifies the committed result separately, because
-/// the committed result is not always what the search produced.
+/**
+ * @brief Draws every wire as curvature-constrained copper on the router
+ * grid, inserts the couplers and routes the feedline chains.
+ *
+ * Coupler placement and feedline routing are one fixpoint, not two steps:
+ * the targeted repair turns a placed coupler when that is what lets a chain
+ * route, so one call does both.
+ */
 class MQT_SCPD_PIPELINE_EXPORT IFinalRouter {
 public:
+  /**
+   * @brief Creates a router.
+   */
   IFinalRouter() = default;
   IFinalRouter(const IFinalRouter&) = delete;
   IFinalRouter& operator=(const IFinalRouter&) = delete;
@@ -204,6 +280,20 @@ public:
   IFinalRouter& operator=(IFinalRouter&&) = delete;
   virtual ~IFinalRouter() = default;
 
+  /**
+   * @brief Routes the wires of a run and inserts the feedlines.
+   * @param chip The classified chip.
+   * @param capacity The capacity plan of the run.
+   * @param global The global routing of the run.
+   * @param assignment The assignment of the run.
+   * @param detail The detail routing of the run, the seed of every wire.
+   * @param config The run configuration.
+   * @param progress Where the stage says what it does, or nothing.
+   * @param debug Where the stage hands out its debug records, or nothing.
+   * @param verbosity 0 for one line per round, 1 for one per wire and
+   * search as well.
+   * @return The final routing, with one snapshot per phase.
+   */
   [[nodiscard]] virtual FinalRoutingT
   run(const ChipT& chip, const CapacityPlanT& capacity,
       const GlobalRoutingT& global, const AssignmentT& assignment,

@@ -10,8 +10,9 @@ np = import_numpy()
 # One link of a capacity chain.
 #
 # A chain is a tree and FlatBuffers has no recursive table, so the nodes are
-# stored flat and a link names its branches by index. That also lets two
-# chains share a subtree without storing it twice.
+# stored flat and a link names its branches by index. Two chains can then
+# share a subtree without storing it twice. A target lies on one chain only,
+# so a shared subtree holds no target.
 class CapacityNode(object):
     __slots__ = ['_tab']
 
@@ -41,8 +42,8 @@ class CapacityNode(object):
             return self._tab.Get(flatbuffers.number_types.Uint8Flags, o + self._tab.Pos)
         return 0
 
-    # The port for a Target and the index into `bottlenecks` for a
-    # Bottleneck. Unused for a Launcher.
+    # The port of a Target and the index into `bottlenecks` of a Bottleneck.
+    # Unused for a Launcher.
     # CapacityNode
     def Id(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))

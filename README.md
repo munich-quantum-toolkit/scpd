@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/munich-quantum-toolkit/scpd/ci.yml?branch=main&style=flat-square&logo=github&label=ci)](https://github.com/munich-quantum-toolkit/scpd/actions/workflows/ci.yml)
 [![CD](https://img.shields.io/github/actions/workflow/status/munich-quantum-toolkit/scpd/cd.yml?style=flat-square&logo=github&label=cd)](https://github.com/munich-quantum-toolkit/scpd/actions/workflows/cd.yml)
-[![Documentation](https://img.shields.io/readthedocs/mqtscpd?logo=readthedocs&style=flat-square)](https://mqt.readthedocs.io/projects/scpd)
+[![Documentation](https://img.shields.io/readthedocs/mqt-scpd?logo=readthedocs&style=flat-square)](https://mqt.readthedocs.io/projects/scpd)
 [![codecov](https://img.shields.io/codecov/c/github/munich-quantum-toolkit/scpd?style=flat-square&logo=codecov)](https://codecov.io/gh/munich-quantum-toolkit/scpd)
 
 <p align="center">
@@ -33,16 +33,6 @@ constraints of superconducting quantum technologies.
 > [!NOTE]
 > MQT SCPD is still under development. This section will be expanded in the
 > future.
-
-The command line is the product. Each benchmark chip under `benchmarks/` has a
-`config.toml`; the doctor checks it and its chip, `plot` draws the chip, and
-`render` writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that).
-
-```bash
-mqt-scpd doctor -c benchmarks/9q/config.toml
-mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg
-mqt-scpd render -c benchmarks/9q/config.toml -o 9q.gds
-```
 
 If you have any questions, feel free to create a
 [discussion](https://github.com/munich-quantum-toolkit/scpd/discussions) or an
@@ -108,15 +98,28 @@ uv pip install mqt.scpd
 > MQT SCPD is still under development. This section will be expanded in the
 > future.
 
-The command line is the product. Each benchmark chip under `benchmarks/` has a
-`config.toml`; the doctor checks it and its chip, `plot` draws the chip, and
-`render` writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that).
+The command line is the product. A chip is described by a `config.toml` and the
+chip input it names; the doctor checks both, `plot` draws the chip, and `render`
+writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that). The eight
+benchmark chips of the paper live in
+[planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd):
 
 ```bash
-mqt-scpd doctor -c benchmarks/9q/config.toml
-mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg
-mqt-scpd render -c benchmarks/9q/config.toml -o 9q.gds
+git clone --depth 1 https://github.com/cda-tum/planar-superconducting-pd.git
+mqt-scpd doctor -c planar-superconducting-pd/inputs/9q/config.toml
+mqt-scpd plot -c planar-superconducting-pd/inputs/9q/config.toml -o 9q.svg
+mqt-scpd render -c planar-superconducting-pd/inputs/9q/config.toml -o 9q.gds
 ```
+
+`plan` runs the planning steps of a chip into a run directory:
+
+```bash
+mqt-scpd plan -c planar-superconducting-pd/inputs/9q/config.toml -o runs/9q
+```
+
+The
+[benchmark guide](https://mqt.readthedocs.io/projects/scpd/en/latest/benchmarks.html)
+describes the chips and what the current release does with them.
 
 **Detailed documentation and examples are available at
 [ReadTheDocs](https://mqt.readthedocs.io/projects/scpd).**
@@ -158,16 +161,6 @@ When discussing the overall MQT project or its ecosystem, cite the MQT Handbook:
 > [!NOTE]
 > MQT SCPD is still under development. This section will be expanded in the
 > future.
-
-The command line is the product. Each benchmark chip under `benchmarks/` has a
-`config.toml`; the doctor checks it and its chip, `plot` draws the chip, and
-`render` writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that).
-
-```bash
-mqt-scpd doctor -c benchmarks/9q/config.toml
-mqt-scpd plot -c benchmarks/9q/config.toml --stage layout -o 9q.svg
-mqt-scpd render -c benchmarks/9q/config.toml -o 9q.gds
-```
 
 ---
 

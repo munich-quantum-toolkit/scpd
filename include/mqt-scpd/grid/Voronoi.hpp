@@ -22,67 +22,98 @@
 
 namespace mqt::scpd::grid {
 
-/// A segment of the medial axis, in cell coordinates as doubles.
+/// A segment of the medial axis, in cell coordinates.
 struct MedialEdge {
+  /// The x coordinate of the first end.
   double x0 = 0.0;
+  /// The y coordinate of the first end.
   double y0 = 0.0;
+  /// The x coordinate of the second end.
   double x1 = 0.0;
+  /// The y coordinate of the second end.
   double y1 = 0.0;
 };
 
-/// The medial axis of the free space of a mask.
-///
-/// The axis is the set of points equidistant from two different walls, which
-/// is what a Voronoi diagram over the boundary cells of the obstacles gives.
-/// Every corridor of the chip runs along it, and where the clearance along it
-/// has a local minimum, the corridor has a bottleneck. That is the whole
-/// reason the capacity stage builds it.
-///
-/// Two filters do the work that makes the result usable. An edge between two
-/// sites of the *same* wall is an artifact of discretizing that wall and is
-/// dropped; two sites belong to the same wall when a walk over the boundary
-/// cells reaches one from the other within a few steps. An edge that passes
-/// through a blocked cell is dropped as well, because the axis of free space
-/// cannot run through an obstacle.
-///
-/// @param blocked The obstacle mask.
-/// @returns The surviving edges, in cell coordinates.
-[[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<MedialEdge> medialAxis(const BitGrid& blocked);
+/**
+ * @brief Computes the medial axis of the free space of a mask.
+ *
+ * The medial axis is the set of points that lie equally far from two
+ * different walls, which a Voronoi diagram over the boundary cells of the
+ * obstacles gives. Every corridor of the chip runs along it, and where the
+ * clearance along it has a local minimum, the corridor has a bottleneck.
+ *
+ * Two filters make the result usable. An edge between two sites of the same
+ * wall is an artifact of the raster and is dropped; two sites belong to one
+ * wall when a walk over the boundary cells reaches one from the other within
+ * four steps. An edge that passes through a blocked cell is dropped as well,
+ * because the axis of the free space cannot run through an obstacle.
+ *
+ * Only blocked cells inside the grid are sites, so the edge of the grid is no
+ * wall: the free space between the artwork and an open edge has no axis. A
+ * caller that needs the edge as a wall blocks a border of cells along it.
+ *
+ * @param blocked The obstacle mask.
+ * @return The edges that survive both filters, in cell coordinates, each
+ * once.
+ */
+[[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<MedialEdge>
+medialAxis(const BitGrid& blocked);
 
 /// What a cell of the rasterized medial axis is.
 enum class AxisCell : std::uint8_t {
-  /// Not on the axis.
+  /// The cell is not on the axis.
   None = 0,
-  /// On the axis, with one or two neighbors.
+  /// The cell is on the axis and has two neighbors there, or none where an
+  /// edge of the axis shrinks to this one cell.
   Path = 1,
-  /// On the axis, where three or more arms meet.
+  /// The cell is on the axis where three or more arms meet.
   Junction = 2,
-  /// On the axis, with exactly one neighbor: a dead end.
+  /// The cell is on the axis and has exactly one neighbor there.
   Endpoint = 4,
 };
 
-/// The medial axis on the grid: which cells it covers, and how they connect.
+/// The medial axis on the grid: which cells it covers and how they connect.
 struct MedialAxis {
-  /// One entry per cell, saying what the cell is on the axis.
+  /// One entry per cell of the grid, saying what the cell is on the axis.
   std::vector<AxisCell> cells;
-  /// The cells adjacent along the axis, for every cell that is on it.
+  /// The cells adjacent along the axis, for every cell on it.
   std::unordered_map<std::size_t, std::vector<std::size_t>> neighbors;
 
-  /// Whether a cell lies on the axis.
+  /**
+   * @brief Checks whether a cell lies on the axis.
+   * @param index The row-major index of the cell.
+   * @return @c true when the cell is on the grid and on the axis.
+   */
   [[nodiscard]] bool onAxis(const std::size_t index) const {
     return index < cells.size() && cells[index] != AxisCell::None;
   }
 };
 
-/// Rasterize the medial axis onto the grid.
-///
-/// Each edge is walked as a Bresenham line through the cells its endpoints
-/// truncate to, and a cell that carries an obstacle is never marked. Cells
-/// are joined to the cell before them on the same edge, so the result is a
-/// graph over the grid rather than a set of pixels; a cell with three or more
-/// such neighbors is a junction and one with a single neighbor a dead end.
-///
-/// @throws std::invalid_argument when the mask does not fit the grid.
+/**
+ * @brief Rasterizes the medial axis onto the grid.
+ *
+ * Each edge is walked as an eight-connected line through the cells its ends
+ * truncate to, and a blocked cell is never marked. Each cell is joined to the
+ * cell before it on the same edge unless a blocked cell lies between them, so
+ * the result is a graph over the grid. A
+ * cell with three or more neighbors is a junction, and a cell with one
+ * neighbor is an endpoint.
+ *
+ * A site stands at the index of its cell, so the cell nearest to a vertex is
+ * the rounded one. Truncation moves a vertex by up to one cell towards smaller
+ * coordinates, and the axis then lies off the middle of a corridor by up to
+ * one cell. Beside a rectangular obstacle that can give an opening more than
+ * one bottleneck, and two mirrored openings different ones. The rasterization
+ * keeps the truncation, because rounding changes the bottlenecks, the Global
+ * circuit and the assignment of the benchmark chips.
+ *
+ * @param blocked The obstacle mask the edges were computed from.
+ * @param grid The metrics of the grid of the mask.
+ * @param edges The edges of the medial axis, in cell coordinates.
+ * @return The axis on the grid.
+ * @throws std::invalid_argument When the mask does not have the size of the
+ * grid.
+ */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT MedialAxis
 rasterizeMedialAxis(const BitGrid& blocked, const GridMetrics& grid,
                     const std::vector<MedialEdge>& edges);

@@ -14,7 +14,9 @@
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/Rasterize.hpp"
 
+#include <boost/polygon/point_data.hpp>
 #include <boost/polygon/voronoi.hpp>
+#include <boost/polygon/voronoi_diagram.hpp>
 
 #include <algorithm>
 #include <array>
@@ -59,13 +61,17 @@ struct Sites {
 };
 
 /// Whether a position is blocked. Everything outside the grid counts as
-/// blocked, so the border of the grid is a wall like any other.
+/// blocked for two reasons: an edge that leaves the grid is not free, and a
+/// blocked cell on the edge of the grid does not touch free space through the
+/// outside, so the outside makes no cell a site. The outside itself gives no
+/// site, so the edge of the grid is not a wall.
 bool blockedAt(const BitGrid& blocked, const int64_t x, const int64_t y) {
-  if (x < 0 || y < 0 || x >= static_cast<int64_t>(blocked.width()) ||
-      y >= static_cast<int64_t>(blocked.height())) {
+  if (x < 0 || y < 0 || std::cmp_greater_equal(x, blocked.width()) ||
+      std::cmp_greater_equal(y, blocked.height())) {
     return true;
   }
-  return blocked.test((static_cast<std::size_t>(y) * blocked.width()) + static_cast<std::size_t>(x));
+  return blocked.test((static_cast<std::size_t>(y) * blocked.width()) +
+                      static_cast<std::size_t>(x));
 }
 
 Sites collectSites(const BitGrid& blocked) {
@@ -84,9 +90,11 @@ Sites collectSites(const BitGrid& blocked) {
           blockedAt(blocked, x, y - 1) && blockedAt(blocked, x, y + 1)) {
         continue;
       }
-      sites.at[(static_cast<std::size_t>(y) * blocked.width()) + static_cast<std::size_t>(x)] =
+      sites.at[(static_cast<std::size_t>(y) * blocked.width()) +
+               static_cast<std::size_t>(x)] =
           static_cast<int>(sites.points.size());
-      sites.points.emplace_back(static_cast<int>(x) * SITE_SCALE, static_cast<int>(y) * SITE_SCALE);
+      sites.points.emplace_back(static_cast<int>(x) * SITE_SCALE,
+                                static_cast<int>(y) * SITE_SCALE);
       sites.x.push_back(static_cast<int>(x));
       sites.y.push_back(static_cast<int>(y));
     }
@@ -99,19 +107,19 @@ Sites collectSites(const BitGrid& blocked) {
 class SameWall {
 public:
   SameWall(const Sites& sites, const BitGrid& blocked)
-      : sites_(sites), blocked_(blocked), stamp_(sites.points.size(), 0) {}
+      : siteList(&sites), mask(&blocked), stamps(sites.points.size(), 0) {}
 
   [[nodiscard]] bool operator()(const int from, const int to) {
     if (from == to) {
       return true;
     }
-    ++current_;
-    queue_.clear();
-    queue_.emplace_back(from, 0);
-    stamp_[static_cast<std::size_t>(from)] = current_;
+    ++generation;
+    frontier.clear();
+    frontier.emplace_back(from, 0);
+    stamps[static_cast<std::size_t>(from)] = generation;
 
-    for (std::size_t head = 0; head < queue_.size(); ++head) {
-      const auto [site, depth] = queue_[head];
+    for (std::size_t head = 0; head < frontier.size(); ++head) {
+      const auto [site, depth] = frontier[head];
       if (site == to) {
         return true;
       }
@@ -119,37 +127,40 @@ public:
         continue;
       }
       for (std::size_t step = 0; step < NEIGHBOR_DX.size(); ++step) {
-        const auto nx = sites_.x[static_cast<std::size_t>(site)] + NEIGHBOR_DX[step];
-        const auto ny = sites_.y[static_cast<std::size_t>(site)] + NEIGHBOR_DY[step];
-        if (nx < 0 || ny < 0 || nx >= static_cast<int>(blocked_.width()) ||
-            ny >= static_cast<int>(blocked_.height())) {
+        const auto nx =
+            siteList->x[static_cast<std::size_t>(site)] + NEIGHBOR_DX[step];
+        const auto ny =
+            siteList->y[static_cast<std::size_t>(site)] + NEIGHBOR_DY[step];
+        if (nx < 0 || ny < 0 || std::cmp_greater_equal(nx, mask->width()) ||
+            std::cmp_greater_equal(ny, mask->height())) {
           continue;
         }
-        const auto next = sites_.at[(static_cast<std::size_t>(ny) * blocked_.width()) +
-                                    static_cast<std::size_t>(nx)];
-        if (next < 0 || stamp_[static_cast<std::size_t>(next)] == current_) {
+        const auto next =
+            siteList->at[(static_cast<std::size_t>(ny) * mask->width()) +
+                         static_cast<std::size_t>(nx)];
+        if (next < 0 || stamps[static_cast<std::size_t>(next)] == generation) {
           continue;
         }
-        stamp_[static_cast<std::size_t>(next)] = current_;
-        queue_.emplace_back(next, depth + 1);
+        stamps[static_cast<std::size_t>(next)] = generation;
+        frontier.emplace_back(next, depth + 1);
       }
     }
     return false;
   }
 
 private:
-  const Sites& sites_;
-  const BitGrid& blocked_;
-  std::vector<int> stamp_;
-  int current_ = 0;
-  std::vector<std::pair<int, int>> queue_;
+  const Sites* siteList;
+  const BitGrid* mask;
+  std::vector<int> stamps;
+  int generation = 0;
+  std::vector<std::pair<int, int>> frontier;
 };
 
 /// Whether the straight segment between two points stays in free space. The
 /// segment is sampled at one point per cell of its length, which is what
 /// keeps a diagonal from stepping over a one-cell wall.
-bool freeSegment(const BitGrid& blocked, const double ax, const double ay, const double bx,
-                 const double by) {
+bool freeSegment(const BitGrid& blocked, const double ax, const double ay,
+                 const double bx, const double by) {
   const auto length = std::hypot(bx - ax, by - ay);
   const auto steps = std::max(1, static_cast<int>(std::ceil(length)));
   for (int step = 0; step <= steps; ++step) {
@@ -176,7 +187,8 @@ std::vector<MedialEdge> medialAxis(const BitGrid& blocked) {
   }
 
   boost::polygon::voronoi_diagram<double> diagram;
-  boost::polygon::construct_voronoi(sites.points.begin(), sites.points.end(), &diagram);
+  boost::polygon::construct_voronoi(sites.points.begin(), sites.points.end(),
+                                    &diagram);
 
   SameWall sameWall(sites, blocked);
   for (const auto& edge : diagram.edges()) {
@@ -207,7 +219,7 @@ std::vector<MedialEdge> medialAxis(const BitGrid& blocked) {
     if (!freeSegment(blocked, x0, y0, x1, y1)) {
       continue;
     }
-    edges.push_back({x0, y0, x1, y1});
+    edges.push_back({.x0 = x0, .y0 = y0, .x1 = x1, .y1 = y1});
   }
   return edges;
 }
@@ -215,9 +227,9 @@ std::vector<MedialEdge> medialAxis(const BitGrid& blocked) {
 MedialAxis rasterizeMedialAxis(const BitGrid& blocked, const GridMetrics& grid,
                                const std::vector<MedialEdge>& edges) {
   if (blocked.width() != grid.width || blocked.height() != grid.height) {
-    throw std::invalid_argument(
-        std::format("the mask is {}x{} cells and the grid {}x{}", blocked.width(),
-                    blocked.height(), grid.width, grid.height));
+    throw std::invalid_argument(std::format(
+        "the mask is {}x{} cells and the grid {}x{}", blocked.width(),
+        blocked.height(), grid.width, grid.height));
   }
 
   MedialAxis axis;
@@ -227,16 +239,18 @@ MedialAxis rasterizeMedialAxis(const BitGrid& blocked, const GridMetrics& grid,
   }
 
   for (const auto& edge : edges) {
-    // The endpoints are truncated rather than rounded, because that is what
-    // decides which cell a vertex exactly between two cells belongs to, and
-    // rounding moves the whole axis by half a cell against the mask it was
-    // derived from.
-    const auto cells = lineCells(static_cast<int64_t>(edge.x0), static_cast<int64_t>(edge.y0),
-                                 static_cast<int64_t>(edge.x1), static_cast<int64_t>(edge.y1),
-                                 grid.width, grid.height);
+    // The endpoints are truncated, which moves a vertex by up to one cell
+    // off the cell nearest to it. Rounding would be exact, but it changes
+    // the bottlenecks of the benchmark chips (see rasterizeMedialAxis()).
+    const auto cells =
+        lineCells(static_cast<int64_t>(edge.x0), static_cast<int64_t>(edge.y0),
+                  static_cast<int64_t>(edge.x1), static_cast<int64_t>(edge.y1),
+                  grid.width, grid.height);
     std::size_t previous = grid.cells();
     for (const auto cell : cells) {
       if (blocked.test(cell)) {
+        // The cells on either side of a blocked cell are not neighbors.
+        previous = grid.cells();
         continue;
       }
       axis.cells[cell] = AxisCell::Path;
