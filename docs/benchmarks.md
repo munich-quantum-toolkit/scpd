@@ -27,8 +27,10 @@ git clone --depth 1 https://github.com/cda-tum/planar-superconducting-pd.git
 cd planar-superconducting-pd
 ```
 
-The CI of MQT SCPD checks every chip against a pinned commit of that repository,
-which follows its `main` branch as the data changes.
+The CI of MQT SCPD checks every chip against a pinned commit of that repository.
+The `Update benchmark data` workflow checks its `main` branch every Sunday and
+opens a pull request when the pinned commit changes. These updates require
+review before merging. The workflow can also be run manually.
 
 ## Running a Chip
 

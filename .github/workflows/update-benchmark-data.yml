@@ -1,0 +1,170 @@
+# Copyright (c) 2023 - 2026 Chair for Design Automation, TUM
+# Copyright (c) 2025 - 2026 Munich Quantum Software Company GmbH
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
+name: Update benchmark data
+on:
+  schedule:
+    - cron: "0 0 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-benchmark-data-update
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  update-benchmark-data:
+    name: ⬆️ Update benchmark chips
+    runs-on: ubuntu-slim
+    environment: mqt-app
+    permissions:
+      contents: write # Needed to push changes to the repository
+      pull-requests: write # Needed to create pull requests
+    steps:
+      # Create a GitHub App token
+      - id: create-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write # Needed to update the pinned ref in benchmarks.yml
+      # Check out the repository
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Get the latest commit of the main branch of the benchmark chips
+        id: get-latest-commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          echo "Querying the latest commit of the main branch of the benchmark chips..."
+          latest_commit=$(gh api repos/cda-tum/planar-superconducting-pd/commits/main)
+          latest_commit_sha=$(jq -er '.sha | strings | select(test("^[0-9a-f]{40}$"))' <<< "$latest_commit")
+          echo "latest_commit_sha=$latest_commit_sha"
+          echo "latest_commit_sha=$latest_commit_sha" >> "$GITHUB_OUTPUT"
+      - name: Update benchmark pin
+        id: update-pin
+        env:
+          NEW_REVISION: ${{ steps.get-latest-commit.outputs.latest_commit_sha }}
+        shell: python
+        run: |
+          import os
+          import re
+          from pathlib import Path
+
+          new_revision = os.environ["NEW_REVISION"]
+          if re.fullmatch(r"[0-9a-f]{40}", new_revision) is None:
+              raise SystemExit("Expected a full benchmark commit SHA")
+
+          path = Path(".github/workflows/benchmarks.yml")
+          content = path.read_text(encoding="utf-8")
+          pins = list(re.finditer(
+              r"(?m)^([ \t]+repository: cda-tum/planar-superconducting-pd\n[ \t]+ref: )([0-9a-f]{40})$",
+              content,
+          ))
+          if len(pins) != 1:
+              raise SystemExit("Expected exactly one pinned benchmark checkout")
+          pin = pins[0]
+          path.write_text(content[:pin.start(2)] + new_revision + content[pin.end(2):], encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"used_revision={pin[2]}\n")
+      # Create a pull request to merge the changes into the main branch.
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ steps.create-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          USED_REVISION: ${{ steps.update-pin.outputs.used_revision }}
+          NEW_REVISION: ${{ steps.get-latest-commit.outputs.latest_commit_sha }}
+        run: |
+          set -euo pipefail
+
+          BRANCH_NAME="update-benchmark-data-${NEW_REVISION}"
+
+          # Nothing to do if the update step did not change anything.
+          git add .github/workflows/benchmarks.yml
+          if git diff --cached --quiet; then
+            echo "No changes to the benchmark pin."
+            exit 0
+          fi
+
+          # Build the commit on a temporary branch, so that an already open pull request
+          # keeps its current commit if anything below fails.
+          BASE_OID="$(git rev-parse HEAD)"
+          TEMPORARY_BRANCH="$BRANCH_NAME-$RUN_ID"
+          cleanup() {
+            gh api --method DELETE "repos/$REPOSITORY/git/refs/heads/$TEMPORARY_BRANCH" \
+              >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          gh api "repos/$REPOSITORY/git/refs" \
+            --field "ref=refs/heads/$TEMPORARY_BRANCH" \
+            --field "sha=$BASE_OID" >/dev/null
+
+          # Commit through the GraphQL API so that GitHub signs the commit and attributes it
+          # to the app. `--no-renames` splits a rename into a deletion and an addition, so
+          # that the old path is removed rather than left behind.
+          ADDITIONS="$(git diff --cached --no-renames --name-only --diff-filter=ACM |
+            while IFS= read -r file; do
+              jq -n --arg path "$file" \
+                    --arg contents "$(base64 < "$file" | tr -d '\n')" \
+                    '{path: $path, contents: $contents}'
+            done | jq --slurp '.')"
+          DELETIONS="$(git diff --cached --no-renames --name-only --diff-filter=D |
+            jq --raw-input '{path: .}' | jq --slurp '.')"
+
+          COMMIT_OID="$(jq -n \
+            --arg repository "$REPOSITORY" \
+            --arg branch "$TEMPORARY_BRANCH" \
+            --arg oid "$BASE_OID" \
+            --arg headline "⬆️ Update benchmark chips" \
+            --argjson additions "$ADDITIONS" \
+            --argjson deletions "$DELETIONS" \
+            '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+              variables: {
+                input: {
+                  branch: {repositoryNameWithOwner: $repository, branchName: $branch},
+                  message: {headline: $headline},
+                  expectedHeadOid: $oid,
+                  fileChanges: {additions: $additions, deletions: $deletions}
+                }
+              }
+            }' | gh api graphql --input - \
+            --jq '.data.createCommitOnBranch.commit.oid')"
+
+          # Only now move the pull request branch onto the new commit.
+          gh api "repos/$REPOSITORY/git/refs" \
+            --field "ref=refs/heads/$BRANCH_NAME" \
+            --field "sha=$COMMIT_OID" >/dev/null 2>&1 ||
+            gh api --method PATCH "repos/$REPOSITORY/git/refs/heads/$BRANCH_NAME" \
+              --field "sha=$COMMIT_OID" --field "force=true" >/dev/null
+
+          # Open a pull request unless one is already open for this branch.
+          if [ -z "$(gh pr list --repo "$REPOSITORY" --head "$BRANCH_NAME" --base "main" --state open --json number --jq '.[].number')" ]; then
+            cat > "$RUNNER_TEMP/benchmark-update.md" <<EOF
+          Update the benchmark chips from cda-tum/planar-superconducting-pd@${USED_REVISION} to cda-tum/planar-superconducting-pd@${NEW_REVISION}.
+
+          **Full Changelog**: https://github.com/cda-tum/planar-superconducting-pd/compare/${USED_REVISION}...${NEW_REVISION}
+          EOF
+            gh pr create \
+              --repo "$REPOSITORY" \
+              --title "⬆️ Update benchmark chips" \
+              --body-file "$RUNNER_TEMP/benchmark-update.md" \
+              --base "main" \
+              --head "$BRANCH_NAME" \
+              --label "dependencies,github-actions"
+          fi

@@ -46,7 +46,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: cda-tum/planar-superconducting-pd
-          # renovate: datasource=git-refs depName=https://github.com/cda-tum/planar-superconducting-pd branch=main
           ref: 636def4e293aa8f8f9af7651d199d3c6056ba4a5
           path: planar-superconducting-pd
           persist-credentials: false
