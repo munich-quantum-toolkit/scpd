@@ -623,21 +623,14 @@ struct GlobalSatOutcome {
   std::vector<std::string> every;
 };
 
-GlobalSatOutcome
-globalSatOf(const Benchmark& benchmark, const Planned& planned,
-            const std::vector<std::pair<const char*, const char*>>& env) {
-  for (const auto& [name, value] : env) {
-    setenv(name, value, 1);
-  }
+GlobalSatOutcome globalSatOf(const Benchmark& benchmark,
+                             const Planned& planned) {
   std::vector<std::string> lines;
   // At verbosity 1, so that every combination says what it lost.
   CouplerSession session(
       benchmark.chip, planned.global, planned.assignment, planned.detail,
       benchmark.config,
       [&lines](const std::string_view line) { lines.emplace_back(line); }, 1);
-  for (const auto& [name, value] : env) {
-    unsetenv(name);
-  }
   GlobalSatOutcome out;
   out.every = lines;
   out.couplers = session.couplers();
@@ -664,200 +657,6 @@ globalSatOf(const Benchmark& benchmark, const Planned& planned,
   return out;
 }
 
-/// The global SAT search collects a chain only when a stage first needs its
-/// states (`SCPD_GLOBAL_SAT_LAZY`, on). It tries the same combinations in
-/// the same order as the search that collects every chain first (`=0`), so
-/// both leave a chip on the same couplers, and it collects no chain the
-/// other does not. On the 17-qubit test chip no chain is at an edge over
-/// and an edge of chain 2 has no way: the lazy search collects chain 2
-/// alone, finds no other state of it and ends.
-TEST(CouplerSession, TheLazyGlobalSatSearchTriesTheSameCombinations) {
-  const auto benchmark = withOldPrices(seventeenQubit());
-  const auto planned = plan(benchmark);
-  const auto eager =
-      globalSatOf(benchmark, planned, {{"SCPD_GLOBAL_SAT_LAZY", "0"}});
-  const auto lazy =
-      globalSatOf(benchmark, planned, {{"SCPD_GLOBAL_SAT_LAZY", "1"}});
-
-  const auto searched = [](const GlobalSatOutcome& outcome) {
-    return std::ranges::count_if(outcome.lines, [](const std::string& line) {
-      return line.find("[Global SAT] the chip is UNSAT") != std::string::npos;
-    });
-  };
-  ASSERT_EQ(searched(eager), 1);
-  ASSERT_EQ(searched(lazy), 1);
-  ASSERT_FALSE(eager.combinations.empty());
-  EXPECT_EQ(lazy.combinations, eager.combinations);
-  ASSERT_FALSE(lazy.chains.empty());
-  EXPECT_LT(lazy.chains.size(), eager.chains.size());
-  EXPECT_TRUE(std::ranges::includes(eager.chains, lazy.chains));
-  // The couplers whole, the flags of their second-dogleg options included:
-  // the search puts back the flags its collection set.
-  EXPECT_EQ(lazy.couplers, eager.couplers);
-  EXPECT_EQ(lazy.verdict, eager.verdict);
-}
-
-/// A combination of the global SAT search puts back only what the
-/// combination before it changed. `SCPD_GLOBAL_SAT_VERIFY=1` builds every
-/// combination once more from a full restore and throws when the two chips
-/// differ; on the 17-qubit chip none does, and the search says that it
-/// checked every combination it tried.
-TEST(CouplerSession, TheGlobalSatSearchPutsTheCommitBackAsAFullRestore) {
-  const auto benchmark = withOldPrices(seventeenQubit());
-  const auto planned = plan(benchmark);
-  GlobalSatOutcome verified;
-  ASSERT_NO_THROW(verified = globalSatOf(benchmark, planned,
-                                         {{"SCPD_GLOBAL_SAT_VERIFY", "1"}}));
-  const std::regex summary(
-      R"(\[Global SAT\] (\d+) combinations? in .* (\d+) checked against a full restore)");
-  std::smatch match;
-  const auto line =
-      std::ranges::find_if(verified.lines, [&](const std::string& text) {
-        return std::regex_search(text, match, summary);
-      });
-  ASSERT_NE(line, verified.lines.end());
-  EXPECT_EQ(match[2].str(), match[1].str());
-}
-
-/// With `SCPD_GLOBAL_SAT_EARLY=1`, the lazy global SAT search tries each
-/// state of a chain at an edge over as soon as a segment finds it. When no
-/// such state is SAT on its own, the search tries every state once, as the
-/// search without the switch does, and then tries the same
-/// conflict-directed combinations. On the 17-qubit test chip no chain is at
-/// an edge over, so the switch must change no combination and no coupler.
-TEST(CouplerSession, TheEarlyGlobalSatSearchEndsOnTheSameChipWithoutASatState) {
-  const auto benchmark = withOldPrices(seventeenQubit());
-  const auto planned = plan(benchmark);
-  const auto lazy =
-      globalSatOf(benchmark, planned, {{"SCPD_GLOBAL_SAT_LAZY", "1"}});
-  const auto early = globalSatOf(
-      benchmark, planned,
-      {{"SCPD_GLOBAL_SAT_LAZY", "1"}, {"SCPD_GLOBAL_SAT_EARLY", "1"}});
-
-  const auto foundEarly = static_cast<std::ptrdiff_t>(
-      std::ranges::count_if(early.combinations, [](const std::string& line) {
-        return line.find(", found early): UNSAT") != std::string::npos;
-      }));
-  ASSERT_FALSE(early.combinations.empty());
-  ASSERT_EQ(early.combinations.size(), lazy.combinations.size());
-  EXPECT_TRUE(std::equal(early.combinations.begin() + foundEarly,
-                         early.combinations.end(),
-                         lazy.combinations.begin() + foundEarly));
-  EXPECT_EQ(early.chains, lazy.chains);
-  EXPECT_EQ(early.couplers, lazy.couplers);
-  EXPECT_EQ(early.verdict, lazy.verdict);
-}
-
-/// The segment search keeps the ways of its edge searches by their corridor
-/// (`SCPD_SEGMENT_MEMO`). A kept way is the way a search would find, so the
-/// comparison of the local check with the rip-up, which runs the segment
-/// search on every chain, reaches the same runs with the memo and without
-/// it, and the stage routes the same.
-TEST(FinalRouter, TheSegmentMemoChangesNoRunOfTheSegmentSearch) {
-  const auto benchmark = fourQubit();
-  const auto planned = plan(benchmark);
-  const auto route = [&](const char* memo) {
-    setenv("SCPD_LOCAL_AGREEMENT", "1", 1);
-    setenv("SCPD_SEGMENT_MEMO", memo, 1);
-    std::vector<std::string> lines;
-    auto routing = finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
-        [&lines](const std::string_view line) { lines.emplace_back(line); });
-    unsetenv("SCPD_SEGMENT_MEMO");
-    unsetenv("SCPD_LOCAL_AGREEMENT");
-    return std::pair{std::move(routing), std::move(lines)};
-  };
-  const auto [plain, plainLines] = route("0");
-  const auto [kept, keptLines] = route("1");
-
-  // What every segment search reached, without the timestamps.
-  const auto searched = [](const std::vector<std::string>& lines) {
-    std::vector<std::string> out;
-    for (const auto& line : lines) {
-      const auto at = line.find("targeted repair:");
-      if (at != std::string::npos &&
-          line.find("edge memo:") == std::string::npos) {
-        out.push_back(line.substr(at));
-      }
-    }
-    return out;
-  };
-  const auto memoLines = [](const std::vector<std::string>& lines) {
-    return std::ranges::count_if(lines, [](const std::string& line) {
-      return line.find("targeted repair:") != std::string::npos &&
-             line.find("edge memo:") != std::string::npos;
-    });
-  };
-  ASSERT_FALSE(searched(plainLines).empty());
-  EXPECT_EQ(searched(keptLines), searched(plainLines));
-  EXPECT_EQ(memoLines(plainLines), 0);
-  EXPECT_GT(memoLines(keptLines), 0);
-  ASSERT_EQ(kept.wires.size(), plain.wires.size());
-  for (std::size_t index = 0; index < plain.wires.size(); ++index) {
-    EXPECT_EQ(kept.wires[index]->path, plain.wires[index]->path)
-        << "wire " << index << " differs with the segment memo";
-  }
-  ASSERT_EQ(kept.feedlines.size(), plain.feedlines.size());
-  for (std::size_t index = 0; index < plain.feedlines.size(); ++index) {
-    EXPECT_EQ(kept.feedlines[index]->path, plain.feedlines[index]->path)
-        << "feedline " << index << " differs with the segment memo";
-  }
-}
-
-/// The coupler insertion has no time limit, so its answer does not depend
-/// on how fast it runs. `SCPD_SLOT_GRAPH_VERIFY=1` builds every slot graph
-/// twice and `SCPD_GLOBAL_SAT_VERIFY=1` builds every combination of the
-/// global SAT search twice: both make the insertion slower and change no
-/// result. With them, every line the insertion says is the same apart from
-/// its seconds and the lines of the two checks, the global SAT search tries
-/// the same combinations in the same order, and the couplers end on the
-/// same options.
-TEST(CouplerSession, TheInsertionDoesNotDependOnItsSpeed) {
-  const auto benchmark = withOldPrices(seventeenQubit());
-  const auto planned = plan(benchmark);
-  // Under the old prices, so that the global SAT search runs.
-  const auto fast = globalSatOf(benchmark, planned, {});
-  const auto slow = globalSatOf(
-      benchmark, planned,
-      {{"SCPD_SLOT_GRAPH_VERIFY", "1"}, {"SCPD_GLOBAL_SAT_VERIFY", "1"}});
-  // Every time the insertion says: seconds, milli- and microseconds, and
-  // the laps of three or more decimals.
-  const std::regex seconds(R"( *\d+\.\d+s\b)");
-  const std::regex fractions(R"(\d+(\.\d+)? ?(ms|us)\b)");
-  const std::regex laps(R"(\d+\.\d{3,})");
-  const std::regex restored(R"(; \d+ checked against a full restore in #s)");
-  const auto said = [&](const std::vector<std::string>& lines) {
-    std::vector<std::string> out;
-    for (const auto& line : lines) {
-      if (line.find("[Slot Graph Verify]") != std::string::npos) {
-        continue;
-      }
-      auto text = std::regex_replace(line, seconds, " #s");
-      text = std::regex_replace(text, fractions, "#");
-      text = std::regex_replace(text, laps, "#");
-      out.push_back(std::regex_replace(text, restored, ""));
-    }
-    return out;
-  };
-  const auto fastLines = said(fast.every);
-  const auto slowLines = said(slow.every);
-  ASSERT_FALSE(fastLines.empty());
-  EXPECT_EQ(fastLines.size(), slowLines.size());
-  const auto [one, other] = std::ranges::mismatch(fastLines, slowLines);
-  EXPECT_TRUE(one == fastLines.end() && other == slowLines.end())
-      << "first line that differs:\n"
-      << (one == fastLines.end() ? std::string("(none)") : *one) << "\n"
-      << (other == slowLines.end() ? std::string("(none)") : *other);
-  ASSERT_FALSE(fast.combinations.empty());
-  EXPECT_EQ(fast.combinations, slow.combinations);
-  EXPECT_EQ(fast.couplers, slow.couplers);
-  EXPECT_EQ(fast.verdict, slow.verdict);
-  for (const auto& line : fast.every) {
-    EXPECT_EQ(line.find("out of time"), std::string::npos) << line;
-  }
-}
-
 /// `coupler_offsets` names the offsets the option generator turns a pad
 /// by, 0,1,2,5,6,7 by default. Those offsets named are the default: the
 /// couplers come out with the same options, and none on offset 3 or 4
@@ -870,9 +669,9 @@ TEST(CouplerSession, OffersOnlyTheAllowedOffsets) {
   const auto withOffsets = [&](const char* offsets) {
     auto chip = benchmark;
     finalParamsOf(chip).coupler_offsets = offsets;
-    return globalSatOf(chip, planned, {});
+    return globalSatOf(chip, planned);
   };
-  const auto plain = globalSatOf(benchmark, planned, {});
+  const auto plain = globalSatOf(benchmark, planned);
   const auto listed = withOffsets("0,1,2,5,6,7");
   EXPECT_EQ(listed.couplers, plain.couplers);
 
@@ -1089,54 +888,6 @@ TEST(FinalRouter, TheCapacityRuleAndTheBottleneckReportAreOnByDefault) {
     return std::regex_search(line, edgeLine);
   }));
   EXPECT_TRUE(graphWritten);
-}
-
-/// The graphs the step check of 9q saw at the feedline edges of the runs
-/// its chains settle on (`SCPD_CAPACITY_STEP_GRAPHS`).
-std::vector<nlohmann::json> nineQubitStepGraphs() {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  setenv("SCPD_CAPACITY_STEP", "1", 1);
-  setenv("SCPD_CAPACITY_STEP_GRAPHS", "1", 1);
-  std::vector<nlohmann::json> graphs;
-  const std::regex stepName(R"(step-c\d+-f\d+-capacity-graph\.json)");
-  static_cast<void>(finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config, {},
-      [&](const std::string_view name, const std::string_view content) {
-        const std::string named(name);
-        if (std::regex_match(named, stepName)) {
-          graphs.push_back(nlohmann::json::parse(content));
-        }
-        return named;
-      }));
-  unsetenv("SCPD_CAPACITY_STEP_GRAPHS");
-  unsetenv("SCPD_CAPACITY_STEP");
-  return graphs;
-}
-
-/// The step check takes a chain on its own, with its terminal edges as
-/// walls. The feedline routing lays those edges again, so they close the
-/// chain's pocket and keep no room: every bottleneck with an end on one
-/// takes every wire and is never over.
-TEST(FinalRouter, TheStepCheckLetsEveryWirePassBesideATerminalEdge) {
-  const auto graphs = nineQubitStepGraphs();
-  ASSERT_FALSE(graphs.empty());
-  std::size_t bottlenecks = 0;
-  for (const auto& graph : graphs) {
-    const auto wires = graph.at("wires").size();
-    for (const auto& edge : graph.at("edges")) {
-      if (edge.at("kind") == "stretch" || !edge.at("terminal").get<bool>()) {
-        continue;
-      }
-      ++bottlenecks;
-      EXPECT_GE(edge.at("capacity").get<std::size_t>(), wires)
-          << edge.at("name").get<std::string>();
-      EXPECT_EQ(edge.at("overflow").get<std::size_t>(), 0U)
-          << edge.at("name").get<std::string>();
-    }
-  }
-  EXPECT_GT(bottlenecks, 0U);
 }
 
 /// The layered search prices its steps by the stub bound: the analytic
@@ -1718,10 +1469,11 @@ TEST(CouplerSession, KeepsTheCrossingPointsClearOfTheTerminalEdgesRuns) {
   EXPECT_GT(points, 0U);
 }
 
-/// The capacity check of the coupler insertion: the graph of gates and
-/// stretches the check by crossing slots judged, for the tests of that graph.
+/// The capacity graph of the coupler insertion as `CouplerSession::graph`
+/// gives it, before the check by crossing slots judges it: the graph of
+/// gates and stretches, for the tests of that graph.
 nlohmann::json stretchCheck(CouplerSession& session) {
-  return nlohmann::json::parse(session.insertionCheck());
+  return nlohmann::json{{"graph", nlohmann::json::parse(session.graph())}};
 }
 
 /// A crossing of a feedline edge takes a rectangle (user, 2026-10-14): the
@@ -2112,31 +1864,6 @@ TEST(CouplerSession, ClosesEveryMouthThoughALeadStandsBeforeTheTip) {
       EXPECT_FALSE(line.get<std::string>().starts_with("no mouth"))
           << chip << ": " << line;
     }
-  }
-}
-
-/// `SCPD_CHECK_ROUND` sets every rule of the check to the state it had after
-/// that round of the review of 2026-10-13 (user, 2026-10-15): at 16 there is
-/// no check of each chain alone, no terminal edge as a wire and so no mouth
-/// and no slot, no rip-up, and no rectangle around a crossing.
-TEST(CouplerSession, ChecksAsItDidInRoundSixteenUnderTheRoundSwitch) {
-  setenv("SCPD_CHECK_ROUND", "16", 1);
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
-                         planned.detail, benchmark.config);
-  const auto check = nlohmann::json::parse(session.insertionCheck());
-  unsetenv("SCPD_CHECK_ROUND");
-
-  EXPECT_TRUE(check.value("local", nlohmann::json::array()).empty());
-  for (const auto& edge : check.at("graph").at("edges")) {
-    EXPECT_FALSE(edge.value("mouth", false)) << edge.at("name");
-    EXPECT_FALSE(edge.value("slot", false)) << edge.at("name");
-  }
-  for (const auto& line : check.at("graph").at("summary")) {
-    const auto text = line.get<std::string>();
-    EXPECT_EQ(text.find("sweeps"), std::string::npos) << text;
-    EXPECT_EQ(text.find("terminal edges as wires"), std::string::npos) << text;
   }
 }
 

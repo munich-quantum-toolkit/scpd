@@ -55,8 +55,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <functional>
 #include <initializer_list>
 #include <iterator>
@@ -97,38 +95,6 @@ using routing::RoutingObjective;
 /// No wire holds this cell.
 constexpr std::uint32_t NO_OWNER = std::numeric_limits<std::uint32_t>::max();
 
-/// Whether an environment switch carries a value at all.
-///
-/// **An empty value is not a value.** `SCPD_CHAIN_SOLO=` left in a shell or a
-/// script is a leftover, not a decision, and `std::atoi("")` is zero — so
-/// read as a number it turns a default **off** and says nothing about having
-/// done so. Every switch below goes through this.
-[[nodiscard]] inline const char* envSet(const char* name) {
-  const char* value = std::getenv(name);
-  return (value != nullptr && *value != '\0') ? value : nullptr;
-}
-
-/// An on/off switch from the environment, `fallback` when it carries no
-/// value.
-[[nodiscard]] inline bool envFlag(const char* name, const bool fallback) {
-  const char* value = envSet(name);
-  return value != nullptr ? std::atoi(value) != 0 : fallback;
-}
-
-/// A whole-number switch from the environment, `fallback` when it carries no
-/// value.
-[[nodiscard]] inline int envWhole(const char* name, const int fallback) {
-  const char* value = envSet(name);
-  return value != nullptr ? std::atoi(value) : fallback;
-}
-
-/// A real-number switch from the environment, `fallback` when it carries no
-/// value.
-[[nodiscard]] inline double envReal(const char* name, const double fallback) {
-  const char* value = envSet(name);
-  return value != nullptr ? std::atof(value) : fallback;
-}
-
 /// The bend radius of the primitives, in cells.
 ///
 /// It is a property of the move set and not a knob: the primitive tables, the
@@ -147,282 +113,6 @@ constexpr std::uint8_t BEND_RADIUS = 5;
 /// on 69q without a way — but it may not run **across** it.
 constexpr std::uint32_t RESONATOR_COPPER = 2;
 
-/// Whether the sweep under the feedline constraints takes the shape the
-/// prototype's `run_final_routing_feedline` gives it, rather than the shape
-/// of the outer routing it otherwise shares every line with.
-///
-/// The prototype's own comment says the feedline pass reroutes every wire
-/// "genau wie run_final_routing()" and only adds the orthogonal crossing
-/// constraints. Its code says five more things (`FinalGrid.cpp:4254`,
-/// `:4262`, `:4437`, `:4612`, `:10677`), and they are what this switch
-/// turns on:
-///
-/// 1. **The band grows with the round**, `(r + 1) * expansion`, where the
-///    outer routing holds it at `expansion`. This is the escape valve a
-///    wire has when its own band is the thing hemming it in.
-/// 2. **Four neighbours are fenced, not two**: `i ± 1` and `i ± 2`.
-/// 3. **The lane polygon is built from other paths than the two
-///    neighbours** — see `Driver::laneOf`, which is the whole of it.
-/// 4. **The relaxation prices its discs at one clearance**, where the outer
-///    routing grows them by the level.
-/// 5. **The crossing rule is built from the edges between couplers only**,
-///    the terminal ones left out.
-///
-/// And it drops the one thing that is ours and not the prototype's: the
-/// ten-fold price on the approaches of the wires around this one.
-[[nodiscard]] inline bool feedlineLikePrototype() {
-  static const bool on = envFlag("SCPD_FEEDLINE_PROTOTYPE", true);
-  return on;
-}
-
-/// Whether every wire of the feedline pass is drawn again at least once,
-/// rather than keeping a way that already holds every rule.
-///
-/// The way a resonator holds when the pass begins is not a way this stage
-/// drew. It is the coupler's lead, and behind the lead's tip the route the
-/// outer routing left, spliced on at the insertion point. The two meet at
-/// the right cell but not on the same heading, so the join is a kink — a
-/// corner no search would ever have returned, and one the curvature rule
-/// does not admit. `isLegal` does not look for it: it asks after the room
-/// against other wires, the crossing rule and the length, and a kinked way
-/// answers all three. So the wire was settled on its first round and never
-/// searched, and the kink stood to the end of the run. Measured on 17q,
-/// every one of the five resonators on a diagonal coupler kept its way in
-/// all six rounds (user, 2026-09-30).
-///
-/// Forcing the draw costs the searches the shortcut saved. `=0` is the way
-/// back.
-[[nodiscard]] inline bool forceReroute() {
-  static const bool on = envFlag("SCPD_FEEDLINE_FORCE_REROUTE", true);
-  return on;
-}
-
-/// Whether a resonator is meandered in the feedline **sweep**.
-///
-/// **On since 2026-10-05** (user), where it had been off since
-/// 2026-09-30. It was off because in the exact regime the only tool is the
-/// meander, which adds, so a way that comes out too long can only be
-/// refused as no way — and a resonator refused in the sweep goes back on
-/// its seed and costs the whole round. What answers that is not switching
-/// the insertion off but giving the sweep a wide band and leaving the rest
-/// to the refinement, which is the prototype's own arrangement: see
-/// `sweepLengthBand`.
-///
-/// Measured over the eight benchmarks (`artifacts/logs/sweep6` against
-/// `base6`): the resonators off their target length go from 102 to 6 and
-/// `bad` from 8 to 2, for about twice the runtime. `=0` leaves the sweep
-/// routing alone, as it was; the refinement then makes the lengths by
-/// itself under `SCPD_REFINE_MEANDER`.
-[[nodiscard]] inline bool feedlineMeander() {
-  static const bool on = envFlag("SCPD_FEEDLINE_MEANDER", true);
-  return on;
-}
-
-/// How many cells at the start of a resonator's way the meander leaves
-/// alone, and what the two legs of its loop keep between them.
-///
-/// Both were derived rather than chosen, and on the 4-qubit chip the two
-/// together made the insertion arithmetically impossible: wire 4's way is
-/// 111 cells, of which 70 lie on a straight run; the margin reserved the
-/// first 35 of them and a loop needs `legSpacing + 2 · BEND_RADIUS` = 35
-/// cells of span between its two ends, which the 34 left over cannot give.
-/// Every one of the 4760 placements it tried was refused for that and for
-/// nothing else — not one for want of room, a closed cell or a crossing
-/// (`artifacts/logs/refine-probe/4q-diag.log`).
-///
-/// **The margin is `couplerLength + 4` now**, where it was
-/// `couplerLength + straightStart + 4`. What it is for is to keep the loop
-/// out of the run the resonator couples along, which is the coupler's own
-/// length; the straight start was the second run after the lead, and
-/// `SCPD_RESONATOR_STUB` took that away on 2026-10-03 without this figure
-/// following. The four cells are the prototype's own start margin.
-[[nodiscard]] inline std::uint32_t
-meanderStartMargin(const std::uint32_t couplerLength,
-                   const std::uint32_t straightStart) {
-  static const auto asked = envWhole("SCPD_MEANDER_START_MARGIN", -1);
-  if (asked >= 0) {
-    return static_cast<std::uint32_t>(asked);
-  }
-  static const bool withStub = envFlag("SCPD_MEANDER_MARGIN_STUB", false);
-  return couplerLength + (withStub ? straightStart : 0U) + 4U;
-}
-
-/// What the two legs of a loop keep between them, in cells.
-///
-/// The prototype's `min_straight_length`, which is **not** the design rule
-/// of that name (decision 0019 keeps the two apart): the rule is 100 layout
-/// units, about ten cells, and the figure here is what holds the two legs of
-/// one resonator apart. 25 is the prototype's. The floor that means
-/// something is the wire clearance, 19 cells — two legs of one wire are not
-/// a pair the design-rule check looks at, so nothing below the clearance is
-/// defensible on its own.
-[[nodiscard]] inline std::uint32_t meanderLegSpacing() {
-  static const auto cells = static_cast<std::uint32_t>(
-      std::clamp(envWhole("SCPD_MEANDER_LEG_SPACING", 25), 4, 200));
-  return cells;
-}
-
-/// How wide the length band of the feedline **sweep** is, as a multiple of
-/// `resonator_length_tolerance`.
-///
-/// **5** (user, 2026-10-05): the meander goes back on in the feedline pass,
-/// and it aims roughly rather than exactly there; the refinement tightens
-/// what is left. This is the prototype's own arrangement, and it is not a
-/// knob it has to tune: its sweep calls `meander_insertion_proximity` and
-/// its refinement `meander_insertion_proximity_strict`
-/// (`FinalGrid.cpp:11809` against `:13570`), so the sweep aims at *at
-/// least* the length and nothing there can be too long, where the strict
-/// insertion aims at the length itself.
-///
-/// What it buys: in the exact regime the only tool is the meander, which
-/// adds, so a way that comes out long can only be refused as no way. A
-/// resonator refused in the sweep goes back on its seed and the whole round
-/// is spent on it. A wide band lets the sweep place a loop that is roughly
-/// right and leaves the last few hundred units to the phase whose business
-/// they are.
-///
-/// The band the **stage is judged by** is not this one: `failsOf` counts
-/// short and long against `resonator_length_tolerance` itself, whatever the
-/// sweep allowed itself. `=1` is the band the sweep had.
-[[nodiscard]] inline double sweepLengthBand() {
-  static const auto band =
-      std::max(1.0, envReal("SCPD_SWEEP_LENGTH_BAND", 5.0));
-  return band;
-}
-
-/// Whether the **refinement** of the feedline routing makes a resonator its
-/// length, whatever `SCPD_FEEDLINE_MEANDER` says about the sweep.
-///
-/// **On** (2026-10-05). The fifth phase is where the lengths are finally
-/// read, and the two passes want different answers: the sweep is judged by
-/// whether a resonator can be routed at all, the refinement by whether it
-/// can be made its length. One switch over both passes could not say that,
-/// and the cost of the sweep's meander is not small — measured on 17q, the
-/// sweep with the meander takes 21.5 s to 72.2 s and opens the 30/31 pair,
-/// for 4 of the 7 short resonators; the refinement closes 4 of them in
-/// 11 s more and opens nothing (`artifacts/logs/refine-probe`).
-///
-/// `=0` leaves the refinement routing alone, as it was while
-/// `feedline_refinement_rounds` was 0.
-[[nodiscard]] inline bool refineMeander() {
-  static const bool on = envFlag("SCPD_REFINE_MEANDER", true);
-  return on;
-}
-
-/// Whether a refinement attempt whose meander found no room is searched
-/// once more with the room price taken off.
-///
-/// **On**, and it is the prototype's own fallback
-/// (`FinalGrid.cpp:13600`): the clearance-maximising way is a detour, and a
-/// detour is long — long enough that the meander has no slack left and in
-/// the exact regime long enough to be refused outright. Zeroing the wire
-/// proximity field leaves the hard corridor standing and gives a direct way
-/// with room to pad. Only for a resonator that has never reached its length
-/// in this phase (the prototype's `fitted`): one that has will roll back
-/// onto a way that is still at its length, so a second search buys nothing.
-///
-/// What it is for, measured on 17q before it existed: of 34 resonator
-/// attempts in two refinement rounds, **12 were refused as too long for
-/// their target** and 15 found no room for a loop.
-[[nodiscard]] inline bool refineFallback() {
-  static const bool on = envFlag("SCPD_REFINE_FALLBACK", true);
-  return on;
-}
-
-/// Whether the refinement's room price is built **after** the feedline
-/// constraints rather than before them.
-///
-/// **On**. `priceRoom` is the chamfer distance to the middle of the channel
-/// — the prototype's `compute_corridor_proximity_decay` — and it reads the
-/// corridor. Built before `constrainByFeedlines`, it reads a corridor in
-/// which the fences of the chain edges and the terminal edges' coupler runs
-/// are not yet closed, so the field pulls a wire into the middle of a
-/// channel whose feedline walls it cannot see. The prototype computes the
-/// decay on the fully marked buffer. `=0` is the order the phase was
-/// written with.
-[[nodiscard]] inline bool refinePriceLast() {
-  static const bool on = envFlag("SCPD_REFINE_PRICE_LAST", true);
-  return on;
-}
-
-/// How many pairs of ring neighbours the refinement fences.
-///
-/// The prototype marks **i ± 1 … i ± 4** as hard obstacles at
-/// `ref_min_clearance`, which is the design rule itself
-/// (`FinalGrid.cpp:13410`); the phase was written with one pair, where the
-/// feedline sweep fences three (`SCPD_FEEDLINE_FENCE_PAIRS`). A way taken
-/// here is tested against every other wire afterwards, so a loose fence
-/// does not break the rule — it wastes searches on ways that are then
-/// refused.
-[[nodiscard]] inline std::uint32_t refineFencePairs() {
-  static const auto pairs = static_cast<std::uint32_t>(
-      std::clamp(envWhole("SCPD_REFINE_FENCE_PAIRS", 3), 1, 8));
-  return pairs;
-}
-
-/// Whether the four checks of the coupler insertion are said again at the
-/// end of the refinement.
-///
-/// **On**. They run at the end of `insertCouplers` and the crossing check
-/// once more after the repair, but the refinement **moves feedline edges**
-/// — 7 of 20 on 17q — and nothing looked at the result: `failsOf` sees a
-/// conventional wire crossing an edge and not an edge crossing an edge.
-[[nodiscard]] inline bool refineChecks() {
-  static const bool on = envFlag("SCPD_REFINE_CHECKS", true);
-  return on;
-}
-
-/// What the halo of a wire let go of costs, as a multiple of the wire price.
-///
-/// One was the figure the lane fill already lays on open ground, and once the
-/// prices add up that is enough to tell the halo from the ground beside it.
-///
-/// **Raising it was measured and made things worse** (33q, the crossing rule
-/// off): 13 fails at one, 16 at two, 20 at three, 15 at four, and the open
-/// wires went the wrong way, 2 -> 6 -> 8 -> 4. A wire let go of is drawn
-/// again a moment later, so pricing its room steers the wire being drawn off
-/// a lane that is about to be free and onto one that the next wire then
-/// wants. The figure is not monotone either, which is the mark of a knob
-/// that shuffles the order rather than one that reaches a cause
-/// (user, 2026-10-01).
-/// How far the halo of a wire reaches, as a multiple of the wire clearance,
-/// and how its price falls over that reach.
-///
-/// **A flat disc of one clearance is the shape that fails.** Measured on a
-/// 33q search: of the 77 587 cells the band lets a wire enter, 59 424 — more
-/// than three quarters — carry the same price. A constant over nearly
-/// everything is not a steer; it adds the same to every way and leaves only
-/// the length to decide, which is why the search takes the shortest way and
-/// looks past the room its neighbour needs. And the disc is a step: at its
-/// rim nothing opposes a crossing, so the cheapest way is often over the
-/// wire, along the cheap side and back over, which is the one shape a
-/// rip-up and re-route must not be taught (user, 2026-10-01).
-///
-/// A reach of several clearances with the price falling over it fixes both:
-/// far out it is cheap, so the field stops blanketing, and the peak sits on
-/// the wire, so a crossing pays the most exactly where it crosses — twice,
-/// for a way that comes back.
-///
-/// The prototype has no such halo in its feedline pass. It has the decay
-/// (`compute_proximity_grid_decay`) and uses it in the resonator refinement
-/// at a reach of 60 cells and a peak of 35, which is where these figures
-/// come from, but nothing of the sort steers the sweep there. This is ours.
-///
-/// `HALO_REACH` is the reach in clearances: one, the prototype's own disc
-/// around a wire let go of. On 69q a reach of three left one bad wire more
-/// and took longer.
-constexpr std::uint32_t HALO_REACH = 1;
-
-/// The rising halo past a released wire in the feedline pass: past the wire
-/// a cell costs the flat price plus a share growing with the distance, up to
-/// `RISE_PEAK` times the flat price at `RISE_REACH` clearances. A way that
-/// runs on the wire it replaces pays nothing; a way that crosses it, runs on
-/// beside it and crosses back pays for every cell it stands off on the far
-/// side. A price over an area alone cannot say "do not cross": a way pays it
-/// on the far side and earns it back there.
-constexpr std::uint32_t RISE_REACH = 3;
-constexpr std::uint32_t RISE_PEAK = 3;
-
 /// The most a cell of the wire proximity may hold.
 ///
 /// The layer is sixteen bits now, but the search adds `PENALTY_SCALE * value`
@@ -431,278 +121,6 @@ constexpr std::uint32_t RISE_PEAK = 3;
 /// bends on a 33-qubit grid, and even a way made entirely of such cells
 /// stays an order of magnitude below where the cost would wrap.
 constexpr std::uint32_t CEILING = 4000;
-
-/// Whether the feedline pass holds a resonator to a second straight run
-/// after its lead — the rule's `min_straight_length` once more — before it
-/// may turn (user, 2026-10-03).
-///
-/// The lead is a quarter turn and `max(COUPLER_LEAD_STRAIGHT, straightStart)`
-/// cells of straight, 14 on every chip here, and the search starts at its
-/// tip. The prototype starts its resonator at the end of the turn with
-/// `start_straight_length = 14` (`FinalGrid.cpp:10658`): the 14 are its stub
-/// **and** its lead, one straight run, and nothing is forced beyond them.
-/// `applyOption` used to set `startStub` to the rule's run on top of the
-/// lead, so the search began 14 + 11 = 25 cells after the turn.
-///
-/// Those eleven cells belong to no way until the resonator has been drawn
-/// once: the way the insertion splices turns off five cells after the tip,
-/// and a neighbour fenced by that way may settle inside the clearance of
-/// where the search has to begin. On 45q wire 3 did exactly that in round 0
-/// — 38.9 cells from 4's stub end before, 17.0 after, 21.2 from 4's way all
-/// the while — and wire 4 never found a way again, in any round, at any
-/// relaxation; 130 did the same to 131. See `fenceFixed`, which closes the
-/// other half of this.
-///
-/// Measured over the eight chips, one run at a time, 2026-10-03, open wires
-/// at the end of the stage (the five small chips have none under any
-/// setting):
-///
-/// | | 45q | 57q | 69q | all |
-/// |---|---|---|---|---|
-/// | the second run, ways fenced (before) | 12 | 19 | 20 | 51 |
-/// | no second run | 8 | 11 | 15 | 34 |
-/// | the second run, fixed places fenced | 8 | 3 | 19 | 30 |
-/// | **no second run, fixed places fenced** | **6** | **3** | **9** | **18** |
-///
-/// The two halves need each other: without the run the search starts where
-/// the neighbours were fenced, but a wire let go of still gives its head
-/// away; with the head fenced the run is still forced, and 4 on 45q finds a
-/// way in round 0 only to lose it to 5's relaxation. Together they close
-/// every resonator that was open at its head on 45q and 57q; what is left
-/// is pairs of plain wires trading one lane (45q 65/66, 133/136; 57q
-/// 9/10/11) and, on 69q, resonator 9, whose lead the insertion laid across
-/// wire 10 with no room left for 10 to go. Fails on the three large chips
-/// went 24/46/49 to 18/29/45; 17q gained two short resonators (7 to 9),
-/// which the meander is for.
-///
-/// Off, which is the prototype's figure. `=1` restores the second run.
-[[nodiscard]] inline bool resonatorStub() {
-  static const bool on = envFlag("SCPD_RESONATOR_STUB", false);
-  return on;
-}
-
-/// Whether a wire's fixed places — a resonator's lead, the straight run out
-/// of a source, the run into a target — keep their clearance in every
-/// fence, whether the wire is fenced or let go of (user, 2026-10-03).
-///
-/// `fence` closes the clearance around a wire's **way**. The fixed places
-/// are not always in it: a resonator the insertion has just spliced holds
-/// its lead and the old tail, and the straight run its next search must
-/// make lies in neither. A neighbour drawn against the way alone may then
-/// settle inside that run's clearance, and the resonator's next search is
-/// over before it starts — its first cell is closed (see `deadOnArrival`).
-///
-/// And a wire let go of in the relaxation is fenced by nothing at all, so a
-/// relaxed neighbour may be drawn straight through its head: 132 on 45q came
-/// within 6 cells of 131's resonator port that way, 13 cells having been the
-/// figure the insertion left. The prototype keeps exactly these cells hard
-/// for a ripped resonator — `resonator_head_cells`, the arc and twenty cells
-/// beyond it (`FinalGrid.cpp:12100`) — and this is that rule, for every wire
-/// and for the runs at the launchers too.
-///
-/// Measured over the eight chips, 2026-10-03, with and without the second
-/// run of `resonatorStub` — the table is there. Alone it takes 57q from 19
-/// open wires to 3 and 45q's 131/132 apart, and leaves 69q at 19 against
-/// 20; with the second run gone as well the three chips read 6, 3 and 9
-/// against 12, 19 and 20.
-///
-/// On. `=0` fences the ways alone, as before.
-[[nodiscard]] inline bool fenceFixed() {
-  static const bool on = envFlag("SCPD_FENCE_FIXED", true);
-  return on;
-}
-
-/// Whether the orthogonal crossing rule binds at all. `=1` puts it back,
-/// `=0` lifts it entirely.
-///
-/// Three things go with it, and all three have to go together or the run
-/// contradicts itself:
-///
-/// 1. **The rule is not built.** `rebuildCrossingRule` clears the router's
-///    constraints instead of filling them, so no cell remembers a heading
-///    and no end zone is closed.
-/// 2. **The search is the free one.** A wire under the feedline constraints
-///    is searched with `route` rather than `routeOrthogonal`, so it is not
-///    paying for a rule that is not there.
-/// 3. **The fails do not count it.** `crossesAFeedline` says no for every
-///    wire, so the `crossing` column reads 0 and the stage's total is the
-///    room and the length alone.
-///
-/// What it leaves standing: the edges are still fenced and still priced.
-/// Only the *angle* at which a wire may pass one stops being a rule.
-///
-/// **On by default** since 2026-10-04 (user). It was set aside while the
-/// rip-up itself was the work (2026-10-02), so that what the sweep did
-/// could be read without it; the rip-up is read, and the rule is the right
-/// rule — a wire that crosses a feedline other than at a right angle is a
-/// crossing no air bridge can be built over. The figure the stage is judged
-/// by under it is open in the last round plus wires crossing a feedline
-/// (plus unrouted), and the baseline it is measured against is
-/// `artifacts/logs/base-ortho` (2026-10-03), eight chips one after another:
-///
-///   | | 4q | 9q | 17q | 21q | 33q | 45q | 57q | 69q | all |
-///   | open, last round     | 0 | 0 |  4 | 0 | 3 | 2 |  9 | 10 | 28 |
-///   | open, end of stage   | 0 | 0 |  4 | 0 | 4 | 6 | 17 | 24 | 55 |
-///   | crossing a feedline  | 0 | 0 |  4 | 0 | 1 | 2 |  8 |  7 | 22 |
-///   | fails, lengths incl. | 4 | 1 | 15 | 2 | 12 | 21 | 47 | 59 | 161 |
-///
-/// With the rule off the same build leaves 7 open in the last round, 18 at
-/// the end and 0 crossing (`artifacts/logs/base`); most of what the rule
-/// adds is wires grazing the ten-cell halo of an edge rather than crossing
-/// one. `=0` is that regime, measured once as a control arm and tuned for
-/// nowhere.
-[[nodiscard]] inline bool orthoCrossing() {
-  static const bool on = envFlag("SCPD_ORTHO_CROSSING", true);
-  return on;
-}
-
-/// Whether the orthogonal search tests the cell a move ends on with the
-/// heading it leaves on, as the count and the DRC read that cell
-/// (`DubinsRouter::setOrthogonalExitCheck`). `SCPD_CROSSING_EXIT_HEADING`,
-/// **off** until measured: the search as it stands lets a wire cross a
-/// feedline straight and turn on the last cell of the halo, and the count
-/// then calls it crossing — 12 of the 22 crossing wires of the 2026-10-04
-/// baseline found a way in their last search and are "crossing" by that
-/// cell alone, every one "10 cells from edge". On, the search refuses what
-/// the count refuses, so a window of the targeted repair can be clean where
-/// today it cannot.
-///
-/// **Measured 2026-10-04** (`artifacts/logs/exit-base` against
-/// `base-ortho2`, eight chips, no repair): crossing 22 → 7, open 55 → 54,
-/// `bad` 77 → 61, no chip worse, the stage 100 s faster over the eight.
-/// With the targeted repair at 20 tests: `bad` 69 → 51, 17q 8 → 0, where
-/// without it the repair accepts nothing on 17q. Still off: whether the
-/// regime's rule changes is the user's decision.
-[[nodiscard]] inline bool crossingExitHeading() {
-  static const bool on = envFlag("SCPD_CROSSING_EXIT_HEADING", false);
-  return on;
-}
-
-/// Whether a conventional wire that has to cross a chain edge is held to
-/// crossing **that** edge: `SCPD_BRIDGE_CHECK`, **on** (user, 2026-10-04).
-///
-/// `assignBridges` tells every plain wire between two couplers which edge
-/// it may cross, and `constrainByFeedlines` fences every other edge but the
-/// terminal ones. A search can still come home without crossing its bridge
-/// — round the end of the chain through a terminal edge, which fences
-/// nobody, or through a gap the fences leave — and such a way is not a
-/// detour but a wire on the wrong side of the feedline. Taken, it stands in
-/// the rounds that follow and the wires around it are drawn against it: on
-/// 33q wires 9 and 11 did exactly that and the lane pairs 9–12 never
-/// settled. Under this switch a way found that does not cross the wire's
-/// bridge is refused as no way, in phase 1 and at every relaxation level,
-/// so the wire fails rather than poisons the rip-up. `=0` takes any way the
-/// search finds, as before.
-///
-/// **Measured 2026-10-04** (`artifacts/logs/bridge-check` against
-/// `base-ortho2`, eight chips, `stop_after = "feedlines"`, no repair):
-/// `bad = unrouted + open + crossing` 77 → 71, open 55 → 50, crossing
-/// 22 → 21, no chip worse, 103 ways refused over the eight chips, 4q / 9q /
-/// 21q at 0 throughout; 33q's bundle 9–12 shrinks to 12/13, 57q and 69q
-/// lose two open wires each, and the CPU time falls on six of eight chips.
-[[nodiscard]] inline bool bridgeCheck() {
-  static const bool on = envFlag("SCPD_BRIDGE_CHECK", true);
-  return on;
-}
-
-/// How many pairs of ring neighbours the feedline pass fences:
-/// `SCPD_FEEDLINE_FENCE_PAIRS`, **3** (user, 2026-10-05). The prototype
-/// fences two (`additional_paths_1`). In phase 1 the pairs are `slot ± k`
-/// for `k = 1..pairs`; at a relaxation level they are the `k`-th wire
-/// beyond the one let go of and the `k`-th behind the wire being drawn,
-/// the released wires never — they are the ones meant to stay crossable —
-/// and a pair that would wrap round onto the wire or a released one is
-/// left out.
-///
-/// **Measured 2026-10-05 on 69q** (5 rounds, relaxation 8, the terminal
-/// stub guard on): 2 pairs `bad` 10, 3 pairs **5**, 4 pairs 5 — three and
-/// four end on the same wires in every round (183/184, 190/191) and the
-/// pass is a third faster, round 0 failing 10 wires instead of 17. 17q is
-/// unchanged at 12. `=2` is the prototype's fence.
-[[nodiscard]] inline std::uint32_t feedlineFencePairs() {
-  static const auto pairs = static_cast<std::uint32_t>(
-      std::clamp(envWhole("SCPD_FEEDLINE_FENCE_PAIRS", 3), 1, 8));
-  return pairs;
-}
-
-/// Whether the fence beyond the wire let go of runs on to the next
-/// conventional wire: `SCPD_FENCE_TO_CONVENTIONAL`, **off**.
-///
-/// **Measured 2026-10-05 on 69q** (6 rounds, relaxation 8, against
-/// `full-r8`): the walk fired in 47 of 1195 relaxation searches, changed
-/// the outcome of 4 — all in the pair 180–184 beside f60/f61, which stays
-/// open either way — and ended on the same failed wires in every round and
-/// the same `bad` 16. The hypothesis below is not what the rounds trade
-/// on (user). Kept as a switch so the arm can be run again; `=1` turns it
-/// on.
-///
-/// At a relaxation level the prototype fences the two wires beyond the one
-/// it let go of and the two behind the wire being drawn, and leaves the
-/// released one crossable. The two beyond are what bounds the room the
-/// released wire gives up — and a resonator does not bound it: it starts at
-/// its coupler out in the fan-in, not at the border, so a resonator in one
-/// of those two slots leaves the room open on that side, and the wire drawn
-/// into it settles where the next conventional wire runs. On 69q one round
-/// fewer ended with fewer fails for exactly that reason (user). Under this
-/// switch the fence beyond the released wire walks on until it has closed a
-/// conventional wire — a resonator is closed and passed, a feedline edge is
-/// passed and left to `constrainByFeedlines`, which fences every edge but
-/// the bridged and the terminal ones — and never fewer than the prototype's
-/// two. `=0` fences the two alone, as the prototype does.
-[[nodiscard]] inline bool fenceToConventional() {
-  static const bool on = envFlag("SCPD_FENCE_TO_CONVENTIONAL", false);
-  return on;
-}
-
-/// Whether the straight run a terminal edge has to make at its coupler is
-/// closed to every other wire of the feedline pass:
-/// `SCPD_TERMINAL_STUB_GUARD`, **on** (user, 2026-10-05).
-///
-/// A terminal edge runs from a launcher to the first coupler of its chain,
-/// or from the last coupler to a launcher, and the prototype fences it for
-/// nobody (`forbidden_feedline_paths` leaves `is_first_last_feedline` out).
-/// Its launcher end is walled by the port band in the obstacle mask; its
-/// coupler end is not a port of the chip and has no band. So the run the
-/// edge has to arrive on at the first coupler — the target of a starting
-/// edge — and the run it has to leave the last coupler on — the source of
-/// an ending edge — were open to every wire that is not a ring neighbour of
-/// the edge, and a wire drawn across them leaves the edge no way when it is
-/// drawn again: 69q's f5 and f6, 17q's f0, f1 and f12 end open there.
-///
-/// Under this switch `constrainByFeedlines` closes that run, inflated by
-/// the clearance, in every search but the edge's own — drawn or not, since
-/// the run follows from the coupler alone — and `SCPD_TERMINAL_STUB_EXTRA`
-/// (5) cells beyond it, so that the bend into the run has room as well
-/// (user). The meeting at the coupler stays open as `closeRoomOf` leaves
-/// it, so the resonator and the next edge of the same coupler keep their
-/// exits. And the coupler insertion closes the same runs of every chain
-/// already settled in the corridor of every later edge search
-/// (`guardSettledTerminalRuns`), where `SCPD_EDGE_SEES_CHAINS` otherwise
-/// lets a chain ignore the others: that is where 69q's f5 and f6 crossed,
-/// and a terminal edge that finds no way afterwards keeps that crossing.
-/// `=0` leaves the runs open in both places, as before.
-[[nodiscard]] inline bool terminalStubGuard() {
-  static const bool on = envFlag("SCPD_TERMINAL_STUB_GUARD", true);
-  return on;
-}
-[[nodiscard]] inline std::uint32_t terminalStubExtra() {
-  static const auto extra = static_cast<std::uint32_t>(
-      std::clamp(envWhole("SCPD_TERMINAL_STUB_EXTRA", 5), 0, 100));
-  return extra;
-}
-
-/// Whether the feedline pass prices the room outside the lane polygon in a
-/// relaxation: `SCPD_FEEDLINE_LANE`, **on**. The polygon is the prototype's
-/// `compute_corridor_polygon_proximity` — the lane between the two
-/// neighbours' ways (`laneOf`), everything outside it at the wire price, so
-/// a relaxed wire stays in its lane rather than wandering where the release
-/// opened room. `=0` leaves the polygon out of the feedline pass; the halos
-/// and the toll of the wires let go of stay. Added 2026-10-04 to measure
-/// what the polygon is worth (user).
-[[nodiscard]] inline bool feedlineLane() {
-  static const bool on = envFlag("SCPD_FEEDLINE_LANE", true);
-  return on;
-}
 
 /// How many places the insertion will try before it gives a coupler up. The
 /// first is the one the bias names; the rest are what a coupler whose every
@@ -763,6 +181,10 @@ struct Tuning {
   /// How many times a placed coupler may be turned to another of its
   /// options while the feedlines do not route.
   std::uint32_t repairTrials = 0;
+  /// The targeted repair: how many ring members beside a segment are drawn
+  /// again and how many local rip-up rounds it runs.
+  std::uint32_t researchRingMembers = 2;
+  std::uint32_t researchRounds = 2;
   /// The coupler insertion's knobs of `[stages.final]`, see `config.fbs`.
   /// Shares of `target_resonator_length`: where the coupler cuts the
   /// resonator, and the most it may leave it short by.
@@ -805,6 +227,33 @@ struct Tuning {
   /// reach of the channel rule, in cells.
   std::uint32_t roomMargin = 10;
   std::size_t roomChannelReach = 80;
+  /// The budgets of the global SAT search: option runs per segment,
+  /// locally SAT states kept per chain, whole-chip combinations tried.
+  std::uint32_t globalSatRuns = 8;
+  std::size_t globalSatStates = 8;
+  std::uint32_t globalSatTries = 200;
+  /// The length-point clearance of the outer routing: its radius in cells
+  /// (0 turns it off) and the half-width of the band as a share of the
+  /// target length.
+  std::uint32_t lengthPointRadius = 40;
+  double lengthPointBand = 0.10;
+  /// The feedline sweep's band of lengths as a multiple of the tolerance,
+  /// the spacing of the meander's legs and the start of a resonator the
+  /// meander leaves alone, in cells.
+  double sweepLengthBand = 5.0;
+  std::uint32_t meanderLegSpacing = 25;
+  std::uint32_t meanderStartMargin = 0;
+  /// How many ring neighbours to either side a wire is fenced against in
+  /// the feedline pass and the refinements, and how far a terminal edge's
+  /// run is guarded past the pad, in cells.
+  std::uint32_t fencePairs = 3;
+  std::uint32_t terminalStubExtra = 5;
+  /// The halo of a wire let go of: its reach in clearances, and in the
+  /// feedline pass the rising halo past the wire, up to `risePeak` times
+  /// the flat price at `riseReach` clearances.
+  std::uint32_t haloReach = 1;
+  std::uint32_t riseReach = 3;
+  std::uint32_t risePeak = 3;
   /// The last of the five phases to run, by the name of its snapshot, or
   /// empty for all five. A stop is for looking at one phase's work: the
   /// stage still counts what it came to and still writes its artifact.
@@ -947,6 +396,8 @@ offsetsOf(const std::string& text) {
   tuning.couplerHeight =
       std::max(1U, grid::cellsFor(params.coupler_height, router));
   tuning.repairTrials = params.repair_trials;
+  tuning.researchRingMembers = std::min(params.research_ring_members, 20U);
+  tuning.researchRounds = std::clamp(params.research_rounds, 1U, 10U);
   tuning.couplerBias = std::clamp(params.coupler_bias, 0.5, 1.0);
   tuning.couplerMaxShortfall =
       std::clamp(params.coupler_max_shortfall, 0.0, 1.0);
@@ -973,6 +424,25 @@ offsetsOf(const std::string& text) {
   tuning.roomMargin = std::min(params.room_margin_cells, 200U);
   tuning.roomChannelReach = static_cast<std::size_t>(
       std::clamp(params.room_channel_reach_cells, 1U, 2000U));
+  tuning.globalSatRuns = std::clamp(params.global_sat_runs, 1U, 1000U);
+  tuning.globalSatStates =
+      static_cast<std::size_t>(std::clamp(params.global_sat_states, 1U, 100U));
+  tuning.globalSatTries = std::clamp(params.global_sat_tries, 1U, 100000U);
+  tuning.lengthPointRadius = std::min(params.length_point_radius_cells, 200U);
+  tuning.lengthPointBand =
+      std::clamp(params.length_point_band_percent, 0.0, 100.0) / 100.0;
+  tuning.sweepLengthBand = std::max(1.0, params.sweep_length_band);
+  tuning.meanderLegSpacing =
+      std::clamp(params.meander_leg_spacing_cells, 4U, 200U);
+  tuning.meanderStartMargin =
+      params.meander_start_margin_cells < 0
+          ? tuning.couplerLength + 4U
+          : static_cast<std::uint32_t>(params.meander_start_margin_cells);
+  tuning.fencePairs = std::clamp(params.fence_pairs, 1U, 8U);
+  tuning.terminalStubExtra = std::min(params.terminal_stub_extra_cells, 100U);
+  tuning.haloReach = std::clamp(params.halo_reach, 1U, 12U);
+  tuning.riseReach = std::clamp(params.rise_reach, 1U, 12U);
+  tuning.risePeak = std::clamp(params.rise_peak, 1U, 50U);
   tuning.stopAfter = params.stop_after;
   tuning.bendPenalty = static_cast<std::uint16_t>(
       std::min<std::uint32_t>(std::numeric_limits<std::uint16_t>::max(),
@@ -1563,7 +1033,7 @@ struct Wire {
   /// go was a promise that it moves.
   bool ripped = false;
   /// The sweep and the round, one based, in which the wire found no way at
-  /// any level of the relaxation; 0 for none (`relaxBoth`).
+  /// any level of the relaxation; 0 for none.
   std::uint64_t relaxedOut = 0;
 };
 
@@ -1937,7 +1407,6 @@ public:
         bodies_(scene.router.width, scene.router.height),
         approaches_(scene.router.width, scene.router.height) {
     router_.attachObstacles(&scene_.blocked);
-    router_.setOrthogonalExitCheck(crossingExitHeading());
     // The price of running beside an obstacle. It forbids nothing — the
     // keepout in the mask already does that — and keeps copper off the artwork
     // wherever there is room for it.
@@ -2013,13 +1482,9 @@ public:
   /// Whether a wire has to reach a length: a resonator, while the meander is
   /// switched on; every resonator once it is drawn from its coupler.
   /// Whether a wire is lengthened in this pass: a resonator that needs a
-  /// length, and — under the feedline constraints — only while the meander
-  /// is switched on there. The refinement has its own switch, because the
-  /// fifth phase is where the lengths are read and the sweep's meander is
-  /// dear: see `feedlineMeander` and `refineMeander`.
-  [[nodiscard]] bool lengthensIn(const Wire& wire, const Pass& pass) const {
-    return needsLength(wire) && (!pass.feedlines || feedlineMeander() ||
-                                 (pass.refinement && refineMeander()));
+  /// length.
+  [[nodiscard]] bool lengthensIn(const Wire& wire) const {
+    return needsLength(wire);
   }
 
   [[nodiscard]] bool needsLength(const Wire& wire) const {
@@ -2108,9 +1573,8 @@ public:
       // never in the run the resonator couples along.
       options.exact = true;
       options.tolerance = band * tuning_.lengthTolerance;
-      options.startMargin =
-          meanderStartMargin(tuning_.couplerLength, tuning_.straightStart);
-      options.minStraightLength = meanderLegSpacing();
+      options.startMargin = tuning_.meanderStartMargin;
+      options.minStraightLength = tuning_.meanderLegSpacing;
       options.boxFor = [this, &strips](const PathPoint& a, const PathPoint& b) {
         return router_.freeStripAlong(a, b, strips);
       };
@@ -2319,9 +1783,9 @@ public:
     }
     const auto fails = failsOf(wires, members);
     sayFails(pass.name, fails, total);
-    if (pass.feedlines && bridgeCheck()) {
+    if (pass.feedlines) {
       say(std::format("{}: {} way{} refused for not crossing the wire's "
-                      "bridge (SCPD_BRIDGE_CHECK)",
+                      "bridge",
                       pass.name, bridgeRefusals_,
                       bridgeRefusals_ == 1 ? "" : "s"));
     }
@@ -2514,7 +1978,7 @@ public:
   /// built from and never binds.
   [[nodiscard]] std::optional<PathPoint>
   crossingCellOf(const Wire& wire) const {
-    if (wire.feedline || !wire.drawn || !orthoCrossing()) {
+    if (wire.feedline || !wire.drawn) {
       return std::nullopt;
     }
     const auto& constraints = router_.crossingConstraints();
@@ -2657,7 +2121,7 @@ public:
         "outer routing settings: length-point clearance k {} cells, band "
         "±{:.0f}% of the target length; hard — a wire that cannot be routed "
         "with it fails, recovered without it at the end",
-        LENGTH_POINT_K, LENGTH_POINT_SHARE * 100.0));
+        tuning_.lengthPointRadius, tuning_.lengthPointBand * 100.0));
   }
 
   /// The recovery at the end of the outer routing: the wires the rounds left
@@ -2669,7 +2133,7 @@ public:
   void recoverWithoutBands(std::vector<Wire>& wires,
                            const std::vector<std::uint32_t>& members,
                            const Pass& pass) {
-    if (LENGTH_POINT_K == 0) {
+    if (tuning_.lengthPointRadius == 0) {
       return;
     }
     std::uint32_t failing = 0;
@@ -2702,7 +2166,7 @@ public:
   void sayLengthPoints(const std::vector<Wire>& wires,
                        const std::vector<std::uint32_t>& members) const {
     constexpr double CAP = 100.0;
-    const auto k = LENGTH_POINT_K;
+    const auto k = tuning_.lengthPointRadius;
     const double guard = std::max(static_cast<double>(k) + 2.0,
                                   1.5 * static_cast<double>(tuning_.clearance));
     struct Hit {
@@ -2781,7 +2245,7 @@ public:
         "unknown), nearest other wire min {:.1f} mean {:.1f} cells, {} below "
         "k; histogram <20:{} 20-25:{} 25-30:{} 30-40:{} 40-60:{} 60-100:{} "
         ">=100:{}",
-        k, LENGTH_POINT_SHARE * 100.0, hits.size(), unknown,
+        k, tuning_.lengthPointBand * 100.0, hits.size(), unknown,
         hits.empty() ? -1.0 : least,
         hits.empty() ? -1.0 : sum / static_cast<double>(hits.size()), below,
         buckets[0], buckets[1], buckets[2], buckets[3], buckets[4], buckets[5],
@@ -2886,23 +2350,15 @@ public:
       say(std::format("{}: {} wires, {} rounds", pass.name, total,
                       pass.rounds));
       if (pass.refinement && pass.feedlines) {
-        say(std::format("{} settings: meander {} (SCPD_REFINE_MEANDER {}, "
-                        "SCPD_FEEDLINE_MEANDER {}), fallback {}, {} pair{} "
-                        "fenced, the room price {} the feedline constraints, "
-                        "checks {}",
-                        pass.name,
-                        (refineMeander() || feedlineMeander()) ? "on" : "off",
-                        refineMeander() ? 1 : 0, feedlineMeander() ? 1 : 0,
-                        refineFallback() ? "on" : "off", refineFencePairs(),
-                        refineFencePairs() == 1 ? "" : "s",
-                        refinePriceLast() ? "after" : "before",
-                        refineChecks() ? "on" : "off"));
+        say(std::format("{} settings: {} pair{} fenced", pass.name,
+                        tuning_.fencePairs,
+                        tuning_.fencePairs == 1 ? "" : "s"));
       }
     }
     // Has this resonator ever been at its length in this pass? The
     // prototype's `fitted`, and the one thing the fallback is gated on: a
     // resonator that has reached it rolls back onto a way that is still at
-    // its length, so a second search buys nothing. See `refineFallback`.
+    // its length, so a second search buys nothing.
     std::vector<std::uint8_t> fitted(wires.size(), 0);
     ++sweepSerial_;
     for (std::uint32_t round = 0; round < pass.rounds; ++round) {
@@ -2924,10 +2380,10 @@ public:
         const auto& after = wires[members[(slot + 1) % total]];
         lift(wire);
         buildCorridor(wire, pass.reach);
-        // The ring neighbours, `refineFencePairs` pairs of them: the pair
+        // The ring neighbours, `fencePairs` pairs of them: the pair
         // beside the wire first, so that one pair is the fence the phase was
         // written with, cell for cell.
-        for (std::uint32_t pair = 1; pair <= refineFencePairs(); ++pair) {
+        for (std::uint32_t pair = 1; pair <= tuning_.fencePairs; ++pair) {
           if (2 * pair >= total) {
             break;
           }
@@ -2941,13 +2397,9 @@ public:
         closeLengthBands(wire, {&before, &after}, pass);
         // The chamfer to the middle of the channel reads the corridor, so it
         // is built after everything that closes a cell of it — the fences of
-        // the chain edges and the terminal edges' coupler runs included. See
-        // `refinePriceLast`.
-        if (!refinePriceLast()) {
-          priceRoom();
-        }
+        // the chain edges and the terminal edges' coupler runs included.
         constrainByFeedlines(wire, wires, pass);
-        if (refinePriceLast()) {
+        {
           priceRoom();
           // `priceRoom` fills the field, so the 5× discs around the chain
           // edges `constrainByFeedlines` stamped are gone with it; they go
@@ -2962,13 +2414,12 @@ public:
         frame_.kind = "refine";
         frame_.fence = {before.key, after.key};
         frame_.ripped.clear();
-        auto found =
-            search(wire, pass.straightStart, true, !lengthensIn(wire, pass));
+        auto found = search(wire, pass.straightStart, true, !lengthensIn(wire));
         std::string note;
         // Whether the way in hand is at this resonator's length, which is
         // what `fitted` records once the way is actually taken.
         bool atLength = false;
-        if (lengthensIn(wire, pass)) {
+        if (lengthensIn(wire)) {
           // A resonator is lengthened here as it is in the relaxation, and
           // keeps the way it had when the wider way has no room for it.
           std::string said;
@@ -2987,8 +2438,8 @@ public:
           // around the neighbours and a detour has no slack, so the search
           // is made once more with the room price taken off and the hard
           // corridor standing. Only while this resonator has never been at
-          // its length. See `refineFallback`.
-          if (found.empty() && refineFallback() && fitted[wire.key] == 0) {
+          // its length.
+          if (found.empty() && fitted[wire.key] == 0) {
             ++fallbacksTried;
             // Nothing reads the price again in this iteration, and the next
             // wire's `priceRoom` fills it from scratch, so it is zeroed
@@ -3079,9 +2530,8 @@ public:
     }
     // The guarantees of the insertion, said again on what the refinement
     // left: it moves feedline edges, and the insertion's lines were about
-    // the edges as it drew them. See `refineChecks`.
-    if (pass.rounds != 0 && pass.feedlines && pass.refinement &&
-        refineChecks()) {
+    // the edges as it drew them.
+    if (pass.rounds != 0 && pass.feedlines && pass.refinement) {
       static_cast<void>(checkFeedlineRoom(wires, pass.name));
       static_cast<void>(checkCouplerCrossings(wires, pass.name));
       static_cast<void>(checkResonatorCrossings(wires, pass.name));
@@ -3765,7 +3215,7 @@ public:
     for (const auto& coupler : couplers_) {
       chosenAtCommit.push_back(coupler.chosen);
     }
-    if (globalSatSearch() && searchGlobalSat(wires)) {
+    if (tuning_.capacityCheck && searchGlobalSat(wires)) {
       // The edges of the couplers the search moved were drawn again.
       drawn = 0;
       angle = 0;
@@ -4235,8 +3685,8 @@ public:
 
   /// Where a resonator reaches its target length, on the way it has now: the
   /// index of that cell (`pt`) and the band of indices `lo..hi` whose
-  /// remaining length to the target end lies within `LENGTH_POINT_SHARE` of the
-  /// figure. The figure is the target length less the anchor gap, as the
+  /// remaining length to the target end lies within `tuning_.lengthPointBand`
+  /// of the figure. The figure is the target length less the anchor gap, as the
   /// prototype's `meander_length - anchor` is — plainly ±10 % of the target
   /// length around that point, nothing derived (user, 2026-10-04). The pad
   /// the insertion then centres lies `leadLength()` nearer the target end,
@@ -4298,7 +3748,7 @@ public:
     }
     const double overall = at.back();
     marks.wanted = std::max(0.0, tuning_.targetLength - wire.anchorGap);
-    const double pct = LENGTH_POINT_SHARE;
+    const double pct = tuning_.lengthPointBand;
     const double low = marks.wanted * (1.0 - pct);
     const double high = marks.wanted * (1.0 + pct);
     std::size_t lo = way.size();
@@ -5450,9 +4900,7 @@ public:
     // across them is a crossing of two chains the feedline pass cannot
     // undo, because a terminal edge that finds no way keeps its way. 69q's
     // f5 and f6 crossed at the insertion that way. See `terminalStubGuard`.
-    if (terminalStubGuard()) {
-      guardSettledTerminalRuns(edge);
-    }
+    guardSettledTerminalRuns(edge);
     guardOwnTerminalRuns(edge);
 
     // **The slot**, and the only thing that opens again — last, so that it
@@ -5653,8 +5101,7 @@ public:
   /// `runsOfEdge` reads it off the chosen one.
   [[nodiscard]] std::uint32_t forcedRunOf(const std::uint32_t chain,
                                           const std::size_t at,
-                                          const std::size_t option,
-                                          const bool leaving) const {
+                                          const std::size_t option) const {
     const auto& point = chains_[chain][at];
     if (point.fixed) {
       return tuning_.straightStart;
@@ -5726,8 +5173,7 @@ public:
   const std::vector<Wire>* feedlineWires_ = nullptr;
   /// The wires a relaxation level has let go of, while
   /// `constrainByFeedlines` builds the search of that level: a feedline
-  /// edge among them is no fence; its room is still priced. See
-  /// `releasedEdgesGone`.
+  /// edge among them is no fence; its room is still priced.
   std::vector<std::uint32_t> letGo_;
 
   /// How often a chain search says how far it has come: every
@@ -5775,15 +5221,6 @@ public:
   /// 8 → 12), 57q ends with 23 open and loses edge f4 of chain 0 — and the
   /// feedline angle moves with the layout (4q 8 → 12, 45q 111 → 109). See
   /// *The length-point clearance* in handover-feedline-routing.md.
-  static constexpr std::uint32_t LENGTH_POINT_K = 40;
-
-  /// The half-width of the band around the length point, as a share of the
-  /// target length: 10 per cent, the prototype's. The point moves with every
-  /// reroute and every meander, so the stretch of the way between
-  /// `(1 - share)` and `(1 + share)` of the figure is what is kept clear,
-  /// not the point.
-  static constexpr double LENGTH_POINT_SHARE = 0.10;
-
   // --------------------------------------------------- The targeted repair
   //
   // Phase 4 leaves wires open that no sweep closes: lane-trading pairs of
@@ -5798,158 +5235,6 @@ public:
   // rest of the chip frozen — and every complete run of options the search
   // reaches is tested by a local rip-up-and-reroute of the wires the segment
   // touches before it is taken. Plan: `plan-coupler-repair-search.md`.
-
-  /// Whether phase 4's repair is the targeted re-search of coupler options
-  /// (`SCPD_REPAIR_SEARCH`, **on**) or the blind `repair` of before (`=0`):
-  /// turn a coupler near a fail to one of its two cheapest other options,
-  /// sweep the whole ring again, keep on strictly fewer fails. The blind
-  /// repair nominates no coupler for a wire that only crosses a feedline,
-  /// and it has never been run against the prefix search; `=0` with
-  /// `repair_trials = 0` is the stage exactly as it stood on 2026-10-04.
-  ///
-  /// **Measured 2026-10-04**, eight chips one at a time, 20 legality tests
-  /// a chip, `bad = unrouted + open + crossing` summed over the chips
-  /// (`artifacts/logs/base-ortho2`, `repair-old`, `research`,
-  /// `research-exit`; handover-targeted-repair.md, *Where it stands*):
-  /// no repair 77, the blind repair 73 (and 1160 s slower, buying its four
-  /// with lengths), this re-search 69 at k 2 / grow 1, and 51 with
-  /// `SCPD_CROSSING_EXIT_HEADING=1` — where 17q goes from 8 to 0. No chip is
-  /// worse than the baseline in any arm. What stays are the lane pairs of
-  /// plain wires; what goes are the crossings.
-  [[nodiscard]] static bool repairSearch() {
-    static const bool on = envFlag("SCPD_REPAIR_SEARCH", true);
-    return on;
-  }
-
-  /// How many free waypoints a blamed run of waypoints is widened by at each
-  /// end before it becomes a segment: `SCPD_RESEARCH_GROW`, 1. At 1 the two
-  /// fixed ends of a segment have one coupler between them and the fail
-  /// that is free to move; at 0 a blamed edge is re-routed between two
-  /// couplers that stay where they are, and a blamed coupler alone yields no
-  /// segment at all. Sweep 0 / 1 / 2.
-  [[nodiscard]] static std::size_t researchGrow() {
-    static const auto grow = static_cast<std::size_t>(
-        std::clamp(envWhole("SCPD_RESEARCH_GROW", 1), 0, 10));
-    return grow;
-  }
-
-  /// How many ring members on each side of a candidate's window are redrawn
-  /// with it: `SCPD_RESEARCH_K`, 2. The window itself is the plain wires
-  /// bridged to a segment edge, the resonators of its waypoints, a terminal
-  /// edge at a launcher end, the wires the fails named, and every member
-  /// whose way lies within the clearance of a new edge way or crosses one;
-  /// `k` is how far beyond that the rip-up reaches along the ring. Sweep
-  /// 1 / 2 / 3 (user, 2026-10-04).
-  [[nodiscard]] static std::uint32_t researchK() {
-    static const auto k = static_cast<std::uint32_t>(
-        std::clamp(envWhole("SCPD_RESEARCH_K", 2), 0, 20));
-    return k;
-  }
-
-  /// How many rounds the local rip-up-and-reroute sweeps:
-  /// `SCPD_RESEARCH_ROUNDS`,
-  /// 2. Not 1 by default: a wire the relaxation releases late in a round
-  /// would never be redrawn, and the window would end with a wire let go of
-  /// and left as it was.
-  [[nodiscard]] static std::uint32_t researchRounds() {
-    static const auto rounds = static_cast<std::uint32_t>(
-        std::clamp(envWhole("SCPD_RESEARCH_ROUNDS", 2), 1, 10));
-    return rounds;
-  }
-
-  /// How many runs of options each segment tests in the comparison of the
-  /// local slot check with the local rip-up-and-reroute:
-  /// `SCPD_LOCAL_AGREEMENT`, 0 (off). When set, phase 4 compares instead of
-  /// repairing (`compareLocally`): every segment of `localAgreementSpan`
-  /// edges of every chain is searched as the targeted repair searches it,
-  /// and each run it reaches is judged by both and put back.
-  [[nodiscard]] static std::uint32_t localAgreementRuns() {
-    return static_cast<std::uint32_t>(
-        std::clamp(envWhole("SCPD_LOCAL_AGREEMENT", 0), 0, 1000));
-  }
-
-  /// Whether the comparison looks at the feedline and the wires it encloses
-  /// alone: `SCPD_LOCAL_AGREEMENT_ENCLOSED`, on (user, 2026-10-19). The
-  /// window is the enclosed one of `windowOfRun`, and the rip-up ignores
-  /// every wire outside it (`rerouteWindow`). `=0` takes the repair's window
-  /// and its rip-up over the whole ring.
-  [[nodiscard]] static bool localAgreementEnclosed() {
-    static const bool on = envFlag("SCPD_LOCAL_AGREEMENT_ENCLOSED", true);
-    return on;
-  }
-
-  /// Whether the comparison tests the crossing slots alone:
-  /// `SCPD_LOCAL_AGREEMENT_PLAIN`, off (user, 2026-10-20). A feedline's
-  /// wires are then its plain wires and its starting and ending edges: the
-  /// slot check judges them with the resonators out of the graph (their
-  /// leads stay walls), and the rip-up routes them alone, every resonator
-  /// left open and off the canvas.
-  /// One segment and one run of options of the comparison alone, so that
-  /// its local rip-up can be drawn for a dashboard:
-  /// `SCPD_LOCAL_AGREEMENT_ONLY=<chain>:<lo>:<options>`, for example
-  /// `10:1:6 5 4 27`; unset compares every segment.
-  struct AgreementOnly {
-    bool on = false;
-    std::uint32_t chain = 0;
-    std::size_t lo = 0;
-    std::string options;
-  };
-  [[nodiscard]] static const AgreementOnly& localAgreementOnly() {
-    static const AgreementOnly only = [] {
-      AgreementOnly out;
-      const char* text = std::getenv("SCPD_LOCAL_AGREEMENT_ONLY");
-      if (text == nullptr) {
-        return out;
-      }
-      const std::string_view value(text);
-      const auto first = value.find(':');
-      const auto second = first == std::string_view::npos
-                              ? std::string_view::npos
-                              : value.find(':', first + 1);
-      if (second == std::string_view::npos) {
-        return out;
-      }
-      out.chain = static_cast<std::uint32_t>(std::strtoul(
-          std::string(value.substr(0, first)).c_str(), nullptr, 10));
-      out.lo = std::strtoul(
-          std::string(value.substr(first + 1, second - first - 1)).c_str(),
-          nullptr, 10);
-      out.options = std::string(value.substr(second + 1));
-      out.on = true;
-      return out;
-    }();
-    return only;
-  }
-
-  [[nodiscard]] static bool localAgreementPlain() {
-    static const bool on = envFlag("SCPD_LOCAL_AGREEMENT_PLAIN", false);
-    return on;
-  }
-
-  /// How many edges a segment of the comparison spans:
-  /// `SCPD_LOCAL_AGREEMENT_SPAN`, 3, so that two couplers move.
-  [[nodiscard]] static std::size_t localAgreementSpan() {
-    static const auto span = static_cast<std::size_t>(
-        std::clamp(envWhole("SCPD_LOCAL_AGREEMENT_SPAN", 3), 2, 20));
-    return span;
-  }
-
-  /// Where the comparison writes every run it judges, as
-  /// `c<chain>-w<lo>-r<n>.json` (the window, both verdicts, what every round
-  /// of the rip-up came to, every wire's way after it, the pads), and the
-  /// graph the slot check saw as
-  /// `…-graph.json` for a run the two judge otherwise:
-  /// `SCPD_LOCAL_AGREEMENT_DIR`, unset (nothing written).
-  [[nodiscard]] static const char* localAgreementDir() {
-    return envSet("SCPD_LOCAL_AGREEMENT_DIR");
-  }
-
-  /// Whether the comparison writes the graph of every run, not only of the
-  /// runs the two judge otherwise: `SCPD_LOCAL_AGREEMENT_GRAPHS`, off.
-  [[nodiscard]] static bool localAgreementGraphs() {
-    static const bool on = envFlag("SCPD_LOCAL_AGREEMENT_GRAPHS", false);
-    return on;
-  }
 
   /// The allowed offsets as a comma list.
   [[nodiscard]] static std::string
@@ -6005,36 +5290,6 @@ public:
     return most >= static_cast<double>(routing::TRELLIS_UNREACHABLE)
                ? routing::TRELLIS_UNREACHABLE
                : static_cast<std::uint64_t>(most);
-  }
-
-  /// Whether this chain's edges outside the segment are fenced while a
-  /// segment is re-searched: `SCPD_RESEARCH_SEES_CHAINS`, on —
-  /// `fenceEverything_` for the length of the search. The edges of the
-  /// other chains stand open, as everywhere else: an edge keeps clear of the
-  /// edges of its own feedline only (user, 2026-10-21).
-  [[nodiscard]] static bool researchSeesChains() {
-    static const bool on = envFlag("SCPD_RESEARCH_SEES_CHAINS", true);
-    return on;
-  }
-
-  /// Whether one full pass over the ring follows the segments, kept only
-  /// when the figure does not rise: `SCPD_RESEARCH_FINAL_SWEEP`, off until
-  /// the sweep decides it. It is a measured arm, not part of the criterion
-  /// (user, 2026-10-04).
-  [[nodiscard]] static bool researchFinalSweep() {
-    static const bool on = envFlag("SCPD_RESEARCH_FINAL_SWEEP", false);
-    return on;
-  }
-
-  /// Whether the local passes of the legality tests speak:
-  /// `SCPD_RESEARCH_VERBOSE`, off. A test is silenced like a trial of the blind
-  /// repair, so a chip's log stays readable; with this on every `wire … · round
-  /// …` line of every candidate's window is printed, with its `dead on arrival`
-  /// and `in the way` verdicts — the way to read why a window wire keeps
-  /// failing. Diagnostic only; it changes no decision.
-  [[nodiscard]] static bool researchVerbose() {
-    static const bool on = envFlag("SCPD_RESEARCH_VERBOSE", false);
-    return on;
   }
 
   // ------------------------------------------------------- The room rules
@@ -6269,10 +5524,11 @@ public:
   /// its nearest out-arm cell name their owners, and every distinct plain
   /// ring wire among them counts once — plus one when the resonator's own
   /// way past its lead lies on one of those lines.
-  [[nodiscard]] CouplerChannel
-  channelAt(const std::vector<Wire>& wires, const CouplerOption& option,
-            const std::uint32_t resonatorKey, const Path& in, const Path& out,
-            const std::size_t reach, const std::uint32_t ringCount) const {
+  [[nodiscard]] CouplerChannel channelAt(const std::vector<Wire>& wires,
+                                         const CouplerOption& option,
+                                         const std::uint32_t resonatorKey,
+                                         const Path& in, const Path& out,
+                                         const std::size_t reach) const {
     CouplerChannel found;
     const std::size_t skip = option.run + 1;
     found.channel =
@@ -6450,11 +5706,8 @@ public:
       if (chain == NO_OWNER) {
         continue;
       }
-      const auto ringCount = static_cast<std::uint32_t>(
-          (at >= 1 ? bridgers_[chain][at - 1].size() : 0) +
-          (at < bridgers_[chain].size() ? bridgers_[chain][at].size() : 0));
       const auto found = channelAt(wires, option, coupler.wire, in.way, out.way,
-                                   tuning_.roomChannelReach, ringCount);
+                                   tuning_.roomChannelReach);
       if (!found.channel.measured) {
         continue;
       }
@@ -6918,12 +6171,10 @@ public:
   [[nodiscard]] PortRun terminalRunOf(const Edge& edge, const Wire& wire,
                                       const bool target) const {
     const auto [atSource, atTarget] = runsOfEdge(edge);
-    const auto& points = chains_[edge.chain];
     // The runs are steps along the heading, a diagonal step √2 cells long
     // (user, 2026-10-14: a diagonal run of 15 steps came out 11 steps
     // long).
-    const auto length = [&](const std::uint32_t steps, const bool fixed,
-                            const Heading heading) {
+    const auto length = [&](const std::uint32_t steps, const Heading heading) {
       const auto v = routing::headingVector(heading);
       return static_cast<double>(steps) *
              std::hypot(static_cast<double>(v.dx), static_cast<double>(v.dy));
@@ -6932,13 +6183,12 @@ public:
       const auto& end = wire.objective.target;
       const auto out = routing::reverse(end.heading);
       return straightRun(static_cast<double>(end.x), static_cast<double>(end.y),
-                         out, length(atTarget, points[edge.to].fixed, out));
+                         out, length(atTarget, out));
     }
     const auto& start = wire.objective.source;
-    return straightRun(
-        static_cast<double>(start.x), static_cast<double>(start.y),
-        start.heading,
-        length(atSource, points[edge.from].fixed, start.heading));
+    return straightRun(static_cast<double>(start.x),
+                       static_cast<double>(start.y), start.heading,
+                       length(atSource, start.heading));
   }
 
   /// The obstacles `reportBottlenecks` builds the medial axis over: the
@@ -7341,7 +6591,6 @@ public:
     // free and are the slot the terminal lies in: the medial axis runs into
     // it, and no bottleneck crosses it. A wall takes only free cells, and a
     // run of no length keeps no room.
-    const auto half = wallInflation();
     const auto markRun = [&](const PortRun& run, const std::string& name,
                              const std::uint32_t wire, const bool lead,
                              const bool target) {
@@ -8323,19 +7572,16 @@ public:
                     const grid::Chambers& chambers) const {
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     const auto height = static_cast<std::int64_t>(scene_.router.height);
-    const auto pitch = static_cast<double>(roomPitch());
     std::vector<Path> crossable;
     for (const auto& edge : edges) {
       const auto& wire = wires[edge.wire];
-      if (wire.drawn && !(edge.terminal && feedlineLikePrototype())) {
+      if (wire.drawn && !edge.terminal) {
         crossable.push_back(wire.way);
       }
     }
     routing::CrossingConstraints rule;
-    if (orthoCrossing()) {
-      rule.build(scene_.router.width, scene_.router.height, crossable, {},
-                 tuning_.crossingReach);
-    }
+    rule.build(scene_.router.width, scene_.router.height, crossable, {},
+               tuning_.crossingReach);
     // The obstacle every drawn edge is, to let a crossing line run over its
     // own edge.
     std::unordered_map<std::uint32_t, std::uint32_t> wallOfEdge;
@@ -8448,7 +7694,7 @@ public:
       // of port runs, and the rule allows a crossing on it.
       std::vector<bool> lineClear(wire.way.size(), false);
       for (std::size_t at = 0; at < wire.way.size(); ++at) {
-        if (orthoCrossing() && !straight[at]) {
+        if (!straight[at]) {
           continue;
         }
         const auto& point = wire.way[at];
@@ -8962,29 +8208,12 @@ public:
     // chamber (user, 2026-10-13): no wire leaves the port without coming
     // within the rule of the edge. The edge's wall is its line inflated by
     // `wallInflation`, so the edge is too near when its wall lies within
-    // the clearance less that of the terminal. Without `narrowMeeting`, an
+    // the clearance less that of the terminal. Without the narrow meeting, an
     // edge of a resonator's own coupler is left out at its source, the end
     // of its lead, where the two meet (`meetAt`).
     const auto near =
         std::max(0.0, static_cast<double>(tuning_.clearance) - wallInflation());
     const auto reachNear = static_cast<std::int64_t>(std::floor(near));
-    const auto ownEdge = [&](const Wire& wire, const std::uint32_t key) {
-      const auto mine = couplerOfWire_.find(wire.key);
-      if (mine == couplerOfWire_.end()) {
-        return false;
-      }
-      return std::ranges::any_of(edges, [&](const Edge& edge) {
-        if (edge.wire != key) {
-          return false;
-        }
-        const auto& points = chains_[edge.chain];
-        return std::ranges::any_of(
-            std::array{edge.from, edge.to}, [&](const std::size_t point) {
-              return !points[point].fixed &&
-                     points[point].coupler == mine->second;
-            });
-      });
-    };
     // The lead end of a resonator against the lines of its own coupler's
     // edges: those meet the lead at the pad, so their walls and the lead's
     // flanks lie between the two, and only the distance to the line itself
@@ -9014,8 +8243,7 @@ public:
     };
     const auto covered = [&](const Wire& wire, const PathPoint& at,
                              const bool source) {
-      if (source && narrowMeeting() && wire.resonator &&
-          nearOwnEdge(wire, at)) {
+      if (source && wire.resonator && nearOwnEdge(wire, at)) {
         return true;
       }
       const auto width = static_cast<std::int64_t>(scene_.router.width);
@@ -9033,10 +8261,6 @@ public:
           if (wall >= walls.list.size() ||
               walls.list[wall].kind != WallKind::Feedline ||
               terminalEdges.contains(walls.list[wall].wire)) {
-            continue;
-          }
-          if (source && !narrowMeeting() &&
-              ownEdge(wire, walls.list[wall].wire)) {
             continue;
           }
           return true;
@@ -9412,7 +8636,7 @@ public:
     }
     writeCapacityGraph(wires, walls, gates, measured, chambers, graph,
                        problem.outerWires, check, verdict, {counted, judged},
-                       true);
+                       !graphOnly_);
   }
 
   /// Say the verdict of the check by crossing slots as
@@ -9710,7 +8934,6 @@ public:
   /// run's slot is closed at its mouth.
   [[nodiscard]] std::vector<grid::Bottleneck>
   fastGates(const std::vector<Wire>& wires, const Walls& walls) const {
-    const auto settingUp = std::chrono::steady_clock::now();
     const auto& fast = fastCapacityOf(wires);
     std::vector<grid::ProfileRole> roles;
     std::vector<std::uint32_t> runs;
@@ -10055,7 +9278,8 @@ public:
     std::uint32_t unjudged = 0;
     double slotSeconds = 0.0;
     double rerouteSeconds = 0.0;
-    /// The runs written to `localAgreementDir`.
+    /// The runs judged, one record each, for the local SAT benchmark.
+    nlohmann::json records = nlohmann::json::array();
     std::uint32_t written = 0;
   };
   Agreement agreement_;
@@ -10562,26 +9786,6 @@ public:
     return report(cost);
   }
 
-  /// What a cell of the head or the body costs an option, in the units the
-  /// greedy multiplies by a hundred — where one turn of a feedline edge
-  /// costs ten thousand.
-  ///
-  /// The head and the body never move again once an option is taken: the
-  /// head is the resonator's fixed places and the body is an obstacle to
-  /// every search after it. So whatever stands beside them is what has to
-  /// give way, and it is the wire beside them that fails when it cannot.
-  /// Measured on the 17-qubit chip: every pair of wires the check found too
-  /// close was a resonator and its ring neighbour, within a dozen cells of
-  /// that resonator's own coupler.
-  ///
-  /// A conventional wire costs more than a resonator under them, because a
-  /// resonator is drawn again from its coupler and may meander its way
-  /// around, while a conventional wire runs from a fixed port to a fixed
-  /// port and has only the band around its way.
-  static constexpr std::uint32_t UNDER_RESONATOR = 20;
-  static constexpr std::uint32_t UNDER_CONVENTIONAL = 60;
-  static constexpr std::uint32_t IN_THE_ROOM = 1;
-
   /// What one edge of a chain costs with a named option at each of its ends,
   /// routed if it has to be. The price the greedy puts on it, for the one
   /// edge: ten thousand an eighth turn, and everything if there is no way.
@@ -10639,11 +9843,6 @@ public:
       ++memoHits_;
       lastCutOff_ = false;
       way = found->second;
-    } else if (!remember && segmentMemo_ != nullptr && !debug_ &&
-               stepBudget_ == routing::TRELLIS_UNREACHABLE) {
-      prefixFence_ = fence;
-      way = segmentWayOf(wires, objective, edge, optionFrom, optionTo);
-      prefixFence_ = nullptr;
     } else {
       ++memoMisses_;
       prefixFence_ = fence;
@@ -10993,8 +10192,8 @@ public:
             const auto arriving =
                 portOfOption(chain, at + 1, open[at + 1][d], false);
             turns[at][(c * m) + d] = pairBound(
-                leaving, arriving, forcedRunOf(chain, at, open[at][c], true),
-                forcedRunOf(chain, at + 1, open[at + 1][d], false));
+                leaving, arriving, forcedRunOf(chain, at, open[at][c]),
+                forcedRunOf(chain, at + 1, open[at + 1][d]));
           }
         }
         boundPairs_ += n * m;
@@ -11636,61 +10835,6 @@ public:
     return faults;
   }
 
-  [[nodiscard]] static bool globalSatSearch() {
-    static const bool on = envFlag("SCPD_GLOBAL_SAT_SEARCH", true);
-    return on;
-  }
-  /// How many runs of options the segment search hands the global search
-  /// per segment (`SCPD_GLOBAL_SAT_RUNS`, 8), how many locally SAT states of
-  /// a chain it keeps (`SCPD_GLOBAL_SAT_STATES`, 8) and how many whole-chip
-  /// combinations it checks (`SCPD_GLOBAL_SAT_TRIES`, 200). These counts
-  /// are the only limits of the search: it has no time limit, so it tries
-  /// the same combinations in the same order on every machine.
-  [[nodiscard]] static std::uint32_t globalSatRuns() {
-    static const auto n = static_cast<std::uint32_t>(
-        std::clamp(envWhole("SCPD_GLOBAL_SAT_RUNS", 8), 1, 1000));
-    return n;
-  }
-  [[nodiscard]] static std::size_t globalSatStates() {
-    static const auto n = static_cast<std::size_t>(
-        std::clamp(envWhole("SCPD_GLOBAL_SAT_STATES", 8), 1, 100));
-    return n;
-  }
-  [[nodiscard]] static std::uint32_t globalSatTries() {
-    static const auto n = static_cast<std::uint32_t>(
-        std::clamp(envWhole("SCPD_GLOBAL_SAT_TRIES", 200), 1, 100000));
-    return n;
-  }
-  /// Whether the global search collects the states of the chains at an edge
-  /// over first, one chain at a time, and tries the states of each such
-  /// chain on their own before it collects the next chain:
-  /// `SCPD_GLOBAL_SAT_LAZY`, **on**. The search stops at the first SAT
-  /// combination, so the other chains are collected only when no state of
-  /// a chain at an edge over is SAT on its own. The search tries the same
-  /// combinations in the same order as with `=0`, which collects every
-  /// chain first.
-  /// On 17q, 45q and 69q the answer was such a state, and the collection of
-  /// the other chains took most of the search (69q: 187 s of 188 s).
-  [[nodiscard]] static bool globalSatLazy() {
-    return envFlag("SCPD_GLOBAL_SAT_LAZY", true);
-  }
-  /// Whether the global search checks its way back to the commit:
-  /// `SCPD_GLOBAL_SAT_VERIFY`, off. A combination puts back only what the
-  /// combination before it changed. With the switch, every combination is
-  /// also built from a full `restore`, and the search throws when the two
-  /// chips differ in a wire, the field, the pads, a coupler or a way of
-  /// `chainEdgePaths_`.
-  [[nodiscard]] static bool globalSatVerify() {
-    return envFlag("SCPD_GLOBAL_SAT_VERIFY", false);
-  }
-  /// Whether the lazy global search tries the states of a chain at an edge
-  /// over on their own after each segment of its collection, and stops at
-  /// the first SAT one: `SCPD_GLOBAL_SAT_EARLY`, off. It tries the states in
-  /// the order the segments find them, not in the order the chain keeps
-  /// them, so it can stop on another state than the search without it.
-  [[nodiscard]] static bool globalSatEarly() {
-    return envFlag("SCPD_GLOBAL_SAT_EARLY", false);
-  }
   /// The options of a chain state, each after a space.
   [[nodiscard]] static std::string
   optionsText(const std::vector<std::size_t>& state) {
@@ -11770,12 +10914,6 @@ public:
     return names;
   }
 
-  /// What `collectChainStates` hands on after each segment of a chain at an
-  /// edge over (`globalSatEarly`): the chain and the states the segment
-  /// found. True ends the collection of that chain.
-  using StatesFound = std::function<bool(
-      std::uint32_t, const std::vector<std::vector<std::size_t>>&)>;
-
   /// The locally SAT states of every chain for `searchGlobalSat`, after the
   /// commit: the chain as it stands first, then the runs of options of the
   /// segments at its two ends (`researchSegment` handing them to
@@ -11792,15 +10930,12 @@ public:
   /// Collects the chains of `order`, in that order, into `chainStates_`,
   /// which the caller sizes. `spent` holds the seconds every earlier call
   /// of the same search collected and gets this call's seconds added; it
-  /// is reported and decides nothing. When `afterSegment` is given, it gets
-  /// the new states of each segment of a chain at an edge over, and the
-  /// collection of that chain stops when it returns true.
+  /// is reported and decides nothing.
   void collectChainStates(
       std::vector<Wire>& wires,
       const std::map<std::uint32_t, std::set<std::size_t>>& focus,
       const std::vector<std::uint32_t>& order,
-      std::chrono::duration<double>& spent,
-      const StatesFound* afterSegment = nullptr) {
+      std::chrono::duration<double>& spent) {
     const auto chains = static_cast<std::uint32_t>(chains_.size());
     auto firstEdge = static_cast<std::uint32_t>(wires.size());
     for (const auto& edge : edges_) {
@@ -11871,9 +11006,6 @@ public:
       std::vector<std::vector<std::size_t>> aloneMoving;
       std::vector<std::vector<std::size_t>> aloneOthers;
       for (const auto lo : starts) {
-        const std::array<std::size_t, 4> sizes{moving.size(), others.size(),
-                                               aloneMoving.size(),
-                                               aloneOthers.size()};
         const RunCollector collect = [&](const std::vector<std::size_t>& layer,
                                          const std::vector<Path>& ways) {
           ++runs;
@@ -11990,23 +11122,8 @@ public:
                                            .hi = lo + span,
                                            .fails = {},
                                            .because = {}},
-                                          globalSatRuns(), badNow));
+                                          tuning_.globalSatRuns, badNow));
         segmentCollect_ = nullptr;
-        // The states this segment found, in the order the chain keeps them.
-        if (atOver && afterSegment != nullptr) {
-          std::vector<std::vector<std::size_t>> found;
-          for (const auto& [states, size] :
-               {std::pair{&moving, sizes[0]}, std::pair{&others, sizes[1]},
-                std::pair{&aloneMoving, sizes[2]},
-                std::pair{&aloneOthers, sizes[3]}}) {
-            found.insert(found.end(),
-                         states->begin() + static_cast<std::ptrdiff_t>(size),
-                         states->end());
-          }
-          if (!found.empty() && (*afterSegment)(chain, found)) {
-            break;
-          }
-        }
       }
       if (atOver) {
         kept.insert(kept.end(), std::make_move_iterator(moving.begin()),
@@ -12020,13 +11137,13 @@ public:
         others.clear();
       }
       for (auto& other : others) {
-        if (kept.size() >= globalSatStates()) {
+        if (kept.size() >= tuning_.globalSatStates) {
           break;
         }
         kept.push_back(std::move(other));
       }
-      if (!atOver && kept.size() > globalSatStates()) {
-        kept.resize(globalSatStates());
+      if (!atOver && kept.size() > tuning_.globalSatStates) {
+        kept.resize(tuning_.globalSatStates);
       }
       say(std::format("[Global SAT] chain {}: {} runs of {} segment{}, {} "
                       "locally SAT on other options ({} with the other chains "
@@ -12086,29 +11203,6 @@ public:
       lost.emplace_back("an edge without a way");
     }
     const auto began = std::chrono::steady_clock::now();
-    // The collection opens the second-dogleg options of the couplers it
-    // searches (`researchJogs`). That is no decision of the search, and the
-    // lazy search collects fewer chains than the eager one, so every
-    // coupler leaves the search with the flag it came with: the targeted
-    // repair (under `SCPD_RESEARCH_JOGS=0`) and `couplersJson` read it.
-    struct JogsScope {
-      std::vector<Coupler>& couplers;
-      std::vector<bool> kept;
-      explicit JogsScope(std::vector<Coupler>& all) : couplers(all) {
-        for (const auto& coupler : couplers) {
-          kept.push_back(coupler.jogsUnlocked);
-        }
-      }
-      JogsScope(const JogsScope&) = delete;
-      JogsScope& operator=(const JogsScope&) = delete;
-      JogsScope(JogsScope&&) = delete;
-      JogsScope& operator=(JogsScope&&) = delete;
-      ~JogsScope() {
-        for (std::size_t index = 0; index < couplers.size(); ++index) {
-          couplers[index].jogsUnlocked = kept[index];
-        }
-      }
-    } jogsScope{couplers_};
     std::string named;
     for (const auto& name : lost) {
       named += (named.empty() ? "" : " ") + name;
@@ -12135,12 +11229,10 @@ public:
     if (!focusText.empty()) {
       say(std::format("[Global SAT] the edges over lie on {}", focusText));
     }
-    // Under `globalSatLazy` the chains at an edge over are collected one at
-    // a time, and the states of each are tried on their own before the next
-    // chain is collected; another chain is collected only when the
-    // conflict-directed stage first needs its states. Without it every
-    // chain is collected first, in chain order.
-    const bool lazy = globalSatLazy();
+    // The chains at an edge over are collected one at a time, and the states
+    // of each are tried on their own before the next chain is collected;
+    // another chain is collected only when the conflict-directed stage first
+    // needs its states.
     chainStates_.assign(chains, {});
     std::chrono::duration<double> collecting{0};
     std::vector<std::size_t> original(couplers_.size());
@@ -12250,73 +11342,8 @@ public:
     std::chrono::duration<double> restoring{0};
     std::chrono::duration<double> moving{0};
     std::chrono::duration<double> judging{0};
-    std::chrono::duration<double> verifying{0};
     std::uint32_t repeated = 0;
-    std::uint32_t verified = 0;
     std::string satMoved;
-    // Builds the combination once more from a full `restore` and compares
-    // the two chips (`globalSatVerify`); the chip stays the full one.
-    const auto verify = [&](const std::vector<std::size_t>& options,
-                            const bool drawn) {
-      const auto verifyBegan = std::chrono::steady_clock::now();
-      const auto cheapWires = wires;
-      const auto cheapField = field_;
-      const auto cheapBodies = bodies_;
-      const auto cheapPaths = chainEdgePaths_;
-      std::vector<std::size_t> cheapChosen;
-      std::vector<PathPoint> cheapAnchors;
-      for (const auto& coupler : couplers_) {
-        cheapChosen.push_back(coupler.chosen);
-        cheapAnchors.push_back(coupler.anchor);
-      }
-      fullBack();
-      std::string differs;
-      if (!field_.sameAs(*restoredField)) {
-        differs += " the restored field;";
-      }
-      field_.track();
-      touchedWires.clear();
-      touchedChains.clear();
-      if (standOn(options) != drawn) {
-        differs += " the drawn edges;";
-      }
-      if (!field_.sameAs(cheapField)) {
-        differs += " the field;";
-      }
-      if (!(bodies_ == cheapBodies)) {
-        differs += " the pads;";
-      }
-      if (chainEdgePaths_ != cheapPaths) {
-        differs += " chainEdgePaths_;";
-      }
-      for (std::size_t index = 0; index < couplers_.size(); ++index) {
-        if (couplers_[index].chosen != cheapChosen[index] ||
-            !(couplers_[index].anchor == cheapAnchors[index])) {
-          differs += std::format(" coupler {};", index);
-        }
-      }
-      for (std::size_t key = 0; key < wires.size(); ++key) {
-        const auto& full = wires[key];
-        const auto& cheap = cheapWires[key];
-        if (full.way != cheap.way || full.drawn != cheap.drawn ||
-            full.placed != cheap.placed || full.endsOnly != cheap.endsOnly ||
-            full.fixed != cheap.fixed || full.arc != cheap.arc ||
-            !(full.objective.source == cheap.objective.source) ||
-            !(full.objective.target == cheap.objective.target) ||
-            full.startStub != cheap.startStub ||
-            full.endStub != cheap.endStub ||
-            full.couplerAtSource != cheap.couplerAtSource) {
-          differs += " wire " + wireId(full) + ";";
-        }
-      }
-      if (!differs.empty()) {
-        throw std::logic_error(std::format(
-            "[Global SAT] combination {} differs from a full restore in{}",
-            checks, differs));
-      }
-      ++verified;
-      verifying += std::chrono::steady_clock::now() - verifyBegan;
-    };
     // The chains a failed check names (`namedChains`): those whose feedline
     // edges an edge over lies on or ends at, terminal edges included; those
     // whose feedline holds a lost wire (`chainWires`); for a feedline edge
@@ -12419,9 +11446,6 @@ public:
       }
       const bool drawn = standOn(options);
       moving += std::chrono::steady_clock::now() - moveBegan;
-      if (globalSatVerify()) {
-        verify(options, drawn);
-      }
       const auto checkBegan = std::chrono::steady_clock::now();
       std::set<std::string> over;
       std::vector<std::array<double, 2>> gates;
@@ -12462,7 +11486,7 @@ public:
     const auto tryAll = [&](const std::vector<std::vector<std::size_t>>& picks,
                             const std::string_view stage) {
       for (const auto& pick : picks) {
-        if (checks >= globalSatTries()) {
+        if (checks >= tuning_.globalSatTries) {
           return false;
         }
         if (!tried.insert(pick).second) {
@@ -12488,13 +11512,9 @@ public:
       say(std::format(
           "[Global SAT] {} combination{} in {:.1f}s: {:.1f}s back to the "
           "commit, {:.1f}s moving couplers, {:.1f}s in whole-chip checks; {} "
-          "combination{} skipped as tried before{}",
+          "combination{} skipped as tried before",
           checks, checks == 1 ? "" : "s", combined.count(), restoring.count(),
-          moving.count(), judging.count(), repeated, repeated == 1 ? "" : "s",
-          globalSatVerify()
-              ? std::format("; {} checked against a full restore in {:.1f}s",
-                            verified, verifying.count())
-              : std::string{}));
+          moving.count(), judging.count(), repeated, repeated == 1 ? "" : "s"));
     };
     const auto sayCollected = [&]() {
       say(std::format("[Global SAT] states collected in {:.1f}s",
@@ -12511,143 +11531,33 @@ public:
                           .count()));
     };
 
-    // Under `globalSatEarly`, the states each segment of a chain at an edge
-    // over finds, tried on their own at once; the chip goes back to the
-    // commit before the segment search goes on. A failed state is kept by
-    // its options until the chain's states are numbered.
-    const bool early = lazy && globalSatEarly();
-    std::chrono::duration<double> triedEarly{0};
-    std::vector<std::size_t> earlyState;
-    std::vector<std::pair<std::vector<std::size_t>, FailedCombination>>
-        failedEarly;
-    const StatesFound tryEarly =
-        [&](const std::uint32_t chain,
-            const std::vector<std::vector<std::size_t>>& found) {
-          const auto earlyBegan = std::chrono::steady_clock::now();
-          const auto& points = chains_[chain];
-          bool sat = false;
-          for (const auto& state : found) {
-            if (checks >= globalSatTries()) {
-              break;
-            }
-            const auto tryBegan = std::chrono::steady_clock::now();
-            ++checks;
-            backToStart();
-            const auto moveBegan = std::chrono::steady_clock::now();
-            restoring += moveBegan - tryBegan;
-            auto options = original;
-            for (std::size_t at = 0; at < points.size(); ++at) {
-              if (!points[at].fixed) {
-                options[points[at].coupler] = state[at];
-              }
-            }
-            const bool drawn = standOn(options);
-            moving += std::chrono::steady_clock::now() - moveBegan;
-            if (globalSatVerify()) {
-              verify(options, drawn);
-            }
-            const auto checkBegan = std::chrono::steady_clock::now();
-            std::set<std::string> over;
-            std::vector<std::array<double, 2>> gates;
-            const auto against =
-                drawn ? wholeChipLost(wires, &over, &gates)
-                      : std::vector<std::string>{"an edge without a way"};
-            judging += std::chrono::steady_clock::now() - checkBegan;
-            combined += std::chrono::steady_clock::now() - tryBegan;
-            if (against.empty()) {
-              earlyState = state;
-              sat = true;
-              break;
-            }
-            std::string lostText;
-            for (const auto& name : against) {
-              lostText += (lostText.empty() ? "" : " ") + name;
-            }
-            tell(std::format("[Global SAT] combination {} (chain {} on "
-                             "options{}, found early): UNSAT ({})",
-                             checks, chain, optionsText(state), lostText));
-            failedEarly.push_back(
-                {state,
-                 {.pick = {},
-                  .against = drawn ? against.size()
-                                   : std::numeric_limits<std::size_t>::max(),
-                  .named = chainsAt(over, against, gates),
-                  .check = checks}});
-          }
-          if (!sat) {
-            backToCommit();
-          }
-          triedEarly += std::chrono::steady_clock::now() - earlyBegan;
-          return sat;
-        };
-
-    // Which chains have their states. Under `globalSatLazy` a chain is
-    // collected only when a stage first needs its states, from the chip as
-    // the commit left it; without it every chain is collected first.
+    // Which chains have their states: a chain is collected only when a stage
+    // first needs its states, from the chip as the commit left it.
     std::vector<bool> collected(chains, false);
-    const auto collect = [&](const std::uint32_t chain,
-                             const StatesFound* afterSegment) {
+    const auto collect = [&](const std::uint32_t chain) {
       if (collected[chain]) {
         return;
       }
-      if (lazy && onRestored) {
+      if (onRestored) {
         backToCommit();
       }
       collected[chain] = true;
-      triedEarly = {};
-      collectChainStates(wires, focus, {chain}, collecting, afterSegment);
-      // The early tries count as combinations, not as collection.
-      collecting -= triedEarly;
+      collectChainStates(wires, focus, {chain}, collecting);
     };
-    if (lazy) {
-      settle();
-      fieldAtCommit = field_;
-    } else {
-      for (std::uint32_t chain = 0; chain < chains; ++chain) {
-        collect(chain, nullptr);
-      }
-      sayCollected();
-      if (std::ranges::all_of(
-              chainStates_, [](const auto& kept) { return kept.size() < 2; })) {
-        say("[Global SAT] no chain has a second locally SAT state");
-        return false;
-      }
-      settle();
-    }
+    settle();
+    fieldAtCommit = field_;
 
     // **Stage 1**: every state of a chain at an edge over on its own, the
     // other chains as the commit left them, chain by chain and in the order
     // each chain keeps its states.
     for (const auto& entry : focus) {
       const auto chain = entry.first;
-      collect(chain, early ? &tryEarly : nullptr);
+      collect(chain);
       const auto& kept = chainStates_[chain];
-      if (!earlyState.empty()) {
-        // The state's place among the chain's states as the chain keeps
-        // them.
-        const auto index = static_cast<std::size_t>(
-            std::ranges::find(kept, earlyState) - kept.begin());
-        sayCollected();
-        sayCombined();
-        satMoved = std::format("chain {} state {} (found early on options{})",
-                               chain, index, optionsText(earlyState));
-        saySat();
-        return true;
-      }
       std::vector<std::vector<std::size_t>> picks;
       for (std::size_t k = 1; k < kept.size(); ++k) {
         picks.emplace_back(chains, 0)[chain] = k;
       }
-      // The states tried as their segment found them count as tried, under
-      // their number.
-      for (auto& [state, one] : failedEarly) {
-        one.pick.assign(chains, 0);
-        one.pick[chain] = static_cast<std::size_t>(
-            std::ranges::find(kept, state) - kept.begin());
-        tried.insert(one.pick);
-        failed.push_back(std::move(one));
-      }
-      failedEarly.clear();
       say(std::format("[Global SAT] stage 1: chain {} alone on its {} "
                       "state{}",
                       chain, picks.size(), picks.size() == 1 ? "" : "s"));
@@ -12657,13 +11567,13 @@ public:
         saySat();
         return true;
       }
-      if (checks >= globalSatTries()) {
+      if (checks >= tuning_.globalSatTries) {
         sayCollected();
         say("[Global SAT] out of combinations after stage 1");
         sayNone();
         return true;
       }
-      if (lazy && onRestored) {
+      if (onRestored) {
         backToCommit();
       }
     }
@@ -12687,7 +11597,7 @@ public:
       const auto next = nextCombinationRound(
           std::exchange(failed, {}),
           [&](const std::uint32_t chain) {
-            collect(chain, nullptr);
+            collect(chain);
             return chainStates_[chain].size();
           },
           tried);
@@ -12721,7 +11631,7 @@ public:
         saySat();
         return true;
       }
-      if (checks >= globalSatTries()) {
+      if (checks >= tuning_.globalSatTries) {
         sayCollected();
         say(std::format("[Global SAT] out of combinations in stage 2 round {}",
                         round));
@@ -13752,8 +12662,8 @@ public:
     // units against 100 on 17q. `cellsOn` is the conversion the coupler's
     // own run and body already go through.
     //
-    // Whether there is such a run at all is `resonatorStub`: the lead is
-    // already the rule's length, and the prototype forces nothing beyond it.
+    // There is no such run: the lead is already the rule's length, and the
+    // prototype forces nothing beyond it.
     wire.startStub = 0U;
     wire.fixed.clear();
     wire.couplerAtSource = index;
@@ -13879,28 +12789,10 @@ public:
       }
     }
     rebuildCrossingRule(wires);
-    {
-      const auto origin = [](const char* name) {
-        return envSet(name) != nullptr ? "env" : "default";
-      };
-      say(std::format(
-          "feedline routing settings: a resonator runs the "
-          "rule's straight again after its lead {} ({}), fixed "
-          "places fenced {} ({}), crossing rule {} ({}), the "
-          "exit heading tested {} ({}), a way that misses the "
-          "wire's bridge refused {} ({}), lane polygon priced {} "
-          "({}), the terminal edges' coupler runs guarded {} "
-          "({}) by {} cells more ({})",
-          resonatorStub() ? "yes" : "no", origin("SCPD_RESONATOR_STUB"),
-          fenceFixed() ? "yes" : "no", origin("SCPD_FENCE_FIXED"),
-          orthoCrossing() ? "on" : "off", origin("SCPD_ORTHO_CROSSING"),
-          crossingExitHeading() ? "yes" : "no",
-          origin("SCPD_CROSSING_EXIT_HEADING"), bridgeCheck() ? "yes" : "no",
-          origin("SCPD_BRIDGE_CHECK"), feedlineLane() ? "yes" : "no",
-          origin("SCPD_FEEDLINE_LANE"), terminalStubGuard() ? "yes" : "no",
-          origin("SCPD_TERMINAL_STUB_GUARD"), terminalStubExtra(),
-          origin("SCPD_TERMINAL_STUB_EXTRA")));
-    }
+    say(std::format("feedline routing settings: the terminal edges' coupler "
+                    "runs guarded by {} cells more, {} pair{} fenced",
+                    tuning_.terminalStubExtra, tuning_.fencePairs,
+                    tuning_.fencePairs == 1 ? "" : "s"));
     if (feedlinePass_ && verbosity_ >= 1) {
       std::string order;
       for (const auto member : members) {
@@ -13930,16 +12822,12 @@ public:
       // leaves the terminal ones out of it (`is_first_last_feedline`,
       // `FinalGrid.cpp:10677`): a terminal edge runs from the border to the
       // first coupler, and a rule over it closes the plane from outside in.
-      if (edge.terminal && feedlineLikePrototype()) {
+      if (edge.terminal) {
         continue;
       }
       if (wire.drawn) {
         crossable.push_back(wire.way);
       }
-    }
-    if (!orthoCrossing()) {
-      router_.clearOrthogonalConstraints();
-      return;
     }
     router_.buildOrthogonalConstraints(crossable, {}, tuning_.crossingReach);
   }
@@ -13953,35 +12841,6 @@ public:
   /// Whether the relaxation level being built has let go of this wire.
   [[nodiscard]] bool isLetGo(const std::uint32_t key) const {
     return std::ranges::find(letGo_, key) != letGo_.end();
-  }
-
-  /// Whether a feedline edge a relaxation level lets go of is let go of as
-  /// every other wire is: `SCPD_RELEASED_EDGES_GONE`, **on** (user,
-  /// 2026-10-17). The sweep puts the terminal edges into the ring beside
-  /// their coupler's resonator, so a relaxation lets go of one as of any
-  /// wire. It used to set the edge's `routed` flag and nothing else, and
-  /// `constrainByFeedlines` asks whether an edge is drawn: the edge let go
-  /// of still fenced its way and its clearance for a plain wire, which then
-  /// gained nothing by letting it go, while the dashboard showed it let go
-  /// of. Now its fence goes, and what stays is what stays of any wire let
-  /// go of: the price of its room (`priceTheEdges`). The run at its coupler
-  /// (`guardTerminalStub`) and the coupler bodies stay closed as before.
-  /// `=0` fences the edge, as before.
-  /// Whether a wire that found no way at any level of the relaxation in one
-  /// round, and finds none in the next, the other way round, tries once
-  /// more with both its neighbours let go of: `SCPD_RELAX_BOTH`, **on**
-  /// (user, 2026-10-21). A level lets go of the wires on one side and
-  /// fences the neighbour on the other, so a wire held from both sides at
-  /// once never gets out. On 69q, chain 10 on options 6 5 4 27, in the local
-  /// rip-up wire 206 took the room of 207 letting it go, and 207 found no
-  /// way in any round, forward with 206 fenced and backward with 208 fenced.
-  [[nodiscard]] static bool relaxBoth() {
-    static const bool on = envFlag("SCPD_RELAX_BOTH", true);
-    return on;
-  }
-
-  [[nodiscard]] static bool releasedEdgesGone() {
-    return envFlag("SCPD_RELEASED_EDGES_GONE", true);
   }
 
   void constrainByFeedlines(const Wire& wire, const std::vector<Wire>& wires,
@@ -14013,12 +12872,12 @@ public:
       const auto& other = wires[edge.wire];
       // The run a terminal edge has to make at its coupler, closed whether
       // or not the edge is drawn: see `terminalStubGuard`.
-      if (edge.terminal && other.key != wire.key && terminalStubGuard()) {
+      if (edge.terminal && other.key != wire.key) {
         guardTerminalStub(wire, other);
       }
       // An edge the relaxation has let go of closes nothing more, like every
       // wire let go of: its room is priced (`priceTheEdges`), and it is
-      // drawn again afterwards. See `releasedEdgesGone`.
+      // drawn again afterwards.
       if (isLetGo(other.key)) {
         continue;
       }
@@ -14036,13 +12895,12 @@ public:
       // its branches (`FinalGrid.cpp:3730`, `:3744`), the resonators' branch
       // included. Fencing a resonator by them was ours.
       //
-      // Under `wireFeedlineClearance` a wire that is no edge fences them
+      // A wire that is no edge fences them
       // after all (user, 2026-10-13): no wire is prescribed to cross a
       // terminal edge, and the count holds every wire to the rule against
       // it, so a search that may run over one finds ways the count refuses.
-      const bool fencesTerminals = wireFeedlineClearance() && !wire.feedline;
-      if (edge.terminal && !fencesTerminals &&
-          (feedlineLikePrototype() || (!wire.resonator && !wire.feedline))) {
+      const bool fencesTerminals = !wire.feedline;
+      if (edge.terminal && !fencesTerminals) {
         continue;
       }
       fence(wire, {&other});
@@ -14084,7 +12942,7 @@ public:
     // overlay the router offers asks for a straight run on the far side
     // that a port beside the feedline cannot give.
     router_.setSingleCrossingFeedline(nullptr, 0, 1);
-    if (wire.feedline && narrowMeeting()) {
+    if (wire.feedline) {
       openTheRunsOut(wire, wires);
     }
     priceTheEdges(wire, wires, pass);
@@ -14103,8 +12961,7 @@ public:
   /// treats a launcher run as free ground (user, 2026-09-30).
   ///
   /// Its own method because the refinement builds the room price after the
-  /// constraints and so has to stamp these again on top of it: see
-  /// `refinePriceLast`.
+  /// constraints and so has to stamp these again on top of it.
   void priceTheEdges(const Wire& wire, const std::vector<Wire>& wires,
                      const Pass& pass) {
     if (!pass.feedlines) {
@@ -14149,14 +13006,14 @@ public:
       if (points.front().fixed && !points[1].fixed && !ways.front().empty()) {
         const auto run = couplerRunOf(points[1].coupler);
         close(router_.straightStub(targetOf(points[1]), true,
-                                   run + terminalStubExtra()));
+                                   run + tuning_.terminalStubExtra));
       }
       // The last edge, committed, out of the last coupler to a launcher.
       const auto last = points.size() - 2;
       if (points.back().fixed && !points[last].fixed && !ways.back().empty()) {
         const auto run = couplerRunOf(points[last].coupler);
         close(router_.straightStub(sourceOf(points[last]), false,
-                                   run + terminalStubExtra()));
+                                   run + tuning_.terminalStubExtra));
       }
     }
   }
@@ -14187,14 +13044,14 @@ public:
         !points[edge.to].fixed) {
       const auto run = couplerRunOf(points[edge.to].coupler);
       close(router_.straightStub(sourceOf(points[edge.to]), false,
-                                 run + terminalStubExtra()));
+                                 run + tuning_.terminalStubExtra));
     }
     // The edge before, from a launcher into the coupler this edge starts at.
     if (edge.from >= 1 && points[edge.from - 1].fixed &&
         !points[edge.from].fixed) {
       const auto run = couplerRunOf(points[edge.from].coupler);
       close(router_.straightStub(targetOf(points[edge.from]), true,
-                                 run + terminalStubExtra()));
+                                 run + tuning_.terminalStubExtra));
     }
   }
 
@@ -14206,14 +13063,15 @@ public:
   void guardTerminalStub(const Wire& wire, const Wire& edge) {
     Path cells;
     if (startsAtLauncher(edge)) {
-      const auto in = router_.straightStub(edge.objective.target, true,
-                                           edge.endStub + terminalStubExtra());
+      const auto in =
+          router_.straightStub(edge.objective.target, true,
+                               edge.endStub + tuning_.terminalStubExtra);
       cells.insert(cells.end(), in.begin(), in.end());
     }
     if (endsAtLauncher(edge)) {
       const auto out = router_.straightStub(
           edge.objective.source, false,
-          startStubOf(edge, tuning_.straightStart) + terminalStubExtra());
+          startStubOf(edge, tuning_.straightStart) + tuning_.terminalStubExtra);
       cells.insert(cells.end(), out.begin(), out.end());
     }
     if (cells.empty()) {
@@ -14337,179 +13195,6 @@ public:
       }
     }
     return dirty;
-  }
-
-  /// Phase 4's repair: while the feedlines leave fails, turn a coupler near
-  /// them to another of its options and route what that unsettles again;
-  /// keep the turn that leaves strictly fewer fails. The prototype's
-  /// `run_final_routing_feedline_choices_parallel`, one trial at a time.
-  ///
-  /// @returns The fails the repair ends on.
-  std::uint32_t repair(std::vector<Wire>& wires,
-                       const std::vector<std::uint32_t>& members,
-                       const std::vector<std::uint32_t>& every,
-                       const Pass& pass) {
-    auto current = failsOf(wires, every);
-    std::uint32_t trials = 0;
-    std::set<std::pair<std::uint32_t, std::size_t>> tried;
-    Pass again = pass;
-    again.rounds = 1;
-    again.name = "feedline repair";
-    while (current.total() > 0 && trials < tuning_.repairTrials) {
-      // The couplers near the fails: of a failing resonator or edge, and
-      // of the nearest resonators on either side of a failing wire, with
-      // their chain neighbours.
-      std::vector<std::uint32_t> candidates;
-      const auto add = [&](const std::uint32_t index) {
-        if (index != NO_OWNER &&
-            std::ranges::find(candidates, index) == candidates.end()) {
-          candidates.push_back(index);
-        }
-      };
-      const auto near = [&](const Wire& wire) {
-        if (wire.feedline) {
-          add(wire.couplerAtSource);
-          add(wire.couplerAtTarget);
-          return;
-        }
-        if (wire.couplerAtSource != NO_OWNER) {
-          add(wire.couplerAtSource);
-          return;
-        }
-        const auto found = std::ranges::find(members, wire.key);
-        if (found == members.end()) {
-          return;
-        }
-        const auto at = static_cast<std::size_t>(found - members.begin());
-        const auto total = members.size();
-        for (const int direction : {1, -1}) {
-          for (std::size_t step = 1; step < total; ++step) {
-            const auto place =
-                (at + total + (static_cast<std::size_t>(direction) * step)) %
-                total;
-            const auto& other = wires[members[place]];
-            if (other.resonator) {
-              add(other.couplerAtSource);
-              break;
-            }
-          }
-        }
-      };
-      for (const auto key : every) {
-        const auto& wire = wires[key];
-        if (!wire.feasible) {
-          continue;
-        }
-        const bool failing =
-            !wire.drawn || !wire.routed || wire.tooShort || wire.tooLong;
-        if (failing) {
-          near(wire);
-        }
-      }
-      const auto direct = candidates;
-      for (const auto index : direct) {
-        for (const auto& points : chains_) {
-          for (std::size_t at = 0; at < points.size(); ++at) {
-            if (points[at].coupler != index) {
-              continue;
-            }
-            if (at > 0) {
-              add(points[at - 1].coupler);
-            }
-            if (at + 1 < points.size()) {
-              add(points[at + 1].coupler);
-            }
-          }
-        }
-      }
-      // A wave: up to two untried options per candidate, the cheapest first.
-      struct Trial {
-        std::uint32_t coupler = 0;
-        std::size_t option = 0;
-        std::uint32_t fails = 0;
-      };
-      std::vector<Trial> wave;
-      for (const auto index : candidates) {
-        const auto& coupler = couplers_[index];
-        std::vector<std::size_t> options;
-        for (std::size_t option = 0; option < coupler.options.size();
-             ++option) {
-          if (option != coupler.chosen && !tried.contains({index, option}) &&
-              coupler.options[option].secondStraight == 0) {
-            options.push_back(option);
-          }
-        }
-        std::ranges::stable_sort(options, {}, [&](const std::size_t option) {
-          return coupler.options[option].cost;
-        });
-        for (std::size_t k = 0; k < 2 && k < options.size(); ++k) {
-          wave.push_back({.coupler = index,
-                          .option = options[k],
-                          .fails = current.total()});
-        }
-      }
-      if (wave.empty()) {
-        say("feedline repair: nothing left to try");
-        break;
-      }
-      const auto taken = snapshot(wires);
-      for (auto& trial : wave) {
-        if (trials >= tuning_.repairTrials) {
-          break;
-        }
-        ++trials;
-        tried.insert({trial.coupler, trial.option});
-        if (!turnCoupler(wires, trial.coupler, trial.option)) {
-          trial.fails = std::numeric_limits<std::uint32_t>::max();
-          tell(std::format(
-              "repair trial {}: coupler {} option {}: its edges find no way",
-              trials, trial.coupler, trial.option));
-          continue;
-        }
-        for (const auto key : unsettledBy(wires, members, trial.coupler)) {
-          wires[key].routed = false;
-        }
-        const auto verbosity = verbosity_;
-        verbosity_ = 0;
-        const auto quiet = progress_;
-        progress_ = {};
-        sweep(wires, members, again);
-        progress_ = quiet;
-        verbosity_ = verbosity;
-        trial.fails = failsOf(wires, every).total();
-        tell(std::format(
-            "repair trial {}: coupler {} option {}: {} fails against {}",
-            trials, trial.coupler, trial.option, trial.fails, current.total()));
-        restore(wires, taken);
-      }
-      const auto best = std::ranges::min_element(wave, {}, &Trial::fails);
-      if (best == wave.end() || best->fails >= current.total()) {
-        say(std::format(
-            "feedline repair: {} trials, none with fewer than {} fails", trials,
-            current.total()));
-        if (trials >= tuning_.repairTrials) {
-          break;
-        }
-        continue;
-      }
-      if (!turnCoupler(wires, best->coupler, best->option)) {
-        continue;
-      }
-      for (const auto key : unsettledBy(wires, members, best->coupler)) {
-        wires[key].routed = false;
-      }
-      sweep(wires, members, again);
-      current = failsOf(wires, every);
-      say(std::format(
-          "feedline repair: coupler {} turned to option {} after {} trials | "
-          "Fails: {}",
-          best->coupler, best->option, trials, current.total()));
-    }
-    // Everything down again, so that the field says what the canvas holds.
-    for (auto& wire : wires) {
-      place(wire);
-    }
-    return current.total();
   }
 
   // --------------------------------------------------- The targeted repair
@@ -14809,7 +13494,7 @@ public:
 
     // The segments: maximal runs of marked waypoints per chain, widened,
     // clamped, merged where they touch after widening.
-    const auto grow = researchGrow();
+    const auto grow = RESEARCH_GROW;
     std::vector<Segment> segments;
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
       const auto size = chains_[chain].size();
@@ -14887,39 +13572,26 @@ public:
   /// Phase 4's repair, dispatched: the targeted re-search of coupler options
   /// under `repairSearch`, the blind `repair` of before without it. Says
   /// which switches are in force first, as the insertion says its own.
+  /// How many waypoints a segment of the targeted repair is widened by to
+  /// either side.
+  static constexpr std::size_t RESEARCH_GROW = 1;
+  /// Every wire of the feedline pass is drawn again at least once: the way
+  /// a resonator holds when the pass begins is the coupler's lead spliced
+  /// onto the outer routing's way, a kink no search would return.
+  static constexpr bool FORCE_REROUTE = true;
+
   void repairFeedlines(std::vector<Wire>& wires,
                        const std::vector<std::uint32_t>& members,
                        const std::vector<std::uint32_t>& every,
                        const Pass& pass) {
-    {
-      const auto from = [](const char* name) {
-        return envSet(name) != nullptr ? "env" : "default";
-      };
-      say(std::format(
-              "targeted repair settings: re-search {} ({}), k {} ({}), grow {} "
-              "({}), {} rounds ({}), jogs {} ({}), "
-              "sees "
-              "chains {} ({}), final sweep {} ({}), budget {} legality tests "
-              "(repair_trials), crossing rule {} ({})",
-              repairSearch() ? "yes" : "no", from("SCPD_REPAIR_SEARCH"),
-              researchK(), from("SCPD_RESEARCH_K"), researchGrow(),
-              from("SCPD_RESEARCH_GROW"), researchRounds(),
-              from("SCPD_RESEARCH_ROUNDS"), "off", from("SCPD_RESEARCH_JOGS"),
-              researchSeesChains() ? "yes" : "no",
-              from("SCPD_RESEARCH_SEES_CHAINS"),
-              researchFinalSweep() ? "on" : "off",
-              from("SCPD_RESEARCH_FINAL_SWEEP"), tuning_.repairTrials,
-              orthoCrossing() ? "on" : "off", from("SCPD_ORTHO_CROSSING")) +
-          (researchVerbose() ? ", the local passes speak (env)" : ""));
-    }
-    if (localAgreementRuns() > 0) {
-      compareLocally(wires, members, every, pass);
-      return;
-    }
-    if (!repairSearch()) {
-      static_cast<void>(repair(wires, members, every, pass));
-      return;
-    }
+    say(std::format("targeted repair settings: {} ring member{} redrawn, "
+                    "segments grown by {}, {} round{}, budget {} legality "
+                    "tests (repair_trials)",
+                    tuning_.researchRingMembers,
+                    tuning_.researchRingMembers == 1 ? "" : "s", RESEARCH_GROW,
+                    tuning_.researchRounds,
+                    tuning_.researchRounds == 1 ? "" : "s",
+                    tuning_.repairTrials));
     researchSegments(wires, members, every, pass);
   }
 
@@ -14977,109 +13649,6 @@ public:
     bool outOfTrials = false;
     bool exhausted = false;
   };
-
-  /// Whether `researchSegment` keeps the ways of its edge searches by their
-  /// corridor (`SegmentMemo`): `SCPD_SEGMENT_MEMO`, off. On 17q the global
-  /// SAT search answered 24 of 850 edge searches from it and took as long:
-  /// only 80 of the 850 asked for a pair of options a second time, so few
-  /// searches repeat at all. The switch stays for the larger chips.
-  [[nodiscard]] static bool segmentMemo() {
-    return envFlag("SCPD_SEGMENT_MEMO", false);
-  }
-
-  /// The ways the edge searches of one `researchSegment` call found, by all
-  /// that a search reads: its two ends, the straight runs at them, and every
-  /// cell of the corridor `corridorOfEdge` builds, the prefix fence and the
-  /// box around the ends included. The key is two 64-bit hashes of these.
-  /// Two steps with the same key ask the router the same question and get
-  /// the same way back, so a hit gives the step the way a search would.
-  ///
-  /// `edgeMemo_` keys a way by the pair of options and tests it against the
-  /// fence. That is not enough here: a way found under a wide fence and
-  /// still open under a narrow one can cost more than the best way the
-  /// narrow fence leaves open, and the segment search would price the step
-  /// differently.
-  ///
-  /// The memo lives for one call. The call clears it after every run it
-  /// applies to the chip (`tryRun`, `agreeRun`), since an applied run changes
-  /// the chip under the router.
-  struct SegmentMemo {
-    std::map<std::pair<std::uint64_t, std::uint64_t>, Path> ways;
-    /// The steps searched so far, by edge and pair of options.
-    std::set<std::tuple<std::size_t, std::size_t, std::size_t>> pairs;
-    std::uint32_t hits = 0;
-    std::uint32_t misses = 0;
-    /// Misses whose edge and pair of options the call had searched before
-    /// under another corridor.
-    std::uint32_t moved = 0;
-  };
-  SegmentMemo* segmentMemo_ = nullptr;
-
-  /// The key of `SegmentMemo` for the corridor `corridorOfEdge` just built.
-  [[nodiscard]] std::pair<std::uint64_t, std::uint64_t>
-  corridorKeyOf(const RoutingObjective& objective, const Edge& edge) const {
-    const auto [startRun, endRun] = runsOfEdge(edge);
-    // Two hashes with different mixers, each over every word in order.
-    std::uint64_t a = 0x9E3779B97F4A7C15ULL;
-    std::uint64_t b = 0xD1B54A32D192ED03ULL;
-    const auto mix = [&a, &b](const std::uint64_t word) {
-      a ^= word;
-      a ^= a >> 33U;
-      a *= 0xFF51AFD7ED558CCDULL;
-      a ^= a >> 33U;
-      a *= 0xC4CEB9FE1A85EC53ULL;
-      a ^= a >> 33U;
-      b += word + 0x9E3779B97F4A7C15ULL;
-      b ^= b >> 30U;
-      b *= 0xBF58476D1CE4E5B9ULL;
-      b ^= b >> 27U;
-      b *= 0x94D049BB133111EBULL;
-      b ^= b >> 31U;
-    };
-    for (const auto& point : {objective.source, objective.target}) {
-      mix((static_cast<std::uint64_t>(point.x) << 32U) | point.y);
-      mix(static_cast<std::uint64_t>(point.heading));
-    }
-    mix((static_cast<std::uint64_t>(startRun) << 32U) | endRun);
-    for (const auto word : corridor_.words()) {
-      mix(word);
-    }
-    return {a, b};
-  }
-
-  /// The way of one step of `researchSegment`, from `segmentMemo_` when a
-  /// step with the same corridor was searched before, otherwise searched
-  /// and kept. A search the step budget cut off is not kept; `edgeCost` only
-  /// asks here without a step budget.
-  [[nodiscard]] Path segmentWayOf(const std::vector<Wire>& wires,
-                                  const RoutingObjective& objective,
-                                  const Edge& edge,
-                                  const std::size_t optionFrom,
-                                  const std::size_t optionTo) {
-    auto& memo = *segmentMemo_;
-    corridorOfEdge(wires, objective, edge);
-    const auto key = corridorKeyOf(objective, edge);
-    if (const auto found = memo.ways.find(key); found != memo.ways.end()) {
-      ++memo.hits;
-      lastCutOff_ = false;
-      lastPicture_.clear();
-      if (found->second.empty()) {
-        tell(std::format("edge of chain {} from {} to {}: no way, as under the "
-                         "same corridor before",
-                         edge.chain, edge.from, edge.to));
-      }
-      return found->second;
-    }
-    ++memo.misses;
-    memo.moved +=
-        memo.pairs.insert({edge.from, optionFrom, optionTo}).second ? 0U : 1U;
-    ++memoMisses_;
-    auto way = routeEdge(wires, objective, edge, true);
-    if (!lastCutOff_) {
-      memo.ways.emplace(key, way);
-    }
-    return way;
-  }
 
   /// **The re-search of one segment**: the prefix search on the sub-chain
   /// `lo..hi`, both ends fixed on the option they stand on, the interior
@@ -15173,8 +13742,8 @@ public:
           const auto arriving =
               portOfOption(chain, lo + e + 1, open[e + 1][d], false);
           turns[e][(c * m) + d] = pairBound(
-              leaving, arriving, forcedRunOf(chain, lo + e, open[e][c], true),
-              forcedRunOf(chain, lo + e + 1, open[e + 1][d], false));
+              leaving, arriving, forcedRunOf(chain, lo + e, open[e][c]),
+              forcedRunOf(chain, lo + e + 1, open[e + 1][d]));
         }
       }
       pairs += n * m;
@@ -15279,24 +13848,11 @@ public:
     // refused candidate is put back to exactly the search's own ground.
     setPads(interior, false);
     const auto taken = snapshot(wires);
-    fenceEverything_ = researchSeesChains();
+    fenceEverything_ = true;
     openChain_ = chain;
     openLo_ = lo;
     openHi_ = hi;
     std::uint32_t trials = 0;
-    // The ways of this call's edge searches by their corridor; never past the
-    // end of the call.
-    SegmentMemo memo;
-    struct MemoScope {
-      SegmentMemo*& slot;
-      explicit MemoScope(SegmentMemo*& memo) : slot(memo) {}
-      MemoScope(const MemoScope&) = delete;
-      MemoScope& operator=(const MemoScope&) = delete;
-      MemoScope(MemoScope&&) = delete;
-      MemoScope& operator=(MemoScope&&) = delete;
-      ~MemoScope() { slot = nullptr; }
-    } memoScope{segmentMemo_};
-    segmentMemo_ = segmentMemo() ? &memo : nullptr;
 
     problem.accept = [&](const std::span<const std::uint32_t> run,
                          const std::uint64_t cost) {
@@ -15335,23 +13891,12 @@ public:
       }
       ++trials;
       if (agreement_.on) {
-        if (!localAgreementOnly().on ||
-            runText(run) == localAgreementOnly().options) {
-          segmentMemo_ = nullptr;
-          agreeRun(wires, members, every, pass, segment, open, run, ways, cost,
-                   taken);
-          memo.ways.clear();
-          segmentMemo_ = segmentMemo() ? &memo : nullptr;
-        }
+        agreeRun(wires, members, every, pass, segment, open, run, ways, cost,
+                 taken);
         return false;
       }
-      // The run is applied to the chip while it is tested: no edge search
-      // of the test reads or fills the memo, and the memo is cleared after.
-      segmentMemo_ = nullptr;
       const bool kept = tryRun(wires, members, every, pass, segment, open, run,
                                ways, cost, taken, badNow);
-      memo.ways.clear();
-      segmentMemo_ = segmentMemo() ? &memo : nullptr;
       if (!kept) {
         ++out.rejected;
         setPads(interior, false);
@@ -15390,12 +13935,6 @@ public:
         answer.expansions == 0
             ? std::string{}
             : std::format(", {} prefixes expanded", answer.expansions)));
-    if (memo.hits + memo.misses > 0) {
-      say(std::format("targeted repair: {} — edge memo: {} of {} edge "
-                      "searches answered by an earlier search under the same "
-                      "corridor, {} searched again under another corridor",
-                      name, memo.hits, memo.hits + memo.misses, memo.moved));
-    }
     return out;
   }
 
@@ -15531,7 +14070,7 @@ public:
       }
     }
     {
-      const auto k = researchK();
+      const auto k = tuning_.researchRingMembers;
       const auto total = members.size();
       std::vector<std::uint32_t> more;
       for (std::size_t at = 0; at < total; ++at) {
@@ -15573,12 +14112,10 @@ public:
   /// the window and the feedline edges alone, in ring order, and every
   /// other member is off the canvas for its length: no obstacle, never
   /// released by the relaxation, and not judged.
-  [[nodiscard]] WindowPass
-  rerouteWindow(std::vector<Wire>& wires,
-                const std::vector<std::uint32_t>& members,
-                const std::vector<std::uint32_t>& every, const Pass& pass,
-                const std::set<std::uint32_t>& window, const std::string& label,
-                const bool ignoreOutside = false) {
+  [[nodiscard]] WindowPass rerouteWindow(
+      std::vector<Wire>& wires, const std::vector<std::uint32_t>& members,
+      const std::vector<std::uint32_t>& every, const Pass& pass,
+      const std::set<std::uint32_t>& window, const bool ignoreOutside = false) {
     WindowPass out;
     std::vector<std::uint32_t> ring;
     std::vector<std::uint32_t> ignored;
@@ -15607,17 +14144,13 @@ public:
 
     // The local pass, silenced unless asked to speak.
     Pass local = pass;
-    local.rounds = researchRounds();
+    local.rounds = tuning_.researchRounds;
     local.name = "targeted repair";
     local.onlyUnsettled = true;
     const auto verbosity = verbosity_;
     const auto quiet = progress_;
-    if (!researchVerbose()) {
-      verbosity_ = 0;
-      progress_ = {};
-    } else {
-      say(label + ": the local pass");
-    }
+    verbosity_ = 0;
+    progress_ = {};
     sweep(wires, ring, local);
     out.after = failsOf(wires, ignoreOutside ? ring : every);
     progress_ = quiet;
@@ -15731,8 +14264,7 @@ public:
     // 2. The window.
     const auto window = windowOfRun(wires, members, segment, run);
     // 3. The local pass, and 4. what it came to in the window.
-    const auto local =
-        rerouteWindow(wires, members, every, pass, window, label);
+    const auto local = rerouteWindow(wires, members, every, pass, window);
     const auto& after = local.after;
     const bool clean = local.clean();
     const bool better = after.bad() < badNow;
@@ -15870,10 +14402,9 @@ public:
   ripFeedline(std::vector<Wire>& wires,
               const std::vector<std::uint32_t>& members,
               const std::vector<std::uint32_t>& every, const Pass& pass,
-              const std::set<std::uint32_t>& window, const std::string& label) {
+              const std::set<std::uint32_t>& window) {
     const auto began = std::chrono::steady_clock::now();
-    const auto local =
-        rerouteWindow(wires, members, every, pass, window, label, true);
+    const auto local = rerouteWindow(wires, members, every, pass, window, true);
     FeedlineRip out;
     out.clean = local.clean();
     out.failing = local.named;
@@ -15988,8 +14519,7 @@ public:
         applyRun(wires, segment, open, run, ways);
       }
       const auto chain = again[at];
-      rips[chain] =
-          ripFeedline(wires, members, every, pass, windows[chain], label);
+      rips[chain] = ripFeedline(wires, members, every, pass, windows[chain]);
       agreement_.rerouteSeconds += rips[chain]->seconds;
     }
 
@@ -16039,7 +14569,7 @@ public:
                                   : std::format("DISAGREE on {}", disagree),
                     said, slotSeconds));
 
-    if (const char* dir = localAgreementDir(); dir != nullptr) {
+    {
       const auto id = std::format("c{}-w{}-r{}", segment.chain, segment.lo,
                                   agreement_.written++);
       json pads = json::array();
@@ -16074,25 +14604,7 @@ public:
                {"seconds", {{"slot", slotSeconds}}},
                {"routed", std::move(routed)},
                {"pads", std::move(pads)}};
-      const std::filesystem::path folder(dir);
-      std::filesystem::create_directories(folder);
-      std::ofstream(folder / (id + ".json")) << out.dump();
-      // The graph the slot check saw, for a run with a feedline the two
-      // judge otherwise.
-      if (disagree > 0 || localAgreementGraphs()) {
-        try {
-          const InsertionState state{
-              .wires = wires,
-              .edges = edges_,
-              .placed = std::vector<bool>(couplers_.size(), true),
-              .terminalsAsWires = true,
-              .options = {}};
-          const auto page = capacityGraphJsonOf(state, label);
-          std::ofstream(folder / (id + "-graph.json")) << slotCheck(page).graph;
-        } catch (const std::invalid_argument& error) {
-          tell(std::format("{}: no graph written ({})", label, error.what()));
-        }
-      }
+      agreement_.records.push_back(std::move(out));
     }
 
     restore(wires, taken);
@@ -16108,15 +14620,11 @@ public:
   /// as it began is judged the same way. The chip ends as it began.
   void compareLocally(std::vector<Wire>& wires,
                       const std::vector<std::uint32_t>& members,
-                      const std::vector<std::uint32_t>& every,
-                      const Pass& pass) {
+                      const std::vector<std::uint32_t>& every, const Pass& pass,
+                      const std::uint32_t runs, const std::size_t spanAsked) {
     const auto began = std::chrono::steady_clock::now();
-    const auto runs = localAgreementRuns();
-    say(std::format("[Local Agreement] {} run{} a segment of {} edges{}", runs,
-                    runs == 1 ? "" : "s", localAgreementSpan(),
-                    localAgreementPlain()
-                        ? "; plain wires alone, the resonators left open"
-                        : ""));
+    say(std::format("[Local Agreement] {} run{} a segment of {} edges", runs,
+                    runs == 1 ? "" : "s", spanAsked));
     agreement_ = Agreement{.on = true};
     const auto chains = static_cast<std::uint32_t>(chains_.size());
     // The chip as it began, feedline by feedline.
@@ -16126,10 +14634,6 @@ public:
     agreement_.baseRip.resize(chains);
     for (std::uint32_t chain = 0; chain < chains; ++chain) {
       agreement_.windows[chain] = feedlineWindow(wires, members, chain);
-      if (localAgreementPlain()) {
-        std::erase_if(agreement_.windows[chain],
-                      [&](const auto key) { return wires[key].resonator; });
-      }
       for (const auto key : agreement_.windows[chain]) {
         agreement_.windowNames[chain].insert(wireId(wires[key]));
       }
@@ -16147,13 +14651,11 @@ public:
     {
       const auto taken = snapshot(wires);
       for (std::uint32_t chain = 0; chain < chains; ++chain) {
-        if (agreement_.windows[chain].empty() ||
-            (localAgreementOnly().on && chain != localAgreementOnly().chain)) {
+        if (agreement_.windows[chain].empty()) {
           continue;
         }
         agreement_.baseRip[chain] =
-            ripFeedline(wires, members, every, pass, agreement_.windows[chain],
-                        "[Local Agreement]");
+            ripFeedline(wires, members, every, pass, agreement_.windows[chain]);
         restore(wires, taken);
         foreignRoomStale_ = true;
         say(std::format("[Local Agreement] as begun: feedline {} {}, rip-up "
@@ -16172,12 +14674,8 @@ public:
       if (points.size() < 3) {
         continue;
       }
-      const auto span = std::min(localAgreementSpan(), points.size() - 1);
+      const auto span = std::min(spanAsked, points.size() - 1);
       for (std::size_t lo = 0; lo + span < points.size(); ++lo) {
-        if (localAgreementOnly().on && (chain != localAgreementOnly().chain ||
-                                        lo != localAgreementOnly().lo)) {
-          continue;
-        }
         ++segments;
         static_cast<void>(researchSegment(wires, members, every, pass,
                                           {.chain = chain,
@@ -16280,31 +14778,6 @@ public:
       verbosity_ = verbosity;
       at = 0;
     }
-    if (researchFinalSweep()) {
-      const auto taken = snapshot(wires);
-      const auto verbosity = verbosity_;
-      verbosity_ = 0;
-      const auto quiet = progress_;
-      progress_ = {};
-      Pass full = pass;
-      full.name = "targeted repair final sweep";
-      sweep(wires, members, full);
-      const auto swept = failsOf(wires, every);
-      progress_ = quiet;
-      verbosity_ = verbosity;
-      if (swept.bad() <= badNow) {
-        say(std::format(
-            "targeted repair: the final sweep is kept, bad {} -> {}", badNow,
-            swept.bad()));
-        badNow = swept.bad();
-      } else {
-        say(std::format("targeted repair: the final sweep is dropped, bad {} "
-                        "-> {}",
-                        badNow, swept.bad()));
-        restore(wires, taken);
-        foreignRoomStale_ = true;
-      }
-    }
     // Everything down again, so that the field says what the canvas holds.
     for (auto& wire : wires) {
       place(wire);
@@ -16322,10 +14795,8 @@ public:
     // And the first guarantee on what the sweep left, so that a pair the
     // refinement's own line reports can be told from one the sweep made:
     // the insertion's line is about the edges as the insertion drew them,
-    // and every pass after it draws them again. See `refineChecks`.
-    if (refineChecks()) {
-      static_cast<void>(checkFeedlineRoom(wires, "feedline routing"));
-    }
+    // and every pass after it draws them again.
+    static_cast<void>(checkFeedlineRoom(wires, "feedline routing"));
     const auto seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
             .count();
@@ -16346,7 +14817,7 @@ private:
   static constexpr std::uint32_t STALE_ROUNDS = 4;
 
   /// How many ways the pass running now refused because they did not cross
-  /// the wire's bridge (`bridgeCheck`). Reset per sweep, said at its end.
+  /// the wire's bridge. Reset per sweep, said at its end.
   std::uint32_t bridgeRefusals_ = 0;
 
   /// Whether the length-point bands are stamped at all. Cleared for the
@@ -16490,8 +14961,8 @@ private:
     // Under the feedline constraints a wire starts on the way it has, and a
     // way that holds every rule already is settled: the rule against every
     // other wire, the crossing rule, and a resonator's length. Only a wire
-    // whose way does not hold is searched for — unless `forceReroute` is on,
-    // which is what draws the kink out of a spliced way. See it for why a
+    // whose way does not hold would be searched for; every wire is drawn
+    // again at least once, which draws the kink out of a spliced way: a
     // kinked way passes `isLegal`.
     // No lane until one is priced: the frame outlives a wire, and a picture
     // of the next one must not show the last one's polygon.
@@ -16500,7 +14971,7 @@ private:
     frame_.laneCurrent.clear();
     const bool ripped = wire.ripped;
     wire.ripped = false;
-    if (pass.feedlines && !forceReroute() && wire.drawn && !ripped &&
+    if (pass.feedlines && !FORCE_REROUTE && wire.drawn && !ripped &&
         isLegal(wire, wires)) {
       wire.routed = true;
       wire.tooShort = false;
@@ -16526,15 +14997,15 @@ private:
     // fences only the first. A ring whose order the chain edges have cut is
     // no longer planar, and one neighbour either side no longer says where
     // a wire may run.
-    if (pass.feedlines && feedlineLikePrototype() && total > 4) {
-      // And the pairs beyond it as `feedlineFencePairs` says, 2 by default.
-      for (std::uint32_t k = 2; k <= feedlineFencePairs() && 2 * k < total;
-           ++k) {
+    if (pass.feedlines && total > 4) {
+      // And the pairs beyond it, as `fencePairs` says.
+      for (std::uint32_t k = 2; k <= tuning_.fencePairs && 2 * k < total; ++k) {
         fence(wire, {&wires[members[(slot + total - k) % total]],
                      &wires[members[(slot + k) % total]]});
       }
     }
-    // The length-point clearance of the outer routing: see `LENGTH_POINT_K`.
+    // The length-point clearance of the outer routing: see
+    // `tuning_.lengthPointRadius`.
     closeLengthBands(wire, {&before, &after}, pass);
     std::ranges::fill(proximity_, 0);
     constrainByFeedlines(wire, wires, pass);
@@ -16544,7 +15015,7 @@ private:
     frame_.kind = "normal";
     frame_.fence = {before.key, after.key};
     frame_.ripped.clear();
-    const bool lengthened = lengthensIn(wire, pass);
+    const bool lengthened = lengthensIn(wire);
     auto found = search(wire, pass.straightStart, true, !lengthened);
     const auto id = wireId(wire);
     const auto where = std::format("round {} {}", frame_.round,
@@ -16555,7 +15026,7 @@ private:
     // way, so that the wire fails here rather than standing in the way of
     // every wire drawn after it. See `bridgeCheck`.
     const auto crossesItsBridge = [&](const Path& way) {
-      if (!pass.feedlines || !bridgeCheck() || wire.bridged == NO_OWNER ||
+      if (!pass.feedlines || wire.bridged == NO_OWNER ||
           wire.bridged >= wires.size()) {
         return true;
       }
@@ -16586,8 +15057,9 @@ private:
       }
       std::string said;
       if (!found.empty()) {
-        const auto made = lengthen(wire, found, priced,
-                                   pass.refinement ? 1.0 : sweepLengthBand());
+        const auto made =
+            lengthen(wire, found, priced,
+                     pass.refinement ? 1.0 : tuning_.sweepLengthBand);
         said = made.note;
         note = " · " + said;
         if (!made.reached) {
@@ -16625,13 +15097,12 @@ private:
       const auto arrival = verbosity_ >= 1
                                ? deadOnArrival(wire, wires, pass.straightStart)
                                : std::string{};
-      tell(std::format(
-          "wire {} · {} · normal: {}, relaxing{}{}{}", id, where, outcome(),
-          picture(),
-          verbosity_ >= 1 && pass.feedlines
-              ? whatBlocks(wire, wires, members, before, after, pass)
-              : std::string{},
-          arrival));
+      tell(std::format("wire {} · {} · normal: {}, relaxing{}{}{}", id, where,
+                       outcome(), picture(),
+                       verbosity_ >= 1 && pass.feedlines
+                           ? whatBlocks(wire, wires, before, after, pass)
+                           : std::string{},
+                       arrival));
     }
 
     // A resonator whose way was found but had no room for its meander keeps
@@ -16640,7 +15111,7 @@ private:
     // the wires it lets go of, and those then find no way back. The wire
     // is tried again in the next round, when the wires around it may have
     // moved.
-    if (found.empty() && !plain.empty() && meanderNoRelax()) {
+    if (found.empty() && !plain.empty()) {
       wire.way = std::move(plain);
       wire.drawn = true;
       wire.tooShort = !plainTooLong;
@@ -16679,7 +15150,7 @@ private:
       // were never named. A reader then sees a closed band drawn over a
       // crossable wire and no band over two closed ones (user, 2026-10-01).
       std::vector<std::uint32_t> closed;
-      if (pass.feedlines && feedlineLikePrototype() && total > 4) {
+      if (pass.feedlines && total > 4) {
         // The prototype fences the wire *after* the one it let go of, not
         // the one it let go of — that one is meant to be crossable — and the
         // second pair with it (`FinalGrid.cpp:4430`).
@@ -16689,13 +15160,11 @@ private:
         const auto backward = [&](const std::uint32_t at) {
           return forward ? (at + total - 1) % total : (at + 1) % total;
         };
-        const auto firstOn = onward(step);
-        const auto secondOn = onward(firstOn);
-        // `feedlineFencePairs` pairs: the k-th beyond the released wire and
+        // `fencePairs` pairs: the k-th beyond the released wire and
         // the k-th behind this one, stopping before a pair wraps round.
         auto on = step;
         auto back = slot;
-        for (std::uint32_t k = 1; k <= feedlineFencePairs(); ++k) {
+        for (std::uint32_t k = 1; k <= tuning_.fencePairs; ++k) {
           on = onward(on);
           back = backward(back);
           if (on == slot || back == step || on == back) {
@@ -16716,31 +15185,6 @@ private:
             }
           }
         }
-        // Beyond the two, on to the next conventional wire: a resonator
-        // does not bound the room the released wire gave up. See
-        // `fenceToConventional`.
-        if (fenceToConventional()) {
-          const auto conventional = [&](const std::uint32_t at) {
-            const auto& other = wires[members[at]];
-            return !other.resonator && !other.feedline;
-          };
-          bool bounded = conventional(firstOn) || conventional(secondOn);
-          auto at = onward(secondOn);
-          for (std::uint32_t walked = 0;
-               !bounded && walked + 4 < total && at != slot && at != step;
-               ++walked, at = onward(at)) {
-            const auto& other = wires[members[at]];
-            if (other.feedline) {
-              continue;
-            }
-            fence(wire, {&other});
-            if (other.key != wire.key &&
-                std::ranges::find(closed, other.key) == closed.end()) {
-              closed.push_back(other.key);
-            }
-            bounded = conventional(at);
-          }
-        }
       } else {
         fence(wire, {&ripped, forward ? &before : &after});
         closed = {ripped.key, (forward ? before : after).key};
@@ -16757,7 +15201,7 @@ private:
       fenceFixedPlaces(wire, wires, released);
       priceLane(wires, members, slot, forward, level);
       letGo_.clear();
-      if (releasedEdgesGone()) {
+      {
         for (const auto& [key, routed] : released) {
           letGo_.push_back(key);
         }
@@ -16787,7 +15231,7 @@ private:
     // way round, ended for this wire with no way at any level either.
     const auto thisRound =
         (static_cast<std::uint64_t>(sweepSerial_) << 32U) | (frame_.round + 1U);
-    if (found.empty() && relaxBoth() && total > 4 && wire.relaxedOut != 0 &&
+    if (found.empty() && total > 4 && wire.relaxedOut != 0 &&
         wire.relaxedOut + 1 == thisRound) {
       auto& ahead = wires[members[(slot + 1) % total]];
       auto& behind = wires[members[(slot + total - 1) % total]];
@@ -16805,7 +15249,7 @@ private:
       fence(wire, {&farAhead, &farBehind});
       fenceFixedPlaces(wire, wires, released);
       letGo_.clear();
-      if (releasedEdgesGone()) {
+      {
         for (const auto& [key, routed] : released) {
           letGo_.push_back(key);
         }
@@ -16878,10 +15322,10 @@ private:
   /// one constraint left out at a time — the ring neighbours, the feedline
   /// fences, the crossing rule, the coupler bodies — and with all of them
   /// left out. Restores what the search had.
-  [[nodiscard]] std::string
-  whatBlocks(const Wire& wire, std::vector<Wire>& wires,
-             const std::vector<std::uint32_t>& members, const Wire& before,
-             const Wire& after, const Pass& pass) {
+  [[nodiscard]] std::string whatBlocks(const Wire& wire,
+                                       std::vector<Wire>& wires,
+                                       const Wire& before, const Wire& after,
+                                       const Pass& pass) {
     const auto attempt = [&](const bool neighbours, const bool feedlines,
                              const bool crossing, const bool bodies) {
       const auto kept = bodies_;
@@ -17117,7 +15561,7 @@ private:
       // clearance does not close the edge's stub and first moves; anywhere
       // else the edge keeps the rule from the resonator, its lead's end
       // included (user, 2026-10-13).
-      if (narrowMeeting() && feedlinePass_ && one.feedline != two.feedline &&
+      if (feedlinePass_ && one.feedline != two.feedline &&
           !(one.resonator && onLead)) {
         const auto& edge = one.feedline ? one : two;
         if (const auto run = runOutOf(edge, shared);
@@ -17274,7 +15718,7 @@ private:
   ///   clearance does not close the edge's stub and first moves.
   [[nodiscard]] double meetingReach(const Wire& one, const Wire& two,
                                     const bool onLead) const {
-    if (!narrowMeeting() || !feedlinePass_) {
+    if (!feedlinePass_) {
       return couplerReach();
     }
     if (one.feedline && two.feedline) {
@@ -17324,29 +15768,6 @@ private:
       }
     }
     return std::nullopt;
-  }
-
-  /// Whether two wires of one coupler meet only where `meetingReach` says:
-  /// `SCPD_NARROW_MEETING`, on (user, 2026-10-13). Off, they meet within
-  /// the coupler's reach of its anchor, whatever they are.
-  [[nodiscard]] static bool narrowMeeting() {
-    return envFlag("SCPD_NARROW_MEETING", true);
-  }
-
-  /// Whether a resonator that finds a way but no room for its meander keeps
-  /// that way instead of letting its neighbours go: `SCPD_MEANDER_NO_RELAX`,
-  /// on (user, 2026-10-13).
-  [[nodiscard]] static bool meanderNoRelax() {
-    return envFlag("SCPD_MEANDER_NO_RELAX", true);
-  }
-
-  /// Whether a plain wire keeps the wire clearance from every feedline edge
-  /// but the one it bridges, the terminal edges included:
-  /// `SCPD_WIRE_FEEDLINE_CLEARANCE`, on (user, 2026-10-13). Off, a plain
-  /// wire and an edge are never held to the rule against each other, and
-  /// only the crossing rule binds a plain wire near an edge.
-  [[nodiscard]] static bool wireFeedlineClearance() {
-    return envFlag("SCPD_WIRE_FEEDLINE_CLEARANCE", true);
   }
 
   /// The coupler two wires share, or none: a resonator and an edge of its
@@ -17479,8 +15900,7 @@ private:
         // crossing rule, and keeps the rule from every other edge (user,
         // 2026-10-13); under `wireFeedlineClearance` off, from none.
         const auto crossedBy = [](const Wire& plain, const Wire& edge) {
-          return plain.inner || plain.bridged == edge.key ||
-                 !wireFeedlineClearance();
+          return plain.inner || plain.bridged == edge.key;
         };
         if ((crossable && !other.resonator && !other.feedline &&
              crossedBy(other, wire)) ||
@@ -17871,10 +16291,7 @@ private:
       // The quarter turn the resonator's search may want off the lead's tip.
       at.clear();
       const auto onward = routing::headingVector(option.arcEnd.heading);
-      const auto beyondTip =
-          static_cast<std::int64_t>(BEND_RADIUS) +
-          (resonatorStub() ? static_cast<std::int64_t>(tuning_.straightStart)
-                           : 0);
+      const auto beyondTip = static_cast<std::int64_t>(BEND_RADIUS);
       for (std::int64_t k = 1; k <= beyondTip; ++k) {
         at.emplace_back(
             static_cast<std::int64_t>(option.arcEnd.x) + (k * onward.dx),
@@ -18201,7 +16618,7 @@ private:
     // A wire under the feedline constraints crosses a feedline at a right
     // angle only; a feedline edge itself is searched free, as the
     // prototype searches it.
-    auto found = feedlinePass_ && !wire.feedline && orthoCrossing()
+    auto found = feedlinePass_ && !wire.feedline
                      ? router_.routeOrthogonal(wire.objective, usePenalty)
                      : router_.route(wire.objective, usePenalty);
     // A resonator drawn from its coupler leaves it on a fixed quarter turn
@@ -18257,9 +16674,8 @@ private:
     // A wire that found nothing in round 0 is offered more room in round 1
     // rather than the same room again, which is what stops the sweep from
     // repeating itself.
-    const std::uint32_t reach = (feedlinePass_ && feedlineLikePrototype())
-                                    ? (frame_.round + 1U) * asked
-                                    : asked;
+    const std::uint32_t reach =
+        feedlinePass_ ? (frame_.round + 1U) * asked : asked;
     blockOnBodies_ = !wire.feedline;
     corridor_.fill(true);
     box_ = {};
@@ -18344,22 +16760,17 @@ private:
       // and the straight run of a resonator the insertion has just spliced,
       // which its next search has to make and no neighbour may take. See
       // `fenceFixed`.
-      if (fenceFixed()) {
-        closeRoomOf(wire, *other, other->fixed);
-      }
+      closeRoomOf(wire, *other, other->fixed);
     }
     openFixedPlaces(wire);
   }
 
   /// Keep the fixed places of the wires let go of closed while everything
   /// else of them is crossable — the prototype's `ripped_heads`, for every
-  /// wire. See `fenceFixed`. Nothing happens with the switch off.
+  /// wire.
   void fenceFixedPlaces(
       const Wire& wire, const std::vector<Wire>& wires,
       const std::vector<std::pair<std::uint32_t, bool>>& released) {
-    if (!fenceFixed()) {
-      return;
-    }
     for (const auto& [key, routed] : released) {
       closeRoomOf(wire, wires[key], wires[key].fixed);
     }
@@ -18378,7 +16789,7 @@ private:
     const bool meeting = couldMeet(wire, other);
     // What the search draws of a resonator starts where its lead ends.
     const bool onLead = !wire.resonator;
-    if (!meeting || !meetAtTheMiddle()) {
+    if (!meeting) {
       alongDisc(cells, stencil,
                 [&](const std::int64_t x, const std::int64_t y) {
                   const auto cell = static_cast<std::size_t>((y * width) + x);
@@ -18411,18 +16822,6 @@ private:
         corridor_.set(cell, true);
       }
     }
-  }
-
-  /// Whether the fence of a wire that may meet another judges a cell at the
-  /// middle of the pair it forms with the other's cell, as the count of the
-  /// fails does: `SCPD_MEET_AT_THE_MIDDLE`, **on** (user, 2026-10-18). Judged
-  /// at the open cell alone, the fence let f15 of 17q (round 55, case 05)
-  /// leave its coupler where its own run out of the port made the cell a
-  /// meeting with its resonator 47, while the middle of the pair lay past
-  /// that run, and the count found both open after every search had found a
-  /// way. `=0` judges the open cell, as before.
-  [[nodiscard]] static bool meetAtTheMiddle() {
-    return envFlag("SCPD_MEET_AT_THE_MIDDLE", true);
   }
 
   /// Close some cells of another wire by the length-point radius, except
@@ -18480,9 +16879,9 @@ private:
 
   /// The length-point clearance of the outer routing, for one search: for
   /// every fenced neighbour that is a resonator, its band inflated by
-  /// `LENGTH_POINT_K` instead of the clearance; and when the wire being
-  /// routed is itself a resonator, the stretch of each fenced neighbour that
-  /// runs alongside its own band — its two marks projected onto the
+  /// `tuning_.lengthPointRadius` instead of the clearance; and when the wire
+  /// being routed is itself a resonator, the stretch of each fenced neighbour
+  /// that runs alongside its own band — its two marks projected onto the
   /// neighbour's way, the way between the projections — inflated by the
   /// same radius. Nothing under the feedline constraints, nothing at `k = 0`.
   /// The wire's own fixed places are opened again afterwards, as `fence`
@@ -18490,7 +16889,7 @@ private:
   void closeLengthBands(const Wire& wire,
                         std::initializer_list<const Wire*> others,
                         const Pass& pass) {
-    const auto k = LENGTH_POINT_K;
+    const auto k = tuning_.lengthPointRadius;
     if (pass.feedlines || k == 0 || !lengthPointActive_) {
       return;
     }
@@ -18692,7 +17091,7 @@ private:
     // let go of at one clearance rather than one per level
     // (`FinalGrid.cpp:4612` against `:3151`), and knows nothing of the
     // ten-fold price on the approaches, which is ours.
-    const bool proto = feedlinePass_ && feedlineLikePrototype();
+    const bool proto = feedlinePass_;
 
     const auto price = tuning_.wireProximityPenalty;
     std::ranges::fill(proximity_, 0);
@@ -18706,9 +17105,7 @@ private:
                          wireId(wire), lane.rule, lane.before.size(),
                          lane.after.size(), lane.current.size()));
       }
-      if (feedlineLane()) {
-        fillLane(lane.current, lane.before, lane.after, price, 0);
-      }
+      fillLane(lane.current, lane.before, lane.after, price, 0);
     } else {
       // The outer routing prices the room outside the lane polygon between
       // the two neighbours' ways: the ground first, the lane freed after, so
@@ -18723,14 +17120,14 @@ private:
     const auto neighbour =
         forward ? (slot + 1) % total : (slot + total - 1) % total;
     // The wires let go of keep a priced halo: in the feedline pass a flat
-    // halo of `HALO_REACH`, in the outer routing one clearance more per
+    // halo of `tuning_.haloReach`, in the outer routing one clearance more per
     // level.
     for (std::uint32_t step = 0; step <= level; ++step) {
       const auto at = forward ? (neighbour + step) % total
                               : (neighbour + total - step) % total;
       const auto& released = wires[members[at]].way;
       stampHalo(released,
-                proto ? HALO_REACH * tuning_.clearance
+                proto ? tuning_.haloReach * tuning_.clearance
                       : (step + 1) * tuning_.clearance,
                 static_cast<std::uint8_t>(std::min<std::uint32_t>(127U, price)),
                 wire.way, proto);
@@ -19133,10 +17530,10 @@ private:
   }
 
   /// The halo of a released way: a flat disc of `reach` at `peak`, and in
-  /// the feedline pass the rising halo past the way on top (`RISE_REACH`,
-  /// `RISE_PEAK`). The outer routing before the insertion keeps the flat
-  /// disc alone, so the one-sided halo does not move the couplers the
-  /// feedline pass starts from.
+  /// the feedline pass the rising halo past the way on top
+  /// (`tuning_.riseReach`, `tuning_.risePeak`). The outer routing before the
+  /// insertion keeps the flat disc alone, so the one-sided halo does not move
+  /// the couplers the feedline pass starts from.
   void stampHalo(const Path& way, const std::uint32_t reach,
                  const std::uint16_t peak, const Path& own = {},
                  const bool feedlinePass = false) {
@@ -19145,8 +17542,9 @@ private:
     }
     stampDisc(way, reach, peak);
     if (feedlinePass) {
-      stampRisingHalo(way, RISE_REACH * tuning_.clearance,
-                      static_cast<std::uint16_t>(RISE_PEAK * peak), own, peak);
+      stampRisingHalo(way, tuning_.riseReach * tuning_.clearance,
+                      static_cast<std::uint16_t>(tuning_.risePeak * peak), own,
+                      peak);
     }
   }
 
@@ -21089,10 +19487,6 @@ private:
   /// The wire of every edge of every chain once it is committed, `NO_OWNER`
   /// before.
   std::vector<std::vector<std::uint32_t>> edgeWireOf_;
-  /// How far the crossing rule reaches from a feedline's straight run, in
-  /// cells: the prototype's `expand_radius`.
-  /// The default of `roomMargin`, in cells.
-  static constexpr int ROOM_MARGIN = 10;
 };
 
 // -------------------------------------------------------- Building the wires
