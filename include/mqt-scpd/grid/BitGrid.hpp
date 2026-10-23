@@ -65,11 +65,6 @@ public:
   /// The number of set cells.
   [[nodiscard]] std::size_t count() const;
 
-  /// Keep a cell set only where `other` sets it too, a word at a time.
-  ///
-  /// @throws std::invalid_argument when the two grids differ in size.
-  BitGrid& operator&=(const BitGrid& other);
-
   /// The packed words, row-major over all cells.
   [[nodiscard]] const std::vector<uint64_t>& words() const { return words_; }
 

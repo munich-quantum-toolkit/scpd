@@ -443,7 +443,8 @@ std::uint32_t AnalyticDubins::minTurnsAround(
           return;
         }
         for (const Arc& arc : arcs_[heading]) {
-          if (arc.turn > left || headingDistance(arc.exit, target) > left - arc.turn) {
+          if (arc.turn > left ||
+              headingDistance(arc.exit, target) > left - arc.turn) {
             continue;
           }
           seq.push_back(&arc);

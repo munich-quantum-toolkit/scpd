@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -813,14 +812,6 @@ void DubinsRouter::buildDistanceField(const uint32_t tx, const uint32_t ty) {
   if (corridor_ == nullptr || tx >= width_ || ty >= height_) {
     return;
   }
-  buildDistanceField(std::vector<uint32_t>{(ty << 16U) | tx});
-}
-
-void DubinsRouter::buildDistanceField(const std::vector<uint32_t>& seeds) {
-  fieldValid_ = false;
-  if (corridor_ == nullptr || seeds.empty()) {
-    return;
-  }
   const std::size_t n = cells();
   if (field_.size() != n) {
     field_.assign(n, 0);
@@ -839,17 +830,9 @@ void DubinsRouter::buildDistanceField(const std::vector<uint32_t>& seeds) {
   const grid::BitGrid& corridor = *corridor_;
   uint32_t* field = field_.data();
 
-  std::size_t pending = 0;
-  for (const uint32_t seed : seeds) {
-    const std::size_t index =
-        (static_cast<std::size_t>(seed >> 16U) * width_) + (seed & 0xFFFFU);
-    if (field[index] == stampHigh) {
-      continue;
-    }
-    field[index] = stampHigh;
-    fieldBuckets_[0].push_back(seed);
-    ++pending;
-  }
+  field[(static_cast<std::size_t>(ty) * width_) + tx] = stampHigh;
+  fieldBuckets_[0].push_back((ty << 16U) | tx);
+  std::size_t pending = 1;
   uint32_t d = 0;
   while (pending != 0) {
     auto& bucket = fieldBuckets_[d % FIELD_BUCKETS];
@@ -879,17 +862,18 @@ void DubinsRouter::buildDistanceField(const std::vector<uint32_t>& seeds) {
           }
           const uint32_t weight =
               (nx != x && ny != y) ? DIAGONAL_COST : STRAIGHT_COST;
-          uint32_t nd = d + weight;
-          if (nd > FIELD_DISTANCE_MASK) {
-            nd = FIELD_DISTANCE_MASK;
+          uint32_t nextDistance = d + weight;
+          if (nextDistance > FIELD_DISTANCE_MASK) {
+            nextDistance = FIELD_DISTANCE_MASK;
           }
           const uint32_t nv = field[nIndex];
           if ((nv >> FIELD_DISTANCE_BITS) == fieldStamp_ &&
-              (nv & FIELD_DISTANCE_MASK) <= nd) {
+              (nv & FIELD_DISTANCE_MASK) <= nextDistance) {
             continue;
           }
-          field[nIndex] = stampHigh | nd;
-          fieldBuckets_[nd % FIELD_BUCKETS].push_back((ny << 16U) | nx);
+          field[nIndex] = stampHigh | nextDistance;
+          fieldBuckets_[nextDistance % FIELD_BUCKETS].push_back((ny << 16U) |
+                                                                nx);
           ++pending;
         }
       }
@@ -1087,11 +1071,10 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective,
   const uint16_t* wireMap = wire_ != nullptr ? wire_->data() : nullptr;
 
   for (uint32_t a = 0; a < NUM_HEADINGS; ++a) {
-    bendLb_[a] = bendLowerBound_
-                     ? headingDistance(static_cast<Heading>(a),
-                                       objective.target.heading) *
-                           params_.bendPenalty
-                     : 0U;
+    bendLb_[a] = bendLowerBound_ ? headingDistance(static_cast<Heading>(a),
+                                                   objective.target.heading) *
+                                       params_.bendPenalty
+                                 : 0U;
   }
   turnGoals_.clear();
   if (turnLowerBound_) {
@@ -1118,6 +1101,7 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective,
              0);
 
   cutOff_ = false;
+  boundWindow_ = {};
   while (!open_.empty()) {
     const QueueEntry current = open_.pop();
     if (const QueueEntry* next = open_.peek()) {
@@ -1150,7 +1134,7 @@ Path DubinsRouter::searchFree(const RoutingObjective& objective,
   return {};
 }
 
-template <bool PACKED, bool USE_PENALTY, bool PARK>
+template <bool PACKED, bool USE_PENALTY>
 void DubinsRouter::expandFree(const QueueEntry& current,
                               const RoutingObjective& objective,
                               const bool onlyStraight, const uint8_t* blockMap,
@@ -1160,17 +1144,22 @@ void DubinsRouter::expandFree(const QueueEntry& current,
                               const uint16_t* wireMap, const bool useField) {
   const uint32_t heading = current.heading & 7U;
   // Whether a move that exits on `exit` keeps the way within `maxTurns_`;
-  // a move that would not is dropped and said so. See `setMaxTurns`.
+  // a move that would not is dropped and said so. See `setMaxTurns`. Every
+  // comparison with the bound is noted in `boundWindow_`; see
+  // `lastBoundWindow`.
   const auto turnsAfter = [&](const uint8_t exit) {
     return static_cast<uint32_t>(current.turns) +
            headingDistance(static_cast<Heading>(heading),
                            static_cast<Heading>(exit & 7U));
   };
   const auto withinTurns = [&](const uint8_t exit) {
-    if (maxTurns_ < 0 || turnsAfter(exit) <= static_cast<uint32_t>(maxTurns_)) {
+    const uint32_t after = turnsAfter(exit);
+    if (maxTurns_ < 0 || after <= static_cast<uint32_t>(maxTurns_)) {
+      boundWindow_.passed = std::max(boundWindow_.passed, after);
       return true;
     }
     cutOff_ = true;
+    boundWindow_.below = std::min(boundWindow_.below, after);
     return false;
   };
   const auto& tprims = triePrimitives_[heading];
@@ -1197,9 +1186,6 @@ void DubinsRouter::expandFree(const QueueEntry& current,
   // The candidates: every primitive whose end is in the grid, allowed, not
   // blocked, not dominated and, with a field, able to reach the target.
   uint16_t alive = 0;
-  // Under PARK, the candidates the field proves unable to reach the target,
-  // kept aside for a later target instead of dropped.
-  uint16_t parked = 0;
   std::array<uint32_t, MAX_PRIMITIVES_PER_HEADING> endField{};
   std::array<uint32_t, MAX_PRIMITIVES_PER_HEADING> endIndex{};
   std::array<uint16_t, MAX_PRIMITIVES_PER_HEADING> endX{};
@@ -1229,14 +1215,9 @@ void DubinsRouter::expandFree(const QueueEntry& current,
     if (useField) {
       const uint32_t hv = field[linear];
       if ((hv >> FIELD_DISTANCE_BITS) != fieldStamp_) {
-        // Provably unable to reach the target.
-        if constexpr (!PARK) {
-          continue;
-        }
-        parked |= static_cast<uint16_t>(1U << i);
-      } else {
-        hRaw = hv & FIELD_DISTANCE_MASK;
+        continue; // Provably unable to reach the target.
       }
+      hRaw = hv & FIELD_DISTANCE_MASK;
     }
     endField[i] = hRaw;
     endIndex[i] = index;
@@ -1321,6 +1302,13 @@ void DubinsRouter::expandFree(const QueueEntry& current,
           turnsAfter(p.exit) + owed > static_cast<uint32_t>(maxTurns_);
       if (improves && overBound) {
         cutOff_ = true;
+        boundWindow_.below =
+            std::min(boundWindow_.below, turnsAfter(p.exit) + owed);
+      } else if (improves) {
+        boundWindow_.kept =
+            std::max(boundWindow_.kept, turnsAfter(p.exit) + owed);
+        boundWindow_.passed =
+            std::max(boundWindow_.passed, turnsAfter(p.exit) + owed);
       }
       if (improves && !overBound) {
         if (!seen) {
@@ -1333,517 +1321,25 @@ void DubinsRouter::expandFree(const QueueEntry& current,
         uint32_t h = 0;
         if (useField) {
           h = endField[tn.completes];
-        } else if (multiGoals_.empty()) {
+        } else {
           h = octile(endX[tn.completes], endY[tn.completes], objective.target.x,
                      objective.target.y);
-        } else {
-          h = UINT32_MAX;
-          for (const PathPoint& goal : multiGoals_) {
-            h = std::min(h, octile(endX[tn.completes], endY[tn.completes],
-                                   goal.x, goal.y));
-          }
         }
         h += std::max(bendLb_[p.exit & 7U], owed * params_.bendPenalty);
         const uint32_t f = tentative + h;
-        const QueueEntry entry{.x = endX[tn.completes],
-                               .y = endY[tn.completes],
-                               .heading = static_cast<uint8_t>(p.exit),
-                               .turns = static_cast<uint8_t>(std::min<uint32_t>(
-                                   255U, turnsAfter(p.exit))),
-                               .primitive = p.id,
-                               .f = f,
-                               .g = tentative};
-        if (PARK && ((parked >> tn.completes) & 1U) != 0U) {
-          parked_.push_back(entry);
-          parked_.back().f = PARKED;
-        } else {
-          open_.push(entry, f);
-        }
+        open_.push({.x = endX[tn.completes],
+                    .y = endY[tn.completes],
+                    .heading = static_cast<uint8_t>(p.exit),
+                    .turns = static_cast<uint8_t>(
+                        std::min<uint32_t>(255U, turnsAfter(p.exit))),
+                    .primitive = p.id,
+                    .f = f,
+                    .g = tentative},
+                   f);
       }
     }
     ++i;
   }
-}
-
-// --- The multi-target search
-// ---------------------------------------------------
-
-std::vector<DubinsRouter::MultiRoute>
-DubinsRouter::routeMulti(const PathPoint& source,
-                         const std::vector<MultiTarget>& targets,
-                         const bool usePenalty) {
-  if (corridor_ == nullptr) {
-    throw std::logic_error("routeMulti needs an attached corridor");
-  }
-  if (usePenalty && wire_ == nullptr) {
-    throw std::logic_error(
-        "routing with penalties needs an attached wire proximity");
-  }
-  std::vector<MultiRoute> out(targets.size());
-  expansions_ = 0;
-  const PathPoint start = sanitize(source, false);
-  std::vector<PathPoint> goals;
-  goals.reserve(targets.size());
-  for (const MultiTarget& one : targets) {
-    goals.push_back(sanitize(one.target, true));
-  }
-  if (!inGrid(start)) {
-    return out;
-  }
-  scratch_.beginSearch();
-  if (packedValid_) {
-    if (usePenalty) {
-      searchMulti<true, true>(source, start, targets, goals, out);
-    } else {
-      searchMulti<true, false>(source, start, targets, goals, out);
-    }
-  } else if (usePenalty) {
-    searchMulti<false, true>(source, start, targets, goals, out);
-  } else {
-    searchMulti<false, false>(source, start, targets, goals, out);
-  }
-  return out;
-}
-
-template <bool PACKED, bool USE_PENALTY>
-void DubinsRouter::searchMulti(const PathPoint& source, const PathPoint& start,
-                               const std::vector<MultiTarget>& targets,
-                               const std::vector<PathPoint>& goals,
-                               std::vector<MultiRoute>& out) {
-  buildTables();
-  open_.clear();
-  cutOff_ = false;
-  const uint8_t* blockMap = PACKED ? packed_.data() : nullptr;
-  const uint8_t* penaltyMap = PACKED ? packed_.data() : static_.data();
-  constexpr uint8_t blockMask = PACKED ? uint8_t{0x80} : uint8_t{0xFF};
-  constexpr uint8_t penaltyMask = PACKED ? uint8_t{0x7F} : uint8_t{0xFF};
-  const uint16_t* wireMap = wire_ != nullptr ? wire_->data() : nullptr;
-
-  // The targets still to settle. A goal off the grid has no way, as in
-  // route().
-  std::vector<std::size_t> pending;
-  std::vector<uint32_t> seeds;
-  for (std::size_t k = 0; k < goals.size(); ++k) {
-    if (inGrid(goals[k])) {
-      pending.push_back(k);
-      seeds.push_back((goals[k].y << 16U) | goals[k].x);
-    }
-  }
-  if (pending.empty()) {
-    return;
-  }
-
-  // The heuristic: the least of its terms over every target (see
-  // `routeMulti`).
-  for (uint32_t a = 0; a < NUM_HEADINGS; ++a) {
-    uint32_t least = UINT32_MAX;
-    for (const std::size_t k : pending) {
-      least = std::min(
-          least, headingDistance(static_cast<Heading>(a), goals[k].heading));
-    }
-    bendLb_[a] = bendLowerBound_ ? least * params_.bendPenalty : 0U;
-  }
-  turnGoals_.clear();
-  if (turnLowerBound_) {
-    for (const std::size_t k : pending) {
-      turnGoals_.push_back(goals[k]);
-    }
-  }
-  const bool useField = heuristic_ == Heuristic::DistanceField;
-  if (useField) {
-    buildDistanceField(seeds);
-  } else {
-    fieldValid_ = false;
-  }
-  const bool fieldReady = useField && fieldValid_;
-  if (!fieldReady) {
-    for (const std::size_t k : pending) {
-      multiGoals_.push_back(goals[k]);
-    }
-  }
-  // `expandFree` reads the objective's target for the octile heuristic
-  // alone, and `multiGoals_` stands in for it here.
-  const RoutingObjective objective{.source = start,
-                                   .target = goals[pending[0]]};
-  const bool onlyStraight = false;
-
-  const uint32_t startIndex = stateIndex(start.x, start.y, start.heading);
-  scratch_.setStart(startIndex);
-  open_.push({.x = static_cast<uint16_t>(start.x),
-              .y = static_cast<uint16_t>(start.y),
-              .heading = start.heading,
-              .primitive = 0,
-              .f = 0,
-              .g = 0},
-             0);
-
-  while (!open_.empty() && !pending.empty()) {
-    const QueueEntry current = open_.pop();
-    const uint32_t currentIndex =
-        stateIndex(current.x, current.y, current.heading);
-    SearchNode& node = scratch_.at(currentIndex);
-    if (node.iteration == scratch_.iteration() && node.closed != 0U) {
-      continue;
-    }
-    if (current.g > node.g) {
-      continue;
-    }
-    node.closed = 1;
-    ++expansions_;
-
-    for (auto it = pending.begin(); it != pending.end();) {
-      const PathPoint& goal = goals[*it];
-      if (current.x != goal.x || current.y != goal.y ||
-          current.heading != goal.heading) {
-        ++it;
-        continue;
-      }
-      out[*it] = settle(currentIndex, startIndex, current.turns, source,
-                        targets[*it].target, goal, targets[*it].own);
-      it = pending.erase(it);
-    }
-    if (pending.empty()) {
-      break;
-    }
-    expandFree<PACKED, USE_PENALTY>(current, objective, onlyStraight, blockMap,
-                                    penaltyMap, blockMask, penaltyMask, wireMap,
-                                    fieldReady);
-  }
-  for (const std::size_t k : pending) {
-    out[k].outcome =
-        cutOff_ ? MultiRoute::Outcome::CutOff : MultiRoute::Outcome::NoWay;
-  }
-  multiGoals_.clear();
-}
-
-DubinsRouter::MultiRoute
-DubinsRouter::settle(const uint32_t goalIndex, const uint32_t startIndex,
-                     const uint32_t turns, const PathPoint& source,
-                     const PathPoint& target, const PathPoint& goal,
-                     const grid::BitGrid* own) {
-  MultiRoute route;
-  const Path searched = reconstruct(goalIndex, startIndex);
-  route.turns = turns;
-  route.cost = scratch_.at(goalIndex).g;
-  // Whether every cell the search tested for the way is open in `own`: the
-  // cells of `searched` after its first, which is the start state the search
-  // never tests, and the goal cell, which `reconstruct` leaves to the stub.
-  const auto openIn = [&] {
-    for (std::size_t i = 1; i < searched.size(); ++i) {
-      if (own->test((static_cast<std::size_t>(searched[i].y) * width_) +
-                    searched[i].x)) {
-        return false;
-      }
-    }
-    return !own->test((static_cast<std::size_t>(goal.y) * width_) + goal.x);
-  };
-  // A goal on the start state leaves nothing searched, which route()
-  // returns as no way.
-  if (searched.empty()) {
-    route.outcome = MultiRoute::Outcome::NoWay;
-  } else if (own != nullptr && !openIn()) {
-    route.outcome = MultiRoute::Outcome::LeftOwnCorridor;
-  } else {
-    route.outcome = MultiRoute::Outcome::Found;
-  }
-  route.way = assemble(searched, source, target);
-  // The loop guard of route(), without its count: a caller that wants the
-  // way searches route() again, which counts it.
-  if (route.outcome == MultiRoute::Outcome::Found &&
-      pathSelfIntersects(route.way, width_, height_, loopScratch_)) {
-    route.outcome = MultiRoute::Outcome::Looped;
-  }
-  return route;
-}
-
-// --- The resumable search
-// -------------------------------------------------------
-
-DubinsRouter::MultiRoute
-DubinsRouter::routeResumable(PausedSearch& search, const PathPoint& source,
-                             const PathPoint& target, const grid::BitGrid* own,
-                             const bool usePenalty,
-                             const std::vector<PathPoint>& family) {
-  if (corridor_ == nullptr) {
-    throw std::logic_error("routeResumable needs an attached corridor");
-  }
-  if (usePenalty && wire_ == nullptr) {
-    throw std::logic_error(
-        "routing with penalties needs an attached wire proximity");
-  }
-  expansions_ = 0;
-  resumeSplit_ = {};
-  const PathPoint goal = sanitize(target, true);
-  if (!search.started_) {
-    search.source_ = source;
-    search.family_.clear();
-    for (const PathPoint& one : family) {
-      if (const PathPoint moved = sanitize(one, true); inGrid(moved)) {
-        search.family_.push_back(moved);
-      }
-    }
-    if (search.family_.empty()) {
-      search.family_.push_back(goal);
-    }
-  }
-  if (!inGrid(sanitize(search.source_, false)) || !inGrid(goal)) {
-    return {};
-  }
-  if (packedValid_) {
-    return usePenalty ? searchResumable<true, true>(search, target, goal, own)
-                      : searchResumable<true, false>(search, target, goal, own);
-  }
-  return usePenalty ? searchResumable<false, true>(search, target, goal, own)
-                    : searchResumable<false, false>(search, target, goal, own);
-}
-
-template <bool PACKED, bool USE_PENALTY>
-DubinsRouter::MultiRoute
-DubinsRouter::searchResumable(PausedSearch& search, const PathPoint& target,
-                              const PathPoint& goal, const grid::BitGrid* own) {
-  buildTables();
-  open_.clear();
-  parked_.clear();
-  const uint8_t* blockMap = PACKED ? packed_.data() : nullptr;
-  const uint8_t* penaltyMap = PACKED ? packed_.data() : static_.data();
-  constexpr uint8_t blockMask = PACKED ? uint8_t{0x80} : uint8_t{0xFF};
-  constexpr uint8_t penaltyMask = PACKED ? uint8_t{0x7F} : uint8_t{0xFF};
-  const uint16_t* wireMap = wire_ != nullptr ? wire_->data() : nullptr;
-
-  // The heuristic: of this call's target alone, or the least over the
-  // family.
-  const bool least = resumeOrder_ == ResumeOrder::Minimum;
-  const std::vector<PathPoint> aims =
-      least ? search.family_ : std::vector<PathPoint>{goal};
-  for (uint32_t a = 0; a < NUM_HEADINGS; ++a) {
-    uint32_t turns = UINT32_MAX;
-    for (const PathPoint& aim : aims) {
-      turns = std::min(turns,
-                       headingDistance(static_cast<Heading>(a), aim.heading));
-    }
-    bendLb_[a] = bendLowerBound_ ? turns * params_.bendPenalty : 0U;
-  }
-  // A resumed search serves targets it does not know yet, so it bounds
-  // nothing by the turns to one goal (`setTurnLowerBound`).
-  turnGoals_.clear();
-  const bool useField = heuristic_ == Heuristic::DistanceField;
-  if (useField) {
-    std::vector<uint32_t> seeds;
-    for (const PathPoint& aim : aims) {
-      seeds.push_back((aim.y << 16U) | aim.x);
-    }
-    buildDistanceField(seeds);
-  } else {
-    fieldValid_ = false;
-  }
-  const bool fieldReady = useField && fieldValid_;
-  if (least && !fieldReady) {
-    multiGoals_ = aims;
-  }
-  // The key of an entry for this call, or PARKED where the field proves it
-  // unable to reach the target.
-  const auto keyOf = [&](const QueueEntry& entry) {
-    uint32_t h = 0;
-    if (fieldReady) {
-      const uint32_t hv =
-          field_[(static_cast<std::size_t>(entry.y) * width_) + entry.x];
-      if ((hv >> FIELD_DISTANCE_BITS) != fieldStamp_) {
-        return PARKED;
-      }
-      h = hv & FIELD_DISTANCE_MASK;
-    } else if (least) {
-      h = UINT32_MAX;
-      for (const PathPoint& aim : aims) {
-        h = std::min(h, octile(entry.x, entry.y, aim.x, aim.y));
-      }
-    } else {
-      h = octile(entry.x, entry.y, goal.x, goal.y);
-    }
-    return entry.g + h + bendLb_[entry.heading & 7U];
-  };
-  // Under Offset, what the keys of the last call are lowered by, if the
-  // field reaches the last goal cell.
-  bool offset = resumeOrder_ == ResumeOrder::Offset && search.started_;
-  uint32_t delta = 0;
-  if (offset) {
-    const PathPoint& last = search.lastGoal_;
-    uint32_t apart = 0;
-    if (fieldReady) {
-      const uint32_t hv =
-          field_[(static_cast<std::size_t>(last.y) * width_) + last.x];
-      offset = (hv >> FIELD_DISTANCE_BITS) == fieldStamp_;
-      apart = hv & FIELD_DISTANCE_MASK;
-    } else {
-      apart = octile(last.x, last.y, goal.x, goal.y);
-    }
-    delta =
-        apart + (bendLowerBound_ ? headingDistance(last.heading, goal.heading) *
-                                       params_.bendPenalty
-                                 : 0U);
-  }
-  const PathPoint start = sanitize(search.source_, false);
-  const RoutingObjective objective{.source = start, .target = goal};
-  const uint32_t goalIndex = stateIndex(goal.x, goal.y, goal.heading);
-  const auto secondsSince =
-      [](const std::chrono::steady_clock::time_point from) {
-        return std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                             from)
-            .count();
-      };
-
-  // The eighth-turns of the way to a closed state, along its parents.
-  const auto turnsTo = [&](uint32_t index) {
-    uint32_t turns = 0;
-    while (index != search.startIndex_) {
-      const SearchNode& node = scratch_.at(index);
-      turns += headingDistance(static_cast<Heading>(node.parentHeading & 7U),
-                               static_cast<Heading>(index & 7U));
-      index = parentState(index);
-    }
-    return turns;
-  };
-
-  scratch_.beginSearch();
-  const uint16_t now = scratch_.iteration();
-  if (!search.started_) {
-    search.started_ = true;
-    search.startIndex_ = stateIndex(start.x, start.y, start.heading);
-    scratch_.setStart(search.startIndex_);
-    cutOff_ = false;
-    open_.push({.x = static_cast<uint16_t>(start.x),
-                .y = static_cast<uint16_t>(start.y),
-                .heading = start.heading,
-                .primitive = 0,
-                .f = 0,
-                .g = 0},
-               0);
-  } else {
-    cutOff_ = search.cutOff_;
-    auto lap = std::chrono::steady_clock::now();
-    for (std::size_t i = 0; i < search.indices_.size(); ++i) {
-      SearchNode node = search.nodes_[i];
-      node.iteration = now;
-      scratch_.at(search.indices_[i]) = node;
-    }
-    resumeSplit_.restore = secondsSince(lap);
-    const SearchNode& reached = scratch_.at(goalIndex);
-    if (reached.iteration == now && reached.closed != 0U) {
-      // An earlier call closed this target's goal state on its way: the
-      // answer is there, and the paused search stays as it was.
-      multiGoals_.clear();
-      return settle(goalIndex, search.startIndex_, turnsTo(goalIndex),
-                    search.source_, target, goal, own);
-    }
-    // Every entry left, back on the open list: a parked one keyed for this
-    // call or parked again, an open one at its key under Minimum, lowered
-    // by `delta` under Offset, and keyed for this call under Target.
-    lap = std::chrono::steady_clock::now();
-    for (QueueEntry entry : search.pending_) {
-      if (entry.f == PARKED || (!least && !offset)) {
-        entry.f = keyOf(entry);
-      } else if (offset) {
-        entry.f = entry.f > entry.g + delta ? entry.f - delta : entry.g;
-      }
-      if (entry.f == PARKED) {
-        parked_.push_back(entry);
-      } else {
-        open_.push(entry, entry.f);
-      }
-    }
-    resumeSplit_.rekey = secondsSince(lap);
-  }
-
-  MultiRoute out;
-  bool found = false;
-  std::vector<uint32_t> closed;
-  while (!open_.empty()) {
-    const QueueEntry current = open_.pop();
-    const uint32_t currentIndex =
-        stateIndex(current.x, current.y, current.heading);
-    SearchNode& node = scratch_.at(currentIndex);
-    if (node.iteration == now && node.closed != 0U) {
-      continue;
-    }
-    if (current.g > node.g) {
-      continue;
-    }
-    if (offset) {
-      // A key lowered by `delta` is set right before the state is taken.
-      QueueEntry exact = current;
-      exact.f = keyOf(current);
-      if (exact.f == PARKED) {
-        parked_.push_back(exact);
-        continue;
-      }
-      if (exact.f > current.f) {
-        open_.push(exact, exact.f);
-        ++resumeSplit_.reinserts;
-        continue;
-      }
-    }
-    node.closed = 1;
-    ++expansions_;
-    closed.push_back(currentIndex);
-    if (currentIndex == goalIndex) {
-      out = settle(goalIndex, search.startIndex_, turnsTo(goalIndex),
-                   search.source_, target, goal, own);
-      found = true;
-    }
-    // The goal state too, so that a later target loses no way through it.
-    expandFree<PACKED, USE_PENALTY, true>(current, objective, false, blockMap,
-                                          penaltyMap, blockMask, penaltyMask,
-                                          wireMap, fieldReady);
-    if (found) {
-      break;
-    }
-  }
-  if (!found) {
-    out.outcome =
-        cutOff_ ? MultiRoute::Outcome::CutOff : MultiRoute::Outcome::NoWay;
-  }
-
-  // Pause: the entries still to expand, the best of each state, and every
-  // state reached.
-  const auto paused = std::chrono::steady_clock::now();
-  search.cutOff_ = cutOff_;
-  search.lastGoal_ = goal;
-  multiGoals_.clear();
-  std::vector<QueueEntry> pending = std::move(parked_);
-  parked_.clear();
-  while (!open_.empty()) {
-    pending.push_back(open_.pop());
-  }
-  std::vector<QueueEntry> kept;
-  kept.reserve(pending.size());
-  for (const QueueEntry& entry : pending) {
-    const SearchNode& state =
-        scratch_.at(stateIndex(entry.x, entry.y, entry.heading));
-    if (state.closed == 0U && entry.g == state.g) {
-      kept.push_back(entry);
-    }
-  }
-  const auto indexOf = [&](const QueueEntry& entry) {
-    return stateIndex(entry.x, entry.y, entry.heading);
-  };
-  std::ranges::sort(kept, {}, indexOf);
-  const auto [first, last] = std::ranges::unique(kept, {}, indexOf);
-  kept.erase(first, last);
-  std::vector<uint32_t> indices = std::move(search.indices_);
-  indices.insert(indices.end(), closed.begin(), closed.end());
-  for (const QueueEntry& entry : kept) {
-    indices.push_back(indexOf(entry));
-  }
-  indices.push_back(search.startIndex_);
-  std::ranges::sort(indices);
-  indices.erase(std::ranges::unique(indices).begin(), indices.end());
-  search.nodes_.resize(indices.size());
-  for (std::size_t i = 0; i < indices.size(); ++i) {
-    search.nodes_[i] = scratch_.at(indices[i]);
-  }
-  search.indices_ = std::move(indices);
-  search.pending_ = std::move(kept);
-  resumeSplit_.pause = secondsSince(paused);
-  return out;
 }
 
 // --- The orthogonal search

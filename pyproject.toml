@@ -236,6 +236,7 @@ default.extend-ignore-re = [
   "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on" # ignore block
 ]
 [tool.typos.default.extend-words]
+countr = "countr"  # std::countr_zero
 wille = "wille"
 anc = "anc"
 optin = "optin"

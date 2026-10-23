@@ -10,7 +10,6 @@
 
 #include "mqt-scpd/pipeline/SlotCheck.hpp"
 
-
 #include "mqt-scpd/routing/CrossingConstraints.hpp"
 #include "mqt-scpd/routing/Heading.hpp"
 #include "mqt-scpd/routing/Path.hpp"
@@ -567,15 +566,11 @@ struct Settings {
   return settings().escapeQuarterTurns;
 }
 [[nodiscard]] bool ownRunBonus() { return settings().ownRunBonus; }
-[[nodiscard]] double escapeStubMargin() {
-  return settings().escapeStubMargin;
-}
+[[nodiscard]] double escapeStubMargin() { return settings().escapeStubMargin; }
 [[nodiscard]] double escapeApartMargin() {
   return settings().escapeApartMargin;
 }
-[[nodiscard]] bool escapeCouplerRuns() {
-  return settings().escapeCouplerRuns;
-}
+[[nodiscard]] bool escapeCouplerRuns() { return settings().escapeCouplerRuns; }
 [[nodiscard]] std::int64_t escapeStraight() {
   return settings().escapeStraight;
 }
@@ -862,11 +857,11 @@ struct Settings {
 }
 
 /// Whether a way out of a crossing slot keeps a clearance from the run of a
-/// feedline through every coupler (`couplerRunsOf`): `SCPD_ESCAPE_COUPLER_RUNS`,
-/// off (user, 2026-10-20). On 45q, chain 7 on options 6 1 2 37, it took the
-/// second slot of f46 and made the check find wires 132 and 133 lost, as the
-/// rip-up did; on 21q it took slots that the rip-up crossed at, and 49 runs
-/// against 4 came out UNSAT with a clean rip-up.
+/// feedline through every coupler (`couplerRunsOf`):
+/// `SCPD_ESCAPE_COUPLER_RUNS`, off (user, 2026-10-20). On 45q, chain 7 on
+/// options 6 1 2 37, it took the second slot of f46 and made the check find
+/// wires 132 and 133 lost, as the rip-up did; on 21q it took slots that the
+/// rip-up crossed at, and 49 runs against 4 came out UNSAT with a clean rip-up.
 [[nodiscard]] bool escapeCouplerRunsOfEnvironment() {
   const char* text = std::getenv("SCPD_ESCAPE_COUPLER_RUNS");
   return text != nullptr && std::string_view(text) == "1";
@@ -885,8 +880,8 @@ struct Settings {
 /// take one wire between them: `SCPD_SLOT_ESCAPE`, **on** (user, 2026-10-20).
 /// A wire leaves a slot at either end of its crossing straight and turns
 /// there; its ways out are the router's turns (`routing::MovePrimitives`,
-/// the router's bend radius) with `SCPD_ESCAPE_STRAIGHT` cells after them, every
-/// cell free and a clearance from every stub. A slot goes only where each
+/// the router's bend radius) with `SCPD_ESCAPE_STRAIGHT` cells after them,
+/// every cell free and a clearance from every stub. A slot goes only where each
 /// of its ends has a way out a clearance from the ways out of the slots
 /// placed before (`SlotPlacer`). Two slots whose ends lie near each other
 /// and that have no pair of ways out a clearance apart take at most one
@@ -910,8 +905,8 @@ constexpr std::uint32_t ESCAPE_RADIUS = 5;
   const auto t =
       length == 0.0
           ? 0.0
-          : std::clamp((((p.x - a.x) * dx) + ((p.y - a.y) * dy)) / length,
-                       0.0, 1.0);
+          : std::clamp((((p.x - a.x) * dx) + ((p.y - a.y) * dy)) / length, 0.0,
+                       1.0);
   return std::hypot(p.x - (a.x + (t * dx)), p.y - (a.y + (t * dy)));
 }
 
@@ -926,7 +921,8 @@ constexpr double COUPLER_RUN_CLEARANCES = 4.0;
 [[nodiscard]] std::vector<std::array<Point, 2>>
 couplerRunsOf(const SlotGraph& graph) {
   std::map<std::int64_t, std::array<Point, 2>> ends;
-  const auto numberOf = [](const std::string& name) -> std::optional<std::int64_t> {
+  const auto numberOf =
+      [](const std::string& name) -> std::optional<std::int64_t> {
     if (name.size() < 2 || name[0] != 'f') {
       return std::nullopt;
     }
@@ -952,7 +948,8 @@ couplerRunsOf(const SlotGraph& graph) {
     if (!wire.terminal) {
       continue;
     }
-    if (const auto k = numberOf(wire.name); k.has_value() && !ends.contains(*k)) {
+    if (const auto k = numberOf(wire.name);
+        k.has_value() && !ends.contains(*k)) {
       ends[*k] = {Point{wire.source.cell[0], wire.source.cell[1]},
                   Point{wire.target.cell[0], wire.target.cell[1]}};
     }
@@ -1115,8 +1112,7 @@ public:
       const auto fits = [&](const EscapeWay& way) {
         for (const auto* list : taken) {
           for (const auto& other : *list) {
-            if (distance(other.end, end) <= near() &&
-                !apart(other.way, way)) {
+            if (distance(other.end, end) <= near() && !apart(other.way, way)) {
               return false;
             }
           }
@@ -1135,8 +1131,8 @@ public:
   /// The ways a placed slot takes, added to a list.
   void take(const Slot& slot, std::vector<Taken>& into) const {
     for (std::size_t side = 0; side < slot.ways.size(); ++side) {
-      into.push_back(
-          {.end = endOf(slot.at, slot.direction, side), .way = slot.ways[side]});
+      into.push_back({.end = endOf(slot.at, slot.direction, side),
+                      .way = slot.ways[side]});
     }
   }
 
@@ -1159,12 +1155,12 @@ private:
   }
 
   /// Whether a cell lies nearer than `radius` to a cell of `near`.
-  [[nodiscard]] bool within(
-      const std::unordered_map<std::int64_t, std::vector<Cell>>& near,
-      const std::int64_t x, const std::int64_t y, const double radius) const {
+  [[nodiscard]] bool
+  within(const std::unordered_map<std::int64_t, std::vector<Cell>>& near,
+         const std::int64_t x, const std::int64_t y,
+         const double radius) const {
     for (std::int64_t by = (y / bucket_) - 1; by <= (y / bucket_) + 1; ++by) {
-      for (std::int64_t bx = (x / bucket_) - 1; bx <= (x / bucket_) + 1;
-           ++bx) {
+      for (std::int64_t bx = (x / bucket_) - 1; bx <= (x / bucket_) + 1; ++bx) {
         const auto found = near.find(keyOf(bx, by));
         if (found == near.end()) {
           continue;
@@ -1230,8 +1226,7 @@ void readSettings() {
                         .slotEscape = slotEscapeOfEnvironment(),
                         .slotPinCells = slotPinCellsOfEnvironment(),
                         .slotStubGap = slotStubGapOfEnvironment(),
-                        .escapeQuarterTurns =
-                            escapeQuarterTurnsOfEnvironment(),
+                        .escapeQuarterTurns = escapeQuarterTurnsOfEnvironment(),
                         .escapeStraight = escapeStraightOfEnvironment(),
                         .escapeCouplerRuns = escapeCouplerRunsOfEnvironment(),
                         .ownRunBonus = ownRunBonusOfEnvironment(),
@@ -1361,9 +1356,9 @@ struct SlotPlacer {
   SlotPlacer(const SlotGraph& graphIn, const Grid& gridIn, Stamps& stampsIn)
       : graph(graphIn), grid(gridIn), stamps(stampsIn),
         clearance(graphIn.clearance),
-        reach(graphIn.crossingReach + slotReachMargin()),
-        along(clearance), inflation(graphIn.inflation),
-        wallKinds(graphIn.wallKinds), portSlots(gridIn.size, false) {
+        reach(graphIn.crossingReach + slotReachMargin()), along(clearance),
+        inflation(graphIn.inflation), wallKinds(graphIn.wallKinds),
+        portSlots(gridIn.size, false) {
     if (slotEscape()) {
       escapes.emplace(graphIn, gridIn);
     }
@@ -1497,8 +1492,7 @@ struct SlotPlacer {
         return out;
       }
       const int value = in ? std::min(grid.at(x, y), CHAMBER) : 1;
-      if (value == CHAMBER || value == 0 ||
-          (value == stubCode && stubFree)) {
+      if (value == CHAMBER || value == 0 || (value == stubCode && stubFree)) {
         continue;
       }
       // The edge's own wall only of the straight piece the slot sits on,
@@ -1569,8 +1563,7 @@ struct SlotPlacer {
       }
       if (found.kind == Examined::Kind::Fits && escapes.has_value()) {
         auto ways = escapes->choose(
-            found.slot,
-            escapes->waysOf(found.slot.at, found.slot.direction),
+            found.slot, escapes->waysOf(found.slot.at, found.slot.direction),
             {&taken, &mine});
         if (ways.has_value()) {
           found.slot.ways = std::move(*ways);
@@ -1650,8 +1643,7 @@ struct SlotPlacer {
     const auto free = [&](const std::size_t point, Try& tried) {
       // A slot's own samples may meet a cell twice; only another slot's
       // cell is in the way.
-      const Cells own(found[point].covered.begin(),
-                      found[point].covered.end());
+      const Cells own(found[point].covered.begin(), found[point].covered.end());
       for (const auto& cell : own) {
         if (stamps[grid.cell(cell.first, cell.second)] == mark ||
             tried.cells.contains(cell)) {
@@ -1662,9 +1654,9 @@ struct SlotPlacer {
         const auto& slot = found[point].slot;
         auto known = waysAt.find(point);
         if (known == waysAt.end()) {
-          known = waysAt
-                      .emplace(point, escapes->waysOf(slot.at, slot.direction))
-                      .first;
+          known =
+              waysAt.emplace(point, escapes->waysOf(slot.at, slot.direction))
+                  .first;
         }
         auto ways =
             escapes->choose(slot, known->second, {&taken, &mine, &tried.taken});
@@ -1811,10 +1803,10 @@ struct SlotPlacer {
         }
         routing::PathPoint cell{.x = x, .y = y};
         if (!way.empty()) {
-          cell.heading = headingOfStep(
-                             signOf(static_cast<double>(x) - way.back().x),
-                             signOf(static_cast<double>(y) - way.back().y))
-                             .value_or(way.back().heading);
+          cell.heading =
+              headingOfStep(signOf(static_cast<double>(x) - way.back().x),
+                            signOf(static_cast<double>(y) - way.back().y))
+                  .value_or(way.back().heading);
         }
         way.push_back(cell);
       }
@@ -1920,23 +1912,21 @@ struct SlotPlacer {
       // As long as one way out of the one end and one of the other keep a
       // clearance apart, the two wires get away together.
       const bool together = std::ranges::any_of(a.ways, [&](const auto& wa) {
-        return std::ranges::any_of(b.ways, [&](const auto& wb) {
-          return escapes.apart(wa, wb);
-        });
+        return std::ranges::any_of(
+            b.ways, [&](const auto& wb) { return escapes.apart(wa, wb); });
       });
       if (together) {
         continue;
       }
       limited.insert(pair);
-      groups.push_back(
-          {.slots = {pair.first, pair.second},
-           .capacity = 1,
-           .name = std::format("X {} / {}", edges[pair.first].name,
-                               edges[pair.second].name),
-           .line = {{{rounded(a.at.x), rounded(a.at.y)},
-                     {rounded(b.at.x), rounded(b.at.y)}}},
-           .feedline = edges[pair.first].feedline,
-           .enders = {}});
+      groups.push_back({.slots = {pair.first, pair.second},
+                        .capacity = 1,
+                        .name = std::format("X {} / {}", edges[pair.first].name,
+                                            edges[pair.second].name),
+                        .line = {{{rounded(a.at.x), rounded(a.at.y)},
+                                  {rounded(b.at.x), rounded(b.at.y)}}},
+                        .feedline = edges[pair.first].feedline,
+                        .enders = {}});
     }
   }
   // For the page: every end of a slot, the way out its placement chose,
@@ -2361,8 +2351,7 @@ slotStubBottlenecks(const SlotGraph& graph, const Grid& grid, Stamps& stamps,
         if (!(length <= longest)) {
           continue;
         }
-        auto capacity =
-            wiresIn(length * headingShare(a, b), clear, margin);
+        auto capacity = wiresIn(length * headingShare(a, b), clear, margin);
         // The line must run free between its ends.
         bool free = true;
         const auto steps = static_cast<std::int64_t>(length > 2 ? length : 2.0);
@@ -2566,8 +2555,9 @@ void Checker::readStrokesAndWires() {
     for (const auto& [x, y] : stroke.points) {
       points.push_back({x, y});
     }
-    strokes_.push_back(
-        {.name = stroke.name, .kind = stroke.kind, .points = std::move(points)});
+    strokes_.push_back({.name = stroke.name,
+                        .kind = stroke.kind,
+                        .points = std::move(points)});
   }
   const auto endOf = [](const SlotGraph::End& end) {
     return WireEnd{.cell = {end.cell[0], end.cell[1]},
@@ -2590,9 +2580,9 @@ void Checker::addSides() {
   std::vector<std::pair<std::string, std::pair<Point, Point>>> gateLines;
   for (const auto& edge : graph_.edges) {
     if (!edge.stretch) {
-      gateLines.emplace_back(
-          edge.name, std::pair{Point{edge.from[0], edge.from[1]},
-                               Point{edge.to[0], edge.to[1]}});
+      gateLines.emplace_back(edge.name,
+                             std::pair{Point{edge.from[0], edge.from[1]},
+                                       Point{edge.to[0], edge.to[1]}});
     }
   }
   std::set<std::string> resonatorNames;
@@ -2624,9 +2614,11 @@ void Checker::addSides() {
     // narrower than `resonatorPassage` of the clearance.
     if (one.capacity >= 1 && one.length < clear_ && one.users.has_value() &&
         !one.users->empty() && one.length < resonatorPassage() * clear_ &&
-        std::ranges::all_of(*one.users, [&](const std::string& name) {
-          return resonatorNames.contains(name);
-        })) {
+        std::ranges::all_of(
+            *one.users,
+            [&](const std::string& name) {
+              return resonatorNames.contains(name);
+            })) {
       one.capacity = 0;
     }
     // A gate that holds its length over the clearance holds it over the
@@ -2637,8 +2629,8 @@ void Checker::addSides() {
       // that the obstacle grants (`staticGapBonus`).
       const auto bonus = feedlineToStatic(one.ends) ? staticGapBonus() : 0.0;
       one.capacity =
-          wiresIn((one.length * headingShare(one.from, one.to)) + bonus,
-                  clear_, margin_);
+          wiresIn((one.length * headingShare(one.from, one.to)) + bonus, clear_,
+                  margin_);
     }
     one.sides = edge.sides;
     // The gates near this one: a sample lies at most a cell and a half off
@@ -2788,12 +2780,12 @@ void Checker::markMouthTwins() {
                                           edge.chambers.end());
     for (const auto m : mouths) {
       const auto& mouth = edges_[m];
-      const bool sameLine = (near(edge.from, mouth.from) &&
-                             near(edge.to, mouth.to)) ||
-                            (near(edge.from, mouth.to) &&
-                             near(edge.to, mouth.from));
-      if (sameLine && chambers == std::set<std::int64_t>(mouth.chambers.begin(),
-                                                         mouth.chambers.end())) {
+      const bool sameLine =
+          (near(edge.from, mouth.from) && near(edge.to, mouth.to)) ||
+          (near(edge.from, mouth.to) && near(edge.to, mouth.from));
+      if (sameLine &&
+          chambers == std::set<std::int64_t>(mouth.chambers.begin(),
+                                             mouth.chambers.end())) {
         edge.mouth = true;
         if (page_ != nullptr) {
           edge.out["mouth"] = true;
@@ -2872,13 +2864,12 @@ std::int64_t Checker::limitFor(const std::size_t k,
       ((2 * clear_) / 2) -
       ((static_cast<double>(std::min<std::int64_t>(own, 2)) * clear_) / 2);
   const auto room =
-      (edges_[k].length * headingShare(edges_[k].from, edges_[k].to)) -
-      margins;
-  return std::max(capacity_[k],
-                  room >= 0 ? static_cast<std::int64_t>(
-                                  std::floor(room / (clear_ * margin_))) +
-                                  1
-                            : 0);
+      (edges_[k].length * headingShare(edges_[k].from, edges_[k].to)) - margins;
+  return std::max(
+      capacity_[k],
+      room >= 0
+          ? static_cast<std::int64_t>(std::floor(room / (clear_ * margin_))) + 1
+          : 0);
 }
 
 void Checker::findMouths() {
@@ -3185,7 +3176,8 @@ Way Checker::shortest(const Demand& demand,
   };
   std::priority_queue<Item, std::vector<Item>, std::greater<>> heap;
   static const std::vector<Move> NONE;
-  const auto leaving = [&](const std::int64_t chamber) -> const std::vector<Move>& {
+  const auto leaving =
+      [&](const std::int64_t chamber) -> const std::vector<Move>& {
     return chamber >= 0 && std::cmp_less(chamber, around_.size())
                ? around_[static_cast<std::size_t>(chamber)]
                : NONE;
@@ -3431,8 +3423,8 @@ std::pair<SlotCheckResult, json> Checker::run() {
   for (std::size_t d = 0; d < demands.size(); ++d) {
     demandOf.emplace(demands[d].name, d);
   }
-  std::vector<std::vector<std::int64_t>> owns(
-      demands.size(), std::vector<std::int64_t>(ne, 0));
+  std::vector<std::vector<std::int64_t>> owns(demands.size(),
+                                              std::vector<std::int64_t>(ne, 0));
   for (std::size_t k = 0; k < ne; ++k) {
     for (const auto& name : owners_[k]) {
       if (const auto found = demandOf.find(name); found != demandOf.end()) {
@@ -3495,8 +3487,7 @@ std::pair<SlotCheckResult, json> Checker::run() {
       const auto lim = limitOf(k, ownLoad[k] + own);
       auto overK = std::max<std::int64_t>(0, load[k] + 1 - lim);
       for (const auto gi : member[k]) {
-        overK +=
-            std::max<std::int64_t>(0, gload[gi] + 1 - groups[gi].capacity);
+        overK += std::max<std::int64_t>(0, gload[gi] + 1 - groups[gi].capacity);
       }
       return lim >= 1 ? (1.0 + hist[k]) *
                             (1.0 + ((0.5 * static_cast<double>(round + 1)) *
@@ -3629,9 +3620,8 @@ std::pair<SlotCheckResult, json> Checker::run() {
     }
     for (const auto& [name, path] : ways) {
       bool crowded =
-          path.has_value() && std::ranges::any_of(*path, [&](const auto k) {
-            return isOver[k];
-          });
+          path.has_value() &&
+          std::ranges::any_of(*path, [&](const auto k) { return isOver[k]; });
       if (!crowded && !gover.empty()) {
         const auto passed = passes(name, path);
         crowded = std::ranges::any_of(passed, [&](const auto gi) {
@@ -3830,8 +3820,7 @@ std::pair<SlotCheckResult, json> Checker::run() {
            "stub, with more slots and wire ends behind it than it takes "
            "wires; {} chambers, {} bottlenecks; {} crossing slots (the "
            "stretches gave {})",
-           groups.size(), graph_.chambers, gates, newStretches,
-           oldStretches),
+           groups.size(), graph_.chambers, gates, newStretches, oldStretches),
        std::format("{}; {} edges and {} self-bottlenecks over; routed by "
                    "negotiated congestion (PathFinder), {} rounds",
                    result.verdict, over.size(), gover.size(), rounds)});
@@ -3909,9 +3898,9 @@ std::pair<SlotCheckResult, json> Checker::run() {
       one.mouth = truthy(edge, "mouth");
       one.length = edge.at("length").get<double>();
       if (edge.contains("sides")) {
-        one.sides = std::array{
-            edge.at("sides").at(0).get<std::vector<std::int64_t>>(),
-            edge.at("sides").at(1).get<std::vector<std::int64_t>>()};
+        one.sides =
+            std::array{edge.at("sides").at(0).get<std::vector<std::int64_t>>(),
+                       edge.at("sides").at(1).get<std::vector<std::int64_t>>()};
       }
     }
     out.edges.push_back(std::move(one));

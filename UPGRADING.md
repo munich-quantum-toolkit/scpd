@@ -6,6 +6,18 @@ of changes including minor and patch releases, please refer to the
 
 ## [Unreleased]
 
+### The chain search of the coupler insertion does less work for the same result
+
+Three exact speed-ups of the chain search are now on by default: the analytic
+turn bound in the edge searches (`SCPD_ROUTER_TURN_BOUND`), the memo of edge
+searches with the same input (`SCPD_EDGE_SEARCH_MEMO`), and leaving out the step
+checks whose verdict nothing reads (`SCPD_CHECK_ONLY_WINNERS`). Every chain
+settles on the same run, and `06-final.fb` stays the same apart from the version
+string. On 45q the coupler insertion takes 40.5 s instead of 77.6 s and the
+Final stage 153.6 s instead of 190.5 s. The `[Capacity Step]` summary line of a
+chain counts the checks left out. Set a switch to `0` to give the earlier
+behavior of that part.
+
 ### The profile cuts keep their work on the walls between step checks
 
 The step checks of the coupler insertion now keep the outline traces, the
@@ -22,12 +34,12 @@ Two defaults of the coupler insertion changed. An edge between a launcher and
 its coupler costs a tenth of its turns in the chain searches
 (`SCPD_CHAIN_END_EDGE_WEIGHT=0.1`; the feedline routing draws these edges
 again), and the option generator turns a pad by the offsets 0, 1, 2, 5, 6 and 7
-only (`SCPD_COUPLER_OFFSETS=0,1,2,5,6,7`; offsets 3 and 4 turn the pad 135°
-and 180° against the way and were never chosen). Together they cut the Final
-stage of 4q to 57q from 1843 s to 634 s, and every chip ends globally SAT. The
-results change: other couplers and feedline edges are chosen, 57q ends with 2
-short wires (40, 183) instead of none, and the feedline angle cost rises on 17q
-(49 → 53), 21q (52 → 54) and 57q (134 → 140).
+only (`SCPD_COUPLER_OFFSETS=0,1,2,5,6,7`; offsets 3 and 4 turn the pad 135° and
+180° against the way and were never chosen). Together they cut the Final stage
+of 4q to 57q from 1843 s to 634 s, and every chip ends globally SAT. The results
+change: other couplers and feedline edges are chosen, 57q ends with 2 short
+wires (40, 183) instead of none, and the feedline angle cost rises on 17q (49 →
+53), 21q (52 → 54) and 57q (134 → 140).
 
 `SCPD_CHAIN_END_EDGE_WEIGHT=1 SCPD_COUPLER_OFFSETS=0,1,2,3,4,5,6,7` restores the
 earlier behavior.
@@ -45,24 +57,16 @@ does not reach past it on plain options and in the segment search
 
 The coupler insertion now gives the same result on every machine and at every
 speed. Its searches stop on a count or when they are done, never on the clock:
-
-| Switch                                      | Now                                                                                       |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `SCPD_CHAIN_ASTAR_SECONDS`                  | removed; the chain search runs to its optimum                                             |
-| `SCPD_RESEARCH_SECONDS`                     | removed; the segment search ends after `repair_trials` tests or when it saw every run     |
-| `SCPD_LOCAL_AGREEMENT_SECONDS`              | removed; `SCPD_LOCAL_AGREEMENT` bounds the comparison                                     |
-| `SCPD_CAPACITY_SECONDS`                     | removed; the flow check (`SCPD_CAPACITY_FLOW=1`) has no limit                             |
-| `SCPD_GLOBAL_SAT_SECONDS`                   | removed; `SCPD_GLOBAL_SAT_TRIES` (200) bounds the combinations                            |
-| `SCPD_GLOBAL_SAT_COLLECT_SECONDS`           | removed; the collection takes every chain a stage needs                                   |
-| `SCPD_CHAIN_WALL_SECONDS`                   | removed                                                                                   |
-| `SCPD_CHAIN_RULE_FIRST_RUN_SECONDS`         | removed                                                                                   |
-| `SCPD_CHAIN_END_PROBE`, `_AFTER`, `_BUDGET` | removed; the probe only cut the clock of the rule search                                  |
-| —                                           | `SCPD_CHAIN_PROGRESS_STEPS` (100): a `[Chain Progress]` line every that many priced steps |
-
-The log no longer says `best in the time given` or `out of time`. A chain search
-that grows without end shows in its `[Chain Progress]` lines. The global SAT
-search tries its combinations in a fixed order and has no random stage, so its
-second stage tries other combinations than before.
+the chain search runs to its optimum, the segment search of the targeted repair
+ends after `repair_trials` tests or when it has seen every run, and the global
+SAT search tries at most `SCPD_GLOBAL_SAT_TRIES` (200) combinations in a fixed
+order, with no random stage, so its second stage tries other combinations than
+before. When the capacity rule has refused `SCPD_CHAIN_RULE_REFUSALS` (1500)
+steps of a chain before a run of options joins the chain, the chain is searched
+again without the rule; on 4q to 57q no chain comes near that limit. The log no
+longer says `best in the time given` or `out of time`. A `[Chain Progress]` line
+every `SCPD_CHAIN_PROGRESS_STEPS` (100) priced steps shows a chain or segment
+search that grows without end.
 
 ### The run directory numbers seven artifacts
 
@@ -103,9 +107,9 @@ check by crossing slots (`SCPD_SLOT_CHECK`, on). The log line
 carry its verdict; the line of the check by stretches now reads
 `CAPACITY GRAPH by the stretches, before the slot check:`, and the graph keeps
 that verdict as `previousVerdict`. In the graph the slot edges (`□ …`) take the
-place of the stretches (`× …`), and the self-bottlenecks (`S …`) join the
-gates. `CouplerSession.insertion_check` returns the slot check's `verdict`,
-`lost`, `over` and `graph`, and the earlier answer as `previousVerdict` and
+place of the stretches (`× …`), and the self-bottlenecks (`S …`) join the gates.
+`CouplerSession.insertion_check` returns the slot check's `verdict`, `lost`,
+`over` and `graph`, and the earlier answer as `previousVerdict` and
 `previousLost`. The chain search keeps its own check. `SCPD_SLOT_CHECK=0` gives
 the earlier behavior.
 
@@ -114,26 +118,23 @@ the earlier behavior.
 The layered search of the coupler insertion now bounds every step by the
 analytic answer with the forced end runs folded in (`SCPD_CHAIN_BOUND=4`). The
 bound stays a lower bound, so the search stays exact and the chains it settles
-cost the same; it is sharper, so the search prices fewer steps and the
-insertion is faster. A chain the old bound ran out of time on may now be
-solved, which can lower the stage's fail count. `SCPD_CHAIN_BOUND=1` gives the
-earlier bound.
+cost the same; it is sharper, so the search prices fewer steps and the insertion
+is faster. `SCPD_CHAIN_BOUND=1` gives the earlier bound.
+
 ### The global SAT search collects the chains at an edge over first
 
 The global SAT search of the coupler insertion now collects the states of the
 chains at an edge over first and tries each state on its own before it collects
 another chain (`SCPD_GLOBAL_SAT_LAZY`, on). It stops at the same combination as
-before, so the chip it leaves does not change; it collects fewer chains and
-says how many it left out. Only a binding `SCPD_GLOBAL_SAT_COLLECT_SECONDS` can
-make the two orders differ, because the lazy order reaches the chains at an
-edge over first. Set `SCPD_GLOBAL_SAT_LAZY=0` to collect every chain first.
+before, so the chip it leaves does not change; it collects fewer chains and says
+how many it left out. Set `SCPD_GLOBAL_SAT_LAZY=0` to collect every chain first.
 
 ### The faster slot check is the default
 
-`slotCheck` and `slotCheckJson` now run the faster check of
-`SlotCheckFast.cpp` by default. It returns the same results as the plain
-check, down to the JSON graph, so nothing changes but the time. Set
-`SCPD_SLOT_CHECK_FAST=0` to run the plain check as before.
+`slotCheck` and `slotCheckJson` now run the faster check of `SlotCheckFast.cpp`
+by default. It returns the same results as the plain check, down to the JSON
+graph, so nothing changes but the time. Set `SCPD_SLOT_CHECK_FAST=0` to run the
+plain check as before.
 
 ### The refinements search a narrower band
 

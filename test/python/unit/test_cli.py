@@ -134,9 +134,7 @@ def test_plan_runs_one_stage_and_resumes(tmp_path: Path) -> None:
     assert (run / "03-assign.fb").is_file()
 
 
-def test_plan_says_what_a_stage_is_doing_with_verbose(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_plan_says_what_a_stage_is_doing_with_verbose(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """`-v` prints one line per round of the stages that report, while they run."""
     run = tmp_path / "run"
     config = str(BENCHMARKS / "4q" / "config.toml")

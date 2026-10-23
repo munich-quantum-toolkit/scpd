@@ -231,7 +231,8 @@ TEST(SlotCheck, SpreadsTheSlotsOfAStraightPieceEvenly) {
     const auto graph = json::parse(slotCheck(chip.text()).graph);
     unsetenv("SCPD_EVEN_SLOTS");
     std::vector<double> xs;
-    for (const auto& slot : graph.at("crossSlots").at("edges").at(0).at("slots")) {
+    for (const auto& slot :
+         graph.at("crossSlots").at("edges").at(0).at("slots")) {
       xs.push_back(slot.at("at").at(0).get<double>());
     }
     std::ranges::sort(xs);
@@ -367,18 +368,18 @@ TEST(SlotCheck, LetsNoWirePastAMouthByItsTwin) {
   chip.fill(199, 180, 199, 239, ARTWORK);
   for (const auto& [name, mouth] :
        {std::pair{"g0", true}, std::pair{"g1", false}}) {
-    chip.edges.push_back({{"kind", "bottleneck"},
-                          {"name", name},
-                          {"line", {{199, 195}, {199, 205}}},
-                          {"ends",
-                           {"f1 at its coupler, left", "f2 at its coupler, right"}},
-                          {"chambers", {1, 2}},
-                          {"capacity", 3},
-                          {"users", nullptr},
-                          {"length", 10.0},
-                          {"mouth", mouth},
-                          {"slot", false},
-                          {"terminal", false}});
+    chip.edges.push_back(
+        {{"kind", "bottleneck"},
+         {"name", name},
+         {"line", {{199, 195}, {199, 205}}},
+         {"ends", {"f1 at its coupler, left", "f2 at its coupler, right"}},
+         {"chambers", {1, 2}},
+         {"capacity", 3},
+         {"users", nullptr},
+         {"length", 10.0},
+         {"mouth", mouth},
+         {"slot", false},
+         {"terminal", false}});
   }
   chip.wire("1", {100, 60}, 0, {230, 220}, 2, {"f1"});
   auto graph = json::parse(chip.text());

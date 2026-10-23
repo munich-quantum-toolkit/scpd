@@ -14,7 +14,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <stdexcept>
 #include <vector>
 
 namespace mqt::scpd::grid {
@@ -58,16 +57,6 @@ std::size_t BitGrid::count() const {
     total += static_cast<std::size_t>(std::popcount(word));
   }
   return total;
-}
-
-BitGrid& BitGrid::operator&=(const BitGrid& other) {
-  if (other.width_ != width_ || other.height_ != height_) {
-    throw std::invalid_argument("BitGrid &= needs grids of the same size");
-  }
-  for (std::size_t i = 0; i < words_.size(); ++i) {
-    words_[i] &= other.words_[i];
-  }
-  return *this;
 }
 
 } // namespace mqt::scpd::grid

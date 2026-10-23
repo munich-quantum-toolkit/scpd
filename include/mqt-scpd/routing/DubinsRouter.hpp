@@ -95,6 +95,35 @@ public:
   void setMaxTurns(const int16_t turns) { maxTurns_ = turns; }
   [[nodiscard]] bool lastSearchCutOff() const { return cutOff_; }
 
+  /// The turn bounds under which the last route() would have run the same.
+  ///
+  /// The search compares a number with the turn bound at two places: the
+  /// turns of a way after a move (`setMaxTurns`) and, for a move that
+  /// improves the state it reaches, those turns plus the turns that state
+  /// still owes (`setTurnLowerBound`). Nothing else the search does reads
+  /// the bound. Take another bound `b`. If every comparison comes out the
+  /// same under `b`, the search pushes the same states in the same order,
+  /// by induction over its moves, and returns the same way at the same cost.
+  ///
+  /// - `kept` is the largest number that passed for an improving move, and
+  ///   `below` the least number that failed for any move. Under every bound
+  ///   `b` with `kept <= b < below` the search returns the same way at the
+  ///   same cost. A move that improves nothing is pushed under no bound, so
+  ///   the outcome of its comparison only sets `lastSearchCutOff`; a pass
+  ///   of such a move does not count in `kept`.
+  /// - `passed` is the largest number that passed for any move. Under every
+  ///   bound with `passed <= b < below`, `lastSearchCutOff` is the same too.
+  ///
+  /// No bound (`-1`) counts as a bound above every number: every comparison
+  /// passes, and `below` stays at its maximum. Valid only after a route()
+  /// that expanded a state (`lastSearchExpansions` above zero).
+  struct BoundWindow {
+    uint32_t kept = 0;
+    uint32_t passed = 0;
+    uint32_t below = UINT32_MAX;
+  };
+  [[nodiscard]] BoundWindow lastBoundWindow() const { return boundWindow_; }
+
   /// Add the unavoidable turning toward the target heading to the heuristic.
   ///
   /// A way has to arrive on the target heading, and every eighth turn it
@@ -118,8 +147,7 @@ public:
 
   /// Bound the turning a state still owes by the analytic Dubins bound, in
   /// the heuristic and against the turn bound of `setMaxTurns`. Off by
-  /// default. It applies to route() and routeMulti(); routeResumable()
-  /// ignores it.
+  /// default.
   ///
   /// For a state and the goal state of the search (the target moved back
   /// by its forced arrival run, as route() tests it), `minTurns` is
@@ -129,8 +157,7 @@ public:
   /// cap. Two things use it:
   ///
   /// - **The heuristic.** The bend term becomes the larger of the heading
-  ///   term (`setBendLowerBound`) and `bendPenalty * minTurns`. In
-  ///   routeMulti() it is the least `minTurns` over every target.
+  ///   term (`setBendLowerBound`) and `bendPenalty * minTurns`.
   /// - **The pruning.** Under a turn bound, a move is dropped when the
   ///   turns of the way so far plus `minTurns` of the state it reaches
   ///   exceed the bound, and `lastSearchCutOff` says so, as for a move that
@@ -165,9 +192,7 @@ public:
   /// the analytic search starts at the heading distance. So the turn bound
   /// adds no inconsistency: each cost component is bounded by its own term,
   /// and the sum is consistent wherever the distance term is consistent
-  /// against the length and the penalty (see `setBendLowerBound`). In
-  /// routeMulti() the least value over all targets keeps both properties
-  /// (see `routeMulti`).
+  /// against the length and the penalty (see `setBendLowerBound`).
   ///
   /// **Why the pruning loses no way within the bound.** A way through the
   /// reached state makes the turns so far plus the turns of its rest, and
@@ -323,183 +348,9 @@ public:
   /// Zero when it found no way.
   [[nodiscard]] uint32_t lastSearchCost() const { return lastCost_; }
 
-  /// How many states the last route() or routeMulti() expanded: the states
+  /// How many states the last route() expanded: the states
   /// it took off the open list and closed.
   [[nodiscard]] uint64_t lastSearchExpansions() const { return expansions_; }
-
-  /// One target of `routeMulti`: the port a way arrives at, as
-  /// `RoutingObjective::target` gives it, and the corridor that holds for
-  /// this target alone. Null `own` means the attached corridor.
-  struct MultiTarget {
-    PathPoint target;
-    const grid::BitGrid* own = nullptr;
-  };
-
-  /// What `routeMulti` says about one target.
-  struct MultiRoute {
-    enum class Outcome : uint8_t {
-      /// `way` is the way to the target, as route() would return it.
-      Found,
-      /// No way reaches the target, and no move was dropped for the turn
-      /// bound.
-      NoWay,
-      /// No way reaches the target within the turn bound.
-      CutOff,
-      /// The cheapest way in the attached corridor enters a cell that the
-      /// target's own corridor closes. `way` is that way; it is not a way
-      /// of the target.
-      LeftOwnCorridor,
-      /// The cheapest way crossed itself. route() would return no way for
-      /// it, as the loop guard does.
-      Looped,
-    };
-    Outcome outcome = Outcome::NoWay;
-    Path way;
-    /// The eighth-turns of the searched part of `way`, which is what
-    /// `setMaxTurns` bounds.
-    uint32_t turns = 0;
-    /// What the search paid for `way`, as `lastSearchCost`.
-    uint32_t cost = 0;
-  };
-
-  /// Route from one source to several targets in one search.
-  ///
-  /// The search is route()'s search with a set of goal states. It starts
-  /// from the source after its forced start run, and a target's goal state
-  /// is the target moved back by its forced arrival run, on the target's
-  /// heading — the goal test of route(). A target is settled when its goal
-  /// state is popped. The search continues until every target is settled
-  /// or the open list is empty; a target left then has no way (`NoWay`), or
-  /// none within the bound of `setMaxTurns` (`CutOff`). The parameters, the
-  /// corridor, the proximity and the turn bound are route()'s and are read
-  /// as they stand. The forced runs of every target are the same, as the
-  /// parameters set them.
-  ///
-  /// **The heuristic** is the minimum over all targets, settled or not,
-  /// throughout the search. The distance term is one backward Dijkstra
-  /// with every target's goal cell as a source, so it is the least
-  /// distance to any goal cell. The bend term is the least cyclic heading
-  /// distance to any target heading, times the bend penalty. Each term is
-  /// at most its term for any single target, so the sum never
-  /// overestimates the cost to any target: it is admissible for every
-  /// target at once. It is also consistent wherever each per-target term
-  /// is: the minimum of functions that each drop by at most the cost of a
-  /// move drops by at most that cost, because the target that sets the
-  /// minimum after the move bounds it before the move as well. The
-  /// search never reopens a closed state, so with a consistent heuristic
-  /// every state it pops carries its least cost, and the goal state of
-  /// every target among them. That is the guarantee route() has under the
-  /// same terms; where its terms are not consistent (see
-  /// `setBendLowerBound`), the two searches may close states in another
-  /// order and a cost may differ. The open list is never re-keyed when a
-  /// target settles: raising the keys would need a pass over the open
-  /// list, and the lower keys stay correct.
-  ///
-  /// **The own corridor.** The attached corridor should hold every cell
-  /// any target may use: the union of the targets' corridors. A target
-  /// with an `own` corridor gets its way only if every cell the search
-  /// tested for it is open in `own`; otherwise it is `LeftOwnCorridor`. A
-  /// way that passes is open in the target's own corridor and costs no
-  /// more than the cheapest way there, since the union holds that way, so
-  /// it is a cheapest way of route() over `own` — at the same cost, though
-  /// it may be another way of that cost.
-  ///
-  /// @param usePenalty Add the static and wire proximity penalties.
-  /// @return One entry per target, in the order of `targets`.
-  [[nodiscard]] std::vector<MultiRoute>
-  routeMulti(const PathPoint& source, const std::vector<MultiTarget>& targets,
-             bool usePenalty = false);
-
-  /// A search of `routeResumable`, paused after a target settled: every
-  /// state it reached with its best cost and parent, and the entries still
-  /// to expand. It belongs to the router, the corridor and the parameters
-  /// it was started under.
-  class PausedSearch;
-
-  /// Route from `source` to `target` with a search that can be resumed
-  /// toward other targets: the first call on an empty `search` starts it
-  /// from `source`, and every later call continues it toward its own
-  /// target, from the states the earlier calls reached. A call ends when
-  /// the target's goal state is popped, or at once when an earlier call
-  /// already closed that state, and pauses the search into `search`. A
-  /// target is answered as `routeMulti` answers it, `own` included. A goal
-  /// state is expanded before the search pauses, so no way through it is
-  /// lost to a later target.
-  ///
-  /// **A resumed search is exact**, under each order of `ResumeOrder`.
-  /// Every state an earlier call closed carries its least cost from the
-  /// source, whatever target the heuristic aimed at: with a consistent
-  /// heuristic, A* closes a state only at its least cost, and the cost from
-  /// the source does not depend on the target. Every state next to a closed
-  /// state was reached when that state was expanded and holds its best cost
-  /// through it, on the open list or parked. A search parks a state that
-  /// the distance term proves unable to reach its target, instead of
-  /// dropping it, so a later call keys it again. So the closed states and
-  /// the entries left are what one search toward the new target would hold
-  /// had it expanded the same states, and the standard argument of A*
-  /// applies: on the cheapest way to the target, the first state not closed
-  /// is on the open list at its least cost, its key is at most the target's
-  /// cost by consistency, and the target's goal state is popped at its
-  /// least cost. Where the heuristic is not consistent (see
-  /// `setBendLowerBound`), route() carries the same caveat. The open list
-  /// is kept as a flat list between calls, since the router's one bucket
-  /// queue serves every search, so each call puts every entry back.
-  ///
-  /// The corridor, the parameters, the turn bound and the order must be
-  /// those of the first call: a move the bound drops is lost to every later
-  /// target too, so the bound should be the largest any target gets, with a
-  /// target's own bound applied to its answer. `family` names, on the first
-  /// call, every target the search will serve; `ResumeOrder::Minimum`
-  /// reads it.
-  [[nodiscard]] MultiRoute
-  routeResumable(PausedSearch& search, const PathPoint& source,
-                 const PathPoint& target, const grid::BitGrid* own,
-                 bool usePenalty = false,
-                 const std::vector<PathPoint>& family = {});
-
-  /// How `routeResumable` orders the open list of a resumed call.
-  enum class ResumeOrder : uint8_t {
-    /// By the heuristic of the call's own target: every entry is keyed for
-    /// it as it is put back, which adds one read of the distance field to
-    /// the pass that puts it back.
-    Target,
-    /// By the minimum over every target of `family`, settled or not, for
-    /// the whole life of the search, so no entry is ever keyed again. The
-    /// minimum of consistent heuristics is consistent (see `routeMulti`),
-    /// so the argument above holds with it; it steers less well.
-    Minimum,
-    /// By the heuristic of the call's own target, with the keys of the last
-    /// call lowered by an offset in the way of D* Lite's `k_m` and set right
-    /// when popped. The distance term is a shortest-way distance over one
-    /// graph of cells, and the octile distance is a metric too; the bend
-    /// term is the bend penalty times a cyclic distance of headings. All
-    /// keep the triangle inequality, so the heuristic of the new target is
-    /// at least that of the old one less `delta`: the distance between the
-    /// two goal cells plus the bend penalty times the distance between their
-    /// headings. A key lowered by `delta` is a lower bound of the new key; a
-    /// popped entry whose true key is higher goes back on the list at its
-    /// true key, so states are expanded in the order of their true keys, as
-    /// under `Target`. When the new target's field does not reach the last
-    /// goal cell there is no `delta`, and every entry is keyed as under
-    /// `Target`.
-    Offset,
-  };
-  void setResumeOrder(const ResumeOrder order) { resumeOrder_ = order; }
-
-  /// The seconds of the last `routeResumable` call outside its search:
-  /// putting the states back, putting the entries back on the open list
-  /// with their keys, and pausing.
-  struct ResumeSplit {
-    double restore = 0.0;
-    double rekey = 0.0;
-    double pause = 0.0;
-    /// Under `ResumeOrder::Offset`: the entries popped below their true key
-    /// and put back at it.
-    uint64_t reinserts = 0;
-  };
-  [[nodiscard]] const ResumeSplit& lastResumeSplit() const {
-    return resumeSplit_;
-  }
 
   /// Searches whose path crossed itself and were rejected.
   [[nodiscard]] uint64_t loopGuardRejections() const {
@@ -591,9 +442,6 @@ private:
   [[nodiscard]] CellBox freeStrip(PathPoint from, PathPoint to,
                                   FreeStripMemo* memo) const;
   void buildDistanceField(uint32_t tx, uint32_t ty);
-  /// The distance field to the nearest of several cells, packed as
-  /// `(y << 16) | x`.
-  void buildDistanceField(const std::vector<uint32_t>& seeds);
   bool beginSingleCrossingOverlay(const PathPoint& source,
                                   const PathPoint& target);
   void endSingleCrossingOverlay();
@@ -617,26 +465,11 @@ private:
   template <bool PACKED, bool USE_PENALTY>
   Path searchFree(const RoutingObjective& objective, const PathPoint& source,
                   const PathPoint& target, bool onlyStraight);
-  template <bool PACKED, bool USE_PENALTY, bool PARK = false>
+  template <bool PACKED, bool USE_PENALTY>
   void expandFree(const QueueEntry& current, const RoutingObjective& objective,
                   bool onlyStraight, const uint8_t* blockMap,
                   const uint8_t* penaltyMap, uint8_t blockMask,
                   uint8_t penaltyMask, const uint16_t* wireMap, bool useField);
-  template <bool PACKED, bool USE_PENALTY>
-  MultiRoute searchResumable(PausedSearch& search, const PathPoint& target,
-                             const PathPoint& goal, const grid::BitGrid* own);
-  /// The answer for a target whose goal state `goalIndex` is closed: its
-  /// way, its cost and the checks of `routeMulti`.
-  [[nodiscard]] MultiRoute settle(uint32_t goalIndex, uint32_t startIndex,
-                                  uint32_t turns, const PathPoint& source,
-                                  const PathPoint& target,
-                                  const PathPoint& goal,
-                                  const grid::BitGrid* own);
-  template <bool PACKED, bool USE_PENALTY>
-  void searchMulti(const PathPoint& source, const PathPoint& start,
-                   const std::vector<MultiTarget>& targets,
-                   const std::vector<PathPoint>& goals,
-                   std::vector<MultiRoute>& out);
   template <bool USE_PENALTY>
   Path searchOrthogonal(const RoutingObjective& objective,
                         const PathPoint& source, const PathPoint& target,
@@ -653,13 +486,9 @@ private:
   Heuristic heuristic_ = Heuristic::DistanceField;
   int16_t maxTurns_ = -1;
   bool cutOff_ = false;
+  BoundWindow boundWindow_;
   uint32_t lastCost_ = 0;
-  ResumeSplit resumeSplit_;
-  ResumeOrder resumeOrder_ = ResumeOrder::Target;
   uint64_t expansions_ = 0;
-  /// The goal cells of `routeMulti` while it runs, for the octile
-  /// heuristic: the least octile distance to any of them. Empty otherwise.
-  std::vector<PathPoint> multiGoals_;
   bool bendLowerBound_ = true;
   /// Per heading, what a state facing it still owes in turning, in the cost
   /// units of the search. Filled once per search; all zeroes when the bend
@@ -728,48 +557,11 @@ private:
   std::array<std::vector<uint32_t>, FIELD_BUCKETS> fieldBuckets_;
 
   BucketQueue<QueueEntry> open_;
-  /// The states a resumable search reached that cannot reach its target
-  /// (`routeResumable`).
-  std::vector<QueueEntry> parked_;
-  /// The key a parked entry carries: it has none until a target keys it.
-  static constexpr uint32_t PARKED = UINT32_MAX;
   PathLoopScratch loopScratch_;
   uint64_t loopGuardRejections_ = 0;
   std::vector<uint8_t> proximityVisited_;
   std::vector<uint32_t> proximityFrontA_;
   std::vector<uint32_t> proximityFrontB_;
-};
-
-/// What `DubinsRouter::routeResumable` keeps of a paused search.
-class DubinsRouter::PausedSearch {
-public:
-  /// Whether a search was started into this.
-  [[nodiscard]] bool started() const { return started_; }
-  /// The bytes the paused search holds.
-  [[nodiscard]] std::size_t bytes() const {
-    return (indices_.capacity() * sizeof(uint32_t)) +
-           (nodes_.capacity() * sizeof(SearchNode)) +
-           (pending_.capacity() * sizeof(QueueEntry));
-  }
-  /// How many states the search has reached, and how many entries wait.
-  [[nodiscard]] std::size_t states() const { return indices_.size(); }
-  [[nodiscard]] std::size_t waiting() const { return pending_.size(); }
-
-private:
-  friend class DubinsRouter;
-  bool started_ = false;
-  bool cutOff_ = false;
-  PathPoint source_{};
-  uint32_t startIndex_ = 0;
-  /// Every state reached, sorted, and its node.
-  std::vector<uint32_t> indices_;
-  std::vector<SearchNode> nodes_;
-  /// The entries still to expand at their cost, turns and key, a parked one
-  /// at `PARKED`.
-  std::vector<QueueEntry> pending_;
-  /// The goal states of every target of the search, and of the last call.
-  std::vector<PathPoint> family_;
-  PathPoint lastGoal_{};
 };
 
 } // namespace mqt::scpd::routing

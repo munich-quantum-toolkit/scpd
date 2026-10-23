@@ -95,25 +95,25 @@ struct ChainProblem {
   /// gives then is not read, because the prefix cannot win.
   mutable uint64_t stepBudget = TRELLIS_UNREACHABLE;
 
-  /// Set with `stepBudget`: the largest step budget any choice of the same
-  /// layer gets under the same prefix, or TRELLIS_UNREACHABLE while no run
-  /// has been priced. The cheapest complete run only falls, so a later
-  /// `stepBudget` for any of those steps is at most this. A `step` that
-  /// prices the steps into every choice at once may stop at this budget
-  /// and hold each step to its own budget when it is asked for it.
-  mutable uint64_t siblingBudget = TRELLIS_UNREACHABLE;
+  /// Set with `stepBudget`: the index of the node of the step being priced,
+  /// and the least index of a complete run priced at the cheapest price so
+  /// far, or `UINT32_MAX` while no run has been priced. Nodes are numbered
+  /// in the order the search makes them. Among entries with the same `f` on
+  /// the last layer, the search takes the smaller index first, so of two
+  /// complete runs at the same price the one with the smaller index is the
+  /// answer.
+  mutable uint32_t stepNode = UINT32_MAX;
+  mutable uint32_t winnerNode = UINT32_MAX;
 
-  /// Set with `stepBudget`: the `f` of the step being priced — the price of
-  /// its prefix plus its bound plus the run of bounds after it — and, for
-  /// every choice of the same layer, the `f` of its step under the same
-  /// prefix while that step waits on the open list and is below the
-  /// cheapest complete run priced so far; TRELLIS_UNREACHABLE for a choice
-  /// whose step is priced, dropped, never offered or at or above that run,
-  /// since the search will never price it. Under plain A\* every key listed
-  /// is at least `stepKey`. A `step` that prices several steps at once may
-  /// pick the ones the search will reach soon by these keys.
-  mutable uint64_t stepKey = TRELLIS_UNREACHABLE;
-  mutable std::vector<uint64_t> siblingKeys;
+  /// Cleared by `step` when it priced a step without a test that could
+  /// have refused it, because no outcome of the test could change the
+  /// answer. `found` is then not called for the run that step completes.
+  mutable bool stepTested = true;
+
+  /// Set by `step` to end the search: the search drops the answer of the
+  /// step that set it and returns at once with the runs it has found so
+  /// far, `optimal` false and `ChainSolution::stopped` set.
+  mutable bool stop = false;
 
   /// Called every time the search completes a run of choices whose every
   /// step is routed — the run and what it costs. They arrive in no
@@ -154,59 +154,9 @@ struct ChainProblem {
   std::function<void(const ChainSolution& sofar, std::size_t open)> progress;
   uint32_t progressEvery = 0;
 
-  /// Called when a prefix of two layers or more whose every step is priced
-  /// comes off the open list, before it is expanded or taken as the
-  /// answer. `false` drops it as though its last step had found no way.
-  /// This is how a caller puts off a test of a step until the search takes
-  /// the step: a test that only refuses, asked here instead of in `step`,
-  /// leaves the prefixes the search takes and the answer as they are, since
-  /// a refused prefix grows nothing either way. Optional.
-  std::function<bool(std::span<const uint32_t> prefix)> admit;
-
   /// Called every time the search grows children from a prefix, with the
   /// prefix. It reports and decides nothing. Optional.
   std::function<void(std::span<const uint32_t> prefix)> expanded;
-
-  /// The weight `w` of weighted A\*, in thousandths: 1000 (plain A\*) or
-  /// more. The open list is ordered by `g + w * h`, where `g` is what a
-  /// prefix's priced steps cost and `h` the run of bounds from its last
-  /// layer to the end, `w * h` rounded to the nearest whole number with
-  /// halves up. The first complete run to come out is the answer, and it
-  /// costs at most `w` times the optimum: every entry still in the list
-  /// holds a lower bound on what a run through it costs.
-  /// `ChainSolution::lowerBound` says the least of those bounds at the
-  /// stop. At 1000 the search is the plain one, step for step.
-  uint32_t weightThousandths = 1000;
-
-  /// Classes of interchangeable choices, empty for none:
-  /// `classOf[layer][choice]` is the class's representative, its member
-  /// with the smallest index. The caller vouches that two members of a
-  /// class cost the same on every step from every choice of the layer
-  /// before and to every choice of the layer after, so that swapping one
-  /// for another changes no run's price. The search offers the
-  /// representative alone. The next member of the class is offered in a
-  /// prefix's place when the step into that prefix's choice finds no way or
-  /// is refused, when `step` sets `askNext`, and when a step of any prefix
-  /// that extends it does: every refusal offers, at every layer of the
-  /// refused prefix, the next member after the choice there, at most once
-  /// per parent.
-  ///
-  /// Complete: take any run R the search with no classes could answer.
-  /// Replace each of its choices by its class's representative and call
-  /// that run R0; it costs what R costs. Either the search reaches R0
-  /// whole, or a step of a prefix of R0 finds no way or is refused; then
-  /// the next member at every layer of that prefix is offered, and so on
-  /// along the members in order, so the search goes on to every run that
-  /// differs from R0 only in members until one carries or none is left. No
-  /// run is lost that differs from a refused one in a member; the runs
-  /// never offered are those whose every prefix carried with
-  /// representatives, which an offered run of the same price stands for.
-  std::vector<std::vector<uint32_t>> classOf;
-
-  /// Set by `step` to have the next member of the class of the choice it
-  /// prices offered as well, though the step carried: for a step whose
-  /// price is not the one its class was built on.
-  mutable bool askNext = false;
 };
 
 /// What the search found.
@@ -238,8 +188,7 @@ struct ChainSolution {
 
   /// Whether the search settled the question. True when it proved `chosen`
   /// the cheapest run there is, and true on an unsolved answer when it saw
-  /// every run of choices there is and none joined the chain. False on a
-  /// solved answer of weighted A\* (`ChainProblem::weightThousandths`).
+  /// every run of choices there is and none joined the chain.
   bool optimal = false;
 
   /// Whether `step` ever answered with a `redone` price — whether the search
@@ -247,16 +196,6 @@ struct ChainSolution {
   /// costs it the proof: a prefix can then be cheaper than the prefix it
   /// extends, and A\* rests on the opposite.
   bool relaid = false;
-
-  /// How many members of a class were offered in a representative's place
-  /// (`ChainProblem::classOf`).
-  uint32_t membersOffered = 0;
-
-  /// Under `ChainProblem::weightThousandths` above 1000: a lower bound on
-  /// the cheapest run there is, the least `g + h` left in the open list
-  /// when the search stopped, or the answer's cost when that is less.
-  /// TRELLIS_UNREACHABLE otherwise.
-  uint64_t lowerBound = TRELLIS_UNREACHABLE;
 
   /// How many complete runs `accept` refused. Zero without an `accept`.
   uint32_t rejected = 0;
@@ -266,6 +205,9 @@ struct ChainSolution {
   /// that ran out of trials and one that saw every run there is must never
   /// be reported by one name.
   bool outOfTrials = false;
+
+  /// Whether `step` ended the search (`ChainProblem::stop`).
+  bool stopped = false;
 };
 
 /// Solve one chain exactly, pricing as few steps as the bound allows.

@@ -43,7 +43,6 @@
 #include <map>
 #include <memory>
 #include <numbers>
-#include <optional>
 #include <regex>
 #include <set>
 #include <stdexcept>
@@ -490,10 +489,11 @@ TEST(FinalRouter, EveryPhaseLeavesASnapshot) {
 /// Every pass starts every wire on the way the Detail stage drew and ends on
 /// a line that says how many wires are unrouted, open, short, long, crossing
 /// a feedline or meeting themselves, and the stage ends on one over every
-/// wire. "Fails: 0"
-/// there promises what the artifact and the design-rule check find: every
-/// connection and every feedline edge drawn, no active finding, and every
-/// resonator the target length within tolerance.
+/// wire. "Fails: 0 | Bad: 0" there promises what the artifact and the
+/// design-rule check find: every connection and every feedline edge drawn,
+/// no active finding, and every resonator the target length within
+/// tolerance. `Fails` counts the resonators of the wrong length, `Bad` the
+/// wires with no usable way.
 TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
@@ -520,6 +520,8 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   const auto total = lineWith("final routing:", "Fails:");
   ASSERT_FALSE(total.empty());
   const auto fails = std::stoul(total.substr(total.find("Fails:") + 6));
+  ASSERT_NE(total.find("Bad:"), std::string::npos) << total;
+  const auto bad = std::stoul(total.substr(total.find("Bad:") + 4));
 
   // Every resonator's length is said, way plus the run to the port against
   // `meander_length`, and a line sums them up.
@@ -541,7 +543,8 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   EXPECT_EQ(said, resonators);
   EXPECT_FALSE(lineWith("resonators:", "in all").empty());
 
-  EXPECT_EQ(fails == 0, holdsEverywhere(benchmark, planned, routing)) << total;
+  EXPECT_EQ(fails + bad == 0, holdsEverywhere(benchmark, planned, routing))
+      << total;
 
   // The end state carries the verdict against every wire, and the count of
   // the wires with one is the count the last line said. An undrawn wire is
@@ -560,7 +563,10 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
       EXPECT_EQ(unrouted, wire->path.empty());
     }
   }
-  EXPECT_EQ(held, fails) << total;
+  // A wire can be both of the wrong length and without a usable way, so it
+  // counts in both figures but holds one verdict.
+  EXPECT_LE(std::max(fails, bad), held) << total;
+  EXPECT_LE(held, fails + bad) << total;
   for (const auto& phase : routing.phases) {
     for (const auto* list : {&phase->wires, &phase->inner, &phase->feedlines}) {
       for (const auto& wire : *list) {
@@ -1210,443 +1216,6 @@ TEST(FinalRouter, TheEndEdgeWeightChangesOnlyThePrice) {
   EXPECT_EQ(compared, 1U);
 }
 
-/// `SCPD_CHAIN_LENGTH_COST` adds the length of a way to its price and a
-/// lower bound on it to the bound of a pair. Off, the stage routes as
-/// without the switch. On, every pair the prefix search prices has its
-/// bound at or below its price (`SCPD_CHAIN_LENGTH_AUDIT`), and the first
-/// chain, searched on the same chip either way, turns no more than without
-/// the length when both settle it on an optimum: the turns still decide
-/// first.
-TEST(FinalRouter, TheLengthCostKeepsTheTurnsFirstAndItsBoundBelowThePrice) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  struct Outcome {
-    FinalRoutingT routing;
-    std::vector<std::string> lines;
-  };
-  const auto run =
-      [&](const std::vector<std::pair<const char*, const char*>>& env) {
-        for (const auto& [name, value] : env) {
-          setenv(name, value, 1);
-        }
-        Outcome out;
-        out.routing = finalRouters().make("dubins")->run(
-            benchmark.chip, planned.capacity, planned.global,
-            planned.assignment, planned.detail, benchmark.config,
-            [&out](const std::string_view line) {
-              out.lines.emplace_back(line);
-            });
-        for (const auto& [name, value] : env) {
-          unsetenv(name);
-        }
-        return out;
-      };
-  // Under the old prices, whose chain lines say the cost at weight 1.
-  const auto plain = run(withOldPrices({}));
-  const auto off = run(withOldPrices({{"SCPD_CHAIN_LENGTH_COST", "0"}}));
-  ASSERT_EQ(off.routing.wires.size(), plain.routing.wires.size());
-  for (std::size_t index = 0; index < plain.routing.wires.size(); ++index) {
-    EXPECT_EQ(off.routing.wires[index]->path, plain.routing.wires[index]->path)
-        << "wire " << index << " differs with the length cost off";
-  }
-
-  const auto on = run(withOldPrices(
-      {{"SCPD_CHAIN_LENGTH_COST", "1"}, {"SCPD_CHAIN_LENGTH_AUDIT", "1"}}));
-  const std::regex audit(
-      R"(\[Length Audit\] (\d+) priced pairs, (\d+) with the bound above)");
-  bool audited = false;
-  for (const auto& line : on.lines) {
-    std::smatch match;
-    if (std::regex_search(line, match, audit)) {
-      audited = true;
-      EXPECT_GT(std::stoull(match[1].str()), 0U) << line;
-      EXPECT_EQ(match[2].str(), "0") << line;
-    }
-  }
-  EXPECT_TRUE(audited);
-
-  const std::regex optimum(
-      R"(\[Coupler Insertion\] chain 0: optimum (\d+) over \d+ layers)");
-  const std::regex turns(R"(, (\d+) eighth turns and \d+ tenths of a cell)");
-  std::optional<std::uint64_t> before;
-  for (const auto& line : plain.lines) {
-    std::smatch match;
-    if (std::regex_search(line, match, optimum)) {
-      before = std::stoull(match[1].str()) / 10000;
-    }
-  }
-  for (const auto& line : on.lines) {
-    std::smatch match;
-    if (before.has_value() && std::regex_search(line, match, optimum)) {
-      ASSERT_TRUE(std::regex_search(line, match, turns)) << line;
-      EXPECT_LE(std::stoull(match[1].str()), *before) << line;
-    }
-  }
-}
-
-/// `SCPD_CHAIN_ASTAR_WEIGHT` orders the prefix search by `g + w * h` and
-/// takes the first complete run. At 1 the stage routes as without the
-/// switch. At 1.5 every edge is drawn, no chain line claims an optimum, and
-/// the first chain, which both searches settle on the same chip, costs at
-/// most 1.5 times its optimum, with a lower bound no higher than it.
-TEST(FinalRouter, WeightedAStarStaysWithinItsWeight) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  struct Outcome {
-    FinalRoutingT routing;
-    std::vector<std::string> lines;
-  };
-  const auto run = [&](const char* weight) {
-    if (weight != nullptr) {
-      setenv("SCPD_CHAIN_ASTAR_WEIGHT", weight, 1);
-    }
-    Outcome out;
-    out.routing = finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
-        [&out](const std::string_view line) { out.lines.emplace_back(line); });
-    unsetenv("SCPD_CHAIN_ASTAR_WEIGHT");
-    return out;
-  };
-  const auto plain = run(nullptr);
-  const auto one = run("1");
-  ASSERT_EQ(one.routing.wires.size(), plain.routing.wires.size());
-  for (std::size_t index = 0; index < plain.routing.wires.size(); ++index) {
-    EXPECT_EQ(one.routing.wires[index]->path, plain.routing.wires[index]->path)
-        << "wire " << index << " differs at A* weight 1";
-  }
-
-  const auto weighted = run("1.5");
-  const std::regex optimum(
-      R"(\[Coupler Insertion\] chain (\d+): optimum (\d+) over \d+ layers)");
-  const std::regex within(R"(\[Coupler Insertion\] chain 0: within 1\.5 of )"
-                          R"(the optimum (\d+) over \d+ layers.*, lower )"
-                          R"(bound (\d+))");
-  const std::regex drawn(R"(coupler insertion: .* (\d+) of (\d+) edges drawn)");
-  std::optional<std::uint64_t> best;
-  for (const auto& line : plain.lines) {
-    std::smatch match;
-    if (std::regex_search(line, match, optimum) && match[1].str() == "0") {
-      best = std::stoull(match[2].str());
-    }
-  }
-  bool compared = false;
-  for (const auto& line : weighted.lines) {
-    std::smatch match;
-    EXPECT_FALSE(std::regex_search(line, match, optimum)) << line;
-    if (std::regex_search(line, match, drawn)) {
-      EXPECT_EQ(match[1].str(), match[2].str()) << line;
-    }
-    if (best.has_value() && std::regex_search(line, match, within)) {
-      compared = true;
-      const auto cost = std::stoull(match[1].str());
-      EXPECT_LE(cost * 2, *best * 3) << line;
-      EXPECT_LE(std::stoull(match[2].str()), *best) << line;
-    }
-  }
-  EXPECT_TRUE(compared || !best.has_value());
-}
-
-/// `SCPD_FREESPACE_PROBE=1` routes every pair of options of a chain once
-/// with no fence of the chain's own edges before the chain search and
-/// compares those prices with what the search pays. It is a measurement:
-/// the stage routes as without it, and every chain says what it found.
-TEST(FinalRouter, TheFreeSpaceProbeChangesNoRoute) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  const auto plain = routeFinal(benchmark, planned);
-  setenv("SCPD_FREESPACE_PROBE", "1", 1);
-  std::vector<std::string> lines;
-  const auto probed = finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
-  unsetenv("SCPD_FREESPACE_PROBE");
-
-  const std::regex probe(
-      R"(\[Free-Space Probe\] chain \d+: [1-9]\d* pairs in )");
-  EXPECT_GT(std::ranges::count_if(lines,
-                                  [&](const std::string& line) {
-                                    return std::regex_search(line, probe);
-                                  }),
-            0);
-  ASSERT_EQ(probed.wires.size(), plain.wires.size());
-  for (std::size_t index = 0; index < plain.wires.size(); ++index) {
-    EXPECT_EQ(probed.wires[index]->path, plain.wires[index]->path)
-        << "wire " << index << " differs under the probe";
-  }
-  ASSERT_EQ(probed.feedlines.size(), plain.feedlines.size());
-  for (std::size_t index = 0; index < plain.feedlines.size(); ++index) {
-    EXPECT_EQ(probed.feedlines[index]->path, plain.feedlines[index]->path)
-        << "feedline " << index << " differs under the probe";
-  }
-}
-
-/// `SCPD_LAZY_STEP_CHECK=1` checks a step's capacity when the chain search
-/// takes its prefix instead of when it prices the step. The search takes
-/// the same prefixes: every chain settles on the same cost after as many
-/// prefixes, the stage routes the same, and it checks no more steps.
-TEST(FinalRouter, TheLazyStepCheckChangesNoRoute) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  const auto run = [&](const char* lazy) {
-    setenv("SCPD_LAZY_STEP_CHECK", lazy, 1);
-    std::vector<std::string> lines;
-    auto routing = finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
-        [&lines](const std::string_view line) { lines.emplace_back(line); });
-    unsetenv("SCPD_LAZY_STEP_CHECK");
-    return std::pair{std::move(routing), std::move(lines)};
-  };
-  const auto [eager, eagerLines] = run("0");
-  const auto [lazy, lazyLines] = run("1");
-
-  const std::regex settled(
-      R"(\[Coupler Insertion\] chain \d+: .* over \d+ layers, \d+ prefixes expanded)");
-  const std::regex checks(
-      R"(\[Capacity Step\] chain \d+: (\d+) steps checked)");
-  const auto summary = [&](const std::vector<std::string>& lines) {
-    std::vector<std::string> out;
-    std::uint64_t checked = 0;
-    for (const auto& line : lines) {
-      std::smatch match;
-      if (std::regex_search(line, match, settled)) {
-        out.push_back(match[0].str());
-      }
-      if (std::regex_search(line, match, checks)) {
-        checked += std::stoull(match[1].str());
-      }
-    }
-    return std::pair{out, checked};
-  };
-  const auto [eagerChains, eagerChecks] = summary(eagerLines);
-  const auto [lazyChains, lazyChecks] = summary(lazyLines);
-  ASSERT_FALSE(eagerChains.empty());
-  EXPECT_EQ(lazyChains, eagerChains);
-  EXPECT_GT(eagerChecks, 0U);
-  EXPECT_LE(lazyChecks, eagerChecks);
-  ASSERT_EQ(lazy.wires.size(), eager.wires.size());
-  for (std::size_t index = 0; index < eager.wires.size(); ++index) {
-    EXPECT_EQ(lazy.wires[index]->path, eager.wires[index]->path)
-        << "wire " << index << " differs with the lazy step check";
-  }
-  ASSERT_EQ(lazy.feedlines.size(), eager.feedlines.size());
-  for (std::size_t index = 0; index < eager.feedlines.size(); ++index) {
-    EXPECT_EQ(lazy.feedlines[index]->path, eager.feedlines[index]->path)
-        << "feedline " << index << " differs with the lazy step check";
-  }
-}
-
-/// `SCPD_PAIR_MEMO=1` routes every pair of options of a chain once in free
-/// space and takes that way wherever a prefix leaves it open. On the
-/// 9-qubit chip the stage routes as without it, the memo is used, and its
-/// audit finds every way it takes at the price and on the cells a search
-/// under the fence finds.
-TEST(FinalRouter, ThePairMemoChangesNoRoute) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  const auto plain = routeFinal(benchmark, planned);
-  setenv("SCPD_PAIR_MEMO", "1", 1);
-  setenv("SCPD_PAIR_MEMO_AUDIT", "1", 1);
-  std::vector<std::string> lines;
-  const auto memo = finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
-  unsetenv("SCPD_PAIR_MEMO_AUDIT");
-  unsetenv("SCPD_PAIR_MEMO");
-
-  const std::regex used(
-      R"(\[Pair Memo\] chain \d+: (\d+) hits, .*audit: (\d+) routed again )"
-      R"(under the fence, the kept price dearer on (\d+), cheaper on (\d+), )"
-      R"(another way at the same price on (\d+))");
-  std::uint64_t hits = 0;
-  for (const auto& line : lines) {
-    std::smatch match;
-    if (std::regex_search(line, match, used)) {
-      hits += std::stoull(match[1].str());
-      EXPECT_EQ(match[3].str(), "0") << line;
-      EXPECT_EQ(match[4].str(), "0") << line;
-      EXPECT_EQ(match[5].str(), "0") << line;
-    }
-  }
-  EXPECT_GT(hits, 0U);
-  ASSERT_EQ(memo.wires.size(), plain.wires.size());
-  for (std::size_t index = 0; index < plain.wires.size(); ++index) {
-    EXPECT_EQ(memo.wires[index]->path, plain.wires[index]->path)
-        << "wire " << index << " differs with the pair memo";
-  }
-  ASSERT_EQ(memo.feedlines.size(), plain.feedlines.size());
-  for (std::size_t index = 0; index < plain.feedlines.size(); ++index) {
-    EXPECT_EQ(memo.feedlines[index]->path, plain.feedlines[index]->path)
-        << "feedline " << index << " differs with the pair memo";
-  }
-}
-
-/// `SCPD_OPTION_CLASSES=1` offers one option per class of options whose
-/// free-space prices to both neighbour layers are the same. Every edge is
-/// still drawn, every layer has no more classes than options, and the
-/// first chain, searched on the same chip either way, settles on the same
-/// cost.
-TEST(FinalRouter, OptionClassesKeepTheFirstChainsCost) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  const auto run = [&](const char* on) {
-    setenv("SCPD_OPTION_CLASSES", on, 1);
-    std::vector<std::string> lines;
-    static_cast<void>(finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
-        [&lines](const std::string_view line) { lines.emplace_back(line); }));
-    unsetenv("SCPD_OPTION_CLASSES");
-    return lines;
-  };
-  const auto off = run("0");
-  const auto on = run("1");
-  const std::regex settled(
-      R"(\[Coupler Insertion\] chain 0: \D+ (\d+) over \d+ layers)");
-  const std::regex classes(
-      R"(\[Option Classes\] chain \d+: (\d+) options in (\d+) classes)");
-  const std::regex drawn(R"(coupler insertion: .* (\d+) of (\d+) edges drawn)");
-  const auto costOf = [&](const std::vector<std::string>& lines) {
-    std::string cost;
-    for (const auto& line : lines) {
-      std::smatch match;
-      if (std::regex_search(line, match, settled)) {
-        cost = match[1].str();
-      }
-    }
-    return cost;
-  };
-  ASSERT_FALSE(costOf(off).empty());
-  EXPECT_EQ(costOf(on), costOf(off));
-  std::size_t said = 0;
-  for (const auto& line : on) {
-    std::smatch match;
-    if (std::regex_search(line, match, classes)) {
-      ++said;
-      EXPECT_LE(std::stoull(match[2].str()), std::stoull(match[1].str()))
-          << line;
-    }
-    if (std::regex_search(line, match, drawn)) {
-      EXPECT_EQ(match[1].str(), match[2].str()) << line;
-    }
-  }
-  EXPECT_GT(said, 0U);
-}
-
-/// `SCPD_MULTI_TARGET_ROUTE=1` prices the steps into several options of a
-/// layer with one router search; `SCPD_MULTI_TARGET_EPS=1000` takes along
-/// every option still to be priced under the prefix. On the 9-qubit chip
-/// every edge is drawn with it as without it, the searches run, and the
-/// first chain, searched on the same chip either way, settles on the same
-/// cost.
-TEST(FinalRouter, MultiTargetRoutingDrawsEveryEdge) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  const auto run = [&](const char* on) {
-    setenv("SCPD_MULTI_TARGET_ROUTE", on, 1);
-    setenv("SCPD_MULTI_TARGET_EPS", "1000", 1);
-    std::vector<std::string> lines;
-    static_cast<void>(finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
-        [&lines](const std::string_view line) { lines.emplace_back(line); }));
-    unsetenv("SCPD_MULTI_TARGET_EPS");
-    unsetenv("SCPD_MULTI_TARGET_ROUTE");
-    return lines;
-  };
-  const auto off = run("0");
-  const auto on = run("1");
-  const std::regex settled(
-      R"(\[Coupler Insertion\] chain 0: \D+ (\d+) over \d+ layers)");
-  const std::regex searches(R"(\[Multi Target\] chain \d+: (\d+) searches)");
-  const std::regex drawn(R"(coupler insertion: .* (\d+) of (\d+) edges drawn)");
-  const auto costOf = [&](const std::vector<std::string>& lines) {
-    std::string cost;
-    for (const auto& line : lines) {
-      std::smatch match;
-      if (std::regex_search(line, match, settled)) {
-        cost = match[1].str();
-      }
-    }
-    return cost;
-  };
-  ASSERT_FALSE(costOf(off).empty());
-  EXPECT_EQ(costOf(on), costOf(off));
-  std::uint64_t searched = 0;
-  for (const auto& lines : {off, on}) {
-    std::size_t said = 0;
-    for (const auto& line : lines) {
-      std::smatch match;
-      if (std::regex_search(line, match, searches)) {
-        searched += std::stoull(match[1].str());
-      }
-      if (std::regex_search(line, match, drawn)) {
-        ++said;
-        EXPECT_EQ(match[1].str(), match[2].str()) << line;
-      }
-    }
-    EXPECT_GT(said, 0U);
-  }
-  EXPECT_GT(searched, 0U);
-}
-
-/// `SCPD_RESUMABLE_ROUTE=1` prices the steps under a prefix with one search
-/// that pauses and resumes. On the 9-qubit chip every edge is drawn with it
-/// as without it, searches are started, and the first chain, searched on
-/// the same chip either way, settles on the same cost.
-TEST(FinalRouter, ResumableRoutingDrawsEveryEdge) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  const auto run = [&](const char* on) {
-    setenv("SCPD_RESUMABLE_ROUTE", on, 1);
-    std::vector<std::string> lines;
-    static_cast<void>(finalRouters().make("dubins")->run(
-        benchmark.chip, planned.capacity, planned.global, planned.assignment,
-        planned.detail, benchmark.config,
-        [&lines](const std::string_view line) { lines.emplace_back(line); }));
-    unsetenv("SCPD_RESUMABLE_ROUTE");
-    return lines;
-  };
-  const auto off = run("0");
-  const auto on = run("1");
-  const std::regex settled(
-      R"(\[Coupler Insertion\] chain 0: \D+ (\d+) over \d+ layers)");
-  const std::regex resumed(
-      R"(\[Resumable Route\] chain \d+: (\d+) searches started)");
-  const std::regex drawn(R"(coupler insertion: .* (\d+) of (\d+) edges drawn)");
-  const auto costOf = [&](const std::vector<std::string>& lines) {
-    std::string cost;
-    for (const auto& line : lines) {
-      std::smatch match;
-      if (std::regex_search(line, match, settled)) {
-        cost = match[1].str();
-      }
-    }
-    return cost;
-  };
-  ASSERT_FALSE(costOf(off).empty());
-  EXPECT_EQ(costOf(on), costOf(off));
-  std::uint64_t started = 0;
-  for (const auto& lines : {off, on}) {
-    std::size_t said = 0;
-    for (const auto& line : lines) {
-      std::smatch match;
-      if (std::regex_search(line, match, resumed)) {
-        started += std::stoull(match[1].str());
-      }
-      if (std::regex_search(line, match, drawn)) {
-        ++said;
-        EXPECT_EQ(match[1].str(), match[2].str()) << line;
-      }
-    }
-    EXPECT_GT(said, 0U);
-  }
-  EXPECT_GT(started, 0U);
-}
-
 /// The chain search says how far it has come every
 /// `SCPD_CHAIN_PROGRESS_STEPS` priced steps and decides nothing by it: with
 /// a report after every step the stage routes as with none.
@@ -1675,6 +1244,44 @@ TEST(FinalRouter, TheChainProgressChangesNoRoute) {
   for (std::size_t index = 0; index < quiet.wires.size(); ++index) {
     EXPECT_EQ(told.wires[index]->path, quiet.wires[index]->path)
         << "wire " << index << " differs with the progress lines";
+  }
+}
+
+/// The router turn bound, the edge search memo and the step checks left out
+/// where nothing reads their verdict are on by default and exact: with all
+/// three off the stage routes the same.
+TEST(FinalRouter, TheExactSpeedUpsChangeNoRoute) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  std::vector<std::string> lines;
+  const auto fast = finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config,
+      [&lines](const std::string_view line) { lines.emplace_back(line); });
+  setenv("SCPD_ROUTER_TURN_BOUND", "0", 1);
+  setenv("SCPD_EDGE_SEARCH_MEMO", "0", 1);
+  setenv("SCPD_CHECK_ONLY_WINNERS", "0", 1);
+  const auto plain = routeFinal(benchmark, planned);
+  unsetenv("SCPD_ROUTER_TURN_BOUND");
+  unsetenv("SCPD_EDGE_SEARCH_MEMO");
+  unsetenv("SCPD_CHECK_ONLY_WINNERS");
+
+  const std::regex leftOut(
+      R"(\[Capacity Step\] chain \d+: .* checks left out)");
+  EXPECT_GT(std::ranges::count_if(lines,
+                                  [&](const std::string& line) {
+                                    return std::regex_search(line, leftOut);
+                                  }),
+            0);
+  ASSERT_EQ(fast.wires.size(), plain.wires.size());
+  for (std::size_t index = 0; index < plain.wires.size(); ++index) {
+    EXPECT_EQ(fast.wires[index]->path, plain.wires[index]->path)
+        << "wire " << index << " differs";
+  }
+  ASSERT_EQ(fast.feedlines.size(), plain.feedlines.size());
+  for (std::size_t index = 0; index < plain.feedlines.size(); ++index) {
+    EXPECT_EQ(fast.feedlines[index]->path, plain.feedlines[index]->path)
+        << "feedline " << index << " differs";
   }
 }
 
@@ -1714,6 +1321,47 @@ TEST(FinalRouter, TheCapacityRuleLetsNoSettledEdgeCloseAWire) {
     }
   }
   EXPECT_GT(verdicts, 0U);
+}
+
+/// `SCPD_CHAIN_RULE_REFUSALS` ends the search of a chain under the capacity
+/// rule once the rule has refused that many steps before a run of options
+/// joined the chain, and the chain is searched again without the rule. At
+/// one refusal, a chain whose first refused step comes before its first run
+/// says so and then gets its answer from the search without the rule. The
+/// 17-qubit chip has such chains; the 9-qubit chip has none.
+TEST(FinalRouter, TheRefusalLimitSearchesAChainAgainWithoutTheRule) {
+  const auto benchmark = seventeenQubit();
+  const auto planned = plan(benchmark);
+  setenv("SCPD_CHAIN_RULE_REFUSALS", "1", 1);
+  std::vector<std::string> lines;
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config,
+      [&lines](const std::string_view line) { lines.emplace_back(line); }));
+  unsetenv("SCPD_CHAIN_RULE_REFUSALS");
+
+  const std::regex limit(
+      R"(\[Coupler Insertion\] chain (\d+): the capacity rule refused 1 step )"
+      R"(before a run of options joined the chain \(SCPD_CHAIN_RULE_REFUSALS, )"
+      R"(\d+ steps routed\) — searched again without the capacity rule)");
+  const std::regex answer(
+      R"(\[Coupler Insertion\] chain (\d+): (optimum|best found|no run of )"
+      R"(options joins the chain — leaving it as it stands))");
+  std::set<std::string> limited;
+  std::set<std::string> answered;
+  for (const auto& line : lines) {
+    std::smatch match;
+    if (std::regex_search(line, match, limit)) {
+      EXPECT_FALSE(answered.contains(match[1].str())) << line;
+      limited.insert(match[1].str());
+    } else if (std::regex_search(line, match, answer)) {
+      answered.insert(match[1].str());
+    }
+  }
+  EXPECT_FALSE(limited.empty());
+  for (const auto& chain : limited) {
+    EXPECT_TRUE(answered.contains(chain)) << "chain " << chain;
+  }
 }
 
 /// With no switch set, the chain search applies the capacity rule and the
@@ -1804,6 +1452,116 @@ TEST(FinalRouter, TheStepCheckPrescribesNoCrossingOfAnOpenChain) {
   }
   // Once a chain stands whole, its edges are prescribed again.
   EXPECT_GT(prescribedWhole, 0U);
+}
+
+/// The graphs the step check of 9q saw at the feedline edges of the runs
+/// its chains settle on (`SCPD_CAPACITY_STEP_GRAPHS`).
+std::vector<nlohmann::json> nineQubitStepGraphs() {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  setenv("SCPD_CAPACITY_STEP", "1", 1);
+  setenv("SCPD_CAPACITY_STEP_GRAPHS", "1", 1);
+  std::vector<nlohmann::json> graphs;
+  const std::regex stepName(R"(step-c\d+-f\d+-capacity-graph\.json)");
+  static_cast<void>(finalRouters().make("dubins")->run(
+      benchmark.chip, planned.capacity, planned.global, planned.assignment,
+      planned.detail, benchmark.config, {},
+      [&](const std::string_view name, const std::string_view content) {
+        const std::string named(name);
+        if (std::regex_match(named, stepName)) {
+          graphs.push_back(nlohmann::json::parse(content));
+        }
+        return named;
+      }));
+  unsetenv("SCPD_CAPACITY_STEP_GRAPHS");
+  unsetenv("SCPD_CAPACITY_STEP");
+  return graphs;
+}
+
+/// The step check stands every pad of the chain on the option the step
+/// gives its coupler, where the step lays the coupler's edges: in every step
+/// graph, each feedline edge ends beside a pad, unless it ends at a launcher,
+/// far from every pad.
+TEST(FinalRouter, TheStepCheckStandsEveryPadWhereTheStepLaysItsEdges) {
+  const auto graphs = nineQubitStepGraphs();
+  ASSERT_FALSE(graphs.empty());
+
+  // A launcher end lies farther than this from every pad, in cells.
+  constexpr double launcherApart = 150.0;
+  // An edge leaves its coupler's port at the edge of the pad.
+  constexpr double besidePad = 2.0;
+  std::size_t ends = 0;
+  for (const auto& graph : graphs) {
+    const auto width = graph.at("width").get<std::int64_t>();
+    const auto& kinds = graph.at("wallKinds");
+    std::int64_t padCode = 0;
+    for (std::size_t kind = 0; kind < kinds.size(); ++kind) {
+      if (kinds[kind].get<std::string>() == "coupler pad") {
+        padCode = static_cast<std::int64_t>(kind) + 1;
+      }
+    }
+    ASSERT_GT(padCode, 0);
+    // The raster as runs: a code, then how many cells in a row hold it.
+    std::vector<std::array<double, 2>> pads;
+    const auto& raster = graph.at("raster");
+    std::int64_t cell = 0;
+    for (std::size_t at = 0; at + 1 < raster.size(); at += 2) {
+      const auto code = raster[at].get<std::int64_t>();
+      const auto count = raster[at + 1].get<std::int64_t>();
+      for (std::int64_t k = 0; code == padCode && k < count; ++k) {
+        pads.push_back({static_cast<double>((cell + k) % width),
+                        static_cast<double>((cell + k) / width)});
+      }
+      cell += count;
+    }
+    for (const auto& stroke : graph.at("strokes")) {
+      if (stroke.at("kind").get<std::string>() != "feedline") {
+        continue;
+      }
+      const auto& points = stroke.at("points");
+      for (const auto* end : {&points.front(), &points.back()}) {
+        const auto x = end->at(0).get<double>();
+        const auto y = end->at(1).get<double>();
+        double nearest = std::numeric_limits<double>::infinity();
+        for (const auto& [px, py] : pads) {
+          nearest = std::min(nearest, std::hypot(px - x, py - y));
+        }
+        if (nearest > launcherApart) {
+          continue;
+        }
+        ++ends;
+        EXPECT_LE(nearest, besidePad)
+            << graph.at("summary").at(0).get<std::string>() << ": "
+            << stroke.at("name").get<std::string>() << " ends at (" << x << ", "
+            << y << ")";
+      }
+    }
+  }
+  EXPECT_GT(ends, 0U);
+}
+
+/// The step check takes a chain on its own, with its terminal edges as
+/// walls. The feedline routing lays those edges again, so they close the
+/// chain's pocket and keep no room: every bottleneck with an end on one
+/// takes every wire and is never over.
+TEST(FinalRouter, TheStepCheckLetsEveryWirePassBesideATerminalEdge) {
+  const auto graphs = nineQubitStepGraphs();
+  ASSERT_FALSE(graphs.empty());
+  std::size_t bottlenecks = 0;
+  for (const auto& graph : graphs) {
+    const auto wires = graph.at("wires").size();
+    for (const auto& edge : graph.at("edges")) {
+      if (edge.at("kind") == "stretch" || !edge.at("terminal").get<bool>()) {
+        continue;
+      }
+      ++bottlenecks;
+      EXPECT_GE(edge.at("capacity").get<std::size_t>(), wires)
+          << edge.at("name").get<std::string>();
+      EXPECT_EQ(edge.at("overflow").get<std::size_t>(), 0U)
+          << edge.at("name").get<std::string>();
+    }
+  }
+  EXPECT_GT(bottlenecks, 0U);
 }
 
 /// Under `SCPD_TERMINAL_CROSSABLE` an edge from or to a launcher is no limit
@@ -3147,7 +2905,8 @@ TEST(CouplerSession, KeepsAnEdgeClearOfTheRunOfItsTerminalNeighbour) {
     }
     const auto at = coupler.at("at").get<std::uint32_t>();
     const bool terminalIn = at == 1;
-    const bool terminalOut = at == lastAt[coupler.at("chain").get<std::uint32_t>()];
+    const bool terminalOut =
+        at == lastAt[coupler.at("chain").get<std::uint32_t>()];
     if (terminalIn == terminalOut) {
       continue;
     }
@@ -3170,8 +2929,8 @@ TEST(CouplerSession, KeepsAnEdgeClearOfTheRunOfItsTerminalNeighbour) {
           way.push_back({cell.at(0).get<double>(), cell.at(1).get<double>()});
         }
         // Both ways from the coupler on.
-        const bool endsHere = edge.at("edge") == terminal ? terminalIn
-                                                          : !terminalIn;
+        const bool endsHere =
+            edge.at("edge") == terminal ? terminalIn : !terminalIn;
         if (endsHere) {
           std::ranges::reverse(way);
         }
@@ -3200,8 +2959,8 @@ TEST(CouplerSession, KeepsAnEdgeClearOfTheRunOfItsTerminalNeighbour) {
           ASSERT_GE(apart(a, b), clearance - 1.0)
               << "coupler " << index << " option " << option.at("index")
               << ": (" << b[0] << ", " << b[1] << ") of the edge beside "
-              << terminal << " is " << apart(a, b) << " from (" << a[0]
-              << ", " << a[1] << ") of its run";
+              << terminal << " is " << apart(a, b) << " from (" << a[0] << ", "
+              << a[1] << ") of its run";
         }
       }
     }
