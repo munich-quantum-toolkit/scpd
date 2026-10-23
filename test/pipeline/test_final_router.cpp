@@ -1358,13 +1358,15 @@ TEST(CouplerSession, CarriesTheTerminalEdgesAsWiresInTheCheckOfTheChip) {
 
 /// With the terminal edges as wires the chains stand open at their ends,
 /// so the check closes every mouth between two chains (user, 2026-10-14):
-/// two bottlenecks, each from a flank of the run the ending terminal edge
-/// of one chain leaves its coupler on to the flank on the same side of the
-/// run the starting terminal edge of the next chain reaches its coupler on,
-/// each holding its length over the clearance. The two ends of one chain
-/// enclose its own pocket and close no mouth, so 4q with its one chain has
-/// none; 9q has one, from the end of its second chain to the start of its
-/// first.
+/// two lines, each from a flank of the run the ending terminal edge of one
+/// chain leaves its coupler on to the flank on the same side of the run the
+/// starting terminal edge of the next chain reaches its coupler on. Where a
+/// line crosses a wall, a resonator's lead or a pad, the wall closes the
+/// mouth there and the line is cut into the gates between the walls; every
+/// gate holds its length over the clearance, under the capacity margin from
+/// `capacity_margin_from_wires` wires on. The two ends of one chain enclose
+/// its own pocket and close no mouth, so 4q with its one chain has none; 9q
+/// has one, from the end of its second chain to the start of its first.
 TEST(CouplerSession, ClosesTheMouthBetweenTwoChainsWithTwoLines) {
   {
     const auto benchmark = fourQubit();
@@ -1384,6 +1386,9 @@ TEST(CouplerSession, ClosesTheMouthBetweenTwoChainsWithTwoLines) {
   const auto check = nlohmann::json::parse(session.insertionCheck());
   const auto& graph = check.at("graph");
   const auto clearance = graph.at("clearance").get<double>();
+  const auto margin = graph.at("capacityMargin").get<double>();
+  const auto marginFrom =
+      graph.at("capacityMarginFromWires").get<std::size_t>();
   std::size_t mouths = 0;
   std::size_t fromFlanks = 0;
   for (const auto& edge : graph.at("edges")) {
@@ -1392,27 +1397,25 @@ TEST(CouplerSession, ClosesTheMouthBetweenTwoChainsWithTwoLines) {
     }
     ++mouths;
     EXPECT_EQ(edge.at("kind"), "bottleneck");
-    bool flank = false;
-    bool lead = false;
     for (const auto& end : edge.at("ends")) {
       const auto name = end.get<std::string>();
-      flank = flank || (name.starts_with("f") &&
-                        name.find(" at its coupler, ") != std::string::npos);
-      lead = lead || name.starts_with("lead of ");
       fromFlanks += name.starts_with("f") &&
                             name.find(" at its coupler, ") != std::string::npos
                         ? 1
                         : 0;
     }
-    // No gate from a terminal edge's flank to a lead: the lead beside the
-    // run would cut the slot off from the mouth.
-    EXPECT_FALSE(flank && lead) << edge.at("ends");
-    // Its length over the clearance; one more where a gap too narrow for
-    // any wire is the own-run passage of the terminal edge at its flank.
+    // Its length over the clearance, under the margin from `marginFrom`
+    // wires on and under the share of it the nearest of the eight headings
+    // can use, which is cos(22.5 degrees) at the least; one more where a
+    // gap too narrow for any wire is the own-run passage of the terminal
+    // edge at its flank.
     const auto length = edge.at("length").get<double>();
-    const auto fits = static_cast<std::size_t>(std::floor(length / clearance));
-    EXPECT_GE(edge.at("capacity").get<std::size_t>(), fits) << edge.at("name");
-    EXPECT_LE(edge.at("capacity").get<std::size_t>(), fits + 1)
+    const auto plain = static_cast<std::size_t>(std::floor(length / clearance));
+    const auto taken = plain >= marginFrom ? clearance * margin : clearance;
+    const auto least = static_cast<std::size_t>(
+        std::floor(length * std::cos(std::numbers::pi / 8.0) / taken));
+    EXPECT_GE(edge.at("capacity").get<std::size_t>(), least) << edge.at("name");
+    EXPECT_LE(edge.at("capacity").get<std::size_t>(), plain + 1)
         << edge.at("name");
     EXPECT_GE(edge.at("chambers").size(), 2U) << edge.at("name");
   }
@@ -1789,9 +1792,11 @@ TEST(CouplerSession, LetsNoGateMeetAnotherInTheMiddle) {
 /// Where the tips of two runs at their couplers lie nearly on one line,
 /// the two lines of the mouth between them would run over the slots and
 /// over each other; one line between the two nearest tips closes that
-/// mouth (user, 2026-10-14). So no tip has more than one mouth gate ending
-/// on it, and no mouth gate runs within half a clearance of a tip of its
-/// own runs other than its ends.
+/// mouth (user, 2026-10-14). So no mouth gate runs within half a clearance
+/// of a tip of its own runs other than its ends, and no tip has more than
+/// two mouth gates ending on it: the two outer lines of a mouth may leave
+/// one tip when the other tip of that run lies between them, and a line
+/// cut at the walls it crosses leaves one gate on its tip.
 TEST(CouplerSession, ClosesAMouthWhoseLinesWouldRunOverTheSlotsWithOneLine) {
   const auto checkChip = [](const Benchmark& benchmark) {
     const auto planned = plan(benchmark);
@@ -1809,7 +1814,7 @@ TEST(CouplerSession, ClosesAMouthWhoseLinesWouldRunOverTheSlotsWithOneLine) {
       }
     }
     EXPECT_GT(tips.size(), 0U);
-    std::map<std::string, std::size_t> endingOn;
+    std::map<std::string, std::vector<std::string>> endingOn;
     std::size_t mouths = 0;
     for (const auto& edge : graph.at("edges")) {
       if (!edge.value("mouth", false)) {
@@ -1820,7 +1825,8 @@ TEST(CouplerSession, ClosesAMouthWhoseLinesWouldRunOverTheSlotsWithOneLine) {
       for (const auto& [name, tip] : tips) {
         if (std::hypot(tip.first - line.ax, tip.second - line.ay) <= 1.5 ||
             std::hypot(tip.first - line.bx, tip.second - line.by) <= 1.5) {
-          ++endingOn[name];
+          endingOn[name].push_back(edge.at("name").get<std::string>() + " " +
+                                   edge.at("ends").dump());
         }
       }
       for (const auto& end : edge.at("ends")) {
@@ -1846,8 +1852,12 @@ TEST(CouplerSession, ClosesAMouthWhoseLinesWouldRunOverTheSlotsWithOneLine) {
       }
     }
     EXPECT_GT(mouths, 0U);
-    for (const auto& [name, count] : endingOn) {
-      EXPECT_LE(count, 1U) << name;
+    for (const auto& [name, gates] : endingOn) {
+      std::string listed;
+      for (const auto& gate : gates) {
+        listed += gate + "; ";
+      }
+      EXPECT_LE(gates.size(), 2U) << name << ": " << listed;
     }
   };
   checkChip(nineQubit());
