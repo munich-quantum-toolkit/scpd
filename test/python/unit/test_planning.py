@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 from itertools import pairwise
 from pathlib import Path
@@ -28,6 +29,10 @@ from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
 from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
+from mqt.scpd.flatbuffers.artifacts.FinalPhase import FinalPhaseT
+from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
+from mqt.scpd.flatbuffers.artifacts.FinalVerdict import FinalVerdict
+from mqt.scpd.flatbuffers.artifacts.FinalWire import FinalWireT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
 from mqt.scpd.flatbuffers.artifacts.Lattice import LatticeT
@@ -38,9 +43,20 @@ from mqt.scpd.flatbuffers.design.Connection import ConnectionT
 from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
-from mqt.scpd.planning import Feedline, PlanningError, PlanningGeometry, planning_geometry
+from mqt.scpd.flatbuffers.geometry.RCoord import RCoordT
+from mqt.scpd.planning import (
+    BAD_VERDICTS,
+    LENGTH_VERDICTS,
+    Feedline,
+    PlanningError,
+    PlanningGeometry,
+    blockade,
+    planning_geometry,
+    verdict_names,
+)
+from mqt.scpd.plot import layout_svg
 from mqt.scpd.run import RunDirectory
-from mqt.scpd.steps import STEPS
+from mqt.scpd.steps import FINAL_PHASES, STEPS
 
 if TYPE_CHECKING:
     from mqt.scpd.flatbuffers.design.Chip import ChipT
@@ -473,8 +489,10 @@ def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:
     """The artifact has to be the one of the stage it is drawn as."""
     with pytest.raises(PlanningError, match="not a global routing"):
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "global")
-    with pytest.raises(PlanningError, match="not a planning stage"):
+    with pytest.raises(PlanningError, match="not a detail routing"):
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "detail")
+    with pytest.raises(PlanningError, match="not a planning stage"):
+        planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "geometry")
 
 
 def capacity_plan(*, cyclic: bool = False, chains: list[int] | None = None) -> bytes:
@@ -605,3 +623,136 @@ def test_a_capacity_artifact_has_to_be_a_capacity_plan(run: RunDirectory) -> Non
         planning_geometry(
             run.artifact("global").read_bytes(), chip_of(run), "global", capacity=run.artifact("assign").read_bytes()
         )
+
+
+def test_the_detail_routing_carries_a_drawn_wire_per_connection(run: RunDirectory) -> None:
+    """Each wire is the polyline of its bends, from its feed to its target, over the partitions."""
+    chip = chip_of(run)
+    geometry = planning_geometry(
+        run.artifact("detail").read_bytes(),
+        chip,
+        "detail",
+        run.artifact("capacity").read_bytes(),
+        run.artifact("assign").read_bytes(),
+    )
+
+    corridor = planning_geometry(
+        run.artifact("corridor").read_bytes(), chip, "corridor", run.artifact("capacity").read_bytes()
+    )
+    drawn = geometry.wires + geometry.resonators
+    assert len(drawn) == len(corridor.corridors)
+    for wire in drawn:
+        assert len(wire) >= 2
+        assert all(before != after for before, after in itertools.pairwise(wire))
+    assert geometry.partitions
+
+
+def test_the_detail_picture_draws_the_clearance_the_router_keeps(run: RunDirectory) -> None:
+    """The band is the design rule as the router converted it to whole cells, not the rule itself."""
+    chip = chip_of(run)
+    without = planning_geometry(run.artifact("detail").read_bytes(), chip, "detail")
+    assert without.clearance == pytest.approx(0.0)
+    assert "l-clearance" not in layout_svg(chip, planning=without)
+
+    with_rule = planning_geometry(run.artifact("detail").read_bytes(), chip, "detail", clearance=185.0)
+    grid = read_artifact(run.artifact("detail").read_bytes()).output.grid
+    cell = min(float(grid.cellWidth), float(grid.cellHeight))
+    assert with_rule.clearance == blockade(185.0, cell)
+    assert 0 < with_rule.clearance < 185.0
+    svg = layout_svg(chip, planning=with_rule)
+    assert "l-clearance" in svg
+
+
+def test_the_final_routing_carries_a_snapshot_of_every_phase(run: RunDirectory) -> None:
+    """Each phase draws what it had at its end, and the end state is what a caller sees without a phase."""
+    chip = chip_of(run)
+    data = run.artifact("final").read_bytes()
+    geometry = planning_geometry(data, chip, "final", assignment=run.artifact("assign").read_bytes(), clearance=185.0)
+
+    assert set(geometry.phases) == set(FINAL_PHASES)
+    assert geometry.phases["pre-feedline-routing"], "the routing before the feedlines drew nothing"
+    drawn = len(geometry.wires) + len(geometry.resonators) + len(geometry.inner_wires) + len(geometry.feedline_wires)
+    assert drawn == len(geometry.phases["feedline-constrained-refinement"])
+    # The clearance drawn is the whole number of cells the rule spans on the router grid.
+    assert 185.0 < geometry.clearance < 2 * 185.0
+
+
+def test_one_phase_of_the_final_routing_is_drawn_on_its_own(run: RunDirectory) -> None:
+    """Each phase draws the state it left; the first two draw the ring without couplers."""
+    chip = chip_of(run)
+    data = run.artifact("final").read_bytes()
+    routed = planning_geometry(data, chip, "final", phase="pre-feedline-routing")
+    refined = planning_geometry(data, chip, "final", phase="pre-feedline-refinement")
+    inserted = planning_geometry(data, chip, "final", phase="feedline-insertion")
+
+    assert routed.wires or routed.resonators
+    assert not refined.couplers
+    assert not refined.feedline_wires
+    # The coupler insertion is the first phase to draw the couplers and the edges of the chains.
+    assert inserted.couplers
+    assert inserted.feedline_wires
+    with pytest.raises(PlanningError, match="holds no phase 'nowhere'"):
+        planning_geometry(data, chip, "final", phase="nowhere")
+
+
+def test_the_final_routing_marks_the_wires_the_stage_left_failing(run: RunDirectory) -> None:
+    """The end state carries the stage's verdict per wire; a picture marks the unrouted, open and crossing ones."""
+    chip = chip_of(run)
+
+    def wire(cells: list[tuple[int, int]], verdict: int = 0) -> FinalWireT:
+        return FinalWireT(path=[RCoordT(x, y, 6) for x, y in cells], length=100.0, verdict=verdict)
+
+    grid = GridExtentT(width=100, height=100, origin=PointT(0.0, 0.0), cellWidth=10.0, cellHeight=10.0)
+    wires = [
+        wire([(1, 1), (5, 1)], FinalVerdict.Open),
+        wire([(1, 3), (5, 3)]),
+        wire([(1, 5), (5, 5)], FinalVerdict.Short),
+        wire([(1, 7), (5, 7)], FinalVerdict.Open | FinalVerdict.Long),
+    ]
+    inner = [wire([(8, 1), (8, 5)], FinalVerdict.Crossing)]
+    feedlines = [wire([], FinalVerdict.Unrouted), wire([(0, 9), (9, 9)], FinalVerdict.Squeezed)]
+    note = "squeezed at (4,9): 2 wires (3, 5) in 30 cells to the artwork, need 59"
+    feedlines[1].note = note
+    feedlines[1].marks = [RCoordT(4, 9, 6), RCoordT(4, 6, 6)]
+    snapshot = FinalPhaseT(
+        name="feedline-constrained-routing", wires=[wire([(1, 1), (5, 1)])], inner=[], feedlines=[], couplers=[]
+    )
+    data = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.FinalRouting,
+            output=FinalRoutingT(
+                grid=grid,
+                wires=wires,
+                inner=inner,
+                feedlines=feedlines,
+                feedlineEdges=[],
+                phases=[snapshot],
+                couplers=[],
+                bridges=[],
+                unresolved=[],
+            ),
+        )
+    )
+
+    geometry = planning_geometry(data, chip, "final")
+
+    assert [(name, verdicts) for name, verdicts, _ in geometry.failing] == [
+        ("0", ["open"]),
+        ("3", ["open", "long"]),
+        ("i0", ["crossing"]),
+        ("f0", ["unrouted"]),
+    ]
+    assert geometry.failing[0][2] == [(10.0, 10.0), (50.0, 10.0)]
+    assert geometry.failing[3][2] == []
+    assert [(name, verdicts) for name, verdicts, _ in geometry.off_length] == [
+        ("2", ["short"]),
+        ("3", ["open", "long"]),
+    ]
+    assert geometry.squeezed == [("f1", note, [(0.0, 90.0), (90.0, 90.0)], [(40.0, 90.0), (40.0, 60.0)])]
+    # A phase snapshot is not judged and carries no verdict.
+    assert not planning_geometry(data, chip, "final", phase="feedline-constrained-routing").failing
+    assert FinalVerdict.Unrouted | FinalVerdict.Open | FinalVerdict.Crossing == BAD_VERDICTS
+    assert FinalVerdict.Short | FinalVerdict.Long == LENGTH_VERDICTS
+    assert verdict_names(FinalVerdict.Short | FinalVerdict.Loop) == ["short", "meeting itself"]
+    assert verdict_names(0) == []

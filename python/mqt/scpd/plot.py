@@ -24,6 +24,7 @@ not needed.
 from __future__ import annotations
 
 import json
+import math
 from collections import defaultdict, deque
 from itertools import pairwise, starmap
 from typing import TYPE_CHECKING
@@ -83,7 +84,27 @@ PLANNING_COLORS: dict[str, str] = {
     "ring": "#6b675f",
     "corridor": "#2b2b2e",
     "slot": "#55524b",
+    "coupler": "#7b7b80",
+    "clearance": "#5f5f65",
+    "failing": "#e01e1e",
+    "offlength": "#c77c00",
+    "squeezed": "#5d3a9b",
 }
+
+#: Every drawn wire is a coplanar waveguide: the color of its ground edges and center conductor,
+#: the total width, the width of one edge and the width of the center, in screen pixels.
+CPW: dict[str, tuple[str, float, float, float]] = {
+    "feedline": ("#1b1a18", 7.6, 1.0, 2.2),
+    "resonator": ("#8c8780", 5.0, 0.8, 1.2),
+    "signal": ("#4a4a50", 5.0, 0.8, 1.2),
+    "inner": ("#4a4a50", 5.0, 0.8, 1.2),
+}
+
+#: The color of the gaps of a coplanar waveguide: the substrate.
+CPW_GAP = "#f7f7f6"
+
+#: The color of an air bridge's landing pads.
+BRIDGE_COLOR = "#7b7b80"
 
 #: The stroke width of each planning layer, in screen pixels.
 _PLANNING_WIDTHS: dict[str, float] = {
@@ -107,6 +128,10 @@ _HIDDEN: dict[str, frozenset[str]] = {
     "capacity": frozenset({"bottlenecks", "partitions"}),
     "assign": frozenset({"bottlenecks", "partitions", "ring"}),
     "corridor": frozenset({"bottlenecks", "partitions"}),
+    # The routing pictures show the copper over the partitions it had to stay inside, and nothing
+    # of the planning that led there.
+    "detail": frozenset({"bottlenecks", "partitions", "ring", "lattice"}),
+    "final": frozenset({"bottlenecks", "partitions", "ring", "lattice", "corridors"}),
 }
 
 #: The stages whose picture shades every partition in the gray of its tone.
@@ -125,6 +150,8 @@ _INSET = 20.0
 _INSET_WIDTH = 6.0
 #: The largest radius of a turn of the approach of a wire into its port, in layout units.
 _STUB_RADIUS = 60.0
+#: How far a corner of a drawn wire is rounded, in layout units: the bend radius of the copper.
+_BEND_ROUNDING = 90.0
 
 
 class PlotError(ValueError):
@@ -403,10 +430,163 @@ def _planning_layers(
                 f"{terminals}{terminations}</g>"
             )
         parts.append(f'<g class="l-feedline">{"".join(chains)}</g>')
+    _routing_layers(planning, parts, polyline, to_view, radius)
     return "".join(parts)
 
 
-def _planning_style(font: float) -> str:
+def _crossings(
+    wire: Sequence[tuple[float, float]], feedline: Sequence[tuple[float, float]]
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """Where a wire crosses a feedline edge, in layout units.
+
+    Returns:
+        The crossing point and the unit heading of the wire there, one per crossing.
+    """
+    found = []
+    for (ax, ay), (bx, by) in pairwise(wire):
+        rx, ry = bx - ax, by - ay
+        for (cx, cy), (dx, dy) in pairwise(feedline):
+            sx, sy = dx - cx, dy - cy
+            den = rx * sy - ry * sx
+            if abs(den) < 1e-9:
+                continue
+            t = ((cx - ax) * sy - (cy - ay) * sx) / den
+            u = ((cx - ax) * ry - (cy - ay) * rx) / den
+            if 0 <= t <= 1 and 0 <= u <= 1:
+                length = math.hypot(rx, ry)
+                found.append(((ax + t * rx, ay + t * ry), (rx / length, ry / length)))
+    return found
+
+
+def _smooth_data(points: Sequence[tuple[float, float]], radius: float) -> str:
+    """A polyline in picture coordinates with its corners filleted, as the copper is drawn.
+
+    Returns:
+        The path data.
+    """
+    if len(points) < 3:
+        return "".join(f"{'M' if i == 0 else 'L'}{_number(x)} {_number(y)}" for i, (x, y) in enumerate(points))
+    out = [f"M{_number(points[0][0])} {_number(points[0][1])}"]
+    for i in range(1, len(points) - 1):
+        (ax, ay), (bx, by), (cx, cy) = points[i - 1], points[i], points[i + 1]
+        la, lc = math.hypot(bx - ax, by - ay), math.hypot(cx - bx, cy - by)
+        r = min(radius, la / 2, lc / 2)
+        p1 = (bx + (ax - bx) * r / la, by + (ay - by) * r / la) if la else (bx, by)
+        p2 = (bx + (cx - bx) * r / lc, by + (cy - by) * r / lc) if lc else (bx, by)
+        out.append(f"L{_number(p1[0])} {_number(p1[1])}Q{_number(bx)} {_number(by)} {_number(p2[0])} {_number(p2[1])}")
+    out.append(f"L{_number(points[-1][0])} {_number(points[-1][1])}")
+    return "".join(out)
+
+
+def _routing_layers(
+    planning: PlanningGeometry,
+    parts: list[str],
+    polyline: Callable[..., str],
+    to_view: Callable[[float, float], tuple[float, float]],
+    radius: float,
+) -> None:
+    """Draw what the routing stages produced.
+
+    The copper is drawn as coplanar waveguides, with the room it keeps, the couplers, the air
+    bridges where a wire crosses a feedline, and the wires the Final stage left failing.
+    """
+    kinds = (
+        ("signal", planning.wires),
+        ("resonator", planning.resonators),
+        ("inner", planning.inner_wires),
+        ("feedline", planning.feedline_wires),
+    )
+    if planning.clearance > 0 and any(wires for _, wires in kinds):
+        # The room every wire is entitled to: a band one clearance wide around it, under the
+        # copper. The width is in layout units, because a clearance is a physical distance. Two
+        # wires closer than the clearance are two bands that overlap, and the overlap reads darker.
+        bands = "".join(f'<path d="{polyline(wire)}"/>' for _, wires in kinds for wire in wires)
+        parts.append(f'<g class="l-clearance">{bands}</g>')
+    if planning.couplers:
+        parts.append(
+            f'<g class="l-coupler"><path d="{"".join(polyline(ring, close=True) for ring in planning.couplers)}"/></g>'
+        )
+    for name, wires in kinds:
+        if not wires:
+            continue
+        # A coplanar waveguide is three strokes: the ground edges, the gaps in the color of the
+        # substrate and the center conductor. Within one group every edge is drawn before every
+        # gap and every gap before every center, so that wires which meet merge as copper would.
+        data = [_smooth_data(list(starmap(to_view, wire)), _BEND_ROUNDING) for wire in wires]
+        parts.append(
+            f'<g class="l-{name} cpw">'
+            + "".join(f'<path class="edge" d="{d}"/>' for d in data)
+            + "".join(f'<path class="gap" d="{d}"/>' for d in data)
+            + "".join(f'<path class="core" d="{d}"/>' for d in data)
+            + "</g>"
+        )
+    if planning.feedline_wires and (planning.wires or planning.inner_wires):
+        # An air bridge where a signal wire crosses a feedline: two landing pads, one either side
+        # of the feedline, a clearance apart along the wire.
+        span = planning.clearance if planning.clearance > 0 else 2 * radius
+        pads = []
+        for wire in (*planning.wires, *planning.inner_wires):
+            for feedline in planning.feedline_wires:
+                for (px, py), (dx, dy) in _crossings(wire, feedline):
+                    for side in (-1, 1):
+                        fx, fy = px + side * dx * span / 2, py + side * dy * span / 2
+                        pads.append(polyline(_rect((fx, fy), (dx, dy), 0.12 * span, 0.3 * span), close=True))
+        if pads:
+            parts.append(f'<g class="l-bridge"><path d="{"".join(pads)}"/></g>')
+    if planning.off_length:
+        # The resonators off their target length, under the failing layer: both figures of the
+        # last phase are in the picture, and the one that matters more is drawn last.
+        marks = "".join(
+            f'<path d="{polyline(points)}"><title>{escape("wire " + name + ": " + ", ".join(verdicts))}</title></path>'
+            for name, verdicts, points in planning.off_length
+            if len(points) >= 2
+        )
+        parts.append(f'<g class="l-offlength">{marks}</g>')
+    if planning.failing:
+        # What the stage's result counted, one element per wire so that hovering one names it and
+        # what is held against it. Over every other layer, so that the mark is found at the zoom
+        # of a whole chip.
+        marks = "".join(
+            f'<path d="{polyline(points)}"><title>{escape("wire " + name + ": " + ", ".join(verdicts))}</title></path>'
+            for name, verdicts, points in planning.failing
+            if len(points) >= 2
+        )
+        parts.append(f'<g class="l-failing">{marks}</g>')
+    if planning.squeezed:
+        # The edges the insertion found leaving too little room, each with the insertion's own
+        # figures in its tooltip, and the line it measured, from the edge to the wall it hit.
+        marks = "".join(
+            f'<path d="{polyline(points)}"><title>{escape("wire " + name + ": " + note)}</title></path>'
+            for name, note, points, _ in planning.squeezed
+            if len(points) >= 2
+        )
+        lines = "".join(
+            f'<path class="m" d="{polyline(line)}"><title>{escape("wire " + name + ": " + note)}</title></path>'
+            f'<circle cx="{_number(wx)}" cy="{_number(wy)}" r="{_number(radius * 0.6)}"/>'
+            for name, note, _, line in planning.squeezed
+            if len(line) >= 2
+            for wx, wy in [to_view(*line[-1])]
+        )
+        parts.append(f'<g class="l-squeezed">{marks}{lines}</g>')
+
+
+def _rect(
+    center: tuple[float, float], along: tuple[float, float], half_along: float, half_across: float
+) -> list[tuple[float, float]]:
+    """A rectangle around a center, with its length along a unit direction.
+
+    Returns:
+        The four corners, in layout units.
+    """
+    (cx, cy), (dx, dy) = center, along
+    nx, ny = -dy, dx
+    return [
+        (cx + sa * half_along * dx + sc * half_across * nx, cy + sa * half_along * dy + sc * half_across * ny)
+        for sa, sc in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+    ]
+
+
+def _planning_style(font: float, planning: PlanningGeometry | None = None) -> str:
     """The stroke of every planning layer, and the type of the gate labels.
 
     Returns:
@@ -433,12 +613,100 @@ def _planning_style(font: float) -> str:
         f"g.l-feedline circle,g.l-feedline rect{{fill:{FEEDLINE_COLOR};stroke:#ffffff;stroke-width:1.2;"
         "vector-effect:non-scaling-stroke}"
     )
+    style += _routing_style(planning)
+    return style
+
+
+def _routing_style(planning: PlanningGeometry | None) -> str:
+    """The strokes of the routing layers.
+
+    The coplanar waveguides, their room, the couplers, the bridges and the marks of the failing
+    wires.
+
+    Returns:
+        The CSS rules.
+    """
+    style = "g.cpw>path{fill:none;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}"
+    for name, (color, total, edge, core) in CPW.items():
+        style += (
+            f"g.l-{name}>path.edge{{stroke:{color};stroke-width:{_number(total)}}}"
+            f"g.l-{name}>path.gap{{stroke:{CPW_GAP};stroke-width:{_number(total - 2 * edge)}}}"
+            f"g.l-{name}>path.core{{stroke:{color};stroke-width:{_number(core)}}}"
+        )
+    style += (
+        f"g.l-coupler>path{{fill:{PLANNING_COLORS['coupler']};fill-opacity:.9;stroke:{METAL_EDGE};stroke-width:1.2;"
+        "vector-effect:non-scaling-stroke}"
+        f"g.l-bridge>path{{fill:{BRIDGE_COLOR};stroke:#ffffff;stroke-width:1;paint-order:stroke;"
+        "vector-effect:non-scaling-stroke}"
+    )
+    if planning is None:
+        return style
+    # The marks of the Final stage's verdicts are styled only where the picture has them, so that
+    # a picture without a failing wire names no failing layer at all.
+    if planning.off_length:
+        style += (
+            f"g.l-offlength>path{{fill:none;stroke:{PLANNING_COLORS['offlength']};stroke-width:3.4;"
+            "stroke-opacity:.8;stroke-dasharray:14 5;stroke-linejoin:round;vector-effect:non-scaling-stroke}"
+        )
+    if planning.failing:
+        style += (
+            f"g.l-failing>path{{fill:none;stroke:{PLANNING_COLORS['failing']};stroke-width:3.4;"
+            "stroke-opacity:.85;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}"
+        )
+    if planning.squeezed:
+        style += (
+            f"g.l-squeezed>path{{fill:none;stroke:{PLANNING_COLORS['squeezed']};stroke-width:3.4;"
+            "stroke-opacity:.85;stroke-dasharray:10 6;stroke-linejoin:round;vector-effect:non-scaling-stroke}"
+            "g.l-squeezed>path.m{stroke-dasharray:none;stroke-width:5;stroke-opacity:1;stroke-linecap:round}"
+            f"g.l-squeezed>circle{{fill:{PLANNING_COLORS['squeezed']};stroke:none}}"
+        )
+    clearance = planning.clearance
+    if clearance > 0:
+        # The band is translucent, so that a single band reads at the zoom of a whole chip and an
+        # overlap of two reads darker.
+        style += (
+            f"g.l-clearance>path{{fill:none;stroke:{PLANNING_COLORS['clearance']};"
+            f"stroke-width:{_number(clearance)};stroke-opacity:.26;stroke-linejoin:round;stroke-linecap:round}}"
+        )
     return style
 
 
 #: The type of every label.
 _FONT = "Inter,'SF Pro Text',system-ui,-apple-system,'Segoe UI',sans-serif"
 _MONO = "ui-monospace,'SF Mono',Menlo,Consolas,monospace"
+
+
+def _routing_legend(planning: PlanningGeometry | None, left: float, view_height: float, font: float) -> str:
+    """The legend entries of the routing pictures: the failing wires and the resonators off their length.
+
+    Each is counted as the stage counts it, the unrouted wires included, in the stroke it is drawn
+    with.
+
+    Returns:
+        The SVG groups, empty when the picture has neither.
+    """
+    if planning is None:
+        return ""
+    entries = []
+    if planning.failing:
+        entries.append(("failing", len(planning.failing), PLANNING_COLORS["failing"], ""))
+    if planning.off_length:
+        entries.append((
+            "off its length",
+            len(planning.off_length),
+            PLANNING_COLORS["offlength"],
+            ' stroke-dasharray="6 3"',
+        ))
+    legend = ""
+    for slot, (name, count, color, dash) in enumerate(entries):
+        x = left + slot * 11 * font
+        legend += (
+            f'<g class="legend" transform="translate({_number(x)},{_number(view_height - 0.45 * font)})">'
+            f'<path d="M0 {_number(-0.35 * font)}L{_number(0.9 * font)} {_number(-0.35 * font)}" fill="none" '
+            f'stroke="{color}" stroke-width="3.4" stroke-linecap="round"{dash} vector-effect="non-scaling-stroke"/>'
+            f'<text x="{_number(1.2 * font)}" y="0">{name} ({count})</text></g>'
+        )
+    return legend
 
 
 def _frame(box: tuple[float, float, float, float], view_height: float, pad: float, font: float, caption: str) -> str:
@@ -684,6 +952,7 @@ def layout_svg(
         if centers
         else ""
     )
+    legend += _routing_legend(planning, pad + (9 * font if centers else 0.0), view_height, font)
 
     # A millimeter grid under the metal: a fine line every 250 um, a stronger one every 1 mm.
     left, top, right, bottom = box
@@ -756,7 +1025,7 @@ def layout_svg(
         f"g.l-raster>path{{fill:{RASTER_FILL};stroke:none}}"
     )
     if overlay:
-        style += _planning_style(0.8 * font) + _LIGHT_GROUND
+        style += _planning_style(0.8 * font, planning) + _LIGHT_GROUND
     name = escape(title)
     heading = ""
     if title:

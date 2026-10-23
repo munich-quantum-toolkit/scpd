@@ -158,8 +158,8 @@ def test_plot_writes_the_layout_and_refuses_later_stages(tmp_path: Path, capsys:
     assert output.read_text(encoding="utf-8").startswith("<svg")
     assert capsys.readouterr().out.startswith(f"✓ {output}  ")
 
-    assert main(["plot", "-c", CONFIG, "--stage", "final", "-o", str(output)]) == 1
-    assert "✗ stage 'final' arrives with phase 4" in capsys.readouterr().err
+    assert main(["plot", "-c", CONFIG, "--stage", "aligned", "-o", str(output)]) == 1
+    assert "✗ stage 'aligned' arrives with phase 4" in capsys.readouterr().err
 
 
 def test_render_writes_a_layout_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -862,9 +862,11 @@ def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
         capacity: bytes | None = None,
         assignment: bytes | None = None,
         global_routing: bytes | None = None,
+        clearance: float = 0.0,
+        phase: str | None = None,
     ) -> PlanningGeometry:
         handed.append(global_routing)
-        return drawing(data, chip, stage, capacity, assignment, global_routing)
+        return drawing(data, chip, stage, capacity, assignment, global_routing, clearance, phase)
 
     monkeypatch.setattr(cli, "planning_geometry", planning_geometry)
     output = tmp_path / f"{stage}.svg"

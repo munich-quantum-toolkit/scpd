@@ -58,6 +58,23 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "feedlines": (32, 0, "plan.feedline"),
     "blocked": (33, 0, "plan.blocked"),
     "budgets": (34, 0, "plan.budget"),
+    # The routing stages: the copper by kind, the room it keeps, the couplers and the marks of the
+    # wires the Final stage left failing. One layer per phase of the Final stage as well, so that
+    # one GDS shows all five and each can be switched off on its own.
+    "wires": (40, 0, "route.wire"),
+    "resonators": (41, 0, "route.resonator"),
+    "inner_wires": (42, 0, "route.inner-wire"),
+    "feedline_wires": (43, 0, "route.feedline"),
+    "clearance": (44, 0, "route.clearance"),
+    "couplers": (45, 0, "route.coupler"),
+    "failing": (46, 0, "route.failing"),
+    "offlength": (47, 0, "route.off-length"),
+    "squeezed": (48, 0, "route.squeezed"),
+    "phase.pre-feedline-routing": (50, 0, "final.pre-feedline-routing"),
+    "phase.pre-feedline-refinement": (51, 0, "final.pre-feedline-refinement"),
+    "phase.feedline-insertion": (52, 0, "final.feedline-insertion"),
+    "phase.feedline-constrained-routing": (53, 0, "final.feedline-constrained-routing"),
+    "phase.feedline-constrained-refinement": (54, 0, "final.feedline-constrained-refinement"),
 }
 
 #: The width of a planning line, in layout units. A path needs a width to be a shape at all; this
@@ -212,6 +229,45 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
         if len(route) >= 2:
             top.shapes(layer("corridors")).insert(path(route))
             written += 1
+    for name, routes in (
+        ("wires", planning.wires),
+        ("resonators", planning.resonators),
+        ("inner_wires", planning.inner_wires),
+        ("feedline_wires", planning.feedline_wires),
+    ):
+        for route in routes:
+            if len(route) >= 2:
+                top.shapes(layer(name)).insert(path(route))
+                written += 1
+    for name, drawn in planning.phases.items():
+        key = f"phase.{name}"
+        if key not in PLANNING_LAYERS:
+            continue
+        for route in drawn:
+            if len(route) >= 2:
+                top.shapes(layer(key)).insert(path(route))
+                written += 1
+    for ring in planning.couplers:
+        top.shapes(layer("couplers")).insert(kdb.DPolygon(list(starmap(kdb.DPoint, ring))))
+        written += 1
+    for name, marked in (("failing", planning.failing), ("offlength", planning.off_length)):
+        for _, _, route in marked:
+            if len(route) >= 2:
+                top.shapes(layer(name)).insert(path(route))
+                written += 1
+    for _, _, route, line in planning.squeezed:
+        for shape in (route, line):
+            if len(shape) >= 2:
+                top.shapes(layer("squeezed")).insert(path(shape))
+                written += 1
+    # The room every wire keeps, as a path one clearance wide: the design rule as the stage
+    # converted it onto its grid. Two wires closer than that are two of these that overlap, which
+    # a boolean on this layer finds.
+    if planning.clearance > 0:
+        for route in (*planning.wires, *planning.resonators, *planning.inner_wires, *planning.feedline_wires):
+            if len(route) >= 2:
+                top.shapes(layer("clearance")).insert(kdb.DPath(list(starmap(kdb.DPoint, route)), planning.clearance))
+                written += 1
     for x, y in planning.slots:
         top.shapes(layer("slots")).insert(square(x, y, PLANNING_MARKER_RADIUS / 3))
         written += 1

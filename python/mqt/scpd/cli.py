@@ -256,7 +256,7 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         RunError: If the artifact of the stage is missing from the run, or if it or an earlier
             artifact was made from inputs the run no longer holds.
     """
-    if STAGES[args.stage] not in {"phase 1", "phase 3"}:
+    if args.stage != "layout" and args.stage not in PLANNING_STAGES:
         msg = f"stage '{args.stage}' arrives with {STAGES[args.stage]}"
         raise PlotError(msg)
     if args.run_dir is None:
@@ -275,14 +275,29 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
     # The global picture is drawn over the cells the grid blocked, and the assign and corridor
     # pictures over the partitions their chords and wires run through, with the inner circuit of the
     # global step. The corridor picture also shows the feedlines its resonator wires start at.
+    # The detail picture is drawn over the partitions its wires had to stay inside; the two routing
+    # pictures tell a resonator from a plain wire by the assignment.
     plan = directory.artifact("capacity")
-    capacity = plan.read_bytes() if args.stage in {"global", "assign", "corridor"} and plan.is_file() else None
+    over_plan = args.stage in {"global", "assign", "corridor", "detail"}
+    capacity = plan.read_bytes() if over_plan and plan.is_file() else None
     chosen = directory.artifact("assign")
-    assignment = chosen.read_bytes() if args.stage == "corridor" and chosen.is_file() else None
+    assignment = (
+        chosen.read_bytes() if args.stage in {"corridor", "detail", "final"} and chosen.is_file() else None
+    )
     solved = directory.artifact("global")
     routing = solved.read_bytes() if args.stage in {"assign", "corridor"} and solved.is_file() else None
+    # The routing pictures draw the room every wire keeps, which is the design rule as the stage
+    # converted it onto its grid.
+    spacing = config.rules.minWireSpacing if config.rules is not None else 0.0
     geometry = planning_geometry(
-        artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, assignment, routing
+        artifact.read_bytes(),
+        decode_chip(chip_bytes),
+        args.stage,
+        capacity,
+        assignment,
+        routing,
+        clearance=spacing,
+        phase=getattr(args, "phase", None),
     )
     return chip_bytes, title, geometry
 
@@ -425,6 +440,11 @@ def _add_drawing_options(parser: argparse.ArgumentParser) -> None:
     source.add_argument("--run-dir", type=Path, help="the run directory to draw the chip and a stage from")
     _add_chip_option(parser)
     parser.add_argument("--stage", choices=list(STAGES), default="layout", help="the stage to draw")
+    parser.add_argument(
+        "--phase",
+        choices=list(FINAL_PHASES),
+        help="for the final stage, the phase whose snapshot is drawn; the end state by default",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -534,6 +554,8 @@ def _check_combinations(parser: argparse.ArgumentParser, args: argparse.Namespac
     if args.command in {"plot", "render"}:
         if args.run_dir is not None and args.chip is not None:
             parser.error(f"{args.command} --run-dir draws the chip the run carries; it takes no --chip")
+        if args.phase is not None and args.stage != "final":
+            parser.error(f"{args.command} --phase names a phase of the final stage; pass --stage final")
         if args.stage in PLANNING_STAGES and args.run_dir is None:
             parser.error(f"{args.command} --stage {args.stage} is drawn from a run; pass --run-dir")
 

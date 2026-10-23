@@ -25,21 +25,54 @@ from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityElement import CapacityElement
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
+from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
+from .flatbuffers.artifacts.FinalVerdict import FinalVerdict
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
+from .flatbuffers.design.AssignedRole import AssignedRole
 from .run import STAGE_FILES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.design.Chip import ChipT
 
-__all__ = ["PLANNING_STAGES", "Feedline", "PlanningError", "PlanningGeometry", "planning_geometry"]
+__all__ = ["PLANNING_STAGES", "Feedline", "PlanningError", "PlanningGeometry", "planning_geometry", "verdict_names"]
 
 #: The planning stages that can be drawn, and the artifact each is read from.
-PLANNING_STAGES: dict[str, str] = {
-    stage: file for stage, file in STAGE_FILES.items() if stage in {"capacity", "global", "assign", "corridor"}
-}
+PLANNING_STAGES: dict[str, str] = dict(STAGE_FILES)
+
+#: The verdicts of the Final stage that count a wire as failing: unrouted, open or crossing a
+#: feedline. A way that meets itself is carried in the artifact and named in a wire's tooltip but
+#: does not mark it; the two length verdicts have a layer of their own, ``LENGTH_VERDICTS``.
+BAD_VERDICTS: int = FinalVerdict.Unrouted | FinalVerdict.Open | FinalVerdict.Crossing
+
+#: The verdicts about a resonator's length: shorter or longer than ``target_resonator_length`` by
+#: more than the tolerance. They have a layer of their own under ``BAD_VERDICTS``, so that a wire
+#: with both reads as failing: a wire off its length is still routed.
+LENGTH_VERDICTS: int = FinalVerdict.Short | FinalVerdict.Long
+
+#: The name of every verdict bit, in the order the stage's own line names them.
+VERDICT_NAMES: tuple[tuple[int, str], ...] = (
+    (FinalVerdict.Unrouted, "unrouted"),
+    (FinalVerdict.Open, "open"),
+    (FinalVerdict.Short, "short"),
+    (FinalVerdict.Long, "long"),
+    (FinalVerdict.Crossing, "crossing"),
+    (FinalVerdict.Loop, "meeting itself"),
+    (FinalVerdict.Squeezed, "squeezed"),
+)
+
+
+def verdict_names(verdict: int) -> list[str]:
+    """The verdicts a wire's bits stand for, by name.
+
+    Returns:
+        The names, in the order the stage's line uses; empty for a wire nothing is held against.
+    """
+    return [name for bit, name in VERDICT_NAMES if verdict & bit]
+
 
 #: A point in layout units.
 Point = tuple[float, float]
@@ -123,6 +156,37 @@ class PlanningGeometry:
     #: Each feedline chain of the assignment, from its first launcher through the feeds of its
     #: resonators to its last.
     feedlines: list[Feedline] = field(default_factory=list)
+    #: Each plain wire of the ring as the routing stages drew it, at its bends.
+    wires: list[list[Point]] = field(default_factory=list)
+    #: Each resonator wire of the ring, likewise. The Detail stage tells the two apart by the
+    #: assignment; the Final stage by its own artifact.
+    resonators: list[list[Point]] = field(default_factory=list)
+    #: Each wire of the inner circuit, likewise.
+    inner_wires: list[list[Point]] = field(default_factory=list)
+    #: Each edge of the feedline chains as the Final stage drew it, likewise.
+    feedline_wires: list[list[Point]] = field(default_factory=list)
+    #: The body of every coupler the Final stage placed, as a closed ring of four corners.
+    couplers: list[list[Point]] = field(default_factory=list)
+    #: The wires the Final stage left failing at its end, ``BAD_VERDICTS``: each as the wire's id
+    #: in the stage's own lines (``183``, ``i12``, ``f5``), the names of every verdict against it,
+    #: and its bends. Only the end state is judged, so a picture of one phase carries none; an
+    #: unrouted wire has no bends and is carried with an empty polyline, so that it is counted.
+    failing: list[tuple[str, list[str], list[Point]]] = field(default_factory=list)
+    #: The resonators the Final stage left off their target length, ``LENGTH_VERDICTS``, in the
+    #: shape of ``failing``.
+    off_length: list[tuple[str, list[str], list[Point]]] = field(default_factory=list)
+    #: The feedline edges the coupler insertion found leaving too little room beside them for the
+    #: wires that have to pass (``Squeezed``): the edge's id, the insertion's note, its bends and
+    #: the line the insertion measured, from the edge to the wall of its channel.
+    squeezed: list[tuple[str, str, list[Point], list[Point]]] = field(default_factory=list)
+    #: What the Final stage had drawn at the end of each of its phases, by phase name: every wire
+    #: of the snapshot as its bends. A phase changes what the phase before it produced, so a
+    #: picture of one cannot be derived from the end state.
+    phases: dict[str, list[list[Point]]] = field(default_factory=dict)
+    #: The clearance the routing stage keeps between two wires, in layout units, or zero when the
+    #: caller named no design rule. It is ``min_wire_spacing`` as the stage converted it to whole
+    #: cells, which is what the stage enforces, not the rule itself.
+    clearance: float = 0.0
 
     def is_empty(self) -> bool:
         """Whether the stage produced nothing to draw.
@@ -147,6 +211,11 @@ class PlanningGeometry:
             self.stubs,
             self.slots,
             self.feedlines,
+            self.wires,
+            self.resonators,
+            self.inner_wires,
+            self.feedline_wires,
+            self.phases,
         ))
 
 
@@ -724,6 +793,218 @@ def _assignment_of(assignment: bytes) -> AssignmentT:
     return chosen
 
 
+def _bends(path: list[Any], to_layout: Callable[[int, int], Point]) -> list[Point]:
+    """One drawn wire as its bends, in layout units.
+
+    A wire is stored cell by cell, and a run of cells in one direction is a straight line, so only
+    the cells where the direction changes are kept: a few dozen points draw the same polyline as a
+    few thousand cells.
+
+    Returns:
+        The corners of the polyline, ends included.
+    """
+    if not path:
+        return []
+    kept = [0]
+    for index in range(1, len(path) - 1):
+        before, here, after = path[index - 1], path[index], path[index + 1]
+        if (here.x - before.x, here.y - before.y) != (after.x - here.x, after.y - here.y):
+            kept.append(index)
+    if len(path) > 1:
+        kept.append(len(path) - 1)
+    return [to_layout(path[index].x, path[index].y) for index in kept]
+
+
+def blockade(wire_spacing: float, cell: float) -> float:
+    """The clearance the Detail stage keeps for a rule of ``wire_spacing`` on cells of ``cell`` units.
+
+    The rule is how many cells it spans, rounded up, less one; on the benchmark chips 158 to 180
+    layout units for a rule of 185.
+
+    Returns:
+        The clearance in layout units, or zero when the rule or the cell is not positive.
+    """
+    if wire_spacing <= 0 or cell <= 0:
+        return 0.0
+    return max(0.0, math.ceil(wire_spacing / cell) - 1) * cell
+
+
+def spacing_cells(wire_spacing: float, cell: float) -> float:
+    """The clearance the Final stage keeps for a rule of ``wire_spacing``, in layout units.
+
+    The router grid is fine enough to span the rule outright, so the clearance is the whole number
+    of cells the rule spans: 19 cells of about ten layout units for a rule of 185.
+
+    Returns:
+        The clearance in layout units, or zero when the rule or the cell is not positive.
+    """
+    if wire_spacing <= 0 or cell <= 0:
+        return 0.0
+    return math.ceil(wire_spacing / cell) * cell
+
+
+def _resonator_slots(assignment: AssignmentT | None) -> set[int]:
+    """The ring slots whose connection is a resonator, by the assignment.
+
+    Returns:
+        The indices into the connections of the assignment that carry a resonator.
+    """
+    if assignment is None:
+        return set()
+    return {
+        index
+        for index, connection in enumerate(_entries(assignment.connections))
+        if int(connection.sourceRole or 0) == AssignedRole.ResonatorSource
+    }
+
+
+def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: float, resonators: set[int]) -> None:
+    """Fill the layers a detail routing carries."""
+    grid = routing.grid
+    if grid is None or grid.origin is None:
+        return
+    geometry.clearance = blockade(wire_spacing, min(float(grid.cellWidth), float(grid.cellHeight)))
+
+    def to_layout(x: int, y: int) -> Point:
+        # A cell is named by its corner in the frame the partition geometry uses, so the middle of
+        # the cell is half a step on, where the corridor stage puts its own places.
+        return (
+            float(grid.origin.x) + (x + 0.5) * float(grid.cellWidth),
+            float(grid.origin.y) + (y + 0.5) * float(grid.cellHeight),
+        )
+
+    for index, wire in enumerate(_entries(routing.wires)):
+        points = _bends(_entries(wire.path), to_layout)
+        if len(points) >= 2:
+            (geometry.resonators if index in resonators else geometry.wires).append(points)
+    for wire in _entries(routing.inner):
+        points = _bends(_entries(wire.path), to_layout)
+        if len(points) >= 2:
+            geometry.inner_wires.append(points)
+
+
+def _final(
+    routing: FinalRoutingT,
+    geometry: PlanningGeometry,
+    wire_spacing: float,
+    phase: str | None,
+    resonators: set[int],
+) -> None:
+    """Fill the layers a final routing carries, for one phase or for the end state.
+
+    Raises:
+        PlanningError: If the run holds no snapshot of the phase asked for.
+    """
+    grid = routing.grid
+    if grid is None or grid.origin is None:
+        return
+    geometry.clearance = spacing_cells(wire_spacing, min(float(grid.cellWidth), float(grid.cellHeight)))
+
+    def to_layout(x: int, y: int) -> Point:
+        # A cell of the router grid is a point: cell (0, 0) sits on the corner of the chip box.
+        return (
+            float(grid.origin.x) + x * float(grid.cellWidth),
+            float(grid.origin.y) + y * float(grid.cellHeight),
+        )
+
+    def drawn(wires: list[Any] | None) -> list[list[Point]]:
+        found = []
+        for wire in _entries(wires):
+            points = _bends(_entries(wire.path), to_layout)
+            if len(points) >= 2:
+                found.append(points)
+        return found
+
+    def split(wires: list[Any] | None) -> tuple[list[list[Point]], list[list[Point]]]:
+        plain: list[list[Point]] = []
+        resonant: list[list[Point]] = []
+        for index, wire in enumerate(_entries(wires)):
+            points = _bends(_entries(wire.path), to_layout)
+            if len(points) >= 2:
+                (resonant if index in resonators else plain).append(points)
+        return plain, resonant
+
+    def bodies(couplers: list[Any] | None) -> list[list[Point]]:
+        # A coupler is a rectangle of its length along its rotation and its height across it,
+        # around its center.
+        rings = []
+        for coupler in _entries(couplers):
+            if coupler.center is None:
+                continue
+            rotation = int(coupler.rotation or 0)
+            angle = math.radians(45.0 * (rotation - 1)) if rotation > 0 else 0.0
+            along = (math.cos(angle), math.sin(angle))
+            across = (-math.sin(angle), math.cos(angle))
+            half_length = 0.5 * float(coupler.length)
+            half_height = 0.5 * float(coupler.height)
+            cx, cy = float(coupler.center.x), float(coupler.center.y)
+            rings.append([
+                (
+                    cx + sl * half_length * along[0] + sh * half_height * across[0],
+                    cy + sl * half_length * along[1] + sh * half_height * across[1],
+                )
+                for sl, sh in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+            ])
+        return rings
+
+    def marked(wires: list[Any] | None, prefix: str, bits: int) -> list[tuple[str, list[str], list[Point]]]:
+        # The id is the one the stage's lines use: the slot of a ring wire, `i` and the slot of an
+        # inner wire, `f` and the index of a feedline edge.
+        found = []
+        for index, wire in enumerate(_entries(wires)):
+            verdict = int(wire.verdict or 0)
+            if verdict & bits:
+                found.append((f"{prefix}{index}", verdict_names(verdict), _bends(_entries(wire.path), to_layout)))
+        return found
+
+    def squeezed(feedlines: list[Any] | None) -> list[tuple[str, str, list[Point], list[Point]]]:
+        return [
+            (
+                f"f{index}",
+                str(wire.note or ""),
+                _bends(_entries(wire.path), to_layout),
+                [to_layout(int(mark.x), int(mark.y)) for mark in _entries(wire.marks)],
+            )
+            for index, wire in enumerate(_entries(feedlines))
+            if int(wire.verdict or 0) & FinalVerdict.Squeezed
+        ]
+
+    for snapshot in _entries(routing.phases):
+        name = snapshot.name or ""
+        geometry.phases[name] = drawn(snapshot.wires) + drawn(snapshot.inner) + drawn(snapshot.feedlines)
+
+    chosen = None
+    for snapshot in _entries(routing.phases):
+        if (snapshot.name or "") == phase:
+            chosen = snapshot
+    if chosen is None and phase:
+        # A run stopped early carries only the phases it ran, and drawing the end state under
+        # another phase's name would show the wrong thing without saying so.
+        held = ", ".join(f"'{name}'" for name in geometry.phases if name) or "none"
+        msg = f"the run holds no phase '{phase}' of the final stage; it holds {held}"
+        raise PlanningError(msg)
+    state = chosen if chosen is not None else routing
+    geometry.wires, geometry.resonators = split(state.wires)
+    geometry.inner_wires = drawn(state.inner)
+    geometry.feedline_wires = drawn(state.feedlines)
+    geometry.couplers = bodies(state.couplers)
+    geometry.squeezed = squeezed(state.feedlines)
+    if chosen is None:
+        # The verdicts are the end state's alone: the phase snapshots are not judged.
+        geometry.failing = (
+            marked(routing.wires, "", BAD_VERDICTS)
+            + marked(routing.inner, "i", BAD_VERDICTS)
+            + marked(routing.feedlines, "f", BAD_VERDICTS)
+        )
+        # A wire that is both failing and off its length is on both layers, and the failing layer
+        # is drawn over this one, so what shows is the verdict that matters more.
+        geometry.off_length = (
+            marked(routing.wires, "", LENGTH_VERDICTS)
+            + marked(routing.inner, "i", LENGTH_VERDICTS)
+            + marked(routing.feedlines, "f", LENGTH_VERDICTS)
+        )
+
+
 def planning_geometry(
     data: bytes,
     chip: ChipT,
@@ -731,6 +1012,8 @@ def planning_geometry(
     capacity: bytes | None = None,
     assignment: bytes | None = None,
     global_routing: bytes | None = None,
+    clearance: float = 0.0,
+    phase: str | None = None,
 ) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
@@ -746,12 +1029,18 @@ def planning_geometry(
             its target port.
         global_routing: The global artifact of the same run, for the assign and corridor stages,
             which are drawn with the lattice edges that the inner circuit selected.
+        clearance: The design rule ``min_wire_spacing``, in layout units. The detail and final
+            stages convert it to the whole number of cells their router works in and draw a band
+            of that width around every wire, so that two wires closer than the router's own
+            clearance are two bands that overlap.
+        phase: For the final stage, the phase whose snapshot is drawn; None draws the end state.
 
     Returns:
         The geometry, in layout units.
 
     Raises:
-        PlanningError: If the stage is not a planning stage, or the artifact is not its output.
+        PlanningError: If the stage is not a planning stage, the artifact is not its output, or
+            the run holds no snapshot of the phase asked for.
     """
     if stage not in PLANNING_STAGES:
         msg = f"'{stage}' is not a planning stage; the planning stages are {', '.join(PLANNING_STAGES)}"
@@ -788,6 +1077,21 @@ def planning_geometry(
         # The inner circuit decided which ports joined the ring, so its wires belong in the picture.
         if global_routing is not None:
             _global(_routing_of(global_routing), geometry, lattice=False)
+    elif stage == "detail":
+        if not isinstance(output, DetailRoutingT):
+            msg = "the artifact is not a detail routing"
+            raise PlanningError(msg)
+        chosen = _assignment_of(assignment) if assignment is not None else None
+        _detail(output, geometry, clearance, _resonator_slots(chosen))
+        # A wire had to stay inside its partitions, so they make a drawn wire readable as a route.
+        if capacity is not None:
+            _capacity(_plan_of(capacity), geometry)
+    elif stage == "final":
+        if not isinstance(output, FinalRoutingT):
+            msg = "the artifact is not a final routing"
+            raise PlanningError(msg)
+        chosen = _assignment_of(assignment) if assignment is not None else None
+        _final(output, geometry, clearance, phase, _resonator_slots(chosen))
     else:
         if not isinstance(output, CorridorRoutingT):
             msg = "the artifact is not a corridor routing"

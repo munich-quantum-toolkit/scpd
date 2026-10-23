@@ -42,6 +42,16 @@ releases may include breaking changes.
     whose tab moves a coupler to another of its options.
 - ✨ Add `mqt-scpd drc`, which checks a finished run against the design rules
   and writes `drc.json` beside the artifacts ([#XXX]) ([**@FeldmeierMichael**])
+- 🎨 Draw the routing stages with `plot` and `render` ([#XXX])
+  ([**@FeldmeierMichael**]):
+  - Every wire is a coplanar waveguide in the colors of the figures: the
+    feedline edges dark, the plain wires gray and the resonators light, with
+    the room every wire keeps as a translucent band, the couplers as pads and
+    an air bridge where a wire crosses a feedline edge.
+  - The wires the Final stage left failing and the resonators off their length
+    are marked on layers of their own and counted in the legend.
+  - `--phase` draws the snapshot of one phase of the Final stage; the GDS
+    carries every phase on a layer of its own.
 - 📝 Add a configuration reference that lists every key of `config.toml` with
   its default and meaning ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory

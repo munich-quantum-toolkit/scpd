@@ -165,3 +165,30 @@ def test_the_stubs_the_blocked_cells_and_the_budgets_are_written(tmp_path: Path)
     assert budget.text_string == "3"
     assert (budget.text_dpos.x, budget.text_dpos.y) == pytest.approx((50.0, 0.0))
     assert len({number for number, _, _ in PLANNING_LAYERS.values()}) == len(PLANNING_LAYERS)
+
+
+def test_the_routing_shapes_get_layers_of_their_own(tmp_path: Path) -> None:
+    """The copper, the room it keeps, the phases and the failing wires each go on their own layer."""
+    config_path = FIXTURE / "config.toml"
+    chip = decode_chip(load_chip(load_config(config_path), config_path))
+    route = [(1000.0, 1000.0), (1400.0, 1000.0), (1400.0, 1600.0)]
+    planning = PlanningGeometry(
+        wires=[route, [(2000.0, 2000.0), (2500.0, 2000.0)]],
+        resonators=[[(300.0, 300.0), (600.0, 300.0)]],
+        failing=[("1", ["open"], route), ("f0", ["unrouted"], [])],
+        phases={"pre-feedline-routing": [route]},
+        clearance=190.0,
+    )
+
+    summary = write_layout(chip, tmp_path / "chip.gds", planning=planning)
+
+    layout = kdb.Layout()
+    layout.read(str(summary.path))
+    top = layout.top_cell()
+    assert top.shapes(layout.layer(*PLANNING_LAYERS["wires"])).size() == 2
+    assert top.shapes(layout.layer(*PLANNING_LAYERS["resonators"])).size() == 1
+    # The one failing wire with a way; the unrouted one has nothing to write.
+    assert top.shapes(layout.layer(*PLANNING_LAYERS["failing"])).size() == 1
+    assert top.shapes(layout.layer(*PLANNING_LAYERS["phase.pre-feedline-routing"])).size() == 1
+    assert top.shapes(layout.layer(*PLANNING_LAYERS["clearance"])).size() == 3
+    assert summary.planning == 8

@@ -430,3 +430,59 @@ def test_the_assign_picture_shows_its_chords_over_the_plan_without_the_ring() ->
     assert "l-ring" not in groups
     assert "g.l-assignment>path{fill:none;stroke:#111111;stroke-width:1.8" in svg
     assert "l-ring" in _groups(layout_svg(_mini(), planning=geometry))
+
+
+def test_the_routing_pictures_draw_the_copper_as_waveguides_with_bridges() -> None:
+    """Every wire is three strokes in its group; a wire that crosses a feedline edge gets a bridge."""
+    model = _mini()
+    wire = [(1000.0, 1000.0), (1400.0, 1000.0), (1400.0, 1600.0)]
+    feedline = [(1200.0, 900.0), (1200.0, 1100.0)]
+    planning = PlanningGeometry(wires=[wire], feedline_wires=[feedline], clearance=190.0)
+
+    svg = layout_svg(model, stage="final", planning=planning)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    groups = {
+        group.get("class"): group for group in root.iter(f"{SVG}g") if (group.get("class") or "").startswith("l-")
+    }
+    assert [path.get("class") for path in groups["l-signal cpw"].findall(f"{SVG}path")] == ["edge", "gap", "core"]
+    assert [path.get("class") for path in groups["l-feedline cpw"].findall(f"{SVG}path")] == ["edge", "gap", "core"]
+    # Two landing pads, one either side of the feedline.
+    assert (groups["l-bridge"].find(f"{SVG}path").get("d") or "").count("M") == 2
+    assert "l-clearance" in groups
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert "g.l-signal>path.edge" in style.text
+    assert "g.l-clearance>path" in style.text
+
+
+def test_the_failing_wires_are_marked_over_the_picture() -> None:
+    """Each wire the Final stage left failing is one marked element naming its verdicts; the legend counts them all."""
+    model = _mini()
+    open_wire = [(1000.0, 1000.0), (1400.0, 1000.0), (1400.0, 1600.0)]
+    edge = [(2000.0, 900.0), (2000.0, 1800.0)]
+    planning = PlanningGeometry(
+        wires=[open_wire],
+        feedline_wires=[edge],
+        failing=[("3", ["open", "short"], open_wire), ("f1", ["crossing"], edge), ("7", ["unrouted"], [])],
+        off_length=[("3", ["open", "short"], open_wire)],
+    )
+
+    svg = layout_svg(model, stage="final", planning=planning)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    groups = [group for group in root.iter(f"{SVG}g") if group.get("class") == "l-failing"]
+    assert len(groups) == 1
+    marks = groups[0].findall(f"{SVG}path")
+    assert [mark.findtext(f"{SVG}title") for mark in marks] == ["wire 3: open, short", "wire f1: crossing"]
+    assert (marks[0].get("d") or "").count("L") == 2
+    texts = [text.text for text in root.iter(f"{SVG}text")]
+    assert "failing (3)" in texts
+    assert "off its length (1)" in texts
+    # The length layer lies under the failing one, so a wire with both reads as failing.
+    order = [group.get("class") for group in root.iter(f"{SVG}g") if group.get("class") in {"l-offlength", "l-failing"}]
+    assert order == ["l-offlength", "l-failing"]
+    plain = layout_svg(model, stage="final", planning=PlanningGeometry(wires=[open_wire]))
+    assert "l-failing" not in plain
+    assert "failing (" not in plain
