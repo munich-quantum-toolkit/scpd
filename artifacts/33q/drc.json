@@ -1,9 +1,0 @@
-{
-  "reports": [
-    {
-      "stage": "final",
-      "feedlines_skipped": 40,
-      "findings": []
-    }
-  ]
-}
