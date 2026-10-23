@@ -72,6 +72,10 @@ struct StageParams;
 struct StageParamsBuilder;
 struct StageParamsT;
 
+struct DebugParams;
+struct DebugParamsBuilder;
+struct DebugParamsT;
+
 struct Config;
 struct ConfigBuilder;
 struct ConfigT;
@@ -102,6 +106,8 @@ bool operator==(const SolverParamsT &lhs, const SolverParamsT &rhs);
 bool operator!=(const SolverParamsT &lhs, const SolverParamsT &rhs);
 bool operator==(const StageParamsT &lhs, const StageParamsT &rhs);
 bool operator!=(const StageParamsT &lhs, const StageParamsT &rhs);
+bool operator==(const DebugParamsT &lhs, const DebugParamsT &rhs);
+bool operator!=(const DebugParamsT &lhs, const DebugParamsT &rhs);
 bool operator==(const ConfigT &lhs, const ConfigT &rhs);
 bool operator!=(const ConfigT &lhs, const ConfigT &rhs);
 
@@ -1257,7 +1263,6 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   uint32_t max_relaxation = 10;
   uint32_t refinement_rounds = 2;
   uint32_t feedline_refinement_rounds = 2;
-  double meander_length = 3000.0;
   double bend_penalty_norm = 2.5;
   double wire_proximity_penalty_norm = 0.00125;
   double static_proximity_penalty_norm = 0.00033;
@@ -1332,58 +1337,57 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_MAX_RELAXATION = 14,
     VT_REFINEMENT_ROUNDS = 16,
     VT_FEEDLINE_REFINEMENT_ROUNDS = 18,
-    VT_MEANDER_LENGTH = 20,
-    VT_BEND_PENALTY_NORM = 22,
-    VT_WIRE_PROXIMITY_PENALTY_NORM = 24,
-    VT_STATIC_PROXIMITY_PENALTY_NORM = 26,
-    VT_OBSTACLE_PENALTY_REACH = 28,
-    VT_COUPLER_LENGTH = 30,
-    VT_COUPLER_HEIGHT = 32,
-    VT_REPAIR_TRIALS = 34,
-    VT_STOP_AFTER_PHASE = 36,
-    VT_REFINEMENT_CORRIDOR_SPACINGS = 38,
-    VT_COUPLER_BIAS = 40,
-    VT_COUPLER_MAX_SHORTFALL = 42,
-    VT_COUPLER_BOX_MARGIN_CELLS = 44,
-    VT_COUPLER_SHIFT_CELLS = 46,
-    VT_COUPLER_LEAD_MARGIN_CELLS = 48,
-    VT_LAUNCHER_LEAD = 50,
-    VT_COUPLER_OFFSETS = 52,
-    VT_EDGE_LAUNCHER_MARGIN_CELLS = 54,
-    VT_TERMINAL_SLOT_CELLS = 56,
-    VT_CHAIN_END_EDGE_WEIGHT = 58,
-    VT_EDGE_BEND_FACTOR = 60,
-    VT_CHAIN_LENGTH_WEIGHT = 62,
-    VT_CAPACITY_CHECK = 64,
-    VT_LENGTH_POINT_RADIUS_CELLS = 66,
-    VT_LENGTH_POINT_BAND_PERCENT = 68,
-    VT_SWEEP_LENGTH_BAND = 70,
-    VT_MEANDER_LEG_SPACING_CELLS = 72,
-    VT_MEANDER_START_MARGIN_CELLS = 74,
-    VT_CAPACITY_MARGIN = 76,
-    VT_CAPACITY_MARGIN_FROM_WIRES = 78,
-    VT_RESONATOR_PASSAGE = 80,
-    VT_CROSSING_REACH_CELLS = 82,
-    VT_CROSSING_SPACING = 84,
-    VT_SLOT_PIN_CELLS = 86,
-    VT_ESCAPE_STRAIGHT_CELLS = 88,
-    VT_ESCAPE_STUB_MARGIN_CELLS = 90,
-    VT_BOTTLENECK_WIRES = 92,
-    VT_BOTTLENECK_RISE = 94,
-    VT_ROOM_MARGIN_CELLS = 96,
-    VT_ROOM_CHANNEL_REACH_CELLS = 98,
-    VT_DETOUR_FACTOR = 100,
-    VT_TERMINAL_STUB_EXTRA_CELLS = 102,
-    VT_GLOBAL_SAT_RUNS = 104,
-    VT_GLOBAL_SAT_STATES = 106,
-    VT_GLOBAL_SAT_TRIES = 108,
-    VT_CHAIN_RULE_REFUSALS = 110,
-    VT_RESEARCH_RING_MEMBERS = 112,
-    VT_RESEARCH_ROUNDS = 114,
-    VT_FENCE_PAIRS = 116,
-    VT_HALO_REACH = 118,
-    VT_RISE_REACH = 120,
-    VT_RISE_PEAK = 122
+    VT_BEND_PENALTY_NORM = 20,
+    VT_WIRE_PROXIMITY_PENALTY_NORM = 22,
+    VT_STATIC_PROXIMITY_PENALTY_NORM = 24,
+    VT_OBSTACLE_PENALTY_REACH = 26,
+    VT_COUPLER_LENGTH = 28,
+    VT_COUPLER_HEIGHT = 30,
+    VT_REPAIR_TRIALS = 32,
+    VT_STOP_AFTER_PHASE = 34,
+    VT_REFINEMENT_CORRIDOR_SPACINGS = 36,
+    VT_COUPLER_BIAS = 38,
+    VT_COUPLER_MAX_SHORTFALL = 40,
+    VT_COUPLER_BOX_MARGIN_CELLS = 42,
+    VT_COUPLER_SHIFT_CELLS = 44,
+    VT_COUPLER_LEAD_MARGIN_CELLS = 46,
+    VT_LAUNCHER_LEAD = 48,
+    VT_COUPLER_OFFSETS = 50,
+    VT_EDGE_LAUNCHER_MARGIN_CELLS = 52,
+    VT_TERMINAL_SLOT_CELLS = 54,
+    VT_CHAIN_END_EDGE_WEIGHT = 56,
+    VT_EDGE_BEND_FACTOR = 58,
+    VT_CHAIN_LENGTH_WEIGHT = 60,
+    VT_CAPACITY_CHECK = 62,
+    VT_LENGTH_POINT_RADIUS_CELLS = 64,
+    VT_LENGTH_POINT_BAND_PERCENT = 66,
+    VT_SWEEP_LENGTH_BAND = 68,
+    VT_MEANDER_LEG_SPACING_CELLS = 70,
+    VT_MEANDER_START_MARGIN_CELLS = 72,
+    VT_CAPACITY_MARGIN = 74,
+    VT_CAPACITY_MARGIN_FROM_WIRES = 76,
+    VT_RESONATOR_PASSAGE = 78,
+    VT_CROSSING_REACH_CELLS = 80,
+    VT_CROSSING_SPACING = 82,
+    VT_SLOT_PIN_CELLS = 84,
+    VT_ESCAPE_STRAIGHT_CELLS = 86,
+    VT_ESCAPE_STUB_MARGIN_CELLS = 88,
+    VT_BOTTLENECK_WIRES = 90,
+    VT_BOTTLENECK_RISE = 92,
+    VT_ROOM_MARGIN_CELLS = 94,
+    VT_ROOM_CHANNEL_REACH_CELLS = 96,
+    VT_DETOUR_FACTOR = 98,
+    VT_TERMINAL_STUB_EXTRA_CELLS = 100,
+    VT_GLOBAL_SAT_RUNS = 102,
+    VT_GLOBAL_SAT_STATES = 104,
+    VT_GLOBAL_SAT_TRIES = 106,
+    VT_CHAIN_RULE_REFUSALS = 108,
+    VT_RESEARCH_RING_MEMBERS = 110,
+    VT_RESEARCH_ROUNDS = 112,
+    VT_FENCE_PAIRS = 114,
+    VT_HALO_REACH = 116,
+    VT_RISE_REACH = 118,
+    VT_RISE_PEAK = 120
   };
   /// The implementation, by the name it is registered under.
   const ::flatbuffers::String *router() const {
@@ -1438,17 +1442,6 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// routing ends.
   uint32_t feedline_refinement_rounds() const {
     return GetField<uint32_t>(VT_FEEDLINE_REFINEMENT_ROUNDS, 2);
-  }
-  /// How long a resonator's way is made before the coupler is spliced into
-  /// it, in layout units. Zero switches the meander off.
-  ///
-  /// This is not `target_resonator_length`. The wire is fed from the segment
-  /// between two launchers and the coupler is spliced where the way left to
-  /// the qubit port reaches the target length, so the whole way has to be
-  /// longer than the target. The prototype's own figures are 3000 layout units
-  /// on the 17-qubit chip and 6000 on the 69-qubit one.
-  double meander_length() const {
-    return GetField<double>(VT_MEANDER_LENGTH, 3000.0);
   }
   /// What one eighth turn costs, in hundredths of a cell.
   ///
@@ -1713,7 +1706,6 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_MAX_RELAXATION, 4) &&
            VerifyField<uint32_t>(verifier, VT_REFINEMENT_ROUNDS, 4) &&
            VerifyField<uint32_t>(verifier, VT_FEEDLINE_REFINEMENT_ROUNDS, 4) &&
-           VerifyField<double>(verifier, VT_MEANDER_LENGTH, 8) &&
            VerifyField<double>(verifier, VT_BEND_PENALTY_NORM, 8) &&
            VerifyField<double>(verifier, VT_WIRE_PROXIMITY_PENALTY_NORM, 8) &&
            VerifyField<double>(verifier, VT_STATIC_PROXIMITY_PENALTY_NORM, 8) &&
@@ -1801,9 +1793,6 @@ struct FinalParamsBuilder {
   }
   void add_feedline_refinement_rounds(uint32_t feedline_refinement_rounds) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_FEEDLINE_REFINEMENT_ROUNDS, feedline_refinement_rounds, 2);
-  }
-  void add_meander_length(double meander_length) {
-    fbb_.AddElement<double>(FinalParams::VT_MEANDER_LENGTH, meander_length, 3000.0);
   }
   void add_bend_penalty_norm(double bend_penalty_norm) {
     fbb_.AddElement<double>(FinalParams::VT_BEND_PENALTY_NORM, bend_penalty_norm, 2.5);
@@ -1979,7 +1968,6 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     uint32_t max_relaxation = 10,
     uint32_t refinement_rounds = 2,
     uint32_t feedline_refinement_rounds = 2,
-    double meander_length = 3000.0,
     double bend_penalty_norm = 2.5,
     double wire_proximity_penalty_norm = 0.00125,
     double static_proximity_penalty_norm = 0.00033,
@@ -2050,7 +2038,6 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_static_proximity_penalty_norm(static_proximity_penalty_norm);
   builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
   builder_.add_bend_penalty_norm(bend_penalty_norm);
-  builder_.add_meander_length(meander_length);
   builder_.add_rise_peak(rise_peak);
   builder_.add_rise_reach(rise_reach);
   builder_.add_halo_reach(halo_reach);
@@ -2110,7 +2097,6 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     uint32_t max_relaxation = 10,
     uint32_t refinement_rounds = 2,
     uint32_t feedline_refinement_rounds = 2,
-    double meander_length = 3000.0,
     double bend_penalty_norm = 2.5,
     double wire_proximity_penalty_norm = 0.00125,
     double static_proximity_penalty_norm = 0.00033,
@@ -2175,7 +2161,6 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       max_relaxation,
       refinement_rounds,
       feedline_refinement_rounds,
-      meander_length,
       bend_penalty_norm,
       wire_proximity_penalty_norm,
       static_proximity_penalty_norm,
@@ -2468,6 +2453,159 @@ struct StageParams::Traits {
 
 ::flatbuffers::Offset<StageParams> CreateStageParams(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct DebugParamsT : public ::flatbuffers::NativeTable {
+  typedef DebugParams TableType;
+  bool html = false;
+  bool pre_feedline_routing_dashboard = false;
+  bool pre_feedline_refinement_dashboard = false;
+  bool feedline_insertion = false;
+  bool local_sat = false;
+  bool global_sat = false;
+  bool feedline_constrained_routing_dashboard = false;
+  bool feedline_constrained_refinement_dashboard = false;
+};
+
+/// The pages a run writes under `<run>/debug`, each off unless asked for.
+/// The Final stage emits the records a page needs and nothing else; the
+/// pages are built from the records when the stage ends, and again by
+/// `mqt-scpd debug <run>`.
+struct DebugParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DebugParamsT NativeTableType;
+  typedef DebugParamsBuilder Builder;
+  struct Traits;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_HTML = 4,
+    VT_PRE_FEEDLINE_ROUTING_DASHBOARD = 6,
+    VT_PRE_FEEDLINE_REFINEMENT_DASHBOARD = 8,
+    VT_FEEDLINE_INSERTION = 10,
+    VT_LOCAL_SAT = 12,
+    VT_GLOBAL_SAT = 14,
+    VT_FEEDLINE_CONSTRAINED_ROUTING_DASHBOARD = 16,
+    VT_FEEDLINE_CONSTRAINED_REFINEMENT_DASHBOARD = 18
+  };
+  /// Write `<run>/debug/index.html`, which links every page below and
+  /// lists what each phase came to.
+  bool html() const {
+    return GetField<uint8_t>(VT_HTML, 0) != 0;
+  }
+  /// A table of the pre-feedline routing: for every wire and round, what the
+  /// search came to and at which relaxation level, with the way it found.
+  bool pre_feedline_routing_dashboard() const {
+    return GetField<uint8_t>(VT_PRE_FEEDLINE_ROUTING_DASHBOARD, 0) != 0;
+  }
+  /// The same table for the pre-feedline refinement.
+  bool pre_feedline_refinement_dashboard() const {
+    return GetField<uint8_t>(VT_PRE_FEEDLINE_REFINEMENT_DASHBOARD, 0) != 0;
+  }
+  /// The coupler options and the capacity graph of the feedline insertion,
+  /// on the page the graph is laid out on.
+  bool feedline_insertion() const {
+    return GetField<uint8_t>(VT_FEEDLINE_INSERTION, 0) != 0;
+  }
+  /// Every step check of the chain search: the chain, the step, the options
+  /// it stands on, the verdict and the wires it closes.
+  bool local_sat() const {
+    return GetField<uint8_t>(VT_LOCAL_SAT, 0) != 0;
+  }
+  /// The global SAT search: the states collected per chain, every
+  /// combination tried with its verdict, and the state the chip stands on.
+  bool global_sat() const {
+    return GetField<uint8_t>(VT_GLOBAL_SAT, 0) != 0;
+  }
+  /// The table for the feedline-constrained routing.
+  bool feedline_constrained_routing_dashboard() const {
+    return GetField<uint8_t>(VT_FEEDLINE_CONSTRAINED_ROUTING_DASHBOARD, 0) != 0;
+  }
+  /// The table for the feedline-constrained refinement.
+  bool feedline_constrained_refinement_dashboard() const {
+    return GetField<uint8_t>(VT_FEEDLINE_CONSTRAINED_REFINEMENT_DASHBOARD, 0) != 0;
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_HTML, 1) &&
+           VerifyField<uint8_t>(verifier, VT_PRE_FEEDLINE_ROUTING_DASHBOARD, 1) &&
+           VerifyField<uint8_t>(verifier, VT_PRE_FEEDLINE_REFINEMENT_DASHBOARD, 1) &&
+           VerifyField<uint8_t>(verifier, VT_FEEDLINE_INSERTION, 1) &&
+           VerifyField<uint8_t>(verifier, VT_LOCAL_SAT, 1) &&
+           VerifyField<uint8_t>(verifier, VT_GLOBAL_SAT, 1) &&
+           VerifyField<uint8_t>(verifier, VT_FEEDLINE_CONSTRAINED_ROUTING_DASHBOARD, 1) &&
+           VerifyField<uint8_t>(verifier, VT_FEEDLINE_CONSTRAINED_REFINEMENT_DASHBOARD, 1) &&
+           verifier.EndTable();
+  }
+  DebugParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DebugParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DebugParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DebugParamsBuilder {
+  typedef DebugParams Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_html(bool html) {
+    fbb_.AddElement<uint8_t>(DebugParams::VT_HTML, static_cast<uint8_t>(html), 0);
+  }
+  void add_pre_feedline_routing_dashboard(bool pre_feedline_routing_dashboard) {
+    fbb_.AddElement<uint8_t>(DebugParams::VT_PRE_FEEDLINE_ROUTING_DASHBOARD, static_cast<uint8_t>(pre_feedline_routing_dashboard), 0);
+  }
+  void add_pre_feedline_refinement_dashboard(bool pre_feedline_refinement_dashboard) {
+    fbb_.AddElement<uint8_t>(DebugParams::VT_PRE_FEEDLINE_REFINEMENT_DASHBOARD, static_cast<uint8_t>(pre_feedline_refinement_dashboard), 0);
+  }
+  void add_feedline_insertion(bool feedline_insertion) {
+    fbb_.AddElement<uint8_t>(DebugParams::VT_FEEDLINE_INSERTION, static_cast<uint8_t>(feedline_insertion), 0);
+  }
+  void add_local_sat(bool local_sat) {
+    fbb_.AddElement<uint8_t>(DebugParams::VT_LOCAL_SAT, static_cast<uint8_t>(local_sat), 0);
+  }
+  void add_global_sat(bool global_sat) {
+    fbb_.AddElement<uint8_t>(DebugParams::VT_GLOBAL_SAT, static_cast<uint8_t>(global_sat), 0);
+  }
+  void add_feedline_constrained_routing_dashboard(bool feedline_constrained_routing_dashboard) {
+    fbb_.AddElement<uint8_t>(DebugParams::VT_FEEDLINE_CONSTRAINED_ROUTING_DASHBOARD, static_cast<uint8_t>(feedline_constrained_routing_dashboard), 0);
+  }
+  void add_feedline_constrained_refinement_dashboard(bool feedline_constrained_refinement_dashboard) {
+    fbb_.AddElement<uint8_t>(DebugParams::VT_FEEDLINE_CONSTRAINED_REFINEMENT_DASHBOARD, static_cast<uint8_t>(feedline_constrained_refinement_dashboard), 0);
+  }
+  explicit DebugParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DebugParams> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DebugParams>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DebugParams> CreateDebugParams(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    bool html = false,
+    bool pre_feedline_routing_dashboard = false,
+    bool pre_feedline_refinement_dashboard = false,
+    bool feedline_insertion = false,
+    bool local_sat = false,
+    bool global_sat = false,
+    bool feedline_constrained_routing_dashboard = false,
+    bool feedline_constrained_refinement_dashboard = false) {
+  DebugParamsBuilder builder_(_fbb);
+  builder_.add_feedline_constrained_refinement_dashboard(feedline_constrained_refinement_dashboard);
+  builder_.add_feedline_constrained_routing_dashboard(feedline_constrained_routing_dashboard);
+  builder_.add_global_sat(global_sat);
+  builder_.add_local_sat(local_sat);
+  builder_.add_feedline_insertion(feedline_insertion);
+  builder_.add_pre_feedline_refinement_dashboard(pre_feedline_refinement_dashboard);
+  builder_.add_pre_feedline_routing_dashboard(pre_feedline_routing_dashboard);
+  builder_.add_html(html);
+  return builder_.Finish();
+}
+
+struct DebugParams::Traits {
+  using type = DebugParams;
+  static auto constexpr Create = CreateDebugParams;
+};
+
+::flatbuffers::Offset<DebugParams> CreateDebugParams(::flatbuffers::FlatBufferBuilder &_fbb, const DebugParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct ConfigT : public ::flatbuffers::NativeTable {
   typedef Config TableType;
   std::string chip_input{};
@@ -2475,6 +2613,7 @@ struct ConfigT : public ::flatbuffers::NativeTable {
   std::unique_ptr<mqt::scpd::flatbuffers::design::DesignRulesT> rules{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::GridParamsT> grid{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::StageParamsT> stages{};
+  std::unique_ptr<mqt::scpd::flatbuffers::config::DebugParamsT> debug{};
   ConfigT() = default;
   ConfigT(const ConfigT &o);
   ConfigT(ConfigT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -2491,7 +2630,8 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_PORTS = 6,
     VT_RULES = 8,
     VT_GRID = 10,
-    VT_STAGES = 12
+    VT_STAGES = 12,
+    VT_DEBUG = 14
   };
   /// The chip input path, relative to the configuration file.
   const ::flatbuffers::String *chip_input() const {
@@ -2509,6 +2649,9 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const mqt::scpd::flatbuffers::config::StageParams *stages() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::StageParams *>(VT_STAGES);
   }
+  const mqt::scpd::flatbuffers::config::DebugParams *debug() const {
+    return GetPointer<const mqt::scpd::flatbuffers::config::DebugParams *>(VT_DEBUG);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -2522,6 +2665,8 @@ struct Config FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(grid()) &&
            VerifyOffset(verifier, VT_STAGES) &&
            verifier.VerifyTable(stages()) &&
+           VerifyOffset(verifier, VT_DEBUG) &&
+           verifier.VerifyTable(debug()) &&
            verifier.EndTable();
   }
   ConfigT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -2548,6 +2693,9 @@ struct ConfigBuilder {
   void add_stages(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::StageParams> stages) {
     fbb_.AddOffset(Config::VT_STAGES, stages);
   }
+  void add_debug(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::DebugParams> debug) {
+    fbb_.AddOffset(Config::VT_DEBUG, debug);
+  }
   explicit ConfigBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -2568,8 +2716,10 @@ inline ::flatbuffers::Offset<Config> CreateConfig(
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortConfig> ports = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::design::DesignRules> rules = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GridParams> grid = 0,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::StageParams> stages = 0) {
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::StageParams> stages = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::DebugParams> debug = 0) {
   ConfigBuilder builder_(_fbb);
+  builder_.add_debug(debug);
   builder_.add_stages(stages);
   builder_.add_grid(grid);
   builder_.add_rules(rules);
@@ -2589,7 +2739,8 @@ inline ::flatbuffers::Offset<Config> CreateConfigDirect(
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::PortConfig> ports = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::design::DesignRules> rules = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GridParams> grid = 0,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::StageParams> stages = 0) {
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::StageParams> stages = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::DebugParams> debug = 0) {
   auto chip_input__ = chip_input ? _fbb.CreateString(chip_input) : 0;
   return mqt::scpd::flatbuffers::config::CreateConfig(
       _fbb,
@@ -2597,7 +2748,8 @@ inline ::flatbuffers::Offset<Config> CreateConfigDirect(
       ports,
       rules,
       grid,
-      stages);
+      stages,
+      debug);
 }
 
 ::flatbuffers::Offset<Config> CreateConfig(::flatbuffers::FlatBufferBuilder &_fbb, const ConfigT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -3097,7 +3249,6 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.max_relaxation == rhs.max_relaxation) &&
       (lhs.refinement_rounds == rhs.refinement_rounds) &&
       (lhs.feedline_refinement_rounds == rhs.feedline_refinement_rounds) &&
-      (lhs.meander_length == rhs.meander_length) &&
       (lhs.bend_penalty_norm == rhs.bend_penalty_norm) &&
       (lhs.wire_proximity_penalty_norm == rhs.wire_proximity_penalty_norm) &&
       (lhs.static_proximity_penalty_norm == rhs.static_proximity_penalty_norm) &&
@@ -3173,7 +3324,6 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = max_relaxation(); _o->max_relaxation = _e; }
   { auto _e = refinement_rounds(); _o->refinement_rounds = _e; }
   { auto _e = feedline_refinement_rounds(); _o->feedline_refinement_rounds = _e; }
-  { auto _e = meander_length(); _o->meander_length = _e; }
   { auto _e = bend_penalty_norm(); _o->bend_penalty_norm = _e; }
   { auto _e = wire_proximity_penalty_norm(); _o->wire_proximity_penalty_norm = _e; }
   { auto _e = static_proximity_penalty_norm(); _o->static_proximity_penalty_norm = _e; }
@@ -3243,7 +3393,6 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _max_relaxation = _o->max_relaxation;
   auto _refinement_rounds = _o->refinement_rounds;
   auto _feedline_refinement_rounds = _o->feedline_refinement_rounds;
-  auto _meander_length = _o->meander_length;
   auto _bend_penalty_norm = _o->bend_penalty_norm;
   auto _wire_proximity_penalty_norm = _o->wire_proximity_penalty_norm;
   auto _static_proximity_penalty_norm = _o->static_proximity_penalty_norm;
@@ -3305,7 +3454,6 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _max_relaxation,
       _refinement_rounds,
       _feedline_refinement_rounds,
-      _meander_length,
       _bend_penalty_norm,
       _wire_proximity_penalty_norm,
       _static_proximity_penalty_norm,
@@ -3487,13 +3635,79 @@ inline ::flatbuffers::Offset<StageParams> StageParams::Pack(::flatbuffers::FlatB
 }
 
 
+inline bool operator==(const DebugParamsT &lhs, const DebugParamsT &rhs) {
+  return
+      (lhs.html == rhs.html) &&
+      (lhs.pre_feedline_routing_dashboard == rhs.pre_feedline_routing_dashboard) &&
+      (lhs.pre_feedline_refinement_dashboard == rhs.pre_feedline_refinement_dashboard) &&
+      (lhs.feedline_insertion == rhs.feedline_insertion) &&
+      (lhs.local_sat == rhs.local_sat) &&
+      (lhs.global_sat == rhs.global_sat) &&
+      (lhs.feedline_constrained_routing_dashboard == rhs.feedline_constrained_routing_dashboard) &&
+      (lhs.feedline_constrained_refinement_dashboard == rhs.feedline_constrained_refinement_dashboard);
+}
+
+inline bool operator!=(const DebugParamsT &lhs, const DebugParamsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline DebugParamsT *DebugParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<DebugParamsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DebugParams::UnPackTo(DebugParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = html(); _o->html = _e; }
+  { auto _e = pre_feedline_routing_dashboard(); _o->pre_feedline_routing_dashboard = _e; }
+  { auto _e = pre_feedline_refinement_dashboard(); _o->pre_feedline_refinement_dashboard = _e; }
+  { auto _e = feedline_insertion(); _o->feedline_insertion = _e; }
+  { auto _e = local_sat(); _o->local_sat = _e; }
+  { auto _e = global_sat(); _o->global_sat = _e; }
+  { auto _e = feedline_constrained_routing_dashboard(); _o->feedline_constrained_routing_dashboard = _e; }
+  { auto _e = feedline_constrained_refinement_dashboard(); _o->feedline_constrained_refinement_dashboard = _e; }
+}
+
+inline ::flatbuffers::Offset<DebugParams> CreateDebugParams(::flatbuffers::FlatBufferBuilder &_fbb, const DebugParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DebugParams::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DebugParams> DebugParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DebugParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _html = _o->html;
+  auto _pre_feedline_routing_dashboard = _o->pre_feedline_routing_dashboard;
+  auto _pre_feedline_refinement_dashboard = _o->pre_feedline_refinement_dashboard;
+  auto _feedline_insertion = _o->feedline_insertion;
+  auto _local_sat = _o->local_sat;
+  auto _global_sat = _o->global_sat;
+  auto _feedline_constrained_routing_dashboard = _o->feedline_constrained_routing_dashboard;
+  auto _feedline_constrained_refinement_dashboard = _o->feedline_constrained_refinement_dashboard;
+  return mqt::scpd::flatbuffers::config::CreateDebugParams(
+      _fbb,
+      _html,
+      _pre_feedline_routing_dashboard,
+      _pre_feedline_refinement_dashboard,
+      _feedline_insertion,
+      _local_sat,
+      _global_sat,
+      _feedline_constrained_routing_dashboard,
+      _feedline_constrained_refinement_dashboard);
+}
+
+
 inline bool operator==(const ConfigT &lhs, const ConfigT &rhs) {
   return
       (lhs.chip_input == rhs.chip_input) &&
       ((lhs.ports == rhs.ports) || (lhs.ports && rhs.ports && *lhs.ports == *rhs.ports)) &&
       ((lhs.rules == rhs.rules) || (lhs.rules && rhs.rules && *lhs.rules == *rhs.rules)) &&
       ((lhs.grid == rhs.grid) || (lhs.grid && rhs.grid && *lhs.grid == *rhs.grid)) &&
-      ((lhs.stages == rhs.stages) || (lhs.stages && rhs.stages && *lhs.stages == *rhs.stages));
+      ((lhs.stages == rhs.stages) || (lhs.stages && rhs.stages && *lhs.stages == *rhs.stages)) &&
+      ((lhs.debug == rhs.debug) || (lhs.debug && rhs.debug && *lhs.debug == *rhs.debug));
 }
 
 inline bool operator!=(const ConfigT &lhs, const ConfigT &rhs) {
@@ -3506,7 +3720,8 @@ inline ConfigT::ConfigT(const ConfigT &o)
         ports((o.ports) ? new mqt::scpd::flatbuffers::config::PortConfigT(*o.ports) : nullptr),
         rules((o.rules) ? new mqt::scpd::flatbuffers::design::DesignRulesT(*o.rules) : nullptr),
         grid((o.grid) ? new mqt::scpd::flatbuffers::config::GridParamsT(*o.grid) : nullptr),
-        stages((o.stages) ? new mqt::scpd::flatbuffers::config::StageParamsT(*o.stages) : nullptr) {
+        stages((o.stages) ? new mqt::scpd::flatbuffers::config::StageParamsT(*o.stages) : nullptr),
+        debug((o.debug) ? new mqt::scpd::flatbuffers::config::DebugParamsT(*o.debug) : nullptr) {
 }
 
 inline ConfigT &ConfigT::operator=(ConfigT o) FLATBUFFERS_NOEXCEPT {
@@ -3515,6 +3730,7 @@ inline ConfigT &ConfigT::operator=(ConfigT o) FLATBUFFERS_NOEXCEPT {
   std::swap(rules, o.rules);
   std::swap(grid, o.grid);
   std::swap(stages, o.stages);
+  std::swap(debug, o.debug);
   return *this;
 }
 
@@ -3532,6 +3748,7 @@ inline void Config::UnPackTo(ConfigT *_o, const ::flatbuffers::resolver_function
   { auto _e = rules(); if (_e) { if(_o->rules) { _e->UnPackTo(_o->rules.get(), _resolver); } else { _o->rules = std::unique_ptr<mqt::scpd::flatbuffers::design::DesignRulesT>(_e->UnPack(_resolver)); } } else if (_o->rules) { _o->rules.reset(); } }
   { auto _e = grid(); if (_e) { if(_o->grid) { _e->UnPackTo(_o->grid.get(), _resolver); } else { _o->grid = std::unique_ptr<mqt::scpd::flatbuffers::config::GridParamsT>(_e->UnPack(_resolver)); } } else if (_o->grid) { _o->grid.reset(); } }
   { auto _e = stages(); if (_e) { if(_o->stages) { _e->UnPackTo(_o->stages.get(), _resolver); } else { _o->stages = std::unique_ptr<mqt::scpd::flatbuffers::config::StageParamsT>(_e->UnPack(_resolver)); } } else if (_o->stages) { _o->stages.reset(); } }
+  { auto _e = debug(); if (_e) { if(_o->debug) { _e->UnPackTo(_o->debug.get(), _resolver); } else { _o->debug = std::unique_ptr<mqt::scpd::flatbuffers::config::DebugParamsT>(_e->UnPack(_resolver)); } } else if (_o->debug) { _o->debug.reset(); } }
 }
 
 inline ::flatbuffers::Offset<Config> CreateConfig(::flatbuffers::FlatBufferBuilder &_fbb, const ConfigT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -3547,13 +3764,15 @@ inline ::flatbuffers::Offset<Config> Config::Pack(::flatbuffers::FlatBufferBuild
   auto _rules = _o->rules ? CreateDesignRules(_fbb, _o->rules.get(), _rehasher) : 0;
   auto _grid = _o->grid ? CreateGridParams(_fbb, _o->grid.get(), _rehasher) : 0;
   auto _stages = _o->stages ? CreateStageParams(_fbb, _o->stages.get(), _rehasher) : 0;
+  auto _debug = _o->debug ? CreateDebugParams(_fbb, _o->debug.get(), _rehasher) : 0;
   return mqt::scpd::flatbuffers::config::CreateConfig(
       _fbb,
       _chip_input,
       _ports,
       _rules,
       _grid,
-      _stages);
+      _stages,
+      _debug);
 }
 
 }  // namespace config

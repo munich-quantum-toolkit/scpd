@@ -110,28 +110,6 @@ inline std::uint32_t readScalar(const std::string& text, const std::string& key,
   return fallback;
 }
 
-/// The value of `key = <number>` on a line of its own, read as a length, or
-/// the fallback. As `readScalar`, for a key whose value carries a fraction.
-inline double readLength(const std::string& text, const std::string& key,
-                         const double fallback) {
-  for (auto at = text.find(key); at != std::string::npos;
-       at = text.find(key, at + 1)) {
-    if (at != 0 && text[at - 1] != '\n') {
-      continue;
-    }
-    auto cursor = at + key.size();
-    while (cursor < text.size() && text[cursor] == ' ') {
-      ++cursor;
-    }
-    if (cursor >= text.size() || text[cursor] != '=') {
-      continue;
-    }
-    ++cursor;
-    return std::stod(text.substr(cursor));
-  }
-  return fallback;
-}
-
 /// One declared bridge rule, as the two expressions the configuration pairs on.
 using RulePair = std::pair<std::string, std::string>;
 
@@ -214,8 +192,6 @@ inline Benchmark load(const std::string& chip, const std::string& resonator,
   // trap 4), and the targeted repair's budget is this figure too.
   config.stages->final->repair_trials = readScalar(
       configText, "repair_trials", config.stages->final->repair_trials);
-  config.stages->final->meander_length = readLength(
-      configText, "meander_length", config.stages->final->meander_length);
 
   benchmark.chip = io::loadChip(
       readFile(BENCHMARKS + "/" + chip + "/routing_config.json"), config);

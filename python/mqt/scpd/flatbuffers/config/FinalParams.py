@@ -120,21 +120,6 @@ class FinalParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 2
 
-    # How long a resonator's way is made before the coupler is spliced into
-    # it, in layout units. Zero switches the meander off.
-    #
-    # This is not `target_resonator_length`. The wire is fed from the segment
-    # between two launchers and the coupler is spliced where the way left to
-    # the qubit port reaches the target length, so the whole way has to be
-    # longer than the target. The prototype's own figures are 3000 layout units
-    # on the 17-qubit chip and 6000 on the 69-qubit one.
-    # FinalParams
-    def MeanderLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
-        return 3000.0
-
     # What one eighth turn costs, in hundredths of a cell.
     #
     # A price and not a distance, but it is still normalised: a bend costs a
@@ -144,7 +129,7 @@ class FinalParams(object):
     # and multiplied by that sum at the point of use.
     # FinalParams
     def BendPenaltyNorm(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 2.5
@@ -152,7 +137,7 @@ class FinalParams(object):
     # What running beside another wire costs, on the same scale.
     # FinalParams
     def WireProximityPenaltyNorm(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.00125
@@ -160,7 +145,7 @@ class FinalParams(object):
     # What running beside an obstacle costs, on the same scale.
     # FinalParams
     def StaticProximityPenaltyNorm(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.00033
@@ -169,7 +154,7 @@ class FinalParams(object):
     # units. Zero switches the penalty off.
     # FinalParams
     def ObstaclePenaltyReach(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 100.0
@@ -178,14 +163,14 @@ class FinalParams(object):
     # units. The prototype carries it as 20 by 3 cells.
     # FinalParams
     def CouplerLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 200.0
 
     # FinalParams
     def CouplerHeight(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(32))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 26.0
@@ -195,7 +180,7 @@ class FinalParams(object):
     # `max_repair_rounds`. Zero switches the repair off.
     # FinalParams
     def RepairTrials(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(32))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 100
@@ -212,7 +197,7 @@ class FinalParams(object):
     # the one named are not run.
     # FinalParams
     def StopAfterPhase(self) -> Optional[str]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(36))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
         if o != 0:
             return self._tab.String(o + self._tab.Pos)
         return None
@@ -224,7 +209,7 @@ class FinalParams(object):
     # Zero takes `corridor_spacings`.
     # FinalParams
     def RefinementCorridorSpacings(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(38))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(36))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 6
@@ -235,7 +220,7 @@ class FinalParams(object):
     # figure hands the rest to the meander.
     # FinalParams
     def CouplerBias(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(40))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(38))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 1.0
@@ -245,7 +230,7 @@ class FinalParams(object):
     # refused.
     # FinalParams
     def CouplerMaxShortfall(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(42))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(40))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.30
@@ -254,7 +239,7 @@ class FinalParams(object):
     # room the launcher stubs leave open.
     # FinalParams
     def CouplerBoxMarginCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(44))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(42))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 5
@@ -263,7 +248,7 @@ class FinalParams(object):
     # cells on an axis, before the place is given up.
     # FinalParams
     def CouplerShiftCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(46))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(44))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 20
@@ -273,7 +258,7 @@ class FinalParams(object):
     # room to be a turn.
     # FinalParams
     def CouplerLeadMarginCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(48))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(46))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 5
@@ -282,7 +267,7 @@ class FinalParams(object):
     # away, in layout units.
     # FinalParams
     def LauncherLead(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(50))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(48))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 10.0
@@ -293,7 +278,7 @@ class FinalParams(object):
     # 180 degrees against the way.
     # FinalParams
     def CouplerOffsets(self) -> Optional[str]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(52))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(50))
         if o != 0:
             return self._tab.String(o + self._tab.Pos)
         return None
@@ -302,7 +287,7 @@ class FinalParams(object):
     # edge keeps closed in front of every launcher but its own.
     # FinalParams
     def EdgeLauncherMarginCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(54))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(52))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 6
@@ -311,7 +296,7 @@ class FinalParams(object):
     # straight run it is forced to make off the port, in cells.
     # FinalParams
     def TerminalSlotCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(56))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(54))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 20
@@ -320,7 +305,7 @@ class FinalParams(object):
     # the chain search, against 1 for every other edge.
     # FinalParams
     def ChainEndEdgeWeight(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(58))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(56))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.1
@@ -328,7 +313,7 @@ class FinalParams(object):
     # The bend price of a feedline edge, as a factor on `bend_penalty_norm`.
     # FinalParams
     def EdgeBendFactor(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(60))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(58))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 1.0
@@ -337,7 +322,7 @@ class FinalParams(object):
     # not at all.
     # FinalParams
     def ChainLengthWeight(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(62))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(60))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
@@ -348,7 +333,7 @@ class FinalParams(object):
     # settled by cost alone.
     # FinalParams
     def CapacityCheck(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(64))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(62))
         if o != 0:
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return True
@@ -359,14 +344,14 @@ class FinalParams(object):
     # the target length. A radius of 0 turns the clearance off.
     # FinalParams
     def LengthPointRadiusCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(66))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(64))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 40
 
     # FinalParams
     def LengthPointBandPercent(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(68))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(66))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 10.0
@@ -375,7 +360,7 @@ class FinalParams(object):
     # length, as a multiple of `resonator_length_tolerance`.
     # FinalParams
     def SweepLengthBand(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(70))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(68))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 5.0
@@ -383,7 +368,7 @@ class FinalParams(object):
     # The spacing of the meander's legs, in cells.
     # FinalParams
     def MeanderLegSpacingCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(72))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(70))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 25
@@ -392,7 +377,7 @@ class FinalParams(object):
     # are; a negative value means the coupler's length plus four.
     # FinalParams
     def MeanderStartMarginCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(74))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(72))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Int32Flags, o + self._tab.Pos)
         return -1
@@ -402,21 +387,21 @@ class FinalParams(object):
     # gap a resonator passes, as a share of the clearance.
     # FinalParams
     def CapacityMargin(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(76))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(74))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 1.06
 
     # FinalParams
     def CapacityMarginFromWires(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(78))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(76))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 3
 
     # FinalParams
     def ResonatorPassage(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(80))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(78))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 0.8
@@ -427,35 +412,35 @@ class FinalParams(object):
     # escape turn and the clearance an escape keeps from a stub.
     # FinalParams
     def CrossingReachCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(82))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(80))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 10
 
     # FinalParams
     def CrossingSpacing(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(84))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(82))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 1.4142135623730951
 
     # FinalParams
     def SlotPinCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(86))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(84))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 10
 
     # FinalParams
     def EscapeStraightCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(88))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(86))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 5
 
     # FinalParams
     def EscapeStubMarginCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(90))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(88))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 4
@@ -464,14 +449,14 @@ class FinalParams(object):
     # bottleneck, and the least rise of a narrowing.
     # FinalParams
     def BottleneckWires(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(92))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(90))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 10
 
     # FinalParams
     def BottleneckRise(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(94))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(92))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 2.0
@@ -481,21 +466,21 @@ class FinalParams(object):
     # a gap, as a factor on the direct way.
     # FinalParams
     def RoomMarginCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(96))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(94))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 10
 
     # FinalParams
     def RoomChannelReachCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(98))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(96))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 80
 
     # FinalParams
     def DetourFactor(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(100))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(98))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 1.5
@@ -504,7 +489,7 @@ class FinalParams(object):
     # cells.
     # FinalParams
     def TerminalStubExtraCells(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(102))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(100))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 5
@@ -513,21 +498,21 @@ class FinalParams(object):
     # SAT states kept per chain and whole-chip combinations tried.
     # FinalParams
     def GlobalSatRuns(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(104))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(102))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 8
 
     # FinalParams
     def GlobalSatStates(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(106))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(104))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 8
 
     # FinalParams
     def GlobalSatTries(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(108))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(106))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 200
@@ -536,7 +521,7 @@ class FinalParams(object):
     # joins a chain; then the chain is searched again without the rule.
     # FinalParams
     def ChainRuleRefusals(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(110))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(108))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 1500
@@ -545,14 +530,14 @@ class FinalParams(object):
     # again and how many local rip-up rounds it runs.
     # FinalParams
     def ResearchRingMembers(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(112))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(110))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 2
 
     # FinalParams
     def ResearchRounds(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(114))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(112))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 2
@@ -561,7 +546,7 @@ class FinalParams(object):
     # the feedline pass and the refinements.
     # FinalParams
     def FencePairs(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(116))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(114))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 3
@@ -571,27 +556,27 @@ class FinalParams(object):
     # times the flat price at `rise_reach` clearances.
     # FinalParams
     def HaloReach(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(118))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(116))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 1
 
     # FinalParams
     def RiseReach(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(120))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(118))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 3
 
     # FinalParams
     def RisePeak(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(122))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(120))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 3
 
 def FinalParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(60)
+    builder.StartObject(59)
 
 def Start(builder: flatbuffers.Builder):
     FinalParamsStart(builder)
@@ -644,314 +629,308 @@ def FinalParamsAddFeedlineRefinementRounds(builder: flatbuffers.Builder, feedlin
 def AddFeedlineRefinementRounds(builder: flatbuffers.Builder, feedlineRefinementRounds: int):
     FinalParamsAddFeedlineRefinementRounds(builder, feedlineRefinementRounds)
 
-def FinalParamsAddMeanderLength(builder: flatbuffers.Builder, meanderLength: float):
-    builder.PrependFloat64Slot(8, meanderLength, 3000.0)
-
-def AddMeanderLength(builder: flatbuffers.Builder, meanderLength: float):
-    FinalParamsAddMeanderLength(builder, meanderLength)
-
 def FinalParamsAddBendPenaltyNorm(builder: flatbuffers.Builder, bendPenaltyNorm: float):
-    builder.PrependFloat64Slot(9, bendPenaltyNorm, 2.5)
+    builder.PrependFloat64Slot(8, bendPenaltyNorm, 2.5)
 
 def AddBendPenaltyNorm(builder: flatbuffers.Builder, bendPenaltyNorm: float):
     FinalParamsAddBendPenaltyNorm(builder, bendPenaltyNorm)
 
 def FinalParamsAddWireProximityPenaltyNorm(builder: flatbuffers.Builder, wireProximityPenaltyNorm: float):
-    builder.PrependFloat64Slot(10, wireProximityPenaltyNorm, 0.00125)
+    builder.PrependFloat64Slot(9, wireProximityPenaltyNorm, 0.00125)
 
 def AddWireProximityPenaltyNorm(builder: flatbuffers.Builder, wireProximityPenaltyNorm: float):
     FinalParamsAddWireProximityPenaltyNorm(builder, wireProximityPenaltyNorm)
 
 def FinalParamsAddStaticProximityPenaltyNorm(builder: flatbuffers.Builder, staticProximityPenaltyNorm: float):
-    builder.PrependFloat64Slot(11, staticProximityPenaltyNorm, 0.00033)
+    builder.PrependFloat64Slot(10, staticProximityPenaltyNorm, 0.00033)
 
 def AddStaticProximityPenaltyNorm(builder: flatbuffers.Builder, staticProximityPenaltyNorm: float):
     FinalParamsAddStaticProximityPenaltyNorm(builder, staticProximityPenaltyNorm)
 
 def FinalParamsAddObstaclePenaltyReach(builder: flatbuffers.Builder, obstaclePenaltyReach: float):
-    builder.PrependFloat64Slot(12, obstaclePenaltyReach, 100.0)
+    builder.PrependFloat64Slot(11, obstaclePenaltyReach, 100.0)
 
 def AddObstaclePenaltyReach(builder: flatbuffers.Builder, obstaclePenaltyReach: float):
     FinalParamsAddObstaclePenaltyReach(builder, obstaclePenaltyReach)
 
 def FinalParamsAddCouplerLength(builder: flatbuffers.Builder, couplerLength: float):
-    builder.PrependFloat64Slot(13, couplerLength, 200.0)
+    builder.PrependFloat64Slot(12, couplerLength, 200.0)
 
 def AddCouplerLength(builder: flatbuffers.Builder, couplerLength: float):
     FinalParamsAddCouplerLength(builder, couplerLength)
 
 def FinalParamsAddCouplerHeight(builder: flatbuffers.Builder, couplerHeight: float):
-    builder.PrependFloat64Slot(14, couplerHeight, 26.0)
+    builder.PrependFloat64Slot(13, couplerHeight, 26.0)
 
 def AddCouplerHeight(builder: flatbuffers.Builder, couplerHeight: float):
     FinalParamsAddCouplerHeight(builder, couplerHeight)
 
 def FinalParamsAddRepairTrials(builder: flatbuffers.Builder, repairTrials: int):
-    builder.PrependUint32Slot(15, repairTrials, 100)
+    builder.PrependUint32Slot(14, repairTrials, 100)
 
 def AddRepairTrials(builder: flatbuffers.Builder, repairTrials: int):
     FinalParamsAddRepairTrials(builder, repairTrials)
 
 def FinalParamsAddStopAfterPhase(builder: flatbuffers.Builder, stopAfterPhase: int):
-    builder.PrependUOffsetTRelativeSlot(16, flatbuffers.number_types.UOffsetTFlags.py_type(stopAfterPhase), 0)
+    builder.PrependUOffsetTRelativeSlot(15, flatbuffers.number_types.UOffsetTFlags.py_type(stopAfterPhase), 0)
 
 def AddStopAfterPhase(builder: flatbuffers.Builder, stopAfterPhase: int):
     FinalParamsAddStopAfterPhase(builder, stopAfterPhase)
 
 def FinalParamsAddRefinementCorridorSpacings(builder: flatbuffers.Builder, refinementCorridorSpacings: int):
-    builder.PrependUint32Slot(17, refinementCorridorSpacings, 6)
+    builder.PrependUint32Slot(16, refinementCorridorSpacings, 6)
 
 def AddRefinementCorridorSpacings(builder: flatbuffers.Builder, refinementCorridorSpacings: int):
     FinalParamsAddRefinementCorridorSpacings(builder, refinementCorridorSpacings)
 
 def FinalParamsAddCouplerBias(builder: flatbuffers.Builder, couplerBias: float):
-    builder.PrependFloat64Slot(18, couplerBias, 1.0)
+    builder.PrependFloat64Slot(17, couplerBias, 1.0)
 
 def AddCouplerBias(builder: flatbuffers.Builder, couplerBias: float):
     FinalParamsAddCouplerBias(builder, couplerBias)
 
 def FinalParamsAddCouplerMaxShortfall(builder: flatbuffers.Builder, couplerMaxShortfall: float):
-    builder.PrependFloat64Slot(19, couplerMaxShortfall, 0.30)
+    builder.PrependFloat64Slot(18, couplerMaxShortfall, 0.30)
 
 def AddCouplerMaxShortfall(builder: flatbuffers.Builder, couplerMaxShortfall: float):
     FinalParamsAddCouplerMaxShortfall(builder, couplerMaxShortfall)
 
 def FinalParamsAddCouplerBoxMarginCells(builder: flatbuffers.Builder, couplerBoxMarginCells: int):
-    builder.PrependUint32Slot(20, couplerBoxMarginCells, 5)
+    builder.PrependUint32Slot(19, couplerBoxMarginCells, 5)
 
 def AddCouplerBoxMarginCells(builder: flatbuffers.Builder, couplerBoxMarginCells: int):
     FinalParamsAddCouplerBoxMarginCells(builder, couplerBoxMarginCells)
 
 def FinalParamsAddCouplerShiftCells(builder: flatbuffers.Builder, couplerShiftCells: int):
-    builder.PrependUint32Slot(21, couplerShiftCells, 20)
+    builder.PrependUint32Slot(20, couplerShiftCells, 20)
 
 def AddCouplerShiftCells(builder: flatbuffers.Builder, couplerShiftCells: int):
     FinalParamsAddCouplerShiftCells(builder, couplerShiftCells)
 
 def FinalParamsAddCouplerLeadMarginCells(builder: flatbuffers.Builder, couplerLeadMarginCells: int):
-    builder.PrependUint32Slot(22, couplerLeadMarginCells, 5)
+    builder.PrependUint32Slot(21, couplerLeadMarginCells, 5)
 
 def AddCouplerLeadMarginCells(builder: flatbuffers.Builder, couplerLeadMarginCells: int):
     FinalParamsAddCouplerLeadMarginCells(builder, couplerLeadMarginCells)
 
 def FinalParamsAddLauncherLead(builder: flatbuffers.Builder, launcherLead: float):
-    builder.PrependFloat64Slot(23, launcherLead, 10.0)
+    builder.PrependFloat64Slot(22, launcherLead, 10.0)
 
 def AddLauncherLead(builder: flatbuffers.Builder, launcherLead: float):
     FinalParamsAddLauncherLead(builder, launcherLead)
 
 def FinalParamsAddCouplerOffsets(builder: flatbuffers.Builder, couplerOffsets: int):
-    builder.PrependUOffsetTRelativeSlot(24, flatbuffers.number_types.UOffsetTFlags.py_type(couplerOffsets), 0)
+    builder.PrependUOffsetTRelativeSlot(23, flatbuffers.number_types.UOffsetTFlags.py_type(couplerOffsets), 0)
 
 def AddCouplerOffsets(builder: flatbuffers.Builder, couplerOffsets: int):
     FinalParamsAddCouplerOffsets(builder, couplerOffsets)
 
 def FinalParamsAddEdgeLauncherMarginCells(builder: flatbuffers.Builder, edgeLauncherMarginCells: int):
-    builder.PrependUint32Slot(25, edgeLauncherMarginCells, 6)
+    builder.PrependUint32Slot(24, edgeLauncherMarginCells, 6)
 
 def AddEdgeLauncherMarginCells(builder: flatbuffers.Builder, edgeLauncherMarginCells: int):
     FinalParamsAddEdgeLauncherMarginCells(builder, edgeLauncherMarginCells)
 
 def FinalParamsAddTerminalSlotCells(builder: flatbuffers.Builder, terminalSlotCells: int):
-    builder.PrependUint32Slot(26, terminalSlotCells, 20)
+    builder.PrependUint32Slot(25, terminalSlotCells, 20)
 
 def AddTerminalSlotCells(builder: flatbuffers.Builder, terminalSlotCells: int):
     FinalParamsAddTerminalSlotCells(builder, terminalSlotCells)
 
 def FinalParamsAddChainEndEdgeWeight(builder: flatbuffers.Builder, chainEndEdgeWeight: float):
-    builder.PrependFloat64Slot(27, chainEndEdgeWeight, 0.1)
+    builder.PrependFloat64Slot(26, chainEndEdgeWeight, 0.1)
 
 def AddChainEndEdgeWeight(builder: flatbuffers.Builder, chainEndEdgeWeight: float):
     FinalParamsAddChainEndEdgeWeight(builder, chainEndEdgeWeight)
 
 def FinalParamsAddEdgeBendFactor(builder: flatbuffers.Builder, edgeBendFactor: float):
-    builder.PrependFloat64Slot(28, edgeBendFactor, 1.0)
+    builder.PrependFloat64Slot(27, edgeBendFactor, 1.0)
 
 def AddEdgeBendFactor(builder: flatbuffers.Builder, edgeBendFactor: float):
     FinalParamsAddEdgeBendFactor(builder, edgeBendFactor)
 
 def FinalParamsAddChainLengthWeight(builder: flatbuffers.Builder, chainLengthWeight: int):
-    builder.PrependUint32Slot(29, chainLengthWeight, 0)
+    builder.PrependUint32Slot(28, chainLengthWeight, 0)
 
 def AddChainLengthWeight(builder: flatbuffers.Builder, chainLengthWeight: int):
     FinalParamsAddChainLengthWeight(builder, chainLengthWeight)
 
 def FinalParamsAddCapacityCheck(builder: flatbuffers.Builder, capacityCheck: bool):
-    builder.PrependBoolSlot(30, capacityCheck, 1)
+    builder.PrependBoolSlot(29, capacityCheck, 1)
 
 def AddCapacityCheck(builder: flatbuffers.Builder, capacityCheck: bool):
     FinalParamsAddCapacityCheck(builder, capacityCheck)
 
 def FinalParamsAddLengthPointRadiusCells(builder: flatbuffers.Builder, lengthPointRadiusCells: int):
-    builder.PrependUint32Slot(31, lengthPointRadiusCells, 40)
+    builder.PrependUint32Slot(30, lengthPointRadiusCells, 40)
 
 def AddLengthPointRadiusCells(builder: flatbuffers.Builder, lengthPointRadiusCells: int):
     FinalParamsAddLengthPointRadiusCells(builder, lengthPointRadiusCells)
 
 def FinalParamsAddLengthPointBandPercent(builder: flatbuffers.Builder, lengthPointBandPercent: float):
-    builder.PrependFloat64Slot(32, lengthPointBandPercent, 10.0)
+    builder.PrependFloat64Slot(31, lengthPointBandPercent, 10.0)
 
 def AddLengthPointBandPercent(builder: flatbuffers.Builder, lengthPointBandPercent: float):
     FinalParamsAddLengthPointBandPercent(builder, lengthPointBandPercent)
 
 def FinalParamsAddSweepLengthBand(builder: flatbuffers.Builder, sweepLengthBand: float):
-    builder.PrependFloat64Slot(33, sweepLengthBand, 5.0)
+    builder.PrependFloat64Slot(32, sweepLengthBand, 5.0)
 
 def AddSweepLengthBand(builder: flatbuffers.Builder, sweepLengthBand: float):
     FinalParamsAddSweepLengthBand(builder, sweepLengthBand)
 
 def FinalParamsAddMeanderLegSpacingCells(builder: flatbuffers.Builder, meanderLegSpacingCells: int):
-    builder.PrependUint32Slot(34, meanderLegSpacingCells, 25)
+    builder.PrependUint32Slot(33, meanderLegSpacingCells, 25)
 
 def AddMeanderLegSpacingCells(builder: flatbuffers.Builder, meanderLegSpacingCells: int):
     FinalParamsAddMeanderLegSpacingCells(builder, meanderLegSpacingCells)
 
 def FinalParamsAddMeanderStartMarginCells(builder: flatbuffers.Builder, meanderStartMarginCells: int):
-    builder.PrependInt32Slot(35, meanderStartMarginCells, -1)
+    builder.PrependInt32Slot(34, meanderStartMarginCells, -1)
 
 def AddMeanderStartMarginCells(builder: flatbuffers.Builder, meanderStartMarginCells: int):
     FinalParamsAddMeanderStartMarginCells(builder, meanderStartMarginCells)
 
 def FinalParamsAddCapacityMargin(builder: flatbuffers.Builder, capacityMargin: float):
-    builder.PrependFloat64Slot(36, capacityMargin, 1.06)
+    builder.PrependFloat64Slot(35, capacityMargin, 1.06)
 
 def AddCapacityMargin(builder: flatbuffers.Builder, capacityMargin: float):
     FinalParamsAddCapacityMargin(builder, capacityMargin)
 
 def FinalParamsAddCapacityMarginFromWires(builder: flatbuffers.Builder, capacityMarginFromWires: int):
-    builder.PrependUint32Slot(37, capacityMarginFromWires, 3)
+    builder.PrependUint32Slot(36, capacityMarginFromWires, 3)
 
 def AddCapacityMarginFromWires(builder: flatbuffers.Builder, capacityMarginFromWires: int):
     FinalParamsAddCapacityMarginFromWires(builder, capacityMarginFromWires)
 
 def FinalParamsAddResonatorPassage(builder: flatbuffers.Builder, resonatorPassage: float):
-    builder.PrependFloat64Slot(38, resonatorPassage, 0.8)
+    builder.PrependFloat64Slot(37, resonatorPassage, 0.8)
 
 def AddResonatorPassage(builder: flatbuffers.Builder, resonatorPassage: float):
     FinalParamsAddResonatorPassage(builder, resonatorPassage)
 
 def FinalParamsAddCrossingReachCells(builder: flatbuffers.Builder, crossingReachCells: int):
-    builder.PrependUint32Slot(39, crossingReachCells, 10)
+    builder.PrependUint32Slot(38, crossingReachCells, 10)
 
 def AddCrossingReachCells(builder: flatbuffers.Builder, crossingReachCells: int):
     FinalParamsAddCrossingReachCells(builder, crossingReachCells)
 
 def FinalParamsAddCrossingSpacing(builder: flatbuffers.Builder, crossingSpacing: float):
-    builder.PrependFloat64Slot(40, crossingSpacing, 1.4142135623730951)
+    builder.PrependFloat64Slot(39, crossingSpacing, 1.4142135623730951)
 
 def AddCrossingSpacing(builder: flatbuffers.Builder, crossingSpacing: float):
     FinalParamsAddCrossingSpacing(builder, crossingSpacing)
 
 def FinalParamsAddSlotPinCells(builder: flatbuffers.Builder, slotPinCells: int):
-    builder.PrependUint32Slot(41, slotPinCells, 10)
+    builder.PrependUint32Slot(40, slotPinCells, 10)
 
 def AddSlotPinCells(builder: flatbuffers.Builder, slotPinCells: int):
     FinalParamsAddSlotPinCells(builder, slotPinCells)
 
 def FinalParamsAddEscapeStraightCells(builder: flatbuffers.Builder, escapeStraightCells: int):
-    builder.PrependUint32Slot(42, escapeStraightCells, 5)
+    builder.PrependUint32Slot(41, escapeStraightCells, 5)
 
 def AddEscapeStraightCells(builder: flatbuffers.Builder, escapeStraightCells: int):
     FinalParamsAddEscapeStraightCells(builder, escapeStraightCells)
 
 def FinalParamsAddEscapeStubMarginCells(builder: flatbuffers.Builder, escapeStubMarginCells: int):
-    builder.PrependUint32Slot(43, escapeStubMarginCells, 4)
+    builder.PrependUint32Slot(42, escapeStubMarginCells, 4)
 
 def AddEscapeStubMarginCells(builder: flatbuffers.Builder, escapeStubMarginCells: int):
     FinalParamsAddEscapeStubMarginCells(builder, escapeStubMarginCells)
 
 def FinalParamsAddBottleneckWires(builder: flatbuffers.Builder, bottleneckWires: int):
-    builder.PrependUint32Slot(44, bottleneckWires, 10)
+    builder.PrependUint32Slot(43, bottleneckWires, 10)
 
 def AddBottleneckWires(builder: flatbuffers.Builder, bottleneckWires: int):
     FinalParamsAddBottleneckWires(builder, bottleneckWires)
 
 def FinalParamsAddBottleneckRise(builder: flatbuffers.Builder, bottleneckRise: float):
-    builder.PrependFloat64Slot(45, bottleneckRise, 2.0)
+    builder.PrependFloat64Slot(44, bottleneckRise, 2.0)
 
 def AddBottleneckRise(builder: flatbuffers.Builder, bottleneckRise: float):
     FinalParamsAddBottleneckRise(builder, bottleneckRise)
 
 def FinalParamsAddRoomMarginCells(builder: flatbuffers.Builder, roomMarginCells: int):
-    builder.PrependUint32Slot(46, roomMarginCells, 10)
+    builder.PrependUint32Slot(45, roomMarginCells, 10)
 
 def AddRoomMarginCells(builder: flatbuffers.Builder, roomMarginCells: int):
     FinalParamsAddRoomMarginCells(builder, roomMarginCells)
 
 def FinalParamsAddRoomChannelReachCells(builder: flatbuffers.Builder, roomChannelReachCells: int):
-    builder.PrependUint32Slot(47, roomChannelReachCells, 80)
+    builder.PrependUint32Slot(46, roomChannelReachCells, 80)
 
 def AddRoomChannelReachCells(builder: flatbuffers.Builder, roomChannelReachCells: int):
     FinalParamsAddRoomChannelReachCells(builder, roomChannelReachCells)
 
 def FinalParamsAddDetourFactor(builder: flatbuffers.Builder, detourFactor: float):
-    builder.PrependFloat64Slot(48, detourFactor, 1.5)
+    builder.PrependFloat64Slot(47, detourFactor, 1.5)
 
 def AddDetourFactor(builder: flatbuffers.Builder, detourFactor: float):
     FinalParamsAddDetourFactor(builder, detourFactor)
 
 def FinalParamsAddTerminalStubExtraCells(builder: flatbuffers.Builder, terminalStubExtraCells: int):
-    builder.PrependUint32Slot(49, terminalStubExtraCells, 5)
+    builder.PrependUint32Slot(48, terminalStubExtraCells, 5)
 
 def AddTerminalStubExtraCells(builder: flatbuffers.Builder, terminalStubExtraCells: int):
     FinalParamsAddTerminalStubExtraCells(builder, terminalStubExtraCells)
 
 def FinalParamsAddGlobalSatRuns(builder: flatbuffers.Builder, globalSatRuns: int):
-    builder.PrependUint32Slot(50, globalSatRuns, 8)
+    builder.PrependUint32Slot(49, globalSatRuns, 8)
 
 def AddGlobalSatRuns(builder: flatbuffers.Builder, globalSatRuns: int):
     FinalParamsAddGlobalSatRuns(builder, globalSatRuns)
 
 def FinalParamsAddGlobalSatStates(builder: flatbuffers.Builder, globalSatStates: int):
-    builder.PrependUint32Slot(51, globalSatStates, 8)
+    builder.PrependUint32Slot(50, globalSatStates, 8)
 
 def AddGlobalSatStates(builder: flatbuffers.Builder, globalSatStates: int):
     FinalParamsAddGlobalSatStates(builder, globalSatStates)
 
 def FinalParamsAddGlobalSatTries(builder: flatbuffers.Builder, globalSatTries: int):
-    builder.PrependUint32Slot(52, globalSatTries, 200)
+    builder.PrependUint32Slot(51, globalSatTries, 200)
 
 def AddGlobalSatTries(builder: flatbuffers.Builder, globalSatTries: int):
     FinalParamsAddGlobalSatTries(builder, globalSatTries)
 
 def FinalParamsAddChainRuleRefusals(builder: flatbuffers.Builder, chainRuleRefusals: int):
-    builder.PrependUint32Slot(53, chainRuleRefusals, 1500)
+    builder.PrependUint32Slot(52, chainRuleRefusals, 1500)
 
 def AddChainRuleRefusals(builder: flatbuffers.Builder, chainRuleRefusals: int):
     FinalParamsAddChainRuleRefusals(builder, chainRuleRefusals)
 
 def FinalParamsAddResearchRingMembers(builder: flatbuffers.Builder, researchRingMembers: int):
-    builder.PrependUint32Slot(54, researchRingMembers, 2)
+    builder.PrependUint32Slot(53, researchRingMembers, 2)
 
 def AddResearchRingMembers(builder: flatbuffers.Builder, researchRingMembers: int):
     FinalParamsAddResearchRingMembers(builder, researchRingMembers)
 
 def FinalParamsAddResearchRounds(builder: flatbuffers.Builder, researchRounds: int):
-    builder.PrependUint32Slot(55, researchRounds, 2)
+    builder.PrependUint32Slot(54, researchRounds, 2)
 
 def AddResearchRounds(builder: flatbuffers.Builder, researchRounds: int):
     FinalParamsAddResearchRounds(builder, researchRounds)
 
 def FinalParamsAddFencePairs(builder: flatbuffers.Builder, fencePairs: int):
-    builder.PrependUint32Slot(56, fencePairs, 3)
+    builder.PrependUint32Slot(55, fencePairs, 3)
 
 def AddFencePairs(builder: flatbuffers.Builder, fencePairs: int):
     FinalParamsAddFencePairs(builder, fencePairs)
 
 def FinalParamsAddHaloReach(builder: flatbuffers.Builder, haloReach: int):
-    builder.PrependUint32Slot(57, haloReach, 1)
+    builder.PrependUint32Slot(56, haloReach, 1)
 
 def AddHaloReach(builder: flatbuffers.Builder, haloReach: int):
     FinalParamsAddHaloReach(builder, haloReach)
 
 def FinalParamsAddRiseReach(builder: flatbuffers.Builder, riseReach: int):
-    builder.PrependUint32Slot(58, riseReach, 3)
+    builder.PrependUint32Slot(57, riseReach, 3)
 
 def AddRiseReach(builder: flatbuffers.Builder, riseReach: int):
     FinalParamsAddRiseReach(builder, riseReach)
 
 def FinalParamsAddRisePeak(builder: flatbuffers.Builder, risePeak: int):
-    builder.PrependUint32Slot(59, risePeak, 3)
+    builder.PrependUint32Slot(58, risePeak, 3)
 
 def AddRisePeak(builder: flatbuffers.Builder, risePeak: int):
     FinalParamsAddRisePeak(builder, risePeak)
@@ -976,7 +955,6 @@ class FinalParamsT(object):
         maxRelaxation = 10,
         refinementRounds = 2,
         feedlineRefinementRounds = 2,
-        meanderLength = 3000.0,
         bendPenaltyNorm = 2.5,
         wireProximityPenaltyNorm = 0.00125,
         staticProximityPenaltyNorm = 0.00033,
@@ -1037,7 +1015,6 @@ class FinalParamsT(object):
         self.maxRelaxation = maxRelaxation  # type: int
         self.refinementRounds = refinementRounds  # type: int
         self.feedlineRefinementRounds = feedlineRefinementRounds  # type: int
-        self.meanderLength = meanderLength  # type: float
         self.bendPenaltyNorm = bendPenaltyNorm  # type: float
         self.wireProximityPenaltyNorm = wireProximityPenaltyNorm  # type: float
         self.staticProximityPenaltyNorm = staticProximityPenaltyNorm  # type: float
@@ -1121,7 +1098,6 @@ class FinalParamsT(object):
         self.maxRelaxation = finalParams.MaxRelaxation()
         self.refinementRounds = finalParams.RefinementRounds()
         self.feedlineRefinementRounds = finalParams.FeedlineRefinementRounds()
-        self.meanderLength = finalParams.MeanderLength()
         self.bendPenaltyNorm = finalParams.BendPenaltyNorm()
         self.wireProximityPenaltyNorm = finalParams.WireProximityPenaltyNorm()
         self.staticProximityPenaltyNorm = finalParams.StaticProximityPenaltyNorm()
@@ -1196,7 +1172,6 @@ class FinalParamsT(object):
         FinalParamsAddMaxRelaxation(builder, self.maxRelaxation)
         FinalParamsAddRefinementRounds(builder, self.refinementRounds)
         FinalParamsAddFeedlineRefinementRounds(builder, self.feedlineRefinementRounds)
-        FinalParamsAddMeanderLength(builder, self.meanderLength)
         FinalParamsAddBendPenaltyNorm(builder, self.bendPenaltyNorm)
         FinalParamsAddWireProximityPenaltyNorm(builder, self.wireProximityPenaltyNorm)
         FinalParamsAddStaticProximityPenaltyNorm(builder, self.staticProximityPenaltyNorm)

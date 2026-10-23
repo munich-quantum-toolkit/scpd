@@ -6,31 +6,29 @@
 #
 # Licensed under the MIT License
 
-"""Lay the capacity graph of the coupler insertion out on a page of its own.
+"""The page of the capacity graph, alone or behind a live coupler session.
 
-With ``--debug`` (and ``SCPD_BOTTLENECKS`` on, the default) the Final stage writes
-``final-capacity-graph.json`` next to its pictures: the chambers and walls as a
-raster, every edge of the graph with what it takes and what the flow sends
-through it, and every outer wire with its two ports. This turns that file into
-one HTML page with no outside resources, from the template
-``capacityview.html`` beside this module. The page draws the chambers and
-walls, the nodes and edges of the graph and a ``load/capacity`` badge on every
-edge, marks the target ports, and lists the edges, the feedline edges and the
-wires in tables. A click on an edge, a chamber, a feedline or a wire shows only
-the parts of the graph that belong to it; the address can name one, as in
-``#wire=14``, ``#edge=g20``, ``#chamber=c12`` or ``#feedline=f2``.
+The Final stage records the capacity graph of its whole-chip check as data: the
+chambers and walls as a raster, every edge of the graph with what it takes and
+what the flow sends through it, and every outer wire with its two ports.
+:func:`page_text` lays that data out on one HTML page with no outside
+resources, from the template ``capacity.html`` beside this module. The page
+draws the chambers and walls, the nodes and edges of the graph and a
+``load/capacity`` badge on every edge, marks the target ports, and lists the
+edges, the feedline edges and the wires in tables. A click on an edge, a
+chamber, a feedline or a wire shows only the parts of the graph that belong to
+it; the address can name one, as in ``#wire=14``, ``#edge=g20``,
+``#chamber=c12`` or ``#feedline=f2``.
 
-    python3 -m mqt.scpd.capacityview <final-capacity-graph.json> [-o out.html]
-
-``serve`` puts the same page behind a local server that holds the Final stage
-after its coupler insertion (``mqt-scpd couplers``): a tab of the page then
-moves a coupler to another of its options, the server draws its two feedline
-edges again and analyses the chip anew, and the page shows the new graph.
+:func:`serve` puts the same page behind a local server that holds the Final
+stage after its coupler insertion (``mqt-scpd debug --serve``): a tab of the
+page then moves a coupler to another of its options, the server draws its two
+feedline edges again and analyses the chip anew, and the page shows the new
+graph.
 """
 
 from __future__ import annotations
 
-import argparse
 import html
 import json
 import re
@@ -38,11 +36,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Protocol
 
-#: The name the Final stage gives the data, and the page built from it.
-DATA_NAME = "final-capacity-graph.json"
-PAGE_NAME = "final-capacity-graph.html"
-
-TEMPLATE = Path(__file__).with_name("capacityview.html")
+TEMPLATE = Path(__file__).with_name("capacity.html")
 TITLE = re.compile(r"<title>.*?</title>", re.DOTALL)
 DATA = re.compile(r'(<script id="graph-data" type="application/json">).*?(</script>)', re.DOTALL)
 SESSION = re.compile(r'(<script id="session-data" type="application/json">).*?(</script>)', re.DOTALL)
@@ -58,7 +52,7 @@ def page_text(graph: dict[str, Any], session: dict[str, Any] | None = None) -> s
     """The page for one capacity graph.
 
     Args:
-        graph: The capacity graph, as the Final stage writes it.
+        graph: The capacity graph, as the Final stage records it.
         session: What the coupler tab needs when a server holds the stage: the
             couplers and their options, and what the last change said. ``None``
             for a page that stands alone.
@@ -78,24 +72,6 @@ def page_text(graph: dict[str, Any], session: dict[str, Any] | None = None) -> s
     text = TITLE.sub(lambda _: title, text, count=1)
     text = DATA.sub(lambda found: found.group(1) + _embedded(graph) + found.group(2), text, count=1)
     return SESSION.sub(lambda found: found.group(1) + _embedded(session) + found.group(2), text, count=1)
-
-
-def build(data: Path, page: Path) -> None:
-    """Write the page for one capacity graph.
-
-    Args:
-        data: The ``final-capacity-graph.json`` the Final stage wrote.
-        page: Where the page goes.
-
-    Raises:
-        ValueError: When the data is not a capacity graph.
-    """
-    try:
-        text = page_text(json.loads(data.read_text(encoding="utf-8")))
-    except ValueError as error:
-        msg = f"{data}: {error}"
-        raise ValueError(msg) from error
-    page.write_text(text, encoding="utf-8")
 
 
 class Session(Protocol):
@@ -238,21 +214,3 @@ def serve(server: CouplerServer, port: int) -> None:
         pass
     finally:
         httpd.server_close()
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Build the page from the command line.
-
-    Returns:
-        The exit code.
-    """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("data", type=Path, help=f"the {DATA_NAME} of a debug run")
-    parser.add_argument("-o", "--output", type=Path, help=f"the page; {PAGE_NAME} beside the data by default")
-    args = parser.parse_args(argv)
-    build(args.data, args.output or args.data.with_name(PAGE_NAME))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

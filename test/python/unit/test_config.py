@@ -231,6 +231,33 @@ def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> Non
     assert back.stages.final.chainRuleRefusals == 1
 
 
+def test_the_debug_section_reads_and_defaults() -> None:
+    """`[debug]` names the pages a run writes; every page is off unless the file turns it on."""
+    config = parse_config(MANUAL)
+    assert config.debug is not None
+    assert config.debug.html is False
+    assert config.debug.preFeedlineRoutingDashboard is False
+    assert config.debug.preFeedlineRefinementDashboard is False
+    assert config.debug.feedlineInsertion is False
+    assert config.debug.localSat is False
+    assert config.debug.globalSat is False
+    assert config.debug.feedlineConstrainedRoutingDashboard is False
+    assert config.debug.feedlineConstrainedRefinementDashboard is False
+
+    config = parse_config(MANUAL + "\n[debug]\nhtml = true\nlocal_sat = true\n")
+    assert config.debug is not None
+    assert config.debug.html is True
+    assert config.debug.localSat is True
+    assert config.debug.globalSat is False
+    back = read_config(write_config(config))
+    assert back.debug is not None
+    assert back.debug.html is True
+    assert back.debug.localSat is True
+
+    with pytest.raises(ConfigError, match=r"\[debug\] has the unknown key .search_pictures."):
+        parse_config(MANUAL + "\n[debug]\nsearch_pictures = true\n")
+
+
 def test_shipped_configurations_carry_only_what_differs_from_the_defaults() -> None:
     """Strict loading rejects defaults written out, except the design rules."""
     assert shipped_config_problems({"ports": {}}) == []

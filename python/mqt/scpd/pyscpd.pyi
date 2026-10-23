@@ -49,7 +49,7 @@ def route_final(
     debug: object | None = None,
     verbosity: int = 0,
 ) -> bytes:
-    """Run the Final stage. Returns 06-final.fb as bytes. progress, when given, is called with one line per round while the stage runs, and with verbosity 1 with one line per wire and search as well; debug, when given, is called with the name and the text of one SVG picture of the grid and then of every search, and returns where it put the picture so the lines can name it."""
+    """Run the Final stage. Returns 06-final.fb as bytes. progress, when given, is called with one line per round while the stage runs, and with verbosity 1 with one line per wire and search as well; debug, when given, is called with the kind and the JSON text of every record a page of the [debug] section asks for."""
 
 class CouplerSession:
     """The Final stage held after its coupler insertion, to move couplers by hand and look at the capacity graph again: a debugging aid."""
@@ -82,7 +82,7 @@ class CouplerSession:
         """Run the feedline routing on the chip as it stands. Returns JSON with the fails of every wire and every wire's way. The routing changes the state for good."""
 
     def set_debug(self, debug: object) -> None:
-        """Draw the stage's pictures from now on: debug is called with the name and the text of every picture and returns where it put it, as in a run with -d."""
+        """Record what the stage does from now on: debug is called with the kind and the JSON text of every record the [debug] section of the session's configuration asks for."""
 
 def check_final(chip: bytes, global_: bytes, assignment: bytes, final: bytes, config: bytes) -> str:
     """Check a final routing against the design rules. Returns the text of drc.json."""

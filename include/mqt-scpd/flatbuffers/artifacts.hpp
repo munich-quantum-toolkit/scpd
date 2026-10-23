@@ -2423,7 +2423,7 @@ struct FinalWire FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// How long the path is, in layout units, as the stage renders it: the
   /// exact curves of its bends and not the cells they sweep. Zero for a wire
   /// that carries no cells. The Final stage lengthens a resonator's way to
-  /// `meander_length` with a meander, and this is the figure it measured.
+  /// the target length with a meander, and this is the figure it measured.
   double length() const {
     return GetField<double>(VT_LENGTH, 0.0);
   }

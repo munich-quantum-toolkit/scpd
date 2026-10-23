@@ -125,16 +125,14 @@ mqt::scpd::pipeline::Progress keepSaying(const nb::object& progress) {
   };
 }
 
-/// The Python callable a stage hands its debug pictures to, or nothing.
-mqt::scpd::pipeline::Debug drawTo(const nb::object& debug) {
+/// The Python callable a stage hands its debug records to, or nothing.
+mqt::scpd::pipeline::Debug recordTo(const nb::object& debug) {
   if (debug.is_none()) {
     return {};
   }
-  return [&debug](const std::string_view name,
-                  const std::string_view content) -> std::string {
-    const nb::object where = debug(nb::str(name.data(), name.size()),
-                                   nb::str(content.data(), content.size()));
-    return where.is_none() ? std::string{} : nb::cast<std::string>(where);
+  return [&debug](const std::string_view kind, const std::string_view record) {
+    debug(nb::str(kind.data(), kind.size()),
+          nb::str(record.data(), record.size()));
   };
 }
 
@@ -295,7 +293,7 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
         return asArtifact(mqt::scpd::pipeline::finalRouters().make(name)->run(
                               design, capacityOf(plan), globalOf(circuit),
                               assignmentOf(assigned), detailOf(drawn),
-                              configuration, sayTo(progress), drawTo(debug),
+                              configuration, sayTo(progress), recordTo(debug),
                               verbosity),
                           producer);
       },
@@ -305,9 +303,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "Run the Final stage. Returns 06-final.fb as bytes. progress, when "
       "given, is called with one line per round while the stage runs, and "
       "with verbosity 1 with one line per wire and search as well; debug, "
-      "when given, is called with the name and the text of one SVG picture "
-      "of the grid and then of every search, and returns where it put the "
-      "picture so the lines can name it.");
+      "when given, is called with the kind and the JSON text of every record "
+      "a page of the [debug] section asks for.");
 
   nb::class_<mqt::scpd::pipeline::CouplerSession>(
       m, "CouplerSession",
@@ -362,24 +359,21 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
           [](mqt::scpd::pipeline::CouplerSession& self,
              const nb::object& debug) {
             // The session keeps the callable past this call, so it holds a
-            // copy of it and not the reference `drawTo` takes.
+            // copy of it and not the reference `recordTo` takes.
             if (debug.is_none()) {
               self.setDebug({});
               return;
             }
-            self.setDebug([debug](const std::string_view name,
-                                  const std::string_view content) {
-              const nb::object where =
-                  debug(nb::str(name.data(), name.size()),
-                        nb::str(content.data(), content.size()));
-              return where.is_none() ? std::string{}
-                                     : nb::cast<std::string>(where);
+            self.setDebug([debug](const std::string_view kind,
+                                  const std::string_view record) {
+              debug(nb::str(kind.data(), kind.size()),
+                    nb::str(record.data(), record.size()));
             });
           },
           "debug"_a,
-          "Draw the stage's pictures from now on: debug is called with the "
-          "name and the text of every picture and returns where it put it, "
-          "as in a run with -d.");
+          "Record what the stage does from now on: debug is called with the "
+          "kind and the JSON text of every record the [debug] section of "
+          "the session's configuration asks for.");
 
   m.def(
       "check_final",

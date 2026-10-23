@@ -26,6 +26,7 @@ from .flatbuffers.config.BridgeRule import BridgeRuleT
 from .flatbuffers.config.CapacityParams import CapacityParamsT
 from .flatbuffers.config.Config import ConfigT
 from .flatbuffers.config.CorridorParams import CorridorParamsT
+from .flatbuffers.config.DebugParams import DebugParamsT
 from .flatbuffers.config.DetailParams import DetailParamsT
 from .flatbuffers.config.FinalParams import FinalParamsT
 from .flatbuffers.config.GlobalParams import GlobalParamsT
@@ -74,6 +75,19 @@ GRID_DEFAULTS: dict[str, float] = {
 
 #: The defaults of the stage sections, by section and key. A shipped configuration carries only
 #: what differs from them, the same rule the grid section follows.
+#: The keys of ``[debug]``: the pages a run writes under ``<run>/debug``, every one off by default.
+#: The key names the page; ``html`` is the index that links them.
+DEBUG_PAGES: tuple[str, ...] = (
+    "html",
+    "pre_feedline_routing_dashboard",
+    "pre_feedline_refinement_dashboard",
+    "feedline_insertion",
+    "local_sat",
+    "global_sat",
+    "feedline_constrained_routing_dashboard",
+    "feedline_constrained_refinement_dashboard",
+)
+
 STAGE_DEFAULTS: dict[str, dict[str, object]] = {
     "capacity": {"planner": "", "bottleneck_clearance": 1.5, "crossing_pitch": 165.0},
     "global": {"router": "", "internal_bridges": False},
@@ -98,7 +112,6 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "refinement_rounds": 2,
         "feedline_refinement_rounds": 2,
         "refinement_corridor_spacings": 6,
-        "meander_length": 3000.0,
         "bend_penalty_norm": 2.5,
         "wire_proximity_penalty_norm": 0.00125,
         "static_proximity_penalty_norm": 0.00033,
@@ -313,6 +326,25 @@ def _read_grid(table: dict[str, Any], problems: list[str]) -> GridParamsT:
     return grid
 
 
+def _read_debug(table: dict[str, Any], problems: list[str]) -> DebugParamsT:
+    section = _Section("debug", table, problems)
+    debug = DebugParamsT()
+    for key in DEBUG_PAGES:
+        setattr(debug, _camel(key), section.take(key, bool, default=False))
+    section.finish()
+    return debug
+
+
+def _camel(key: str) -> str:
+    """The attribute name the generated object API gives a schema field.
+
+    Returns:
+        ``pre_feedline_routing_dashboard`` as ``preFeedlineRoutingDashboard``.
+    """
+    first, *rest = key.split("_")
+    return first + "".join(word.capitalize() for word in rest)
+
+
 def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     """Read the stage sections, applying the defaults to everything a file leaves out.
 
@@ -423,7 +455,6 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     # Lengths in layout units and prices against the grid extent. None of them is a cell
     # count: the same count is a different distance on every one of the eight grids.
     for key, field in (
-        ("meander_length", "meanderLength"),
         ("bend_penalty_norm", "bendPenaltyNorm"),
         ("wire_proximity_penalty_norm", "wireProximityPenaltyNorm"),
         ("static_proximity_penalty_norm", "staticProximityPenaltyNorm"),
@@ -550,8 +581,9 @@ def parse_config(text: str, *, source: str = "config.toml", strict: bool = False
 
     # The stage sections are always built, so an absent one is the defaults rather than nothing.
     config.stages = _read_stages(root.subtable("stages") or {}, problems)
+    config.debug = _read_debug(root.subtable("debug") or {}, problems)
 
-    known = {"chip", "ports", "design_rules", "grid", "stages"}
+    known = {"chip", "ports", "design_rules", "grid", "stages", "debug"}
     problems.extend(f"unknown section [{key}]" for key in document if key not in known)
     if strict:
         problems.extend(shipped_config_problems(document))

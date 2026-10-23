@@ -26,6 +26,7 @@ self
 :caption: User Guide
 
 installation
+routing
 references
 CHANGELOG
 UPGRADING

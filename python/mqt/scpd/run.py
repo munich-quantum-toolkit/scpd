@@ -186,7 +186,7 @@ class RunDirectory:
 
     @property
     def debug(self) -> Path:
-        """Where the debug pictures of a run go."""
+        """Where the debug records and pages of a run go."""
         return self.path / "debug"
 
     def run_stage(
@@ -194,7 +194,7 @@ class RunDirectory:
         stage: str,
         config: ConfigT,
         progress: Callable[[str], None] | None = None,
-        debug: Callable[[str, str], str | None] | None = None,
+        debug: Callable[[str, str], None] | None = None,
         verbosity: int = 0,
     ) -> StageResult:
         """Run one stage and write its artifact.
@@ -202,9 +202,9 @@ class RunDirectory:
         Args:
             stage: The stage to run.
             progress: Called with one line at a time while a stage that reports its progress runs.
-            debug: Called with the name and the text of every debug picture a stage draws, and
-                answers with where it put the picture, so the progress can name it; only the Final
-                stage draws any.
+            debug: Called with the kind and the JSON text of every debug record a stage makes;
+                only the Final stage makes any, and only of the kinds the ``[debug]`` section of
+                ``config`` asks for.
             verbosity: 0 for one progress line per round, 1 for one per wire and search as well.
             config: The run configuration.
 

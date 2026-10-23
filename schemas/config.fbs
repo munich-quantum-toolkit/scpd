@@ -247,15 +247,6 @@ table FinalParams {
   /// Zero switches the phase off and leaves the stage where the feedline
   /// routing ends.
   feedline_refinement_rounds: uint32 = 2;
-  /// How long a resonator's way is made before the coupler is spliced into
-  /// it, in layout units. Zero switches the meander off.
-  ///
-  /// This is not `target_resonator_length`. The wire is fed from the segment
-  /// between two launchers and the coupler is spliced where the way left to
-  /// the qubit port reaches the target length, so the whole way has to be
-  /// longer than the target. The prototype's own figures are 3000 layout units
-  /// on the 17-qubit chip and 6000 on the 69-qubit one.
-  meander_length: double = 3000.0;
   /// What one eighth turn costs, in hundredths of a cell.
   ///
   /// A price and not a distance, but it is still normalised: a bend costs a
@@ -429,6 +420,34 @@ table StageParams {
   final: FinalParams;
 }
 
+/// The pages a run writes under `<run>/debug`, each off unless asked for.
+/// The Final stage emits the records a page needs and nothing else; the
+/// pages are built from the records when the stage ends, and again by
+/// `mqt-scpd debug <run>`.
+table DebugParams {
+  /// Write `<run>/debug/index.html`, which links every page below and
+  /// lists what each phase came to.
+  html: bool = false;
+  /// A table of the pre-feedline routing: for every wire and round, what the
+  /// search came to and at which relaxation level, with the way it found.
+  pre_feedline_routing_dashboard: bool = false;
+  /// The same table for the pre-feedline refinement.
+  pre_feedline_refinement_dashboard: bool = false;
+  /// The coupler options and the capacity graph of the feedline insertion,
+  /// on the page the graph is laid out on.
+  feedline_insertion: bool = false;
+  /// Every step check of the chain search: the chain, the step, the options
+  /// it stands on, the verdict and the wires it closes.
+  local_sat: bool = false;
+  /// The global SAT search: the states collected per chain, every
+  /// combination tried with its verdict, and the state the chip stands on.
+  global_sat: bool = false;
+  /// The table for the feedline-constrained routing.
+  feedline_constrained_routing_dashboard: bool = false;
+  /// The table for the feedline-constrained refinement.
+  feedline_constrained_refinement_dashboard: bool = false;
+}
+
 /// The whole run configuration.
 table Config {
   /// The chip input path, relative to the configuration file.
@@ -437,4 +456,5 @@ table Config {
   rules: design.DesignRules (required);
   grid: GridParams;
   stages: StageParams;
+  debug: DebugParams;
 }

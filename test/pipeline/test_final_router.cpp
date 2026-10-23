@@ -39,6 +39,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <format>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -530,7 +531,7 @@ TEST(FinalRouter, StartsOnTheDetailWaysAndReportsItsFails) {
   const auto bad = std::stoul(total.substr(total.find("Bad:") + 4));
 
   // Every resonator's length is said, way plus the run to the port against
-  // `meander_length`, and a line sums them up.
+  // the target length, and a line sums them up.
   std::size_t resonators = 0;
   std::size_t said = 0;
   for (std::size_t index = 0; index < planned.assignment.connections.size();
@@ -868,10 +869,22 @@ TEST(FinalRouter, TheRefusalLimitSearchesAChainAgainWithoutTheRule) {
   }
 }
 
+/// The benchmark with the debug pages `turnOn` names on; every other page
+/// stays off, as a configuration without a `[debug]` section leaves them.
+Benchmark withDebugPages(
+    Benchmark benchmark,
+    const std::function<void(flatbuffers::config::DebugParamsT&)>& turnOn) {
+  benchmark.config.debug =
+      std::make_unique<flatbuffers::config::DebugParamsT>();
+  turnOn(*benchmark.config.debug);
+  return benchmark;
+}
+
 /// By default the chain search applies the capacity rule and the insertion
 /// reports the capacity graph it leaves behind.
 TEST(FinalRouter, TheCapacityRuleAndTheBottleneckReportAreOnByDefault) {
-  const auto benchmark = nineQubit();
+  const auto benchmark = withDebugPages(
+      nineQubit(), [](auto& debug) { debug.feedline_insertion = true; });
   const auto planned = plan(benchmark);
   std::vector<std::string> lines;
   bool graphWritten = false;
@@ -879,9 +892,8 @@ TEST(FinalRouter, TheCapacityRuleAndTheBottleneckReportAreOnByDefault) {
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
       planned.detail, benchmark.config,
       [&lines](const std::string_view line) { lines.emplace_back(line); },
-      [&graphWritten](const std::string_view name, const std::string_view) {
-        graphWritten = graphWritten || name == "final-capacity-graph.json";
-        return std::string(name);
+      [&graphWritten](const std::string_view kind, const std::string_view) {
+        graphWritten = graphWritten || kind == "capacity-graph";
       }));
 
   const std::regex edgeLine(R"(\[Capacity Step\] chain \d+ f\d+: )");
@@ -2216,34 +2228,182 @@ TEST(FinalRouter, NoEdgeCrossesAnEdgeOfItsOwnChain) {
   }
 }
 
-/// With a debug sink the stage hands out a picture of its grid and then one
-/// of every search, each an SVG document named after the pass, the round,
-/// the wire and the kind of search.
-TEST(FinalRouter, DrawsItsGridAndEverySearchWhenAsked) {
-  const auto benchmark = fourQubit();
+/// The records a run hands its debug sink, each as its kind and its data.
+using Records = std::vector<std::pair<std::string, nlohmann::json>>;
+
+/// Runs the Final stage of `benchmark` with a debug sink and returns every
+/// record it got, in order.
+Records recordsOf(const Benchmark& benchmark) {
   const auto planned = plan(benchmark);
-  std::vector<std::pair<std::string, std::string>> pictures;
-  const auto routing = finalRouters().make("dubins")->run(
+  Records records;
+  static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
       planned.detail, benchmark.config, {},
-      [&pictures](const std::string_view name, const std::string_view content) {
-        pictures.emplace_back(name, content);
-        return std::string(name);
-      });
+      [&records](const std::string_view kind, const std::string_view record) {
+        records.emplace_back(kind, nlohmann::json::parse(record));
+      }));
+  return records;
+}
 
-  ASSERT_FALSE(pictures.empty());
-  EXPECT_EQ(pictures.front().first, "final-grid.svg");
-  std::size_t searches = 0;
-  for (const auto& [name, content] : pictures) {
-    // The capacity graph of the bottleneck report is data, not a picture.
-    if (!name.ends_with(".svg")) {
-      continue;
+/// The records of one kind, in order.
+std::vector<nlohmann::json> ofKind(const Records& records,
+                                   const std::string_view kind) {
+  std::vector<nlohmann::json> found;
+  for (const auto& [name, data] : records) {
+    if (name == kind) {
+      found.push_back(data);
     }
-    EXPECT_TRUE(content.starts_with("<svg")) << name;
-    EXPECT_TRUE(content.ends_with("</svg>\n")) << name;
-    searches += name.find("-normal.svg") != std::string::npos ? 1 : 0;
   }
-  EXPECT_GE(searches, routing.wires.size());
+  return found;
+}
+
+/// A dashboard asks for the grid once, first, and then for one record per
+/// search of its phase: the pass, the round, the wire, the kind of search,
+/// what it found and the way as its bends.
+TEST(FinalRouter, RecordsItsGridAndEverySearchOfAPhaseForItsDashboard) {
+  const auto benchmark = withDebugPages(fourQubit(), [](auto& debug) {
+    debug.pre_feedline_routing_dashboard = true;
+  });
+  const auto records = recordsOf(benchmark);
+
+  ASSERT_FALSE(records.empty());
+  EXPECT_EQ(records.front().first, "grid");
+  const auto& grid = records.front().second;
+  EXPECT_GT(grid.at("width").get<std::size_t>(), 0U);
+  EXPECT_GT(grid.at("height").get<std::size_t>(), 0U);
+  EXPECT_FALSE(grid.at("blocked").empty());
+  EXPECT_EQ(ofKind(records, "grid").size(), 1U);
+
+  const auto searches = ofKind(records, "search");
+  // Every ring wire of the 4-qubit chip is searched at least once before
+  // the feedlines; the inner circuit too.
+  EXPECT_GE(searches.size(), 12U);
+  for (const auto& search : searches) {
+    EXPECT_EQ(search.at("phase"), "pre-feedline-routing");
+    EXPECT_TRUE(search.contains("pass"));
+    EXPECT_TRUE(search.contains("round"));
+    EXPECT_TRUE(search.contains("wire"));
+    EXPECT_TRUE(search.contains("kind"));
+    EXPECT_TRUE(search.at("found").is_boolean());
+    EXPECT_TRUE(search.at("way").is_array());
+  }
+  // Only the phase asked for is recorded: no search of the feedline
+  // routing, and nothing of the other pages.
+  for (const auto& [kind, data] : records) {
+    EXPECT_TRUE(kind == "grid" || kind == "search") << kind;
+  }
+}
+
+/// A sink that no page asks for gets nothing: the `[debug]` section decides
+/// what is recorded, not the presence of the sink.
+TEST(FinalRouter, RecordsNothingWhenNoDebugPageAsksForIt) {
+  EXPECT_TRUE(recordsOf(fourQubit()).empty());
+  EXPECT_TRUE(
+      recordsOf(withDebugPages(fourQubit(), [](auto& /*debug*/) {})).empty());
+}
+
+/// The insertion page asks for the coupler options once, before the chain
+/// search, and for the capacity graph of the whole-chip check after the
+/// commit: the same graph as data the coupler session answers.
+TEST(FinalRouter,
+     RecordsTheCouplerOptionsAndTheCapacityGraphForTheInsertionPage) {
+  const auto records = recordsOf(withDebugPages(
+      fourQubit(), [](auto& debug) { debug.feedline_insertion = true; }));
+
+  const auto options = ofKind(records, "coupler-options");
+  ASSERT_EQ(options.size(), 1U);
+  const auto& couplers = options.front().at("couplers");
+  EXPECT_EQ(couplers.size(), 4U);
+  EXPECT_TRUE(couplers.front().at("options").front().contains("pad"));
+
+  const auto graphs = ofKind(records, "capacity-graph");
+  ASSERT_FALSE(graphs.empty());
+  const auto first = std::ranges::find_if(records, [](const auto& record) {
+    return record.first == "capacity-graph";
+  });
+  const auto before = std::ranges::find_if(records, [](const auto& record) {
+    return record.first == "coupler-options";
+  });
+  EXPECT_LT(before - records.begin(), first - records.begin());
+  const auto& data = graphs.back();
+  const auto width = data.at("width").get<std::size_t>();
+  const auto height = data.at("height").get<std::size_t>();
+  // The raster covers the grid, run by run, and names only chambers there are.
+  const auto& raster = data.at("raster");
+  ASSERT_EQ(raster.size() % 2, 0U);
+  std::size_t cells = 0;
+  const auto chambers = data.at("nodes").size();
+  for (std::size_t at = 0; at < raster.size(); at += 2) {
+    const auto code = raster[at].get<std::size_t>();
+    EXPECT_TRUE(code < 6 || code - 6 < chambers) << code;
+    cells += raster[at + 1].get<std::size_t>();
+  }
+  EXPECT_EQ(cells, width * height);
+  EXPECT_TRUE(data.contains("verdict"));
+}
+
+/// The local SAT page asks for every step check of the chain search: the
+/// chain, the step, the options the step stands on, the verdict, the wires
+/// without a way and the ones this edge closed.
+TEST(FinalRouter, RecordsEveryStepCheckForTheLocalSatPage) {
+  const auto records = recordsOf(
+      withDebugPages(fourQubit(), [](auto& debug) { debug.local_sat = true; }));
+
+  const auto steps = ofKind(records, "step-check");
+  ASSERT_FALSE(steps.empty());
+  for (const auto& step : steps) {
+    EXPECT_TRUE(step.at("chain").is_number_unsigned());
+    EXPECT_TRUE(step.at("step").is_number_unsigned());
+    EXPECT_TRUE(step.at("options").is_array());
+    const auto verdict = step.at("verdict").get<std::string>();
+    EXPECT_TRUE(verdict == "SAT" || verdict == "UNSAT") << verdict;
+    EXPECT_EQ(verdict == "SAT", step.at("lost").empty());
+    EXPECT_TRUE(step.at("closed").is_array());
+    EXPECT_TRUE(step.at("refused").is_boolean());
+  }
+  for (const auto& [kind, data] : records) {
+    EXPECT_EQ(kind, "step-check");
+  }
+}
+
+/// The global SAT page asks for the search's course: what it set out from,
+/// the states it collected per chain, every combination with its verdict,
+/// and the result. A chip that is SAT after the commit records the result
+/// alone, and says why nothing was searched.
+TEST(FinalRouter, RecordsTheGlobalSatSearchForItsPage) {
+  const auto records = recordsOf(withDebugPages(
+      fourQubit(), [](auto& debug) { debug.global_sat = true; }));
+
+  const auto events = ofKind(records, "global-sat");
+  ASSERT_FALSE(events.empty());
+  EXPECT_EQ(events.back().at("event"), "result");
+  EXPECT_FALSE(events.back().at("searched").get<bool>());
+  EXPECT_FALSE(events.back().at("why").get<std::string>().empty());
+  for (const auto& [kind, data] : records) {
+    EXPECT_EQ(kind, "global-sat");
+  }
+}
+
+/// The index asks for what every phase came to: one record per phase, in
+/// the order the phases run, with the wires and the fails counted.
+TEST(FinalRouter, RecordsWhatEveryPhaseCameToForTheIndex) {
+  const auto records = recordsOf(
+      withDebugPages(fourQubit(), [](auto& debug) { debug.html = true; }));
+
+  const auto phases = ofKind(records, "phase");
+  ASSERT_EQ(phases.size(), 5U);
+  const std::array<std::string, 5> names{
+      "pre-feedline-routing", "pre-feedline-refinement", "feedline-insertion",
+      "feedline-constrained-routing", "feedline-constrained-refinement"};
+  for (std::size_t at = 0; at < names.size(); ++at) {
+    EXPECT_EQ(phases[at].at("phase"), names[at]);
+    EXPECT_GT(phases[at].at("wires").get<std::size_t>(), 0U);
+    EXPECT_TRUE(phases[at].at("drawn").is_number_unsigned());
+    EXPECT_TRUE(phases[at].at("unrouted").is_number_unsigned());
+  }
+  for (const auto& [kind, data] : records) {
+    EXPECT_EQ(kind, "phase");
+  }
 }
 
 /// An edge between two couplers keeps inside the box the launcher stubs
@@ -2304,7 +2464,8 @@ TEST(FinalRouter, AnEdgeKeepsTheLauncherMarginClear) {
   };
   const auto runWith = [&](const std::uint32_t margin) {
     Seen seen;
-    auto chip = benchmark;
+    auto chip = withDebugPages(
+        benchmark, [](auto& debug) { debug.feedline_insertion = true; });
     finalParamsOf(chip).edge_launcher_margin_cells = margin;
     static_cast<void>(finalRouters().make("dubins")->run(
         chip.chip, planned.capacity, planned.global, planned.assignment,
@@ -2315,11 +2476,10 @@ TEST(FinalRouter, AnEdgeKeepsTheLauncherMarginClear) {
             seen.run = std::stol(std::string(line.substr(at + 22)));
           }
         },
-        [&seen](const std::string_view name, const std::string_view content) {
-          if (name == "final-capacity-graph.json") {
-            seen.graph = nlohmann::json::parse(content);
+        [&seen](const std::string_view kind, const std::string_view record) {
+          if (kind == "capacity-graph") {
+            seen.graph = nlohmann::json::parse(record);
           }
-          return std::string(name);
         }));
     return seen;
   };
@@ -2387,7 +2547,8 @@ TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
   };
   const auto runWith = [&](const std::uint32_t margin) {
     Seen seen;
-    auto chip = benchmark;
+    auto chip = withDebugPages(
+        benchmark, [](auto& debug) { debug.feedline_insertion = true; });
     finalParamsOf(chip).coupler_box_margin_cells = margin;
     static_cast<void>(finalRouters().make("dubins")->run(
         chip.chip, planned.capacity, planned.global, planned.assignment,
@@ -2399,11 +2560,10 @@ TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
           seen.said = seen.said || line.find("coupler_box_margin_cells") !=
                                        std::string_view::npos;
         },
-        [&seen](const std::string_view name, const std::string_view content) {
-          if (name == "final-capacity-graph.json") {
-            seen.graph = nlohmann::json::parse(content);
+        [&seen](const std::string_view kind, const std::string_view record) {
+          if (kind == "capacity-graph") {
+            seen.graph = nlohmann::json::parse(record);
           }
-          return std::string(name);
         }));
     return seen;
   };
@@ -2447,256 +2607,6 @@ TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
   EXPECT_TRUE(kept.said);
   EXPECT_GE(closest(kept), 20);
   EXPECT_LT(closest(plain), 20);
-}
-
-/// With a debug sink the stage draws the bottlenecks of the chip the coupler
-/// insertion leaves: once, after the picture of the coupler options, with a
-/// line for each bottleneck whose tooltip names the obstacles at its two
-/// ends.
-TEST(FinalRouter, DrawsTheBottlenecksAfterTheCouplerInsertion) {
-  const auto benchmark = fourQubit();
-  const auto planned = plan(benchmark);
-  std::vector<std::pair<std::string, std::string>> pictures;
-  static_cast<void>(finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config, {},
-      [&pictures](const std::string_view name, const std::string_view content) {
-        pictures.emplace_back(name, content);
-        return std::string(name);
-      }));
-
-  const auto named = [&pictures](const std::string_view name) {
-    return std::ranges::find_if(pictures, [name](const auto& picture) {
-      return picture.first == name;
-    });
-  };
-  const auto options = named("final-coupler-options.svg");
-  const auto bottlenecks = named("final-bottlenecks.svg");
-  ASSERT_NE(bottlenecks, pictures.end());
-  ASSERT_NE(options, pictures.end());
-  EXPECT_LT(options - pictures.begin(), bottlenecks - pictures.begin());
-  EXPECT_EQ(std::ranges::count_if(pictures,
-                                  [](const auto& picture) {
-                                    return picture.first ==
-                                           "final-bottlenecks.svg";
-                                  }),
-            1);
-  const auto& content = bottlenecks->second;
-  EXPECT_NE(content.find("<line x1="), std::string::npos);
-  EXPECT_NE(content.find(" · "), std::string::npos);
-}
-
-/// With a debug sink the stage draws the capacity graph of the chambers the
-/// bottlenecks cut, once and after the bottlenecks, with a node per chamber
-/// and the ports of the wires.
-TEST(FinalRouter, DrawsTheCapacityGraphAfterTheBottlenecks) {
-  const auto benchmark = fourQubit();
-  const auto planned = plan(benchmark);
-  std::vector<std::pair<std::string, std::string>> pictures;
-  static_cast<void>(finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config, {},
-      [&pictures](const std::string_view name, const std::string_view content) {
-        pictures.emplace_back(name, content);
-        return std::string(name);
-      }));
-
-  const auto named = [&pictures](const std::string_view name) {
-    return std::ranges::find_if(pictures, [name](const auto& picture) {
-      return picture.first == name;
-    });
-  };
-  const auto bottlenecks = named("final-bottlenecks.svg");
-  const auto graph = named("final-capacity-graph.svg");
-  ASSERT_NE(graph, pictures.end());
-  ASSERT_NE(bottlenecks, pictures.end());
-  EXPECT_LT(bottlenecks - pictures.begin(), graph - pictures.begin());
-  EXPECT_EQ(std::ranges::count_if(pictures,
-                                  [](const auto& picture) {
-                                    return picture.first ==
-                                           "final-capacity-graph.svg";
-                                  }),
-            1);
-  const auto& content = graph->second;
-  EXPECT_NE(content.find("class=\"node\""), std::string::npos);
-  EXPECT_NE(content.find("port of "), std::string::npos);
-
-  // The same graph as data, for the page `plan --debug` builds from it.
-  const auto written = named("final-capacity-graph.json");
-  ASSERT_NE(written, pictures.end());
-  const auto data = nlohmann::json::parse(written->second);
-  const auto width = data.at("width").get<std::size_t>();
-  const auto height = data.at("height").get<std::size_t>();
-  // The raster covers the grid, run by run, and names only chambers there are.
-  const auto& raster = data.at("raster");
-  ASSERT_EQ(raster.size() % 2, 0U);
-  std::size_t cells = 0;
-  const auto chambers = data.at("nodes").size();
-  for (std::size_t at = 0; at < raster.size(); at += 2) {
-    const auto code = raster[at].get<std::size_t>();
-    EXPECT_TRUE(code < 6 || code - 6 < chambers) << code;
-    cells += raster[at + 1].get<std::size_t>();
-  }
-  EXPECT_EQ(cells, width * height);
-  // Every edge carries the wires whose way takes it.
-  const auto& edges = data.at("edges");
-  std::vector<std::size_t> taken(edges.size(), 0);
-  const auto& wires = data.at("wires");
-  ASSERT_FALSE(wires.empty());
-  for (const auto& wire : wires) {
-    // A target port is named and lies in a chamber.
-    EXPECT_FALSE(wire.at("target").at("label").get<std::string>().empty());
-    EXPECT_FALSE(wire.at("target").at("chambers").empty());
-    EXPECT_EQ(wire.at("target").at("heading").size(), 2U);
-    if (!wire.at("way").is_null()) {
-      for (const auto& index : wire.at("way")) {
-        ++taken.at(index.get<std::size_t>());
-      }
-    }
-  }
-  for (std::size_t index = 0; index < edges.size(); ++index) {
-    EXPECT_EQ(edges[index].at("load").get<std::size_t>(), taken[index]);
-    EXPECT_EQ(edges[index].at("through").size(), taken[index]);
-  }
-  // A way crosses exactly the feedline edges its wire is prescribed, each
-  // once, and no other but the terminal edges, which every wire may cross.
-  for (const auto& wire : wires) {
-    if (wire.at("way").is_null()) {
-      continue;
-    }
-    std::vector<std::string> crossed;
-    for (const auto& index : wire.at("way")) {
-      const auto& edge = edges.at(index.get<std::size_t>());
-      if (edge.at("kind") == "stretch" && !edge.at("terminal").get<bool>()) {
-        crossed.push_back(edge.at("feedline").get<std::string>());
-      }
-    }
-    auto prescribed = wire.at("crosses").get<std::vector<std::string>>();
-    std::ranges::sort(crossed);
-    std::ranges::sort(prescribed);
-    EXPECT_EQ(crossed, prescribed) << wire.at("name");
-  }
-  // A bottleneck is an edge only where the insertion has a hand in it: an
-  // end on a feedline edge, a coupler pad or a resonator's lead.
-  const auto ofTheInsertion = [](const std::string& end) {
-    return end.starts_with("pad of ") || end.starts_with("lead of ") ||
-           (end.size() > 1 && end[0] == 'f' &&
-            std::isdigit(static_cast<unsigned char>(end[1])) != 0);
-  };
-  for (const auto& edge : edges) {
-    // A mouth between two chains is closed by lines of the insertion's
-    // own, whatever walls they meet on the way.
-    if (edge.at("kind") != "bottleneck" || edge.value("mouth", false)) {
-      continue;
-    }
-    const auto& ends = edge.at("ends");
-    EXPECT_TRUE(ofTheInsertion(ends[0].get<std::string>()) ||
-                ofTheInsertion(ends[1].get<std::string>()))
-        << ends;
-  }
-  // A port run is the rule's straight length from the port, once: a target
-  // run starts at the target port and not at the router's target cell,
-  // which already lies that far out.
-  const auto straight = data.at("straightLength").get<double>();
-  ASSERT_GT(straight, 1.0);
-  std::size_t runs = 0;
-  for (const auto& stroke : data.at("strokes")) {
-    const auto name = stroke.at("name").get<std::string>();
-    if (!name.ends_with(" at its target, left") &&
-        !name.ends_with(" at its source, left")) {
-      continue;
-    }
-    ++runs;
-    const auto& points = stroke.at("points");
-    ASSERT_EQ(points.size(), 2U) << name;
-    const auto length =
-        std::hypot(points[1][0].get<double>() - points[0][0].get<double>(),
-                   points[1][1].get<double>() - points[0][1].get<double>());
-    // The ends are rounded to whole cells.
-    EXPECT_NEAR(length, straight, 1.5) << name;
-  }
-  EXPECT_GE(runs, wires.size());
-  // Every terminal lies in the slot of its port run, a free cell between the
-  // run's two walls.
-  std::vector<std::size_t> codes;
-  codes.reserve(width * height);
-  for (std::size_t at = 0; at < raster.size(); at += 2) {
-    codes.insert(codes.end(), raster[at + 1].get<std::size_t>(),
-                 raster[at].get<std::size_t>());
-  }
-  ASSERT_EQ(codes.size(), width * height);
-  const auto& kinds = data.at("wallKinds");
-  const auto stub = static_cast<std::size_t>(std::ranges::find(kinds, "stub") -
-                                             kinds.begin() + 1);
-  ASSERT_LE(stub, kinds.size());
-  std::set<std::pair<std::int64_t, std::int64_t>> slots;
-  for (const auto& cell : data.at("slots")) {
-    const auto x = cell[0].get<std::int64_t>();
-    const auto y = cell[1].get<std::int64_t>();
-    slots.emplace(x, y);
-    const auto code = codes.at((static_cast<std::size_t>(y) * width) +
-                               static_cast<std::size_t>(x));
-    EXPECT_TRUE(code == 0 || code >= 6) << x << "," << y << " is a wall";
-  }
-  for (const auto& wire : wires) {
-    for (const auto* const end : {"source", "target"}) {
-      const auto& terminal = wire.at(end).at("cell");
-      EXPECT_TRUE(slots.contains(
-          {terminal[0].get<std::int64_t>(), terminal[1].get<std::int64_t>()}))
-          << wire.at("name") << " " << end;
-    }
-  }
-  // A port run is two walls one cell thick: no square of four cells is all
-  // port run.
-  const auto isStub = [&](const std::size_t x, const std::size_t y) {
-    return codes[(y * width) + x] == stub;
-  };
-  std::size_t stubCells = 0;
-  for (std::size_t y = 0; y + 1 < height; ++y) {
-    for (std::size_t x = 0; x + 1 < width; ++x) {
-      stubCells += isStub(x, y) ? 1 : 0;
-      EXPECT_FALSE(isStub(x, y) && isStub(x + 1, y) && isStub(x, y + 1) &&
-                   isStub(x + 1, y + 1))
-          << x << "," << y;
-    }
-  }
-  EXPECT_GT(stubCells, 0U);
-  // No bottleneck joins the two walls of one port run: its line would cross
-  // the slot between them.
-  const auto runOf = [](const std::string& end) {
-    for (const std::string_view side : {", left", ", right"}) {
-      if (end.ends_with(side)) {
-        return end.substr(0, end.size() - side.size());
-      }
-    }
-    return std::string();
-  };
-  // The mouth of a terminal edge's slot is the one gate that joins the two
-  // walls of a run, for that edge alone.
-  std::vector<nlohmann::json> cuts;
-  for (const auto& edge : edges) {
-    if (edge.at("kind") == "bottleneck" && !edge.value("slot", false)) {
-      cuts.push_back(edge);
-    }
-  }
-  for (const auto& cut : data.at("aside")) {
-    cuts.push_back(cut);
-  }
-  for (const auto& cut : cuts) {
-    const auto& ends = cut.at("ends");
-    const auto run = runOf(ends[0].get<std::string>());
-    EXPECT_TRUE(run.empty() || run != runOf(ends[1].get<std::string>()))
-        << ends;
-  }
-  // The end of a port run at its port is closed: no way leads from the slot
-  // round behind the run, so a cut that ends on a port run parts two
-  // chambers.
-  for (const auto& cut : data.at("aside")) {
-    const auto& ends = cut.at("ends");
-    EXPECT_TRUE(runOf(ends[0].get<std::string>()).empty() &&
-                runOf(ends[1].get<std::string>()).empty())
-        << ends;
-  }
 }
 
 } // namespace

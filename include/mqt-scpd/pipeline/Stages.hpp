@@ -54,16 +54,17 @@ using flatbuffers::design::ChipT;
 /// human-readable form of it in one place.
 using Progress = std::function<void(std::string_view)>;
 
-/// Where a stage hands out a picture of what it is doing, when asked to.
+/// Where a stage hands out records of what it is doing, when asked to.
 ///
-/// A debug run of the Final stage draws its grid once and then every search
-/// it makes: the band, the fence, the prices, the wires around it and the
-/// way it found. Like the progress it is a callback and not a file: the
-/// stage names a document and hands over its text, and the caller decides
-/// where it goes and says so in return, so that a progress line can point at
-/// the picture. Nothing is written from the core.
+/// A debug run of the Final stage records what the pages of the `[debug]`
+/// section need: its grid, every search of a phase whose dashboard is on,
+/// the coupler options and the capacity graph, every step check, the course
+/// of the global SAT search and what each phase came to. Like the progress
+/// it is a callback and not a file: the stage names the kind of record and
+/// hands over its JSON text, and the caller decides where it goes. Nothing
+/// is written from the core, and nothing is recorded that no page asks for.
 using Debug =
-    std::function<std::string(std::string_view name, std::string_view content)>;
+    std::function<void(std::string_view kind, std::string_view record)>;
 
 /// Partitions the free space and budgets how many wires may cross between
 /// the partitions.

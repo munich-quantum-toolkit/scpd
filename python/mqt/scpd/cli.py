@@ -20,9 +20,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .artifacts import ArtifactError
-from .capacityview import CouplerServer, serve
 from .chip import ChipError, classify_chip, decode_chip, load_chip
 from .config import ConfigError, load_config, write_config
+from .debug import pages, store
+from .debug.serve import CouplerServer, serve
 from .doctor import run_doctor
 from .export.klayout import ExportError, write_layout
 from .inspection import InspectionError, artifact_to_json
@@ -149,59 +150,61 @@ def command_plan(args: argparse.Namespace) -> int:
     # With --verbose a stage that reports its progress prints one line at a time while it runs.
     # The Final stage is minutes of work on the largest chip, and what it is doing in that time is
     # only useful live.
-    # With --debug the same lines are kept, because the dashboard built at the
-    # end of the run is read off them: one line per attempt, naming the wire,
-    # the round, the outcome and the picture it drew.
+    # A run that writes debug pages keeps the same lines in <run>/debug/run.log, which the index
+    # links.
+    if args.debug:
+        config.debug = pages.all_pages()
+    debugging = pages.wanted(config.debug)
     spoken: list[str] = []
 
     def say(line: str) -> None:
         if args.verbose is not None:
             print(line, flush=True)
-        if args.debug:
+        if debugging:
             spoken.append(line)
 
-    # With --debug a stage that draws pictures of what it is doing writes them into <run>/debug:
-    # the Final stage draws its grid once and then every search it makes, labelled by pass, round,
-    # wire and kind of search. It is a callback like the progress, so the core writes no file.
-    drawn = 0
-    written: set[str] = set()
-
-    def draw(name: str, content: str) -> str:
-        nonlocal drawn
-        directory.debug.mkdir(parents=True, exist_ok=True)
-        target = directory.debug / name
-        target.write_text(content, encoding="utf-8")
-        drawn += 1
-        written.add(name)
-        return str(target)
-
-    for stage in list(IMPLEMENTED) if args.stage is None else [args.stage]:
-        drawn = 0
-        written.clear()
-        result = directory.run_stage(
-            stage,
-            config,
-            say if args.verbose is not None or args.debug else None,
-            draw if args.debug else None,
-            args.verbose or 0,
-        )
-        print(f"{result.stage:9s} -> {result.path.name} ({result.size} bytes)")
-        if drawn:
-            print(f"{'':9s}    {drawn} debug pictures in {directory.debug}")
-            _dashboards(directory, spoken)
-            _capacity_view(directory, written)
-        spoken.clear()
+    # The Final stage records what the pages of the [debug] section need, one JSON record at a
+    # time; the sink keeps them under <run>/debug/data and the pages are built from them when the
+    # stage ends. It is a callback like the progress, so the core writes no file.
+    sink = store.Sink(directory.debug) if debugging else None
+    try:
+        for stage in list(IMPLEMENTED) if args.stage is None else [args.stage]:
+            result = directory.run_stage(
+                stage,
+                config,
+                say if args.verbose is not None or debugging else None,
+                sink,
+                args.verbose or 0,
+            )
+            print(f"{result.stage:9s} -> {result.path.name} ({result.size} bytes)")
+    finally:
+        if sink is not None:
+            sink.close()
+    if sink is not None:
+        (directory.debug / "run.log").write_text("\n".join(spoken) + "\n", encoding="utf-8")
+        assert config.debug is not None
+        made = pages.build(directory.debug, config.debug)
+        records = sum(sink.counts.values())
+        print(f"{'':9s}    {records} debug records; {len(made)} pages: {directory.debug / pages.INDEX}")
     return 0
 
 
-def command_couplers(args: argparse.Namespace) -> int:
-    """Serve the capacity graph of a run with a tab that moves couplers.
+def command_debug(args: argparse.Namespace) -> int:
+    """Build the debug pages of a run again, or serve the capacity graph with a tab that moves couplers.
 
     Returns:
         The exit code.
     """
-    register_external_solver()
     directory = RunDirectory(args.run_dir)
+    if args.serve is None:
+        if not store.kinds(directory.debug):
+            print(f"error: {directory.debug} holds no debug records; run `mqt-scpd plan -d` first", file=sys.stderr)
+            return 1
+        made = pages.build(directory.debug, pages.with_data(directory.debug))
+        print(f"{len(made)} pages: {directory.debug / pages.INDEX}")
+        return 0
+
+    register_external_solver()
     config = directory.load()
     lines: list[str] = []
 
@@ -213,53 +216,9 @@ def command_couplers(args: argparse.Namespace) -> int:
     print(f"running the Final stage of {args.run_dir} to the end of the coupler insertion ...", flush=True)
     session = directory.coupler_session(config, say, args.verbose or 0)
     server = CouplerServer(session, lines)
-    print(f"capacity graph with the coupler tab on http://127.0.0.1:{args.port}/ (Ctrl-C ends it)", flush=True)
-    serve(server, args.port)
+    print(f"capacity graph with the coupler tab on http://127.0.0.1:{args.serve}/ (Ctrl-C ends it)", flush=True)
+    serve(server, args.serve)
     return 0
-
-
-def _capacity_view(directory: RunDirectory, written: set[str]) -> None:
-    """Lay the capacity graph out on a page when the stage wrote one.
-
-    The Final stage writes the graph as data only with ``SCPD_BOTTLENECKS`` on;
-    the page is built from what this stage wrote, never from the data of an
-    earlier run left in the directory.
-    """
-    from . import capacityview  # ruff: ignore[import-outside-top-level]
-
-    if capacityview.DATA_NAME not in written:
-        return
-    page = directory.debug / capacityview.PAGE_NAME
-    capacityview.build(directory.debug / capacityview.DATA_NAME, page)
-    print(f"{'':9s}    {page} (capacity graph)")
-
-
-def _dashboards(directory: RunDirectory, spoken: list[str]) -> None:
-    """Lay the run's pictures out as a table, one page per pass.
-
-    A directory of a thousand pictures is not a thing anybody reads. The table
-    is: a row per wire, a column per round, and every failure a link to the
-    picture of that attempt with its layers switched on and off. Built from
-    the progress lines, so it needs the second level of verbosity -- without
-    it no attempt is reported and there is nothing to lay out.
-    """
-    from . import dashboard
-
-    log = directory.debug / "run.log"
-    log.write_text("\n".join(spoken) + "\n", encoding="utf-8")
-    made = []
-    for which in ("feedline", "outer", "inner", "refinement"):
-        cells, *_ = dashboard.parse(log, which)
-        if not cells:
-            continue
-        page = directory.debug / f"dashboard-{which}.html"
-        dashboard.build(log, which, page, directory.debug / "viewers")
-        made.append((page, len(cells)))
-    if made:
-        for page, attempts in made:
-            print(f"{'':9s}    {page} ({attempts} attempts)")
-    else:
-        print(f"{'':9s}    no table: the attempts are only reported at -v 1")
 
 
 def command_drc(args: argparse.Namespace) -> int:
@@ -380,17 +339,25 @@ def build_parser() -> argparse.ArgumentParser:
         "-d",
         "--debug",
         action="store_true",
-        help="draw the Final stage's grid and every search it makes as SVG pictures into <run>/debug",
+        help="write every debug page into <run>/debug, as a [debug] section with every key on would",
     )
     plan.set_defaults(run=command_plan)
 
-    couplers = commands.add_parser(
-        "couplers",
-        help="serve the capacity graph of a run on a local page that moves couplers to other options",
+    debug = commands.add_parser(
+        "debug",
+        help="build the debug pages of a run again, or serve the capacity graph on a local page that moves couplers",
     )
-    couplers.add_argument("run_dir", type=Path, help="the run directory, with the stages before final")
-    couplers.add_argument("--port", type=int, default=8765, help="the local port (8765)")
-    couplers.add_argument(
+    debug.add_argument("run_dir", type=Path, help="the run directory")
+    debug.add_argument(
+        "--serve",
+        nargs="?",
+        const=8765,
+        default=None,
+        type=int,
+        metavar="PORT",
+        help="run the Final stage to the end of its coupler insertion and serve the capacity graph on PORT (8765)",
+    )
+    debug.add_argument(
         "-v",
         "--verbose",
         nargs="?",
@@ -398,9 +365,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         type=int,
         metavar="LEVEL",
-        help="print every line the stage says; with LEVEL 1 also one line per wire and search",
+        help="with --serve, print every line the stage says; with LEVEL 1 also one line per wire and search",
     )
-    couplers.set_defaults(run=command_couplers)
+    debug.set_defaults(run=command_debug)
 
     drc = commands.add_parser("drc", help="check a run against the design rules")
     drc.add_argument("run_dir", type=Path, help="the run directory to check")
