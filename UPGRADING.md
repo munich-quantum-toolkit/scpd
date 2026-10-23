@@ -10,14 +10,14 @@ of changes including minor and patch releases, please refer to the
 
 A run now goes on from the corridors to the two routing stages, `detail` and
 `final`, unless `[run] stop_after` or `--stop-after` stops it before. Both
-stages read `[design_rules]` and `[grid]` as the planning stages do; the keys
-of `[stages.detail]` and `[stages.final]` are optional, and the Final stage
-takes `[grid] router_cell_size` for the size of its cells. `stop_after` also
-takes one of the five phases of the Final stage, so a run can stop after the
-routing before the feedlines or after the feedline insertion. The Final stage
-counts a resonator off its target length as a fail, as it counts a wire without
-a way, an open wire and a wire that crosses a feedline other than at a right
-angle; a run that ends with fails exits with code 1 as before.
+stages read `[design_rules]` and `[grid]` as the planning stages do; the keys of
+`[stages.detail]` and `[stages.final]` are optional, and the Final stage takes
+`[grid] router_cell_size` for the size of its cells. `stop_after` also takes one
+of the five phases of the Final stage, so a run can stop after the routing
+before the feedlines or after the feedline insertion. The Final stage counts a
+resonator off its target length as a fail, as it counts a wire without a way, an
+open wire and a wire that crosses a feedline other than at a right angle; a run
+that ends with fails exits with code 1 as before.
 
 ### Planning a chip
 

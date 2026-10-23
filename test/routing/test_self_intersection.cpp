@@ -62,7 +62,8 @@ TEST(SelfIntersection, ARevisitedCellIsFound) {
   }
   PathLoopScratch scratch;
   std::vector<PathLoopHit> hits;
-  EXPECT_EQ(findPathSelfIntersections(pathOf(cells), 100, 100, scratch, &hits), 1U);
+  EXPECT_EQ(findPathSelfIntersections(pathOf(cells), 100, 100, scratch, &hits),
+            1U);
   ASSERT_EQ(hits.size(), 1U);
   EXPECT_EQ(hits[0].kind, PathLoopKind::Revisit);
   EXPECT_EQ(hits[0].x, 10U);
@@ -118,7 +119,8 @@ TEST(SelfIntersection, ALongExactRetraceIsALoopNotASpur) {
   }
   PathLoopScratch scratch;
   std::vector<PathLoopHit> hits;
-  EXPECT_GT(findPathSelfIntersections(pathOf(cells), 100, 100, scratch, &hits), 0U);
+  EXPECT_GT(findPathSelfIntersections(pathOf(cells), 100, 100, scratch, &hits),
+            0U);
   ASSERT_FALSE(hits.empty());
   EXPECT_EQ(hits[0].kind, PathLoopKind::Revisit);
 }
@@ -135,7 +137,8 @@ TEST(SelfIntersection, OneCrossingIsOneEventNotOnePerCell) {
   }
   PathLoopScratch scratch;
   std::vector<PathLoopHit> hits;
-  const uint32_t events = findPathSelfIntersections(pathOf(cells), 100, 100, scratch, &hits);
+  const uint32_t events =
+      findPathSelfIntersections(pathOf(cells), 100, 100, scratch, &hits);
   EXPECT_LT(events, 10U);
   EXPECT_GT(events, 0U);
 }

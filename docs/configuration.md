@@ -77,11 +77,11 @@ of a later release read them.
 The capacity step cuts the chip into a coarse capacity grid, and each capacity
 cell into a finer detail grid.
 
-| Key                | Default | Meaning                                                                                                                   |
-| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `capacity_cells_x` | `50`    | The cells of the capacity grid across the width of the chip; at least two                                                 |
-| `capacity_cells_y` | `0`     | The cells of the capacity grid across the height of the chip; `0` takes the aspect ratio, any other value is at least two |
-| `detail_factor`    | `30`    | The detail cells per capacity cell along each axis; at least one                                                          |
+| Key                | Default | Meaning                                                                                                                                        |
+| ------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `capacity_cells_x` | `50`    | The cells of the capacity grid across the width of the chip; at least two                                                                      |
+| `capacity_cells_y` | `0`     | The cells of the capacity grid across the height of the chip; `0` takes the aspect ratio, any other value is at least two                      |
+| `detail_factor`    | `30`    | The detail cells per capacity cell along each axis; at least one                                                                               |
 | `router_cell_size` | `10.0`  | The size of a router cell in layout units; every capacity cell is divided into as many router cells as it holds steps of this size, rounded up |
 
 No stage reads `launcher_offset_x` and `launcher_offset_y` any more. The loader
@@ -245,9 +245,9 @@ well, but each round takes longer.
 
 The Detail stage draws every corridor of the Corridor stage as a path of cells
 on the detail grid, with an eight-connected A\* search inside the corridor.
-Every length is in layout units unless the key says `cells`. The wire
-clearance of the stage is `min_wire_spacing` converted onto the grid, and no
-key sets it. {doc}`routing` describes the stage.
+Every length is in layout units unless the key says `cells`. The wire clearance
+of the stage is `min_wire_spacing` converted onto the grid, and no key sets it.
+{doc}`routing` describes the stage.
 
 | Key                      | Default | Meaning                                                                                                                 |
 | ------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -348,8 +348,8 @@ ends and again by `mqt-scpd debug <run>`. {doc}`routing` describes the pages.
 
 ## `[run]`
 
-| Key          | Default | Meaning                                                                                   |
-| ------------ | ------- | ----------------------------------------------------------------------------------------- |
+| Key          | Default | Meaning                                                                                                                                                                                                                                                                                  |
+| ------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `stop_after` | `""`    | The last step of a run: `capacity`, `global`, `assign`, `corridor`, `detail` or `final`, or a phase of the Final stage (`pre-feedline-routing`, `pre-feedline-refinement`, `feedline-insertion`, `feedline-constrained-routing`, `feedline-constrained-refinement`); empty runs them all |
 
 `mqt-scpd list-algorithms` names the implementations that a build ships for each

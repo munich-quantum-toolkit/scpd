@@ -87,7 +87,8 @@ TEST(Primitives, ADiagonalHeadingKeepsItsQuarterTurns) {
       if (headingDistance(h, p.exitHeading) == 2) {
         ++quarters;
         EXPECT_NEAR(p.cost, std::ceil(std::numbers::pi / 2.0 * 5.0), 1e-9);
-        const double reach = std::hypot(static_cast<double>(p.dx), static_cast<double>(p.dy));
+        const double reach =
+            std::hypot(static_cast<double>(p.dx), static_cast<double>(p.dy));
         EXPECT_NEAR(reach, 5.0 * std::numbers::sqrt2, 1.5);
       }
     }

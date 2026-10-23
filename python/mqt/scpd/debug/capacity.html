@@ -1533,16 +1533,36 @@
           "Chip",
           [
             ["strokes", "feedline edges and port runs as lines", true],
-            ["tedges", "starting and ending feedline edges: their ways in the check", true],
+            [
+              "tedges",
+              "starting and ending feedline edges: their ways in the check",
+              true,
+            ],
             ["flabels", "feedline edge names", true],
             ["paths", "the way every wire has now", false],
             ["slots", "the slots the terminals lie in", true],
             ["xslots", "crossing slots of the feedline edges", true],
             ["xmiss", "places where no crossing slot fits", true],
-            ["escapes", "ways out of the crossing slots (SCPD_SLOT_ESCAPE)", true],
-            ["ezones", "each way out inflated by the clearance: no other way out may enter it", false],
-            ["estubs", "the stubs inflated as the ways out keep from them", true],
-            ["cruns", "each coupler's run between its two feedline ports, a clearance wide (hatched red)", true],
+            [
+              "escapes",
+              "ways out of the crossing slots (SCPD_SLOT_ESCAPE)",
+              true,
+            ],
+            [
+              "ezones",
+              "each way out inflated by the clearance: no other way out may enter it",
+              false,
+            ],
+            [
+              "estubs",
+              "the stubs inflated as the ways out keep from them",
+              true,
+            ],
+            [
+              "cruns",
+              "each coupler's run between its two feedline ports, a clearance wide (hatched red)",
+              true,
+            ],
           ],
         ],
         [
@@ -1759,7 +1779,10 @@
         if (data.escapes) {
           // The stubs as obstacles of the ways out: a way keeps the clearance
           // less the inflation from a stub's wall, so a clearance from its line.
-          const stubKeep = Math.max(0, (data.clearance || 0) - (data.inflation || 0));
+          const stubKeep = Math.max(
+            0,
+            (data.clearance || 0) - (data.inflation || 0),
+          );
           const zs = el("g", { class: "escape-stubs" }, world);
           // The run of a feedline through each coupler, the line between its
           // two feedline ports a clearance wide, hatched red: the band of a
@@ -1777,25 +1800,55 @@
               },
               defs,
             );
-            el("line", { x1: 0, y1: 0, x2: 0, y2: 2, stroke: "#dc2626", "stroke-width": 0.8 }, hatch);
+            el(
+              "line",
+              {
+                x1: 0,
+                y1: 0,
+                x2: 0,
+                y2: 2,
+                stroke: "#dc2626",
+                "stroke-width": 0.8,
+              },
+              hatch,
+            );
           }
           const cr = el("g", { class: "coupler-runs" }, world);
           for (const run of data.couplerRuns || []) {
             const pts = worldPoints(run);
-            el("polyline", { points: pts, class: "coupler-run-fill", "stroke-width": data.clearance || 0 }, cr);
-            const band = el(
+            el(
               "polyline",
-              { points: pts, class: "coupler-run", "stroke-width": data.clearance || 0, stroke: "url(#coupler-hatch)" },
+              {
+                points: pts,
+                class: "coupler-run-fill",
+                "stroke-width": data.clearance || 0,
+              },
               cr,
             );
-            band.dataset.tip = "a coupler's run between its two feedline ports, a clearance wide: no way out's band overlaps it";
+            const band = el(
+              "polyline",
+              {
+                points: pts,
+                class: "coupler-run",
+                "stroke-width": data.clearance || 0,
+                stroke: "url(#coupler-hatch)",
+              },
+              cr,
+            );
+            band.dataset.tip =
+              "a coupler's run between its two feedline ports, a clearance wide: no way out's band overlaps it";
           }
           for (const s of data.strokes) {
             if (s.kind !== "stub" || !s.points || s.points.length < 1) continue;
-            const pts = s.points.length === 1 ? [s.points[0], s.points[0]] : s.points;
+            const pts =
+              s.points.length === 1 ? [s.points[0], s.points[0]] : s.points;
             const band = el(
               "polyline",
-              { points: worldPoints(pts), class: "escape-stub", "stroke-width": 2 * stubKeep },
+              {
+                points: worldPoints(pts),
+                class: "escape-stub",
+                "stroke-width": 2 * stubKeep,
+              },
               zs,
             );
             band.dataset.tip = `${s.name}: no way out enters this (${stubKeep.toFixed(1)} cells from the wall)`;
@@ -1840,19 +1893,32 @@
             const pts = worldPoints(end.line || end.way);
             el(
               "polyline",
-              { points: pts, class: "escape-rim", "stroke-width": data.clearance + 1.5 },
+              {
+                points: pts,
+                class: "escape-rim",
+                "stroke-width": data.clearance + 1.5,
+              },
               es,
             );
             el(
               "polyline",
-              { points: pts, class: "escape-band", "stroke-width": data.clearance },
+              {
+                points: pts,
+                class: "escape-band",
+                "stroke-width": data.clearance,
+              },
               es,
             );
             const line = el("polyline", { points: pts, class: "escape" }, es);
             line.dataset.tip = `${end.slot}: the way out its placement chose, a clearance wide (${end.ways} free)`;
             el(
               "circle",
-              { cx: wx(end.at[0]), cy: wy(end.at[1]), r: 1.5, class: "escape-end" },
+              {
+                cx: wx(end.at[0]),
+                cy: wy(end.at[1]),
+                r: 1.5,
+                class: "escape-end",
+              },
               es,
             );
           }

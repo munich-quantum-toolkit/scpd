@@ -57,10 +57,12 @@ TEST(MemoryModel, TheSearchScratchIsEightBytesPerState) {
   const SearchScratch scratch(1000, 1000);
   EXPECT_EQ(scratch.size(), 1000ULL * 1000ULL * 8ULL);
   const double perCell =
-      static_cast<double>(scratch.size() * sizeof(SearchNode)) / (1000.0 * 1000.0);
+      static_cast<double>(scratch.size() * sizeof(SearchNode)) /
+      (1000.0 * 1000.0);
   EXPECT_DOUBLE_EQ(perCell, 64.0);
   // The scratch of the largest benchmark, per thread.
-  const double largest = static_cast<double>(LARGEST_CELLS) * perCell / MEGABYTE;
+  const double largest =
+      static_cast<double>(LARGEST_CELLS) * perCell / MEGABYTE;
   EXPECT_LT(largest, 600.0);
 }
 
@@ -120,8 +122,10 @@ TEST(MemoryModel, TheBudgetOfTheLargestBenchmarkFitsThreeThreads) {
   // the wire proximity as a byte per cell.
   constexpr double perCellShared = 0.125 + 0.125 + 1.0;
 
-  const double perThread = static_cast<double>(LARGEST_CELLS) * perCellPerThread / MEGABYTE;
-  const double shared = static_cast<double>(LARGEST_CELLS) * perCellShared / MEGABYTE;
+  const double perThread =
+      static_cast<double>(LARGEST_CELLS) * perCellPerThread / MEGABYTE;
+  const double shared =
+      static_cast<double>(LARGEST_CELLS) * perCellShared / MEGABYTE;
   EXPECT_LT(perThread, 700.0);
   EXPECT_LT(shared, 15.0);
 

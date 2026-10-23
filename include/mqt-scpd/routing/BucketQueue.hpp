@@ -35,9 +35,11 @@ namespace mqt::scpd::routing {
 /// ascending order. The span of the priorities held at one time must stay
 /// below FINE_SIZE times COARSE_SIZE. The entry type carries its own priority
 /// in a member named f.
-template <typename Entry, uint32_t FINE_SIZE = 1024, uint32_t COARSE_SIZE = 1024>
+template <typename Entry, uint32_t FINE_SIZE = 1024,
+          uint32_t COARSE_SIZE = 1024>
 class BucketQueue {
-  static_assert((FINE_SIZE & (FINE_SIZE - 1)) == 0, "the fine size is a power of two");
+  static_assert((FINE_SIZE & (FINE_SIZE - 1)) == 0,
+                "the fine size is a power of two");
   static_assert((COARSE_SIZE & (COARSE_SIZE - 1)) == 0,
                 "the coarse size is a power of two");
   static_assert(FINE_SIZE >= 64 && COARSE_SIZE >= 64, "at least one mask word");
@@ -142,7 +144,8 @@ private:
     for (std::size_t w = 0; w < mask.size(); ++w) {
       uint64_t bits = mask[w];
       while (bits != 0) {
-        level[(w << 6U) | static_cast<uint32_t>(std::countr_zero(bits))].clear();
+        level[(w << 6U) | static_cast<uint32_t>(std::countr_zero(bits))]
+            .clear();
         bits &= bits - 1;
       }
       mask[w] = 0;

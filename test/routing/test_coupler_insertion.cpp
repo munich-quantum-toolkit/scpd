@@ -60,7 +60,8 @@ TEST(CouplerInsertion, ADoglegTurnsOnceAndThenRunsStraight) {
 
   const DoglegGeometry clockwise = buildDogleg(PRIMITIVES, 6, 1, 0);
   EXPECT_EQ(clockwise.tip.heading, 0);
-  EXPECT_THROW(static_cast<void>(buildDogleg(PRIMITIVES, 6, 0, 4)), std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(buildDogleg(PRIMITIVES, 6, 0, 4)),
+               std::invalid_argument);
 }
 
 TEST(CouplerInsertion, TheSpliceLandsWhereTheRestOfThePathHitsTheTarget) {
@@ -107,12 +108,15 @@ TEST(CouplerInsertion, AnAllowedAreaMovesTheCouplerAlongItsResonator) {
   // slides along the resonator instead of the placement being lost.
   Path restricted = straightRun(400, 300, 6, 300);
   const uint32_t forbidden = free->anchor.x;
-  const std::optional<CouplerSplice> moved = spliceCouplerDogleg(
-      PRIMITIVES, 150.0, restricted, 0, {},
-      [&](const uint32_t x, const uint32_t) { return x < forbidden - 20 || x > forbidden + 20; });
+  const std::optional<CouplerSplice> moved =
+      spliceCouplerDogleg(PRIMITIVES, 150.0, restricted, 0, {},
+                          [&](const uint32_t x, const uint32_t) {
+                            return x < forbidden - 20 || x > forbidden + 20;
+                          });
   ASSERT_TRUE(moved.has_value());
   EXPECT_TRUE(moved->inAllowedArea);
-  EXPECT_TRUE(moved->anchor.x < forbidden - 20 || moved->anchor.x > forbidden + 20);
+  EXPECT_TRUE(moved->anchor.x < forbidden - 20 ||
+              moved->anchor.x > forbidden + 20);
 }
 
 TEST(CouplerInsertion, AnUnreachableWindowStillPlacesTheCoupler) {
@@ -135,20 +139,25 @@ TEST(CouplerInsertion, ASecondDoglegOffersAnotherPlacement) {
   // The S-jog turns back on itself, so it reaches across the resonator and
   // puts the coupler somewhere the single dogleg cannot reach.
   Path jogged = straightRun(400, 300, 6, 300);
-  const std::optional<CouplerSplice> jog = spliceCouplerDogleg(
-      PRIMITIVES, 150.0, jogged, 0,
-      {.straightLength = 14, .secondStraightLength = 10, .secondTurnReverse = true});
+  const std::optional<CouplerSplice> jog =
+      spliceCouplerDogleg(PRIMITIVES, 150.0, jogged, 0,
+                          {.straightLength = 14,
+                           .secondStraightLength = 10,
+                           .secondTurnReverse = true});
   ASSERT_TRUE(jog.has_value());
   EXPECT_NE(jog->anchor.x, one->anchor.x);
-  EXPECT_NEAR(reconstructSegments(PRIMITIVES, jogged).nominalLength, 150.0, 3.0);
+  EXPECT_NEAR(reconstructSegments(PRIMITIVES, jogged).nominalLength, 150.0,
+              3.0);
 
   // The hook turns twice the same way, so its second straight run lies
   // along the resonator: on a straight wire it lands the coupler exactly
   // where the single dogleg does, only further along the wire.
   Path hooked = straightRun(400, 300, 6, 300);
-  const std::optional<CouplerSplice> hook = spliceCouplerDogleg(
-      PRIMITIVES, 150.0, hooked, 0,
-      {.straightLength = 14, .secondStraightLength = 10, .secondTurnReverse = false});
+  const std::optional<CouplerSplice> hook =
+      spliceCouplerDogleg(PRIMITIVES, 150.0, hooked, 0,
+                          {.straightLength = 14,
+                           .secondStraightLength = 10,
+                           .secondTurnReverse = false});
   ASSERT_TRUE(hook.has_value());
   EXPECT_EQ(hook->anchor.x, one->anchor.x);
   EXPECT_EQ(hook->anchor.y, one->anchor.y);
@@ -171,8 +180,9 @@ TEST(CouplerInsertion, ThereIsNothingToSpliceOntoAnEmptyPath) {
   Path empty;
   EXPECT_FALSE(spliceCouplerDogleg(PRIMITIVES, 150.0, empty, 0).has_value());
   Path path = straightRun(400, 300, 6, 10);
-  EXPECT_THROW(static_cast<void>(spliceCouplerDogleg(PRIMITIVES, 150.0, path, 9)),
-               std::invalid_argument);
+  EXPECT_THROW(
+      static_cast<void>(spliceCouplerDogleg(PRIMITIVES, 150.0, path, 9)),
+      std::invalid_argument);
 }
 
 } // namespace

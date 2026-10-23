@@ -65,7 +65,8 @@ TEST(PathGeometry, AHeadingChangeStartsANewSegment) {
   EXPECT_TRUE(segmented.segments[0].straight);
   EXPECT_TRUE(segmented.segments[1].straight);
   // The lengths accumulate across the segments.
-  EXPECT_GT(segmented.segments[1].lengthAt.back(), segmented.segments[0].lengthAt.back());
+  EXPECT_GT(segmented.segments[1].lengthAt.back(),
+            segmented.segments[0].lengthAt.back());
 }
 
 TEST(PathGeometry, ATurnPrimitiveStaysOneStepAtItsRealEnd) {
@@ -91,14 +92,17 @@ TEST(PathGeometry, ATurnPrimitiveStaysOneStepAtItsRealEnd) {
   const PathSegment& turn = segmented.segments[1];
   EXPECT_FALSE(turn.straight);
   EXPECT_EQ(turn.steps(), 1U);
-  EXPECT_EQ(turn.cells[0].x, static_cast<uint32_t>(105 + quarter->swept.back().dx));
-  EXPECT_EQ(turn.cells[0].y, static_cast<uint32_t>(100 + quarter->swept.back().dy));
+  EXPECT_EQ(turn.cells[0].x,
+            static_cast<uint32_t>(105 + quarter->swept.back().dx));
+  EXPECT_EQ(turn.cells[0].y,
+            static_cast<uint32_t>(100 + quarter->swept.back().dy));
 }
 
 TEST(PathGeometry, SamplingRendersTheStraightRunAtItsRealLength) {
   Path path = straightRun(100, 100, 6, 20);
   std::vector<PathSegment> segments;
-  const std::vector<Point> samples = samplePath(PRIMITIVES, path, path.front(), segments);
+  const std::vector<Point> samples =
+      samplePath(PRIMITIVES, path, path.front(), segments);
   ASSERT_FALSE(samples.empty());
   EXPECT_DOUBLE_EQ(samples.front().x(), 100.0);
   EXPECT_DOUBLE_EQ(samples.back().x(), 120.0);
@@ -131,7 +135,8 @@ TEST(PathGeometry, SamplingSnapsEveryStepOntoItsGridCell) {
   path.insert(path.end(), after.begin(), after.end());
 
   std::vector<PathSegment> segments;
-  const std::vector<Point> samples = samplePath(PRIMITIVES, path, path.front(), segments);
+  const std::vector<Point> samples =
+      samplePath(PRIMITIVES, path, path.front(), segments);
   ASSERT_FALSE(samples.empty());
   // The rendering ends exactly on the last grid cell, so it never drifts.
   EXPECT_NEAR(samples.back().x(), static_cast<double>(path.back().x), 1e-9);
@@ -173,11 +178,13 @@ TEST(PathGeometry, BendsAreDirectionChanges) {
 TEST(PathGeometry, ARepeatedCellRendersNothing) {
   Path path = straightRun(100, 100, 6, 5);
   // The state re-emission of a heading change: the same cell twice.
-  path.push_back({.x = 105, .y = 100, .heading = 7, .primitive = PRIMITIVES.straight(7)});
+  path.push_back(
+      {.x = 105, .y = 100, .heading = 7, .primitive = PRIMITIVES.straight(7)});
   const Path after = straightRun(106, 99, 7, 5);
   path.insert(path.end(), after.begin(), after.end());
   std::vector<PathSegment> segments;
-  const std::vector<Point> samples = samplePath(PRIMITIVES, path, path.front(), segments);
+  const std::vector<Point> samples =
+      samplePath(PRIMITIVES, path, path.front(), segments);
   EXPECT_NEAR(samples.back().x(), static_cast<double>(path.back().x), 1e-9);
   EXPECT_NEAR(samples.back().y(), static_cast<double>(path.back().y), 1e-9);
   EXPECT_NEAR(polylineLength(samples), 5.0 + (6.0 * std::numbers::sqrt2), 0.01);

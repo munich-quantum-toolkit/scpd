@@ -8,9 +8,9 @@ stage does, how to read a run, and every key of their configuration.
 
 ## Overview
 
-| Stage  | Artifact       | Reads                                                                             | Writes                                                                                        |
-| ------ | -------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| detail | `05-detail.fb` | The partitions of the capacity plan, the inner connections, the assignment and the corridors | One eight-connected path per connection of the assignment and per inner connection            |
+| Stage  | Artifact       | Reads                                                                                         | Writes                                                                                             |
+| ------ | -------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| detail | `05-detail.fb` | The partitions of the capacity plan, the inner connections, the assignment and the corridors  | One eight-connected path per connection of the assignment and per inner connection                 |
 | final  | `06-final.fb`  | The inner connections, the assignment with its ring and feedline chains, and the detail paths | The wires, the inner wires, the feedline edges, the couplers, one snapshot per phase, the verdicts |
 
 The Detail stage takes a corridor, which names the partitions a wire passes and
@@ -36,8 +36,8 @@ It draws every wire in five passes.
 1. **Inside each partition.** A corridor cuts its wire into one piece per
    partition it names, and each piece is searched for inside that partition
    alone, between the two crossings the plan gave it. The pieces of one
-   partition are tried in up to `orderings` orders, and the order that draws
-   the most pieces is kept. Only this pass reads the partitions.
+   partition are tried in up to `orderings` orders, and the order that draws the
+   most pieces is kept. Only this pass reads the partitions.
 2. **Joined.** The pieces of a wire are joined in corridor order.
 3. **The rescue.** A wire the pieces could not join is searched for once more
    from end to end over the free space. Where that finds nothing, the wires in
@@ -45,47 +45,47 @@ It draws every wire in five passes.
 4. **Across the borders.** Every wire is drawn again from end to end in up to
    `rounds` sweeps that alternate direction. A wire that holds the rule is left
    alone. A wire that does not is searched in a band `corridor_spacings` wire
-   spacings to either side of the way it has, with every cell within the rule
-   of another wire cut out. Where the band holds nothing, the relaxation lets
-   go of the wires ahead of it in the sweep, one more each time, and then the
-   wires behind it, up to `max_relaxation`. Letting go of a wire opens its
-   clearance; its copper stays until it is drawn again. The relaxed search is
-   priced rather than confined: cells outside the ring of the wire's own ends
-   and its neighbours' ways cost more. A wire that finds no way keeps the way
-   it had, and the next round asks again.
-5. **The inner circuit.** The inner connections have no corridor. They are
-   drawn last over the free space the ring leaves.
+   spacings to either side of the way it has, with every cell within the rule of
+   another wire cut out. Where the band holds nothing, the relaxation lets go of
+   the wires ahead of it in the sweep, one more each time, and then the wires
+   behind it, up to `max_relaxation`. Letting go of a wire opens its clearance;
+   its copper stays until it is drawn again. The relaxed search is priced rather
+   than confined: cells outside the ring of the wire's own ends and its
+   neighbours' ways cost more. A wire that finds no way keeps the way it had,
+   and the next round asks again.
+5. **The inner circuit.** The inner connections have no corridor. They are drawn
+   last over the free space the ring leaves.
 
 The clearance is `min_wire_spacing` converted onto the grid, and the stage holds
 it against every wire, not only against the two beside a wire in the ring. The
 grid counts how many wires guard each cell; a wire charges its room when it is
 put down and gives it up when it is taken off, so a search cannot enter a cell
-another wire guards. A wire's two ends keep their room while the wire is off
-the grid. No two wires share a cell, and no two cross between cells. A step
-beside an obstacle costs `obstacle_penalty` more, falling to nothing at
+another wire guards. A wire's two ends keep their room while the wire is off the
+grid. No two wires share a cell, and no two cross between cells. A step beside
+an obstacle costs `obstacle_penalty` more, falling to nothing at
 `obstacle_penalty_reach` layout units.
 
-The stage reports, per round, how many wires are still to settle, and at the
-end how many wires it drew, how many are unrouted and how many lie within the
-rule of another. A fail is a wire without a way or a wire within the rule of
-another, counted with every wire down. A wire the stage could not draw carries
-no cells in the artifact.
+The stage reports, per round, how many wires are still to settle, and at the end
+how many wires it drew, how many are unrouted and how many lie within the rule
+of another. A fail is a wire without a way or a wire within the rule of another,
+counted with every wire down. A wire the stage could not draw carries no cells
+in the artifact.
 
 ## Final Routing
 
 The Final stage runs five phases. Each phase changes what the phase before it
 produced, so each one leaves its own snapshot in the artifact, and `plot` and
-`render` draw the one they are asked for. `[run] stop_after`
-names the last phase to run; the phases after it do not run, and the stage still
-counts what it came to and writes its artifact.
+`render` draw the one they are asked for. `[run] stop_after` names the last
+phase to run; the phases after it do not run, and the stage still counts what it
+came to and writes its artifact.
 
-| Phase                             | What runs                                                                               | What the snapshot holds                                                                        |
-| --------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `pre-feedline-routing`            | The inner routing, the outer routing and the outer recovery                             | Every ring wire and every inner wire with its way and its rendered length; no couplers         |
-| `pre-feedline-refinement`         | The refinement of the outer routing                                                     | The same wires, moved into the room they have                                                  |
-| `feedline-insertion`              | The coupler insertion: the chain search with its step checks, the commit, the whole-chip check and the global SAT search | Every resonator cut back to its coupler, the coupler bodies and the feedline edges |
-| `feedline-constrained-routing`    | The bridges, the feedline routing, the inner routing under the feedlines, the targeted repair | Every wire drawn again under the feedline constraints                                     |
-| `feedline-constrained-refinement` | The refinement under the feedline constraints                                           | The same, with every resonator at its target length                                            |
+| Phase                             | What runs                                                                                                                | What the snapshot holds                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `pre-feedline-routing`            | The inner routing, the outer routing and the outer recovery                                                              | Every ring wire and every inner wire with its way and its rendered length; no couplers |
+| `pre-feedline-refinement`         | The refinement of the outer routing                                                                                      | The same wires, moved into the room they have                                          |
+| `feedline-insertion`              | The coupler insertion: the chain search with its step checks, the commit, the whole-chip check and the global SAT search | Every resonator cut back to its coupler, the coupler bodies and the feedline edges     |
+| `feedline-constrained-routing`    | The bridges, the feedline routing, the inner routing under the feedlines, the targeted repair                            | Every wire drawn again under the feedline constraints                                  |
+| `feedline-constrained-refinement` | The refinement under the feedline constraints                                                                            | The same, with every resonator at its target length                                    |
 
 One driver runs every routing pass. A pass sweeps its wires in rounds that
 alternate direction. For each wire it offers a way inside a band around the way
@@ -95,8 +95,8 @@ holds the rule against every wire with every wire down; a way that exists only
 because a neighbour was lifted leaves the wire open, and the next round tries
 again.
 
-**Pre-feedline routing.** The inner routing draws the wires of the inner
-circuit inside the unit cells, in `inner_rounds` rounds and a band of
+**Pre-feedline routing.** The inner routing draws the wires of the inner circuit
+inside the unit cells, in `inner_rounds` rounds and a band of
 `inner_corridor_spacings` wire spacings. The outer routing draws the ring. Every
 wire starts on its detail path and is searched in a band `corridor_spacings`
 wire spacings to either side of it, fenced by its two ring neighbours. The
@@ -106,10 +106,10 @@ everything outside the lane between the two neighbours' ways costs more, and so
 does the halo of every wire let go of. A plain wire keeps
 `length_point_radius_cells` from the band where a resonator reaches its target
 length, because the coupler insertion puts the pad there; the band is
-`length_point_band_percent` of the target length to either side of that point.
-A resonator's way is made `target_resonator_length` long: one rectangular loop
-is spliced into a straight run of it, as deep as the missing length asks, as
-near the qubit as it fits. A way without room for its loop is no way. The outer
+`length_point_band_percent` of the target length to either side of that point. A
+resonator's way is made `target_resonator_length` long: one rectangular loop is
+spliced into a straight run of it, as deep as the missing length asks, as near
+the qubit as it fits. A way without room for its loop is no way. The outer
 recovery ends the phase with one more pass over the wires that still fail, with
 the length-point bands off.
 
@@ -150,23 +150,22 @@ coupling. Two resonator ports sit at the ends of the near edge. The lead runs
 from a resonator port through a quarter turn onto the coupler's orientation and
 then straight for `min_straight_length` plus `coupler_lead_margin_cells` cells.
 The tip of the lead lands on the resonator's way. The port a coupler creates
-joins the port list of the chip, so the connection of the resonator is
-complete.
+joins the port list of the chip, so the connection of the resonator is complete.
 
 An option of a coupler is one orientation, one resonator port and one jog. The
 orientations are the offsets of `coupler_offsets`, counted in eighth turns from
 the heading of the nearest launcher. A jog adds a second quarter turn and a
 straight run after the lead, which moves the pad sideways off the way. For each
-option the insertion walks the cells of the resonator's way in order of how
-near the place leaves the length `coupler_bias` times the target, and keeps the
-first place that fits. A place is refused when the pad or the lead leaves the
-coupler box less `coupler_box_margin_cells`, after a shift of up to
+option the insertion walks the cells of the resonator's way in order of how near
+the place leaves the length `coupler_bias` times the target, and keeps the first
+place that fits. A place is refused when the pad or the lead leaves the coupler
+box less `coupler_box_margin_cells`, after a shift of up to
 `coupler_shift_cells` into it; when it lies on artwork, on a placed pad or in a
 port's approach; when the rest of the way runs through the pad or meets itself;
 when the pad covers the tail of another resonator; or when the spliced length
 falls more than `coupler_max_shortfall` of the target below it. The coupler box
-is the rectangle the launcher slots span, less the launchers' straight runs
-plus `launcher_lead`.
+is the rectangle the launcher slots span, less the launchers' straight runs plus
+`launcher_lead`.
 
 ### The chains and the chain search
 
@@ -177,14 +176,13 @@ that every edge has a way.
 
 The chain search is a best-first search over **prefixes** of options. A node is
 the options chosen for the first `k` waypoints. Its price is the real price of
-the edges inside the prefix, each routed against the committed chip and the
-ways the earlier edges of the same prefix have laid. The heuristic is the
-cheapest run of lower bounds from the node to the end of the chain, where the
-bound of a step is the least turning a way of the bend radius can make from one
-pose to another with nothing in its way. The bound never exceeds a real way, so
-the search returns the optimum. A step is routed when the search pops it, and a
-node whose bound reaches the cheapest complete run found so far is dropped
-unpriced.
+the edges inside the prefix, each routed against the committed chip and the ways
+the earlier edges of the same prefix have laid. The heuristic is the cheapest
+run of lower bounds from the node to the end of the chain, where the bound of a
+step is the least turning a way of the bend radius can make from one pose to
+another with nothing in its way. The bound never exceeds a real way, so the
+search returns the optimum. A step is routed when the search pops it, and a node
+whose bound reaches the cheapest complete run found so far is dropped unpriced.
 
 An edge costs its turns: one eighth turn costs 10000. An edge at a launcher is
 weighted by `chain_end_edge_weight`, the bend price of an edge is
@@ -205,23 +203,22 @@ plus `terminal_stub_extra_cells`. It opens a straight slot of
 
 ### The step check
 
-With `capacity_check` on, every step that routes its edge is followed by a
-check of the chip as the step leaves it: the chains settled before on their
-options, this chain's couplers up to the far end of the edge, and the prefix's
-edges up to this one. A step whose edge loses a wire is refused, and the search
-takes the next option. After `chain_rule_refusals` refused steps without a
-complete run, the chain is searched again without the rule, because a chain
-left on its first options is worse than one that loses a wire. The check judges
-only the wires of the chain's own feedline; every terminal edge stays in the
-graph.
+With `capacity_check` on, every step that routes its edge is followed by a check
+of the chip as the step leaves it: the chains settled before on their options,
+this chain's couplers up to the far end of the edge, and the prefix's edges up
+to this one. A step whose edge loses a wire is refused, and the search takes the
+next option. After `chain_rule_refusals` refused steps without a complete run,
+the chain is searched again without the rule, because a chain left on its first
+options is worse than one that loses a wire. The check judges only the wires of
+the chain's own feedline; every terminal edge stays in the graph.
 
 ### The commit
 
-The commit applies the chosen options: the pad becomes an obstacle, the lead
-and the rest of the way become the resonator, and one wire per edge joins the
-wire list in chain order with the way the search found. Where the second edge of
-an end pair finds no way at the commit, the pair is laid the other way round, as
-in the search.
+The commit applies the chosen options: the pad becomes an obstacle, the lead and
+the rest of the way become the resonator, and one wire per edge joins the wire
+list in chain order with the way the search found. Where the second edge of an
+end pair finds no way at the commit, the pair is laid the other way round, as in
+the search.
 
 ### The capacity graph
 
@@ -234,12 +231,12 @@ gaps the chip leaves. It builds a graph of the free space.
 - **Bottlenecks** come from **profile cuts**. The walls that stay through an
   insertion are built once, with a distance field of the walls inside the
   feedline ring and one of the walls outside it. The outline of every wall the
-  insertion adds is walked, and the gap from each outline cell to each field
-  and to the other added walls is a profile. A bottleneck is a persistent
-  minimum of a profile: the gap rises by `bottleneck_rise` on both sides before
-  it falls below. Only a gap of at most `bottleneck_wires` wires counts. A cut
-  crosses free cells only and no slot. A port run's slot is closed by a cut
-  from each flank to the nearest wall ahead, its **mouth**.
+  insertion adds is walked, and the gap from each outline cell to each field and
+  to the other added walls is a profile. A bottleneck is a persistent minimum of
+  a profile: the gap rises by `bottleneck_rise` on both sides before it falls
+  below. Only a gap of at most `bottleneck_wires` wires counts. A cut crosses
+  free cells only and no slot. A port run's slot is closed by a cut from each
+  flank to the nearest wall ahead, its **mouth**.
 - **Chambers** are the pieces the walls and the cuts leave of the free space.
 - **Stretches** are the cells of a feedline edge where a wire may cross it: the
   band `crossing_reach_cells` to either side is free, the crossing rule allows
@@ -265,13 +262,13 @@ lead, plus the tolerance. A way may be up to `detour_factor` times the shortest.
 
 ### The judge
 
-The demands are routed one after another in wire order, each on its way with
-the fewest edges over the gates that still take a wire, so that every gate
-carries a load. The **slot check** then gives the verdict. It replaces the
-stretches by **slots**: a rectangle on a straight piece of a feedline edge, the
-crossing reach to either side and one clearance along the edge, on free cells
-only, spread evenly along the piece, none within `slot_pin_cells` of an end. A
-slot takes one wire between the chambers on its two sides. A slot is placed only
+The demands are routed one after another in wire order, each on its way with the
+fewest edges over the gates that still take a wire, so that every gate carries a
+load. The **slot check** then gives the verdict. It replaces the stretches by
+**slots**: a rectangle on a straight piece of a feedline edge, the crossing
+reach to either side and one clearance along the edge, on free cells only,
+spread evenly along the piece, none within `slot_pin_cells` of an end. A slot
+takes one wire between the chambers on its two sides. A slot is placed only
 where both of its ends have an **escape**: a turn of the router or a straight
 run of `escape_straight_cells` that keeps `escape_stub_margin_cells` from the
 walls of a port run. Each wire takes a shortest way over the slots and gates it
@@ -289,10 +286,10 @@ says UNSAT, the global SAT search looks for another set of options.
 1. The chains that own the gates over capacity are the **focus**, with the
    waypoints at both ends of each such edge marked.
 2. Per chain, the segment search of the targeted repair yields up to
-   `global_sat_runs` runs of options per segment. For a chain outside the
-   focus, only the two end segments are searched and only states that move an
-   end coupler are kept, up to `global_sat_states`. For a focus chain every
-   segment with a marked waypoint is searched and every state is kept.
+   `global_sat_runs` runs of options per segment. For a chain outside the focus,
+   only the two end segments are searched and only states that move an end
+   coupler are kept, up to `global_sat_states`. For a focus chain every segment
+   with a marked waypoint is searched and every state is kept.
 3. A state is **locally SAT** when either of two checks finds it SAT: with the
    other chains standing as the commit left them, or with the chain alone.
 4. **Stage 1** tries every locally SAT state of a focus chain alone.
@@ -310,8 +307,8 @@ The first SAT combination stays. Without one, the chip goes back to the commit.
 A plain wire may cross a feedline edge only at a right angle, within
 `crossing_reach_cells` of the edge's straight runs, outside the pin cells at the
 edge's ends and outside the room around a bend. The search, the obstacle mask
-and the count all read the same rule. A terminal edge is outside the rule: it
-is a hard obstacle for every wire, and the clearance rule checks it. Each plain
+and the count all read the same rule. A terminal edge is outside the rule: it is
+a hard obstacle for every wire, and the clearance rule checks it. Each plain
 wire between two couplers is told its bridge, the one edge it may cross; every
 other edge is fenced, and a way that does not cross the wire's bridge is refused
 as no way.
@@ -335,11 +332,11 @@ level that lets go of both neighbours at once.
 
 ### The meander
 
-In the sweep a resonator's way is lengthened to within `sweep_length_band`
-times `resonator_length_tolerance` of the target. One rectangular loop is
-spliced into a straight run, its legs `meander_leg_spacing_cells` apart, and the
-first `meander_start_margin_cells` cells of the way, the coupler's run and a
-margin by default, are left alone. The refinement makes the length exact.
+In the sweep a resonator's way is lengthened to within `sweep_length_band` times
+`resonator_length_tolerance` of the target. One rectangular loop is spliced into
+a straight run, its legs `meander_leg_spacing_cells` apart, and the first
+`meander_start_margin_cells` cells of the way, the coupler's run and a margin by
+default, are left alone. The refinement makes the length exact.
 
 ### The targeted repair
 
@@ -368,27 +365,27 @@ The Final stage ends every pass on one line and the stage on one over every
 wire. The line counts the wires drawn and the wires with each verdict, with
 every wire down. A conflict between two wires counts both wires.
 
-| Verdict    | Meaning                                                                                        |
-| ---------- | ---------------------------------------------------------------------------------------------- |
-| `unrouted` | The wire has no way of its own: it is still on its seed or not on the grid                     |
-| `open`     | Its way comes within the wire clearance of another wire                                        |
-| `crossing` | It crosses a feedline edge other than at a right angle, or enters the room around a bend        |
-| `short`    | A resonator shorter than `target_resonator_length` less the tolerance                          |
-| `long`     | A resonator longer than `target_resonator_length` plus the tolerance                           |
+| Verdict    | Meaning                                                                                  |
+| ---------- | ---------------------------------------------------------------------------------------- |
+| `unrouted` | The wire has no way of its own: it is still on its seed or not on the grid               |
+| `open`     | Its way comes within the wire clearance of another wire                                  |
+| `crossing` | It crosses a feedline edge other than at a right angle, or enters the room around a bend |
+| `short`    | A resonator shorter than `target_resonator_length` less the tolerance                    |
+| `long`     | A resonator longer than `target_resonator_length` plus the tolerance                     |
 
-The line also names a wire whose way meets itself; such a wire is carried in
-the artifact and named in its tooltip. `Bad` is `unrouted + open + crossing`:
-the wires with no usable way. `Fails` is `short + long`: the resonators off
-their length. `0 bad wires` means every connection and every feedline edge has a
-way that holds the clearance and the crossing rule. `SAT` on the whole-chip
-check means every outer wire has a way through the capacity graph with no slot
-and no gate over capacity. The two are different claims: the graph is a
-necessary condition, and the routing is the result.
+The line also names a wire whose way meets itself; such a wire is carried in the
+artifact and named in its tooltip. `Bad` is `unrouted + open + crossing`: the
+wires with no usable way. `Fails` is `short + long`: the resonators off their
+length. `0 bad wires` means every connection and every feedline edge has a way
+that holds the clearance and the crossing rule. `SAT` on the whole-chip check
+means every outer wire has a way through the capacity graph with no slot and no
+gate over capacity. The two are different claims: the graph is a necessary
+condition, and the routing is the result.
 
 A benchmark run is accepted when every connection and every feedline edge is
-drawn, `Bad` is 0, `Fails` is 0, the whole-chip check is SAT, and
-`mqt-scpd drc` reports no active finding. `Bad` counts wires and the check
-counts findings, so a pair of wires too close is two bad wires and one finding.
+drawn, `Bad` is 0, `Fails` is 0, the whole-chip check is SAT, and `mqt-scpd drc`
+reports no active finding. `Bad` counts wires and the check counts findings, so
+a pair of wires too close is two bad wires and one finding.
 
 The end state of `06-final.fb` carries the verdict of every wire.
 `plot --stage final` draws a wire with an unrouted, open or crossing bit in red
@@ -398,126 +395,126 @@ of one phase; the snapshots carry no verdict, because they are not judged.
 
 ## Configuration
 
-Every key below is optional. Every length is in layout units unless the key
-says `cells`; a cell is a router cell for `[stages.final]` and a detail cell for
+Every key below is optional. Every length is in layout units unless the key says
+`cells`; a cell is a router cell for `[stages.final]` and a detail cell for
 `[stages.detail]`. The wire clearance of both stages is `min_wire_spacing`
 converted onto the grid, and no key sets it.
 
 ### `[stages.detail]`
 
-| Key                      | Default | Meaning                                                                                                          |
-| ------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| `router`                 | `""`    | The implementation of the stage; empty takes `pixel-astar`                                                       |
-| `corridor_spacings`      | `4`     | How far to either side of its own way a wire may move when it is drawn again across the borders, in wire spacings |
-| `rounds`                 | `30`    | The most sweeps over the wires, in turn forward and backward                                                     |
-| `max_relaxation`         | `30`    | How many neighbouring wires a wire without a way may let go of, along the sweep first and then against it        |
-| `obstacle_penalty_reach` | `185.0` | How far the price of running beside an obstacle reaches; `0.0` turns the price off                               |
+| Key                      | Default | Meaning                                                                                                                 |
+| ------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `router`                 | `""`    | The implementation of the stage; empty takes `pixel-astar`                                                              |
+| `corridor_spacings`      | `4`     | How far to either side of its own way a wire may move when it is drawn again across the borders, in wire spacings       |
+| `rounds`                 | `30`    | The most sweeps over the wires, in turn forward and backward                                                            |
+| `max_relaxation`         | `30`    | How many neighbouring wires a wire without a way may let go of, along the sweep first and then against it               |
+| `obstacle_penalty_reach` | `185.0` | How far the price of running beside an obstacle reaches; `0.0` turns the price off                                      |
 | `obstacle_penalty`       | `10`    | What a step right beside an obstacle costs, against the 10 a step along an axis costs; it falls to nothing at the reach |
-| `orderings`              | `16`    | How many orders the pieces of one partition are tried in; `1` keeps the given order                              |
+| `orderings`              | `16`    | How many orders the pieces of one partition are tried in; `1` keeps the given order                                     |
 
 ### `[stages.final]`
 
 The routing passes:
 
-| Key                             | Default   | Meaning                                                                                                   |
-| ------------------------------- | --------- | --------------------------------------------------------------------------------------------------------- |
-| `router`                        | `""`      | The implementation of the stage; empty takes `dubins`                                                     |
-| `corridor_spacings`             | `11`      | The band to either side of its way a ring wire may move in, in wire spacings                              |
-| `inner_corridor_spacings`       | `11`      | The same for the inner circuit                                                                            |
-| `refinement_corridor_spacings`  | `6`       | The band of both refinements, in wire spacings; `0` takes `corridor_spacings`                             |
-| `rounds`                        | `30`      | The most sweeps of the outer routing and the feedline routing                                             |
-| `inner_rounds`                  | `4`       | The most sweeps of the inner routing                                                                      |
-| `max_relaxation`                | `10`      | How many neighbouring wires a wire without a way may let go of                                            |
-| `refinement_rounds`             | `2`       | The rounds of the pre-feedline refinement; `0` skips it                                                   |
-| `feedline_refinement_rounds`    | `2`       | The rounds of the feedline-constrained refinement; `0` skips it                                           |
-| `bend_penalty_norm`             | `2.5`     | What one eighth turn costs, in hundredths of a cell per unit of the grid's width plus height              |
-| `wire_proximity_penalty_norm`   | `0.00125` | What running beside another wire costs, on the same scale                                                 |
-| `static_proximity_penalty_norm` | `0.00033` | What running beside an obstacle costs, on the same scale                                                  |
-| `obstacle_penalty_reach`        | `100.0`   | How far the price of running beside an obstacle reaches; `0.0` turns the price off                        |
-| `fence_pairs`                   | `3`       | How many ring neighbours to either side a wire is fenced against in the feedline routing and the refinements |
-| `halo_reach`                    | `1`       | The halo of a wire let go of, in clearances                                                               |
-| `rise_reach`                    | `3`       | Where the rising price past the halo reaches its peak, in clearances                                      |
-| `rise_peak`                     | `3`       | The peak of the rising price, as a factor on the flat price                                               |
-| `length_point_radius_cells`     | `40`      | What a wire keeps from the band where a resonator reaches its target length, in cells; `0` turns it off   |
-| `length_point_band_percent`     | `10.0`    | The half-width of that band, as a percentage of the target length                                         |
-| `sweep_length_band`             | `5.0`     | The band of lengths the feedline sweep accepts, as a multiple of `resonator_length_tolerance`             |
-| `meander_leg_spacing_cells`     | `25`      | What the two legs of a meander loop keep between them, in cells                                           |
+| Key                             | Default   | Meaning                                                                                                         |
+| ------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------- |
+| `router`                        | `""`      | The implementation of the stage; empty takes `dubins`                                                           |
+| `corridor_spacings`             | `11`      | The band to either side of its way a ring wire may move in, in wire spacings                                    |
+| `inner_corridor_spacings`       | `11`      | The same for the inner circuit                                                                                  |
+| `refinement_corridor_spacings`  | `6`       | The band of both refinements, in wire spacings; `0` takes `corridor_spacings`                                   |
+| `rounds`                        | `30`      | The most sweeps of the outer routing and the feedline routing                                                   |
+| `inner_rounds`                  | `4`       | The most sweeps of the inner routing                                                                            |
+| `max_relaxation`                | `10`      | How many neighbouring wires a wire without a way may let go of                                                  |
+| `refinement_rounds`             | `2`       | The rounds of the pre-feedline refinement; `0` skips it                                                         |
+| `feedline_refinement_rounds`    | `2`       | The rounds of the feedline-constrained refinement; `0` skips it                                                 |
+| `bend_penalty_norm`             | `2.5`     | What one eighth turn costs, in hundredths of a cell per unit of the grid's width plus height                    |
+| `wire_proximity_penalty_norm`   | `0.00125` | What running beside another wire costs, on the same scale                                                       |
+| `static_proximity_penalty_norm` | `0.00033` | What running beside an obstacle costs, on the same scale                                                        |
+| `obstacle_penalty_reach`        | `100.0`   | How far the price of running beside an obstacle reaches; `0.0` turns the price off                              |
+| `fence_pairs`                   | `3`       | How many ring neighbours to either side a wire is fenced against in the feedline routing and the refinements    |
+| `halo_reach`                    | `1`       | The halo of a wire let go of, in clearances                                                                     |
+| `rise_reach`                    | `3`       | Where the rising price past the halo reaches its peak, in clearances                                            |
+| `rise_peak`                     | `3`       | The peak of the rising price, as a factor on the flat price                                                     |
+| `length_point_radius_cells`     | `40`      | What a wire keeps from the band where a resonator reaches its target length, in cells; `0` turns it off         |
+| `length_point_band_percent`     | `10.0`    | The half-width of that band, as a percentage of the target length                                               |
+| `sweep_length_band`             | `5.0`     | The band of lengths the feedline sweep accepts, as a multiple of `resonator_length_tolerance`                   |
+| `meander_leg_spacing_cells`     | `25`      | What the two legs of a meander loop keep between them, in cells                                                 |
 | `meander_start_margin_cells`    | `-1`      | How many cells at the start of a resonator the meander leaves alone; negative takes the coupler's run plus four |
 
 The couplers and the chain search:
 
-| Key                          | Default | Meaning                                                                                                    |
-| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
-| `coupler_length`             | `200.0` | The run of the pad the resonator couples along                                                             |
-| `coupler_height`             | `26.0`  | How far the feedline lies from the resonator across the pad                                                |
+| Key                          | Default | Meaning                                                                                                                                                |
+| ---------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `coupler_length`             | `200.0` | The run of the pad the resonator couples along                                                                                                         |
+| `coupler_height`             | `26.0`  | How far the feedline lies from the resonator across the pad                                                                                            |
 | `coupler_offsets`            | `""`    | The orientations of an option, as a comma list of eighth turns `0` to `7` off the nearest launcher's heading; empty takes every offset but `3` and `4` |
-| `coupler_bias`               | `1.0`   | Where the coupler cuts the way, as the share of the target length left to run from the coupler to the qubit |
-| `coupler_max_shortfall`      | `0.30`  | How far below the target length a coupler may leave the resonator, as a share of it                       |
-| `coupler_box_margin_cells`   | `5`     | What a coupler keeps off every side of the coupler box, in cells                                           |
-| `coupler_shift_cells`        | `20`    | How far an option that leaves the box is moved into it before the place is given up, in cells             |
-| `coupler_lead_margin_cells`  | `5`     | The straight run of the lead beyond `min_straight_length`, in cells                                        |
-| `launcher_lead`              | `10.0`  | How much further than its straight run a launcher keeps the coupler box away                              |
-| `edge_launcher_margin_cells` | `6`     | What a feedline edge keeps closed in front of every launcher but its own, beyond the launcher's run, in cells |
-| `terminal_slot_cells`        | `20`    | The straight slot a feedline edge keeps open at a port, in cells                                           |
-| `terminal_stub_extra_cells`  | `5`     | How far the coupler run of a terminal edge is guarded past the pad, in cells                               |
-| `chain_end_edge_weight`      | `0.1`   | The weight of an edge at a launcher in the chain search, against `1` for every other edge                 |
-| `edge_bend_factor`           | `1.0`   | The bend price of a feedline edge, as a factor on `bend_penalty_norm`                                      |
-| `chain_length_weight`        | `0`     | The price of one cell of an edge's length in the chain search; `0` prices length not at all              |
-| `repair_trials`              | `100`   | How many legality tests the targeted repair may run per chip; `0` turns the repair off                     |
-| `research_ring_members`      | `2`     | How many ring members beside each window wire the repair draws again                                       |
-| `research_rounds`            | `2`     | The rounds of the repair's local pass                                                                      |
+| `coupler_bias`               | `1.0`   | Where the coupler cuts the way, as the share of the target length left to run from the coupler to the qubit                                            |
+| `coupler_max_shortfall`      | `0.30`  | How far below the target length a coupler may leave the resonator, as a share of it                                                                    |
+| `coupler_box_margin_cells`   | `5`     | What a coupler keeps off every side of the coupler box, in cells                                                                                       |
+| `coupler_shift_cells`        | `20`    | How far an option that leaves the box is moved into it before the place is given up, in cells                                                          |
+| `coupler_lead_margin_cells`  | `5`     | The straight run of the lead beyond `min_straight_length`, in cells                                                                                    |
+| `launcher_lead`              | `10.0`  | How much further than its straight run a launcher keeps the coupler box away                                                                           |
+| `edge_launcher_margin_cells` | `6`     | What a feedline edge keeps closed in front of every launcher but its own, beyond the launcher's run, in cells                                          |
+| `terminal_slot_cells`        | `20`    | The straight slot a feedline edge keeps open at a port, in cells                                                                                       |
+| `terminal_stub_extra_cells`  | `5`     | How far the coupler run of a terminal edge is guarded past the pad, in cells                                                                           |
+| `chain_end_edge_weight`      | `0.1`   | The weight of an edge at a launcher in the chain search, against `1` for every other edge                                                              |
+| `edge_bend_factor`           | `1.0`   | The bend price of a feedline edge, as a factor on `bend_penalty_norm`                                                                                  |
+| `chain_length_weight`        | `0`     | The price of one cell of an edge's length in the chain search; `0` prices length not at all                                                            |
+| `repair_trials`              | `100`   | How many legality tests the targeted repair may run per chip; `0` turns the repair off                                                                 |
+| `research_ring_members`      | `2`     | How many ring members beside each window wire the repair draws again                                                                                   |
+| `research_rounds`            | `2`     | The rounds of the repair's local pass                                                                                                                  |
 
 The capacity check:
 
-| Key                          | Default              | Meaning                                                                                                   |
-| ---------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------- |
-| `capacity_check`             | `true`               | Whether the insertion runs the step checks, the whole-chip check and the global SAT search; off, the chains are settled by cost alone |
-| `chain_rule_refusals`        | `1500`               | How many steps the capacity rule may refuse before a run of options joins a chain; then the chain is searched again without the rule |
-| `bottleneck_wires`           | `10`                 | The widest gap, in wires, that is still a bottleneck                                                       |
-| `bottleneck_rise`            | `2.0`                | The least rise of a gap profile on both sides of a minimum, in cells                                       |
-| `crossing_reach_cells`       | `10`                 | The band beside a feedline edge where a wire may cross only at a right angle, in cells                     |
-| `crossing_spacing`           | `1.414…`             | The spacing of the crossing points of a stretch, in clearances                                             |
-| `slot_pin_cells`             | `10`                 | The cells at each end of an edge where no slot lies                                                        |
-| `escape_straight_cells`      | `5`                  | The straight run a slot's escape may take, in cells                                                        |
-| `escape_stub_margin_cells`   | `4`                  | What an escape keeps from the walls of a port run, in cells                                                |
-| `capacity_margin`            | `1.06`               | The factor on the clearance a gate counts with, from `capacity_margin_from_wires` wires on                 |
-| `capacity_margin_from_wires` | `3`                  | The fewest wires the factor applies to                                                                     |
-| `resonator_passage`          | `0.8`                | The narrowest gate a resonator passes at its own port run, in clearances                                   |
-| `detour_factor`              | `1.5`                | How much longer than its shortest way a demand may run through the graph                                   |
-| `room_margin_cells`          | `10`                 | The dead length at both ends of a straight run in the room report, in cells                                |
-| `room_channel_reach_cells`   | `80`                 | The reach of the channel rule in the room report, in cells                                                 |
-| `global_sat_runs`            | `8`                  | The runs of options the global SAT search collects per segment                                             |
-| `global_sat_states`          | `8`                  | The locally SAT states it keeps per chain outside the focus                                                |
-| `global_sat_tries`           | `200`                | The whole-chip combinations it tries                                                                       |
+| Key                          | Default  | Meaning                                                                                                                               |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `capacity_check`             | `true`   | Whether the insertion runs the step checks, the whole-chip check and the global SAT search; off, the chains are settled by cost alone |
+| `chain_rule_refusals`        | `1500`   | How many steps the capacity rule may refuse before a run of options joins a chain; then the chain is searched again without the rule  |
+| `bottleneck_wires`           | `10`     | The widest gap, in wires, that is still a bottleneck                                                                                  |
+| `bottleneck_rise`            | `2.0`    | The least rise of a gap profile on both sides of a minimum, in cells                                                                  |
+| `crossing_reach_cells`       | `10`     | The band beside a feedline edge where a wire may cross only at a right angle, in cells                                                |
+| `crossing_spacing`           | `1.414…` | The spacing of the crossing points of a stretch, in clearances                                                                        |
+| `slot_pin_cells`             | `10`     | The cells at each end of an edge where no slot lies                                                                                   |
+| `escape_straight_cells`      | `5`      | The straight run a slot's escape may take, in cells                                                                                   |
+| `escape_stub_margin_cells`   | `4`      | What an escape keeps from the walls of a port run, in cells                                                                           |
+| `capacity_margin`            | `1.06`   | The factor on the clearance a gate counts with, from `capacity_margin_from_wires` wires on                                            |
+| `capacity_margin_from_wires` | `3`      | The fewest wires the factor applies to                                                                                                |
+| `resonator_passage`          | `0.8`    | The narrowest gate a resonator passes at its own port run, in clearances                                                              |
+| `detour_factor`              | `1.5`    | How much longer than its shortest way a demand may run through the graph                                                              |
+| `room_margin_cells`          | `10`     | The dead length at both ends of a straight run in the room report, in cells                                                           |
+| `room_channel_reach_cells`   | `80`     | The reach of the channel rule in the room report, in cells                                                                            |
+| `global_sat_runs`            | `8`      | The runs of options the global SAT search collects per segment                                                                        |
+| `global_sat_states`          | `8`      | The locally SAT states it keeps per chain outside the focus                                                                           |
+| `global_sat_tries`           | `200`    | The whole-chip combinations it tries                                                                                                  |
 
 ## Debug Pages
 
 A run writes debug pages when its `config.toml` has a `[debug]` section with a
 page turned on, or when `mqt-scpd plan` runs with `-d`, which turns every page
-on. The Final stage then records what the pages need, one JSON record at a
-time, and the run keeps the records under `<run>/debug/data/<kind>.jsonl.gz`.
-The pages are built from the records when the stage ends and link from
+on. The Final stage then records what the pages need, one JSON record at a time,
+and the run keeps the records under `<run>/debug/data/<kind>.jsonl.gz`. The
+pages are built from the records when the stage ends and link from
 `<run>/debug/index.html`; `mqt-scpd debug <run>` builds them again from the
 records, and `mqt-scpd debug <run> --serve` runs the stage to the end of its
-coupler insertion and serves the capacity graph on a local page whose tab
-moves a coupler to another option. The core writes no file.
+coupler insertion and serves the capacity graph on a local page whose tab moves
+a coupler to another option. The core writes no file.
 
-| Key                                        | Page                                                                                                  |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `html`                                     | `index.html`: the links, the lines the run said and what every phase came to                           |
-| `pre_feedline_routing_dashboard`           | A table of the pre-feedline routing: a row per wire, a column per round and relaxation level; a click draws the way the search found over the grid |
-| `pre_feedline_refinement_dashboard`        | The same table for the pre-feedline refinement                                                         |
-| `feedline_insertion`                       | The coupler options and the capacity graph of the whole-chip check, on the page the graph is laid out on |
-| `local_sat`                                | Every step check of the chain search: the chain, the step, the options, the verdict and the wires it closes |
-| `global_sat`                               | The global SAT search: the states collected per chain, every combination with its verdict, and the result |
-| `feedline_constrained_routing_dashboard`   | The table for the feedline-constrained routing                                                         |
-| `feedline_constrained_refinement_dashboard`| The table for the feedline-constrained refinement                                                      |
+| Key                                         | Page                                                                                                                                               |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `html`                                      | `index.html`: the links, the lines the run said and what every phase came to                                                                       |
+| `pre_feedline_routing_dashboard`            | A table of the pre-feedline routing: a row per wire, a column per round and relaxation level; a click draws the way the search found over the grid |
+| `pre_feedline_refinement_dashboard`         | The same table for the pre-feedline refinement                                                                                                     |
+| `feedline_insertion`                        | The coupler options and the capacity graph of the whole-chip check, on the page the graph is laid out on                                           |
+| `local_sat`                                 | Every step check of the chain search: the chain, the step, the options, the verdict and the wires it closes                                        |
+| `global_sat`                                | The global SAT search: the states collected per chain, every combination with its verdict, and the result                                          |
+| `feedline_constrained_routing_dashboard`    | The table for the feedline-constrained routing                                                                                                     |
+| `feedline_constrained_refinement_dashboard` | The table for the feedline-constrained refinement                                                                                                  |
 
 Every key is off by default. A run records only the kinds the pages it writes
 need: `grid` and `search` for a dashboard, `coupler-options` and
-`capacity-graph` for the insertion page, `step-check`, `global-sat` and
-`phase`. The records are plain JSON, one per line, so a script can read them
-without the pages.
+`capacity-graph` for the insertion page, `step-check`, `global-sat` and `phase`.
+The records are plain JSON, one per line, so a script can read them without the
+pages.
 
 ## SAT Benchmarks
 
@@ -536,7 +533,7 @@ one of four classes:
 | UNSAT and failing    | UNSAT          | with a bad wire  |
 
 The agreement is `(SAT and clean + UNSAT and failing) / all`. A case in the
-second class is the check too lax; a case in the third is the check too
-strict. The benchmarks live in `test/python/benchmarks/` and run with
+second class is the check too lax; a case in the third is the check too strict.
+The benchmarks live in `test/python/benchmarks/` and run with
 `MQT_SCPD_SAT_BENCHMARKS=1 uvx nox -s sat_benchmarks`. They take hours on the
 large chips, so the ordinary test suite leaves them out.

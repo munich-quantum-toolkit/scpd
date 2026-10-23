@@ -291,10 +291,11 @@ void checkOrthogonality(const CellView& view, fbdrc::DrcReportT& report) {
     routing::Path path;
     path.reserve(wire.cells.size());
     for (const auto& cell : wire.cells) {
-      path.push_back({.x = cell.x(),
-                      .y = cell.y(),
-                      .heading = static_cast<routing::Heading>(cell.heading() & 7U),
-                      .primitive = 0});
+      path.push_back(
+          {.x = cell.x(),
+           .y = cell.y(),
+           .heading = static_cast<routing::Heading>(cell.heading() & 7U),
+           .primitive = 0});
     }
     feedlines.push_back(std::move(path));
   }
@@ -441,7 +442,8 @@ CellView viewOfFinal(const fbd::ChipT& chip, const fba::GlobalRoutingT& global,
          .components = {std::string_view{},
                         componentOf(connection.target.index())},
          .feedline = false,
-         .resonator = connection.target_role == fbd::AssignedRole::ResonatorTarget,
+         .resonator =
+             connection.target_role == fbd::AssignedRole::ResonatorTarget,
          .ports = {couplerOfConnection[index], connection.target.index()}});
   }
   for (std::size_t index = 0; index < routing.inner.size(); ++index) {

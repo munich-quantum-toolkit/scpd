@@ -193,16 +193,14 @@ TEST(FeedlineOrthogonality, ATerminalEdgeIsNotInTheRule) {
   const auto wire = along(205, 100, 300);
   CellView view;
   view.grid = tenUnitGrid();
-  view.wires = {{.connection = 0,
-                 .cells = wire,
-                 .components = {},
-                 .feedline = false},
-                {.connection = 1,
-                 .cells = feedline,
-                 .components = {},
-                 .feedline = true,
-                 .edge = true,
-                 .terminal = true}};
+  view.wires = {
+      {.connection = 0, .cells = wire, .components = {}, .feedline = false},
+      {.connection = 1,
+       .cells = feedline,
+       .components = {},
+       .feedline = true,
+       .edge = true,
+       .terminal = true}};
 
   EXPECT_EQ(countOf(checkCells(view, rules()), DrcRule::FeedlineOrthogonality),
             0U);
@@ -225,8 +223,15 @@ TEST(WireClearance, AFeedlineKeepsTheRuleFromAResonatorButNotFromOtherWires) {
   view.grid = tenUnitGrid();
   view.wires = {
       {.connection = 0, .cells = feedline, .components = {}, .feedline = true},
-      {.connection = 1, .cells = conventional, .components = {}, .feedline = false},
-      {.connection = 2, .cells = resonator, .components = {}, .feedline = false, .resonator = true}};
+      {.connection = 1,
+       .cells = conventional,
+       .components = {},
+       .feedline = false},
+      {.connection = 2,
+       .cells = resonator,
+       .components = {},
+       .feedline = false,
+       .resonator = true}};
 
   const auto report = checkCells(view, rules());
   ASSERT_EQ(countOf(report, DrcRule::WireClearance), 1U);
@@ -301,7 +306,10 @@ TEST(WireClearance, AnEdgeAtALauncherDoesNotWallOffAConventionalWire) {
                  .feedline = true,
                  .edge = true,
                  .ports = {1, 2}},
-                {.connection = 1, .cells = conventional, .components = {}, .feedline = false}};
+                {.connection = 1,
+                 .cells = conventional,
+                 .components = {},
+                 .feedline = false}};
 
   const auto report = checkCells(view, rules());
   EXPECT_EQ(countOf(report, DrcRule::WireClearance), 0U);

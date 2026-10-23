@@ -58,7 +58,8 @@ SegmentedPath reconstructSegments(const MovePrimitives& primitives,
       segment.cells.push_back(point);
       x = point.x;
       y = point.y;
-    } else if (!segments.empty() && !primitives.isStraight(heading, primitive) &&
+    } else if (!segments.empty() &&
+               !primitives.isStraight(heading, primitive) &&
                !(x == point.x && y == point.y)) {
       // A turn primitive lists every cell it sweeps under one tag. The
       // segment stays one step; its recorded cell follows to the last one,
@@ -99,7 +100,8 @@ std::vector<Point> render(const MovePrimitives& primitives, const Path& path,
   for (std::size_t j = 0; j < segments.size(); ++j) {
     PathSegment& segment = segments[j];
     if (bounds != nullptr) {
-      bounds->emplace_back(points.empty() ? 0 : points.size() - 1, segment.straight);
+      bounds->emplace_back(points.empty() ? 0 : points.size() - 1,
+                           segment.straight);
     }
     for (uint32_t i = 0; i < segment.steps(); ++i) {
       const PathPoint& cell = segment.cells[i];
@@ -110,7 +112,8 @@ std::vector<Point> render(const MovePrimitives& primitives, const Path& path,
         segment.lengthAt[i] = accumulated;
         continue;
       }
-      const Primitive* primitive = primitives.find(segment.heading, segment.primitive);
+      const Primitive* primitive =
+          primitives.find(segment.heading, segment.primitive);
       const std::size_t unitStart = points.size();
       if (primitive != nullptr) {
         // The first sample is the origin and is skipped.
@@ -128,7 +131,8 @@ std::vector<Point> render(const MovePrimitives& primitives, const Path& path,
         } else {
           const std::size_t added = points.size() - unitStart;
           for (std::size_t k = 0; k < added; ++k) {
-            const double t = static_cast<double>(k + 1) / static_cast<double>(added);
+            const double t =
+                static_cast<double>(k + 1) / static_cast<double>(added);
             Point& p = points[unitStart + k];
             p = Point(p.x() + (t * errX), p.y() + (t * errY));
           }
@@ -163,10 +167,10 @@ std::vector<Point> samplePath(const MovePrimitives& primitives, Path& path,
   return render(primitives, path, start, segments, nullptr);
 }
 
-std::vector<Point> samplePathFromSecond(
-    const MovePrimitives& primitives, Path path, const PathPoint start,
-    std::vector<PathSegment>& segments,
-    std::vector<std::pair<std::size_t, bool>>* segmentBounds) {
+std::vector<Point>
+samplePathFromSecond(const MovePrimitives& primitives, Path path,
+                     const PathPoint start, std::vector<PathSegment>& segments,
+                     std::vector<std::pair<std::size_t, bool>>* segmentBounds) {
   if (!path.empty()) {
     path.erase(path.begin());
   }

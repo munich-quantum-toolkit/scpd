@@ -2,9 +2,7 @@
 
 One directory per benchmark chip, each holding the chip's `config.toml` and its
 input `routing_config.json`. The inputs are the prototype's files in the same
-format; see
-[decision 0020](../docs/design/decisions/0020-legacy-routing-config-as-input.md).
-On 2026-09-08 they were reduced to the routable ports and a consolidated
+format. On 2026-09-08 they were reduced to the routable ports and a consolidated
 obstacle set, so every port of every chip matches one of the three role
 patterns.
 
@@ -19,8 +17,7 @@ drive port `port1`.
 prototype's drivers, `all_outer_ports` and `fixed_outer_ports`, copied verbatim.
 The 4-qubit driver carries one list, `all_ports`, and passes it as both. The
 9-qubit driver's fixed literal omits `Qb4` and `Coupler1_4`, which its own
-`all_outer` lists. Loading checks every label against the chip; see
-[decision 0025](../docs/design/decisions/0025-port-ring-is-manual-input.md).
+`all_outer` lists. Loading checks every label against the chip.
 
 **Design rules.** The five lengths are the same on every chip: 185, 25, 50 and
 100 layout units, a resonator target of 2500 with a tolerance of 100. The two

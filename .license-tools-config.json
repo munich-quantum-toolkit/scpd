@@ -11,7 +11,8 @@
   "style_override_for_suffix": {
     ".pyi": "DOCSTRING_STYLE",
     ".toml": "POUND_STYLE",
-    ".fbs": "SLASH_STYLE"
+    ".fbs": "SLASH_STYLE",
+    ".js": "SLASH_STYLE"
   },
   "exclude": [
     "^\\.[^/]+",

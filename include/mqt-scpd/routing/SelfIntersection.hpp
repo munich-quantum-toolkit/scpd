@@ -87,8 +87,8 @@ struct MQT_SCPD_ROUTING_EXPORT PathLoopScratch {
 /// marking uses, so that the cells examined are the ones the corridors were
 /// stamped from. Consecutive cells differ by at most one along each axis;
 /// cells outside the grid are dropped.
-MQT_SCPD_ROUTING_EXPORT void rasterizePathCells(const Path& path, uint32_t width,
-                                                uint32_t height,
+MQT_SCPD_ROUTING_EXPORT void rasterizePathCells(const Path& path,
+                                                uint32_t width, uint32_t height,
                                                 std::vector<int32_t>& xs,
                                                 std::vector<int32_t>& ys);
 
@@ -100,21 +100,20 @@ MQT_SCPD_ROUTING_EXPORT void rasterizePathCells(const Path& path, uint32_t width
 /// scan returns at the first hit.
 ///
 /// @returns The number of self-intersection events.
-MQT_SCPD_ROUTING_EXPORT uint32_t
-scanCellsForSelfIntersection(PathLoopScratch& scratch,
-                             std::vector<PathLoopHit>* hits, bool stopAtFirst);
+MQT_SCPD_ROUTING_EXPORT uint32_t scanCellsForSelfIntersection(
+    PathLoopScratch& scratch, std::vector<PathLoopHit>* hits, bool stopAtFirst);
 
 /// Rasterize a path and return every self-intersection event in it. The
 /// scratch keeps the rasterized cells, so a caller that reports context
 /// around a hit does not rasterize twice.
-MQT_SCPD_ROUTING_EXPORT uint32_t
-findPathSelfIntersections(const Path& path, uint32_t width, uint32_t height,
-                          PathLoopScratch& scratch, std::vector<PathLoopHit>* hits);
+MQT_SCPD_ROUTING_EXPORT uint32_t findPathSelfIntersections(
+    const Path& path, uint32_t width, uint32_t height, PathLoopScratch& scratch,
+    std::vector<PathLoopHit>* hits);
 
 /// Whether a path crosses or touches itself. Stops at the first hit, which
 /// is written to first when given.
-MQT_SCPD_ROUTING_EXPORT bool pathSelfIntersects(const Path& path, uint32_t width,
-                                                uint32_t height,
+MQT_SCPD_ROUTING_EXPORT bool pathSelfIntersects(const Path& path,
+                                                uint32_t width, uint32_t height,
                                                 PathLoopScratch& scratch,
                                                 PathLoopHit* first = nullptr);
 

@@ -75,10 +75,12 @@ Request requestFor(const int t) {
   }
   const auto startHeading = static_cast<Heading>(t % 8);
   const auto endHeading = static_cast<Heading>((t + 4) % 8);
-  return {.objective = {{.x = startX, .y = startY, .heading = startHeading, .primitive = 0},
-                        {.x = endX, .y = endY, .heading = endHeading, .primitive = 0}},
-          .lowerX = cellX,
-          .lowerY = cellY};
+  return {
+      .objective =
+          {{.x = startX, .y = startY, .heading = startHeading, .primitive = 0},
+           {.x = endX, .y = endY, .heading = endHeading, .primitive = 0}},
+      .lowerX = cellX,
+      .lowerY = cellY};
 }
 
 TEST(RouteStress, AHundredRoutesOverTwoGrids) {
@@ -113,7 +115,9 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
       ASSERT_LT(point.x, GRID_DIMENSION) << t;
       ASSERT_LT(point.y, GRID_DIMENSION) << t;
     }
-    EXPECT_FALSE(pathSelfIntersects(path, GRID_DIMENSION, GRID_DIMENSION, loopScratch)) << t;
+    EXPECT_FALSE(
+        pathSelfIntersects(path, GRID_DIMENSION, GRID_DIMENSION, loopScratch))
+        << t;
 
     // The length of the rendered curve agrees with the length the search
     // paid for. This is what the harness existed to check: the cost the
@@ -122,20 +126,27 @@ TEST(RouteStress, AHundredRoutesOverTwoGrids) {
     const SegmentedPath segmented = reconstructSegments(*primitives, path);
     std::vector<PathSegment> segments;
     Path copy = path;
-    const std::vector<Point> samples = samplePath(*primitives, copy, copy.front(), segments);
+    const std::vector<Point> samples =
+        samplePath(*primitives, copy, copy.front(), segments);
     ASSERT_FALSE(samples.empty()) << t;
     const double sampled = polylineLength(samples);
     ASSERT_GT(segmented.nominalLength, 0.0) << t;
     EXPECT_NEAR(sampled / segmented.nominalLength, 1.0, 0.02) << t;
     // It is at least the straight line between the two ends.
-    const double beeline = std::hypot(
-        static_cast<double>(request.objective.target.x) - request.objective.source.x,
-        static_cast<double>(request.objective.target.y) - request.objective.source.y);
+    const double beeline =
+        std::hypot(static_cast<double>(request.objective.target.x) -
+                       request.objective.source.x,
+                   static_cast<double>(request.objective.target.y) -
+                       request.objective.source.y);
     EXPECT_GE(sampled, beeline) << t;
 
     // The rendering ends on the target rather than drifting away from it.
-    EXPECT_NEAR(samples.back().x(), static_cast<double>(request.objective.target.x), 1e-6) << t;
-    EXPECT_NEAR(samples.back().y(), static_cast<double>(request.objective.target.y), 1e-6) << t;
+    EXPECT_NEAR(samples.back().x(),
+                static_cast<double>(request.objective.target.x), 1e-6)
+        << t;
+    EXPECT_NEAR(samples.back().y(),
+                static_cast<double>(request.objective.target.y), 1e-6)
+        << t;
   }
   EXPECT_EQ(routed, TOTAL_ROUTES);
   EXPECT_EQ(router.loopGuardRejections(), 0U);
@@ -148,8 +159,10 @@ TEST(RouteStress, EveryRouteIsTheSameOnASecondRun) {
   SearchScratch first(GRID_DIMENSION, GRID_DIMENSION);
   SearchScratch second(GRID_DIMENSION, GRID_DIMENSION);
   grid::BitGrid corridor(GRID_DIMENSION, GRID_DIMENSION);
-  const SearchParams params{.startStraightLength = 10, .endStraightLength = 10,
-                            .minRadius = 5, .bendPenalty = 500};
+  const SearchParams params{.startStraightLength = 10,
+                            .endStraightLength = 10,
+                            .minRadius = 5,
+                            .bendPenalty = 500};
   DubinsRouter a(primitives, first, params);
   DubinsRouter b(primitives, second, params);
   a.attachCorridor(&corridor);
@@ -176,8 +189,10 @@ TEST(RouteStress, ObstaclesInEveryCellStillLeaveAWayThrough) {
     }
   }
   DubinsRouter router(primitives, scratch,
-                      {.startStraightLength = 10, .endStraightLength = 10,
-                       .minRadius = 5, .bendPenalty = 500});
+                      {.startStraightLength = 10,
+                       .endStraightLength = 10,
+                       .minRadius = 5,
+                       .bendPenalty = 500});
   router.attachCorridor(&corridor);
 
   PathLoopScratch loopScratch;
@@ -190,7 +205,9 @@ TEST(RouteStress, ObstaclesInEveryCellStillLeaveAWayThrough) {
     for (const PathPoint& point : path) {
       EXPECT_FALSE(corridor.testCell(point.x, point.y)) << t;
     }
-    EXPECT_FALSE(pathSelfIntersects(path, GRID_DIMENSION, GRID_DIMENSION, loopScratch)) << t;
+    EXPECT_FALSE(
+        pathSelfIntersects(path, GRID_DIMENSION, GRID_DIMENSION, loopScratch))
+        << t;
   }
 }
 

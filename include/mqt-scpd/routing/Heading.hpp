@@ -62,14 +62,17 @@ struct HeadingVector {
 }
 
 /// The heading a number of eighth turns clockwise from another.
-[[nodiscard]] constexpr Heading turned(const Heading heading, const int eighths) {
-  return static_cast<Heading>(((static_cast<int>(heading) + eighths) % 8 + 8) % 8);
+[[nodiscard]] constexpr Heading turned(const Heading heading,
+                                       const int eighths) {
+  return static_cast<Heading>(((static_cast<int>(heading) + eighths) % 8 + 8) %
+                              8);
 }
 
 /// The number of eighth turns between two headings, 0..4.
-[[nodiscard]] constexpr uint32_t headingDistance(const Heading a, const Heading b) {
-  const uint32_t raw = (a > b) ? static_cast<uint32_t>(a - b)
-                               : static_cast<uint32_t>(b - a);
+[[nodiscard]] constexpr uint32_t headingDistance(const Heading a,
+                                                 const Heading b) {
+  const uint32_t raw =
+      (a > b) ? static_cast<uint32_t>(a - b) : static_cast<uint32_t>(b - a);
   return raw < NUM_HEADINGS - raw ? raw : NUM_HEADINGS - raw;
 }
 

@@ -126,7 +126,8 @@ uint32_t scanCellsForSelfIntersection(PathLoopScratch& scratch,
         scratch.seenCell.emplace(key, j);
       } else if (j - it->second <= PATH_LOOP_SPUR_WINDOW) {
         ++scratch.spurRevisitsIgnored;
-        scratch.maxSpurDistance = std::max(scratch.maxSpurDistance, j - it->second);
+        scratch.maxSpurDistance =
+            std::max(scratch.maxSpurDistance, j - it->second);
         it->second = j;
       } else {
         hit = true;
@@ -169,8 +170,8 @@ bool pathSelfIntersects(const Path& path, const uint32_t width,
                         PathLoopHit* first) {
   rasterizePathCells(path, width, height, scratch.xs, scratch.ys);
   std::vector<PathLoopHit> one;
-  const uint32_t n =
-      scanCellsForSelfIntersection(scratch, first != nullptr ? &one : nullptr, true);
+  const uint32_t n = scanCellsForSelfIntersection(
+      scratch, first != nullptr ? &one : nullptr, true);
   if (n != 0 && first != nullptr && !one.empty()) {
     *first = one.front();
   }
