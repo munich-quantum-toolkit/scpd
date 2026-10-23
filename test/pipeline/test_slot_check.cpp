@@ -209,11 +209,9 @@ TEST(SlotCheck, CrossingPrescriptionTakesTheSlot) {
   EXPECT_EQ(graph.at("verdict"), "SAT");
 }
 
-/// The slots of a straight piece are spread evenly over it
-/// (`SCPD_EVEN_SLOTS`): as many as laid one after the other, with equal gaps
+/// The slots of a straight piece are spread evenly over it, with equal gaps
 /// between them and to the two ends. On f1 from x 60 to 170 they lie as far
-/// from the one end as from the other; laid one after the other they
-/// crowd the start.
+/// from the one end as from the other.
 TEST(SlotCheck, SpreadsTheSlotsOfAStraightPieceEvenly) {
   Drawing chip(260, 240, 19.0);
   chip.fill(0, 180, 259, 239, CHAMBER + 1);
@@ -226,36 +224,25 @@ TEST(SlotCheck, SpreadsTheSlotsOfAStraightPieceEvenly) {
   chip.strokes.push_back(
       {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
   chip.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
-  const auto slotsAt = [&](const char* even) {
-    setenv("SCPD_EVEN_SLOTS", even, 1);
-    const auto graph = json::parse(slotCheck(chip.text()).graph);
-    unsetenv("SCPD_EVEN_SLOTS");
-    std::vector<double> xs;
-    for (const auto& slot :
-         graph.at("crossSlots").at("edges").at(0).at("slots")) {
-      xs.push_back(slot.at("at").at(0).get<double>());
-    }
-    std::ranges::sort(xs);
-    return xs;
-  };
-
-  const auto laid = slotsAt("0");
-  const auto spread = slotsAt("1");
+  const auto graph = json::parse(slotCheck(chip.text()).graph);
+  std::vector<double> spread;
+  for (const auto& slot :
+       graph.at("crossSlots").at("edges").at(0).at("slots")) {
+    spread.push_back(slot.at("at").at(0).get<double>());
+  }
+  std::ranges::sort(spread);
 
   ASSERT_GE(spread.size(), 3U);
-  EXPECT_EQ(spread.size(), laid.size());
   EXPECT_NEAR(spread.front() - 60.0, 170.0 - spread.back(), 1.0);
-  EXPECT_GT(std::abs((laid.front() - 60.0) - (170.0 - laid.back())), 1.0);
   for (std::size_t k = 2; k < spread.size(); ++k) {
     EXPECT_NEAR(spread[k] - spread[k - 1], spread[1] - spread[0], 1.0);
   }
 }
 
-/// Under `SCPD_SLOT_ESCAPE` a slot goes only where each of its ends has a way
-/// out: one of the router's turns and five cells on, every cell free. On f1
-/// from x 60 to 170, artwork from x 60 to 110 a cell below the lower ends of
-/// the slots leaves no turn there, so the slots move right of it; without
-/// the switch they lie over the whole edge.
+/// A slot goes only where each of its ends has a way out: one of the
+/// router's turns and five cells on, every cell free. On f1 from x 60 to
+/// 170, artwork from x 60 to 110 a cell below the lower ends of the slots
+/// leaves no turn there, so the slots lie right of it.
 TEST(SlotCheck, PlacesASlotOnlyWhereItsEndsHaveAWayOut) {
   Drawing chip(260, 240, 19.0);
   chip.fill(0, 180, 259, 239, CHAMBER + 1);
@@ -269,12 +256,6 @@ TEST(SlotCheck, PlacesASlotOnlyWhereItsEndsHaveAWayOut) {
   chip.strokes.push_back(
       {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
   chip.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
-  const auto graphWith = [&](const char* escape) {
-    setenv("SCPD_SLOT_ESCAPE", escape, 1);
-    auto graph = json::parse(slotCheck(chip.text()).graph);
-    unsetenv("SCPD_SLOT_ESCAPE");
-    return graph;
-  };
   const auto slotsOf = [](const json& graph) {
     std::vector<double> xs;
     for (const auto& slot :
@@ -285,11 +266,8 @@ TEST(SlotCheck, PlacesASlotOnlyWhereItsEndsHaveAWayOut) {
     return xs;
   };
 
-  const auto plain = graphWith("0");
-  const auto escaping = graphWith("1");
+  const auto escaping = json::parse(slotCheck(chip.text()).graph);
 
-  ASSERT_FALSE(slotsOf(plain).empty());
-  EXPECT_LT(slotsOf(plain).front(), 110.0);
   ASSERT_FALSE(slotsOf(escaping).empty());
   EXPECT_GT(slotsOf(escaping).front(), 110.0);
   // Every end of a slot placed shows the way out its placement chose.
@@ -301,7 +279,7 @@ TEST(SlotCheck, PlacesASlotOnlyWhereItsEndsHaveAWayOut) {
 }
 
 /// A slot needs a line across its edge that the feedline routing's crossing
-/// rule allows (`SCPD_SLOT_CROSSING_RULE`). On an edge of 21 cells the one
+/// rule allows. On an edge of 21 cells the one
 /// straight piece a slot fits on has its middle on the last of the first
 /// ten cells' neighbours, where the router may not cross, so the edge holds
 /// no slot and the wire prescribed to cross it has no way.
@@ -333,7 +311,7 @@ TEST(SlotCheck, LaysNoSlotWhereTheRouterMayNotCross) {
   EXPECT_TRUE(ruled) << edges[0].at("rejected");
 }
 
-/// With fewer cells closed at the ends of an edge (`SCPD_SLOT_PIN_CELLS`),
+/// With fewer cells closed at the ends of an edge (`slotPinCells`),
 /// the middle of the edge of 21 cells lies outside them, and its slot takes
 /// the wire.
 TEST(SlotCheck, LaysASlotNearerTheEndsWithFewerPinCells) {
@@ -349,16 +327,16 @@ TEST(SlotCheck, LaysASlotNearerTheEndsWithFewerPinCells) {
       {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
   chip.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
 
-  setenv("SCPD_SLOT_PIN_CELLS", "5", 1);
-  const auto result = slotCheck(chip.text());
-  unsetenv("SCPD_SLOT_PIN_CELLS");
+  auto text = json::parse(chip.text());
+  text["slotPinCells"] = 5;
+  const auto result = slotCheck(text.dump());
 
   EXPECT_EQ(result.verdict, "SAT");
   EXPECT_TRUE(result.lost.empty());
 }
 
 /// A gate on the line of a mouth between the same two chambers is that
-/// mouth (`SCPD_MOUTH_TWINS`): a wire prescribed to cross a feedline edge
+/// mouth: a wire prescribed to cross a feedline edge
 /// passes no mouth, so it passes the plain twin of the mouth neither. Below
 /// f1, chamber 2 lies behind an artwork wall that only the mouth g0 and its
 /// twin g1 cross.
@@ -495,7 +473,7 @@ TEST(SlotCheck, GateOverCapacityIsUnsat) {
 }
 
 /// A gate is counted across the heading the wires cross it on
-/// (`SCPD_GATE_HEADING`): its line lies 21.8 degrees off the nearest of the
+/// across the wires' heading: its line lies 21.8 degrees off the nearest of the
 /// eight headings' normals, so two wires that would fit 8.6 cells straight
 /// across take 8.6 / cos(21.8) = 9.3 of it at that angle, and the gate
 /// holds one.
@@ -524,102 +502,9 @@ TEST(SlotCheck, GateWithRoomForBothIsSat) {
   EXPECT_EQ(edgeNamed(json::parse(result.graph), "g0").at("load"), 2);
 }
 
-/// Places the slots by the edge alone (`SCPD_SLOT_ESCAPE=0`) while it lives.
-/// The stub of the tests below closes every way out of the slot's upper end,
-/// so with the escape check the slot they are about is not placed.
-struct WithoutEscapes {
-  WithoutEscapes() { setenv("SCPD_SLOT_ESCAPE", "0", 1); }
-  WithoutEscapes(const WithoutEscapes&) = delete;
-  WithoutEscapes& operator=(const WithoutEscapes&) = delete;
-  WithoutEscapes(WithoutEscapes&&) = delete;
-  WithoutEscapes& operator=(WithoutEscapes&&) = delete;
-  ~WithoutEscapes() { unsetenv("SCPD_SLOT_ESCAPE"); }
-};
-
-TEST(SlotCheck, SlotAndStubShareALineForOneWire) {
-  // The line from the slot's corner to the stub's open end is 21 cells
-  // long and takes one wire. Wire 7 starts in the room behind it and wire
-  // 2 crosses f1 at the slot whose exit lies in that room: both pass it.
-  const WithoutEscapes plain;
-  auto chip = feedlineChip();
-  addStub(chip, "7", 140);
-  chip.wire("7", {60, 150}, 0, {200, 50}, 0, {});
-  chip.wire("2", {200, 60}, 0, {200, 220}, 1, {"f1"});
-
-  const auto result = slotCheck(chip.text());
-  const auto graph = json::parse(result.graph);
-
-  EXPECT_EQ(result.verdict, "UNSAT");
-  EXPECT_TRUE(result.lost.empty());
-  EXPECT_EQ(result.over,
-            std::vector<std::string>{"□ f1 1 to stub (80, 140) 2/1"});
-  const auto line = edgeNamed(graph, "S □ f1 1 to stub (80, 140)");
-  ASSERT_FALSE(line.is_null());
-  EXPECT_TRUE(line.at("selfBottleneck").get<bool>());
-  EXPECT_EQ(line.at("capacity"), 1);
-  EXPECT_EQ(line.at("through"), json::array({"2", "7"}));
-  EXPECT_EQ(line.at("endsInRoom"), json::array({"7"}));
-}
-
-TEST(SlotCheck, StubTakesItsOwnWire) {
-  // The line from the slot's corner to the stub's open end is 17 cells
-  // long, less than a clearance, yet the stub's own wire always leaves the
-  // stub: the line takes wire 7.
-  const WithoutEscapes plain;
-  auto chip = feedlineChip();
-  addStub(chip, "7", 145);
-  chip.wire("7", {60, 152}, 0, {200, 50}, 0, {});
-
-  const auto result = slotCheck(chip.text());
-  const auto line =
-      edgeNamed(json::parse(result.graph), "S □ f1 1 to stub (80, 145)");
-
-  EXPECT_EQ(result.verdict, "SAT");
-  ASSERT_FALSE(line.is_null());
-  EXPECT_EQ(line.at("capacity"), 1);
-  EXPECT_EQ(line.at("load"), 1);
-}
-
-TEST(SlotCheck, StubOfAnotherWireTakesNoWireThroughANarrowLine) {
-  const WithoutEscapes plain;
-  auto chip = feedlineChip();
-  addStub(chip, "9", 145);
-  chip.wire("7", {60, 152}, 0, {200, 50}, 0, {});
-
-  const auto result = slotCheck(chip.text());
-
-  EXPECT_EQ(result.verdict, "UNSAT");
-  EXPECT_EQ(result.over,
-            std::vector<std::string>{"□ f1 1 to stub (80, 145) 1/0"});
-}
-
-/// The faster check, the default of `SCPD_SLOT_CHECK_FAST`, finds what the
-/// plain check finds, down to the graph it writes, on a feedline with slots
-/// and stubs and on a gate over its capacity.
-TEST(SlotCheck, FastCheckFindsTheSame) {
-  auto feedline = feedlineChip();
-  feedline.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
-  addStub(feedline, "9", 145);
-  feedline.wire("7", {60, 152}, 0, {200, 50}, 0, {});
-  auto gate = gateChip(1);
-  gate.wire("1", {20, 5}, 0, {20, 35}, 1, {});
-  gate.wire("2", {22, 5}, 0, {22, 35}, 1, {});
-
-  for (const auto& text : {feedline.text(), gate.text()}) {
-    EXPECT_EQ(fast::slotCheckJson(text), detail::plainSlotCheckJson(text));
-    const auto graph = slotGraphOf(text);
-    const auto plain = detail::plainSlotCheck(graph);
-    const auto quick = fast::slotCheck(graph);
-    EXPECT_EQ(quick.verdict, plain.verdict);
-    EXPECT_EQ(quick.lost, plain.lost);
-    EXPECT_EQ(quick.over, plain.over);
-    EXPECT_EQ(quick.crowded, plain.crowded);
-  }
-}
-
 /// A graph whose raster is a view over wall and chamber buffers
 /// (`SlotGraph::raster`) is judged as the same graph with its codes written
-/// out, by the fast check and by the plain one.
+/// out.
 TEST(SlotCheck, ARasterViewIsJudgedAsTheCodes) {
   auto feedline = feedlineChip();
   feedline.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
@@ -659,16 +544,12 @@ TEST(SlotCheck, ARasterViewIsJudgedAsTheCodes) {
     for (std::size_t cell = 0; cell < coded.codes.size(); ++cell) {
       ASSERT_EQ(viewed.raster->code(cell), coded.codes[cell]) << cell;
     }
-    const auto quickCoded = fast::slotCheck(coded);
-    const auto quickViewed = fast::slotCheck(viewed);
-    const auto plainCoded = detail::plainSlotCheck(coded);
-    const auto plainViewed = detail::plainSlotCheck(viewed);
-    for (const auto* result : {&quickViewed, &plainCoded, &plainViewed}) {
-      EXPECT_EQ(result->verdict, quickCoded.verdict);
-      EXPECT_EQ(result->lost, quickCoded.lost);
-      EXPECT_EQ(result->over, quickCoded.over);
-      EXPECT_EQ(result->crowded, quickCoded.crowded);
-    }
+    const auto quickCoded = slotCheck(coded);
+    const auto quickViewed = slotCheck(viewed);
+    EXPECT_EQ(quickViewed.verdict, quickCoded.verdict);
+    EXPECT_EQ(quickViewed.lost, quickCoded.lost);
+    EXPECT_EQ(quickViewed.over, quickCoded.over);
+    EXPECT_EQ(quickViewed.crowded, quickCoded.crowded);
   }
 }
 

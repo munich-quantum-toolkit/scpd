@@ -254,6 +254,13 @@ struct Tuning {
   std::uint32_t haloReach = 1;
   std::uint32_t riseReach = 3;
   std::uint32_t risePeak = 3;
+  /// The slot check's settings, handed to it with every graph.
+  double capacityMargin = 1.06;
+  std::int64_t capacityMarginFromWires = 3;
+  double resonatorPassage = 0.8;
+  std::size_t slotPinCells = 10;
+  std::int64_t escapeStraight = 5;
+  double escapeStubMargin = 4.0;
   /// The last of the five phases to run, by the name of its snapshot, or
   /// empty for all five. A stop is for looking at one phase's work: the
   /// stage still counts what it came to and still writes its artifact.
@@ -443,7 +450,16 @@ offsetsOf(const std::string& text) {
   tuning.haloReach = std::clamp(params.halo_reach, 1U, 12U);
   tuning.riseReach = std::clamp(params.rise_reach, 1U, 12U);
   tuning.risePeak = std::clamp(params.rise_peak, 1U, 50U);
-  tuning.stopAfter = params.stop_after;
+  tuning.capacityMargin = std::clamp(params.capacity_margin, 1.0, 2.0);
+  tuning.capacityMarginFromWires = static_cast<std::int64_t>(
+      std::clamp(params.capacity_margin_from_wires, 1U, 100U));
+  tuning.resonatorPassage = std::clamp(params.resonator_passage, 0.0, 1.0);
+  tuning.slotPinCells = params.slot_pin_cells;
+  tuning.escapeStraight =
+      static_cast<std::int64_t>(std::min(params.escape_straight_cells, 100U));
+  tuning.escapeStubMargin =
+      static_cast<double>(std::min(params.escape_stub_margin_cells, 100U));
+  tuning.stopAfter = params.stop_after_phase;
   tuning.bendPenalty = static_cast<std::uint16_t>(
       std::min<std::uint32_t>(std::numeric_limits<std::uint16_t>::max(),
                               resolved(params.bend_penalty_norm, router)));
@@ -18709,6 +18725,12 @@ public:
               {"straightLength", tuning_.straightLength},
               {"pitch", roomPitch()},
               {"crossingReach", tuning_.crossingReach + 1},
+              {"capacityMargin", tuning_.capacityMargin},
+              {"capacityMarginFromWires", tuning_.capacityMarginFromWires},
+              {"resonatorPassage", tuning_.resonatorPassage},
+              {"slotPinCells", tuning_.slotPinCells},
+              {"escapeStraight", tuning_.escapeStraight},
+              {"escapeStubMargin", tuning_.escapeStubMargin},
               {"inflation", wallInflation()},
               {"verdict", verdict},
               {"summary", summary},
@@ -18804,6 +18826,12 @@ public:
     out.clearance = static_cast<double>(tuning_.clearance);
     out.crossingReach = static_cast<double>(tuning_.crossingReach + 1);
     out.inflation = wallInflation();
+    out.capacityMargin = tuning_.capacityMargin;
+    out.capacityMarginFromWires = tuning_.capacityMarginFromWires;
+    out.resonatorPassage = tuning_.resonatorPassage;
+    out.slotPinCells = tuning_.slotPinCells;
+    out.escapeStraight = tuning_.escapeStraight;
+    out.escapeStubMargin = tuning_.escapeStubMargin;
     out.wallKinds.clear();
     out.stubCells.clear();
     out.portSlots.clear();
@@ -19855,8 +19883,8 @@ snapshotOf(std::string name, const std::vector<Wire>& wires,
           .refinement = true};
 }
 
-/// Phase 2 of the stage: the ring, against the inner circuit and against
-/// itself, then its refinement.
+/// The ring, against the inner circuit and against itself: the second half
+/// of the first phase.
 void routeTheRing(Driver& driver, std::vector<Wire>& wires,
                   const std::vector<std::uint32_t>& outer,
                   const Tuning& tuning) {
@@ -19864,6 +19892,12 @@ void routeTheRing(Driver& driver, std::vector<Wire>& wires,
   const auto outerPass = outerPassOf(tuning);
   driver.sweep(wires, outer, outerPass);
   driver.recoverWithoutBands(wires, outer, outerPass);
+}
+
+/// The second phase: the refinement of the ring before the feedlines.
+void refineTheRing(Driver& driver, std::vector<Wire>& wires,
+                   const std::vector<std::uint32_t>& outer,
+                   const Tuning& tuning) {
   driver.refine(wires, outer, refinementPassOf(tuning));
   driver.sayLengthPoints(wires, outer);
 }
@@ -19952,12 +19986,13 @@ public:
     extent->cell_height = field.router.cellHeight;
     routing.grid = std::move(extent);
 
-    // Where the run ends. `stop_after` names the last phase to run, by the
-    // name of its snapshot; what follows it is not run at all, which is what
-    // a stop is worth over a picture of a finished run. An unknown name runs
-    // every phase, because the loader has already refused it.
+    // Where the run ends. `stop_after_phase` names the last phase to run,
+    // by the name of its snapshot; what follows it is not run at all. An
+    // unknown name runs every phase, because the loader has already refused
+    // it.
     static constexpr std::array<std::string_view, 5> PHASES{
-        "inner", "outer", "couplers", "feedlines", "refined"};
+        "pre-feedline-routing", "pre-feedline-refinement", "feedline-insertion",
+        "feedline-constrained-routing", "feedline-constrained-refinement"};
     std::size_t lastPhase = PHASES.size() - 1;
     for (std::size_t at = 0; at < PHASES.size(); ++at) {
       if (tuning.stopAfter == PHASES[at]) {
@@ -19968,19 +20003,22 @@ public:
       return phase <= lastPhase;
     };
 
-    // Phase 1. The inner circuit runs inside the unit cells, where the room is
-    // narrow and there is nothing to steer around, so it takes no straight
-    // stubs and a band a fraction of the ring's.
+    // Phase 1, the routing before the feedlines. The inner circuit runs
+    // inside the unit cells, where the room is narrow and there is nothing to
+    // steer around, so it takes no straight stubs and a band a fraction of
+    // the ring's. Then the ring, against the inner circuit and against
+    // itself.
     driver.sayTheSetting();
     driver.sweep(wires, inner, innerPassOf(tuning));
-    routing.phases.push_back(
-        snapshotOf("inner", wires, ring, global.connections.size(), measure));
+    routeTheRing(driver, wires, outer, tuning);
+    routing.phases.push_back(snapshotOf(std::string(PHASES[0]), wires, ring,
+                                        global.connections.size(), measure));
 
-    // Phase 2. The ring, against the inner circuit and against itself.
+    // Phase 2. The refinement of the ring.
     if (runs(1)) {
-      routeTheRing(driver, wires, outer, tuning);
-      routing.phases.push_back(
-          snapshotOf("outer", wires, ring, global.connections.size(), measure));
+      refineTheRing(driver, wires, outer, tuning);
+      routing.phases.push_back(snapshotOf(std::string(PHASES[1]), wires, ring,
+                                          global.connections.size(), measure));
     }
 
     // What the tail writes, whatever the run stops after: the edges of the
@@ -19997,15 +20035,16 @@ public:
       return all;
     };
 
-    // Phase 3. The couplers, and the feedline chains through them.
+    // Phase 3. The feedline insertion: the couplers, and the feedline chains
+    // through them.
     if (runs(2)) {
       driver.insertCouplers(wires, assignment, chip);
       for (const auto& edge : driver.edges()) {
         edges.push_back(edge.wire);
       }
       routing.phases.push_back(snapshotOf(
-          "couplers", wires, ring, global.connections.size(), measure, edges,
-          couplersNow(), nullptr, &driver.squeezed()));
+          std::string(PHASES[2]), wires, ring, global.connections.size(),
+          measure, edges, couplersNow(), nullptr, &driver.squeezed()));
     }
 
     // Phase 4. Every wire again under the feedline constraints, in the ring
@@ -20015,8 +20054,8 @@ public:
       const auto members =
           routeTheFeedlines(driver, wires, outer, inner, tuning);
       routing.phases.push_back(snapshotOf(
-          "feedlines", wires, ring, global.connections.size(), measure, edges,
-          couplersNow(), nullptr, &driver.squeezed()));
+          std::string(PHASES[3]), wires, ring, global.connections.size(),
+          measure, edges, couplersNow(), nullptr, &driver.squeezed()));
 
       // Phase 5. The refinement of the feedline routing.
       if (runs(4)) {
@@ -20030,8 +20069,8 @@ public:
                        .feedlines = true,
                        .refinement = true});
         routing.phases.push_back(snapshotOf(
-            "refined", wires, ring, global.connections.size(), measure, edges,
-            couplersNow(), nullptr, &driver.squeezed()));
+            std::string(PHASES[4]), wires, ring, global.connections.size(),
+            measure, edges, couplersNow(), nullptr, &driver.squeezed()));
       }
     }
 
@@ -20039,8 +20078,9 @@ public:
     // every wire down, so that the last line of a run says what the
     // design-rule check will find.
     if (lastPhase + 1 < PHASES.size()) {
-      driver.say(std::format("the stage stops after {}, as stop_after asks",
-                             PHASES[lastPhase]));
+      driver.say(
+          std::format("the stage stops after {}, as stop_after_phase asks",
+                      PHASES[lastPhase]));
     }
     driver.sayResonatorLengths(wires, outer);
     const auto fails = driver.failsOf(wires, everyWire());
@@ -20126,6 +20166,7 @@ CouplerSession::CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
   driver.sayTheSetting();
   driver.sweep(wires, inner, innerPassOf(state_->tuning));
   routeTheRing(driver, wires, outer, state_->tuning);
+  refineTheRing(driver, wires, outer, state_->tuning);
   driver.insertCouplers(wires, assignment, chip);
 }
 

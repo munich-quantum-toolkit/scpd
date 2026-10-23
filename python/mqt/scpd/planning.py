@@ -72,7 +72,13 @@ def verdict_names(verdict: int) -> list[str]:
 
 #: The five phases of the Final stage, in the order it runs them. Each one changes what the phase
 #: before it produced, so each leaves its own snapshot in the artifact and gets its own picture.
-FINAL_PHASES: tuple[str, ...] = ("inner", "outer", "couplers", "feedlines", "refined")
+FINAL_PHASES: tuple[str, ...] = (
+    "pre-feedline-routing",
+    "pre-feedline-refinement",
+    "feedline-insertion",
+    "feedline-constrained-routing",
+    "feedline-constrained-refinement",
+)
 
 PLANNING_STAGES: dict[str, str] = {
     "capacity": "01-capacity.fb",

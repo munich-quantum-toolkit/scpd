@@ -474,8 +474,9 @@ TEST(FinalRouter, EveryPhaseLeavesASnapshot) {
   const auto routing = routeFinal(benchmark, planned);
 
   ASSERT_EQ(routing.phases.size(), 5U);
-  const std::vector<std::string> names{"inner", "outer", "couplers",
-                                       "feedlines", "refined"};
+  const std::vector<std::string> names{
+      "pre-feedline-routing", "pre-feedline-refinement", "feedline-insertion",
+      "feedline-constrained-routing", "feedline-constrained-refinement"};
   for (std::size_t index = 0; index < names.size(); ++index) {
     EXPECT_EQ(routing.phases[index]->name, names[index]);
     EXPECT_EQ(routing.phases[index]->wires.size(),
@@ -1923,7 +1924,7 @@ TEST(CouplerSession, KeepsTheEdgesOfAChainApartInTheFeedlineRouting) {
 /// An edge that meets a terminal edge of its own chain at a coupler keeps the
 /// wire clearance from the run the terminal edge makes at that coupler: the
 /// run follows from the coupler's option, so the edge is drawn round it even
-/// before the terminal edge is (`SCPD_OWN_TERMINAL_STUB_GUARD`). On 9q every
+/// before the terminal edge is. On 9q every
 /// open option of every coupler next to a launcher is drawn, and the run is
 /// measured against the other edge outside that edge's own slot.
 TEST(CouplerSession, KeepsAnEdgeClearOfTheRunOfItsTerminalNeighbour) {
@@ -1944,7 +1945,7 @@ TEST(CouplerSession, KeepsAnEdgeClearOfTheRunOfItsTerminalNeighbour) {
     last = std::max(last, coupler.at("at").get<std::uint32_t>());
   }
   // The edge's own slot at the coupler opens again after the guard: the
-  // run of `SCPD_TERMINAL_SLOT` cells, or the pad's run and a bend.
+  // run of `terminal_slot_cells` cells, or the pad's run and a bend.
   constexpr std::size_t SLOT = 30;
   std::size_t measured = 0;
   for (const auto& coupler : listed) {
@@ -2038,7 +2039,7 @@ TEST(CouplerSession, KeepsAnEdgeClearOfTheRunOfItsTerminalNeighbour) {
 /// routing does not draw an edge between two couplers again, so an edge the
 /// insertion lets closer stays open. On 4q every open option of every
 /// coupler is drawn, and the two edges at that coupler are measured.
-/// `SCPD_EDGE_SLOT_CLEARANCE`.
+/// the slots.
 TEST(CouplerSession, KeepsTheEdgesAtACouplerApartOutsideTheirMeeting) {
   const auto benchmark = fourQubit();
   const auto planned = plan(benchmark);
@@ -2140,7 +2141,7 @@ TEST(CouplerSession, JudgesTheGraphInMemoryAsItsJson) {
   EXPECT_GT(compared, 0U);
 }
 
-/// `SCPD_COUPLER_SHIFT` (20) moves an option that leaves the coupler box
+/// `coupler_shift_cells` (20) moves an option that leaves the coupler box
 /// into it, by at most that many cells along each axis. On 4q some options
 /// are moved, and none further than the limit.
 TEST(CouplerSession, MovesAnOptionIntoTheBoxByAtMostTheLimit) {

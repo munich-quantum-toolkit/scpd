@@ -62,18 +62,18 @@ def run(tmp_path_factory: pytest.TempPathFactory) -> RunDirectory:
 
 
 @pytest.fixture(scope="module")
-def chip(run: RunDirectory):  # noqa: ANN201
+def chip(run: RunDirectory):  # ruff: ignore[missing-return-type-undocumented-public-function]
     """The chip the run was made from.
 
     Returns:
         The classified chip.
     """
-    from mqt.scpd.chip import classify_chip  # noqa: PLC0415
+    from mqt.scpd.chip import classify_chip  # ruff: ignore[import-outside-top-level]
 
     return decode_chip(classify_chip(run.chip.read_text(encoding="utf-8"), run.load()))
 
 
-def test_the_capacity_plan_carries_the_partitioning(run: RunDirectory, chip) -> None:  # noqa: ANN001
+def test_the_capacity_plan_carries_the_partitioning(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """Everything the capacity stage decided is in the artifact, in layout units."""
     geometry = planning_geometry(run.artifact("capacity").read_bytes(), chip, "capacity")
 
@@ -98,7 +98,7 @@ def test_the_capacity_plan_carries_the_partitioning(run: RunDirectory, chip) -> 
 
 def test_the_global_picture_carries_the_gates_when_the_capacity_plan_is_given(
     run: RunDirectory,
-    chip,  # noqa: ANN001
+    chip,  # ruff: ignore[missing-type-function-argument]
 ) -> None:
     """Where a wire may surface is decided by the free space behind the port, so the gates
     that measure it are drawn with the circuit that paid for them.
@@ -125,7 +125,7 @@ def test_the_global_picture_carries_the_gates_when_the_capacity_plan_is_given(
 
 def test_a_capacity_plan_is_the_only_thing_the_global_picture_takes_gates_from(
     run: RunDirectory,
-    chip,  # noqa: ANN001
+    chip,  # ruff: ignore[missing-type-function-argument]
 ) -> None:
     """An artifact of another stage passed as the capacity plan is a problem, not a picture."""
     with pytest.raises(PlanningError, match="not a capacity plan"):
@@ -137,7 +137,7 @@ def test_a_capacity_plan_is_the_only_thing_the_global_picture_takes_gates_from(
         )
 
 
-def test_the_global_routing_carries_its_lattice(run: RunDirectory, chip) -> None:  # noqa: ANN001
+def test_the_global_routing_carries_its_lattice(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """The lattice and the edges the inner circuit selected are both drawable."""
     geometry = planning_geometry(run.artifact("global").read_bytes(), chip, "global")
 
@@ -147,7 +147,7 @@ def test_the_global_routing_carries_its_lattice(run: RunDirectory, chip) -> None
     assert not geometry.partitions
 
 
-def test_the_assignment_carries_a_chord_per_ring_node(run: RunDirectory, chip) -> None:  # noqa: ANN001
+def test_the_assignment_carries_a_chord_per_ring_node(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """Each ring node is drawn joined to the launcher it was given."""
     geometry = planning_geometry(run.artifact("assign").read_bytes(), chip, "assign")
 
@@ -156,7 +156,7 @@ def test_the_assignment_carries_a_chord_per_ring_node(run: RunDirectory, chip) -
     assert not geometry.bottlenecks
 
 
-def test_the_corridor_routing_carries_a_way_per_connection(run: RunDirectory, chip) -> None:  # noqa: ANN001
+def test_the_corridor_routing_carries_a_way_per_connection(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """Each wire is drawn from its feed through its crossings to its target."""
     geometry = planning_geometry(
         run.artifact("corridor").read_bytes(), chip, "corridor", run.artifact("capacity").read_bytes()
@@ -174,7 +174,7 @@ def test_the_corridor_routing_carries_a_way_per_connection(run: RunDirectory, ch
 
 def test_the_corridor_picture_draws_nothing_of_the_partitions_without_a_plan(
     run: RunDirectory,
-    chip,  # noqa: ANN001
+    chip,  # ruff: ignore[missing-type-function-argument]
 ) -> None:
     """The capacity artifact is what carries the partitions; without it the ways stand alone."""
     geometry = planning_geometry(run.artifact("corridor").read_bytes(), chip, "corridor")
@@ -183,7 +183,7 @@ def test_the_corridor_picture_draws_nothing_of_the_partitions_without_a_plan(
     assert not geometry.partitions
 
 
-def test_the_detail_routing_carries_a_drawn_wire_per_connection(run: RunDirectory, chip) -> None:  # noqa: ANN001
+def test_the_detail_routing_carries_a_drawn_wire_per_connection(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """Each wire is the polyline of its bends, from its feed to its target."""
     geometry = planning_geometry(
         run.artifact("detail").read_bytes(), chip, "detail", run.artifact("capacity").read_bytes()
@@ -214,7 +214,7 @@ def test_the_detail_routing_carries_a_drawn_wire_per_connection(run: RunDirector
 
 def test_the_detail_picture_draws_the_clearance_the_router_actually_keeps(
     run: RunDirectory,
-    chip,  # noqa: ANN001
+    chip,  # ruff: ignore[missing-type-function-argument]
 ) -> None:
     """The band is the design rule as the router converted it to whole cells, not the rule itself.
 
@@ -238,42 +238,42 @@ def test_the_detail_picture_draws_the_clearance_the_router_actually_keeps(
     assert f"stroke-width:{with_rule.clearance:.3f}".rstrip("0").rstrip(".") in svg
 
 
-def test_an_artifact_of_the_wrong_stage_is_refused(run: RunDirectory, chip) -> None:  # noqa: ANN001
+def test_an_artifact_of_the_wrong_stage_is_refused(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """Reading a capacity plan as an assignment says so rather than drawing nothing."""
     with pytest.raises(PlanningError, match="not an assignment"):
         planning_geometry(run.artifact("capacity").read_bytes(), chip, "assign")
 
 
-def test_the_final_routing_carries_a_snapshot_of_every_phase(run: RunDirectory, chip) -> None:  # noqa: ANN001
+def test_the_final_routing_carries_a_snapshot_of_every_phase(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """Each of the five phases draws what it had at its end, and the two that are built carry wires."""
     data = run.artifact("final").read_bytes()
     geometry = planning_geometry(data, chip, "final", clearance=185.0)
 
     assert set(geometry.phases) == set(FINAL_PHASES)
-    assert geometry.phases["outer"], "the outer routing drew nothing"
+    assert geometry.phases["pre-feedline-routing"], "the routing before the feedlines drew nothing"
     # The end state is what a caller sees without naming a phase.
-    assert len(geometry.wires) + len(geometry.inner_wires) == len(geometry.phases["refined"])
+    assert len(geometry.wires) + len(geometry.inner_wires) == len(geometry.phases["feedline-constrained-refinement"])
     # The clearance drawn is the whole number of cells the rule spans on the router grid, which
     # is a little more than the rule itself, because that is what the router keeps.
     assert geometry.clearance > 185.0
     assert geometry.clearance < 2 * 185.0
 
 
-def test_one_phase_of_the_final_routing_is_drawn_on_its_own(run: RunDirectory, chip) -> None:  # noqa: ANN001
-    """Each phase draws the state it left, and the inner circuit alone before the ring is routed."""
+def test_one_phase_of_the_final_routing_is_drawn_on_its_own(run: RunDirectory, chip) -> None:  # ruff: ignore[missing-type-function-argument]
+    """Each phase draws the state it left; the first two draw the ring without couplers."""
     data = run.artifact("final").read_bytes()
-    inner = planning_geometry(data, chip, "final", phase="inner")
-    outer = planning_geometry(data, chip, "final", phase="outer")
+    routed = planning_geometry(data, chip, "final", phase="pre-feedline-routing")
+    outer = planning_geometry(data, chip, "final", phase="pre-feedline-refinement")
 
-    # The first phase draws the inner circuit and nothing of the ring.
-    assert not inner.wires
-    assert inner.inner_wires
+    # The first phase draws the inner circuit and the ring.
+    assert routed.wires
+    assert routed.inner_wires
     assert outer.wires
 
     # The coupler insertion cuts every resonator back to its coupler, so the third phase draws
     # the ring differently from the second, and it is the first to draw the couplers and the
     # edges of the feedline chains.
-    couplers = planning_geometry(data, chip, "final", phase="couplers")
+    couplers = planning_geometry(data, chip, "final", phase="feedline-insertion")
     assert couplers.wires != outer.wires
     assert len(couplers.wires) == len(outer.wires)
     assert not outer.couplers
@@ -281,7 +281,7 @@ def test_one_phase_of_the_final_routing_is_drawn_on_its_own(run: RunDirectory, c
     assert len(couplers.inner_wires) > len(outer.inner_wires)
 
 
-def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:  # noqa: ANN001
+def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """The end state carries the stage's verdict per wire; a picture marks the unrouted, open and crossing ones."""
 
     def wire(cells: list[tuple[int, int]], verdict: int = 0) -> FinalWireT:
@@ -304,7 +304,9 @@ def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:
     end["feedlines"][1].note = "squeezed at (4,9): 2 wires (3, 5) in 30 cells to the artwork, need 59"
     end["feedlines"][1].marks = [RCoordT(4, 9, 6), RCoordT(4, 6, 6)]
     # A phase snapshot is not judged and carries no verdict, whatever its wires hold.
-    snapshot = FinalPhaseT(name="feedlines", wires=[wire([(1, 1), (5, 1)])], inner=[], feedlines=[], couplers=[])
+    snapshot = FinalPhaseT(
+        name="feedline-constrained-routing", wires=[wire([(1, 1), (5, 1)])], inner=[], feedlines=[], couplers=[]
+    )
     data = write_artifact(
         ArtifactT(
             producer="test",
@@ -336,15 +338,15 @@ def test_the_final_routing_marks_the_wires_the_stage_left_failing(chip) -> None:
     assert geometry.off_length[0][2] == [(10.0, 50.0), (50.0, 50.0)]
     note = "squeezed at (4,9): 2 wires (3, 5) in 30 cells to the artwork, need 59"
     assert geometry.squeezed == [("f1", note, [(0.0, 90.0), (90.0, 90.0)], [(40.0, 90.0), (40.0, 60.0)])]
-    assert not planning_geometry(data, chip, "final", phase="feedlines").failing
-    assert not planning_geometry(data, chip, "final", phase="feedlines").off_length
+    assert not planning_geometry(data, chip, "final", phase="feedline-constrained-routing").failing
+    assert not planning_geometry(data, chip, "final", phase="feedline-constrained-routing").off_length
     assert FinalVerdict.Unrouted | FinalVerdict.Open | FinalVerdict.Crossing == BAD_VERDICTS
     assert FinalVerdict.Short | FinalVerdict.Long == LENGTH_VERDICTS
     assert verdict_names(FinalVerdict.Short | FinalVerdict.Loop) == ["short", "meeting itself"]
     assert verdict_names(0) == []
 
 
-def test_a_stage_that_is_not_a_planning_stage_is_refused(chip) -> None:  # noqa: ANN001
+def test_a_stage_that_is_not_a_planning_stage_is_refused(chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """The message lists the stages that can be drawn."""
     empty = write_artifact(
         ArtifactT(
@@ -357,7 +359,7 @@ def test_a_stage_that_is_not_a_planning_stage_is_refused(chip) -> None:  # noqa:
         planning_geometry(empty, chip, "aligned")
 
 
-def test_an_empty_plan_draws_nothing(chip) -> None:  # noqa: ANN001
+def test_an_empty_plan_draws_nothing(chip) -> None:  # ruff: ignore[missing-type-function-argument]
     """A stage that produced nothing is a valid artifact with an empty picture."""
     empty = write_artifact(
         ArtifactT(
@@ -379,7 +381,7 @@ def test_an_empty_plan_draws_nothing(chip) -> None:  # noqa: ANN001
 
 
 @pytest.mark.parametrize("stage", list(PLANNING_STAGES))
-def test_every_planning_stage_renders_to_svg(run: RunDirectory, chip, stage: str) -> None:  # noqa: ANN001
+def test_every_planning_stage_renders_to_svg(run: RunDirectory, chip, stage: str) -> None:  # ruff: ignore[missing-type-function-argument]
     """Each stage draws over the artwork, on layers of its own, inside the snapshot budget."""
     geometry = planning_geometry(run.artifact(stage).read_bytes(), chip, stage)
     svg = layout_svg(chip, planning=geometry)
@@ -404,7 +406,7 @@ def test_every_planning_stage_renders_to_svg(run: RunDirectory, chip, stage: str
 
 
 @pytest.mark.parametrize("stage", list(PLANNING_STAGES))
-def test_every_planning_stage_renders_to_gds(run: RunDirectory, chip, tmp_path: Path, stage: str) -> None:  # noqa: ANN001
+def test_every_planning_stage_renders_to_gds(run: RunDirectory, chip, tmp_path: Path, stage: str) -> None:  # ruff: ignore[missing-type-function-argument]
     """Each stage is written beside the artwork on the planning layers, which stay switchable."""
     geometry = planning_geometry(run.artifact(stage).read_bytes(), chip, stage)
     path = tmp_path / f"{stage}.gds"
@@ -421,7 +423,7 @@ def test_every_planning_stage_renders_to_gds(run: RunDirectory, chip, tmp_path: 
     assert used & {number for number, _, _ in PLANNING_LAYERS.values()}
 
 
-def test_the_chip_still_renders_without_a_planning_stage(chip, tmp_path: Path) -> None:  # noqa: ANN001
+def test_the_chip_still_renders_without_a_planning_stage(chip, tmp_path: Path) -> None:  # ruff: ignore[missing-type-function-argument]
     """`render` with no stage writes the unrouted chip exactly as it did before."""
     summary = write_layout(chip, tmp_path / "chip.gds")
     assert summary.planning == 0

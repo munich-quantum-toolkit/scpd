@@ -35,6 +35,21 @@ struct SlotGraph {
   double crossingReach = 0.0;
   /// How far a feedline or a port run is inflated into a wall, in cells.
   double inflation = 0.0;
+  /// The settings of the check, `[stages.final]` of the configuration. The
+  /// safety factor on the clearance a wire takes in a gap: a gap holds
+  /// `floor(cells / (clearance * margin))` wires, from gaps of
+  /// `capacityMarginFromWires` wires on; below that a gap is measured
+  /// exactly on the grid.
+  double capacityMargin = 1.06;
+  std::int64_t capacityMarginFromWires = 3;
+  /// The narrowest gap a resonator passes, as a share of the clearance.
+  double resonatorPassage = 0.8;
+  /// The cells closed at the ends of a feedline edge, where no slot lies.
+  std::size_t slotPinCells = 10;
+  /// The straight run after the escape turn of a slot's end and the
+  /// clearance an escape keeps from a stub, in cells.
+  std::int64_t escapeStraight = 5;
+  double escapeStubMargin = 4.0;
   /// The names of the wall kinds; wall code k + 1 is kind k.
   std::vector<std::string> wallKinds;
   /// Per cell, row by row: 0 a cut line, 1 to 5 a wall (`wallKinds`),
@@ -229,63 +244,5 @@ slotGraphOf(std::string_view graph);
 /// @throws std::invalid_argument as `slotCheck` does.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string
 slotCheckJson(std::string_view graph);
-
-/// The faster slot check, which `slotCheck` and `slotCheckJson` run while
-/// `SCPD_SLOT_CHECK_FAST` is on (the default): the same results with less
-/// work per check.
-namespace fast {
-/// `slotCheck` of a graph as JSON.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
-slotCheck(std::string_view graph);
-/// `slotCheck` of a graph in memory.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
-slotCheck(const SlotGraph& graph);
-/// `slotCheckJson`.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string
-slotCheckJson(std::string_view graph);
-
-/// The seconds the fast check spent in each of its parts, summed over the
-/// checks of this thread since the last `takeSlotCheckSplit`. The check
-/// reads the clock only while `SCPD_STEP_PROFILE` is on; the clock changes
-/// no result.
-struct SlotCheckSplit {
-  /// How many checks the seconds cover.
-  std::uint64_t checks = 0;
-  /// Reading the strokes and wires, and the sides of every gate.
-  double setup = 0.0;
-  /// The placement of the crossing slots.
-  double placement = 0.0;
-  /// The self-bottlenecks between two places of one feedline edge.
-  double bottlenecks = 0.0;
-  /// The bottlenecks between a slot and a stub, with their room fills.
-  double rooms = 0.0;
-  /// The escape ways and their limits.
-  double escapes = 0.0;
-  /// The moves, owners, limits, mouths and open edges of the search graph.
-  double graph = 0.0;
-  /// The shortest way of every wire.
-  double ways = 0.0;
-  /// The negotiated congestion and the result.
-  double negotiation = 0.0;
-};
-
-/// The split since the last call, which starts a new one.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckSplit takeSlotCheckSplit();
-} // namespace fast
-
-/// The plain slot check, which `slotCheck` and `slotCheckJson` run under
-/// `SCPD_SLOT_CHECK_FAST=0`: the reference the fast check is held against,
-/// callable by name whatever the switch says.
-namespace detail {
-/// `slotCheck` of a graph as JSON.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
-plainSlotCheck(std::string_view graph);
-/// `slotCheck` of a graph in memory.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT SlotCheckResult
-plainSlotCheck(const SlotGraph& graph);
-/// `slotCheckJson`.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string
-plainSlotCheckJson(std::string_view graph);
-} // namespace detail
 
 } // namespace mqt::scpd::pipeline

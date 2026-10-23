@@ -15,8 +15,6 @@ when the arguments are wrong.
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -156,21 +154,7 @@ def command_plan(args: argparse.Namespace) -> int:
     # the round, the outcome and the picture it drew.
     spoken: list[str] = []
 
-    # With SCPD_OPTION_DUMP=1 the Final stage says one `[Option Stats]` line per coupler. Those
-    # lines go into <run>/option-stats.jsonl, each with the chip's name, and not into the log.
-    dumping = os.environ.get("SCPD_OPTION_DUMP", "0") not in {"", "0"}
-    chip = Path(args.config).parent.name
-    option_stats = directory.path / "option-stats.jsonl"
-    option_marker = "[Option Stats] "
-    if dumping and (args.stage is None or args.stage == "final"):
-        option_stats.unlink(missing_ok=True)
-
     def say(line: str) -> None:
-        if dumping and option_marker in line:
-            entry = json.loads(line.split(option_marker, 1)[1])
-            with option_stats.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps({"chip": chip, **entry}) + "\n")
-            return
         if args.verbose is not None:
             print(line, flush=True)
         if args.debug:
@@ -197,7 +181,7 @@ def command_plan(args: argparse.Namespace) -> int:
         result = directory.run_stage(
             stage,
             config,
-            say if args.verbose is not None or args.debug or dumping else None,
+            say if args.verbose is not None or args.debug else None,
             draw if args.debug else None,
             args.verbose or 0,
         )

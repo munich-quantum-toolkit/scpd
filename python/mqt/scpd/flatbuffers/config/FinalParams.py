@@ -200,17 +200,18 @@ class FinalParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 100
 
-    # The last phase of the stage to run: "inner", "outer", "couplers",
-    # "feedlines" or "refined". Empty runs the whole stage.
+    # The last phase of the stage to run: "pre-feedline-routing",
+    # "pre-feedline-refinement", "feedline-insertion",
+    # "feedline-constrained-routing" or "feedline-constrained-refinement".
+    # Empty runs the whole stage.
     #
     # The five phases are the five snapshots the artifact carries and the
     # five values `plot --phase` and `render --phase` take, so a run stopped
     # after a phase is drawn by the name it was stopped at. The stage still
     # says what it came to and still writes its artifact; the phases after
-    # the one named are simply not run, which is what makes a stop worth
-    # more than a picture of a finished run.
+    # the one named are not run.
     # FinalParams
-    def StopAfter(self) -> Optional[str]:
+    def StopAfterPhase(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(36))
         if o != 0:
             return self._tab.String(o + self._tab.Pos)
@@ -691,11 +692,11 @@ def FinalParamsAddRepairTrials(builder: flatbuffers.Builder, repairTrials: int):
 def AddRepairTrials(builder: flatbuffers.Builder, repairTrials: int):
     FinalParamsAddRepairTrials(builder, repairTrials)
 
-def FinalParamsAddStopAfter(builder: flatbuffers.Builder, stopAfter: int):
-    builder.PrependUOffsetTRelativeSlot(16, flatbuffers.number_types.UOffsetTFlags.py_type(stopAfter), 0)
+def FinalParamsAddStopAfterPhase(builder: flatbuffers.Builder, stopAfterPhase: int):
+    builder.PrependUOffsetTRelativeSlot(16, flatbuffers.number_types.UOffsetTFlags.py_type(stopAfterPhase), 0)
 
-def AddStopAfter(builder: flatbuffers.Builder, stopAfter: int):
-    FinalParamsAddStopAfter(builder, stopAfter)
+def AddStopAfterPhase(builder: flatbuffers.Builder, stopAfterPhase: int):
+    FinalParamsAddStopAfterPhase(builder, stopAfterPhase)
 
 def FinalParamsAddRefinementCorridorSpacings(builder: flatbuffers.Builder, refinementCorridorSpacings: int):
     builder.PrependUint32Slot(17, refinementCorridorSpacings, 6)
@@ -983,7 +984,7 @@ class FinalParamsT(object):
         couplerLength = 200.0,
         couplerHeight = 26.0,
         repairTrials = 100,
-        stopAfter = None,
+        stopAfterPhase = None,
         refinementCorridorSpacings = 6,
         couplerBias = 1.0,
         couplerMaxShortfall = 0.30,
@@ -1044,7 +1045,7 @@ class FinalParamsT(object):
         self.couplerLength = couplerLength  # type: float
         self.couplerHeight = couplerHeight  # type: float
         self.repairTrials = repairTrials  # type: int
-        self.stopAfter = stopAfter  # type: Optional[str]
+        self.stopAfterPhase = stopAfterPhase  # type: Optional[str]
         self.refinementCorridorSpacings = refinementCorridorSpacings  # type: int
         self.couplerBias = couplerBias  # type: float
         self.couplerMaxShortfall = couplerMaxShortfall  # type: float
@@ -1128,9 +1129,9 @@ class FinalParamsT(object):
         self.couplerLength = finalParams.CouplerLength()
         self.couplerHeight = finalParams.CouplerHeight()
         self.repairTrials = finalParams.RepairTrials()
-        self.stopAfter = finalParams.StopAfter()
-        if self.stopAfter is not None:
-            self.stopAfter = self.stopAfter.decode('utf-8')
+        self.stopAfterPhase = finalParams.StopAfterPhase()
+        if self.stopAfterPhase is not None:
+            self.stopAfterPhase = self.stopAfterPhase.decode('utf-8')
         self.refinementCorridorSpacings = finalParams.RefinementCorridorSpacings()
         self.couplerBias = finalParams.CouplerBias()
         self.couplerMaxShortfall = finalParams.CouplerMaxShortfall()
@@ -1181,8 +1182,8 @@ class FinalParamsT(object):
     def Pack(self, builder):
         if self.router is not None:
             router = builder.CreateString(self.router)
-        if self.stopAfter is not None:
-            stopAfter = builder.CreateString(self.stopAfter)
+        if self.stopAfterPhase is not None:
+            stopAfterPhase = builder.CreateString(self.stopAfterPhase)
         if self.couplerOffsets is not None:
             couplerOffsets = builder.CreateString(self.couplerOffsets)
         FinalParamsStart(builder)
@@ -1203,8 +1204,8 @@ class FinalParamsT(object):
         FinalParamsAddCouplerLength(builder, self.couplerLength)
         FinalParamsAddCouplerHeight(builder, self.couplerHeight)
         FinalParamsAddRepairTrials(builder, self.repairTrials)
-        if self.stopAfter is not None:
-            FinalParamsAddStopAfter(builder, stopAfter)
+        if self.stopAfterPhase is not None:
+            FinalParamsAddStopAfterPhase(builder, stopAfterPhase)
         FinalParamsAddRefinementCorridorSpacings(builder, self.refinementCorridorSpacings)
         FinalParamsAddCouplerBias(builder, self.couplerBias)
         FinalParamsAddCouplerMaxShortfall(builder, self.couplerMaxShortfall)

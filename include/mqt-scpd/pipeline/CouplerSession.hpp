@@ -22,11 +22,11 @@ namespace mqt::scpd::pipeline {
 /// The Final stage held after its coupler insertion, to move couplers by
 /// hand and look at the capacity graph again: a debugging aid.
 ///
-/// The constructor runs the Final stage as `stop_after = "couplers"` does:
-/// the inner and the outer routing, then the coupler insertion. The state
-/// is kept. `setOption` then puts one coupler on another of its options
-/// and draws its two feedline edges again, `graph` runs the capacity
-/// analysis of `SCPD_BOTTLENECKS` on the chip as it stands,
+/// The constructor runs the Final stage as `stop_after_phase =
+/// "feedline-insertion"` does: the inner and the outer routing, then the
+/// coupler insertion. The state is kept. `setOption` then puts one coupler on
+/// another of its options and draws its two feedline edges again, `graph` runs
+/// the capacity analysis of `SCPD_BOTTLENECKS` on the chip as it stands,
 /// `insertionCheck` runs the capacity check of the coupler insertion, and
 /// `routeFeedlines` runs the feedline routing. The stage's own
 /// switches apply as in a run of the stage.
@@ -73,12 +73,12 @@ public:
   [[nodiscard]] std::string insertionCheck();
 
   /// Runs the feedline routing of the Final stage on the chip as it stands:
-  /// phase 4, as `stop_after = "feedlines"` runs it. Returns JSON with the
-  /// fails of every wire as the stage counts them (`bad` is unrouted, open
-  /// and crossing together; `unrouted`, `open`, `crossing`, `short`, `long`
-  /// and `loops` name the wires), every wire's way (`wires`), and per round
-  /// of the feedline sweep its direction, how many wires found a way in
-  /// phase 1 and after relaxation, and which failed (`rounds`).
+  /// phase 4, as `stop_after_phase = "feedline-constrained-routing"` runs it.
+  /// Returns JSON with the fails of every wire as the stage counts them (`bad`
+  /// is unrouted, open and crossing together; `unrouted`, `open`, `crossing`,
+  /// `short`, `long` and `loops` name the wires), every wire's way (`wires`),
+  /// and per round of the feedline sweep its direction, how many wires found a
+  /// way in phase 1 and after relaxation, and which failed (`rounds`).
   ///
   /// The routing changes the state for good: a coupler moved afterwards
   /// does not move the wires the routing drew.

@@ -40,7 +40,8 @@ class FinalPhase(object):
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # "inner", "outer", "couplers", "feedlines" or "refined".
+    # "pre-feedline-routing", "pre-feedline-refinement", "feedline-insertion",
+    # "feedline-constrained-routing" or "feedline-constrained-refinement".
     # FinalPhase
     def Name(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))

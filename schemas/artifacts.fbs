@@ -329,7 +329,8 @@ table FinalWire {
 /// its own snapshot here and the renderers draw the one they are asked for. A
 /// phase that has not been implemented yet carries no wires.
 table FinalPhase {
-  /// "inner", "outer", "couplers", "feedlines" or "refined".
+  /// "pre-feedline-routing", "pre-feedline-refinement", "feedline-insertion",
+  /// "feedline-constrained-routing" or "feedline-constrained-refinement".
   name: string (required);
   wires: [FinalWire] (required);
   inner: [FinalWire] (required);

@@ -106,7 +106,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "coupler_length": 200.0,
         "coupler_height": 26.0,
         "repair_trials": 100,
-        "stop_after": "",
+        "stop_after_phase": "",
         "coupler_bias": 1.0,
         "coupler_max_shortfall": 0.30,
         "coupler_box_margin_cells": 5,
@@ -446,11 +446,11 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         setattr(stages.final, field, final.take(key, float, default=defaults["final"][key]))
     stages.final.capacityCheck = final.take("capacity_check", bool, default=True)
     stages.final.couplerOffsets = final.take("coupler_offsets", str, default="")
-    stages.final.stopAfter = final.take("stop_after", str, default="")
-    if stages.final.stopAfter and stages.final.stopAfter not in FINAL_PHASES:
+    stages.final.stopAfterPhase = final.take("stop_after_phase", str, default="")
+    if stages.final.stopAfterPhase and stages.final.stopAfterPhase not in FINAL_PHASES:
         named = ", ".join(f"'{phase}'" for phase in FINAL_PHASES)
-        problems.append(f"[stages.final] stop_after must be empty or one of {named}")
-        stages.final.stopAfter = ""
+        problems.append(f"[stages.final] stop_after_phase must be empty or one of {named}")
+        stages.final.stopAfterPhase = ""
     final.finish()
 
     solver = _Section("stages.solver", section.subtable("solver") or {}, problems)

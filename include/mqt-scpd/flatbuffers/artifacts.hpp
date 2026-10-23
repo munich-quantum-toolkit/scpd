@@ -2570,7 +2570,8 @@ struct FinalPhase FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_FEEDLINES = 10,
     VT_COUPLERS = 12
   };
-  /// "inner", "outer", "couplers", "feedlines" or "refined".
+  /// "pre-feedline-routing", "pre-feedline-refinement", "feedline-insertion",
+  /// "feedline-constrained-routing" or "feedline-constrained-refinement".
   const ::flatbuffers::String *name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_NAME);
   }

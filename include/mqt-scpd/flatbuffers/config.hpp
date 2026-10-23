@@ -1265,7 +1265,7 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   double coupler_length = 200.0;
   double coupler_height = 26.0;
   uint32_t repair_trials = 100;
-  std::string stop_after{};
+  std::string stop_after_phase{};
   uint32_t refinement_corridor_spacings = 6;
   double coupler_bias = 1.0;
   double coupler_max_shortfall = 0.30;
@@ -1340,7 +1340,7 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_COUPLER_LENGTH = 30,
     VT_COUPLER_HEIGHT = 32,
     VT_REPAIR_TRIALS = 34,
-    VT_STOP_AFTER = 36,
+    VT_STOP_AFTER_PHASE = 36,
     VT_REFINEMENT_CORRIDOR_SPACINGS = 38,
     VT_COUPLER_BIAS = 40,
     VT_COUPLER_MAX_SHORTFALL = 42,
@@ -1487,17 +1487,18 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t repair_trials() const {
     return GetField<uint32_t>(VT_REPAIR_TRIALS, 100);
   }
-  /// The last phase of the stage to run: "inner", "outer", "couplers",
-  /// "feedlines" or "refined". Empty runs the whole stage.
+  /// The last phase of the stage to run: "pre-feedline-routing",
+  /// "pre-feedline-refinement", "feedline-insertion",
+  /// "feedline-constrained-routing" or "feedline-constrained-refinement".
+  /// Empty runs the whole stage.
   ///
   /// The five phases are the five snapshots the artifact carries and the
   /// five values `plot --phase` and `render --phase` take, so a run stopped
   /// after a phase is drawn by the name it was stopped at. The stage still
   /// says what it came to and still writes its artifact; the phases after
-  /// the one named are simply not run, which is what makes a stop worth
-  /// more than a picture of a finished run.
-  const ::flatbuffers::String *stop_after() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_STOP_AFTER);
+  /// the one named are not run.
+  const ::flatbuffers::String *stop_after_phase() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_STOP_AFTER_PHASE);
   }
   /// The band both refinements may redraw a wire in, in wire spacings, as
   /// `corridor_spacings` is for the sweep. A refinement moves a way that
@@ -1720,8 +1721,8 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<double>(verifier, VT_COUPLER_LENGTH, 8) &&
            VerifyField<double>(verifier, VT_COUPLER_HEIGHT, 8) &&
            VerifyField<uint32_t>(verifier, VT_REPAIR_TRIALS, 4) &&
-           VerifyOffset(verifier, VT_STOP_AFTER) &&
-           verifier.VerifyString(stop_after()) &&
+           VerifyOffset(verifier, VT_STOP_AFTER_PHASE) &&
+           verifier.VerifyString(stop_after_phase()) &&
            VerifyField<uint32_t>(verifier, VT_REFINEMENT_CORRIDOR_SPACINGS, 4) &&
            VerifyField<double>(verifier, VT_COUPLER_BIAS, 8) &&
            VerifyField<double>(verifier, VT_COUPLER_MAX_SHORTFALL, 8) &&
@@ -1825,8 +1826,8 @@ struct FinalParamsBuilder {
   void add_repair_trials(uint32_t repair_trials) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_REPAIR_TRIALS, repair_trials, 100);
   }
-  void add_stop_after(::flatbuffers::Offset<::flatbuffers::String> stop_after) {
-    fbb_.AddOffset(FinalParams::VT_STOP_AFTER, stop_after);
+  void add_stop_after_phase(::flatbuffers::Offset<::flatbuffers::String> stop_after_phase) {
+    fbb_.AddOffset(FinalParams::VT_STOP_AFTER_PHASE, stop_after_phase);
   }
   void add_refinement_corridor_spacings(uint32_t refinement_corridor_spacings) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_REFINEMENT_CORRIDOR_SPACINGS, refinement_corridor_spacings, 6);
@@ -1986,7 +1987,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     double coupler_length = 200.0,
     double coupler_height = 26.0,
     uint32_t repair_trials = 100,
-    ::flatbuffers::Offset<::flatbuffers::String> stop_after = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> stop_after_phase = 0,
     uint32_t refinement_corridor_spacings = 6,
     double coupler_bias = 1.0,
     double coupler_max_shortfall = 0.30,
@@ -2080,7 +2081,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_coupler_shift_cells(coupler_shift_cells);
   builder_.add_coupler_box_margin_cells(coupler_box_margin_cells);
   builder_.add_refinement_corridor_spacings(refinement_corridor_spacings);
-  builder_.add_stop_after(stop_after);
+  builder_.add_stop_after_phase(stop_after_phase);
   builder_.add_repair_trials(repair_trials);
   builder_.add_feedline_refinement_rounds(feedline_refinement_rounds);
   builder_.add_refinement_rounds(refinement_rounds);
@@ -2117,7 +2118,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     double coupler_length = 200.0,
     double coupler_height = 26.0,
     uint32_t repair_trials = 100,
-    const char *stop_after = nullptr,
+    const char *stop_after_phase = nullptr,
     uint32_t refinement_corridor_spacings = 6,
     double coupler_bias = 1.0,
     double coupler_max_shortfall = 0.30,
@@ -2162,7 +2163,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     uint32_t rise_reach = 3,
     uint32_t rise_peak = 3) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
-  auto stop_after__ = stop_after ? _fbb.CreateString(stop_after) : 0;
+  auto stop_after_phase__ = stop_after_phase ? _fbb.CreateString(stop_after_phase) : 0;
   auto coupler_offsets__ = coupler_offsets ? _fbb.CreateString(coupler_offsets) : 0;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
@@ -2182,7 +2183,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       coupler_length,
       coupler_height,
       repair_trials,
-      stop_after__,
+      stop_after_phase__,
       refinement_corridor_spacings,
       coupler_bias,
       coupler_max_shortfall,
@@ -3104,7 +3105,7 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.coupler_length == rhs.coupler_length) &&
       (lhs.coupler_height == rhs.coupler_height) &&
       (lhs.repair_trials == rhs.repair_trials) &&
-      (lhs.stop_after == rhs.stop_after) &&
+      (lhs.stop_after_phase == rhs.stop_after_phase) &&
       (lhs.refinement_corridor_spacings == rhs.refinement_corridor_spacings) &&
       (lhs.coupler_bias == rhs.coupler_bias) &&
       (lhs.coupler_max_shortfall == rhs.coupler_max_shortfall) &&
@@ -3180,7 +3181,7 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = coupler_length(); _o->coupler_length = _e; }
   { auto _e = coupler_height(); _o->coupler_height = _e; }
   { auto _e = repair_trials(); _o->repair_trials = _e; }
-  { auto _e = stop_after(); if (_e) _o->stop_after = _e->str(); }
+  { auto _e = stop_after_phase(); if (_e) _o->stop_after_phase = _e->str(); }
   { auto _e = refinement_corridor_spacings(); _o->refinement_corridor_spacings = _e; }
   { auto _e = coupler_bias(); _o->coupler_bias = _e; }
   { auto _e = coupler_max_shortfall(); _o->coupler_max_shortfall = _e; }
@@ -3250,7 +3251,7 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _coupler_length = _o->coupler_length;
   auto _coupler_height = _o->coupler_height;
   auto _repair_trials = _o->repair_trials;
-  auto _stop_after = _o->stop_after.empty() ? 0 : _fbb.CreateString(_o->stop_after);
+  auto _stop_after_phase = _o->stop_after_phase.empty() ? 0 : _fbb.CreateString(_o->stop_after_phase);
   auto _refinement_corridor_spacings = _o->refinement_corridor_spacings;
   auto _coupler_bias = _o->coupler_bias;
   auto _coupler_max_shortfall = _o->coupler_max_shortfall;
@@ -3312,7 +3313,7 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _coupler_length,
       _coupler_height,
       _repair_trials,
-      _stop_after,
+      _stop_after_phase,
       _refinement_corridor_spacings,
       _coupler_bias,
       _coupler_max_shortfall,

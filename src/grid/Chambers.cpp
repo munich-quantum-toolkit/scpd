@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -26,8 +25,6 @@
 #include <iterator>
 #include <optional>
 #include <stdexcept>
-#include <string_view>
-#include <utility>
 #include <vector>
 
 namespace mqt::scpd::grid {

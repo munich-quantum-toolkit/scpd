@@ -279,16 +279,17 @@ table FinalParams {
   /// of its options while the feedlines leave fails. The prototype's
   /// `max_repair_rounds`. Zero switches the repair off.
   repair_trials: uint32 = 100;
-  /// The last phase of the stage to run: "inner", "outer", "couplers",
-  /// "feedlines" or "refined". Empty runs the whole stage.
+  /// The last phase of the stage to run: "pre-feedline-routing",
+  /// "pre-feedline-refinement", "feedline-insertion",
+  /// "feedline-constrained-routing" or "feedline-constrained-refinement".
+  /// Empty runs the whole stage.
   ///
   /// The five phases are the five snapshots the artifact carries and the
   /// five values `plot --phase` and `render --phase` take, so a run stopped
   /// after a phase is drawn by the name it was stopped at. The stage still
   /// says what it came to and still writes its artifact; the phases after
-  /// the one named are simply not run, which is what makes a stop worth
-  /// more than a picture of a finished run.
-  stop_after: string;
+  /// the one named are not run.
+  stop_after_phase: string;
   /// The band both refinements may redraw a wire in, in wire spacings, as
   /// `corridor_spacings` is for the sweep. A refinement moves a way that
   /// already stands, so it needs less room than a search that finds one, and

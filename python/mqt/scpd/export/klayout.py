@@ -57,11 +57,11 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     # One layer per phase of the Final stage, so that a single GDS shows all five and each can be
     # switched off on its own. A phase changes what the phase before it produced, so none of the
     # five can be derived from another.
-    "phase.inner": (24, 0, "final.inner-routing"),
-    "phase.outer": (25, 0, "final.outer-routing"),
-    "phase.couplers": (26, 0, "final.coupler-insertion"),
-    "phase.feedlines": (27, 0, "final.feedline-routing"),
-    "phase.refined": (28, 0, "final.feedline-refinement"),
+    "phase.pre-feedline-routing": (24, 0, "final.pre-feedline-routing"),
+    "phase.pre-feedline-refinement": (25, 0, "final.pre-feedline-refinement"),
+    "phase.feedline-insertion": (26, 0, "final.feedline-insertion"),
+    "phase.feedline-constrained-routing": (27, 0, "final.feedline-constrained-routing"),
+    "phase.feedline-constrained-refinement": (28, 0, "final.feedline-constrained-refinement"),
     # The wires the Final stage left failing at its end, by its own count, so that a boolean
     # against `plan.wire` finds them without the log.
     "failing": (29, 0, "final.failing"),
@@ -133,7 +133,7 @@ def write_layout(
         msg = f"{path}: the suffix must be one of {', '.join(FORMATS)}"
         raise ExportError(msg)
     try:
-        import klayout.db as kdb  # noqa: PLC0415
+        import klayout.db as kdb  # ruff: ignore[import-outside-top-level]
     except ImportError as error:
         msg = "KLayout is not installed; install mqt-scpd[klayout] to write layouts"
         raise ExportError(msg) from error
@@ -163,7 +163,7 @@ def write_layout(
     return ExportSummary(path, FORMATS[suffix], polygons, ports, shapes)
 
 
-def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # noqa: ANN001
+def _write_planning(kdb, layout, top, planning: PlanningGeometry) -> int:  # ruff: ignore[missing-type-function-argument]
     """Write the shapes of one planning stage onto their own layers.
 
     A partition is a polygon and everything else is a path, because that is what each of them
