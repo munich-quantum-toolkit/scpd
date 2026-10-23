@@ -65,20 +65,6 @@ bool pointOnSegment(const double px, const double py, const double x0,
          py >= std::min(y0, y1) - EPSILON && py <= std::max(y0, y1) + EPSILON;
 }
 
-/// Whether `chambersOf` times its parts (`takeChambersSplit`):
-/// `SCPD_STEP_PROFILE`, off.
-[[nodiscard]] bool stepProfileOfEnvironment() {
-  const char* text = std::getenv("SCPD_STEP_PROFILE");
-  return text != nullptr && std::string_view(text) != "0" &&
-         std::string_view(text) != "";
-}
-
-/// The split of the calls of this thread since the last `takeChambersSplit`.
-[[nodiscard]] ChambersSplit& chambersSplit() {
-  thread_local ChambersSplit split;
-  return split;
-}
-
 } // namespace
 
 std::vector<std::vector<BlockedMove>>
@@ -183,23 +169,9 @@ void chambersOf(const BitGrid& blocked,
         "the mask is {}x{} cells and the grid {}x{}", blocked.width(),
         blocked.height(), grid.width, grid.height));
   }
-  // The seconds of each part under `SCPD_STEP_PROFILE`; read only for the
-  // split, never for a result.
-  const bool timed = stepProfileOfEnvironment();
-  auto lapStart = std::chrono::steady_clock::now();
-  const auto lap = [&](double ChambersSplit::* part) {
-    if (!timed) {
-      return;
-    }
-    const auto now = std::chrono::steady_clock::now();
-    chambersSplit().*part +=
-        std::chrono::duration<double>(now - lapStart).count();
-    lapStart = now;
-  };
   const auto width = static_cast<std::int64_t>(grid.width);
   const auto height = static_cast<std::int64_t>(grid.height);
   const auto moves = bottleneckMoves(bottlenecks, grid);
-  lap(&ChambersSplit::moves);
 
   // The directions a gate refuses out of each cell, one bit each. The bits
   // are kept per thread from call to call and cleared where they were set:
@@ -387,7 +359,6 @@ void chambersOf(const BitGrid& blocked,
       }
     }
   }
-  lap(&ChambersSplit::runs);
   chambers.count = 0;
   chambers.of.resize(grid.cells());
   chambers.beside.clear();
@@ -408,7 +379,6 @@ void chambersOf(const BitGrid& blocked,
     }
     std::fill(row + x, row + width, NO_CHAMBER);
   }
-  lap(&ChambersSplit::labels);
 
   // The chambers beside each gate. A cell beside a gate's line that lies on
   // the line of another gate is in no chamber; the chamber behind that line
@@ -448,14 +418,6 @@ void chambersOf(const BitGrid& blocked,
       refusedBits[move.cell >> 6U] = 0;
     }
   }
-  lap(&ChambersSplit::beside);
-  if (timed) {
-    ++chambersSplit().calls;
-  }
-}
-
-ChambersSplit takeChambersSplit() {
-  return std::exchange(chambersSplit(), ChambersSplit{});
 }
 
 } // namespace mqt::scpd::grid

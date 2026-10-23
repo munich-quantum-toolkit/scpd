@@ -805,37 +805,6 @@ TEST(FinalRouter, TheSegmentMemoChangesNoRunOfTheSegmentSearch) {
   }
 }
 
-/// Every capacity check of the insertion fills one slot graph again
-/// instead of building a new one. `SCPD_SLOT_GRAPH_VERIFY=1` builds each
-/// graph fresh as well and throws when the two differ: the stage runs
-/// through, says how many it compared, and routes as without the switch.
-TEST(FinalRouter, AReusedSlotGraphEqualsAFreshOne) {
-  const auto benchmark = fourQubit();
-  const auto planned = plan(benchmark);
-  const auto plain = routeFinal(benchmark, planned);
-  setenv("SCPD_SLOT_GRAPH_VERIFY", "1", 1);
-  std::vector<std::string> lines;
-  const auto verified = finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config,
-      [&lines](const std::string_view line) { lines.emplace_back(line); });
-  unsetenv("SCPD_SLOT_GRAPH_VERIFY");
-
-  EXPECT_EQ(std::ranges::count_if(lines,
-                                  [](const std::string& line) {
-                                    return line.find("[Slot Graph Verify] 1 "
-                                                     "graph built both ways, "
-                                                     "all equal") !=
-                                           std::string::npos;
-                                  }),
-            1);
-  ASSERT_EQ(verified.wires.size(), plain.wires.size());
-  for (std::size_t index = 0; index < plain.wires.size(); ++index) {
-    EXPECT_EQ(verified.wires[index]->path, plain.wires[index]->path)
-        << "wire " << index << " differs under the verify switch";
-  }
-}
-
 /// The coupler insertion has no time limit, so its answer does not depend
 /// on how fast it runs. `SCPD_SLOT_GRAPH_VERIFY=1` builds every slot graph
 /// twice and `SCPD_GLOBAL_SAT_VERIFY=1` builds every combination of the
@@ -1104,7 +1073,6 @@ TEST(FinalRouter, TheRefusalLimitSearchesAChainAgainWithoutTheRule) {
 TEST(FinalRouter, TheCapacityRuleAndTheBottleneckReportAreOnByDefault) {
   const auto benchmark = nineQubit();
   const auto planned = plan(benchmark);
-  unsetenv("SCPD_BOTTLENECKS");
   std::vector<std::string> lines;
   bool graphWritten = false;
   static_cast<void>(finalRouters().make("dubins")->run(
@@ -1169,53 +1137,6 @@ TEST(FinalRouter, TheStepCheckLetsEveryWirePassBesideATerminalEdge) {
     }
   }
   EXPECT_GT(bottlenecks, 0U);
-}
-
-/// Under `SCPD_TERMINAL_CROSSABLE` an edge from or to a launcher is no limit
-/// in the capacity graph, since the feedline routing lays it again: a
-/// bottleneck with an end on one, and every stretch of one, takes every wire
-/// and is never over, and every wire may cross it.
-TEST(FinalRouter, ACrossableTerminalEdgeTakesEveryWire) {
-  const auto benchmark = nineQubit();
-  const auto planned = plan(benchmark);
-  setenv("SCPD_BOTTLENECKS", "1", 1);
-  setenv("SCPD_TERMINAL_CROSSABLE", "1", 1);
-  std::string written;
-  static_cast<void>(finalRouters().make("dubins")->run(
-      benchmark.chip, planned.capacity, planned.global, planned.assignment,
-      planned.detail, benchmark.config, {},
-      [&written](const std::string_view name, const std::string_view content) {
-        if (name == "final-capacity-graph.json") {
-          written = content;
-        }
-        return std::string(name);
-      }));
-  unsetenv("SCPD_BOTTLENECKS");
-  unsetenv("SCPD_TERMINAL_CROSSABLE");
-  ASSERT_FALSE(written.empty());
-
-  const auto data = nlohmann::json::parse(written);
-  const auto wires = data.at("wires").size();
-  std::size_t bottlenecks = 0;
-  std::size_t stretches = 0;
-  for (const auto& edge : data.at("edges")) {
-    if (!edge.at("terminal").get<bool>()) {
-      continue;
-    }
-    if (edge.at("kind") == "stretch") {
-      ++stretches;
-      EXPECT_TRUE(edge.at("users").is_null())
-          << edge.at("name").get<std::string>();
-    } else {
-      ++bottlenecks;
-    }
-    EXPECT_GE(edge.at("capacity").get<std::size_t>(), wires)
-        << edge.at("name").get<std::string>();
-    EXPECT_EQ(edge.at("overflow").get<std::size_t>(), 0U)
-        << edge.at("name").get<std::string>();
-  }
-  EXPECT_GT(bottlenecks, 0U);
-  EXPECT_GT(stretches, 0U);
 }
 
 /// The layered search prices its steps by the stub bound: the analytic
@@ -1620,11 +1541,7 @@ TEST(CouplerSession, CarriesTheTerminalEdgesAsWiresInTheCheckOfTheChip) {
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
 
-  // A margin of 5 past the pad's run, measured against the default of none
-  // below.
-  setenv("SCPD_TERMINAL_STUB_MARGIN", "5", 1);
   const auto check = nlohmann::json::parse(session.insertionCheck());
-  unsetenv("SCPD_TERMINAL_STUB_MARGIN");
   const auto& graph = check.at("graph");
   std::set<std::string> terminals;
   for (const auto& wire : graph.at("wires")) {
@@ -1643,7 +1560,6 @@ TEST(CouplerSession, CarriesTheTerminalEdgesAsWiresInTheCheckOfTheChip) {
   // at the launcher the straight start (user, 2026-10-14).
   const auto straight = graph.at("straightLength").get<double>();
   std::size_t runs = 0;
-  std::map<std::string, double> couplerRuns;
   for (const auto& stroke : graph.at("strokes")) {
     const auto name = stroke.at("name").get<std::string>();
     if (stroke.at("kind") == "feedline") {
@@ -1660,37 +1576,14 @@ TEST(CouplerSession, CarriesTheTerminalEdgesAsWiresInTheCheckOfTheChip) {
         points.back()[0].get<double>() - points.front()[0].get<double>(),
         points.back()[1].get<double>() - points.front()[1].get<double>());
     if (name.find("at its coupler") != std::string::npos) {
-      // The pad's run of 21 steps and the margin of 5, a diagonal step √2
-      // cells long: 26 cells axial, 28.3 diagonal.
-      EXPECT_GE(length, 25.0) << name;
-      couplerRuns[name] = length;
+      // The pad's run of 21 steps, a diagonal step √2 cells long: 21 cells
+      // axial, 29.7 diagonal.
+      EXPECT_GE(length, 20.0) << name;
     } else {
       EXPECT_NEAR(length, straight, 1.5) << name;
     }
   }
   EXPECT_EQ(runs, 2 * terminals.size());
-  // At the coupler the run goes on by `SCPD_TERMINAL_STUB_MARGIN` steps past
-  // the pad's run; by default by none.
-  CouplerSession bare(benchmark.chip, planned.global, planned.assignment,
-                      planned.detail, benchmark.config);
-  const auto unmargined = nlohmann::json::parse(bare.insertionCheck());
-  std::size_t compared = 0;
-  for (const auto& stroke : unmargined.at("graph").at("strokes")) {
-    const auto name = stroke.at("name").get<std::string>();
-    const auto found = couplerRuns.find(name);
-    if (found == couplerRuns.end()) {
-      continue;
-    }
-    ++compared;
-    const auto& points = stroke.at("points");
-    const auto dx =
-        points.back()[0].get<double>() - points.front()[0].get<double>();
-    const auto dy =
-        points.back()[1].get<double>() - points.front()[1].get<double>();
-    const auto step = (dx != 0.0 && dy != 0.0) ? std::numbers::sqrt2 : 1.0;
-    EXPECT_NEAR(found->second - std::hypot(dx, dy), 5.0 * step, 0.5) << name;
-  }
-  EXPECT_EQ(compared, couplerRuns.size());
   for (const auto& edge : graph.at("edges")) {
     if (edge.at("kind") == "stretch") {
       EXPECT_FALSE(terminals.contains(edge.at("feedline").get<std::string>()))
@@ -1825,14 +1718,10 @@ TEST(CouplerSession, KeepsTheCrossingPointsClearOfTheTerminalEdgesRuns) {
   EXPECT_GT(points, 0U);
 }
 
-/// The capacity check of the coupler insertion by its stretches, with the
-/// check by crossing slots off (`SCPD_SLOT_CHECK=0`): the graph of gates and
-/// stretches that the slot check starts from, for the tests of that graph.
+/// The capacity check of the coupler insertion: the graph of gates and
+/// stretches the check by crossing slots judged, for the tests of that graph.
 nlohmann::json stretchCheck(CouplerSession& session) {
-  setenv("SCPD_SLOT_CHECK", "0", 1);
-  auto check = nlohmann::json::parse(session.insertionCheck());
-  unsetenv("SCPD_SLOT_CHECK");
-  return check;
+  return nlohmann::json::parse(session.insertionCheck());
 }
 
 /// A crossing of a feedline edge takes a rectangle (user, 2026-10-14): the
@@ -1922,11 +1811,7 @@ TEST(CouplerSession, ClosesTheSlotOfEveryTerminalEdgesRunForTheEdgeAlone) {
   CouplerSession session(benchmark.chip, planned.global, planned.assignment,
                          planned.detail, benchmark.config);
 
-  // A margin of 5 past the pad's run, measured against the default of none
-  // below.
-  setenv("SCPD_TERMINAL_STUB_MARGIN", "5", 1);
   const auto check = nlohmann::json::parse(session.insertionCheck());
-  unsetenv("SCPD_TERMINAL_STUB_MARGIN");
   const auto& graph = check.at("graph");
   std::set<std::string> terminals;
   for (const auto& wire : graph.at("wires")) {
@@ -2693,7 +2578,6 @@ TEST(FinalRouter, AnEdgeKeepsTheLauncherMarginClear) {
     Seen seen;
     auto chip = benchmark;
     finalParamsOf(chip).edge_launcher_margin_cells = margin;
-    setenv("SCPD_BOTTLENECKS", "1", 1);
     static_cast<void>(finalRouters().make("dubins")->run(
         chip.chip, planned.capacity, planned.global, planned.assignment,
         planned.detail, chip.config,
@@ -2709,7 +2593,6 @@ TEST(FinalRouter, AnEdgeKeepsTheLauncherMarginClear) {
           }
           return std::string(name);
         }));
-    unsetenv("SCPD_BOTTLENECKS");
     return seen;
   };
   // The least distance from an edge to the run of `run` cells off a launcher
@@ -2778,7 +2661,6 @@ TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
     Seen seen;
     auto chip = benchmark;
     finalParamsOf(chip).coupler_box_margin_cells = margin;
-    setenv("SCPD_BOTTLENECKS", "1", 1);
     static_cast<void>(finalRouters().make("dubins")->run(
         chip.chip, planned.capacity, planned.global, planned.assignment,
         planned.detail, chip.config,
@@ -2795,7 +2677,6 @@ TEST(FinalRouter, ACouplerKeepsTheBoxMarginClear) {
           }
           return std::string(name);
         }));
-    unsetenv("SCPD_BOTTLENECKS");
     return seen;
   };
   // The least distance of a cell of a coupler pad to a side of the box.
@@ -2848,8 +2729,6 @@ TEST(FinalRouter, DrawsTheBottlenecksAfterTheCouplerInsertion) {
   const auto benchmark = fourQubit();
   const auto planned = plan(benchmark);
   std::vector<std::pair<std::string, std::string>> pictures;
-  // The analysis is off unless asked for.
-  setenv("SCPD_BOTTLENECKS", "1", 1);
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
       planned.detail, benchmark.config, {},
@@ -2857,7 +2736,6 @@ TEST(FinalRouter, DrawsTheBottlenecksAfterTheCouplerInsertion) {
         pictures.emplace_back(name, content);
         return std::string(name);
       }));
-  unsetenv("SCPD_BOTTLENECKS");
 
   const auto named = [&pictures](const std::string_view name) {
     return std::ranges::find_if(pictures, [name](const auto& picture) {
@@ -2887,8 +2765,6 @@ TEST(FinalRouter, DrawsTheCapacityGraphAfterTheBottlenecks) {
   const auto benchmark = fourQubit();
   const auto planned = plan(benchmark);
   std::vector<std::pair<std::string, std::string>> pictures;
-  // The analysis is off unless asked for.
-  setenv("SCPD_BOTTLENECKS", "1", 1);
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
       planned.detail, benchmark.config, {},
@@ -2896,7 +2772,6 @@ TEST(FinalRouter, DrawsTheCapacityGraphAfterTheBottlenecks) {
         pictures.emplace_back(name, content);
         return std::string(name);
       }));
-  unsetenv("SCPD_BOTTLENECKS");
 
   const auto named = [&pictures](const std::string_view name) {
     return std::ranges::find_if(pictures, [name](const auto& picture) {

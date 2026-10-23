@@ -170,21 +170,6 @@ constexpr std::size_t START_FROM = 4;
 /// How far a simplified line may stray from the cells it stands for.
 constexpr double SIMPLIFY_TOLERANCE = 1.0;
 
-/// Whether `profileCuts` times its parts (`takeProfileCutsSplit`):
-/// `SCPD_STEP_PROFILE`, off.
-[[nodiscard]] bool stepProfileOfEnvironment() {
-  const char* text = std::getenv("SCPD_STEP_PROFILE");
-  return text != nullptr && std::string_view(text) != "0" &&
-         std::string_view(text) != "";
-}
-
-/// The split of the calls of this thread since the last
-/// `takeProfileCutsSplit`.
-[[nodiscard]] ProfileCutsSplit& profileCutsSplit() {
-  thread_local ProfileCutsSplit split;
-  return split;
-}
-
 using Point = std::pair<double, double>;
 
 /// A dynamic wall: its outlines, and a line its gap to another dynamic wall
@@ -432,27 +417,11 @@ public:
         height_(static_cast<std::int64_t>(scene.height)), memo_(memo) {}
 
   std::vector<Bottleneck> run() {
-    // The seconds of each part under `SCPD_STEP_PROFILE`; read only for the
-    // split, never for a result.
-    const bool timed = stepProfileOfEnvironment();
-    auto lapStart = std::chrono::steady_clock::now();
-    const auto lap = [&](double ProfileCutsSplit::* part) {
-      if (!timed) {
-        return;
-      }
-      const auto now = std::chrono::steady_clock::now();
-      profileCutsSplit().*part +=
-          std::chrono::duration<double>(now - lapStart).count();
-      lapStart = now;
-    };
     collectWalls();
-    lap(&ProfileCutsSplit::walls);
     for (auto& wall : walls_) {
       traceOutlines(wall);
     }
-    lap(&ProfileCutsSplit::outlines);
     drawLines();
-    lap(&ProfileCutsSplit::lines);
     for (const auto& wall : walls_) {
       for (const auto& outline : wall.outlines) {
         for (std::size_t field = 0; field < scene_.fields.size(); ++field) {
@@ -460,7 +429,6 @@ public:
         }
       }
     }
-    lap(&ProfileCutsSplit::fields);
     for (const auto& one : walls_) {
       for (const auto& other : walls_) {
         if (&one != &other) {
@@ -468,16 +436,9 @@ public:
         }
       }
     }
-    lap(&ProfileCutsSplit::pairs);
     closeMouths();
-    lap(&ProfileCutsSplit::mouths);
     dropWedges();
-    lap(&ProfileCutsSplit::wedges);
     auto cuts = oneCutPerNarrowing();
-    lap(&ProfileCutsSplit::narrowings);
-    if (timed) {
-      ++profileCutsSplit().calls;
-    }
     return cuts;
   }
 
@@ -1305,9 +1266,5 @@ ProfileMemo& ProfileMemo::operator=(ProfileMemo&& other) noexcept = default;
 void ProfileMemo::clear() { state_->clear(); }
 
 ProfileMemo::Counts ProfileMemo::counts() const { return state_->counts; }
-
-ProfileCutsSplit takeProfileCutsSplit() {
-  return std::exchange(profileCutsSplit(), ProfileCutsSplit{});
-}
 
 } // namespace mqt::scpd::grid

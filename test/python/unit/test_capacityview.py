@@ -153,29 +153,15 @@ def test_the_command_line_writes_the_page_beside_the_data(tmp_path: Path) -> Non
 
 
 def test_plan_lays_the_capacity_graph_out_with_bottlenecks_and_debug(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`-d` with `SCPD_BOTTLENECKS=1` builds the page from the data the Final stage wrote."""
-    monkeypatch.setenv("SCPD_BOTTLENECKS", "1")
-    monkeypatch.setenv("SCPD_SEARCH_PICTURES", "0")
+    """`-d` builds the page from the data the Final stage wrote."""
     run = tmp_path / "run"
     assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run), "-d"]) == 0
 
     page = run / "debug" / capacityview.PAGE_NAME
     assert page.is_file()
     assert f"{page} (capacity graph)" in capsys.readouterr().out
-
-
-def test_plan_leaves_the_data_of_an_earlier_run_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """With `SCPD_BOTTLENECKS=0` no page is built, whatever data an earlier run left."""
-    monkeypatch.setenv("SCPD_BOTTLENECKS", "0")
-    monkeypatch.setenv("SCPD_SEARCH_PICTURES", "0")
-    run = tmp_path / "run"
-    (run / "debug").mkdir(parents=True)
-    (run / "debug" / capacityview.DATA_NAME).write_text(json.dumps(graph()), encoding="utf-8")
-    assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run), "-d"]) == 0
-
-    assert not (run / "debug" / capacityview.PAGE_NAME).exists()
 
 
 def couplers() -> list[dict[str, Any]]:
@@ -317,9 +303,8 @@ def test_the_server_moves_a_coupler_and_answers_the_new_graph() -> None:
         httpd.server_close()
 
 
-def test_a_coupler_session_holds_the_final_stage_of_a_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_coupler_session_holds_the_final_stage_of_a_run(tmp_path: Path) -> None:
     """The session runs to the coupler insertion; a coupler moved there stands on its new option."""
-    monkeypatch.setenv("SCPD_SEARCH_PICTURES", "0")
     run = tmp_path / "run"
     assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run)]) == 0
     directory = RunDirectory(run)

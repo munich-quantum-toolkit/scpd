@@ -10,8 +10,6 @@
 
 #pragma once
 
-#include "mqt-scpd/milp/Backend.hpp"
-#include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
 #include <cstddef>
@@ -71,7 +69,6 @@ struct FlowCheck {
   /// What the solver made of the model: `Optimal` when the overflow is
   /// proven least, `Feasible` when a limit stopped it first. `checkInTurn`
   /// says `Optimal`.
-  milp::SolveStatus status = milp::SolveStatus::Error;
   /// The edges each demand passes, in order from where it starts. Empty
   /// when it starts in a chamber it may end in; nothing when the graph has
   /// no way for it at all, whatever the capacities.
@@ -102,34 +99,6 @@ struct FlowCheck {
 /// feedline or a port run, has to be inflated by half of it before.
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::uint32_t
 wiresThroughGap(double cells, double clearance);
-
-/// Whether a capacity graph carries every demand at once, as an integer
-/// multi-commodity flow.
-///
-/// Every demand is one unit from its start chambers to its end chambers,
-/// on a single way, over the edges open to it. An edge is a node of the
-/// network of its own, joined both ways to each of its chambers, so that a
-/// bottleneck between three chambers is one edge and not three; the units
-/// that enter it, in either direction, are its load. The load may exceed
-/// the capacity, by an integer overflow, and the objective is the least
-/// total overflow first and the fewest edges after it. A demand with no
-/// way at all, found by a walk that ignores the capacities, is left out of
-/// the model and has no way in the answer.
-///
-/// The flow does not hold a demand to its groups of edges to cross or to
-/// its `longest`; `checkInTurn` does.
-///
-/// The answer is a necessary condition for routing and not a sufficient
-/// one: the flow lets two wires change their order inside a chamber, which
-/// two wires that may not cross cannot do.
-///
-/// @param chambers How many chambers there are; they are numbered from zero.
-/// @throws std::invalid_argument when an edge or a demand names a chamber
-/// out of range, an edge a demand that does not exist, or a demand an edge
-/// to cross that does not exist or more than `MAX_CROSSINGS` groups.
-[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT FlowCheck checkCapacity(
-    std::uint32_t chambers, const std::vector<FlowEdge>& edges,
-    const std::vector<FlowDemand>& demands, const milp::SolveOptions& options);
 
 /// How `checkInTurn` routes, where a rule has an earlier form: the rules of
 /// the rounds before the rip-up (round 22) and before the detour measured

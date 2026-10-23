@@ -181,31 +181,4 @@ private:
 profileCuts(const ProfileScene& scene, const ProfileOptions& options,
             ProfileMemo& memo);
 
-/// The seconds `profileCuts` spent in each of its parts, summed over the
-/// calls of this thread since the last `takeProfileCutsSplit`. The clock is
-/// read only while `SCPD_STEP_PROFILE` is on; it changes no result.
-struct ProfileCutsSplit {
-  /// How many calls the seconds cover.
-  std::uint64_t calls = 0;
-  /// Gathering the cells of the dynamic walls.
-  double walls = 0.0;
-  /// Tracing their outlines.
-  double outlines = 0.0;
-  /// Their lines, simplified.
-  double lines = 0.0;
-  /// The gaps to the static fields.
-  double fields = 0.0;
-  /// The gaps between two dynamic walls.
-  double pairs = 0.0;
-  /// The cuts at the mouths.
-  double mouths = 0.0;
-  /// The wedges where two walls touch.
-  double wedges = 0.0;
-  /// One cut per narrowing.
-  double narrowings = 0.0;
-};
-
-/// The split since the last call, which starts a new one.
-[[nodiscard]] MQT_SCPD_GRID_EXPORT ProfileCutsSplit takeProfileCutsSplit();
-
 } // namespace mqt::scpd::grid

@@ -189,27 +189,6 @@ def test_plan_is_quiet_without_verbose(tmp_path: Path, capsys: pytest.CaptureFix
     assert "[final]" not in capsys.readouterr().out
 
 
-def test_plan_writes_the_option_stats_with_the_option_dump(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """SCPD_OPTION_DUMP=1 writes one line per coupler to option-stats.jsonl, and none to the log."""
-    run = tmp_path / "run"
-    monkeypatch.setenv("SCPD_OPTION_DUMP", "1")
-    assert main(["plan", "-c", CONFIG, "-o", str(run), "-v"]) == 0
-
-    assert "[Option Stats]" not in capsys.readouterr().out
-    lines = (run / "option-stats.jsonl").read_text(encoding="utf-8").splitlines()
-    assert lines
-    for line in lines:
-        coupler = json.loads(line)
-        assert coupler["chip"] == "4q"
-        assert coupler["options"] == len(coupler["perOption"]) > 0
-        assert 0 <= coupler["chosen"] < coupler["options"]
-        assert {"priced", "expanded", "sat", "unsat", "segment", "states", "place"} <= set(coupler["perOption"][0])
-    # The chosen options were priced by the chain search.
-    assert any(json.loads(line)["perOption"][json.loads(line)["chosen"]]["priced"] > 0 for line in lines)
-
-
 def test_drc_writes_a_report_of_a_finished_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """`drc` checks a run without routing it again, and the exit code says whether it holds."""
     run = tmp_path / "run"

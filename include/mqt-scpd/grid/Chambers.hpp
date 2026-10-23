@@ -91,23 +91,4 @@ MQT_SCPD_GRID_EXPORT void chambersOf(const BitGrid& blocked,
                                      const std::vector<Bottleneck>& bottlenecks,
                                      const GridMetrics& grid, Chambers& into);
 
-/// The seconds `chambersOf` spent in each of its parts, summed over the
-/// calls of this thread since the last `takeChambersSplit`. The clock is read
-/// only while `SCPD_STEP_PROFILE` is on; it changes no result.
-struct ChambersSplit {
-  /// How many calls the seconds cover.
-  std::uint64_t calls = 0;
-  /// The steps the gates refuse.
-  double moves = 0.0;
-  /// The runs of the rows and their joins.
-  double runs = 0.0;
-  /// The label of every cell.
-  double labels = 0.0;
-  /// The chambers beside every gate.
-  double beside = 0.0;
-};
-
-/// The split since the last call, which starts a new one.
-[[nodiscard]] MQT_SCPD_GRID_EXPORT ChambersSplit takeChambersSplit();
-
 } // namespace mqt::scpd::grid
