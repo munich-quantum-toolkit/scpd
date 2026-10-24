@@ -94,7 +94,7 @@ PLANNING_COLORS: dict[str, str] = {
 #: Every drawn wire is a coplanar waveguide: the color of its ground edges and center conductor,
 #: the total width, the width of one edge and the width of the center, in screen pixels.
 CPW: dict[str, tuple[str, float, float, float]] = {
-    "feedline": ("#1b1a18", 7.6, 1.0, 2.2),
+    "feedline": ("#4a4a50", 5.0, 0.8, 1.2),
     "resonator": ("#8c8780", 5.0, 0.8, 1.2),
     "signal": ("#4a4a50", 5.0, 0.8, 1.2),
     "inner": ("#4a4a50", 5.0, 0.8, 1.2),
@@ -102,9 +102,6 @@ CPW: dict[str, tuple[str, float, float, float]] = {
 
 #: The color of the gaps of a coplanar waveguide: the substrate.
 CPW_GAP = "#f7f7f6"
-
-#: The color of an air bridge's landing pads.
-BRIDGE_COLOR = "#7b7b80"
 
 #: The stroke width of each planning layer, in screen pixels.
 _PLANNING_WIDTHS: dict[str, float] = {
@@ -434,30 +431,6 @@ def _planning_layers(
     return "".join(parts)
 
 
-def _crossings(
-    wire: Sequence[tuple[float, float]], feedline: Sequence[tuple[float, float]]
-) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    """Where a wire crosses a feedline edge, in layout units.
-
-    Returns:
-        The crossing point and the unit heading of the wire there, one per crossing.
-    """
-    found = []
-    for (ax, ay), (bx, by) in pairwise(wire):
-        rx, ry = bx - ax, by - ay
-        for (cx, cy), (dx, dy) in pairwise(feedline):
-            sx, sy = dx - cx, dy - cy
-            den = rx * sy - ry * sx
-            if abs(den) < 1e-9:
-                continue
-            t = ((cx - ax) * sy - (cy - ay) * sx) / den
-            u = ((cx - ax) * ry - (cy - ay) * rx) / den
-            if 0 <= t <= 1 and 0 <= u <= 1:
-                length = math.hypot(rx, ry)
-                found.append(((ax + t * rx, ay + t * ry), (rx / length, ry / length)))
-    return found
-
-
 def _smooth_data(points: Sequence[tuple[float, float]], radius: float) -> str:
     """A polyline in picture coordinates with its corners filleted, as the copper is drawn.
 
@@ -487,8 +460,8 @@ def _routing_layers(
 ) -> None:
     """Draw what the routing stages produced.
 
-    The copper is drawn as coplanar waveguides, with the room it keeps, the couplers, the air
-    bridges where a wire crosses a feedline, and the wires the Final stage left failing.
+    The copper is drawn as coplanar waveguides, with the room it keeps, the couplers and the
+    wires the Final stage left failing.
     """
     kinds = (
         ("signal", planning.wires),
@@ -520,19 +493,6 @@ def _routing_layers(
             + "".join(f'<path class="core" d="{d}"/>' for d in data)
             + "</g>"
         )
-    if planning.feedline_wires and (planning.wires or planning.inner_wires):
-        # An air bridge where a signal wire crosses a feedline: two landing pads, one either side
-        # of the feedline, a clearance apart along the wire.
-        span = planning.clearance if planning.clearance > 0 else 2 * radius
-        pads = []
-        for wire in (*planning.wires, *planning.inner_wires):
-            for feedline in planning.feedline_wires:
-                for (px, py), (dx, dy) in _crossings(wire, feedline):
-                    for side in (-1, 1):
-                        fx, fy = px + side * dx * span / 2, py + side * dy * span / 2
-                        pads.append(polyline(_rect((fx, fy), (dx, dy), 0.12 * span, 0.3 * span), close=True))
-        if pads:
-            parts.append(f'<g class="l-bridge"><path d="{"".join(pads)}"/></g>')
     if planning.off_length:
         # The resonators off their target length, under the failing layer: both figures of the
         # last phase are in the picture, and the one that matters more is drawn last.
@@ -570,22 +530,6 @@ def _routing_layers(
         parts.append(f'<g class="l-squeezed">{marks}{lines}</g>')
 
 
-def _rect(
-    center: tuple[float, float], along: tuple[float, float], half_along: float, half_across: float
-) -> list[tuple[float, float]]:
-    """A rectangle around a center, with its length along a unit direction.
-
-    Returns:
-        The four corners, in layout units.
-    """
-    (cx, cy), (dx, dy) = center, along
-    nx, ny = -dy, dx
-    return [
-        (cx + sa * half_along * dx + sc * half_across * nx, cy + sa * half_along * dy + sc * half_across * ny)
-        for sa, sc in ((-1, -1), (1, -1), (1, 1), (-1, 1))
-    ]
-
-
 def _planning_style(font: float, planning: PlanningGeometry | None = None) -> str:
     """The stroke of every planning layer, and the type of the gate labels.
 
@@ -620,7 +564,7 @@ def _planning_style(font: float, planning: PlanningGeometry | None = None) -> st
 def _routing_style(planning: PlanningGeometry | None) -> str:
     """The strokes of the routing layers.
 
-    The coplanar waveguides, their room, the couplers, the bridges and the marks of the failing
+    The coplanar waveguides, their room, the couplers and the marks of the failing
     wires.
 
     Returns:
@@ -635,8 +579,6 @@ def _routing_style(planning: PlanningGeometry | None) -> str:
         )
     style += (
         f"g.l-coupler>path{{fill:{PLANNING_COLORS['coupler']};fill-opacity:.9;stroke:{METAL_EDGE};stroke-width:1.2;"
-        "vector-effect:non-scaling-stroke}"
-        f"g.l-bridge>path{{fill:{BRIDGE_COLOR};stroke:#ffffff;stroke-width:1;paint-order:stroke;"
         "vector-effect:non-scaling-stroke}"
     )
     if planning is None:

@@ -432,8 +432,8 @@ def test_the_assign_picture_shows_its_chords_over_the_plan_without_the_ring() ->
     assert "l-ring" in _groups(layout_svg(_mini(), planning=geometry))
 
 
-def test_the_routing_pictures_draw_the_copper_as_waveguides_with_bridges() -> None:
-    """Every wire is three strokes in its group; a wire that crosses a feedline edge gets a bridge."""
+def test_the_routing_pictures_draw_the_copper_as_waveguides() -> None:
+    """Every wire is three strokes in its group, the feedline edges in the same strokes as the plain wires."""
     model = _mini()
     wire = [(1000.0, 1000.0), (1400.0, 1000.0), (1400.0, 1600.0)]
     feedline = [(1200.0, 900.0), (1200.0, 1100.0)]
@@ -447,10 +447,7 @@ def test_the_routing_pictures_draw_the_copper_as_waveguides_with_bridges() -> No
     }
     assert [path.get("class") for path in groups["l-signal cpw"].findall(f"{SVG}path")] == ["edge", "gap", "core"]
     assert [path.get("class") for path in groups["l-feedline cpw"].findall(f"{SVG}path")] == ["edge", "gap", "core"]
-    # Two landing pads, one either side of the feedline.
-    bridge = groups["l-bridge"].find(f"{SVG}path")
-    assert bridge is not None
-    assert (bridge.get("d") or "").count("M") == 2
+    assert "l-bridge" not in groups
     assert "l-clearance" in groups
     style = root.find(f"{SVG}style")
     assert style is not None

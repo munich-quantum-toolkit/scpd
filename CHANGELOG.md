@@ -53,10 +53,9 @@ releases may include breaking changes.
   and writes `drc.json` beside the artifacts ([#XXX]) ([**@FeldmeierMichael**])
 - 🎨 Draw the routing stages with `plot` and `render` ([#XXX])
   ([**@FeldmeierMichael**]):
-  - Every wire is a coplanar waveguide in the colors of the figures: the
-    feedline edges dark, the plain wires gray and the resonators light, with the
-    room every wire keeps as a translucent band, the couplers as pads and an air
-    bridge where a wire crosses a feedline edge.
+  - Every wire is a coplanar waveguide in the colors of the figures: the plain
+    wires and the feedline edges gray and the resonators light, with the room
+    every wire keeps as a translucent band and the couplers as pads.
   - The wires the Final stage left failing and the resonators off their length
     are marked on layers of their own and counted in the legend.
   - `--phase` draws the snapshot of one phase of the Final stage; the GDS
