@@ -211,17 +211,16 @@ void reportFirst(const flatbuffers::drc::DrcReportT& report,
   }
 }
 
-/// How far a resonator's length lies from `target_resonator_length`, at
-/// worst, in layout units: the length the artifact carries plus the run from
-/// the last cell of the way to the port itself, which the wire covers without
-/// cells of its own. The stage cuts every resonator back to its coupler and
-/// makes what is left the target length, within the rule's tolerance.
-double worstResonatorDeviation(const Benchmark& benchmark,
-                               const Planned& planned,
-                               const FinalRoutingT& routing) {
+/// The resonators the stage drew, each with how far its length lies from the
+/// target: the length the artifact carries plus the run from the last cell
+/// of the way to the port itself, which the wire covers without cells of its
+/// own.
+std::vector<std::pair<std::size_t, double>>
+resonatorDeviations(const Benchmark& benchmark, const Planned& planned,
+                    const FinalRoutingT& routing) {
   const auto grid = gridOf(routing);
   const double target = benchmark.config.rules->target_resonator_length;
-  double worst = 0.0;
+  std::vector<std::pair<std::size_t, double>> deviations;
   for (std::size_t index = 0; index < routing.wires.size(); ++index) {
     const auto& wire = *routing.wires[index];
     const auto& connection = *planned.assignment.connections[index];
@@ -234,7 +233,19 @@ double worstResonatorDeviation(const Benchmark& benchmark,
     const auto end = grid.toLayout(last.x(), last.y());
     const double gap =
         std::hypot(end.x() - port.center.x(), end.y() - port.center.y());
-    worst = std::max(worst, std::abs((wire.length + gap) - target));
+    deviations.emplace_back(index, (wire.length + gap) - target);
+  }
+  return deviations;
+}
+
+/// How far the resonator farthest from the target length lies from it.
+double worstResonatorDeviation(const Benchmark& benchmark,
+                               const Planned& planned,
+                               const FinalRoutingT& routing) {
+  double worst = 0.0;
+  for (const auto& [index, deviation] :
+       resonatorDeviations(benchmark, planned, routing)) {
+    worst = std::max(worst, std::abs(deviation));
   }
   return worst;
 }
@@ -317,29 +328,38 @@ TEST_P(Final, WiresRunFromFeedToTargetWithoutMeetingThemselves) {
   }
 }
 
-/// Every resonator is the target length within the rule's tolerance, the
-/// run to the port counted, and every drawn wire carries its length. The
-/// length is the sampled curve of the way and not the cells it sweeps, which
-/// is what the stage measured when it lengthened the way.
+/// Every drawn wire carries its length, and the stage's verdict on a
+/// resonator's length is the truth of the copper: a resonator it calls
+/// neither short nor long is the target length within the rule's tolerance,
+/// a resonator it calls short is shorter than that, and one it calls long is
+/// longer. The stage does not promise that every resonator reaches the
+/// length: where the chip has no room for a meander, it says so instead.
 TEST_P(Final, ResonatorsReachTheTargetLength) {
   const auto& [benchmark, planned, routing] = routedOf(GetParam());
   ASSERT_GT(benchmark.config.rules->target_resonator_length, 0.0);
+  const double tolerance = benchmark.config.rules->resonator_length_tolerance;
+  using mqt::scpd::flatbuffers::artifacts::FinalVerdict;
 
   std::size_t resonators = 0;
-  for (std::size_t index = 0; index < routing.wires.size(); ++index) {
+  for (const auto& [index, deviation] :
+       resonatorDeviations(benchmark, planned, routing)) {
     const auto& wire = *routing.wires[index];
-    if (wire.path.empty()) {
-      continue;
-    }
     EXPECT_GT(wire.length, 0.0) << "wire " << index << " carries no length";
-    resonators += planned.assignment.connections[index]->target_role ==
-                          AssignedRole::ResonatorTarget
-                      ? 1
-                      : 0;
+    ++resonators;
+    const auto verdict = static_cast<std::uint8_t>(wire.verdict);
+    const bool tooShort =
+        (verdict & static_cast<std::uint8_t>(FinalVerdict::Short)) != 0;
+    const bool tooLong =
+        (verdict & static_cast<std::uint8_t>(FinalVerdict::Long)) != 0;
+    if (tooShort) {
+      EXPECT_LT(deviation, -tolerance) << "wire " << index;
+    } else if (tooLong) {
+      EXPECT_GT(deviation, tolerance) << "wire " << index;
+    } else {
+      EXPECT_LE(std::abs(deviation), tolerance) << "wire " << index;
+    }
   }
   EXPECT_GT(resonators, 0U);
-  EXPECT_LE(worstResonatorDeviation(benchmark, planned, routing),
-            benchmark.config.rules->resonator_length_tolerance);
 }
 
 /// Every resonator carries a coupler, and the coupler carries the port the
@@ -385,9 +405,10 @@ TEST_P(Final, EveryResonatorGetsACoupler) {
   }
 }
 
-/// The edge into a coupler and the edge out of it meet at the coupler's
-/// port and nowhere else: two consecutive edges of a chain share exactly one
-/// cell, and edges of different chains share none.
+/// The edge into a coupler ends at one port of the coupler and the edge out
+/// of it starts at the other, so no two feedline edges share a cell: not two
+/// consecutive edges of a chain, whose ends the coupler's length keeps
+/// apart, and not edges of different chains.
 TEST_P(Final, TheEdgesOfAChainMeetOnlyAtTheCoupler) {
   const auto& [benchmark, planned, routing] = routedOf(GetParam());
   ASSERT_EQ(routing.feedline_edges.size(), routing.feedlines.size());
@@ -406,13 +427,8 @@ TEST_P(Final, TheEdgesOfAChainMeetOnlyAtTheCoupler) {
       for (const auto& cell : first) {
         shared += second.contains(cell) ? 1 : 0;
       }
-      const auto& one = *routing.feedline_edges[a];
-      const auto& two = *routing.feedline_edges[b];
-      const bool consecutive =
-          one.chain == two.chain && one.to.index() == two.from.index();
-      EXPECT_EQ(shared, consecutive ? 1U : 0U)
-          << "feedline edges " << a << " and " << b << " share " << shared
-          << " cells";
+      EXPECT_EQ(shared, 0U) << "feedline edges " << a << " and " << b
+                            << " share " << shared << " cells";
     }
   }
 }
@@ -2039,6 +2055,49 @@ TEST(CouplerSession, ClosesEveryMouthThoughALeadStandsBeforeTheTip) {
           << chip << ": " << line;
     }
   }
+}
+
+/// The entry of the local SAT benchmark: the feedlines routed, every segment
+/// of every chain searched as the repair searches it, and every run it
+/// reaches judged twice, by the slot check of each feedline alone and by a
+/// rip-up and re-route of that feedline's wires alone, with the four classes
+/// counted over every feedline judged. The chip ends as the comparison
+/// began.
+TEST(CouplerSession, ComparesTheSlotCheckWithTheRipUpOfEveryFeedline) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  const auto before = nlohmann::json::parse(session.couplers());
+
+  const auto compared = nlohmann::json::parse(session.compareLocally(2, 3));
+
+  EXPECT_GT(compared.at("segments").get<int>(), 0);
+  const auto& classes = compared.at("classes");
+  const auto judged = classes.at("satClean").get<int>() +
+                      classes.at("satFailing").get<int>() +
+                      classes.at("unsatClean").get<int>() +
+                      classes.at("unsatFailing").get<int>();
+  EXPECT_GT(judged, 0);
+  ASSERT_FALSE(compared.at("runs").empty());
+  int feedlines = 0;
+  for (const auto& run : compared.at("runs")) {
+    for (const auto key :
+         {"chain", "lo", "hi", "options", "moves", "slot", "feedlines"}) {
+      EXPECT_TRUE(run.contains(key)) << key;
+    }
+    EXPECT_TRUE(run.at("slot").contains("verdict"));
+    for (const auto& move : run.at("moves")) {
+      EXPECT_TRUE(move.contains("coupler") && move.contains("option"));
+    }
+    for (const auto& feedline : run.at("feedlines")) {
+      EXPECT_TRUE(feedline.contains("sat") && feedline.contains("clean"));
+      ++feedlines;
+    }
+  }
+  EXPECT_EQ(judged, feedlines);
+  EXPECT_EQ(nlohmann::json::parse(session.couplers()).at("couplers"),
+            before.at("couplers"));
 }
 
 /// The chain search checks its steps against the chain alone, not against

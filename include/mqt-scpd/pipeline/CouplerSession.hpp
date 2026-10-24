@@ -71,6 +71,21 @@ public:
   /// check before.
   [[nodiscard]] std::string insertionCheck();
 
+  /// Routes the feedlines of the chip as it stands, then compares the slot
+  /// check of every feedline alone with a rip-up and re-route of that
+  /// feedline's wires alone: every segment of `span` edges of every chain is
+  /// searched as the targeted repair searches it, and up to `runs` runs of
+  /// options it reaches are applied, judged and put back. Returns JSON with
+  /// `segments`, `classes` (SAT and clean, SAT but failing, UNSAT but clean,
+  /// UNSAT and failing, over every feedline judged), `unjudged`, the seconds
+  /// spent, `begun` (what the chip as it began came to) and `runs`, one
+  /// record per run with the chain, the segment, the moves of couplers onto
+  /// options, the slot verdict and what each feedline came to. The feedline
+  /// routing changes the state for good; the comparison leaves it as it
+  /// found it.
+  [[nodiscard]] std::string compareLocally(std::uint32_t runs,
+                                           std::size_t span);
+
   /// Runs the feedline routing of the Final stage on the chip as it stands:
   /// phase 4, as `stop_after_phase = "feedline-constrained-routing"` runs it.
   /// Returns JSON with the fails of every wire as the stage counts them (`bad`

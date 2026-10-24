@@ -108,6 +108,9 @@ class CouplerSession:
     def insertion_check(self) -> str:
         """The capacity check of the coupler insertion on the chip as it stands, every chain standing. Returns JSON with verdict, lost and graph; under SCPD_SLOT_CHECK (on) the check by crossing slots gives them, adds over, and keeps the check before as previousVerdict and previousLost."""
 
+    def compare_locally(self, runs: int, span: int) -> str:
+        """Route the feedlines, then compare the slot check of every feedline alone with a rip-up and re-route of its wires alone, over up to runs runs of options of every segment of span edges of every chain. Returns JSON with the four classes, the runs judged and what the chip as it began came to; the routing changes the state for good, the comparison leaves it as found."""
+
     def route_feedlines(self) -> str:
         """Run the feedline routing on the chip as it stands. Returns JSON with the fails of every wire and every wire's way. The routing changes the state for good."""
 

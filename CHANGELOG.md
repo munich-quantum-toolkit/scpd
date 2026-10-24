@@ -45,6 +45,10 @@ releases may include breaking changes.
   - `mqt-scpd debug <run>` builds the pages again from the records, and
     `mqt-scpd debug <run> --serve` serves the capacity graph on a local page
     whose tab moves a coupler to another of its options.
+- ✅ Add the local and the global SAT benchmark, which measure how well the
+  capacity check of the coupler insertion predicts the feedline routing; the
+  coupler session's `compare_locally` is their entry, and
+  `uvx nox -s sat_benchmarks` runs them ([#XXX]) ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd drc`, which checks a finished run against the design rules
   and writes `drc.json` beside the artifacts ([#XXX]) ([**@FeldmeierMichael**])
 - 🎨 Draw the routing stages with `plot` and `render` ([#XXX])

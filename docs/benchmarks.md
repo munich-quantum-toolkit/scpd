@@ -54,8 +54,8 @@ together, it names the offending port or key and exits with a nonzero status.
 beyond those of `plot` and `render`: the `launcher_target` of the assignment,
 the `component` pattern, and the bridge rules of the couplers. The configuration
 of every benchmark chip carries them. `doctor` checks the configuration for the
-steps up to `[run] stop_after`, which are all four steps when the key is
-missing, so a configuration without `launcher_target` passes `doctor` only with
+steps up to `[run] stop_after`, which are all six steps when the key is missing,
+so a configuration without `launcher_target` passes `doctor` only with
 `stop_after = "global"` or an earlier step:
 
 ```console
@@ -157,9 +157,33 @@ each bottleneck is a text on layer 34, `plan.budget`.
 
 MQT SCPD is being ported, one stage at a time, from the research prototype that
 produced the results of the paper. The current release reads, checks, draws, and
-exports the chip inputs, and it plans them: it partitions the free space, solves
-the inner circuit, assigns the ports to launchers, and routes every connection
-through the partitions. It does not draw the wires yet. Until those stages
-arrive, the routed layouts and the metrics of Table I in
-`planar-superconducting-pd` come from the prototype, and this page grows with
-each stage that MQT SCPD takes over.
+exports the chip inputs, plans them, and routes them: it partitions the free
+space, solves the inner circuit, assigns the ports to launchers, routes every
+connection through the partitions, draws every wire as copper, inserts the
+couplers and routes the feedline chains. `docs/routing.md` describes the two
+routing stages. The routed layouts and the metrics of Table I in
+`planar-superconducting-pd` still come from the prototype, and this page grows
+as MQT SCPD takes them over.
+
+## SAT Benchmarks
+
+Two benchmarks measure how well the capacity check of the coupler insertion
+predicts the feedline routing; `docs/routing.md` explains their four classes.
+They run on the chips in `benchmarks/`, or on a clone named by
+`MQT_SCPD_BENCHMARKS`, and only when asked for, because they take minutes on the
+small chips and hours on the large ones:
+
+```console
+uvx nox -s sat_benchmarks                                   # 4q, 9q and 17q
+MQT_SCPD_SAT_CHIPS="4q 9q" MQT_SCPD_SAT_REPORT=sat uvx nox -s sat_benchmarks
+```
+
+`test_sat_local.py` plans a chip through the coupler insertion, then has the
+coupler session search up to eight runs of options for every segment of three
+edges of every chain and judge every feedline a run touches twice: by the slot
+check of that feedline alone, and by ripping its wires up and routing them
+again. `test_sat_global.py` builds whole-chip states from the runs the local
+check called SAT, judges each by the whole-chip check and routes it. Both assert
+that the check is never optimistic, write one JSON table per chip to
+`MQT_SCPD_SAT_REPORT` (the working directory by default), and print one line per
+chip with the four classes and the agreement.

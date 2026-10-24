@@ -97,6 +97,13 @@ TEST(ArtifactSchema, EveryStageOutputIsAnArtifact) {
   EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 7U);
 }
 
+/// A grid that carries every field the schema requires of one.
+std::unique_ptr<GridExtentT> emptyGrid() {
+  auto grid = std::make_unique<GridExtentT>();
+  grid->origin = Point(0.0, 0.0);
+  return grid;
+}
+
 /// A capacity plan that carries nothing, but carries every field the schema
 /// requires. A stage that produced nothing still writes a complete artifact.
 CapacityPlanT emptyPlan() {
@@ -118,10 +125,26 @@ TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   EXPECT_EQ(global.output.type, StageOutput::GlobalRouting);
   EXPECT_NE(global.output.AsGlobalRouting(), nullptr);
 
-  const ArtifactT detail = readArtifact(writeArtifact(wrap(DetailRoutingT{})));
+  DetailRoutingT drawn;
+  drawn.grid = emptyGrid();
+  const ArtifactT detail = readArtifact(writeArtifact(wrap(std::move(drawn))));
   EXPECT_EQ(detail.output.type, StageOutput::DetailRouting);
   EXPECT_NE(detail.output.AsDetailRouting(), nullptr);
   EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
+}
+
+/// The two routing outputs count their cells on a grid, so an artifact
+/// without one is refused before it is written rather than failing the
+/// verifier of every reader afterwards.
+TEST(ArtifactSchema, WriteArtifactRejectsARoutingWithoutItsGrid) {
+  EXPECT_EQ(validate(wrap(DetailRoutingT{})),
+            (std::vector<std::string>{"grid is missing"}));
+  EXPECT_THROW(static_cast<void>(writeArtifact(wrap(DetailRoutingT{}))),
+               std::invalid_argument);
+  EXPECT_EQ(validate(wrap(FinalRoutingT{})),
+            (std::vector<std::string>{"grid is missing"}));
+  EXPECT_THROW(static_cast<void>(writeArtifact(wrap(FinalRoutingT{}))),
+               std::invalid_argument);
 }
 
 TEST(ArtifactSchema, CorridorRoutingRoundTrips) {
@@ -563,6 +586,7 @@ TEST(ArtifactSchema, FinalRoutingKeepsTheCreatedPortsAndTheFailures) {
   // The coupler carries the port it creates and the connection it completes,
   // so a reloaded run can rebuild the grown port list without the stage.
   FinalRoutingT final;
+  final.grid = emptyGrid();
   final.couplers.push_back(makeCoupler(3));
   final.bridges.push_back(makeBridge());
   final.unresolved = {ConnectionRef(7)};
@@ -641,6 +665,7 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnUnsetRole) {
 
 TEST(ArtifactSchema, WriteArtifactRejectsIncompleteComponents) {
   FinalRoutingT final;
+  final.grid = emptyGrid();
   final.couplers.push_back(makeCoupler(0));
   final.couplers.back()->port.reset();
   final.bridges.push_back(makeBridge());

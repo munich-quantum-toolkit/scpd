@@ -14715,12 +14715,22 @@ public:
       const auto loud = std::exchange(report_, Report{});
       auto routed = json::parse(routedJson(wires));
       report_ = loud;
+      // The run as moves of couplers onto options, so that a benchmark can
+      // put the chip on the same state again.
+      json moves = json::array();
+      for (std::size_t k = 0; k < run.size(); ++k) {
+        if (!points[segment.lo + k].fixed) {
+          moves.push_back({{"coupler", points[segment.lo + k].coupler},
+                           {"option", open[k][run[k]]}});
+        }
+      }
       json out{{"id", id},
                {"chain", segment.chain},
                {"lo", segment.lo},
                {"hi", segment.hi},
                {"segment", segmentName(wires, segment)},
                {"options", options},
+               {"moves", std::move(moves)},
                {"cost", cost},
                {"slot",
                 {{"verdict", whole.verdict},
@@ -14746,10 +14756,16 @@ public:
   /// repair searches it, and up to `localAgreementRuns` runs it reaches are
   /// judged feedline by feedline (`agreeRun`) and put back. First the chip
   /// as it began is judged the same way. The chip ends as it began.
-  void compareLocally(std::vector<Wire>& wires,
-                      const std::vector<std::uint32_t>& members,
-                      const std::vector<std::uint32_t>& every, const Pass& pass,
-                      const std::uint32_t runs, const std::size_t spanAsked) {
+  ///
+  /// @returns What the comparison counted, as JSON: `segments`, `classes`
+  /// (the four classes over every feedline judged), `unjudged`, the seconds
+  /// in the slot check and in the rerouting, `begun` (what the chip as it
+  /// began came to, per feedline) and `runs` (one record per run judged).
+  [[nodiscard]] nlohmann::json
+  compareLocally(std::vector<Wire>& wires,
+                 const std::vector<std::uint32_t>& members,
+                 const std::vector<std::uint32_t>& every, const Pass& pass,
+                 const std::uint32_t runs, const std::size_t spanAsked) {
     const auto began = std::chrono::steady_clock::now();
     say(std::format("local agreement: {} run{} a segment of {} edges", runs,
                     runs == 1 ? "" : "s", spanAsked));
@@ -14815,16 +14831,42 @@ public:
       }
     }
     const auto& w = agreement_.whole;
+    const auto seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
+            .count();
     say(std::format(
         "==> local agreement: {} segments; feedlines judged: {} SAT and "
         "clean, {} SAT but failing, {} UNSAT but clean, {} UNSAT and "
         "failing; {} not judged; {:.0f}s in the slot check, {:.0f}s "
         "rerouting, {:.0f}s in all",
         segments, w[0], w[1], w[2], w[3], agreement_.unjudged,
-        agreement_.slotSeconds, agreement_.rerouteSeconds,
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
-            .count()));
+        agreement_.slotSeconds, agreement_.rerouteSeconds, seconds));
+    nlohmann::json begun = nlohmann::json::array();
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      if (agreement_.windows[chain].empty()) {
+        continue;
+      }
+      begun.push_back({{"chain", chain},
+                       {"sat", agreement_.baseSat[chain]},
+                       {"clean", agreement_.baseRip[chain].clean},
+                       {"failing", agreement_.baseRip[chain].failing}});
+    }
+    nlohmann::json out{{"segments", segments},
+                       {"runsPerSegment", runs},
+                       {"span", spanAsked},
+                       {"classes",
+                        {{"satClean", w[0]},
+                         {"satFailing", w[1]},
+                         {"unsatClean", w[2]},
+                         {"unsatFailing", w[3]}}},
+                       {"unjudged", agreement_.unjudged},
+                       {"slotSeconds", agreement_.slotSeconds},
+                       {"rerouteSeconds", agreement_.rerouteSeconds},
+                       {"seconds", seconds},
+                       {"begun", std::move(begun)},
+                       {"runs", std::move(agreement_.records)}};
     agreement_ = Agreement{};
+    return out;
   }
 
   /// **The targeted repair over one chip**, in place of the blind `repair`:
@@ -19116,6 +19158,18 @@ void refineTheRing(Driver& driver, std::vector<Wire>& wires,
 /// ring with the edges of the chains, which the refinement takes.
 /// `rounds`, when given, receives what every round of the feedline sweep
 /// came to (`Driver::roundsJson`).
+/// The pass of the feedline routing: every wire of the ring with the edges
+/// of the chains, under the feedline constraints.
+[[nodiscard]] Pass feedlinePassOf(const Tuning& tuning) {
+  return {.name = "feedline routing",
+          .rounds = tuning.rounds,
+          .maxRelaxation = tuning.maxRelaxation,
+          .reach = tuning.reach,
+          .straightStart = tuning.straightStart,
+          .keepDrawn = true,
+          .feedlines = true};
+}
+
 [[nodiscard]] std::vector<std::uint32_t>
 routeTheFeedlines(Driver& driver, std::vector<Wire>& wires,
                   const std::vector<std::uint32_t>& outer,
@@ -19124,13 +19178,7 @@ routeTheFeedlines(Driver& driver, std::vector<Wire>& wires,
   driver.assignBridges(wires, outer);
   driver.checkBridgers(wires);
   auto members = driver.ringWithEdges(wires, outer);
-  const Pass feedlinePass{.name = "feedline routing",
-                          .rounds = tuning.rounds,
-                          .maxRelaxation = tuning.maxRelaxation,
-                          .reach = tuning.reach,
-                          .straightStart = tuning.straightStart,
-                          .keepDrawn = true,
-                          .feedlines = true};
+  const auto feedlinePass = feedlinePassOf(tuning);
   driver.sweep(wires, members, feedlinePass);
   if (rounds != nullptr) {
     *rounds = driver.roundsJson();
@@ -19416,6 +19464,21 @@ std::string CouplerSession::insertionCheck() {
 
 void CouplerSession::setDebug(Debug debug) {
   state_->driver->setDebug(std::move(debug));
+}
+
+std::string CouplerSession::compareLocally(const std::uint32_t runs,
+                                           const std::size_t span) {
+  auto& driver = *state_->driver;
+  auto& wires = state_->wires;
+  driver.enterPhase(PHASES[3]);
+  const auto members = routeTheFeedlines(driver, wires, state_->outer,
+                                         state_->inner, state_->tuning);
+  std::vector<std::uint32_t> every(wires.size());
+  std::iota(every.begin(), every.end(), 0U);
+  return driver
+      .compareLocally(wires, members, every, feedlinePassOf(state_->tuning),
+                      runs, span)
+      .dump();
 }
 
 std::string CouplerSession::routeFeedlines() {

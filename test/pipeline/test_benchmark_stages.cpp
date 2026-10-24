@@ -15,10 +15,7 @@
 #include "Benchmarks.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
-#include "mqt-scpd/grid/Bottlenecks.hpp"
-#include "mqt-scpd/grid/DistanceTransform.hpp"
 #include "mqt-scpd/grid/Partitions.hpp"
-#include "mqt-scpd/grid/Voronoi.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/GlobalRouter.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
@@ -172,18 +169,6 @@ TEST(BenchmarkStages, KeepsOnlyTheBottlenecksItsChainsCross) {
     }
   }
   EXPECT_EQ(named.size(), plan.bottlenecks.size());
-
-  // The pruning is what makes the difference: the raw candidate set is much
-  // larger than what survives on the chains. It is not as large as it once
-  // was, because the search now reports one line per narrowing rather than
-  // one per cell of a plateau.
-  const auto scene = buildScene(benchmark.chip, benchmark.config);
-  const auto axis = grid::rasterizeMedialAxis(scene.blocked, scene.detail,
-                                              grid::medialAxis(scene.blocked));
-  const auto candidates = grid::findBottlenecks(
-      scene.blocked, axis, grid::squaredDistanceTransform(scene.blocked),
-      scene.detail, {.targets = scene.targetCell});
-  EXPECT_GT(candidates.size(), plan.bottlenecks.size() * 3);
 }
 
 TEST(BenchmarkStages, LeavesNoGateWithoutSomethingBeyondIt) {

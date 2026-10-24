@@ -133,6 +133,22 @@ def benchmarks(session: nox.Session) -> None:
     _run_tests(session, pytest_run_args=["test/python/benchmarks"])
 
 
+@nox.session(python="3.14", reuse_venv=True)
+def sat_benchmarks(session: nox.Session) -> None:
+    """Measure how well the capacity check of the coupler insertion predicts the feedline routing.
+
+    The local benchmark judges one feedline at a time, the global one whole-chip states; both are
+    documented in ``docs/routing.md``. ``MQT_SCPD_SAT_CHIPS`` names the chips (``4q 9q 17q`` by
+    default), ``MQT_SCPD_SAT_REPORT`` the directory of the tables, and ``MQT_SCPD_BENCHMARKS`` a
+    clone of the benchmark data in place of the chips in ``benchmarks/``.
+    """
+    os.environ["MQT_SCPD_SAT_BENCHMARKS"] = "1"
+    _run_tests(
+        session,
+        pytest_run_args=["test/python/benchmarks/test_sat_local.py", "test/python/benchmarks/test_sat_global.py", "-s"],
+    )
+
+
 @nox.session(python=PYTHON_ALL_VERSIONS, reuse_venv=True, venv_backend="uv", default=True)
 def minimums(session: nox.Session) -> None:
     """Test the minimum versions of dependencies."""

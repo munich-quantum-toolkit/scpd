@@ -110,6 +110,29 @@ inline std::uint32_t readScalar(const std::string& text, const std::string& key,
   return fallback;
 }
 
+/// The value of `key = <number>` on a line of its own, as a real number, or
+/// the fallback; the lengths of the design rules are written with a decimal
+/// point.
+inline double readReal(const std::string& text, const std::string& key,
+                       const double fallback) {
+  for (auto at = text.find(key); at != std::string::npos;
+       at = text.find(key, at + 1)) {
+    if (at != 0 && text[at - 1] != '\n') {
+      continue;
+    }
+    auto cursor = at + key.size();
+    while (cursor < text.size() && text[cursor] == ' ') {
+      ++cursor;
+    }
+    if (cursor >= text.size() || text[cursor] != '=') {
+      continue;
+    }
+    ++cursor;
+    return std::stod(text.substr(cursor));
+  }
+  return fallback;
+}
+
 /// One declared bridge rule, as the two expressions the configuration pairs on.
 using RulePair = std::pair<std::string, std::string>;
 
@@ -141,13 +164,20 @@ inline Benchmark load(const std::string& chip, const std::string& resonator,
   config.ports->sequences->all_outer = readArray(configText, "all_outer");
   config.ports->sequences->fixed_outer = readArray(configText, "fixed_outer");
 
+  // The design rules as the chip ships them: the lengths are the same on
+  // every chip, the resonator target and its tolerance are not.
   config.rules = std::make_unique<flatbuffers::design::DesignRulesT>();
-  config.rules->min_wire_spacing = 185.0;
-  config.rules->min_obstacle_spacing = 25.0;
-  config.rules->min_bend_radius = 50.0;
-  config.rules->min_straight_length = 100.0;
-  config.rules->target_resonator_length = 2500.0;
-  config.rules->resonator_length_tolerance = 100.0;
+  config.rules->min_wire_spacing =
+      readReal(configText, "min_wire_spacing", 185.0);
+  config.rules->min_obstacle_spacing =
+      readReal(configText, "min_obstacle_spacing", 25.0);
+  config.rules->min_bend_radius = readReal(configText, "min_bend_radius", 50.0);
+  config.rules->min_straight_length =
+      readReal(configText, "min_straight_length", 100.0);
+  config.rules->target_resonator_length =
+      readReal(configText, "target_resonator_length", 2500.0);
+  config.rules->resonator_length_tolerance =
+      readReal(configText, "resonator_length_tolerance", 100.0);
   config.rules->max_feedline_utilization =
       readScalar(configText, "max_feedline_utilization", 0);
   config.rules->feedline_terminations =
@@ -170,6 +200,8 @@ inline Benchmark load(const std::string& chip, const std::string& resonator,
   // tests run what `mqt-scpd plan` runs; the schema's defaults where a
   // benchmark says nothing.
   config.stages->final = std::make_unique<fbc::FinalParamsT>();
+  config.stages->final->corridor_spacings = readScalar(
+      configText, "corridor_spacings", config.stages->final->corridor_spacings);
   config.stages->final->rounds =
       readScalar(configText, "rounds", config.stages->final->rounds);
   config.stages->final->max_relaxation = readScalar(

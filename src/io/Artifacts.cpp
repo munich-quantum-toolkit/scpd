@@ -399,6 +399,9 @@ Problems validate(const ArtifactT& artifact) {
     // held in each, so two consecutive cells differ by at most one along each
     // axis and every heading names one of the eight directions.
     const auto& routing = *artifact.output.AsFinalRouting();
+    if (routing.grid == nullptr) {
+      problems.emplace_back("grid is missing");
+    }
     validateEach(routing.couplers, "coupler", problems);
     validateEach(routing.bridges, "bridge", problems);
     validateFinalWires(routing.wires, "wire", problems);
@@ -499,10 +502,13 @@ Problems validate(const ArtifactT& artifact) {
     // a way a wire could take, and nothing downstream can tell which of the
     // two ends the gap belongs to.
     const auto& routing = *artifact.output.AsDetailRouting();
+    if (routing.grid == nullptr) {
+      problems.emplace_back("grid is missing");
+    }
     validateDetailWires(routing.wires, "wire", problems);
     validateDetailWires(routing.inner, "inner wire", problems);
     break;
-  } break;
+  }
   }
   return problems;
 }
