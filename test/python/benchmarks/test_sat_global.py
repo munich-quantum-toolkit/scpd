@@ -22,6 +22,7 @@ import os
 import random
 import sys
 import time
+import traceback
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -51,17 +52,21 @@ def routed_bad(session: pyscpd.CouplerSession) -> int:
     pid = os.fork()
     if pid == 0:  # pragma: no cover - the child reports through the pipe and exits
         os.close(reading)
+        code = 0
         try:
             routed = json.loads(session.route_feedlines())
             os.write(writing, str(routed["bad"]).encode())
+        except BaseException:  # ruff: ignore[blind-except]
+            traceback.print_exc()
+            code = 1
         finally:
             os.close(writing)
-            os._exit(0)
+            os._exit(code)
     os.close(writing)
     with os.fdopen(reading) as answer:
         text = answer.read()
     _, status = os.waitpid(pid, 0)
-    assert status == 0, f"the routing child ended with status {status}"
+    assert status == 0, f"the routing child ended with status {status}; its traceback is above"
     return int(text)
 
 

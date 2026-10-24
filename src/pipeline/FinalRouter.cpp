@@ -19152,12 +19152,6 @@ void refineTheRing(Driver& driver, std::vector<Wire>& wires,
   driver.sayLengthPoints(wires, outer);
 }
 
-/// Phase 4 of the stage: every wire again under the feedline constraints,
-/// in the ring with the edges of the chains, then the inner circuit; and the
-/// repair, which turns a coupler while the feedlines leave fails. Returns the
-/// ring with the edges of the chains, which the refinement takes.
-/// `rounds`, when given, receives what every round of the feedline sweep
-/// came to (`Driver::roundsJson`).
 /// The pass of the feedline routing: every wire of the ring with the edges
 /// of the chains, under the feedline constraints.
 [[nodiscard]] Pass feedlinePassOf(const Tuning& tuning) {
@@ -19170,6 +19164,12 @@ void refineTheRing(Driver& driver, std::vector<Wire>& wires,
           .feedlines = true};
 }
 
+/// Phase 4 of the stage: every wire again under the feedline constraints,
+/// in the ring with the edges of the chains, then the inner circuit; and the
+/// repair, which turns a coupler while the feedlines leave fails. Returns the
+/// ring with the edges of the chains, which the refinement takes.
+/// `rounds`, when given, receives what every round of the feedline sweep
+/// came to (`Driver::roundsJson`).
 [[nodiscard]] std::vector<std::uint32_t>
 routeTheFeedlines(Driver& driver, std::vector<Wire>& wires,
                   const std::vector<std::uint32_t>& outer,
