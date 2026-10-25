@@ -1206,7 +1206,7 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   double coupler_height = 26.0;
   uint32_t repair_trials = 100;
   uint32_t refinement_corridor_spacings = 6;
-  double coupler_bias = 1.0;
+  double coupler_bias = 0.98;
   double coupler_max_shortfall = 0.30;
   uint32_t coupler_box_margin_cells = 5;
   uint32_t coupler_shift_cells = 20;
@@ -1221,7 +1221,7 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   bool capacity_check = true;
   uint32_t length_point_radius_cells = 40;
   double length_point_band_percent = 10.0;
-  double sweep_length_band = 5.0;
+  double sweep_length_band = 1.0;
   uint32_t meander_leg_spacing_cells = 25;
   int32_t meander_start_margin_cells = -1;
   double capacity_margin = 1.06;
@@ -1427,9 +1427,11 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// How much of `target_resonator_length` is left to run from the centre of
   /// the coupler to the qubit, as a share of that figure. The meander can
   /// lengthen a way but never shorten one, so a coupler cut short of the
-  /// figure hands the rest to the meander.
+  /// figure hands the rest to the meander. A little below one, so that the
+  /// way the routing draws again from the coupler, which may run a few cells
+  /// longer than the way that was cut, still lands within the tolerance.
   double coupler_bias() const {
-    return GetField<double>(VT_COUPLER_BIAS, 1.0);
+    return GetField<double>(VT_COUPLER_BIAS, 0.98);
   }
   /// How far below `target_resonator_length` a coupler may leave the
   /// resonator, as a share of that figure. A place that leaves less is
@@ -1507,16 +1509,18 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetField<double>(VT_LENGTH_POINT_BAND_PERCENT, 10.0);
   }
   /// The band of lengths the feedline sweep accepts around the target
-  /// length, as a multiple of `resonator_length_tolerance`.
+  /// length, as a multiple of `resonator_length_tolerance`. One holds the
+  /// sweep to the length the refinement holds it to.
   double sweep_length_band() const {
-    return GetField<double>(VT_SWEEP_LENGTH_BAND, 5.0);
+    return GetField<double>(VT_SWEEP_LENGTH_BAND, 1.0);
   }
   /// The spacing of the meander's legs, in cells.
   uint32_t meander_leg_spacing_cells() const {
     return GetField<uint32_t>(VT_MEANDER_LEG_SPACING_CELLS, 25);
   }
-  /// How many cells at the start of a resonator the meander leaves as they
-  /// are; a negative value means the coupler's length plus four.
+  /// How many straight cells at the start of a resonator the meander leaves
+  /// as they are; a negative value means the straight run of the lead off
+  /// the coupler.
   int32_t meander_start_margin_cells() const {
     return GetField<int32_t>(VT_MEANDER_START_MARGIN_CELLS, -1);
   }
@@ -1740,7 +1744,7 @@ struct FinalParamsBuilder {
     fbb_.AddElement<uint32_t>(FinalParams::VT_REFINEMENT_CORRIDOR_SPACINGS, refinement_corridor_spacings, 6);
   }
   void add_coupler_bias(double coupler_bias) {
-    fbb_.AddElement<double>(FinalParams::VT_COUPLER_BIAS, coupler_bias, 1.0);
+    fbb_.AddElement<double>(FinalParams::VT_COUPLER_BIAS, coupler_bias, 0.98);
   }
   void add_coupler_max_shortfall(double coupler_max_shortfall) {
     fbb_.AddElement<double>(FinalParams::VT_COUPLER_MAX_SHORTFALL, coupler_max_shortfall, 0.30);
@@ -1785,7 +1789,7 @@ struct FinalParamsBuilder {
     fbb_.AddElement<double>(FinalParams::VT_LENGTH_POINT_BAND_PERCENT, length_point_band_percent, 10.0);
   }
   void add_sweep_length_band(double sweep_length_band) {
-    fbb_.AddElement<double>(FinalParams::VT_SWEEP_LENGTH_BAND, sweep_length_band, 5.0);
+    fbb_.AddElement<double>(FinalParams::VT_SWEEP_LENGTH_BAND, sweep_length_band, 1.0);
   }
   void add_meander_leg_spacing_cells(uint32_t meander_leg_spacing_cells) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_MEANDER_LEG_SPACING_CELLS, meander_leg_spacing_cells, 25);
@@ -1894,7 +1898,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     double coupler_height = 26.0,
     uint32_t repair_trials = 100,
     uint32_t refinement_corridor_spacings = 6,
-    double coupler_bias = 1.0,
+    double coupler_bias = 0.98,
     double coupler_max_shortfall = 0.30,
     uint32_t coupler_box_margin_cells = 5,
     uint32_t coupler_shift_cells = 20,
@@ -1909,7 +1913,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     bool capacity_check = true,
     uint32_t length_point_radius_cells = 40,
     double length_point_band_percent = 10.0,
-    double sweep_length_band = 5.0,
+    double sweep_length_band = 1.0,
     uint32_t meander_leg_spacing_cells = 25,
     int32_t meander_start_margin_cells = -1,
     double capacity_margin = 1.06,
@@ -2021,7 +2025,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     double coupler_height = 26.0,
     uint32_t repair_trials = 100,
     uint32_t refinement_corridor_spacings = 6,
-    double coupler_bias = 1.0,
+    double coupler_bias = 0.98,
     double coupler_max_shortfall = 0.30,
     uint32_t coupler_box_margin_cells = 5,
     uint32_t coupler_shift_cells = 20,
@@ -2036,7 +2040,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     bool capacity_check = true,
     uint32_t length_point_radius_cells = 40,
     double length_point_band_percent = 10.0,
-    double sweep_length_band = 5.0,
+    double sweep_length_band = 1.0,
     uint32_t meander_leg_spacing_cells = 25,
     int32_t meander_start_margin_cells = -1,
     double capacity_margin = 1.06,

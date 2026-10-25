@@ -262,8 +262,10 @@ table FinalParams {
   /// How much of `target_resonator_length` is left to run from the centre of
   /// the coupler to the qubit, as a share of that figure. The meander can
   /// lengthen a way but never shorten one, so a coupler cut short of the
-  /// figure hands the rest to the meander.
-  coupler_bias: double = 1.0;
+  /// figure hands the rest to the meander. A little below one, so that the
+  /// way the routing draws again from the coupler, which may run a few cells
+  /// longer than the way that was cut, still lands within the tolerance.
+  coupler_bias: double = 0.98;
   /// How far below `target_resonator_length` a coupler may leave the
   /// resonator, as a share of that figure. A place that leaves less is
   /// refused.
@@ -312,12 +314,14 @@ table FinalParams {
   length_point_radius_cells: uint32 = 40;
   length_point_band_percent: double = 10.0;
   /// The band of lengths the feedline sweep accepts around the target
-  /// length, as a multiple of `resonator_length_tolerance`.
-  sweep_length_band: double = 5.0;
+  /// length, as a multiple of `resonator_length_tolerance`. One holds the
+  /// sweep to the length the refinement holds it to.
+  sweep_length_band: double = 1.0;
   /// The spacing of the meander's legs, in cells.
   meander_leg_spacing_cells: uint32 = 25;
-  /// How many cells at the start of a resonator the meander leaves as they
-  /// are; a negative value means the coupler's length plus four.
+  /// How many straight cells at the start of a resonator the meander leaves
+  /// as they are; a negative value means the straight run of the lead off
+  /// the coupler.
   meander_start_margin_cells: int32 = -1;
   /// The slot check: the safety factor on the clearance a wire takes in a
   /// gap, from the gap size (in wires) the factor applies to; the narrowest

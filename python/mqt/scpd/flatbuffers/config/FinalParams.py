@@ -200,13 +200,15 @@ class FinalParams(object):
     # How much of `target_resonator_length` is left to run from the centre of
     # the coupler to the qubit, as a share of that figure. The meander can
     # lengthen a way but never shorten one, so a coupler cut short of the
-    # figure hands the rest to the meander.
+    # figure hands the rest to the meander. A little below one, so that the
+    # way the routing draws again from the coupler, which may run a few cells
+    # longer than the way that was cut, still lands within the tolerance.
     # FinalParams
     def CouplerBias(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(36))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
-        return 1.0
+        return 0.98
 
     # How far below `target_resonator_length` a coupler may leave the
     # resonator, as a share of that figure. A place that leaves less is
@@ -340,13 +342,14 @@ class FinalParams(object):
         return 10.0
 
     # The band of lengths the feedline sweep accepts around the target
-    # length, as a multiple of `resonator_length_tolerance`.
+    # length, as a multiple of `resonator_length_tolerance`. One holds the
+    # sweep to the length the refinement holds it to.
     # FinalParams
     def SweepLengthBand(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(66))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
-        return 5.0
+        return 1.0
 
     # The spacing of the meander's legs, in cells.
     # FinalParams
@@ -356,8 +359,9 @@ class FinalParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 25
 
-    # How many cells at the start of a resonator the meander leaves as they
-    # are; a negative value means the coupler's length plus four.
+    # How many straight cells at the start of a resonator the meander leaves
+    # as they are; a negative value means the straight run of the lead off
+    # the coupler.
     # FinalParams
     def MeanderStartMarginCells(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(70))
@@ -661,7 +665,7 @@ def AddRefinementCorridorSpacings(builder: flatbuffers.Builder, refinementCorrid
     FinalParamsAddRefinementCorridorSpacings(builder, refinementCorridorSpacings)
 
 def FinalParamsAddCouplerBias(builder: flatbuffers.Builder, couplerBias: float):
-    builder.PrependFloat64Slot(16, couplerBias, 1.0)
+    builder.PrependFloat64Slot(16, couplerBias, 0.98)
 
 def AddCouplerBias(builder: flatbuffers.Builder, couplerBias: float):
     FinalParamsAddCouplerBias(builder, couplerBias)
@@ -751,7 +755,7 @@ def AddLengthPointBandPercent(builder: flatbuffers.Builder, lengthPointBandPerce
     FinalParamsAddLengthPointBandPercent(builder, lengthPointBandPercent)
 
 def FinalParamsAddSweepLengthBand(builder: flatbuffers.Builder, sweepLengthBand: float):
-    builder.PrependFloat64Slot(31, sweepLengthBand, 5.0)
+    builder.PrependFloat64Slot(31, sweepLengthBand, 1.0)
 
 def AddSweepLengthBand(builder: flatbuffers.Builder, sweepLengthBand: float):
     FinalParamsAddSweepLengthBand(builder, sweepLengthBand)
@@ -940,7 +944,7 @@ class FinalParamsT(object):
         couplerHeight = 26.0,
         repairTrials = 100,
         refinementCorridorSpacings = 6,
-        couplerBias = 1.0,
+        couplerBias = 0.98,
         couplerMaxShortfall = 0.30,
         couplerBoxMarginCells = 5,
         couplerShiftCells = 20,
@@ -955,7 +959,7 @@ class FinalParamsT(object):
         capacityCheck = True,
         lengthPointRadiusCells = 40,
         lengthPointBandPercent = 10.0,
-        sweepLengthBand = 5.0,
+        sweepLengthBand = 1.0,
         meanderLegSpacingCells = 25,
         meanderStartMarginCells = -1,
         capacityMargin = 1.06,

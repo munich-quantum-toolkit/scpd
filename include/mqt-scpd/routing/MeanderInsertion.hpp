@@ -14,6 +14,7 @@
 #include "mqt-scpd/routing/Primitives.hpp"
 #include "mqt-scpd/routing/mqt_scpd_routing_export.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <utility>
@@ -47,6 +48,10 @@ struct MeanderOptions {
   uint32_t minStraightLength = 25;
   /// Straight cells at the start of the path a meander leaves alone.
   uint32_t startMargin = 4;
+  /// The cells of the path before this index a meander leaves alone as
+  /// well: the part a later cut takes off the way, where a meander would be
+  /// lost.
+  std::size_t keepBefore = 0;
   /// A deficit under this is lengthened by this much more, so that the
   /// meander has a shape at all. The prototype's own margin.
   double smallDeficitMargin = 50.0;
@@ -95,6 +100,9 @@ struct MeanderResult {
   uint32_t straightCells = 0;
   uint32_t reserved = 0;
   uint32_t widestSpan = 0;
+  /// The box the inserted meander spans, its two turns onto the loop
+  /// included, both bounds included; empty when none was inserted.
+  CellBox meander{.minX = 1, .maxX = 0, .minY = 1, .maxY = 0};
 
   /// Why the placements that were tried did not fit. A resonator that stays
   /// short says what stood in its way rather than only how many placements
@@ -137,15 +145,22 @@ struct MeanderResult {
 /// This is the prototype's `meander_insertion`. A path that is long enough
 /// is left as it is. Otherwise the cells of its straight runs are walked in
 /// steps, from the end of the path, and for every pair of them a meander is
-/// tried between the two: each end is turned onto the axis across the pair
+/// tried between the two: each end is turned onto a heading across the pair
 /// by one or two moves of the primitives, and one rectangular loop is built
 /// between the turned ends, as deep as the missing length makes it and as
-/// wide as the pair is apart. The loop and its two turns replace the cells
-/// between the pair. A placement fits when every cell of it may be entered
-/// and the spliced path does not meet itself. The pairs nearest the end of
-/// the path come first, so the loop goes as near the target as it fits: the
-/// source end of a resonator is cut back to the target length when the
-/// coupler is spliced in, and the feedline runs there.
+/// wide as the pair is apart. Across a pair that lies along a diagonal the
+/// loop runs along the other diagonal first and along an axis after that;
+/// the prototype builds it along the axes only. The loop and its two turns
+/// replace the cells between the pair. A placement fits when every cell of
+/// it may be entered and the spliced path does not meet itself. The pairs
+/// nearest the end of the path come first, so the loop goes as near the
+/// target as it fits: the source end of a resonator is cut back to the
+/// target length when the coupler is spliced in, and the feedline runs
+/// there.
+///
+/// In the exact mode a loop that even at its flattest adds more than the
+/// missing length is still taken when the length it lands on lies within
+/// the tolerance.
 ///
 /// Without a price the first placement that fits is taken, as in phase 1 of
 /// the prototype's final routing. With one, every placement that fits is

@@ -721,12 +721,26 @@ uncrossedBottlenecks(const std::vector<Bottleneck>& bottlenecks,
     if (a.length < 1.0 || b.length < 1.0) {
       return false;
     }
+    // Two lines whose ends lie within `near` of each other start at one
+    // place, as a fan from one tip does, and do not cross: at a shallow
+    // angle, ends a cell apart put the crossing point several cells into
+    // both lines (21q: a mouth line from f15's coupler and the narrower cut
+    // from the run of 38 both at the run of f16's coupler). An end on the
+    // middle of the other still meets it.
+    bool fan = false;
+    for (const auto& [ex, ey] :
+         {std::pair{a.ax, a.ay}, std::pair{a.bx, a.by}}) {
+      for (const auto& [fx, fy] :
+           {std::pair{b.ax, b.ay}, std::pair{b.bx, b.by}}) {
+        fan = fan || std::hypot(ex - fx, ey - fy) < near;
+      }
+    }
     const double rx = a.bx - a.ax;
     const double ry = a.by - a.ay;
     const double sx = b.bx - b.ax;
     const double sy = b.by - b.ay;
     const double den = (rx * sy) - (ry * sx);
-    if (std::abs(den) > 1e-9) {
+    if (!fan && std::abs(den) > 1e-9) {
       const double t = (((b.ax - a.ax) * sy) - ((b.ay - a.ay) * sx)) / den;
       const double u = (((b.ax - a.ax) * ry) - ((b.ay - a.ay) * rx)) / den;
       if (t > near / a.length && t < 1.0 - (near / a.length) &&

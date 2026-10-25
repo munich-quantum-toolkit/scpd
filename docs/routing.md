@@ -332,11 +332,39 @@ level that lets go of both neighbours at once.
 
 ### The meander
 
-In the sweep a resonator's way is lengthened to within `sweep_length_band` times
-`resonator_length_tolerance` of the target. One rectangular loop is spliced into
-a straight run, its legs `meander_leg_spacing_cells` apart, and the first
-`meander_start_margin_cells` cells of the way, the coupler's run and a margin by
-default, are left alone. The refinement makes the length exact.
+A resonator is lengthened by a meander spliced in between two straight cells of
+its way: each end turns onto a heading across the pair, and between the two
+turned ends a rectangular loop runs out, across and back, its run across at
+least `meander_leg_spacing_cells` long. Where one loop would reach past the room
+it may use, the meander takes three, five or more shallower loops side by side,
+the fewest that fit. Of all placements that fit, the insertion takes the one
+whose cells cost least in the search's price field, with a price of 100 per
+direction change, as the prototype's strict insertion does. When the pairs a
+hundred cells apart along the way leave nothing, every pair up to 150 cells
+apart is tried as well. A loop along the axes comes first; only when none fits
+does the loop run along the other diagonal of a diagonal way.
+
+Before the couplers, a resonator's way is made long enough from where it enters
+the coupler box onwards, since the coupler is spliced in there and whatever lies
+before it is cut off; the meander stays inside the coupler box and behind that
+cell. The coupler insertion then keeps the feedline edges out of the box of
+every such meander, grown by the wire clearance and cut down to the coupler box,
+except around the two ends of an edge. The coupler itself leaves `coupler_bias`
+times the target to run to the qubit, a little below the target, because the
+meander can lengthen a way and never shorten it.
+
+Under the feedline constraints the sweep holds a resonator to within
+`sweep_length_band` times `resonator_length_tolerance` of the target, and the
+refinement to the tolerance itself. The first `meander_start_margin_cells`
+straight cells of the way, by default the straight run of the lead off the
+coupler, are left alone. A loop that adds more than the missing length is taken
+when the length it lands on lies within the tolerance. When the way a resonator
+finds has no room for a meander, it keeps the way it had if that way holds every
+rule, or takes a meander into that way when only its length is wrong.
+
+A resonator that reaches its qubit through a bridge carries its length on the
+inner wire beyond the bridge: that wire gets the meander and the target length,
+and the wire from the coupler to the bridge only feeds it.
 
 ### The targeted repair
 
@@ -416,30 +444,30 @@ converted onto the grid, and no key sets it.
 
 The routing passes:
 
-| Key                             | Default   | Meaning                                                                                                         |
-| ------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------- |
-| `router`                        | `""`      | The implementation of the stage; empty takes `dubins`                                                           |
-| `corridor_spacings`             | `11`      | The band to either side of its way a ring wire may move in, in wire spacings                                    |
-| `inner_corridor_spacings`       | `11`      | The same for the inner circuit                                                                                  |
-| `refinement_corridor_spacings`  | `6`       | The band of both refinements, in wire spacings; `0` takes `corridor_spacings`                                   |
-| `rounds`                        | `30`      | The most sweeps of the outer routing and the feedline routing                                                   |
-| `inner_rounds`                  | `4`       | The most sweeps of the inner routing                                                                            |
-| `max_relaxation`                | `10`      | How many neighbouring wires a wire without a way may let go of                                                  |
-| `refinement_rounds`             | `2`       | The rounds of the pre-feedline refinement; `0` skips it                                                         |
-| `feedline_refinement_rounds`    | `2`       | The rounds of the feedline-constrained refinement; `0` skips it                                                 |
-| `bend_penalty_norm`             | `2.5`     | What one eighth turn costs, in hundredths of a cell per unit of the grid's width plus height                    |
-| `wire_proximity_penalty_norm`   | `0.00125` | What running beside another wire costs, on the same scale                                                       |
-| `static_proximity_penalty_norm` | `0.00033` | What running beside an obstacle costs, on the same scale                                                        |
-| `obstacle_penalty_reach`        | `100.0`   | How far the price of running beside an obstacle reaches; `0.0` turns the price off                              |
-| `fence_pairs`                   | `3`       | How many ring neighbours to either side a wire is fenced against in the feedline routing and the refinements    |
-| `halo_reach`                    | `1`       | The halo of a wire let go of, in clearances                                                                     |
-| `rise_reach`                    | `3`       | Where the rising price past the halo reaches its peak, in clearances                                            |
-| `rise_peak`                     | `3`       | The peak of the rising price, as a factor on the flat price                                                     |
-| `length_point_radius_cells`     | `40`      | What a wire keeps from the band where a resonator reaches its target length, in cells; `0` turns it off         |
-| `length_point_band_percent`     | `10.0`    | The half-width of that band, as a percentage of the target length                                               |
-| `sweep_length_band`             | `5.0`     | The band of lengths the feedline sweep accepts, as a multiple of `resonator_length_tolerance`                   |
-| `meander_leg_spacing_cells`     | `25`      | What the two legs of a meander loop keep between them, in cells                                                 |
-| `meander_start_margin_cells`    | `-1`      | How many cells at the start of a resonator the meander leaves alone; negative takes the coupler's run plus four |
+| Key                             | Default   | Meaning                                                                                                              |
+| ------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------- |
+| `router`                        | `""`      | The implementation of the stage; empty takes `dubins`                                                                |
+| `corridor_spacings`             | `11`      | The band to either side of its way a ring wire may move in, in wire spacings                                         |
+| `inner_corridor_spacings`       | `11`      | The same for the inner circuit                                                                                       |
+| `refinement_corridor_spacings`  | `6`       | The band of both refinements, in wire spacings; `0` takes `corridor_spacings`                                        |
+| `rounds`                        | `30`      | The most sweeps of the outer routing and the feedline routing                                                        |
+| `inner_rounds`                  | `4`       | The most sweeps of the inner routing                                                                                 |
+| `max_relaxation`                | `10`      | How many neighbouring wires a wire without a way may let go of                                                       |
+| `refinement_rounds`             | `2`       | The rounds of the pre-feedline refinement; `0` skips it                                                              |
+| `feedline_refinement_rounds`    | `2`       | The rounds of the feedline-constrained refinement; `0` skips it                                                      |
+| `bend_penalty_norm`             | `2.5`     | What one eighth turn costs, in hundredths of a cell per unit of the grid's width plus height                         |
+| `wire_proximity_penalty_norm`   | `0.00125` | What running beside another wire costs, on the same scale                                                            |
+| `static_proximity_penalty_norm` | `0.00033` | What running beside an obstacle costs, on the same scale                                                             |
+| `obstacle_penalty_reach`        | `100.0`   | How far the price of running beside an obstacle reaches; `0.0` turns the price off                                   |
+| `fence_pairs`                   | `3`       | How many ring neighbours to either side a wire is fenced against in the feedline routing and the refinements         |
+| `halo_reach`                    | `1`       | The halo of a wire let go of, in clearances                                                                          |
+| `rise_reach`                    | `3`       | Where the rising price past the halo reaches its peak, in clearances                                                 |
+| `rise_peak`                     | `3`       | The peak of the rising price, as a factor on the flat price                                                          |
+| `length_point_radius_cells`     | `40`      | What a wire keeps from the band where a resonator reaches its target length, in cells; `0` turns it off              |
+| `length_point_band_percent`     | `10.0`    | The half-width of that band, as a percentage of the target length                                                    |
+| `sweep_length_band`             | `1.0`     | The band of lengths the feedline sweep accepts, as a multiple of `resonator_length_tolerance`                        |
+| `meander_leg_spacing_cells`     | `25`      | What the two legs of a meander loop keep between them, in cells                                                      |
+| `meander_start_margin_cells`    | `-1`      | How many straight cells at the start of a resonator the meander leaves alone; negative takes the lead's straight run |
 
 The couplers and the chain search:
 
@@ -448,7 +476,7 @@ The couplers and the chain search:
 | `coupler_length`             | `200.0` | The run of the pad the resonator couples along                                                                                                         |
 | `coupler_height`             | `26.0`  | How far the feedline lies from the resonator across the pad                                                                                            |
 | `coupler_offsets`            | `""`    | The orientations of an option, as a comma list of eighth turns `0` to `7` off the nearest launcher's heading; empty takes every offset but `3` and `4` |
-| `coupler_bias`               | `1.0`   | Where the coupler cuts the way, as the share of the target length left to run from the coupler to the qubit                                            |
+| `coupler_bias`               | `0.98`  | Where the coupler cuts the way, as the share of the target length left to run from the coupler to the qubit                                            |
 | `coupler_max_shortfall`      | `0.30`  | How far below the target length a coupler may leave the resonator, as a share of it                                                                    |
 | `coupler_box_margin_cells`   | `5`     | What a coupler keeps off every side of the coupler box, in cells                                                                                       |
 | `coupler_shift_cells`        | `20`    | How far an option that leaves the box is moved into it before the place is given up, in cells                                                          |

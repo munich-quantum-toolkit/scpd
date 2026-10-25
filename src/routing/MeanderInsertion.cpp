@@ -31,6 +31,13 @@ namespace mqt::scpd::routing {
 
 namespace {
 
+/// The most fingers a meander has.
+constexpr uint32_t MAX_FINGERS = 15;
+
+/// The widest pair, in cells of the straight runs, the fallback sweep over
+/// every cell tries: the prototype's `kSmallDetourMaxSpan`.
+constexpr std::int64_t SMALL_SPAN = 150;
+
 /// A cell with a heading and the move that leaves it, in signed arithmetic,
 /// so that a candidate off the grid is a number and not a wrapped one.
 struct Spot {
@@ -229,104 +236,182 @@ std::vector<Chain> chainsInto(const MovePrimitives& primitives, const Spot& to,
   return chains;
 }
 
-/// The quarter turn of the primitives from one cardinal heading onto the
-/// next but one, the one that ends a radius along each of the two.
+/// The quarter turn of the primitives from one heading onto the next but
+/// one. A cardinal heading holds one, which ends a radius along each of the
+/// two; a diagonal heading holds one as well, added on top of its eighth
+/// turns.
 const Primitive* quarterTurn(const MovePrimitives& primitives,
                              const Heading from, const Heading to) {
-  const auto radius = static_cast<int64_t>(primitives.minRadius());
-  const HeadingVector in = headingVector(from);
-  const HeadingVector out = headingVector(to);
   for (const Primitive& move : primitives.of(from)) {
-    if (move.exitHeading == to && move.dx == radius * (in.dx + out.dx) &&
-        move.dy == radius * (in.dy + out.dy)) {
+    if (move.exitHeading == to) {
       return &move;
     }
   }
   return nullptr;
 }
 
-/// One rectangular loop from a point on a cardinal heading to a point on the
-/// opposite heading beside it: out along the heading, a quarter turn, across
-/// to the other point, a quarter turn, and back to it. Its depth is what the
-/// wanted length makes it.
+/// A meander from a point on a heading to a point on the opposite heading
+/// beside it: out along the heading, a quarter turn, across, a quarter turn,
+/// and back, `fingers` times side by side, each finger as deep as the first
+/// and joined to the next by a run across at the foot of the two. Its depth
+/// is what the wanted length makes it. Where even the flattest meander is
+/// longer than wanted, it is built flat when it overshoots by no more than
+/// `slack`.
 ///
-/// The prototype's `compute_meander_with_sanitized_coordinates_*` with one
-/// meander, which is the one shape its insertion ever accepts, and its
-/// `construct_*_meander_path`.
-std::optional<Piece> buildLoop(const MovePrimitives& primitives, const Spot& a,
-                               const Spot& b, const double wanted,
-                               const Box& box, const uint32_t safety,
-                               const uint32_t minStraight,
-                               MeanderResult::Refusals& why) {
-  if (isDiagonal(a.heading) || b.heading != reverse(a.heading)) {
+/// The heading may be cardinal or diagonal. With `u` the step out, `v` the
+/// step across and `D` the moves of the quarter turns, the meander joins the
+/// two points when `b - a` is the legs along `u`, the runs along `v` and the
+/// turns, which fixes the length of the runs across and the difference of
+/// the first and the last leg.
+///
+/// The prototype's `compute_meander_with_sanitized_coordinates_*` with an
+/// odd number of meanders, which is the shape its strict insertion accepts,
+/// and its `construct_*_meander_path`. The prototype builds the meander
+/// along the axes only.
+std::optional<Piece>
+buildLoop(const MovePrimitives& primitives, const Spot& a, const Spot& b,
+          const double wanted, const double slack, const Box& box,
+          const uint32_t safety, const uint32_t minStraight,
+          const uint32_t fingers, MeanderResult::Refusals& why) {
+  if (b.heading != reverse(a.heading)) {
     ++why.headingsApart;
     return std::nullopt;
   }
-  const auto radius = static_cast<int64_t>(primitives.minRadius());
   const HeadingVector along = headingVector(a.heading);
   const int64_t dx = b.x - a.x;
   const int64_t dy = b.y - a.y;
-  // How far b lies along a's heading, and how far across it.
-  const int64_t forward = (dx * along.dx) + (dy * along.dy);
+  // The side b lies on, across a's heading.
   Heading across = a.heading;
-  int64_t span = 0;
   for (const int eighths : {2, -2}) {
     const Heading candidate = turned(a.heading, eighths);
     const HeadingVector v = headingVector(candidate);
-    const int64_t side = (dx * v.dx) + (dy * v.dy);
-    if (side > 0) {
+    if ((dx * v.dx) + (dy * v.dy) > 0) {
       across = candidate;
-      span = side;
     }
   }
-  const int64_t run = span - (2 * radius);
-  if (span <= 0 || run < static_cast<int64_t>(minStraight)) {
+  if (across == a.heading) {
     ++why.tooClose;
     return std::nullopt;
   }
+  // The turns at the head of a finger, from the heading out onto the one
+  // across and from there back, and at its foot the other way round.
   const Primitive* first = quarterTurn(primitives, a.heading, across);
   const Primitive* second = quarterTurn(primitives, across, b.heading);
-  if (first == nullptr || second == nullptr) {
+  const Primitive* third = quarterTurn(primitives, b.heading, across);
+  const Primitive* fourth = quarterTurn(primitives, across, a.heading);
+  if (first == nullptr || second == nullptr ||
+      (fingers > 1 && (third == nullptr || fourth == nullptr))) {
     ++why.headingsApart;
     return std::nullopt;
   }
-  // The loop is out + first turn + run + second turn + back long, and back
-  // is out less the forward distance. Rounded up, so that the length is not
-  // undershot.
-  const double out =
-      std::ceil((wanted - static_cast<double>(run) - first->cost -
-                 second->cost + static_cast<double>(forward)) /
-                2.0);
-  if (out < 0.0) {
-    ++why.noDepth;
+  const HeadingVector v = headingVector(across);
+  // One step along a heading: one cell on the axes, two on a diagonal, in
+  // squared length; the out and the across step have the same.
+  const int64_t norm = (along.dx * along.dx) + (along.dy * along.dy);
+  const double stepLength =
+      primitives.cost(a.heading, primitives.straight(a.heading));
+  // The heads of the fingers and the feet between them.
+  const auto heads = static_cast<int64_t>((fingers + 1) / 2);
+  const int64_t feet = heads - 1;
+  const auto runs = static_cast<int64_t>(fingers);
+  // What the straight runs have to cover once every turn is made.
+  int64_t restX = dx - (heads * (first->dx + second->dx));
+  int64_t restY = dy - (heads * (first->dy + second->dy));
+  double turns = static_cast<double>(heads) * (first->cost + second->cost);
+  if (feet > 0) {
+    restX -= feet * (third->dx + fourth->dx);
+    restY -= feet * (third->dy + fourth->dy);
+    turns += static_cast<double>(feet) * (third->cost + fourth->cost);
+  }
+  const int64_t alongRest = (restX * along.dx) + (restY * along.dy);
+  const int64_t acrossRest = (restX * v.dx) + (restY * v.dy);
+  if (alongRest % norm != 0 || acrossRest % norm != 0) {
+    ++why.noJoin;
     return std::nullopt;
+  }
+  // How many steps the first leg is longer than the last, and the steps of
+  // every run across together, shared out as evenly as they go.
+  const int64_t forward = alongRest / norm;
+  const int64_t across0 = acrossRest / norm;
+  const int64_t narrowest = across0 < 0 ? -1 : across0 / runs;
+  if (narrowest < 0 || static_cast<double>(narrowest) * stepLength <
+                           static_cast<double>(minStraight)) {
+    ++why.tooClose;
+    return std::nullopt;
+  }
+  // The meander is the first leg, the legs between, the last leg, the runs
+  // and the turns long. The legs between are as long as the first and the
+  // last is the first less the forward difference, so each step deeper adds
+  // one step per leg. Rounded up, so that the length is not undershot.
+  const auto legs = static_cast<double>(fingers + 1);
+  double out =
+      std::ceil((((wanted - turns) / stepLength) -
+                 static_cast<double>(across0) + static_cast<double>(forward)) /
+                legs);
+  // The flattest meander has no leg shorter than nothing.
+  const auto flattest = static_cast<double>(std::max<int64_t>(0, forward));
+  if (out < flattest) {
+    if (legs * stepLength * (flattest - out) > slack) {
+      ++why.noDepth;
+      return std::nullopt;
+    }
+    out = flattest;
   }
   const auto outSteps = static_cast<int64_t>(out);
   const int64_t back = outSteps - forward;
-  if (back < 0) {
-    ++why.noDepth;
-    return std::nullopt;
+  // The far edge of the meander, `safety` cells short of the box: the end of
+  // the first turn, measured along the heading out. On a diagonal the end
+  // of the last head is a corner of its own, and a meander of several
+  // fingers reaches back past its start at their feet.
+  const auto margin = static_cast<double>(safety);
+  const auto beyond = [&](const double x, const double y) {
+    return x < static_cast<double>(box.minX) + margin ||
+           x > static_cast<double>(box.maxX) - margin ||
+           y < static_cast<double>(box.minY) + margin ||
+           y > static_cast<double>(box.maxY) - margin;
+  };
+  const auto alongOf = [&](const Primitive& turn) {
+    return static_cast<double>((turn.dx * along.dx) + (turn.dy * along.dy)) /
+           static_cast<double>(norm);
+  };
+  const auto at = [&](const Spot& from, const double depth) {
+    return std::pair{static_cast<double>(from.x) + (depth * along.dx),
+                     static_cast<double>(from.y) + (depth * along.dy)};
+  };
+  const auto [farX, farY] =
+      at(a, static_cast<double>(outSteps) + alongOf(*first));
+  bool outside = beyond(farX, farY);
+  if (!outside && isDiagonal(a.heading)) {
+    const auto [backX, backY] =
+        at(b, static_cast<double>(back) - alongOf(*second));
+    outside = beyond(backX, backY);
   }
-  // The far edge of the loop, `safety` cells short of the box.
-  const int64_t farX = a.x + ((outSteps + radius) * along.dx);
-  const int64_t farY = a.y + ((outSteps + radius) * along.dy);
-  const auto margin = static_cast<int64_t>(safety);
-  if (farX < box.minX + margin || farX > box.maxX - margin ||
-      farY < box.minY + margin || farY > box.maxY - margin) {
+  if (!outside && feet > 0) {
+    const auto [footX, footY] =
+        at(a, alongOf(*first) + alongOf(*second) + alongOf(*third));
+    outside = beyond(footX, footY);
+  }
+  if (outside) {
     ++why.outsideBox;
     return std::nullopt;
   }
 
   Piece loop;
-  Spot at = a;
-  appendStraight(loop, at, primitives, outSteps);
-  appendMove(loop, at, *first);
-  at = after(at, *first);
-  appendStraight(loop, at, primitives, run);
-  appendMove(loop, at, *second);
-  at = after(at, *second);
-  appendStraight(loop, at, primitives, back);
-  if (at.x != b.x || at.y != b.y) {
+  Spot spot = a;
+  appendStraight(loop, spot, primitives, outSteps);
+  for (int64_t run = 0; run < runs; ++run) {
+    const bool head = run % 2 == 0;
+    const Primitive& onto = head ? *first : *third;
+    const Primitive& off = head ? *second : *fourth;
+    appendMove(loop, spot, onto);
+    spot = after(spot, onto);
+    appendStraight(loop, spot, primitives,
+                   (across0 / runs) + (run < across0 % runs ? 1 : 0));
+    appendMove(loop, spot, off);
+    spot = after(spot, off);
+    appendStraight(loop, spot, primitives, run + 1 == runs ? back : outSteps);
+  }
+  if (spot.x != b.x || spot.y != b.y) {
     ++why.noJoin;
     return std::nullopt;
   }
@@ -376,11 +461,15 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
   const double deficit = wanted - result.lengthBefore;
 
   // The cells of the straight runs. The sampler has just cut the path into
-  // its segments, so each cell is found again in the path in order.
+  // its segments, so each cell is found again in the path in order. A run
+  // of one straight step counts as well: it is the cell an arc ends on when
+  // another arc or the end of the path follows, and the segments call it
+  // straight only from its second cell on.
   std::vector<Straight> straights;
   std::size_t cursor = 0;
   for (const PathSegment& segment : segments) {
-    if (!segment.straight) {
+    if (!segment.straight &&
+        !primitives.isStraight(segment.heading, segment.primitive)) {
       continue;
     }
     for (std::size_t i = 0; i < segment.cells.size(); ++i) {
@@ -404,8 +493,10 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
     return result;
   }
   const std::size_t step = std::max<std::size_t>(1, count / 100);
-  const std::size_t start =
-      count > options.startMargin ? options.startMargin : 0;
+  std::size_t start = count > options.startMargin ? options.startMargin : 0;
+  while (start < count && straights[start].index < options.keepBefore) {
+    ++start;
+  }
   result.straightCells = static_cast<uint32_t>(count);
   result.reserved = static_cast<uint32_t>(start);
   // The widest span any pair of the cells left over spans, which is the
@@ -431,8 +522,8 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
   // and every cell is the near end of many pairs and the far end of many
   // more, so they are built once per cell and target set.
   using Chains = std::vector<Chain>;
-  std::vector<std::array<std::optional<Chains>, 4>> heads(count);
-  std::vector<std::array<std::optional<Chains>, 4>> tails(count);
+  std::vector<std::array<std::optional<Chains>, 6>> heads(count);
+  std::vector<std::array<std::optional<Chains>, 6>> tails(count);
   // The box of a pair: the box of the options, cut down to what the caller
   // allows between the two cells of the pair. With a box per pair the
   // chains of a cell differ per pair too, so they are not cached then.
@@ -483,13 +574,14 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
     return *slot;
   };
 
-  // The head, the loop and the tail as one run of cells, or nothing when the
-  // loop does not fit or a cell of it may not be entered.
+  // The head, the meander and the tail as one run of cells, or nothing when
+  // the meander does not fit or a cell of it may not be entered.
   const auto assemble = [&](const Chain& head, const Chain& tail,
-                            const double loopLength) -> std::optional<Piece> {
-    const auto loop =
-        buildLoop(primitives, head.to, tail.from, loopLength, pairBox,
-                  options.safety, options.minStraightLength, result.refusals);
+                            const double loopLength,
+                            const uint32_t fingers) -> std::optional<Piece> {
+    const auto loop = buildLoop(
+        primitives, head.to, tail.from, loopLength, tolerance, pairBox,
+        options.safety, options.minStraightLength, fingers, result.refusals);
     if (!loop.has_value()) {
       return std::nullopt;
     }
@@ -508,6 +600,30 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
       }
     }
     return piece;
+  };
+
+  // The fewest fingers a meander between two turned ends fits with: one
+  // loop first, as deep as the length makes it, and more of them, each
+  // shallower, when the deep one leaves the box or runs into a closed cell.
+  // More fingers only narrow the runs across and add turns, so the count
+  // stops growing once a meander is too narrow or too long at its flattest.
+  // The prototype takes the fewest that fit its box as well.
+  const auto fewestFingers = [&](const Chain& head, const Chain& tail,
+                                 const double loopLength)
+      -> std::optional<std::pair<Piece, uint32_t>> {
+    for (uint32_t fingers = 1; fingers <= MAX_FINGERS; fingers += 2) {
+      const auto refused = result.refusals;
+      auto piece = assemble(head, tail, loopLength, fingers);
+      if (piece.has_value()) {
+        return std::pair{std::move(*piece), fingers};
+      }
+      if (result.refusals.tooClose != refused.tooClose ||
+          result.refusals.noDepth != refused.noDepth ||
+          result.refusals.headingsApart != refused.headingsApart) {
+        break;
+      }
+    }
+    return std::nullopt;
   };
 
   // The path with a piece in place of the cells between a pair, or nothing
@@ -535,25 +651,50 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
     return spliced;
   };
 
-  // Take a placement: the loop is built for the length it should have, and
-  // where the rendering falls short of the requirement by a fraction of a
-  // cell per bend, it is built again that much deeper.
+  // Take a placement: the meander is built for the length it should have,
+  // and where the rendering falls short of the requirement by a fraction of
+  // a cell per bend, it is built again that much deeper.
   const auto take = [&](const Straight& g0, const Straight& g1,
-                        const Chain& head, const Chain& tail,
-                        double loopLength) {
-    Path candidate;
-    double after = 0.0;
-    // Where the rendering lands within a cell of the requirement the loop
-    // is right; in the exact mode it is built again shallower as well as
-    // deeper, so that it lands within the tolerance and not merely above.
+                        const Chain& head, const Chain& tail, double loopLength,
+                        const uint32_t fingers) {
+    // The best rendering that met the requirement, and whether any meander
+    // was built at all.
+    Path best;
+    double bestAfter = 0.0;
+    CellBox bestBox{.minX = 1, .maxX = 0, .minY = 1, .maxY = 0};
+    bool built = false;
+    const auto meets = [&](const double after) {
+      return options.exact ? std::abs(after - required) <= tolerance
+                           : after >= required;
+    };
+    // Where the rendering lands within a cell of the requirement the
+    // meander is right; in the exact mode it is built again shallower as
+    // well as deeper, so that it lands within the tolerance and not merely
+    // above. A meander built again may no longer fit, for a flat one cannot
+    // be made shallower; the best one so far is kept.
     const int attempts = options.exact ? 6 : 4;
     for (int attempt = 0; attempt < attempts; ++attempt) {
-      const auto piece = assemble(head, tail, loopLength);
-      candidate = piece.has_value() ? splice(g0, g1, *piece) : Path{};
+      const auto piece = assemble(head, tail, loopLength, fingers);
+      Path candidate = piece.has_value() ? splice(g0, g1, *piece) : Path{};
       if (candidate.empty()) {
-        return false;
+        break;
       }
-      after = renderedLength(primitives, candidate);
+      built = true;
+      const double after = renderedLength(primitives, candidate);
+      if (meets(after) &&
+          (best.empty() ||
+           std::abs(after - required) < std::abs(bestAfter - required))) {
+        best = std::move(candidate);
+        bestAfter = after;
+        bestBox = {
+            .minX = UINT32_MAX, .maxX = 0, .minY = UINT32_MAX, .maxY = 0};
+        for (const Spot& spot : *piece) {
+          bestBox.minX = std::min(bestBox.minX, static_cast<uint32_t>(spot.x));
+          bestBox.maxX = std::max(bestBox.maxX, static_cast<uint32_t>(spot.x));
+          bestBox.minY = std::min(bestBox.minY, static_cast<uint32_t>(spot.y));
+          bestBox.maxY = std::max(bestBox.maxY, static_cast<uint32_t>(spot.y));
+        }
+      }
       if (options.exact) {
         if (std::abs(after - required) <= 1.0) {
           break;
@@ -566,15 +707,17 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
       }
       loopLength += (required - after) + 1.0;
     }
-    if (options.exact ? std::abs(after - required) > tolerance
-                      : after < required) {
-      ++result.refusals.offLength;
+    if (best.empty()) {
+      if (built) {
+        ++result.refusals.offLength;
+      }
       return false;
     }
-    path = std::move(candidate);
+    path = std::move(best);
     result.reached = true;
     result.inserted = true;
-    result.lengthAfter = after;
+    result.lengthAfter = bestAfter;
+    result.meander = bestBox;
     return true;
   };
 
@@ -630,92 +773,146 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
     return total + (options.bendPrice * bends);
   };
 
+  // A placement that fits, by what it takes to build it again: the pair,
+  // the headings it reaches out along, the two turned ends by their place
+  // in the lists of the pair, and the number of fingers.
   struct Fit {
     std::size_t from = 0;
     std::size_t to = 0;
-    Chain head;
-    Chain tail;
+    Targets target{};
+    std::size_t key = 0;
+    std::size_t head = 0;
+    std::size_t tail = 0;
     double loopLength = 0.0;
+    uint32_t fingers = 1;
     double score = 0.0;
   };
   std::vector<Fit> fits;
 
+  // One sweep over the pairs, `stride` cells apart and spanning at most
+  // `widest`, with a meander along the axes or, as the last resort, along
+  // the diagonals; whether it took one.
+  //
   // The pairs are tried by their span, the smallest first, and within one
-  // span from the target end of the path, so that the smallest loop goes as
-  // near the target as it fits. The source end is where the coupler
+  // span from the target end of the path, so that the smallest meander goes
+  // as near the target as it fits. The source end is where the coupler
   // insertion cuts the way back to the target length and where the feedline
-  // runs, so a loop there is cut in two or in the feedline's way. The
-  // prototype walks from the source; its later phases place the loop again
-  // from the coupler.
+  // runs, so a meander there is cut in two or in the feedline's way. The
+  // prototype walks from the source; its later phases place the meander
+  // again from the coupler.
+  //
+  // Without a price the first placement that fits is taken. With one, every
+  // placement that fits is scored and the cheapest is taken, as in the
+  // prototype's strict insertion.
   const auto first = static_cast<std::int64_t>(start);
   const auto last = static_cast<std::int64_t>(count) - 1;
-  const auto stride = static_cast<std::int64_t>(step);
-  for (std::int64_t span = stride; span <= last - first; span += stride) {
-    for (std::int64_t i = last; i - span >= first; i -= stride) {
-      const std::int64_t j = i - span;
-      const Straight& g0 = straights[static_cast<std::size_t>(j)];
-      const Straight& g1 = straights[static_cast<std::size_t>(i)];
-      // A loop reaches out across the pair: across a pair that lies along
-      // x it runs along y, and the other way round.
-      const int64_t apartX = std::abs(g1.spot.x - g0.spot.x);
-      const int64_t apartY = std::abs(g1.spot.y - g0.spot.y);
-      Targets target{};
-      std::size_t key = 0;
-      if (apartX >= apartY) {
-        target[0] = true;
-        target[4] = true;
-        key |= 1U;
-      }
-      if (apartX <= apartY) {
-        target[2] = true;
-        target[6] = true;
-        key |= 2U;
-      }
-      // What replaces the cells between the pair has to be as long as they
-      // were, plus the deficit.
-      const double lengthToAdd = (g1.lengthAt - g0.lengthAt) + deficit;
-      pairBox = boxOfPair(g0, g1);
-      if (pairBox.maxX < pairBox.minX || pairBox.maxY < pairBox.minY) {
-        continue;
-      }
-      for (const Chain& head :
-           headsOf(static_cast<std::size_t>(j), key, target)) {
-        for (const Chain& tail :
-             tailsOf(static_cast<std::size_t>(i), key, target)) {
-          ++result.candidates;
-          if (tail.from.heading != reverse(head.to.heading)) {
-            ++result.refusals.headingsApart;
+  const auto sweep = [&](const std::int64_t stride, const std::int64_t widest,
+                         const bool diagonal) {
+    fits.clear();
+    for (std::int64_t span = stride; span <= std::min(widest, last - first);
+         span += stride) {
+      for (std::int64_t i = last; i - span >= first; i -= stride) {
+        const std::int64_t j = i - span;
+        const Straight& g0 = straights[static_cast<std::size_t>(j)];
+        const Straight& g1 = straights[static_cast<std::size_t>(i)];
+        // A meander reaches out across the pair: across a pair that lies
+        // along x it runs along y, and the other way round. Across a pair
+        // that lies along a diagonal, the smaller of its two distances at
+        // least half the larger, it may run along the other diagonal.
+        const int64_t apartX = std::abs(g1.spot.x - g0.spot.x);
+        const int64_t apartY = std::abs(g1.spot.y - g0.spot.y);
+        Targets target{};
+        std::size_t key = 0;
+        if (diagonal) {
+          if (apartX == 0 || apartY == 0 ||
+              2 * std::min(apartX, apartY) < std::max(apartX, apartY)) {
             continue;
           }
-          const double loopLength = lengthToAdd - head.cost - tail.cost;
-          if (!price) {
-            if (take(g0, g1, head, tail, loopLength)) {
-              result.fits = 1;
-              return result;
+          const bool sameSign =
+              (g1.spot.x - g0.spot.x > 0) == (g1.spot.y - g0.spot.y > 0);
+          target[sameSign ? 3 : 1] = true;
+          target[sameSign ? 7 : 5] = true;
+          key = sameSign ? 5U : 4U;
+        } else {
+          if (apartX >= apartY) {
+            target[0] = true;
+            target[4] = true;
+            key |= 1U;
+          }
+          if (apartX <= apartY) {
+            target[2] = true;
+            target[6] = true;
+            key |= 2U;
+          }
+        }
+        // What replaces the cells between the pair has to be as long as
+        // they were, plus the deficit.
+        const double lengthToAdd = (g1.lengthAt - g0.lengthAt) + deficit;
+        pairBox = boxOfPair(g0, g1);
+        if (pairBox.maxX < pairBox.minX || pairBox.maxY < pairBox.minY) {
+          continue;
+        }
+        const Chains& headChains =
+            headsOf(static_cast<std::size_t>(j), key, target);
+        const Chains& tailChains =
+            tailsOf(static_cast<std::size_t>(i), key, target);
+        for (std::size_t h = 0; h < headChains.size(); ++h) {
+          const Chain& head = headChains[h];
+          for (std::size_t t = 0; t < tailChains.size(); ++t) {
+            const Chain& tail = tailChains[t];
+            ++result.candidates;
+            if (tail.from.heading != reverse(head.to.heading)) {
+              ++result.refusals.headingsApart;
+              continue;
             }
-            continue;
+            const double loopLength = lengthToAdd - head.cost - tail.cost;
+            const auto fit = fewestFingers(head, tail, loopLength);
+            if (!fit.has_value()) {
+              continue;
+            }
+            ++result.fits;
+            if (!price) {
+              if (take(g0, g1, head, tail, loopLength, fit->second)) {
+                return true;
+              }
+              continue;
+            }
+            fits.push_back({.from = static_cast<std::size_t>(j),
+                            .to = static_cast<std::size_t>(i),
+                            .target = target,
+                            .key = key,
+                            .head = h,
+                            .tail = t,
+                            .loopLength = loopLength,
+                            .fingers = fit->second,
+                            .score = scoreOf(g0, g1, fit->first)});
           }
-          const auto piece = assemble(head, tail, loopLength);
-          if (!piece.has_value()) {
-            continue;
-          }
-          fits.push_back({.from = static_cast<std::size_t>(j),
-                          .to = static_cast<std::size_t>(i),
-                          .head = head,
-                          .tail = tail,
-                          .loopLength = loopLength,
-                          .score = scoreOf(g0, g1, *piece)});
         }
       }
     }
-  }
+    std::ranges::stable_sort(fits, {}, &Fit::score);
+    for (const Fit& fit : fits) {
+      const Straight& g0 = straights[fit.from];
+      const Straight& g1 = straights[fit.to];
+      pairBox = boxOfPair(g0, g1);
+      const Chain head = headsOf(fit.from, fit.key, fit.target)[fit.head];
+      const Chain tail = tailsOf(fit.to, fit.key, fit.target)[fit.tail];
+      if (take(g0, g1, head, tail, fit.loopLength, fit.fingers)) {
+        return true;
+      }
+    }
+    return false;
+  };
 
-  result.fits = static_cast<uint32_t>(fits.size());
-  std::ranges::stable_sort(fits, {}, &Fit::score);
-  for (const Fit& fit : fits) {
-    pairBox = boxOfPair(straights[fit.from], straights[fit.to]);
-    if (take(straights[fit.from], straights[fit.to], fit.head, fit.tail,
-             fit.loopLength)) {
+  // The coarse sweep first, about a hundred cells of the path to choose
+  // from; where it finds nothing, every cell, with pairs no wider than
+  // `SMALL_SPAN`, so that a small meander between close cells is tried as
+  // well, as in the prototype's fallback. A meander along the diagonals is
+  // the last resort: the layout keeps its meanders on the axes.
+  const auto stride = static_cast<std::int64_t>(step);
+  for (const bool diagonal : {false, true}) {
+    if (sweep(stride, last - first, diagonal) ||
+        (stride > 1 && sweep(1, SMALL_SPAN, diagonal))) {
       return result;
     }
   }

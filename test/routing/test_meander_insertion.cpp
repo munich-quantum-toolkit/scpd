@@ -259,4 +259,134 @@ TEST(MeanderInsertion, LeavesTheFirstCellsOfThePathAlone) {
   EXPECT_EQ(none.candidates, 0U);
 }
 
+TEST(MeanderInsertion, LeavesThePartBeforeTheKeptIndexAlone) {
+  // The loop goes behind the index, where a cut further along keeps it.
+  Path path = straightRun(100, 200, 6, 300);
+  const Path before = path;
+  MeanderOptions options = everywhere();
+  options.keepBefore = 120;
+  const auto result = insertMeander(PRIMITIVES, path, 450.0, anyCell, options);
+
+  ASSERT_TRUE(result.reached);
+  for (std::size_t at = 0; at < 120; ++at) {
+    EXPECT_EQ(path[at], before[at]) << "cell " << at;
+  }
+  expectWellFormed(path, result);
+
+  // A kept part that covers the whole run leaves no pair to try.
+  Path untouched = straightRun(100, 200, 6, 300);
+  options.keepBefore = 300;
+  const auto none =
+      insertMeander(PRIMITIVES, untouched, 450.0, anyCell, options);
+  EXPECT_FALSE(none.reached);
+  EXPECT_EQ(none.candidates, 0U);
+}
+
+TEST(MeanderInsertion, MeetsASmallDeficitWithinTheToleranceInTheExactMode) {
+  // The flattest loop adds more than these deficits, but not more than the
+  // tolerance allows past the required length: it is the loop to take.
+  for (const double deficit : {11.0, 14.0, 18.0}) {
+    Path path = straightRun(100, 200, 6, 150);
+    MeanderOptions options = everywhere();
+    options.exact = true;
+    options.tolerance = 10.0;
+    const double required = 150.0 + deficit;
+    const auto result =
+        insertMeander(PRIMITIVES, path, required, anyCell, options);
+
+    EXPECT_TRUE(result.reached) << "deficit " << deficit;
+    EXPECT_TRUE(result.inserted) << "deficit " << deficit;
+    EXPECT_NEAR(result.lengthAfter, required, options.tolerance)
+        << "deficit " << deficit;
+    expectWellFormed(path, result);
+  }
+}
+
+TEST(MeanderInsertion, KeepsTheLoopOnTheAxesOfADiagonalWay) {
+  // A diagonal way with room for a loop along the axes takes that loop: a
+  // loop along the diagonals is the last resort.
+  for (const Heading heading : {1, 3, 5, 7}) {
+    for (const bool exact : {false, true}) {
+      Path path = straightRun(200, 200, heading, 100);
+      MeanderOptions options = everywhere();
+      options.exact = exact;
+      options.tolerance = 10.0;
+      const auto result =
+          insertMeander(PRIMITIVES, path, 300.0, anyCell, options);
+
+      ASSERT_TRUE(result.reached) << "heading " << int{heading};
+      EXPECT_TRUE(result.inserted);
+      if (exact) {
+        EXPECT_NEAR(result.lengthAfter, 300.0, options.tolerance);
+      } else {
+        EXPECT_GE(result.lengthAfter, 300.0);
+      }
+      EXPECT_TRUE(std::ranges::any_of(
+          path,
+          [](const PathPoint& point) { return !isDiagonal(point.heading); }))
+          << "heading " << int{heading};
+      expectWellFormed(path, result);
+    }
+  }
+}
+
+TEST(MeanderInsertion, SplitsADeepLoopIntoFingersWhereTheBoxIsFlat) {
+  // One loop for the missing length would reach far past the box; several
+  // shallower fingers side by side stay inside it.
+  Path path = straightRun(50, 200, 6, 300);
+  MeanderOptions options = everywhere();
+  options.box = {.minX = 0, .maxX = WIDTH - 1, .minY = 150, .maxY = 250};
+  for (const bool exact : {false, true}) {
+    Path way = path;
+    options.exact = exact;
+    options.tolerance = 10.0;
+    const auto result = insertMeander(PRIMITIVES, way, 600.0, anyCell, options);
+
+    ASSERT_TRUE(result.reached) << (exact ? "exact" : "at least");
+    for (const PathPoint& point : way) {
+      EXPECT_GE(point.y, 150U);
+      EXPECT_LE(point.y, 250U);
+    }
+    expectWellFormed(way, result);
+  }
+}
+
+TEST(MeanderInsertion, FindsRoomOnAShortDiagonalAfterAnAxisRun) {
+  // A run along an axis the start margin keeps, then a diagonal too short
+  // for a loop along an axis: the loop goes across the diagonal.
+  Path path = straightRun(150, 100, 2, 25);
+  const auto turn =
+      std::ranges::find_if(PRIMITIVES.of(2), [](const Primitive& move) {
+        return move.exitHeading == 3;
+      });
+  ASSERT_NE(turn, PRIMITIVES.of(2).end());
+  const PathPoint corner = path.back();
+  path.back().primitive = turn->id;
+  for (const CellOffset& offset : turn->swept) {
+    if ((offset.dx == 0 && offset.dy == 0) ||
+        (offset.dx == turn->dx && offset.dy == turn->dy)) {
+      continue;
+    }
+    path.push_back({.x = static_cast<uint32_t>(corner.x + offset.dx),
+                    .y = static_cast<uint32_t>(corner.y + offset.dy),
+                    .heading = 2,
+                    .primitive = turn->id});
+  }
+  const Path diagonal =
+      straightRun(static_cast<uint32_t>(corner.x + turn->dx),
+                  static_cast<uint32_t>(corner.y + turn->dy), 3, 40);
+  path.insert(path.end(), diagonal.begin(), diagonal.end());
+  MeanderOptions options = everywhere();
+  options.exact = true;
+  options.tolerance = 10.0;
+  options.startMargin = 25;
+  const double before = renderedLength(PRIMITIVES, path);
+  const auto result =
+      insertMeander(PRIMITIVES, path, before + 120.0, anyCell, options);
+
+  ASSERT_TRUE(result.reached);
+  EXPECT_NEAR(result.lengthAfter, before + 120.0, options.tolerance);
+  expectWellFormed(path, result);
+}
+
 } // namespace

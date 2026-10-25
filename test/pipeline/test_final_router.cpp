@@ -211,29 +211,57 @@ void reportFirst(const flatbuffers::drc::DrcReportT& report,
   }
 }
 
+/// A drawn wire that carries a resonator's length, and how far that length
+/// lies from the target.
+struct Deviation {
+  const flatbuffers::artifacts::FinalWireT* wire = nullptr;
+  double deviation = 0.0;
+};
+
 /// The resonators the stage drew, each with how far its length lies from the
 /// target: the length the artifact carries plus the run from the last cell
 /// of the way to the port itself, which the wire covers without cells of its
-/// own.
-std::vector<std::pair<std::size_t, double>>
-resonatorDeviations(const Benchmark& benchmark, const Planned& planned,
-                    const FinalRoutingT& routing) {
+/// own. A resonator that reaches its qubit through a bridge carries its
+/// length on the inner wire beyond the bridge, and the wire that feeds the
+/// bridge carries none.
+std::vector<Deviation> resonatorDeviations(const Benchmark& benchmark,
+                                           const Planned& planned,
+                                           const FinalRoutingT& routing) {
+  using flatbuffers::design::UnassignedRole;
   const auto grid = gridOf(routing);
   const double target = benchmark.config.rules->target_resonator_length;
-  std::vector<std::pair<std::size_t, double>> deviations;
+  const auto roleOf = [&](const std::uint32_t port) {
+    return benchmark.chip.ports[port]->role;
+  };
+  std::vector<Deviation> deviations;
+  const auto measure = [&](const flatbuffers::artifacts::FinalWireT& wire,
+                           const std::uint32_t port) {
+    const auto& center = benchmark.chip.ports[port]->center;
+    const auto& last = wire.path.back();
+    const auto end = grid.toLayout(last.x(), last.y());
+    const double gap = std::hypot(end.x() - center.x(), end.y() - center.y());
+    deviations.push_back(
+        {.wire = &wire, .deviation = (wire.length + gap) - target});
+  };
   for (std::size_t index = 0; index < routing.wires.size(); ++index) {
     const auto& wire = *routing.wires[index];
     const auto& connection = *planned.assignment.connections[index];
     if (wire.path.empty() ||
-        connection.target_role != AssignedRole::ResonatorTarget) {
+        connection.target_role != AssignedRole::ResonatorTarget ||
+        roleOf(connection.target.index()) == UnassignedRole::BridgePair) {
       continue;
     }
-    const auto& port = *benchmark.chip.ports[connection.target.index()];
-    const auto& last = wire.path.back();
-    const auto end = grid.toLayout(last.x(), last.y());
-    const double gap =
-        std::hypot(end.x() - port.center.x(), end.y() - port.center.y());
-    deviations.emplace_back(index, (wire.length + gap) - target);
+    measure(wire, connection.target.index());
+  }
+  for (std::size_t index = 0; index < routing.inner.size(); ++index) {
+    const auto& wire = *routing.inner[index];
+    const auto& connection = *planned.global.connections[index];
+    if (wire.path.empty() || connection.source == nullptr ||
+        roleOf(connection.source->index()) != UnassignedRole::BridgePair ||
+        roleOf(connection.target.index()) != UnassignedRole::Resonator) {
+      continue;
+    }
+    measure(wire, connection.target.index());
   }
   return deviations;
 }
@@ -243,7 +271,7 @@ double worstResonatorDeviation(const Benchmark& benchmark,
                                const Planned& planned,
                                const FinalRoutingT& routing) {
   double worst = 0.0;
-  for (const auto& [index, deviation] :
+  for (const auto& [wire, deviation] :
        resonatorDeviations(benchmark, planned, routing)) {
     worst = std::max(worst, std::abs(deviation));
   }
@@ -341,23 +369,22 @@ TEST_P(Final, ResonatorsReachTheTargetLength) {
   using mqt::scpd::flatbuffers::artifacts::FinalVerdict;
 
   std::size_t resonators = 0;
-  for (const auto& [index, deviation] :
+  for (const auto& [wire, deviation] :
        resonatorDeviations(benchmark, planned, routing)) {
-    const auto& wire = *routing.wires[index];
-    EXPECT_GT(wire.length, 0.0) << "wire " << index << " carries no length";
-    ++resonators;
-    const auto verdict = static_cast<std::uint8_t>(wire.verdict);
+    EXPECT_GT(wire->length, 0.0) << "resonator " << resonators;
+    const auto verdict = static_cast<std::uint8_t>(wire->verdict);
     const bool tooShort =
         (verdict & static_cast<std::uint8_t>(FinalVerdict::Short)) != 0;
     const bool tooLong =
         (verdict & static_cast<std::uint8_t>(FinalVerdict::Long)) != 0;
     if (tooShort) {
-      EXPECT_LT(deviation, -tolerance) << "wire " << index;
+      EXPECT_LT(deviation, -tolerance) << "resonator " << resonators;
     } else if (tooLong) {
-      EXPECT_GT(deviation, tolerance) << "wire " << index;
+      EXPECT_GT(deviation, tolerance) << "resonator " << resonators;
     } else {
-      EXPECT_LE(std::abs(deviation), tolerance) << "wire " << index;
+      EXPECT_LE(std::abs(deviation), tolerance) << "resonator " << resonators;
     }
+    ++resonators;
   }
   EXPECT_GT(resonators, 0U);
 }
@@ -2400,15 +2427,20 @@ TEST(CouplerSession, MovesAnOptionIntoTheBoxByAtMostTheLimit) {
 
 /// On 4q the ways of Q1 and Q4 run along the box edge near their target
 /// length, and their couplers reach offset 0 only when moved into the box.
-/// With the move every feedline edge is drawn and the chain makes four
-/// quarter turns, an angle cost of 8.
-TEST(FinalRouter, TheFourQubitChainMakesFourQuarterTurns) {
+/// With the move every feedline edge is drawn, and the edges between two
+/// couplers turn four eighths in all. The terminal edges are left out:
+/// how much an edge from a launcher turns depends on where the coupler sits
+/// against the launcher, and the couplers sit where the resonators' meanders
+/// keep their length.
+TEST(FinalRouter, TheFourQubitChainTurnsLittleBetweenItsCouplers) {
   const auto benchmark = fourQubit();
   const auto planned = plan(benchmark);
-  long cost = -1;
   long undrawn = -1;
+  std::map<long, long> inner;
   const std::regex said(
-      R"(==> coupler insertion: (\d+) feedline edges NOT drawn, feedline angle cost (\d+))");
+      R"(==> coupler insertion: (\d+) feedline edges NOT drawn)");
+  const std::regex edge(
+      R"(coupler insertion: edge f(\d+) chain \d+ \(\d+->\d+(, terminal)?\): \d+ cells, angle (\d+))");
   static_cast<void>(finalRouters().make("dubins")->run(
       benchmark.chip, planned.capacity, planned.global, planned.assignment,
       planned.detail, benchmark.config,
@@ -2416,12 +2448,20 @@ TEST(FinalRouter, TheFourQubitChainMakesFourQuarterTurns) {
         std::match_results<std::string_view::const_iterator> match;
         if (std::regex_search(line.begin(), line.end(), match, said)) {
           undrawn = std::stol(match[1].str());
-          cost = std::stol(match[2].str());
+        }
+        if (std::regex_search(line.begin(), line.end(), match, edge) &&
+            !match[2].matched) {
+          inner[std::stol(match[1].str())] = std::stol(match[3].str());
         }
       })));
 
   EXPECT_EQ(undrawn, 0);
-  EXPECT_EQ(cost, 8);
+  ASSERT_FALSE(inner.empty()) << "no edge between two couplers was drawn";
+  long turns = 0;
+  for (const auto& [slot, angle] : inner) {
+    turns += angle;
+  }
+  EXPECT_EQ(turns, 4);
 }
 
 /// No two edges of one chain cross. The stage says so after the coupler

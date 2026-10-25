@@ -285,7 +285,7 @@ key does.
 | `coupler_length`                | `200.0`              | The run of the pad the resonator couples along                                                                                                         |
 | `coupler_height`                | `26.0`               | How far the feedline lies from the resonator across the pad                                                                                            |
 | `repair_trials`                 | `100`                | How many legality tests the targeted repair may run per chip; `0` turns the repair off                                                                 |
-| `coupler_bias`                  | `1.0`                | Where the coupler cuts the way, as the share of the target length left to run from the coupler to the qubit                                            |
+| `coupler_bias`                  | `0.98`               | Where the coupler cuts the way, as the share of the target length left to run from the coupler to the qubit                                            |
 | `coupler_max_shortfall`         | `0.3`                | How far below the target length a coupler may leave the resonator, as a share of it                                                                    |
 | `coupler_box_margin_cells`      | `5`                  | What a coupler keeps off every side of the coupler box, in cells                                                                                       |
 | `coupler_shift_cells`           | `20`                 | How far an option that leaves the box is moved into it before the place is given up, in cells                                                          |
@@ -300,9 +300,9 @@ key does.
 | `capacity_check`                | `true`               | Whether the insertion runs the step checks, the whole-chip check and the global SAT search; off, the chains are settled by cost alone                  |
 | `length_point_radius_cells`     | `40`                 | What a wire keeps from the band where a resonator reaches its target length, in cells; `0` turns it off                                                |
 | `length_point_band_percent`     | `10.0`               | The half-width of that band, as a percentage of the target length                                                                                      |
-| `sweep_length_band`             | `5.0`                | The band of lengths the feedline sweep accepts, as a multiple of `resonator_length_tolerance`                                                          |
+| `sweep_length_band`             | `1.0`                | The band of lengths the feedline sweep accepts, as a multiple of `resonator_length_tolerance`                                                          |
 | `meander_leg_spacing_cells`     | `25`                 | What the two legs of a meander loop keep between them, in cells                                                                                        |
-| `meander_start_margin_cells`    | `-1`                 | How many cells at the start of a resonator the meander leaves alone; negative takes the coupler's run plus four                                        |
+| `meander_start_margin_cells`    | `-1`                 | How many straight cells at the start of a resonator the meander leaves alone; negative takes the straight run of the lead off the coupler              |
 | `capacity_margin`               | `1.06`               | The factor on the clearance a gate counts with, from `capacity_margin_from_wires` wires on                                                             |
 | `capacity_margin_from_wires`    | `3`                  | The fewest wires the factor applies to                                                                                                                 |
 | `resonator_passage`             | `0.8`                | The narrowest gate a resonator passes at its own port run, in clearances                                                                               |

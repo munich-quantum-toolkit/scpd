@@ -27,6 +27,12 @@ releases may include breaking changes.
     slots of its feedline edges, and searches a globally satisfiable state over
     the chains when the chip is not. `[stages.final] capacity_check` turns the
     check off.
+  - Every resonator reaches its target length in every phase: the meander takes
+    several loops where one does not fit, the cheapest placement, and a loop
+    along the other diagonal only as the last resort; before the couplers it
+    stays inside the coupler box and the feedline edges keep out of it; the
+    coupler leaves `coupler_bias` (0.98) times the target; and a resonator
+    through a bridge carries its length beyond the bridge.
   - `[stages.detail]` and `[stages.final]` hold the parameters of the two
     stages; `docs/routing.md` describes the stages and `docs/configuration.md`
     every key.

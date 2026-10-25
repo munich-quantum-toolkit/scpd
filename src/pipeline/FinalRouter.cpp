@@ -103,6 +103,17 @@ constexpr std::uint32_t NO_OWNER = std::numeric_limits<std::uint32_t>::max();
 /// against a router cell of about ten. The prototype uses five everywhere.
 constexpr std::uint8_t BEND_RADIUS = 5;
 
+/// The straight run of a resonator's lead off its coupler, in cells, after
+/// the quarter turn out of the port: what the routing holds the resonator
+/// to before its own search begins (`leadOf`). The coupler insertion lays
+/// `coupler_lead_margin_cells` more, which the routing gives back.
+constexpr std::uint32_t COUPLER_LEAD_STRAIGHT = 14;
+
+/// What one direction change of a resonator's way costs against the price of
+/// its cells, when the meander insertion picks the cheapest placement: the
+/// prototype's `c_angle` of its strict insertion.
+constexpr double MEANDER_BEND_PRICE = 100.0;
+
 /// How wide a resonator's copper stands in the way of a feedline edge, in
 /// cells, past the lead that carries the clearance (user, 2026-10-03).
 ///
@@ -188,7 +199,7 @@ struct Tuning {
   /// The coupler insertion's knobs of `[stages.final]`, see `config.fbs`.
   /// Shares of `target_resonator_length`: where the coupler cuts the
   /// resonator, and the most it may leave it short by.
-  double couplerBias = 1.0;
+  double couplerBias = 0.98;
   double couplerMaxShortfall = 0.30;
   /// In cells: what a coupler keeps off the sides of the coupler box, how far
   /// an option is moved into the box, the lead's run beyond the rule, what a
@@ -240,7 +251,7 @@ struct Tuning {
   /// The feedline sweep's band of lengths as a multiple of the tolerance,
   /// the spacing of the meander's legs and the start of a resonator the
   /// meander leaves alone, in cells.
-  double sweepLengthBand = 5.0;
+  double sweepLengthBand = 1.0;
   std::uint32_t meanderLegSpacing = 25;
   std::uint32_t meanderStartMargin = 0;
   /// How many ring neighbours to either side a wire is fenced against in
@@ -441,9 +452,11 @@ offsetsOf(const std::string& text) {
   tuning.sweepLengthBand = std::max(1.0, params.sweep_length_band);
   tuning.meanderLegSpacing =
       std::clamp(params.meander_leg_spacing_cells, 4U, 200U);
+  // By default the meander leaves the lead's straight run alone and may
+  // start on the first cell behind it.
   tuning.meanderStartMargin =
       params.meander_start_margin_cells < 0
-          ? tuning.couplerLength + 4U
+          ? std::max(COUPLER_LEAD_STRAIGHT, tuning.straightStart)
           : static_cast<std::uint32_t>(params.meander_start_margin_cells);
   tuning.fencePairs = std::clamp(params.fence_pairs, 1U, 8U);
   tuning.terminalStubExtra = std::min(params.terminal_stub_extra_cells, 100U);
@@ -995,6 +1008,13 @@ struct Wire {
   /// on, which its port's orientation fixes, and the cell of its target port.
   Path fixed;
   bool resonator = false;
+  /// A resonator whose target is one end of a bridge: the inner wire beyond
+  /// the bridge is the resonator and carries its length, and this one only
+  /// feeds it, with the coupler on it and no length of its own.
+  bool feedsABridge = false;
+  /// An inner wire from one end of a bridge to a resonator port: the part
+  /// of a resonator beyond the bridge, which carries the resonator's length.
+  bool resonatorBeyondBridge = false;
   /// The run from the cell its way ends on to the port itself, in cells. The
   /// sampler measures a way to its last cell, and the wire runs on to the
   /// port from there; a resonator's length counts both.
@@ -1296,6 +1316,9 @@ public:
         bodies_(scene.router.width, scene.router.height),
         approaches_(scene.router.width, scene.router.height) {
     router_.attachObstacles(&scene_.blocked);
+    // The room a coupler may sit in depends on the launchers alone, and the
+    // outer routing already lays each resonator's meander inside it.
+    couplerBox_ = couplerBoxOf();
     // The price of running beside an obstacle. It forbids nothing — the
     // keepout in the mask already does that — and keeps copper off the artwork
     // wherever there is room for it.
@@ -1494,16 +1517,102 @@ public:
   }
 
   [[nodiscard]] bool needsLength(const Wire& wire) const {
-    return wire.resonator && (exact_ || tuning_.meanderLength > 0.0);
+    return carriesLength(wire) && (exact_ || tuning_.meanderLength > 0.0);
+  }
+
+  /// Whether a wire is the part of a resonator that carries its length: a
+  /// resonator that ends on its qubit, or the inner wire beyond the bridge
+  /// of one that does not.
+  [[nodiscard]] static bool carriesLength(const Wire& wire) {
+    return (wire.resonator && !wire.feedsABridge) || wire.resonatorBeyondBridge;
   }
 
   /// How long a resonator's way has to be, in cells: `meander_length` in the
   /// outer routing and the target length once the coupler is in, each less
   /// the run from the cell the way ends on to the port itself, which the
   /// wire covers without cells of its own.
-  [[nodiscard]] double requiredLength(const Wire& wire) const {
+  ///
+  /// In the outer routing the coupler is still to come, and it is spliced
+  /// where what is left to the qubit is `leftAtCoupler`, inside the coupler
+  /// box (`couplerPlace`). A way that carries its length outside the box is
+  /// cut there short of it. So the way has to carry what the coupler leaves
+  /// from where it enters the box (`couplerEntry`), and whatever runs before
+  /// that comes on top.
+  [[nodiscard]] double requiredLength(const Wire& wire, const Path& way) const {
     const auto figure = exact_ ? tuning_.targetLength : tuning_.meanderLength;
-    return std::max(0.0, figure - wire.anchorGap);
+    const auto whole = std::max(0.0, figure - wire.anchorGap);
+    if (exact_ || !wire.resonator || wire.feedsABridge) {
+      return whole;
+    }
+    const auto entry = couplerEntry(way);
+    if (!entry.has_value()) {
+      return whole;
+    }
+    return std::max(whole, entry->lengthAt + leftAtCoupler(wire));
+  }
+
+  /// What the way of a resonator measures from its coupler to the qubit once
+  /// the coupler is in, in cells: `target_resonator_length` times the bias,
+  /// less the run to the port and the lead the component leaves the pad on.
+  [[nodiscard]] double leftAtCoupler(const Wire& resonator) const {
+    const double target =
+        std::max(0.0, tuning_.targetLength - resonator.anchorGap);
+    // The component's own lead runs in front of what is left, so the place
+    // is the point where the lead **and** the rest together come to the
+    // figure. Without this the way left is the target and the lead — a
+    // quarter turn and fourteen cells, about 290 layout units — sits on top
+    // of it: on 21q every resonator came out at 2746 to 2805 against a
+    // target of 2500, over by exactly the lead, and nothing downstream
+    // shortens a way.
+    return std::max(0.0, (target * tuning_.couplerBias) - leadLength());
+  }
+
+  /// Where a way first comes to a cell a coupler may be centred on, and the
+  /// rendered length of the way up to there, in cells.
+  struct CouplerEntry {
+    std::size_t index = 0;
+    double lengthAt = 0.0;
+  };
+
+  /// The first cell of a way that lies far enough inside the coupler box
+  /// for a coupler centred on it to keep its ports, their runs and its body
+  /// inside, in any orientation: `coupler_box_margin_cells`, half the pad's
+  /// run and the run off a port along it, half its depth across.
+  [[nodiscard]] std::optional<CouplerEntry>
+  couplerEntry(const Path& way) const {
+    // A box narrower than one resonator's length has no room for a meander
+    // behind the entry, and on such a chip the meander goes where it fits.
+    if (way.size() < 2 || couplerBox_.empty() ||
+        static_cast<double>(std::min(couplerBox_.maxX - couplerBox_.minX,
+                                     couplerBox_.maxY - couplerBox_.minY)) <
+            tuning_.targetLength) {
+      return std::nullopt;
+    }
+    const auto inset =
+        tuning_.couplerBoxMargin +
+        static_cast<std::int64_t>(cellsOn(tuning_.couplerLength, 0) / 2) +
+        edgeRunOffPort() +
+        static_cast<std::int64_t>(cellsOn(tuning_.couplerHeight, 0) / 2) + 1;
+    Path copy = way;
+    std::vector<routing::PathSegment> segments;
+    std::ignore =
+        routing::samplePath(*primitives_, copy, copy.front(), segments);
+    std::size_t cursor = 0;
+    for (const auto& segment : segments) {
+      for (std::size_t i = 0; i < segment.cells.size(); ++i) {
+        const auto& cell = segment.cells[i];
+        while (cursor < way.size() && !(way[cursor] == cell)) {
+          ++cursor;
+        }
+        if (cursor >= way.size()) {
+          return std::nullopt;
+        }
+        if (couplerBox_.holds(cell.x, cell.y, inset)) {
+          return CouplerEntry{.index = cursor, .lengthAt = segment.lengthAt[i]};
+        }
+      }
+    }
+    return std::nullopt;
   }
 
   /// The figure a resonator is measured against, in layout units, and the
@@ -1551,56 +1660,83 @@ public:
   };
 
   /// Lengthen a resonator's way to what it needs: the prototype's meander
-  /// insertion, the first placement that fits in phase 1 and the cheapest by
-  /// the search's own price field in the relaxation and the refinement. The
-  /// meander may enter what the search could enter — the band less the
-  /// fence — and nothing else, so it cannot cross a neighbour the way itself
-  /// could not.
+  /// insertion, the cheapest placement by the search's own price field and
+  /// `MEANDER_BEND_PRICE` per direction change, as the prototype's strict
+  /// insertion takes it. The meander may enter what the search could
+  /// enter — the band less the fence — and nothing else, so it cannot cross
+  /// a neighbour the way itself could not.
   /// @param band How wide the length band is, as a multiple of
   ///   `resonator_length_tolerance`: one in the refinement, which aims at
   ///   the length itself, and `sweepLengthBand` in the sweep, which aims
   ///   roughly. See `sweepLengthBand`.
   [[nodiscard]] Lengthened lengthen(const Wire& wire, Path& way,
-                                    const bool priced,
                                     const double band = 1.0) {
-    const auto required = requiredLength(wire);
-    // The obstacles stand still for the whole insertion, so what one strip
-    // learns of the cells beside a straight serves every other strip.
-    routing::DubinsRouter::FreeStripMemo strips;
+    const auto required = requiredLength(wire, way);
     routing::MeanderOptions options{.width = scene_.router.width,
                                     .height = scene_.router.height,
                                     .box = {.minX = 0,
                                             .maxX = scene_.router.width - 1,
                                             .minY = 0,
-                                            .maxY = scene_.router.height - 1}};
+                                            .maxY = scene_.router.height - 1},
+                                    .minStraightLength =
+                                        tuning_.meanderLegSpacing};
+    // Before the coupler is in, the meander goes where the coupler keeps
+    // it: inside the coupler box and behind the cell the way enters it on,
+    // for the coupler is spliced there and what lies before it is cut off.
+    // See `requiredLength`.
+    const auto entry = exact_ || !wire.resonator || wire.feedsABridge
+                           ? std::optional<CouplerEntry>{}
+                           : couplerEntry(way);
+    // The entry cell itself stays where it is, so that the way with its
+    // meander enters the box on the same cell and is measured against the
+    // same length.
+    if (entry.has_value()) {
+      options.keepBefore = entry->index + 1;
+    }
     if (exact_) {
       // The prototype's strict insertion: the length exactly, within the
-      // rule's tolerance, in the widest free strip along the pair, and
-      // never in the run the resonator couples along.
+      // rule's tolerance, and never in the lead the resonator leaves its
+      // coupler on.
+      //
+      // The prototype also holds each pair to the widest free strip along
+      // it, because its depth comes from that strip's height. Here every
+      // cell of a meander is tested against the corridor and the spliced
+      // way against itself, and the strip only took room away: it ends at
+      // the two cells of the pair, so a meander could not reach past them.
       options.exact = true;
       options.tolerance = band * tuning_.lengthTolerance;
       options.startMargin = tuning_.meanderStartMargin;
-      options.minStraightLength = tuning_.meanderLegSpacing;
-      options.boxFor = [this, &strips](const PathPoint& a, const PathPoint& b) {
-        return router_.freeStripAlong(a, b, strips);
-      };
     }
-    const auto enterable = [this](const std::uint32_t x,
-                                  const std::uint32_t y) {
+    // Before the coupler is in, a resonator's meander stays inside the
+    // coupler box when its way reaches the box far enough for a coupler.
+    // A way that never does leaves the coupler no place inside the box in
+    // any case, and a chip whose box is that small keeps its meanders
+    // where they fit.
+    const bool inBox = entry.has_value();
+    const auto enterable = [this, inBox](const std::uint32_t x,
+                                         const std::uint32_t y) {
+      if (inBox && !couplerBox_.holds(x, y, tuning_.couplerBoxMargin)) {
+        return false;
+      }
       return x < scene_.router.width && y < scene_.router.height &&
              !corridor_.testCell(x, y);
     };
-    routing::CellPrice price;
-    if (priced) {
-      price = [this](const std::uint32_t x, const std::uint32_t y) {
-        const auto cell =
-            (static_cast<std::size_t>(y) * scene_.router.width) + x;
-        return static_cast<std::uint32_t>(router_.staticPenalty(cell)) +
-               proximity_[cell];
-      };
-    }
+    options.bendPrice = MEANDER_BEND_PRICE;
+    const routing::CellPrice price = [this](const std::uint32_t x,
+                                            const std::uint32_t y) {
+      const auto cell = (static_cast<std::size_t>(y) * scene_.router.width) + x;
+      return static_cast<std::uint32_t>(router_.staticPenalty(cell)) +
+             proximity_[cell];
+    };
     const auto made = routing::insertMeander(*primitives_, way, required,
                                              enterable, options, price);
+    if (made.inserted) {
+      auto& kept = meanders_[wire.key];
+      kept.emplace_back(way, made.meander);
+      if (kept.size() > 4) {
+        kept.erase(kept.begin());
+      }
+    }
     Lengthened result{.reached = made.reached, .tooLong = made.tooLong};
     if (made.tooLong) {
       result.note =
@@ -1916,7 +2052,7 @@ public:
       }
       place(wire);
       const auto length = needsLength(wire) ? lengthOf(wire.way) : 0.0;
-      const auto required = requiredLength(wire);
+      const auto required = requiredLength(wire, wire.way);
       const auto tolerance = exact_ ? tuning_.lengthTolerance : 0.0;
       wire.tooShort = needsLength(wire) && length < required - tolerance;
       wire.tooLong =
@@ -2278,7 +2414,7 @@ public:
     double longest = 0.0;
     for (const auto member : members) {
       const auto& wire = wires[member];
-      if (!wire.resonator || !wire.feasible) {
+      if (!carriesLength(wire) || !wire.feasible) {
         continue;
       }
       ++resonators;
@@ -2376,6 +2512,19 @@ public:
     const auto loud = std::exchange(report_, Report{});
     const auto fails = failsOf(wires, members);
     report_ = loud;
+    // Which resonators are off their length at the end of the phase, and by
+    // how much, so that a phase is read by wire and not only by its count.
+    if (report_.wants(Detail::Items)) {
+      for (const auto key : members) {
+        const auto& wire = wires[key];
+        if (wire.tooShort || wire.tooLong) {
+          say(std::format("  {} is {} at the end of {}: {:.0f} of {:.0f} cells",
+                          wireId(wire), wire.tooShort ? "short" : "long",
+                          PHASES[phase], lengthOf(wire.way),
+                          requiredLength(wire, wire.way)));
+        }
+      }
+    }
     const auto total = static_cast<std::uint32_t>(members.size());
     switch (phase) {
     case 0:
@@ -2523,7 +2672,7 @@ public:
           std::string said;
           bool reached = true;
           if (!found.empty()) {
-            const auto made = lengthen(wire, found, true);
+            const auto made = lengthen(wire, found);
             said = made.note;
             note = " · " + said;
             reached = made.reached;
@@ -2549,7 +2698,7 @@ public:
             std::string saidAgain("no way");
             bool reachedAgain = false;
             if (!again.empty()) {
-              const auto made = lengthen(wire, again, true);
+              const auto made = lengthen(wire, again);
               saidAgain = made.note;
               reachedAgain = made.reached;
             }
@@ -2859,6 +3008,7 @@ public:
     bodies_ = grid::BitGrid(scene_.router.width, scene_.router.height);
     aimAtTarget(true);
     couplerBox_ = couplerBoxOf();
+    closeMeanders(wires);
     say(std::format(
         "couplers sit inside x {}..{} y {}..{}, which is what the "
         "launcher stubs leave open at a run of {} cells inflated "
@@ -3299,8 +3449,8 @@ public:
         place(wire);
       }
       tell(std::format(
-          "coupler insertion: edge f{} chain {} ({}->{}): {}", wire.slot,
-          edge.chain, edge.from, edge.to,
+          "coupler insertion: edge f{} chain {} ({}->{}{}): {}", wire.slot,
+          edge.chain, edge.from, edge.to, wire.terminal ? ", terminal" : "",
           wire.drawn ? std::format(
                            "{} cells, angle {}{}", wire.way.size(),
                            angleCostOf(wire.way, wire.objective.target.heading),
@@ -3639,6 +3789,53 @@ public:
     return false;
   }
 
+  /// Close the box of every meander a resonator's way carries, grown by the
+  /// wire clearance, to the feedline edges of the coupler insertion: an edge
+  /// that runs into a meander's box takes the room the meander needs, and
+  /// the resonator then loses its length when it is drawn again.
+  void closeMeanders(const std::vector<Wire>& wires) {
+    meanderKeepout_ = grid::BitGrid(scene_.router.width, scene_.router.height);
+    const auto grow = static_cast<std::int64_t>(tuning_.clearance);
+    const auto w = static_cast<std::int64_t>(scene_.router.width);
+    const auto h = static_cast<std::int64_t>(scene_.router.height);
+    std::uint32_t boxes = 0;
+    std::uint64_t cells = 0;
+    for (const auto& wire : wires) {
+      if (!carriesLength(wire) || !wire.drawn) {
+        continue;
+      }
+      const auto found = meanders_.find(wire.key);
+      if (found == meanders_.end()) {
+        continue;
+      }
+      for (const auto& [way, box] : found->second) {
+        if (way != wire.way || box.maxX < box.minX) {
+          continue;
+        }
+        ++boxes;
+        // Never past the coupler box: what lies outside it is the room the
+        // feedline edges need in front of the launchers.
+        const auto lowY =
+            std::max({std::int64_t{0}, box.minY - grow, couplerBox_.minY});
+        const auto highY = std::min({h - 1, box.maxY + grow, couplerBox_.maxY});
+        const auto lowX =
+            std::max({std::int64_t{0}, box.minX - grow, couplerBox_.minX});
+        const auto highX = std::min({w - 1, box.maxX + grow, couplerBox_.maxX});
+        for (auto y = lowY; y <= highY; ++y) {
+          for (auto x = lowX; x <= highX; ++x) {
+            const auto cell = static_cast<std::size_t>((y * w) + x);
+            cells += meanderKeepout_.test(cell) ? 0 : 1;
+            meanderKeepout_.set(cell, true);
+          }
+        }
+        break;
+      }
+    }
+    say(std::format("the feedline edges keep clear of {} meander boxes, "
+                    "grown by the clearance of {} cells: {} cells",
+                    boxes, tuning_.clearance, cells));
+  }
+
   /// The rectangle the launcher stubs leave open, from the scene's launchers.
   [[nodiscard]] CouplerBox couplerBoxOf() const {
     CouplerBox box{.minX = 0,
@@ -3727,17 +3924,7 @@ public:
       return {};
     }
     const auto overall = segmented.segments.back().lengthAt.back();
-    const double target =
-        std::max(0.0, tuning_.targetLength - resonator.anchorGap);
-    // The component's own lead runs in front of what is left, so the place
-    // is the point where the lead **and** the rest together come to the
-    // figure. Without this the way left is the target and the lead — a
-    // quarter turn and fourteen cells, about 290 layout units — sits on top
-    // of it: on 21q every resonator came out at 2746 to 2805 against a
-    // target of 2500, over by exactly the lead, and nothing downstream
-    // shortens a way.
-    const double wanted =
-        std::max(0.0, (target * tuning_.couplerBias) - leadLength());
+    const double wanted = leftAtCoupler(resonator);
     // Where each cell of the way sits, so a cell of a segment can be named as
     // an index into the way again.
     std::unordered_map<std::uint64_t, std::size_t> indexOf;
@@ -3907,7 +4094,6 @@ public:
     return std::max(COUPLER_LEAD_STRAIGHT, tuning_.straightStart) +
            tuning_.couplerLeadMargin;
   }
-  static constexpr std::uint32_t COUPLER_LEAD_STRAIGHT = 14;
 
   /// How many corners of a way no primitive could have made: two cells in a
   /// row whose headings are more than one eighth apart. A way the router
@@ -4140,41 +4326,45 @@ public:
                  resonator.way.end());
       option.way = std::move(way);
     }
-    // What is left runs to the qubit. Only an overshoot is refused: nothing
-    // spliced in later makes a way shorter, while a way short of the figure
-    // is what the meander is for, and is priced by how much it has to add.
-    const double target =
-        std::max(0.0, tuning_.targetLength - resonator.anchorGap);
-    // The resonator measures the lead as well as what is left, as the
-    // shortfall test below says; without the lead a place up to one lead
-    // too long passed.
-    const auto left = lengthOf(option.way);
-    if (left + leadLength() > target + tuning_.lengthTolerance) {
-      return refuse("what is left of the way is longer than the target");
-    }
-    // **And it may not be far shorter either.**
-    //
-    // The figure to hold against is what the resonator will actually
-    // measure: the lead the component leaves the pad on, what is left to the
-    // qubit, and the run from the last cell to the port. `left` is the
-    // middle term alone — the lead is spliced on at the end of this function
-    // — so the lead has to be added back, and it matters that it is: it is
-    // an absolute length, about 290 layout units, which is a twentieth of a
-    // 6000-unit target and an eighth of a 2500-unit one. Measured without
-    // it, the same share would refuse on the small chips the very place
-    // `couplerPlace` aims at.
-    const auto whole = left + leadLength() + resonator.anchorGap;
-    const auto least =
-        tuning_.targetLength * (1.0 - tuning_.couplerMaxShortfall);
-    if (whole < least) {
-      return refuse(std::format(
-          "what is left of the resonator is {:.0f} against a target of "
-          "{:.0f}, past the {:.0f}% a coupler may take off",
-          whole, tuning_.targetLength, tuning_.couplerMaxShortfall * 100.0));
-    }
-    if (left < target - tuning_.lengthTolerance) {
-      option.guarded +=
-          static_cast<std::uint32_t>(target - tuning_.lengthTolerance - left);
+    // A resonator that only feeds a bridge has no length to hold, so no
+    // place is refused for what is left of it.
+    if (!resonator.feedsABridge) {
+      // What is left runs to the qubit. Only an overshoot is refused: nothing
+      // spliced in later makes a way shorter, while a way short of the figure
+      // is what the meander is for, and is priced by how much it has to add.
+      const double target =
+          std::max(0.0, tuning_.targetLength - resonator.anchorGap);
+      // The resonator measures the lead as well as what is left, as the
+      // shortfall test below says; without the lead a place up to one lead
+      // too long passed.
+      const auto left = lengthOf(option.way);
+      if (left + leadLength() > target + tuning_.lengthTolerance) {
+        return refuse("what is left of the way is longer than the target");
+      }
+      // **And it may not be far shorter either.**
+      //
+      // The figure to hold against is what the resonator will actually
+      // measure: the lead the component leaves the pad on, what is left to the
+      // qubit, and the run from the last cell to the port. `left` is the
+      // middle term alone — the lead is spliced on at the end of this function
+      // — so the lead has to be added back, and it matters that it is: it is
+      // an absolute length, about 290 layout units, which is a twentieth of a
+      // 6000-unit target and an eighth of a 2500-unit one. Measured without
+      // it, the same share would refuse on the small chips the very place
+      // `couplerPlace` aims at.
+      const auto whole = left + leadLength() + resonator.anchorGap;
+      const auto least =
+          tuning_.targetLength * (1.0 - tuning_.couplerMaxShortfall);
+      if (whole < least) {
+        return refuse(std::format(
+            "what is left of the resonator is {:.0f} against a target of "
+            "{:.0f}, past the {:.0f}% a coupler may take off",
+            whole, tuning_.targetLength, tuning_.couplerMaxShortfall * 100.0));
+      }
+      if (left < target - tuning_.lengthTolerance) {
+        option.guarded +=
+            static_cast<std::uint32_t>(target - tuning_.lengthTolerance - left);
+      }
     }
 
     // Where the whole lead ends, as an offset from the port: the first
@@ -4839,6 +5029,20 @@ public:
       // a loop that already walks the grid, against two more walks of it.
       const grid::BitGrid* foreign =
           foreignRoom_.empty() ? nullptr : &foreignRoom_;
+      // The meanders' boxes, but around the edge's own two ends: an edge
+      // reaches its coupler however near the coupler sits to a meander.
+      const grid::BitGrid* meanders =
+          meanderKeepout_.empty() ? nullptr : &meanderKeepout_;
+      const auto around =
+          couplerReach() + static_cast<double>(tuning_.clearance);
+      const auto nearAnEnd = [&](const std::int64_t x, const std::int64_t y) {
+        return std::hypot(static_cast<double>(x) - objective.source.x,
+                          static_cast<double>(y) - objective.source.y) <=
+                   around ||
+               std::hypot(static_cast<double>(x) - objective.target.x,
+                          static_cast<double>(y) - objective.target.y) <=
+                   around;
+      };
       // The coupler box, for an edge between two couplers.
       const bool inBox = !edge.terminal && !couplerBox_.empty();
       // Everything outside the box closed a word at a time; the cells
@@ -4854,7 +5058,9 @@ public:
         for (std::int64_t x = box_.minX; x <= box_.maxX; ++x) {
           const auto cell = row(y, x);
           if ((inBox && !couplerBox_.holds(x, y)) || bodies_.test(cell) ||
-              (foreign != nullptr && foreign->test(cell))) {
+              (foreign != nullptr && foreign->test(cell)) ||
+              (meanders != nullptr && meanders->test(cell) &&
+               !nearAnEnd(x, y))) {
             corridor_.set(cell, true);
           }
         }
@@ -7299,9 +7505,80 @@ public:
   /// the longer. `mouthsFrom` and `slotsFrom` move to where the mouths and
   /// the slots start among the gates that stay; one past the end stays
   /// past the end.
+  /// Gives gates whose ends lie within a cell and a half of each other one
+  /// end: the end of the gate that ranks first (slot, then mouth, then cut;
+  /// the shorter within a rank). Such gates start at one place, as a fan
+  /// from one tip does, and `uncrossedBottlenecks` keeps them both; ends a
+  /// cell apart would make two lines at a shallow angle cross a few cells
+  /// in, and the sliver between them would let a way pass the narrower one
+  /// (21q: the mouth line from f15's coupler and the cut from the run of 38
+  /// at the run of f16's coupler). `counts` holds how many of `gates` are
+  /// cuts, mouths and slots, in that order.
+  void snapSharedEnds(std::vector<grid::Bottleneck>& gates,
+                      const std::array<std::size_t, 3>& counts,
+                      const Walls& walls) const {
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    const auto xOf = [&](const std::size_t cell) {
+      return static_cast<double>(static_cast<std::int64_t>(cell) % width);
+    };
+    const auto yOf = [&](const std::size_t cell) {
+      return static_cast<double>(static_cast<std::int64_t>(cell) / width);
+    };
+    const auto rankOf = [&](const std::size_t index) {
+      return index >= counts[0] + counts[1] ? 2U : index >= counts[0] ? 1U : 0U;
+    };
+    const auto lengthOf = [&](const grid::Bottleneck& gate) {
+      return std::hypot(xOf(gate.second) - xOf(gate.first),
+                        yOf(gate.second) - yOf(gate.first));
+    };
+    std::vector<std::size_t> order(gates.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    std::ranges::stable_sort(order,
+                             [&](const std::size_t i, const std::size_t j) {
+                               if (rankOf(i) != rankOf(j)) {
+                                 return rankOf(i) > rankOf(j);
+                               }
+                               return lengthOf(gates[i]) < lengthOf(gates[j]);
+                             });
+    // Whether the line between two cells crosses no wall between its ends.
+    const auto free = [&](const std::size_t from, const std::size_t to) {
+      const auto cells =
+          grid::lineCells(static_cast<std::int64_t>(xOf(from)),
+                          static_cast<std::int64_t>(yOf(from)),
+                          static_cast<std::int64_t>(xOf(to)),
+                          static_cast<std::int64_t>(yOf(to)),
+                          scene_.router.width, scene_.router.height);
+      for (std::size_t k = 1; k + 1 < cells.size(); ++k) {
+        if (walls.of[cells[k]] != NO_OWNER) {
+          return false;
+        }
+      }
+      return true;
+    };
+    constexpr double SHARED = 1.5;
+    std::vector<std::size_t> ends;
+    for (const auto index : order) {
+      auto& gate = gates[index];
+      for (auto* end : {&gate.first, &gate.second}) {
+        const auto far = end == &gate.first ? gate.second : gate.first;
+        for (const auto other : ends) {
+          if (other != *end &&
+              std::hypot(xOf(other) - xOf(*end), yOf(other) - yOf(*end)) <
+                  SHARED &&
+              free(other, far)) {
+            *end = other;
+            break;
+          }
+        }
+      }
+      ends.push_back(gate.first);
+      ends.push_back(gate.second);
+    }
+  }
+
   void dropCrossingGates(std::vector<grid::Bottleneck>& gates,
-                         std::size_t& mouthsFrom,
-                         std::size_t& slotsFrom) const {
+                         std::size_t& mouthsFrom, std::size_t& slotsFrom,
+                         const Walls& walls) const {
     std::vector<std::uint32_t> rank(gates.size());
     for (std::size_t index = 0; index < gates.size(); ++index) {
       rank[index] = index >= slotsFrom ? 2U : index >= mouthsFrom ? 1U : 0U;
@@ -7317,6 +7594,7 @@ public:
         ++counts[rank[index]];
       }
     }
+    snapSharedEnds(kept, counts, walls);
     if (mouthsFrom <= gates.size()) {
       mouthsFrom = counts[0];
     }
@@ -7464,7 +7742,7 @@ public:
     for (const auto& slot : slotGates(wires, edges_, walls)) {
       gates.push_back(slot);
     }
-    dropCrossingGates(gates, mouthsFrom, slotsFrom);
+    dropCrossingGates(gates, mouthsFrom, slotsFrom, walls);
     lap("profiles");
 
     std::vector<MeasuredBottleneck> measured;
@@ -8961,14 +9239,25 @@ public:
     auto fast = std::make_shared<FastCapacity>();
     grid::BitGrid inside(scene_.router.width, scene_.router.height);
     grid::BitGrid outside(scene_.router.width, scene_.router.height);
+    // The fields hold the static walls alone: the artwork inside, the
+    // border outside. The search walks every other wall as dynamic and
+    // takes no field cell of one as a partner, so such a cell would only
+    // hide the static wall behind it: a target run at the tip of a lead hid
+    // that lead from the coupler run beside it (21q, the lead of Qb20 and
+    // the run of f16 at its coupler).
     for (std::size_t cell = 0; cell < walls.of.size(); ++cell) {
       if (walls.of[cell] == NO_OWNER) {
         continue;
       }
       const auto& wall = walls.list[walls.of[cell]];
-      const bool in = wall.kind == WallKind::Artwork ||
-                      (wall.kind == WallKind::Stub && wall.target);
-      (in ? inside : outside).set(cell);
+      if (wall.lead) {
+        continue;
+      }
+      if (wall.kind == WallKind::Artwork) {
+        inside.set(cell);
+      } else if (wall.kind == WallKind::Border) {
+        outside.set(cell);
+      }
     }
     fast->inside = grid::nearestBlocked(inside);
     fast->outside = grid::nearestBlocked(outside);
@@ -9167,7 +9456,7 @@ public:
         pass.gates.push_back(slot);
       }
     }
-    dropCrossingGates(pass.gates, pass.mouthsFrom, pass.slotsFrom);
+    dropCrossingGates(pass.gates, pass.mouthsFrom, pass.slotsFrom, pass.walls);
     lap();
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     std::vector<MeasuredBottleneck> measured;
@@ -9360,8 +9649,9 @@ public:
     /// Over every feedline of every run: SAT and clean, SAT and failing,
     /// UNSAT and clean, UNSAT and failing.
     std::array<std::uint32_t, 4> whole{};
-    /// Per feedline its wires (`feedlineWindow`), by key and by name, and
-    /// what the slot check and the rip-up said of the chip as it began.
+    /// Per feedline its wires (`feedlineWindow`) and the free wires beside
+    /// it (`freeWiresBeside`), by key and by name, and what the slot check
+    /// and the rip-up said of the chip as it began.
     std::vector<std::set<std::uint32_t>> windows;
     std::vector<std::set<std::string>> windowNames;
     std::vector<bool> baseSat;
@@ -11081,7 +11371,7 @@ public:
       std::uint32_t sat = 0;
       std::chrono::duration<double> checking{0};
       const auto chainBegan = std::chrono::steady_clock::now();
-      const auto own = chainWires(before, chain);
+      const auto own = localCheckWires(before, chain);
       const std::vector<bool> every(chains, true);
       std::vector<bool> only(chains, false);
       only[chain] = true;
@@ -11147,10 +11437,12 @@ public:
           // Two local checks; a state either finds SAT is kept. First as the
           // comparison of the local check with the rip-up makes it
           // (`slotCheckNow`): every other chain standing as the commit left
-          // it, the terminal edges as wires, and only the chain's own wires
-          // and terminal edges routed and judged. Such a state can stand on
-          // its own. Then with the chain alone, its own wires routed: such a
-          // state may need its neighbours to move as well.
+          // it, the terminal edges as wires, and only the chain's own wires,
+          // the free wires beside them and its terminal edges routed and
+          // judged. Such a
+          // state can stand on its own. Then with the chain alone, its own
+          // wires and the free wires beside them routed: such a state may
+          // need its neighbours to move as well.
           auto state = stateOf(before, every, chain, &options, &paths);
           state.terminalsAsWires = true;
           std::set<std::string> judged = own;
@@ -11793,7 +12085,7 @@ public:
       report_.progress("coupler insertion", std::format("chain {}", chain + 1),
                        chain, chains_.size());
       soloChain_ = chain;
-      const auto own = chainWires(wires, chain);
+      const auto own = localCheckWires(wires, chain);
       localWires_ = &own;
       stepSettled_ = tuning_.capacityCheck ? &none : nullptr;
       stepRefuses_ = tuning_.capacityCheck;
@@ -11860,6 +12152,70 @@ public:
         tuning_.capacityCheck ? ", each checked against itself alone" : "",
         faults, faults == 1 ? "" : "s"));
     return settled;
+  }
+
+  /// The free wires beside every feedline, by name. A free wire is a ring
+  /// wire that belongs to no feedline (`owned`, per chain). It joins the
+  /// feedlines that own the nearest owned ring wire before it and the
+  /// nearest after it, so the free wires in the ring between two feedlines
+  /// join both. No feedline's check would judge them otherwise, and a
+  /// feedline could take the room they need unseen.
+  [[nodiscard]] std::vector<std::set<std::string>>
+  freeWiresBeside(const std::vector<Wire>& wires,
+                  const std::vector<std::set<std::string>>& owned) const {
+    const auto total = ring_.size();
+    std::vector<std::string> names(total);
+    std::vector<std::vector<std::uint32_t>> owners(total);
+    bool any = false;
+    for (std::size_t at = 0; at < total; ++at) {
+      if (ring_[at] >= wires.size()) {
+        continue;
+      }
+      names[at] = wireId(wires[ring_[at]]);
+      for (std::uint32_t chain = 0; chain < owned.size(); ++chain) {
+        if (owned[chain].contains(names[at])) {
+          owners[at].push_back(chain);
+          any = true;
+        }
+      }
+    }
+    std::vector<std::set<std::string>> beside(owned.size());
+    if (!any) {
+      return beside;
+    }
+    for (std::size_t at = 0; at < total; ++at) {
+      if (names[at].empty() || !owners[at].empty()) {
+        continue;
+      }
+      for (const std::size_t back : {std::size_t{1}, total - 1}) {
+        for (std::size_t step = 1, next = (at + back) % total; step < total;
+             ++step, next = (next + back) % total) {
+          if (!owners[next].empty()) {
+            for (const auto chain : owners[next]) {
+              beside[chain].insert(names[at]);
+            }
+            break;
+          }
+        }
+      }
+    }
+    return beside;
+  }
+
+  /// The wires a local check of one chain routes and judges: its own
+  /// feedline's (`chainWires`) and the free wires beside it
+  /// (`freeWiresBeside`).
+  [[nodiscard]] std::set<std::string>
+  localCheckWires(const std::vector<Wire>& wires,
+                  const std::uint32_t chain) const {
+    std::vector<std::set<std::string>> owned;
+    owned.reserve(chains_.size());
+    for (std::uint32_t other = 0; other < chains_.size(); ++other) {
+      owned.push_back(chainWires(wires, other));
+    }
+    auto names = std::move(owned[chain]);
+    names.merge(freeWiresBeside(wires, owned)[chain]);
+    return names;
   }
 
   /// The wires of one chain's feedline in the insertion, by name: for a
@@ -12106,8 +12462,9 @@ public:
         auto& graph = scratchGraph_;
         fillSlotGraphOfPass(graph, state.wires, pass, true);
         if (localWires_ != nullptr) {
-          // The wires of the chain's feedline alone, and every terminal
-          // edge, which names the mouths between the chains.
+          // The wires of the chain's feedline and the free wires beside it
+          // alone (`localCheckWires`), and every terminal edge, which names
+          // the mouths between the chains.
           std::erase_if(graph.wires, [&](const SlotGraph::Wire& wire) {
             return !wire.terminal && !localWires_->contains(wire.name);
           });
@@ -12566,7 +12923,7 @@ public:
       std::vector<bool> only(chains_.size(), false);
       only[chain] = true;
       const auto alone = stateOf(before, only);
-      const auto own = chainWires(before, chain);
+      const auto own = localCheckWires(before, chain);
       localWires_ = &own;
       const auto verdict = capacityVerdictOf(alone);
       localWires_ = nullptr;
@@ -14782,6 +15139,23 @@ public:
         agreement_.windowNames[chain].insert(wireId(wires[key]));
       }
     }
+    // The free wires beside each feedline join its window.
+    std::unordered_map<std::string, std::uint32_t> keyOf;
+    for (const auto member : members) {
+      keyOf.emplace(wireId(wires[member]), member);
+    }
+    const auto beside = freeWiresBeside(wires, agreement_.windowNames);
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      if (agreement_.windows[chain].empty()) {
+        continue;
+      }
+      for (const auto& name : beside[chain]) {
+        if (const auto found = keyOf.find(name); found != keyOf.end()) {
+          agreement_.windows[chain].insert(found->second);
+          agreement_.windowNames[chain].insert(name);
+        }
+      }
+    }
     if (const auto checks = slotCheckNow(wires, agreement_.windowNames,
                                          "local agreement: as begun");
         checks.has_value()) {
@@ -15111,9 +15485,9 @@ private:
   /// the wires let go of go back to what they were.
   ///
   /// A resonator's way found is not a way taken until it is long enough.
-  /// The meander goes in after each search, the first placement that fits in
-  /// phase 1 and the cheapest in the relaxation, and a way without room for
-  /// it counts as no way, so the relaxation goes on; when nothing comes of
+  /// The meander goes in after each search, the cheapest placement that
+  /// fits, and a way without room for it counts as no way, so the
+  /// relaxation goes on; when nothing comes of
   /// it the wire keeps that way, short as it is, as the prototype keeps it.
   ///
   /// The rule against every other wire is not what the search keeps. It is
@@ -15136,8 +15510,11 @@ private:
     // of the next one must not show the last one's polygon.
     const bool ripped = wire.ripped;
     wire.ripped = false;
-    if (pass.feedlines && !FORCE_REROUTE && wire.drawn && !ripped &&
-        isLegal(wire, wires)) {
+    std::string broken;
+    const bool holds =
+        pass.feedlines && wire.drawn && !ripped &&
+        isLegal(wire, wires, report_.wants(Detail::Items) ? &broken : nullptr);
+    if (holds && !FORCE_REROUTE) {
       wire.routed = true;
       wire.tooShort = false;
       wire.tooLong = false;
@@ -15147,6 +15524,25 @@ private:
                        forward ? "forward" : "backward"));
       return true;
     }
+    if (!broken.empty()) {
+      tell(std::format("wire {} · round {} {}: its way does not hold, {}",
+                       wireId(wire), frame_.round,
+                       forward ? "forward" : "backward", broken));
+    }
+    // The way a resonator has when it holds every rule, its length
+    // included: the outer routing lays the meander where the coupler keeps
+    // it, so the way the coupler leaves is often at its length already. It
+    // is drawn again all the same, but a way found with no room for a
+    // meander does not replace it.
+    const Path held = holds && lengthensIn(wire) ? wire.way : Path{};
+    // A resonator whose way holds every rule but its length: what the
+    // coupler left is often a little short. When the way found has no room
+    // for a meander, the meander goes into this way instead.
+    const Path shortOf = !holds && pass.feedlines && wire.drawn && !ripped &&
+                                 lengthensIn(wire) &&
+                                 isLegal(wire, wires, nullptr, false)
+                             ? wire.way
+                             : Path{};
 
     // The wire is lifted off the canvas for the length of its own search, so
     // that what is put down afterwards is the one way it has.
@@ -15215,16 +15611,15 @@ private:
     Path plain;
     bool plainTooLong = false;
     std::string note;
-    const auto lengthenFound = [&](const bool priced) {
+    const auto lengthenFound = [&]() {
       note.clear();
       if (!lengthened) {
         return;
       }
       std::string said;
       if (!found.empty()) {
-        const auto made =
-            lengthen(wire, found, priced,
-                     pass.refinement ? 1.0 : tuning_.sweepLengthBand);
+        const auto made = lengthen(
+            wire, found, pass.refinement ? 1.0 : tuning_.sweepLengthBand);
         said = made.note;
         note = " · " + said;
         if (!made.reached) {
@@ -15249,7 +15644,7 @@ private:
       }
       return std::string("no way");
     };
-    lengthenFound(false);
+    lengthenFound();
     if (!found.empty()) {
       tell(std::format("wire {} · {} · normal: {}", id, where, outcome()));
       if (record != nullptr) {
@@ -15275,6 +15670,41 @@ private:
     // the wires it lets go of, and those then find no way back. The wire
     // is tried again in the next round, when the wires around it may have
     // moved.
+    if (found.empty() && !plain.empty() && !held.empty()) {
+      wire.way = held;
+      wire.drawn = true;
+      wire.tooShort = false;
+      wire.tooLong = false;
+      place(wire);
+      wire.routed = true;
+      tell(std::format("wire {} · {}: no room for its meander; keeps the way "
+                       "it had, which holds",
+                       id, where));
+      return true;
+    }
+    if (found.empty() && !plain.empty() && !shortOf.empty()) {
+      Path again = shortOf;
+      const auto made = lengthen(
+          wire, again, pass.refinement ? 1.0 : tuning_.sweepLengthBand);
+      if (made.reached) {
+        const Path had = std::exchange(wire.way, std::move(again));
+        if (isLegal(wire, wires)) {
+          wire.drawn = true;
+          wire.tooShort = false;
+          wire.tooLong = false;
+          place(wire);
+          wire.routed = true;
+          tell(std::format("wire {} · {}: no room for its meander; the way it "
+                           "had takes one · {}",
+                           id, where, made.note));
+          return true;
+        }
+        wire.way = had;
+      }
+      tell(std::format("wire {} · {}: the way it had takes no meander either "
+                       "· {}",
+                       id, where, made.note));
+    }
     if (found.empty() && !plain.empty()) {
       wire.way = std::move(plain);
       wire.drawn = true;
@@ -15377,7 +15807,7 @@ private:
       frame_.ripped.push_back(ripped.key);
       found = search(wire, pass.straightStart, true, !lengthened);
       refuseTheDetour(std::format("relax {}", level));
-      lengthenFound(true);
+      lengthenFound();
       std::string fenced;
       for (const auto key : closed) {
         fenced += (fenced.empty() ? "" : ", ") + wireId(wires[key]);
@@ -15427,7 +15857,7 @@ private:
       frame_.ripped.push_back(behind.key);
       found = search(wire, pass.straightStart, true, !lengthened);
       refuseTheDetour(std::format("relax {}", level));
-      lengthenFound(true);
+      lengthenFound();
       tell(std::format("wire {} · relax {}: let go of {} and {}, both "
                        "neighbours, fence {}, {} · {}",
                        id, level, wireId(behind), wireId(ahead),
@@ -15654,31 +16084,49 @@ private:
   /// Whether the way a wire has holds every rule the pass judges by: the
   /// rule against every other wire, the crossing rule, and the length of a
   /// resonator.
-  [[nodiscard]] bool isLegal(Wire& wire, const std::vector<Wire>& wires) {
-    if (!wire.drawn || wire.way.empty()) {
+  /// @param why Where to say which rule the way breaks, when given.
+  /// @param length Whether a resonator's length is one of the rules.
+  [[nodiscard]] bool isLegal(Wire& wire, const std::vector<Wire>& wires,
+                             std::string* why = nullptr,
+                             const bool length = true) {
+    const auto broken = [why](std::string rule) {
+      if (why != nullptr) {
+        *why = std::move(rule);
+      }
       return false;
+    };
+    if (!wire.drawn || wire.way.empty()) {
+      return broken("it has no way");
     }
     const bool placed = wire.placed;
     lift(wire);
     const bool open =
         conflictsOf(wire, wires) != 0 || crossesItsChain(wire, wires);
+    if (open && why != nullptr) {
+      *why = std::format("it lies in the room of {}", whoBlocks(wire, wires));
+    }
     if (placed) {
       place(wire);
     }
-    if (open || crossesAFeedline(wire, wires) ||
-        (feedlinePass_ &&
-         breaksAFeedlineRule(wire, wire.way,
-                             startStubOf(wire, tuning_.straightStart),
-                             wires))) {
+    if (open) {
       return false;
     }
-    if (needsLength(wire)) {
-      const auto length = lengthOf(wire.way);
-      const auto required = requiredLength(wire);
+    if (crossesAFeedline(wire, wires)) {
+      return broken("it crosses a feedline");
+    }
+    if (feedlinePass_ &&
+        breaksAFeedlineRule(wire, wire.way,
+                            startStubOf(wire, tuning_.straightStart), wires)) {
+      return broken("it breaks a feedline rule");
+    }
+    if (length && needsLength(wire)) {
+      const auto measured = lengthOf(wire.way);
+      const auto required = requiredLength(wire, wire.way);
       const auto tolerance = exact_ ? tuning_.lengthTolerance : 0.0;
-      if (length < required - tolerance ||
-          (exact_ && length > required + tolerance)) {
-        return false;
+      if (measured < required - tolerance ||
+          (exact_ && measured > required + tolerance)) {
+        return broken(std::format("it is {:.0f} cells long against {:.0f}",
+                                  measured, required));
       }
     }
     return true;
@@ -18753,6 +19201,16 @@ private:
   grid::BitGrid approaches_;
   /// The rectangle the launcher stubs leave open, which a coupler sits in.
   CouplerBox couplerBox_;
+  /// The meanders the resonators' ways carry, by wire: the way as it came out
+  /// of the insertion and the box its meander spans, the last few per wire,
+  /// so that a way a refinement went back to still finds its own.
+  std::unordered_map<std::uint32_t,
+                     std::vector<std::pair<Path, routing::CellBox>>>
+      meanders_;
+  /// The cells the feedline edges keep clear of in the coupler insertion:
+  /// the box of every meander a resonator's way carries, grown by the wire
+  /// clearance.
+  grid::BitGrid meanderKeepout_;
   std::vector<Coupler> couplers_;
   /// The coupler of every resonator that has one, by wire key.
   std::unordered_map<std::uint32_t, std::uint32_t> couplerOfWire_;
@@ -18869,6 +19327,10 @@ private:
     if (!place(connection.target.index(), false, wire.objective.target)) {
       wire.feasible = false;
     }
+    wire.feedsABridge = wire.resonator &&
+                        connection.target.index() < chip.ports.size() &&
+                        chip.ports[connection.target.index()]->role ==
+                            fbd::UnassignedRole::BridgePair;
     // A resonator's length runs to the port itself, and the way ends on the
     // cell beyond the port's band, so the gap between the two is part of
     // the length. The port's exact position is in fractional cells, as the
@@ -18903,6 +19365,24 @@ private:
         connection.source != nullptr &&
         place(connection.source->index(), true, wire.objective.source) &&
         place(connection.target.index(), false, wire.objective.target);
+    const auto roleOf = [&chip](const std::uint32_t port) {
+      return port < chip.ports.size() ? chip.ports[port]->role
+                                      : fbd::UnassignedRole::Unset;
+    };
+    wire.resonatorBeyondBridge =
+        connection.source != nullptr &&
+        roleOf(connection.source->index()) == fbd::UnassignedRole::BridgePair &&
+        roleOf(connection.target.index()) == fbd::UnassignedRole::Resonator;
+    // Its length runs to the port itself, as a resonator's does.
+    if (wire.resonatorBeyondBridge && wire.feasible) {
+      const auto exact =
+          scene.router.toCell(chip.ports[connection.target.index()]->center);
+      const auto dx = static_cast<double>(wire.objective.target.x) - exact.x();
+      const auto dy = static_cast<double>(wire.objective.target.y) - exact.y();
+      wire.anchorGap = std::hypot(dx, dy);
+      wire.anchorGapUnits =
+          std::hypot(dx * scene.router.cellWidth, dy * scene.router.cellHeight);
+    }
     wires.push_back(std::move(wire));
   }
   return wires;
@@ -19354,7 +19834,7 @@ public:
       driver.say(std::format("the stage stops after {}, as stop_after asks",
                              PHASES[lastPhase]));
     }
-    driver.sayResonatorLengths(wires, outer);
+    driver.sayResonatorLengths(wires, everyWire());
     const auto fails = driver.failsOf(wires, everyWire());
     driver.reportResult(fails, static_cast<std::uint32_t>(wires.size()));
 

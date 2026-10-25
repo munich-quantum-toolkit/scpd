@@ -439,7 +439,7 @@ def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> Non
     assert config.stages is not None
     assert config.stages.final is not None
     final = config.stages.final
-    assert final.couplerBias == pytest.approx(1.0)
+    assert final.couplerBias == pytest.approx(0.98)
     assert final.couplerMaxShortfall == pytest.approx(0.30)
     assert final.couplerBoxMarginCells == 5
     assert final.couplerShiftCells == 20
