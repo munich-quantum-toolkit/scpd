@@ -465,6 +465,7 @@ class RunDirectory:
         config: ConfigT,
         reporter: Reporter | None = None,
         verbosity: int = 0,
+        debug: Callable[[str, str], None] | None = None,
     ) -> pyscpd.CouplerSession:
         """Run the Final stage up to and with the coupler insertion and keep it.
 
@@ -475,6 +476,9 @@ class RunDirectory:
             config: The run configuration.
             reporter: Where the stage reports what it does, now and on every later call, or None.
             verbosity: How many times -v was given.
+            debug: Called with the kind and the JSON text of every debug record the session makes,
+                from its run to the coupler insertion (the global SAT search included) and from
+                every later call; only of the kinds the ``[debug]`` section asks for.
 
         Returns:
             The session.
@@ -488,6 +492,7 @@ class RunDirectory:
             write_config(config),
             reporter,
             min(max(verbosity, 0), 3),
+            debug,
         )
 
     def invalidate_after(self, stage: str) -> list[Path]:

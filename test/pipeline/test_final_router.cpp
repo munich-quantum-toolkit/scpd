@@ -2620,6 +2620,17 @@ TEST(FinalRouter, RecordsEveryStepCheckForTheLocalSatPage) {
     EXPECT_EQ(verdict == "SAT", step.at("lost").empty());
     EXPECT_TRUE(step.at("closed").is_array());
     EXPECT_TRUE(step.at("refused").is_boolean());
+    // The coupler of every entry of `options`; a fixed waypoint has none
+    // and stays on option 0.
+    const auto& couplers = step.at("couplers");
+    ASSERT_EQ(couplers.size(), step.at("options").size());
+    for (std::size_t at = 0; at < couplers.size(); ++at) {
+      if (couplers[at].is_null()) {
+        EXPECT_EQ(step.at("options")[at].get<std::size_t>(), 0U);
+      } else {
+        EXPECT_TRUE(couplers[at].is_number_unsigned());
+      }
+    }
   }
   for (const auto& [kind, data] : records) {
     EXPECT_EQ(kind, "step-check");
@@ -2642,6 +2653,301 @@ TEST(FinalRouter, RecordsTheGlobalSatSearchForItsPage) {
   for (const auto& [kind, data] : records) {
     EXPECT_EQ(kind, "global-sat");
   }
+}
+
+/// The records a coupler session hands its debug sink while it runs the
+/// Final stage up to and with the coupler insertion.
+Records sessionRecordsOf(const Benchmark& benchmark, const Planned& planned,
+                         std::unique_ptr<CouplerSession>& session) {
+  Records records;
+  session = std::make_unique<CouplerSession>(
+      benchmark.chip, planned.global, planned.assignment, planned.detail,
+      benchmark.config, Report{},
+      [&records](const std::string_view kind, const std::string_view record) {
+        records.emplace_back(kind, nlohmann::json::parse(record));
+      });
+  return records;
+}
+
+/// The global SAT page asks for every chain state the search checks
+/// locally: the committed state of each chain it searches, first, and every
+/// state a segment's runs reach. A record names the chain, the segment, the
+/// options per waypoint, the coupler per waypoint, the couplers it moves off
+/// the committed state, the check that found it SAT and the chain's own
+/// lost wires. The 17-qubit chip is UNSAT after the commit, so its search
+/// runs; the 4- and 9-qubit chips are SAT there. A local check of the
+/// coupler session on the committed options judges as the search did, and
+/// puts the chip back as it stood.
+TEST(CouplerSession, RecordsEveryChainStateTheGlobalSatSearchChecks) {
+  const auto benchmark = withDebugPages(
+      seventeenQubit(), [](auto& debug) { debug.global_sat = true; });
+  const auto planned = plan(benchmark);
+  std::unique_ptr<CouplerSession> session;
+  const auto records = sessionRecordsOf(benchmark, planned, session);
+
+  const auto states = ofKind(records, "chain-state");
+  ASSERT_FALSE(states.empty());
+  const auto events = ofKind(records, "global-sat");
+  ASSERT_FALSE(events.empty());
+  EXPECT_TRUE(events.back().at("searched").get<bool>());
+  std::map<std::size_t, std::size_t> kept;
+  for (const auto& event : events) {
+    if (event.at("event") == "states") {
+      EXPECT_EQ(event.at("options").size(),
+                event.at("states").get<std::size_t>());
+      kept[event.at("chain").get<std::size_t>()] =
+          event.at("states").get<std::size_t>();
+    }
+  }
+  // Every state a combination picks has its options on record, in stage 2
+  // as in stage 1.
+  for (const auto& event : events) {
+    if (event.at("event") != "combination") {
+      continue;
+    }
+    const auto picks = event.at("states").get<std::vector<std::size_t>>();
+    for (std::size_t chain = 0; chain < picks.size(); ++chain) {
+      if (picks[chain] != 0) {
+        ASSERT_TRUE(kept.contains(chain)) << "chain " << chain;
+        EXPECT_LT(picks[chain], kept[chain]) << "chain " << chain;
+      }
+    }
+  }
+  std::map<std::uint32_t, nlohmann::json> committed;
+  for (const auto& state : states) {
+    const auto chain = state.at("chain").get<std::uint32_t>();
+    const auto& options = state.at("options");
+    const auto& couplers = state.at("couplers");
+    ASSERT_EQ(couplers.size(), options.size());
+    const auto check = state.at("check").get<std::string>();
+    EXPECT_TRUE(check == "standing" || check == "alone" || check == "none")
+        << check;
+    EXPECT_EQ(state.at("verdict") == "SAT", check != "none");
+    EXPECT_EQ(check == "standing", state.at("lost").empty());
+    EXPECT_GE(state.at("seconds").get<double>(), 0.0);
+    if (state.at("committed").get<bool>()) {
+      // The committed state comes first and moves nothing.
+      EXPECT_FALSE(committed.contains(chain));
+      EXPECT_TRUE(state.at("segment").is_null());
+      EXPECT_TRUE(state.at("moved").empty());
+      committed[chain] = state;
+      continue;
+    }
+    ASSERT_TRUE(committed.contains(chain));
+    EXPECT_TRUE(state.at("segment").is_number_unsigned());
+    // `moved` names exactly the couplers whose option differs from the
+    // committed state.
+    const auto& from = committed[chain].at("options");
+    std::set<std::uint32_t> differ;
+    for (std::size_t at = 0; at < options.size(); ++at) {
+      if (options[at] != from[at]) {
+        ASSERT_FALSE(couplers[at].is_null());
+        differ.insert(couplers[at].get<std::uint32_t>());
+      }
+    }
+    std::set<std::uint32_t> named;
+    for (const auto& move : state.at("moved")) {
+      named.insert(move.at("coupler").get<std::uint32_t>());
+      EXPECT_NE(move.at("from"), move.at("to"));
+    }
+    EXPECT_EQ(named, differ);
+  }
+  ASSERT_FALSE(committed.empty());
+
+  const auto before = session->chains();
+  for (const auto& [chain, state] : committed) {
+    const auto options = state.at("options").get<std::vector<std::size_t>>();
+    const auto local =
+        nlohmann::json::parse(session->localCheck(chain, options));
+    EXPECT_EQ(local.at("chain").get<std::uint32_t>(), chain);
+    const auto check = state.at("check").get<std::string>();
+    EXPECT_EQ(local.at("standing").at("verdict") == "SAT", check == "standing")
+        << "chain " << chain;
+    EXPECT_EQ(local.at("standing").at("lost"), state.at("lost"));
+    if (check == "alone") {
+      EXPECT_EQ(local.at("alone").at("verdict"), "SAT") << "chain " << chain;
+    }
+    for (const auto* const which : {"standing", "alone"}) {
+      for (const auto* const key : {"raster", "nodes", "edges", "wires"}) {
+        EXPECT_TRUE(local.at(which).at("graph").contains(key)) << key;
+      }
+    }
+  }
+  EXPECT_EQ(session->chains(), before);
+}
+
+/// The search records no chain state when the global SAT page is off,
+/// though it runs.
+TEST(CouplerSession, RecordsNoChainStateWithoutTheGlobalSatPage) {
+  const auto benchmark = withDebugPages(
+      seventeenQubit(), [](auto& debug) { debug.feedline_insertion = true; });
+  const auto planned = plan(benchmark);
+  std::unique_ptr<CouplerSession> session;
+  const auto records = sessionRecordsOf(benchmark, planned, session);
+
+  EXPECT_FALSE(ofKind(records, "coupler-options").empty());
+  EXPECT_TRUE(ofKind(records, "chain-state").empty());
+  EXPECT_TRUE(ofKind(records, "global-sat").empty());
+}
+
+/// A coupler session lists every chain: the coupler of every waypoint, the
+/// option it stands on and the chain's feedline edges. A local check puts
+/// the chain's couplers on other options for the checks only, and refuses a
+/// chain, an option count or an option that does not exist.
+TEST(CouplerSession, ListsTheChainsAndChecksOneLocally) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto chains = nlohmann::json::parse(session.chains()).at("chains");
+  ASSERT_EQ(chains.size(), 1U);
+  const auto& chain = chains.front();
+  EXPECT_EQ(chain.at("chain").get<std::uint32_t>(), 0U);
+  const auto& couplers = chain.at("couplers");
+  const auto options = chain.at("options").get<std::vector<std::size_t>>();
+  ASSERT_EQ(couplers.size(), options.size());
+  EXPECT_EQ(chain.at("edges").size(), options.size() - 1);
+  const auto listed = nlohmann::json::parse(session.couplers()).at("couplers");
+  std::size_t placed = 0;
+  for (std::size_t at = 0; at < options.size(); ++at) {
+    if (couplers[at].is_null()) {
+      EXPECT_EQ(options[at], 0U);
+      continue;
+    }
+    ++placed;
+    for (const auto& coupler : listed) {
+      if (coupler.at("index") == couplers[at]) {
+        EXPECT_EQ(coupler.at("chosen").get<std::size_t>(), options[at]);
+        EXPECT_EQ(coupler.at("at").get<std::size_t>(), at);
+      }
+    }
+  }
+  EXPECT_EQ(placed, listed.size());
+
+  // Another option for the first coupler that has one.
+  auto moved = options;
+  for (const auto& coupler : listed) {
+    if (coupler.at("options").size() > 1) {
+      const auto at = coupler.at("at").get<std::size_t>();
+      moved[at] = options[at] == 0 ? 1 : 0;
+      break;
+    }
+  }
+  ASSERT_NE(moved, options);
+  const auto before = session.chains();
+  const auto local = nlohmann::json::parse(session.localCheck(0, moved));
+  EXPECT_EQ(local.at("options").get<std::vector<std::size_t>>(), moved);
+  EXPECT_TRUE(local.at("undrawn").is_array());
+  for (const auto* const which : {"standing", "alone"}) {
+    const auto verdict = local.at(which).at("verdict").get<std::string>();
+    EXPECT_TRUE(verdict == "SAT" || verdict == "UNSAT") << verdict;
+    EXPECT_TRUE(local.at(which).at("lost").is_array());
+    EXPECT_TRUE(local.at(which).at("graph").contains("wires")) << which;
+  }
+  EXPECT_EQ(local.at("alone").at("verdict") == "SAT",
+            local.at("alone").at("lost").empty());
+  EXPECT_EQ(session.chains(), before);
+
+  EXPECT_THROW(static_cast<void>(session.localCheck(1, options)),
+               std::invalid_argument);
+  auto shorter = options;
+  shorter.pop_back();
+  EXPECT_THROW(static_cast<void>(session.localCheck(0, shorter)),
+               std::invalid_argument);
+  auto beyond = options;
+  for (std::size_t at = 0; at < options.size(); ++at) {
+    if (!couplers[at].is_null()) {
+      beyond[at] = 1000;
+      break;
+    }
+  }
+  EXPECT_THROW(static_cast<void>(session.localCheck(0, beyond)),
+               std::invalid_argument);
+}
+
+/// A step check of the coupler session rebuilds a step check of the chain
+/// search: on the options of every recorded step it judges the chip the
+/// step judged, the chain alone up to the far end of the step's edge. The
+/// session draws the edges again against the chip as it stands, so its
+/// ways may differ from the search's own; on the steps of the committed
+/// options of the 9-qubit chip they give the recorded verdict. The step
+/// check refuses a chain, a step or options that do not exist, and puts the
+/// chip back as it stood.
+TEST(CouplerSession, RebuildsTheStepChecksOfTheChainSearch) {
+  const auto benchmark =
+      withDebugPages(nineQubit(), [](auto& debug) { debug.local_sat = true; });
+  const auto planned = plan(benchmark);
+  std::unique_ptr<CouplerSession> session;
+  const auto records = sessionRecordsOf(benchmark, planned, session);
+  const auto steps = ofKind(records, "step-check");
+  ASSERT_FALSE(steps.empty());
+
+  const auto before = session->chains();
+  const auto chains = nlohmann::json::parse(before).at("chains");
+  std::size_t onCommit = 0;
+  std::size_t agreeing = 0;
+  for (const auto& recorded : steps) {
+    const auto chain = recorded.at("chain").get<std::uint32_t>();
+    const auto step = recorded.at("step").get<std::size_t>();
+    const auto options = recorded.at("options").get<std::vector<std::size_t>>();
+    const auto rebuilt =
+        nlohmann::json::parse(session->stepCheck(chain, step, options));
+    EXPECT_EQ(rebuilt.at("chain"), recorded.at("chain"));
+    EXPECT_EQ(rebuilt.at("step"), recorded.at("step"));
+    EXPECT_EQ(rebuilt.at("edge"), recorded.at("edge"));
+    EXPECT_EQ(rebuilt.at("options"), recorded.at("options"));
+    EXPECT_EQ(rebuilt.at("verdict") == "SAT", rebuilt.at("lost").empty());
+    EXPECT_TRUE(rebuilt.at("closed").is_array());
+    EXPECT_TRUE(rebuilt.at("undrawn").is_array());
+    EXPECT_TRUE(rebuilt.at("graph").contains("wires"));
+    agreeing += rebuilt.at("verdict") == recorded.at("verdict") ? 1U : 0U;
+    // A step on the committed options: every waypoint up to the far end of
+    // its edge stands where the chain settled.
+    const auto committed =
+        chains.at(chain).at("options").get<std::vector<std::size_t>>();
+    if (std::equal(options.begin(),
+                   options.begin() + static_cast<std::ptrdiff_t>(step + 2),
+                   committed.begin())) {
+      ++onCommit;
+      EXPECT_EQ(rebuilt.at("verdict"), recorded.at("verdict"))
+          << "chain " << chain << " step " << step;
+      EXPECT_EQ(rebuilt.at("lost"), recorded.at("lost"))
+          << "chain " << chain << " step " << step;
+    }
+  }
+  EXPECT_GT(onCommit, 0U);
+  // Most steps off the committed options agree as well.
+  EXPECT_GE(agreeing * 10, steps.size() * 8)
+      << agreeing << " of " << steps.size() << " step checks agree";
+  std::printf("%zu of %zu step checks agree with the chain search\n", agreeing,
+              steps.size());
+  EXPECT_EQ(session->chains(), before);
+
+  const auto& first = steps.front();
+  const auto options = first.at("options").get<std::vector<std::size_t>>();
+  const auto chain = first.at("chain").get<std::uint32_t>();
+  const auto edges = chains.at(chain).at("edges").size();
+  EXPECT_THROW(static_cast<void>(session->stepCheck(
+                   static_cast<std::uint32_t>(chains.size()), 0, options)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(session->stepCheck(chain, edges, options)),
+               std::invalid_argument);
+  auto shorter = options;
+  shorter.pop_back();
+  EXPECT_THROW(static_cast<void>(session->stepCheck(chain, 0, shorter)),
+               std::invalid_argument);
+  auto beyond = options;
+  const auto& couplers = chains.at(chain).at("couplers");
+  for (std::size_t at = 0; at < couplers.size(); ++at) {
+    if (!couplers[at].is_null()) {
+      beyond[at] = 1000;
+      break;
+    }
+  }
+  EXPECT_THROW(static_cast<void>(session->stepCheck(chain, 0, beyond)),
+               std::invalid_argument);
+  EXPECT_EQ(session->chains(), before);
 }
 
 /// The index asks for what every phase came to: one record per phase, in

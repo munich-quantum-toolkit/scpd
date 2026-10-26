@@ -1204,7 +1204,7 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   double obstacle_penalty_reach = 100.0;
   double coupler_length = 200.0;
   double coupler_height = 26.0;
-  uint32_t repair_trials = 100;
+  uint32_t repair_trials = 0;
   uint32_t refinement_corridor_spacings = 6;
   double coupler_bias = 0.98;
   double coupler_max_shortfall = 0.30;
@@ -1414,7 +1414,7 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// of its options while the feedlines leave fails. The prototype's
   /// `max_repair_rounds`. Zero switches the repair off.
   uint32_t repair_trials() const {
-    return GetField<uint32_t>(VT_REPAIR_TRIALS, 100);
+    return GetField<uint32_t>(VT_REPAIR_TRIALS, 0);
   }
   /// The band both refinements may redraw a wire in, in wire spacings, as
   /// `corridor_spacings` is for the sweep. A refinement moves a way that
@@ -1738,7 +1738,7 @@ struct FinalParamsBuilder {
     fbb_.AddElement<double>(FinalParams::VT_COUPLER_HEIGHT, coupler_height, 26.0);
   }
   void add_repair_trials(uint32_t repair_trials) {
-    fbb_.AddElement<uint32_t>(FinalParams::VT_REPAIR_TRIALS, repair_trials, 100);
+    fbb_.AddElement<uint32_t>(FinalParams::VT_REPAIR_TRIALS, repair_trials, 0);
   }
   void add_refinement_corridor_spacings(uint32_t refinement_corridor_spacings) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_REFINEMENT_CORRIDOR_SPACINGS, refinement_corridor_spacings, 6);
@@ -1896,7 +1896,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     double obstacle_penalty_reach = 100.0,
     double coupler_length = 200.0,
     double coupler_height = 26.0,
-    uint32_t repair_trials = 100,
+    uint32_t repair_trials = 0,
     uint32_t refinement_corridor_spacings = 6,
     double coupler_bias = 0.98,
     double coupler_max_shortfall = 0.30,
@@ -2023,7 +2023,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     double obstacle_penalty_reach = 100.0,
     double coupler_length = 200.0,
     double coupler_height = 26.0,
-    uint32_t repair_trials = 100,
+    uint32_t repair_trials = 0,
     uint32_t refinement_corridor_spacings = 6,
     double coupler_bias = 0.98,
     double coupler_max_shortfall = 0.30,

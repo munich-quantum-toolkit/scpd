@@ -299,6 +299,19 @@ mqt::scpd::pipeline::Debug recordTo(const nb::object& debug) {
   };
 }
 
+/// `recordTo` for a coupler session, which calls the callable after the call
+/// that handed it over: the sink holds a copy of the callable and not the
+/// reference `recordTo` takes.
+mqt::scpd::pipeline::Debug keepRecording(const nb::object& debug) {
+  if (debug.is_none()) {
+    return {};
+  }
+  return [debug](const std::string_view kind, const std::string_view record) {
+    debug(nb::str(kind.data(), kind.size()),
+          nb::str(record.data(), record.size()));
+  };
+}
+
 /// The detail routing an artifact carries.
 const mqt::scpd::flatbuffers::artifacts::DetailRoutingT&
 detailOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
@@ -550,7 +563,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
           [](mqt::scpd::pipeline::CouplerSession* self, const nb::bytes& chip,
              const nb::bytes& global, const nb::bytes& assignment,
              const nb::bytes& detail, const nb::bytes& config,
-             const nb::object& reporter, const int verbosity) {
+             const nb::object& reporter, const int verbosity,
+             const nb::object& debug) {
             const auto configuration =
                 mqt::scpd::io::readConfig(asSpan(config));
             const auto design = mqt::scpd::io::readChip(asSpan(chip));
@@ -561,13 +575,16 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
             new (self) mqt::scpd::pipeline::CouplerSession(
                 design, globalOf(circuit), assignmentOf(assigned),
                 detailOf(drawn), configuration,
-                keepReporting(reporter, verbosity));
+                keepReporting(reporter, verbosity), keepRecording(debug));
           },
           "chip"_a, "global_"_a, "assignment"_a, "detail"_a, "config"_a,
-          "reporter"_a = nb::none(), "verbosity"_a = 0,
+          "reporter"_a = nb::none(), "verbosity"_a = 0, "debug"_a = nb::none(),
           "Run the Final stage up to and with the coupler insertion and keep "
           "it. The stage reports through reporter as plan_capacity, now and "
-          "on every later call.")
+          "on every later call. debug, when given, is called with the kind "
+          "and the JSON text of every record the [debug] section of config "
+          "asks for, from this run, the global SAT search included, and from "
+          "every later call.")
       .def("couplers", &mqt::scpd::pipeline::CouplerSession::couplers,
            "The couplers as they stand and every option of each, as JSON.")
       .def("set_option", &mqt::scpd::pipeline::CouplerSession::setOption,
@@ -584,6 +601,26 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
            "graph; under SCPD_SLOT_CHECK (on) the check by crossing slots "
            "gives them, adds over, and keeps the check before as "
            "previousVerdict and previousLost.")
+      .def("local_check", &mqt::scpd::pipeline::CouplerSession::localCheck,
+           "chain"_a, "options"_a,
+           "Run the two local checks of the global SAT search on a chain with "
+           "its couplers on options, one per waypoint (0 at a fixed waypoint), "
+           "then put the couplers back. Returns JSON with chain, options, "
+           "undrawn and, for the checks standing and alone, the verdict, the "
+           "lost wires and the graph judged.")
+      .def("step_check", &mqt::scpd::pipeline::CouplerSession::stepCheck,
+           "chain"_a, "step"_a, "options"_a,
+           "Rebuild the step check of the chain search at edge step of a "
+           "chain with its couplers on options, one per waypoint (0 at a "
+           "fixed waypoint): the chain alone, its couplers up to the far end "
+           "of edge step and its edges 0 to step, drawn as set_option draws "
+           "them; then put the couplers back. Returns JSON with chain, step, "
+           "edge, options, verdict, lost, closed, undrawn and the graph "
+           "judged.")
+      .def("chains", &mqt::scpd::pipeline::CouplerSession::chains,
+           "Every chain as it stands, as JSON: per chain the coupler of every "
+           "waypoint (null at a fixed waypoint), the option every waypoint "
+           "stands on and its feedline edges by name.")
       .def("compare_locally",
            &mqt::scpd::pipeline::CouplerSession::compareLocally, "runs"_a,
            "span"_a,
@@ -601,19 +638,7 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       .def(
           "set_debug",
           [](mqt::scpd::pipeline::CouplerSession& self,
-             const nb::object& debug) {
-            // The session keeps the callable past this call, so it holds a
-            // copy of it and not the reference `recordTo` takes.
-            if (debug.is_none()) {
-              self.setDebug({});
-              return;
-            }
-            self.setDebug([debug](const std::string_view kind,
-                                  const std::string_view record) {
-              debug(nb::str(kind.data(), kind.size()),
-                    nb::str(record.data(), record.size()));
-            });
-          },
+             const nb::object& debug) { self.setDebug(keepRecording(debug)); },
           "debug"_a,
           "Record what the stage does from now on: debug is called with the "
           "kind and the JSON text of every record the [debug] section of "

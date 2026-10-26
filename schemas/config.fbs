@@ -252,7 +252,7 @@ table FinalParams {
   /// How many times the feedline repair may turn a placed coupler to another
   /// of its options while the feedlines leave fails. The prototype's
   /// `max_repair_rounds`. Zero switches the repair off.
-  repair_trials: uint32 = 100;
+  repair_trials: uint32 = 0;
   /// The band both refinements may redraw a wire in, in wire spacings, as
   /// `corridor_spacings` is for the sweep. A refinement moves a way that
   /// already stands, so it needs less room than a search that finds one, and

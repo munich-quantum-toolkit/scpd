@@ -467,6 +467,54 @@ class FakeSession:
         self.lines.append(f"coupler insertion: CAPACITY GRAPH UNSAT — option {self.chosen}")
         return json.dumps(graph())
 
+    def chains(self) -> str:
+        """The one chain, with coupler 0 between edges f0 and f1.
+
+        Returns:
+            The JSON.
+        """
+        return json.dumps({
+            "chains": [{"chain": 0, "couplers": [None, 0, None], "options": [0, self.chosen, 0], "edges": ["f0", "f1"]}]
+        })
+
+    @staticmethod
+    def local_check(chain: int, options: list[int]) -> str:
+        """Both local checks find the chain SAT.
+
+        Returns:
+            The JSON.
+        """
+        judged = {"verdict": "SAT", "lost": [], "graph": graph()}
+        return json.dumps({"chain": chain, "options": options, "undrawn": [], "standing": judged, "alone": judged})
+
+    @staticmethod
+    def step_check(chain: int, step: int, options: list[int]) -> str:
+        """The step check finds the step SAT.
+
+        Returns:
+            The JSON.
+        """
+        return json.dumps({
+            "chain": chain,
+            "step": step,
+            "edge": step,
+            "options": options,
+            "verdict": "SAT",
+            "lost": [],
+            "closed": [],
+            "undrawn": [],
+            "graph": graph(),
+        })
+
+    @staticmethod
+    def insertion_check() -> str:
+        """The whole-chip check finds the chip SAT.
+
+        Returns:
+            The JSON.
+        """
+        return json.dumps({"verdict": "SAT", "lost": [], "graph": graph()})
+
 
 def test_the_session_data_is_embedded_and_no_name_ends_its_script() -> None:
     """The coupler tab's data is in the page as it was given."""
@@ -518,6 +566,9 @@ def test_the_server_moves_a_coupler_and_answers_the_new_graph() -> None:
         assert session["last"] == answer
 
         status, text = ask("POST", "/option", b'{"coupler": 5, "option": 0}')
+        assert status == 400
+        assert "no coupler 5" in json.loads(text)["error"]
+        status, text = ask("POST", "/option", b'{"coupler": 0, "option": 7}')
         assert status == 400
         assert "no option" in json.loads(text)["error"]
     finally:
@@ -573,3 +624,34 @@ def test_a_coupler_session_holds_the_final_stage_of_a_run(tmp_path: Path) -> Non
     assert any("CAPACITY GRAPH" in line for line in lines)
     with pytest.raises(ValueError, match="has no option"):
         session.set_option(coupler["index"], len(coupler["options"]))
+
+
+def test_a_coupler_session_records_its_run_and_checks_a_chain_locally(tmp_path: Path) -> None:
+    """The session hands its run's records to debug; it lists its chains and checks one locally."""
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run), "--stop-after", "detail"]) == 0
+    directory = RunDirectory(run)
+    config = directory.load()
+    config.debug = DebugParamsT()
+    config.debug.feedlineInsertion = True
+    kinds: list[str] = []
+    session = directory.coupler_session(config, debug=lambda kind, _record: kinds.append(kind))
+    assert "coupler-options" in kinds
+
+    chains = json.loads(session.chains())["chains"]
+    assert [c["chain"] for c in chains] == [0]
+    chain = chains[0]
+    assert len(chain["couplers"]) == len(chain["options"]) == len(chain["edges"]) + 1
+    assert all(o == 0 for c, o in zip(chain["couplers"], chain["options"], strict=True) if c is None)
+
+    local = json.loads(session.local_check(0, chain["options"]))
+    assert local["chain"] == 0
+    assert local["options"] == chain["options"]
+    for check in ("standing", "alone"):
+        assert local[check]["verdict"] in {"SAT", "UNSAT"}
+        assert {"raster", "nodes", "edges", "wires"} <= local[check]["graph"].keys()
+    assert json.loads(session.chains())["chains"] == chains
+    with pytest.raises(ValueError, match="there is no chain"):
+        session.local_check(1, chain["options"])
+    with pytest.raises(ValueError, match="waypoints"):
+        session.local_check(0, chain["options"][:-1])

@@ -184,6 +184,44 @@ edges of every chain and judge every feedline a run touches twice: by the slot
 check of that feedline alone, and by ripping its wires up and routing them
 again. `test_sat_global.py` builds whole-chip states from the runs the local
 check called SAT, judges each by the whole-chip check and routes it. Both assert
-that the check is never optimistic, write one JSON table per chip to
-`MQT_SCPD_SAT_REPORT` (the working directory by default), and print one line per
-chip with the four classes and the agreement.
+that the check is never optimistic, write one JSON table and one page per chip
+to `MQT_SCPD_SAT_REPORT` (the working directory by default), and print one line
+per chip with the four classes and the agreement.
+
+`mqt-scpd sat-bench` runs the same measurement on one run directory that holds
+the artifacts through `detail`:
+
+```console
+mqt-scpd plan -c inputs/17q/config.toml -o runs/17q --stop-after detail
+mqt-scpd sat-bench local runs/17q --runs 8 --span 3
+mqt-scpd sat-bench global runs/17q --cases 12
+```
+
+`--runs` is the number of runs of options per segment (8), `--span` the edges of
+a segment (3) and `--cases` the whole-chip states beyond the committed one (12).
+The command prints one line per stage, one line per global case and the summary
+line of the tests. It writes `sat-local.json` and `sat-local.html`, or
+`sat-global.json` and `sat-global.html`, to `<run>/sat-bench`, or to the
+directory that `-o` names. The global benchmark takes the runs of
+`sat-local.json` when that table has the same runs, span and run inputs, and
+otherwise runs the local benchmark first. It routes every case in a forked
+child, one after the other, so it needs a platform with `fork`. On 17q with
+`--runs 2`, the local benchmark takes about 40 s and the global benchmark with
+`--cases 3` about 20 s.
+
+The local page has a tile per class, the agreement, the cases and the seconds.
+The mismatches come first: SAT but failing in red on top, then UNSAT but clean
+in amber. A row gives the feedline and its edges, the run, the segment, the
+moved couplers (`c13: 0→1`), the verdict and the lost wires of the slot check,
+the result of the rip-up (clean, or the failing wires, and the rounds) and the
+seconds. A strip per feedline shows its classes, and every case follows in a
+table with a filter per class and a search box. The global page has the same
+tiles and a row per case with its moves, the verdict of the whole-chip check,
+the lost wires and the edges over their capacity, the bad count and the class.
+
+The pages that the command writes stand alone, and their `graph ↗` and
+`routed ↗` links are off. `mqt-scpd debug <run> --serve` serves the same pages
+at `/bench/local` and `/bench/global` from `<run>/sat-bench`, with the links on:
+`graph ↗` runs the check of the case on the session and `routed ↗` draws the
+wires along the ways that the routing of the case laid. `docs/routing.md` lists
+the routes.

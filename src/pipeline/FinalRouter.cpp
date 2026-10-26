@@ -1169,7 +1169,8 @@ constexpr std::array<std::string_view, 5> PHASES{
 
 /// The kinds of record the `[debug]` section asks for: "grid",
 /// "search:<phase>", "coupler-options", "capacity-graph", "step-check",
-/// "global-sat" and "phase". A run records nothing of a kind no page needs.
+/// "global-sat", "chain-state" and "phase". A run records nothing of a kind
+/// no page needs.
 using DebugRecords = std::set<std::string>;
 
 /// The record kinds the pages of `config.debug` need.
@@ -1199,6 +1200,7 @@ using DebugRecords = std::set<std::string>;
   }
   if (debug->global_sat) {
     wanted.insert("global-sat");
+    wanted.insert("chain-state");
   }
   if (debug->html) {
     wanted.insert("phase");
@@ -10535,14 +10537,10 @@ public:
     // The checks left out because no verdict could change the answer.
     std::uint32_t stepsUnread = 0;
     double stepSeconds = 0.0;
-    std::uint32_t firstSlot = 0;
-    for (std::uint32_t before = 0; before < chain; ++before) {
-      firstSlot += chains_[before].empty()
-                       ? 0U
-                       : static_cast<std::uint32_t>(chains_[before].size() - 1);
-    }
+    const auto firstSlot = firstEdgeSlotOf(chain);
     if (stepSettled_ != nullptr) {
-      unchained = capacityVerdictOf(stateOf(wires, *stepSettled_));
+      unchained = capacityVerdictOf(
+          stepStateOf(wires, *stepSettled_, chain, {}, {}, 0));
     }
 
     // Two goes at most: the plain options, then the jogs opened at the wall
@@ -10650,11 +10648,12 @@ public:
                    ? &found->second.way
                    : nullptr;
       };
-      // The capacity check of one step: the chip the chains settled before
-      // this one leave, with the prefix `key` and the option `j` after it
-      // standing on top — its couplers up to this edge's far end and its
+      // The capacity check of one step (`stepStateOf`): the chains
+      // `stepSettled_` marks standing, none, and the prefix `key` with the
+      // option `j` after it — its couplers up to this edge's far end and its
       // edges up to this one, `way` the edge's own and `before` the one
-      // before it where the pair was laid the other way round. Under
+      // before it where the pair was laid the other way round. The coupler
+      // session rebuilds it (`stepCheckJson`). Under
       // `capacityRule` a step whose edge closes a wire is refused: whether
       // it is.
       const auto checkStep = [&](const std::vector<std::uint32_t>& key,
@@ -10681,15 +10680,13 @@ public:
         }
         ways[at] = &way;
         const auto state =
-            stateOf(wires, *stepSettled_, chain, &options, &ways, at + 2);
+            stepStateOf(wires, *stepSettled_, chain, options, ways, at + 2);
         auto verdict = capacityVerdictOf(state);
         const auto parent = checked.find(key);
         const auto& was = (at == 0 || parent == checked.end())
                               ? unchained
                               : parent->second.verdict;
-        std::vector<std::uint32_t> closed;
-        std::ranges::set_difference(verdict.lost, was.lost,
-                                    std::back_inserter(closed));
+        auto closed = closedBy(verdict, was);
         const auto spent = std::chrono::steady_clock::now() - began;
         const auto seconds = std::chrono::duration<double>(spent).count();
         ++stepChecks;
@@ -10736,6 +10733,7 @@ public:
                                 {"step", at},
                                 {"edge", firstSlot + at},
                                 {"options", options},
+                                {"couplers", couplersOfChain(chain)},
                                 {"verdict", lost.empty() ? "SAT" : "UNSAT"},
                                 {"lost", ids(lost)},
                                 {"closed", ids(closed)},
@@ -11312,6 +11310,149 @@ public:
     return names;
   }
 
+  /// The coupler of every waypoint of chain `chain`, as JSON: its index, or
+  /// null for a fixed waypoint.
+  [[nodiscard]] nlohmann::json
+  couplersOfChain(const std::uint32_t chain) const {
+    auto list = nlohmann::json::array();
+    for (const auto& point : chains_[chain]) {
+      list.push_back(point.fixed ? nlohmann::json(nullptr)
+                                 : nlohmann::json(point.coupler));
+    }
+    return list;
+  }
+
+  /// What the two local checks of one state of one chain found
+  /// (`checkChainLocally`).
+  struct LocalChainVerdict {
+    /// The wires the check with the other chains standing judges and lost:
+    /// the chain's own wires, the free wires beside them and its terminal
+    /// edges that have no way or pass an edge over its capacity.
+    std::vector<std::string> standingLost;
+    /// The wires the check of the chain alone lost. Empty when that check
+    /// did not run.
+    std::optional<std::vector<std::string>> aloneLost;
+    /// The seconds the slot checks took.
+    double seconds = 0.0;
+
+    /// Whether the check with the other chains standing finds SAT.
+    [[nodiscard]] bool standing() const { return standingLost.empty(); }
+    /// Whether the check of the chain alone ran and finds SAT.
+    [[nodiscard]] bool alone() const {
+      return aloneLost.has_value() && aloneLost->empty();
+    }
+    /// The first check that finds SAT: "standing", "alone", or "none".
+    [[nodiscard]] std::string_view check() const {
+      if (standing()) {
+        return "standing";
+      }
+      return alone() ? "alone" : "none";
+    }
+  };
+
+  /// The capacity graphs the two local checks judged, in the form of
+  /// `final-capacity-graph.json` (`localGraphOf`). A graph stays null when
+  /// its check did not run.
+  struct LocalChainGraphs {
+    nlohmann::json standing;
+    nlohmann::json alone;
+  };
+
+  /// Sets `localWires_` while it lives, and clears it after.
+  class LocalWires {
+  public:
+    LocalWires(const std::set<std::string>*& at,
+               const std::set<std::string>& wires)
+        : at_(at) {
+      at_ = &wires;
+    }
+    ~LocalWires() { at_ = nullptr; }
+    LocalWires(const LocalWires&) = delete;
+    LocalWires& operator=(const LocalWires&) = delete;
+    LocalWires(LocalWires&&) = delete;
+    LocalWires& operator=(LocalWires&&) = delete;
+
+  private:
+    const std::set<std::string>*& at_;
+  };
+
+  /// **The two local checks** of chain `chain` on `options` (one per
+  /// waypoint) and `paths` (one way per edge), as the global SAT search
+  /// makes them (`collectChainStates`) and the coupler session repeats them
+  /// (`localCheckJson`). `before` holds the wires before the commit
+  /// appended the feedline edges; `own` holds the chain's own wires and
+  /// the free wires beside them (`localCheckWires`).
+  ///
+  /// The first check is the one the comparison of the local check with the
+  /// rip-up makes (`slotCheckNow`): every other chain stands as the commit
+  /// left it, the terminal edges are wires, and only the chain's own wires,
+  /// the free wires beside them and its terminal edges are routed and
+  /// judged. A state SAT there can stand on its own. The second check
+  /// routes the chain alone, with its own wires and the free wires beside
+  /// them. A state SAT only there may need its neighbours to move as well.
+  /// The second check runs when the first finds the state UNSAT, or always
+  /// with `bothChecks`. With `graphs` given, it receives the graph of each
+  /// check that ran.
+  [[nodiscard]] LocalChainVerdict checkChainLocally(
+      const std::vector<Wire>& before, const std::uint32_t chain,
+      const std::set<std::string>& own, const std::vector<std::size_t>& options,
+      const std::vector<const Path*>& paths, const bool bothChecks = false,
+      LocalChainGraphs* graphs = nullptr) {
+    LocalChainVerdict out;
+    const std::vector<bool> every(chains_.size(), true);
+    auto state = stateOf(before, every, chain, &options, &paths);
+    state.terminalsAsWires = true;
+    auto judged = own;
+    for (const auto& edge : state.edges) {
+      if (edge.chain == chain && edge.terminal) {
+        judged.insert(wireId(state.wires[edge.wire]));
+      }
+    }
+    {
+      const LocalWires local(localWires_, judged);
+      const auto began = std::chrono::steady_clock::now();
+      const auto verdict = capacityVerdictOf(state);
+      out.seconds += std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - began)
+                         .count();
+      for (const auto key : verdict.lost) {
+        if (const auto name = wireId(state.wires[key]); judged.contains(name)) {
+          out.standingLost.push_back(name);
+        }
+      }
+    }
+    if (graphs != nullptr) {
+      graphs->standing = localGraphOf(
+          state, judged,
+          std::format("the local check of chain {}, the other chains "
+                      "standing, the terminal edges as wires",
+                      chain));
+    }
+    if (out.standing() && !bothChecks) {
+      return out;
+    }
+    std::vector<bool> only(chains_.size(), false);
+    only[chain] = true;
+    const auto alone = stateOf(before, only, chain, &options, &paths);
+    {
+      const LocalWires local(localWires_, own);
+      const auto began = std::chrono::steady_clock::now();
+      const auto verdict = capacityVerdictOf(alone);
+      out.seconds += std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - began)
+                         .count();
+      auto& lost = out.aloneLost.emplace();
+      for (const auto key : verdict.lost) {
+        lost.push_back(wireId(alone.wires[key]));
+      }
+    }
+    if (graphs != nullptr) {
+      graphs->alone = localGraphOf(
+          alone, own, std::format("the local check of chain {} alone", chain));
+    }
+    return out;
+  }
+
   /// The locally SAT states of every chain for `searchGlobalSat`, after the
   /// commit: the chain as it stands first, then the runs of options of the
   /// segments at its two ends (`researchSegment` handing them to
@@ -11325,6 +11466,9 @@ public:
   /// limit of `globalSatStates`; those that move the coupler of such a
   /// waypoint come first.
   ///
+  /// Under `[debug] global_sat` every state checked is recorded
+  /// (`chain-state`), the committed state of each chain first.
+  ///
   /// Collects the chains of `order`, in that order, into `chainStates_`,
   /// which the caller sizes. `spent` holds the seconds every earlier call
   /// of the same search collected and gets this call's seconds added; it
@@ -11334,7 +11478,6 @@ public:
       const std::map<std::uint32_t, std::set<std::size_t>>& focus,
       const std::vector<std::uint32_t>& order,
       std::chrono::duration<double>& spent) {
-    const auto chains = static_cast<std::uint32_t>(chains_.size());
     auto firstEdge = static_cast<std::uint32_t>(wires.size());
     for (const auto& edge : edges_) {
       firstEdge = std::min(firstEdge, edge.wire);
@@ -11372,9 +11515,6 @@ public:
       std::chrono::duration<double> checking{0};
       const auto chainBegan = std::chrono::steady_clock::now();
       const auto own = localCheckWires(before, chain);
-      const std::vector<bool> every(chains, true);
-      std::vector<bool> only(chains, false);
-      only[chain] = true;
       std::uint32_t fitting = 0;
       const auto span = std::min<std::size_t>(3, points.size() - 1);
       std::set<std::size_t> starts{0, points.size() - 1 - span};
@@ -11403,6 +11543,49 @@ public:
       // over; after those SAT with the other chains standing.
       std::vector<std::vector<std::size_t>> aloneMoving;
       std::vector<std::vector<std::size_t>> aloneOthers;
+      // A record of every state checked (`chain-state`), when a page asks
+      // for them: the committed state first, judged by the same two checks.
+      // A committed state has no segment.
+      const bool recording = wants("chain-state");
+      const auto couplerList =
+          recording ? couplersOfChain(chain) : nlohmann::json();
+      const auto recordState = [&](const std::vector<std::size_t>& options,
+                                   const std::optional<std::size_t> segment,
+                                   const LocalChainVerdict& judged) {
+        if (!recording) {
+          return;
+        }
+        auto moved = nlohmann::json::array();
+        for (std::size_t at = 0; at < points.size(); ++at) {
+          if (!points[at].fixed && options[at] != current[at]) {
+            moved.push_back({{"coupler", points[at].coupler},
+                             {"from", current[at]},
+                             {"to", options[at]}});
+          }
+        }
+        record("chain-state",
+               {{"chain", chain},
+                {"committed", !segment.has_value()},
+                {"segment", segment.has_value() ? nlohmann::json(*segment)
+                                                : nlohmann::json(nullptr)},
+                {"span", span},
+                {"atOver", atOver},
+                {"options", options},
+                {"couplers", couplerList},
+                {"moved", std::move(moved)},
+                {"check", judged.check()},
+                {"verdict", judged.check() == "none" ? "UNSAT" : "SAT"},
+                {"lost", judged.standingLost},
+                {"seconds", judged.seconds}});
+      };
+      if (recording) {
+        std::vector<const Path*> paths;
+        for (const auto& way : chainEdgePaths_[chain]) {
+          paths.push_back(&way);
+        }
+        recordState(current, std::nullopt,
+                    checkChainLocally(before, chain, own, current, paths));
+      }
       for (const auto lo : starts) {
         const RunCollector collect = [&](const std::vector<std::size_t>& layer,
                                          const std::vector<Path>& ways) {
@@ -11434,46 +11617,14 @@ public:
                   paths, [](const Path* way) { return way->empty(); })) {
             return false;
           }
-          // Two local checks; a state either finds SAT is kept. First as the
-          // comparison of the local check with the rip-up makes it
-          // (`slotCheckNow`): every other chain standing as the commit left
-          // it, the terminal edges as wires, and only the chain's own wires,
-          // the free wires beside them and its terminal edges routed and
-          // judged. Such a
-          // state can stand on its own. Then with the chain alone, its own
-          // wires and the free wires beside them routed: such a state may
-          // need its neighbours to move as well.
-          auto state = stateOf(before, every, chain, &options, &paths);
-          state.terminalsAsWires = true;
-          std::set<std::string> judged = own;
-          for (const auto& edge : state.edges) {
-            if (edge.chain == chain && edge.terminal) {
-              judged.insert(wireId(state.wires[edge.wire]));
-            }
-          }
-          localWires_ = &judged;
-          const auto checkBegan = std::chrono::steady_clock::now();
-          const auto verdict = capacityVerdictOf(state);
-          checking += std::chrono::steady_clock::now() - checkBegan;
-          localWires_ = nullptr;
-          std::vector<std::string> ownLost;
-          for (const auto key : verdict.lost) {
-            if (const auto name = wireId(state.wires[key]);
-                judged.contains(name)) {
-              ownLost.push_back(name);
-            }
-          }
-          const bool fits = ownLost.empty();
-          bool alone = false;
-          if (!fits) {
-            localWires_ = &own;
-            const auto aloneBegan = std::chrono::steady_clock::now();
-            alone = capacityVerdictOf(
-                        stateOf(before, only, chain, &options, &paths))
-                        .lost.empty();
-            checking += std::chrono::steady_clock::now() - aloneBegan;
-            localWires_ = nullptr;
-          }
+          // The two local checks (`checkChainLocally`); a state either
+          // finds SAT is kept.
+          const auto judged =
+              checkChainLocally(before, chain, own, options, paths);
+          checking += std::chrono::duration<double>(judged.seconds);
+          recordState(options, lo, judged);
+          const bool fits = judged.standing();
+          const bool alone = judged.alone();
           if (!fits && !alone) {
             if (atOver) {
               std::string named;
@@ -11481,7 +11632,7 @@ public:
                 named += std::format(" {}", option);
               }
               std::string lostText;
-              for (const auto& name : ownLost) {
+              for (const auto& name : judged.standingLost) {
                 lostText += " " + name;
               }
               tell(std::format("global SAT: chain {} segment {}: locally "
@@ -11973,6 +12124,13 @@ public:
       }
       collected[chain] = true;
       collectChainStates(wires, focus, {chain}, collecting);
+      // Every chain a combination moves has its kept states on record, so
+      // the state number a combination picks maps to the chain's options.
+      const auto& kept = chainStates_[chain];
+      record("global-sat", {{"event", "states"},
+                            {"chain", chain},
+                            {"states", kept.size()},
+                            {"options", kept}});
     };
     settle();
     fieldAtCommit = field_;
@@ -11984,8 +12142,6 @@ public:
       const auto chain = entry.first;
       collect(chain);
       const auto& kept = chainStates_[chain];
-      record("global-sat",
-             {{"event", "states"}, {"chain", chain}, {"states", kept.size()}});
       std::vector<std::vector<std::size_t>> picks;
       for (std::size_t k = 1; k < kept.size(); ++k) {
         picks.emplace_back(chains, 0)[chain] = k;
@@ -12080,7 +12236,7 @@ public:
     std::uint32_t settled = 0;
     // Every step is checked with no other chain standing: each chain on its
     // own chip, judged by its own feedline's wires.
-    const std::vector<bool> none(chains_.size(), false);
+    const auto none = stepCheckChains();
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
       report_.progress("coupler insertion", std::format("chain {}", chain + 1),
                        chain, chains_.size());
@@ -12425,6 +12581,42 @@ public:
     return state;
   }
 
+  /// The chains a step check of the chain search sees standing beside the
+  /// chain it judges: none, so every chain is judged on its own chip, by its
+  /// own feedline's wires (`optimizeChainsPrefix`).
+  [[nodiscard]] std::vector<bool> stepCheckChains() const {
+    return std::vector<bool>(chains_.size(), false);
+  }
+
+  /// The chip a step check of the chain search judges (`checkStep`): the
+  /// chains `settled` marks standing on the options and ways they settled
+  /// on, and of chain `chain` the first `standing` waypoints on `options`
+  /// and its edges on `ways` (one entry per edge, null for no way). The
+  /// step at edge `at` stands `at + 2` waypoints and the edges 0 to `at`;
+  /// `standing` 0 is the chip with none of the chain standing, which the
+  /// first step is compared with.
+  [[nodiscard]] InsertionState stepStateOf(
+      const std::vector<Wire>& wires, const std::vector<bool>& settled,
+      const std::uint32_t chain, const std::vector<std::size_t>& options,
+      const std::vector<const Path*>& ways, const std::size_t standing) const {
+    if (standing == 0) {
+      return stateOf(wires, settled);
+    }
+    return stateOf(wires, settled, chain, &options, &ways, standing);
+  }
+
+  /// The slot the commit gives the first feedline edge of chain `chain`:
+  /// the edges of the chains before it come first.
+  [[nodiscard]] std::uint32_t firstEdgeSlotOf(const std::uint32_t chain) const {
+    std::uint32_t slot = 0;
+    for (std::uint32_t before = 0; before < chain; ++before) {
+      slot += chains_[before].empty()
+                  ? 0U
+                  : static_cast<std::uint32_t>(chains_[before].size() - 1);
+    }
+    return slot;
+  }
+
   /// What the capacity graph of a state says: the outer wires it has no
   /// way for, and by how many wires its edges are short.
   struct CapacityVerdict {
@@ -12434,6 +12626,16 @@ public:
     std::vector<std::string> over;
     double seconds = 0.0;
   };
+
+  /// The wires a step closes (`checkStep`): lost in `verdict`, the step's
+  /// own, and not in `was`, the verdict on the prefix before it.
+  [[nodiscard]] static std::vector<std::uint32_t>
+  closedBy(const CapacityVerdict& verdict, const CapacityVerdict& was) {
+    std::vector<std::uint32_t> closed;
+    std::ranges::set_difference(verdict.lost, was.lost,
+                                std::back_inserter(closed));
+    return closed;
+  }
 
   /// The outer wires the capacity graph of a state has no way for: a
   /// terminal in no chamber, no way at all, or a way over an edge with
@@ -12588,6 +12790,34 @@ public:
     graphOnly_ = wasGraphOnly;
     giveBack(pass);
     return std::move(capturedGraph_);
+  }
+
+  /// The capacity graph of a local check of a state as the check by
+  /// crossing slots judges it, in the form of `final-capacity-graph.json`:
+  /// the wires of `judged` and every terminal edge, as `capacityVerdictOf`
+  /// keeps them under `localWires_`. When the slot check fails, the graph
+  /// before it.
+  [[nodiscard]] nlohmann::json localGraphOf(const InsertionState& state,
+                                            const std::set<std::string>& judged,
+                                            const std::string& said) {
+    auto graph = nlohmann::json::parse(capacityGraphJsonOf(state, said));
+    auto& wires = graph.at("wires");
+    for (auto it = wires.begin(); it != wires.end();) {
+      if (!it->value("terminal", false) &&
+          !judged.contains(it->at("name").get<std::string>())) {
+        it = wires.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    try {
+      return nlohmann::json::parse(slotCheck(graph.dump()).graph);
+    } catch (const std::invalid_argument& error) {
+      say(std::format("coupler session: the slot check failed ({}); the "
+                      "graph is the one before it",
+                      error.what()));
+    }
+    return graph;
   }
 
   /// What `capacityGraphJsonOf` gives its caller besides the JSON, without
@@ -12977,6 +13207,257 @@ public:
                 {"local", std::move(local)},
                 {"graph", json::parse(graph)}}
         .dump();
+  }
+
+  /// Throws unless chain `chain` exists and `options` holds one option per
+  /// waypoint of it, each one its waypoint's coupler has, and 0 at a fixed
+  /// waypoint: what `localCheckJson` and `stepCheckJson` accept.
+  ///
+  /// @throws std::invalid_argument when it does not.
+  void requireChainOptions(const std::uint32_t chain,
+                           const std::vector<std::size_t>& options) const {
+    if (chain >= chains_.size()) {
+      throw std::invalid_argument(std::format("there is no chain {}; the "
+                                              "chip has {}",
+                                              chain, chains_.size()));
+    }
+    const auto& points = chains_[chain];
+    if (options.size() != points.size()) {
+      throw std::invalid_argument(
+          std::format("chain {} has {} waypoints, and {} options were given",
+                      chain, points.size(), options.size()));
+    }
+    for (std::size_t at = 0; at < points.size(); ++at) {
+      if (points[at].fixed
+              ? options[at] != 0
+              : options[at] >= couplers_[points[at].coupler].options.size()) {
+        throw std::invalid_argument(
+            std::format("waypoint {} of chain {} has no option {}", at, chain,
+                        options[at]));
+      }
+    }
+  }
+
+  /// The wires before the commit appended the feedline edges: the wires
+  /// the chain search and the global SAT search build their states from.
+  [[nodiscard]] std::vector<Wire>
+  wiresBeforeTheEdges(const std::vector<Wire>& wires) const {
+    auto firstEdge = static_cast<std::uint32_t>(wires.size());
+    for (const auto& edge : edges_) {
+      firstEdge = std::min(firstEdge, edge.wire);
+    }
+    return {wires.begin(),
+            wires.begin() + static_cast<std::ptrdiff_t>(firstEdge)};
+  }
+
+  /// Puts the couplers of the first `upto` waypoints of chain `chain` on
+  /// `options` and draws their edges as `setCouplerOption` draws them,
+  /// runs `check`, and puts the chip back as it stood, also when `check`
+  /// throws: as the global SAT search puts back a state it tried.
+  void withChainOn(std::vector<Wire>& wires, const std::uint32_t chain,
+                   const std::vector<std::size_t>& options,
+                   const std::size_t upto, const std::function<void()>& check) {
+    const auto& points = chains_[chain];
+    const auto taken = snapshot(wires);
+    const auto field = field_;
+    const auto paths = chainEdgePaths_;
+    const auto putBack = [&]() {
+      wires = taken.wires;
+      bodies_ = taken.bodies;
+      for (std::size_t index = 0; index < couplers_.size(); ++index) {
+        couplers_[index].chosen = taken.chosen[index];
+        couplers_[index].anchor = taken.anchors[index];
+      }
+      field_ = field;
+      chainEdgePaths_ = paths;
+      foreignRoomStale_ = true;
+    };
+    try {
+      for (std::size_t at = 0; at < std::min(upto, points.size()); ++at) {
+        if (!points[at].fixed &&
+            couplers_[points[at].coupler].chosen != options[at]) {
+          static_cast<void>(
+              setCouplerOption(wires, points[at].coupler, options[at]));
+        }
+      }
+      check();
+    } catch (...) {
+      putBack();
+      throw;
+    }
+    putBack();
+  }
+
+  /// The two local checks of the global SAT search (`checkChainLocally`)
+  /// of chain `chain` on `options`, one per waypoint, for the coupler
+  /// session (`CouplerSession::localCheck`). The chain's couplers are put
+  /// on `options` and their edges drawn as `setCouplerOption` draws them;
+  /// both checks run on those ways, and the chip is then put back as it
+  /// was. Returns JSON: `chain`, `options`, `undrawn` (the edges of the
+  /// chain with no way) and per check (`standing`, `alone`) its `verdict`,
+  /// its `lost` wires and the `graph` it judged.
+  ///
+  /// @throws std::invalid_argument when the chain does not exist, `options`
+  /// does not hold one option per waypoint, or names an option that the
+  /// coupler of its waypoint does not have, or other than 0 at a fixed
+  /// waypoint.
+  [[nodiscard]] std::string
+  localCheckJson(std::vector<Wire>& wires, const std::uint32_t chain,
+                 const std::vector<std::size_t>& options) {
+    requireChainOptions(chain, options);
+    const auto& points = chains_[chain];
+    const auto before = wiresBeforeTheEdges(wires);
+    const auto own = localCheckWires(before, chain);
+    using nlohmann::json;
+    LocalChainGraphs graphs;
+    LocalChainVerdict verdict;
+    json undrawn = json::array();
+    withChainOn(wires, chain, options, points.size(), [&]() {
+      std::vector<const Path*> ways;
+      for (std::size_t at = 0; at < chainEdgePaths_[chain].size(); ++at) {
+        ways.push_back(&chainEdgePaths_[chain][at]);
+        if (chainEdgePaths_[chain][at].empty()) {
+          undrawn.push_back(wireId(wires[edgeWireOf_[chain][at]]));
+        }
+      }
+      verdict =
+          checkChainLocally(before, chain, own, options, ways, true, &graphs);
+    });
+    const auto aloneLost =
+        verdict.aloneLost.value_or(std::vector<std::string>{});
+    return json{{"chain", chain},
+                {"options", options},
+                {"undrawn", std::move(undrawn)},
+                {"standing",
+                 {{"verdict", verdict.standing() ? "SAT" : "UNSAT"},
+                  {"lost", verdict.standingLost},
+                  {"graph", std::move(graphs.standing)}}},
+                {"alone",
+                 {{"verdict", verdict.alone() ? "SAT" : "UNSAT"},
+                  {"lost", aloneLost},
+                  {"graph", std::move(graphs.alone)}}}}
+        .dump();
+  }
+
+  /// **The step check** of the chain search (`checkStep`) at edge `step` of
+  /// chain `chain` on `options`, rebuilt for the coupler session
+  /// (`CouplerSession::stepCheck`). The couplers of waypoints 0 to
+  /// `step + 1` are put on `options` and their edges drawn as
+  /// `setCouplerOption` draws them, against the chip as it stands; the
+  /// search drew them against the prefix it grew, so the ways may differ
+  /// from the search's own. The check then judges the chip the step check
+  /// judges (`stepStateOf`): the chains a step check sees standing
+  /// (`stepCheckChains`), the chain's couplers up to edge `step`'s far end
+  /// and its edges 0 to `step`, with the chain's own wires and the free
+  /// wires beside them (`localCheckWires`) routed and judged. The parent
+  /// prefix, up to edge `step - 1`, is judged the same way, or the chip
+  /// without the chain at step 0, to give the wires the step closes. The
+  /// chip is then put back as it was. Returns JSON: `chain`, `step`, `edge`
+  /// (the slot of the edge, as the commit numbers it), `options` (later
+  /// waypoints on 0, as the step-check record holds them), `verdict`,
+  /// `lost`, `closed`, `undrawn` (the edges 0 to `step` with no way) and
+  /// `graph`, the graph judged, in the form of `final-capacity-graph.json`.
+  ///
+  /// @throws std::invalid_argument as `requireChainOptions`, and when the
+  /// chain has no edge `step`.
+  [[nodiscard]] std::string
+  stepCheckJson(std::vector<Wire>& wires, const std::uint32_t chain,
+                const std::size_t step,
+                const std::vector<std::size_t>& options) {
+    requireChainOptions(chain, options);
+    const auto& points = chains_[chain];
+    if (points.size() < 2 || step + 1 >= points.size()) {
+      throw std::invalid_argument(
+          std::format("chain {} has {} feedline edges, so there is no step {}",
+                      chain, points.size() < 2 ? 0 : points.size() - 1, step));
+    }
+    const auto before = wiresBeforeTheEdges(wires);
+    const auto own = localCheckWires(before, chain);
+    const auto settled = stepCheckChains();
+    std::vector<std::size_t> standing(points.size(), 0);
+    for (std::size_t layer = 0; layer <= step + 1; ++layer) {
+      standing[layer] = options[layer];
+    }
+    using nlohmann::json;
+    const auto names = [](const InsertionState& state,
+                          const std::vector<std::uint32_t>& keys) {
+      json named = json::array();
+      for (const auto key : keys) {
+        named.push_back(wireId(state.wires[key]));
+      }
+      return named;
+    };
+    const auto edge = firstEdgeSlotOf(chain) + step;
+    json undrawn = json::array();
+    json lost;
+    json closed;
+    json graph;
+    withChainOn(wires, chain, standing, step + 2, [&]() {
+      std::vector<const Path*> ways(points.size() - 1, nullptr);
+      for (std::size_t e = 0; e <= step; ++e) {
+        ways[e] = &chainEdgePaths_[chain][e];
+        if (chainEdgePaths_[chain][e].empty()) {
+          undrawn.push_back(wireId(wires[edgeWireOf_[chain][e]]));
+        }
+      }
+      const auto state =
+          stepStateOf(before, settled, chain, standing, ways, step + 2);
+      CapacityVerdict verdict;
+      CapacityVerdict was;
+      {
+        const LocalWires local(localWires_, own);
+        verdict = capacityVerdictOf(state);
+        auto parentWays = ways;
+        parentWays[step] = nullptr;
+        was = capacityVerdictOf(stepStateOf(before, settled, chain, standing,
+                                            parentWays,
+                                            step == 0 ? 0 : step + 1));
+      }
+      const auto closedKeys = closedBy(verdict, was);
+      lost = names(state, {verdict.lost.begin(), verdict.lost.end()});
+      closed = names(state, closedKeys);
+      graph = localGraphOf(
+          state, own,
+          std::format("the step check of chain {} at edge f{}, step {}, "
+                      "rebuilt by the coupler session",
+                      chain, edge, step));
+    });
+    return json{{"chain", chain},
+                {"step", step},
+                {"edge", edge},
+                {"options", standing},
+                {"verdict", lost.empty() ? "SAT" : "UNSAT"},
+                {"lost", std::move(lost)},
+                {"closed", std::move(closed)},
+                {"undrawn", std::move(undrawn)},
+                {"graph", std::move(graph)}}
+        .dump();
+  }
+
+  /// Every chain as it stands, for the coupler session
+  /// (`CouplerSession::chains`), as JSON: per chain its index, the coupler
+  /// of every waypoint (null for a fixed waypoint), the option every
+  /// waypoint stands on (0 for a fixed waypoint) and its feedline edges by
+  /// name, in order.
+  [[nodiscard]] std::string chainsJson(const std::vector<Wire>& wires) const {
+    using nlohmann::json;
+    json list = json::array();
+    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      json options = json::array();
+      for (const auto& point : chains_[chain]) {
+        options.push_back(point.fixed ? 0 : couplers_[point.coupler].chosen);
+      }
+      json edges = json::array();
+      for (const auto key : edgeWireOf_[chain]) {
+        edges.push_back(key < wires.size() ? json(wireId(wires[key]))
+                                           : json(nullptr));
+      }
+      list.push_back({{"chain", chain},
+                      {"couplers", couplersOfChain(chain)},
+                      {"options", std::move(options)},
+                      {"edges", std::move(edges)}});
+    }
+    return json{{"chains", std::move(list)}}.dump();
   }
 
   /// Hand the pictures to `debug` from now on (`CouplerSession`).
@@ -19889,7 +20370,8 @@ struct CouplerSession::State {
 CouplerSession::CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
                                const AssignmentT& assignment,
                                const DetailRoutingT& detail,
-                               const ConfigT& config, const Report& report) {
+                               const ConfigT& config, const Report& report,
+                               Debug debug) {
   if (config.grid == nullptr || config.rules == nullptr) {
     throw std::invalid_argument(
         "the configuration carries no grid section or no design rules");
@@ -19909,8 +20391,9 @@ CouplerSession::CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
   for (const auto& wire : wires) {
     (wire.inner ? inner : outer).push_back(wire.key);
   }
-  state_->driver = std::make_unique<Driver>(
-      state_->field, state_->tuning, report, Debug{}, recordsWantedBy(config));
+  state_->driver =
+      std::make_unique<Driver>(state_->field, state_->tuning, report,
+                               std::move(debug), recordsWantedBy(config));
   auto& driver = *state_->driver;
   driver.attachPorts(portMarksOf(chip, state_->field));
   driver.sayTheSetting();
@@ -19940,6 +20423,22 @@ std::string CouplerSession::graph() {
 
 std::string CouplerSession::insertionCheck() {
   return state_->driver->insertionCheckJson(state_->wires);
+}
+
+std::string
+CouplerSession::localCheck(const std::uint32_t chain,
+                           const std::vector<std::size_t>& options) {
+  return state_->driver->localCheckJson(state_->wires, chain, options);
+}
+
+std::string CouplerSession::stepCheck(const std::uint32_t chain,
+                                      const std::size_t step,
+                                      const std::vector<std::size_t>& options) {
+  return state_->driver->stepCheckJson(state_->wires, chain, step, options);
+}
+
+std::string CouplerSession::chains() const {
+  return state_->driver->chainsJson(state_->wires);
 }
 
 void CouplerSession::setDebug(Debug debug) {

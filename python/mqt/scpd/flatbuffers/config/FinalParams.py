@@ -183,7 +183,7 @@ class FinalParams(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(32))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 100
+        return 0
 
     # The band both refinements may redraw a wire in, in wire spacings, as
     # `corridor_spacings` is for the sweep. A refinement moves a way that
@@ -653,7 +653,7 @@ def AddCouplerHeight(builder: flatbuffers.Builder, couplerHeight: float):
     FinalParamsAddCouplerHeight(builder, couplerHeight)
 
 def FinalParamsAddRepairTrials(builder: flatbuffers.Builder, repairTrials: int):
-    builder.PrependUint32Slot(14, repairTrials, 100)
+    builder.PrependUint32Slot(14, repairTrials, 0)
 
 def AddRepairTrials(builder: flatbuffers.Builder, repairTrials: int):
     FinalParamsAddRepairTrials(builder, repairTrials)
@@ -942,7 +942,7 @@ class FinalParamsT(object):
         obstaclePenaltyReach = 100.0,
         couplerLength = 200.0,
         couplerHeight = 26.0,
-        repairTrials = 100,
+        repairTrials = 0,
         refinementCorridorSpacings = 6,
         couplerBias = 0.98,
         couplerMaxShortfall = 0.30,

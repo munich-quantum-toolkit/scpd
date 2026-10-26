@@ -19,6 +19,7 @@ import argparse
 import contextlib
 import os
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -26,9 +27,9 @@ from . import pyscpd
 from .artifacts import ArtifactError
 from .chip import ChipError, decode_chip, load_chip
 from .config import ConfigError, load_config, removed_keys_in, write_config
-from .console import Console, size, write_out
-from .debug import pages, store
-from .debug.serve import CouplerServer, serve
+from .console import Console, duration, size, write_out
+from .debug import bench, pages, store
+from .debug.serve import CouplerServer, Recorder, serve, want_sat_records
 from .doctor import run_doctor, solver_problem
 from .export import HAS_KLAYOUT
 from .flatbuffers.config.RunParams import RunParamsT
@@ -202,7 +203,7 @@ def _debug_pages(console: Console, directory: RunDirectory, config: ConfigT, spo
 
 
 def command_debug(args: argparse.Namespace) -> int:
-    """Build the debug pages of a run again, or serve the capacity graph with a tab that moves couplers.
+    """Build the debug pages of a run again, or serve the capacity graph and the SAT dashboards of a session.
 
     Returns:
         The exit code.
@@ -218,6 +219,9 @@ def command_debug(args: argparse.Namespace) -> int:
 
     register_external_solver()
     config = directory.load()
+    # The SAT dashboards read the records of the session's own run.
+    want_sat_records(config)
+    records = Recorder()
     lines: list[str] = []
 
     class Spoken:
@@ -246,10 +250,50 @@ def command_debug(args: argparse.Namespace) -> int:
 
     write_out(f"running the Final stage of {args.run_dir} to the end of the coupler insertion ...")
     # The steps of the stage are what the server reads; -v adds the items.
-    session = directory.coupler_session(config, Spoken(), args.verbose + 1)
-    server = CouplerServer(session, lines)
-    write_out(f"capacity graph with the coupler tab on http://127.0.0.1:{args.serve}/ (Ctrl-C ends it)")
+    session = directory.coupler_session(config, Spoken(), args.verbose + 1, records)
+    server = CouplerServer(session, lines, records)
+    benches = directory.path / bench.DIRECTORY
+    bench.add_routes(server, benches)
+    address = f"http://127.0.0.1:{args.serve}"
+    write_out(f"capacity graph with the coupler tab on {address}/ (Ctrl-C ends it)")
+    write_out(f"SAT dashboards on {address}/sat (the feedlines) and {address}/global (the combinations)")
+    write_out(f"SAT benchmarks on {address}/bench/local and {address}/bench/global, from {benches}")
     serve(server, args.serve)
+    return 0
+
+
+def command_sat_bench(args: argparse.Namespace) -> int:
+    """Run a SAT benchmark on a run directory and write its table and page.
+
+    Returns:
+        The exit code.
+    """
+
+    def say(text: str) -> None:
+        write_out(text + "\n")
+
+    directory = RunDirectory(args.run_dir)
+    output = args.output if args.output is not None else directory.path / bench.DIRECTORY
+    register_external_solver()
+    config = directory.load()
+    inputs = bench.fingerprint(directory)
+    name = args.name or directory.path.resolve().name
+    began = time.monotonic()
+    say(f"sat-bench {args.kind} {name}: running the Final stage to the end of the coupler insertion ...")
+    session = directory.coupler_session(config)
+    say(f"sat-bench {args.kind} {name}: the session stands after {duration(time.monotonic() - began)}")
+    bench.run_bench(
+        args.kind,
+        session,
+        output,
+        name=name,
+        inputs=inputs,
+        runs=args.runs,
+        span=args.span,
+        cases=args.cases,
+        say=say,
+    )
+    say(f"sat-bench {args.kind} {name}: {output / bench.json_name(args.kind)} and {bench.html_name(args.kind)}")
     return 0
 
 
@@ -515,7 +559,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     debug = commands.add_parser(
         "debug",
-        help="build the debug pages of a run again, or serve the capacity graph on a local page that moves couplers",
+        help=(
+            "build the debug pages of a run again, or serve the capacity graph and the SAT dashboards on a local "
+            "page that moves couplers"
+        ),
     )
     debug.add_argument("run_dir", type=Path, help="the run directory")
     debug.add_argument(
@@ -525,7 +572,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         type=int,
         metavar="PORT",
-        help="run the Final stage to the end of its coupler insertion and serve the capacity graph on PORT (8765)",
+        help=(
+            "run the Final stage to the end of its coupler insertion and serve on PORT (8765): / the capacity graph "
+            "with the coupler tab, /sat and /global the SAT dashboards with live graph and mover links, /bench/local "
+            "and /bench/global the tables of mqt-scpd sat-bench"
+        ),
     )
     debug.add_argument(
         "-v",
@@ -535,6 +586,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="with --serve, show every line the stage says; -vv one line per wire and search as well",
     )
     debug.set_defaults(run=command_debug)
+
+    sat_bench = commands.add_parser(
+        "sat-bench",
+        help="measure how well the capacity check of the coupler insertion predicts the feedline routing of a run",
+    )
+    sat_bench.add_argument(
+        "kind",
+        choices=list(bench.KINDS),
+        help="local: the slot check of every feedline against a rip-up of its wires; global: whole-chip states",
+    )
+    sat_bench.add_argument("run_dir", type=Path, help="the run directory, with the artifacts through detail")
+    sat_bench.add_argument(
+        "--runs", type=_positive_int, default=bench.RUNS_PER_SEGMENT, help="the runs of options per segment (8)"
+    )
+    sat_bench.add_argument("--span", type=_positive_int, default=bench.SPAN, help="the edges of a segment (3)")
+    sat_bench.add_argument(
+        "--cases", type=_positive_int, default=bench.CASES, help="global: the states beyond the committed one (12)"
+    )
+    sat_bench.add_argument(
+        "-o", "--output", type=Path, help="the directory of the table and the page; <run>/sat-bench by default"
+    )
+    sat_bench.add_argument("--name", help="the chip's name on the pages; the run directory's name by default")
+    sat_bench.set_defaults(run=command_sat_bench)
 
     plot = commands.add_parser("plot", help="draw a stage as SVG")
     _add_drawing_options(plot)

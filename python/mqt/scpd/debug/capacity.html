@@ -536,6 +536,43 @@
         color: var(--over);
         font-weight: 600;
       }
+      .session-log .v-SAT {
+        color: var(--used);
+        font-weight: 600;
+      }
+      .session-log .v-UNSAT {
+        color: var(--over);
+        font-weight: 600;
+      }
+      .session-tools {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+        margin: 0 14px 8px;
+      }
+      .session-tools a {
+        color: var(--ink-2);
+      }
+      .banner {
+        padding: 6px 16px;
+        border-bottom: 1px solid var(--hairline);
+        background: var(--surface);
+        font-weight: 600;
+      }
+      .banner.SAT {
+        color: var(--used);
+      }
+      .banner.UNSAT {
+        color: var(--over);
+      }
+      .banner.mismatch {
+        color: #ffffff;
+        background: var(--over);
+      }
+      .banner a {
+        color: inherit;
+      }
       .spoke {
         stroke: var(--ink-2);
         stroke-width: 1;
@@ -1039,6 +1076,17 @@
             the list below, puts the coupler on it; the server draws its two
             feedline edges again and analyses the chip anew.
           </p>
+          <div class="session-tools" id="session-tools" hidden>
+            <button type="button" id="session-undo">Undo</button>
+            <button type="button" id="session-reset">
+              Reset to the commit
+            </button>
+            <button type="button" id="session-check">
+              Check every feedline
+            </button>
+            <a href="sat">local SAT</a>
+            <a href="global">global SAT</a>
+          </div>
           <div class="session-log" id="session-log"></div>
           <div class="scroll"><table id="coupler-table"></table></div>
           <div class="scroll"><table id="option-table"></table></div>
@@ -3563,6 +3611,48 @@
               if (/UNSAT|NO WAY/.test(text)) line.className = "bad";
               log.appendChild(line);
             }
+            sayVerdicts(last.verdicts);
+          }
+          // The three verdicts after a move: each moved feedline checked
+          // locally with the other feedlines standing and alone, and the chip
+          // checked as a whole.
+          function verdictLine(parts) {
+            const line = document.createElement("div");
+            for (const [text, verdict] of parts) {
+              const span = document.createElement("span");
+              span.textContent = text;
+              if (verdict) span.className = `v-${verdict}`;
+              line.appendChild(span);
+            }
+            log.appendChild(line);
+          }
+          function lostText(lost) {
+            return lost && lost.length ? ` (lost ${lost.join(", ")})` : "";
+          }
+          function sayVerdicts(verdicts) {
+            if (!session.live || !verdicts) return;
+            for (const l of verdicts.local || [])
+              verdictLine([
+                [`feedline ${l.chain}: standing `, ""],
+                [
+                  l.standing.verdict + lostText(l.standing.lost),
+                  l.standing.verdict,
+                ],
+                [" · alone ", ""],
+                [l.alone.verdict + lostText(l.alone.lost), l.alone.verdict],
+              ]);
+            if (verdicts.global)
+              verdictLine([
+                ["the chip as a whole: ", ""],
+                [
+                  verdicts.global.verdict +
+                    lostText(verdicts.global.lost) +
+                    (verdicts.global.over && verdicts.global.over.length
+                      ? ` (over ${verdicts.global.over.join(", ")})`
+                      : ""),
+                  verdicts.global.verdict,
+                ],
+              ]);
           }
           async function move(coupler, option) {
             log.textContent = `coupler ${coupler} to option ${option}: drawing its edges and analysing the chip …`;
@@ -3587,19 +3677,66 @@
             location.reload();
           }
 
+          // Undo, reset and the check of every feedline, when the server can
+          // answer them.
+          async function ask(path, doing, reload) {
+            log.textContent = doing;
+            let answer;
+            try {
+              const reply = await fetch(path, { method: "POST" });
+              answer = await reply.json();
+              if (!reply.ok) throw new Error(answer.error || reply.statusText);
+            } catch (error) {
+              log.textContent = `the server refused: ${error.message}`;
+              return;
+            }
+            if (!reload) {
+              sayLast(answer);
+              return;
+            }
+            remember({
+              ...recall(),
+              tab: true,
+              view: { s: view.s, tx: view.tx, ty: view.ty },
+            });
+            location.reload();
+          }
+          if (session.live) {
+            document.getElementById("session-tools").hidden = false;
+            const undo = document.getElementById("session-undo");
+            undo.disabled = !session.undo;
+            undo.addEventListener("click", () =>
+              ask("undo", "taking the last move back …", true),
+            );
+            document
+              .getElementById("session-reset")
+              .addEventListener("click", () =>
+                ask(
+                  "reset",
+                  "putting every feedline back on the commit …",
+                  true,
+                ),
+              );
+            document
+              .getElementById("session-check")
+              .addEventListener("click", () =>
+                ask("check-all", "checking every feedline locally …", false),
+              );
+          }
+
           sayLast(session.last);
           couplerTable();
           optionTable();
           // `#coupler=8` in the address picks a coupler and shows it.
-          const asked = new URLSearchParams(location.hash.slice(1)).get(
-            "coupler",
-          );
+          // `#tab=couplers` opens the tab, as a move of a whole feedline asks.
+          const hashArgs = new URLSearchParams(location.hash.slice(1));
+          const asked = hashArgs.get("coupler");
           const saved = recall();
           if (asked !== null && byIndex.has(+asked)) {
             tab.click();
             pickCoupler(+asked, true);
           } else {
-            if (saved.tab) tab.click();
+            if (saved.tab || hashArgs.get("tab") === "couplers") tab.click();
             if (saved.coupler !== undefined && byIndex.has(saved.coupler))
               pickCoupler(saved.coupler, false);
             else build();

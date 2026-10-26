@@ -51,10 +51,38 @@ releases may include breaking changes.
   - `mqt-scpd debug <run>` builds the pages again from the records, and
     `mqt-scpd debug <run> --serve` serves the capacity graph on a local page
     whose tab moves a coupler to another of its options.
+  - `global_sat` records every chain state that the global SAT search checks
+    locally, the committed state of each chain first, with its options, its
+    moved couplers and the check that found it SAT.
+  - The coupler session takes `debug` and records its own run to the end of the
+    coupler insertion; `chains()` lists every chain, and `local_check()` runs
+    the two local checks of the search on a chain with its couplers on given
+    options.
+  - The local SAT page is a dashboard of the feedlines, a card per feedline. A
+    feedline is SAT when a step check of the chain search at its last edge is
+    SAT. Its card lists per edge the SAT options, or the UNSAT options of an
+    edge with none, each with a link to the step check that the coupler
+    session's `step_check()` rebuilds (`/graph?step=`), and below them the
+    states the global search checked. The global SAT page lists every
+    combination the search checked, and each state number links to its row on
+    the local SAT page.
+  - `mqt-scpd debug <run> --serve` serves both dashboards at `/sat` and
+    `/global`, from the session's own run: a link opens the graph of a state's
+    local check or a combination's whole-chip check and says when the verdict
+    differs from the record, and another puts a feedline on the state's options.
+    After every move the server checks the moved feedlines locally and the chip
+    as a whole; the coupler tab shows the three verdicts and can undo, reset to
+    the commit and check every feedline.
 - ✅ Add the local and the global SAT benchmark, which measure how well the
   capacity check of the coupler insertion predicts the feedline routing; the
   coupler session's `compare_locally` is their entry, and
   `uvx nox -s sat_benchmarks` runs them ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `mqt-scpd sat-bench {local|global} <run>`, which runs a SAT benchmark
+  on a run directory and writes its table and page to `<run>/sat-bench`; the
+  global benchmark takes the local table of the same runs, and
+  `mqt-scpd debug <run> --serve` serves both pages at `/bench/local` and
+  `/bench/global`, with links to the check and the routed ways of every case
+  ([#XXX]) ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd drc`, which checks a finished run against the design rules
   and writes `drc.json` beside the artifacts ([#XXX]) ([**@FeldmeierMichael**])
 - 🎨 Draw the routing stages with `plot` and `render` ([#XXX])
@@ -178,6 +206,9 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🔧 Turn the targeted repair of the Final stage off by default:
+  `[stages.final] repair_trials` is `0` unless a configuration sets it ([#XXX])
+  ([**@FeldmeierMichael**])
 - 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y`: the
   capacity step blocks no border of its grid, so the launchers on the edge stay
   free. A configuration that sets them still loads, and `doctor` and `plan` warn

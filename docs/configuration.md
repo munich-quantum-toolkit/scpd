@@ -284,7 +284,7 @@ key does.
 | `obstacle_penalty_reach`        | `100.0`              | How far the price of running beside an obstacle reaches; `0.0` turns the price off                                                                     |
 | `coupler_length`                | `200.0`              | The run of the pad the resonator couples along                                                                                                         |
 | `coupler_height`                | `26.0`               | How far the feedline lies from the resonator across the pad                                                                                            |
-| `repair_trials`                 | `100`                | How many legality tests the targeted repair may run per chip; `0` turns the repair off                                                                 |
+| `repair_trials`                 | `0`                  | How many legality tests the targeted repair may run per chip; `0` turns the repair off                                                                 |
 | `coupler_bias`                  | `0.98`               | Where the coupler cuts the way, as the share of the target length left to run from the coupler to the qubit                                            |
 | `coupler_max_shortfall`         | `0.3`                | How far below the target length a coupler may leave the resonator, as a share of it                                                                    |
 | `coupler_box_margin_cells`      | `5`                  | What a coupler keeps off every side of the coupler box, in cells                                                                                       |

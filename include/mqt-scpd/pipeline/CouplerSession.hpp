@@ -13,9 +13,11 @@
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace mqt::scpd::pipeline {
 
@@ -32,13 +34,17 @@ namespace mqt::scpd::pipeline {
 /// switches apply as in a run of the stage.
 class MQT_SCPD_PIPELINE_EXPORT CouplerSession {
 public:
-  /// Runs the Final stage up to and with the coupler insertion.
+  /// Runs the Final stage up to and with the coupler insertion. `debug`
+  /// receives the records of that run, the global SAT search included, as
+  /// the stage hands them in a run with `-d`, and every record of the
+  /// session's later calls.
   ///
   /// @throws std::invalid_argument when the configuration carries no grid
   /// section or no design rules, or the detail routing no grid.
   CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
                  const AssignmentT& assignment, const DetailRoutingT& detail,
-                 const ConfigT& config, const Report& report = {});
+                 const ConfigT& config, const Report& report = {},
+                 Debug debug = {});
   ~CouplerSession();
   CouplerSession(const CouplerSession&) = delete;
   CouplerSession& operator=(const CouplerSession&) = delete;
@@ -70,6 +76,53 @@ public:
   /// own, and `previousVerdict` and `previousLost` keep the answer of the
   /// check before.
   [[nodiscard]] std::string insertionCheck();
+
+  /// The two local checks of the global SAT search on chain `chain` with
+  /// its couplers on `options`, one per waypoint (0 at a fixed waypoint).
+  /// The chain's couplers are put on `options` and their feedline edges
+  /// drawn as `setOption` draws them; then the check with every other chain
+  /// standing and the check of the chain alone run as the search runs them,
+  /// and the couplers go back to where they stood. Returns JSON with
+  /// `chain`, `options`, `undrawn` (the chain's edges with no way) and, for
+  /// each check (`standing`, `alone`), its `verdict` (`SAT` or `UNSAT`), its
+  /// `lost` wires and the `graph` it judged, in the form of
+  /// `final-capacity-graph.json`.
+  ///
+  /// @throws std::invalid_argument when the chain does not exist, `options`
+  /// does not hold one option per waypoint, or names an option the coupler
+  /// of its waypoint does not have.
+  [[nodiscard]] std::string localCheck(std::uint32_t chain,
+                                       const std::vector<std::size_t>& options);
+
+  /// The step check of the chain search at edge `step` of chain `chain`,
+  /// rebuilt with the chain's couplers on `options`, one per waypoint (0 at
+  /// a fixed waypoint): what a `step-check` record judged. The couplers of
+  /// waypoints 0 to `step + 1` are put on `options` and their feedline edges
+  /// drawn as `setOption` draws them, against the chip as it stands; the
+  /// chain search drew them against the prefix it grew, so the ways may
+  /// differ from the search's own. The check judges the chip the step check
+  /// judges: no other chain standing, the chain's couplers up to the far end
+  /// of edge `step` and its edges 0 to `step`, with the chain's own wires
+  /// and the free wires beside them routed and judged. The prefix up to edge
+  /// `step - 1` is judged the same way to give the wires the step closes.
+  /// The couplers then go back to where they stood. Returns JSON with
+  /// `chain`, `step`, `edge` (the edge's slot, `f<edge>`), `options` (the
+  /// waypoints after `step + 1` on 0, as the record holds them), `verdict`
+  /// (`SAT` or `UNSAT`), `lost`, `closed` (lost now but not by the prefix),
+  /// `undrawn` (the edges 0 to `step` with no way) and `graph`, the graph
+  /// judged, in the form of `final-capacity-graph.json`.
+  ///
+  /// @throws std::invalid_argument when the chain does not exist, has no
+  /// edge `step`, `options` does not hold one option per waypoint, or names
+  /// an option the coupler of its waypoint does not have.
+  [[nodiscard]] std::string stepCheck(std::uint32_t chain, std::size_t step,
+                                      const std::vector<std::size_t>& options);
+
+  /// Every chain as it stands, as JSON: per chain its index (`chain`), the
+  /// coupler of every waypoint (`couplers`, null for a fixed waypoint), the
+  /// option every waypoint stands on (`options`, 0 for a fixed waypoint)
+  /// and its feedline edges by name (`edges`).
+  [[nodiscard]] std::string chains() const;
 
   /// Routes the feedlines of the chip as it stands, then compares the slot
   /// check of every feedline alone with a rip-up and re-route of that

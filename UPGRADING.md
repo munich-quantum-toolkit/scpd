@@ -19,6 +19,11 @@ resonator off its target length as a fail, as it counts a wire without a way, an
 open wire and a wire that crosses a feedline other than at a right angle; a run
 that ends with fails exits with code 1 as before.
 
+The targeted repair of the Final stage is off by default:
+`[stages.final] repair_trials` is `0`. A configuration that wants the repair
+sets the number of legality tests it may run per chip, such as
+`repair_trials = 100`, the former default.
+
 ### Planning a chip
 
 `mqt-scpd plan` needs a few keys that a configuration for `plot` and `render`

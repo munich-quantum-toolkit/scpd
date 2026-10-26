@@ -114,7 +114,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "obstacle_penalty_reach": 100.0,
         "coupler_length": 200.0,
         "coupler_height": 26.0,
-        "repair_trials": 100,
+        "repair_trials": 0,
         "coupler_bias": 0.98,
         "coupler_max_shortfall": 0.30,
         "coupler_box_margin_cells": 5,

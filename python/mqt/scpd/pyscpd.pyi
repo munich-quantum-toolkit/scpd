@@ -93,8 +93,9 @@ class CouplerSession:
         config: bytes,
         reporter: object | None = None,
         verbosity: int = 0,
+        debug: object | None = None,
     ) -> None:
-        """Run the Final stage up to and with the coupler insertion and keep it. The stage reports through reporter as plan_capacity, now and on every later call."""
+        """Run the Final stage up to and with the coupler insertion and keep it. The stage reports through reporter as plan_capacity, now and on every later call. debug, when given, is called with the kind and the JSON text of every record the [debug] section of config asks for, from this run, the global SAT search included, and from every later call."""
 
     def couplers(self) -> str:
         """The couplers as they stand and every option of each, as JSON."""
@@ -107,6 +108,15 @@ class CouplerSession:
 
     def insertion_check(self) -> str:
         """The capacity check of the coupler insertion on the chip as it stands, every chain standing. Returns JSON with verdict, lost and graph; under SCPD_SLOT_CHECK (on) the check by crossing slots gives them, adds over, and keeps the check before as previousVerdict and previousLost."""
+
+    def local_check(self, chain: int, options: Sequence[int]) -> str:
+        """Run the two local checks of the global SAT search on a chain with its couplers on options, one per waypoint (0 at a fixed waypoint), then put the couplers back. Returns JSON with chain, options, undrawn and, for the checks standing and alone, the verdict, the lost wires and the graph judged."""
+
+    def step_check(self, chain: int, step: int, options: Sequence[int]) -> str:
+        """Rebuild the step check of the chain search at edge step of a chain with its couplers on options, one per waypoint (0 at a fixed waypoint): the chain alone, its couplers up to the far end of edge step and its edges 0 to step, drawn as set_option draws them; then put the couplers back. Returns JSON with chain, step, edge, options, verdict, lost, closed, undrawn and the graph judged."""
+
+    def chains(self) -> str:
+        """Every chain as it stands, as JSON: per chain the coupler of every waypoint (null at a fixed waypoint), the option every waypoint stands on and its feedline edges by name."""
 
     def compare_locally(self, runs: int, span: int) -> str:
         """Route the feedlines, then compare the slot check of every feedline alone with a rip-up and re-route of its wires alone, over up to runs runs of options of every segment of span edges of every chain. Returns JSON with the four classes, the runs judged and what the chip as it began came to; the routing changes the state for good, the comparison leaves it as found."""

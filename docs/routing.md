@@ -204,13 +204,13 @@ plus `terminal_stub_extra_cells`. It opens a straight slot of
 ### The step check
 
 With `capacity_check` on, every step that routes its edge is followed by a check
-of the chip as the step leaves it: the chains settled before on their options,
-this chain's couplers up to the far end of the edge, and the prefix's edges up
-to this one. A step whose edge loses a wire is refused, and the search takes the
-next option. After `chain_rule_refusals` refused steps without a complete run,
-the chain is searched again without the rule, because a chain left on its first
-options is worse than one that loses a wire. The check judges only the wires of
-the chain's own feedline; every terminal edge stays in the graph.
+of the chip as the step leaves it: this chain's couplers up to the far end of
+the edge and the prefix's edges up to this one, with no other chain standing. A
+step whose edge loses a wire is refused, and the search takes the next option.
+After `chain_rule_refusals` refused steps without a complete run, the chain is
+searched again without the rule, because a chain left on its first options is
+worse than one that loses a wire. The check judges only the wires of the chain's
+own feedline; every terminal edge stays in the graph.
 
 ### The commit
 
@@ -384,8 +384,9 @@ The repair runs after the sweep on the wires that still fail.
    The run is kept when no wire of the window is unrouted, open or crossing and
    the bad wires of the chip fall. Otherwise the chip is put back.
 
-The budget is `repair_trials` legality tests per chip; zero turns the repair
-off. After an accepted run the triage is built again on the new state.
+The budget is `repair_trials` legality tests per chip; zero, the default, turns
+the repair off. After an accepted run the triage is built again on the new
+state.
 
 ## Reading a Run
 
@@ -488,7 +489,7 @@ The couplers and the chain search:
 | `chain_end_edge_weight`      | `0.1`   | The weight of an edge at a launcher in the chain search, against `1` for every other edge                                                              |
 | `edge_bend_factor`           | `1.0`   | The bend price of a feedline edge, as a factor on `bend_penalty_norm`                                                                                  |
 | `chain_length_weight`        | `0`     | The price of one cell of an edge's length in the chain search; `0` prices length not at all                                                            |
-| `repair_trials`              | `100`   | How many legality tests the targeted repair may run per chip; `0` turns the repair off                                                                 |
+| `repair_trials`              | `0`     | How many legality tests the targeted repair may run per chip; `0` turns the repair off                                                                 |
 | `research_ring_members`      | `2`     | How many ring members beside each window wire the repair draws again                                                                                   |
 | `research_rounds`            | `2`     | The rounds of the repair's local pass                                                                                                                  |
 
@@ -533,16 +534,170 @@ a coupler to another option. The core writes no file.
 | `pre_feedline_routing_dashboard`            | A table of the pre-feedline routing: a row per wire, a column per round and relaxation level; a click draws the way the search found over the grid |
 | `pre_feedline_refinement_dashboard`         | The same table for the pre-feedline refinement                                                                                                     |
 | `feedline_insertion`                        | The coupler options and the capacity graph of the whole-chip check, on the page the graph is laid out on                                           |
-| `local_sat`                                 | Every step check of the chain search: the chain, the step, the options, the verdict and the wires it closes                                        |
-| `global_sat`                                | The global SAT search: the states collected per chain, every combination with its verdict, and the result                                          |
+| `local_sat`                                 | The feedline dashboard: a card per feedline with the step checks of the chain search and the states the global SAT search checked on it            |
+| `global_sat`                                | The global dashboard: the result of the global SAT search, the states kept per chain and every combination with its verdict                        |
 | `feedline_constrained_routing_dashboard`    | The table for the feedline-constrained routing                                                                                                     |
 | `feedline_constrained_refinement_dashboard` | The table for the feedline-constrained refinement                                                                                                  |
 
 Every key is off by default. A run records only the kinds the pages it writes
 need: `grid` and `search` for a dashboard, `coupler-options` and
-`capacity-graph` for the insertion page, `step-check`, `global-sat` and `phase`.
-The records are plain JSON, one per line, so a script can read them without the
-pages.
+`capacity-graph` for the insertion page, `step-check`, `global-sat` and
+`chain-state` for the SAT pages, and `phase`. The records are plain JSON, one
+per line, so a script can read them without the pages.
+
+A `step-check` record gives the option of every waypoint of the chain in
+`options` and the coupler of every waypoint in `couplers` (null for a fixed
+waypoint). The `states` event of `global-sat` gives the option vectors of the
+states a chain keeps in `options`, in the order it keeps them; the search
+records it when it first collects the chain, so every chain a combination moves
+has one. The `states` index of a chain in a `combination` event points into that
+list, and index 0 is the committed state.
+
+`global_sat` also records a `chain-state` for every state of a chain that the
+global SAT search checks locally, whether the chain has a feedline edge at an
+edge over its capacity or not. The first record of each chain the search
+collects is the committed state, judged by the same two checks:
+
+| Field       | Meaning                                                                                        |
+| ----------- | ---------------------------------------------------------------------------------------------- |
+| `chain`     | The chain (the feedline), by index                                                             |
+| `committed` | Whether this is the state the commit left                                                      |
+| `segment`   | The first waypoint of the segment whose runs reached the state; null for the committed state   |
+| `span`      | The edges per segment                                                                          |
+| `atOver`    | Whether the chain has a feedline edge at an edge over its capacity                             |
+| `options`   | The option of every waypoint; a fixed waypoint keeps 0                                         |
+| `couplers`  | The coupler of every waypoint; null for a fixed waypoint                                       |
+| `moved`     | The couplers on another option than in the committed state, as `{coupler, from, to}`           |
+| `check`     | The check that found the state SAT: `standing`, `alone`, or `none` when neither did            |
+| `verdict`   | `SAT` when one of the two checks found the state SAT, else `UNSAT`                             |
+| `lost`      | The wires the `standing` check judges and found without a way or crowded                       |
+| `seconds`   | The time the slot checks of the state took                                                     |
+
+The `standing` check keeps every other chain as the commit left it and routes
+the chain's own wires, the free wires beside them and its terminal edges. The
+`alone` check routes the chain without the other chains. It runs only when the
+`standing` check finds the state UNSAT.
+
+The feedline dashboard (`local-sat.html`) has a card per feedline, with its
+`f<n>` edges. Its badge comes from the local checks of the coupler insertion,
+the step checks of the chain search: the feedline is SAT when a step check of
+its last edge is SAT, UNSAT when it has step checks but none of its last edge is
+SAT, and "no local check" when the chain search made none. The card lists the
+step checks by edge: per edge its SAT options, or its UNSAT options when the
+edge has no SAT option, and the other step checks behind a summary. A row gives
+the edge, the option tried at the edge's far end (`c13: 2`, or
+`launcher (end)`), the options of every waypoint, the verdict, the lost and the
+closed wires, whether the capacity rule refused the step, the seconds and a
+`graph ↗` and a `mover ↗` link. A line counts the options checked, SAT, UNSAT
+and refused. A smaller badge gives the global SAT search's outcome for the
+feedline: the number of its SAT states, UNSAT, or "not needed" when the search
+collected no state of it. Its states follow in a second table: the SAT states,
+and the UNSAT states behind a summary; a feedline with no SAT state lists its
+UNSAT states. A state row gives the state number in kept order, the segment, the
+moved couplers (`c13: 0→1`), the check, the lost wires and a `graph ↗` and a
+`mover ↗` link. A bar filters the cards by the badge and searches them by
+feedline, edge, coupler or wire. On the global dashboard (`global-sat.html`)
+every state number of a combination links to its row on the feedline dashboard,
+as `local-sat.html#chain-3-state-2`. A page built from a run's records has its
+`graph ↗` and `mover ↗` links off: they need a coupler session.
+
+### Coupler Session
+
+`RunDirectory.coupler_session(config, reporter, verbosity, debug=None)` runs the
+Final stage to the end of its coupler insertion, the global SAT search included,
+and keeps the state (`pyscpd.CouplerSession`). `debug`, when given, is called
+with the kind and the JSON text of every record the `[debug]` section asks for,
+from that run and from every later call. Every method answers JSON:
+
+| Method                             | Answer                                                                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `couplers()`                       | Every coupler as it stands and every option of each                                                                                         |
+| `set_option(coupler, option)`      | Puts a coupler on another option and draws its two feedline edges again                                                                     |
+| `chains()`                         | Per chain: `couplers` (the coupler of every waypoint, null when fixed), `options` (the option of every waypoint) and `edges` (`f<n>` names) |
+| `local_check(chain, options)`      | The two checks of a `chain-state` record on `options`, then the couplers go back                                                            |
+| `step_check(chain, step, options)` | The check of a `step-check` record at edge `step` on `options`, then the couplers go back                                                   |
+| `graph()`                          | The capacity graph of the chip as it stands                                                                                                 |
+| `insertion_check()`                | The whole-chip check of the coupler insertion                                                                                               |
+
+`local_check` puts the chain's couplers on `options`, one per waypoint, and
+draws their edges as `set_option` does. It then runs the `standing` and the
+`alone` check on the session's wires and puts the couplers back. It answers
+`chain`, `options`, `undrawn` (the chain's edges with no way) and, for
+`standing` and `alone`, the `verdict`, the `lost` wires and the `graph` the
+check judged, in the form of `final-capacity-graph.json`. A chain, an option
+count or an option that does not exist raises `ValueError`.
+
+`step_check` rebuilds a step check of the chain search. It puts the couplers of
+waypoints 0 to `step + 1` on `options` and draws their edges as `set_option`
+does, against the chip as it stands. The chain search drew them against the
+prefix it grew, so the ways may differ from the search's own. The check then
+judges what the step check judged: the chain's couplers up to the far end of
+edge `step` and its edges 0 to `step`, with no other chain standing. It routes
+and judges the chain's own wires and the free wires beside them. The prefix up
+to edge `step - 1` is judged the same way, to give the wires the step closes. It
+answers `chain`, `step`, `edge` (the slot of `f<edge>`), `options` (the
+waypoints after `step + 1` on 0, as the record holds them), `verdict`, `lost`,
+`closed`, `undrawn` and `graph`. A chain, a step, an option count or an option
+that does not exist raises `ValueError`.
+
+### Coupler Server
+
+`mqt-scpd debug <run> --serve [PORT]` builds a coupler session with `local_sat`
+and `global_sat` on, keeps the records of its run in memory and answers on
+`http://127.0.0.1:PORT` (8765), one request at a time:
+
+| Route                                                    | Answer                                                                                                     |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `GET /`                                                  | The capacity graph of the chip as it stands, with the coupler tab                                          |
+| `GET /sat`, `GET /global`                                | The feedline and the global dashboard, with live links                                                     |
+| `GET /graph?step=S&chain=C&options=a,b,c`                | The graph of the step check of feedline `C` at step `S`, rebuilt by `step_check`; the couplers go back     |
+| `GET /graph?chain=C&options=a,b,c&check=standing\|alone` | The graph of that local check; the couplers go back                                                        |
+| `GET /graph?combination=K`                               | The graph of the whole-chip check on combination `K`; the couplers go back                                 |
+| `GET /mover?chain=C&options=a,b,c`                       | Puts feedline `C` on the options, keeps them and opens `/` on its first edge with the coupler tab          |
+| `POST /option`                                           | `{"coupler", "option"}`: puts one coupler on another option                                                |
+| `POST /options`                                          | `{"moves": [{"coupler", "option"}]}`: puts several couplers on other options                               |
+| `POST /undo`                                             | Takes the last move back                                                                                   |
+| `POST /reset`                                            | Puts every feedline back on its committed options; `POST /undo` takes the reset back                       |
+| `POST /check-all`                                        | Checks every feedline locally                                                                              |
+| `GET /state.json`                                        | The options of every chain, the whole-chip verdict and the local checks of the chains checked since a move |
+| `GET /graph.json`, `GET /couplers.json`                  | The capacity graph and the couplers as data                                                                |
+| `GET /bench/local`, `GET /bench/global`                  | The pages of the SAT benchmarks, from the tables in `<run>/sat-bench`, with live links                     |
+| `GET /graph?bench=local&case=ID&chain=C`                 | The window slot check of feedline `C` on the state of run `ID`; the couplers go back                       |
+| `GET /graph?bench=global&case=K`                         | The whole-chip check on the state of global case `K`; the couplers go back                                 |
+| `GET /routed?bench=local&case=ID&chain=C`                | The capacity graph of the state of run `ID`, its wires drawn along the ways the rip-up laid                |
+| `GET /routed?bench=global&case=K`                        | The capacity graph of the state of case `K`, its wires drawn along the ways the feedline routing laid      |
+
+The banner of a `/graph` page names the check, its verdict and its lost wires,
+and compares the verdict with the record of the search. It marks a mismatch in
+red. A step check is compared with the first `step-check` record of the same
+chain, step and options; the banner says when there are several or none. The
+search judged a chain state with every other chain on the commit, so the banner
+also names the feedlines that stand elsewhere now. The committed options are
+those of the committed `chain-state` record, or those the chain stood on when
+the session started.
+
+After every move the server checks each moved feedline locally (`standing` and
+`alone`) and the chip as a whole (`insertion_check`), and draws the capacity
+graph again. A move answers `action`, `edges`, `lines` and `verdicts`:
+
+```json
+{
+  "local": [
+    {
+      "chain": 2,
+      "options": [0, 3, 0, 3, 3, 0],
+      "undrawn": [],
+      "standing": { "verdict": "SAT", "lost": [] },
+      "alone": { "verdict": "SAT", "lost": [] }
+    }
+  ],
+  "global": { "verdict": "UNSAT", "lost": [], "over": ["g20"] }
+}
+```
+
+`over` names the edges over their capacity. The coupler tab shows the three
+verdicts and has buttons to undo, to reset and to check every feedline. A move
+that fails answers `400` with `{"error"}` and moves nothing.
 
 ## SAT Benchmarks
 
@@ -562,6 +717,20 @@ one of four classes:
 
 The agreement is `(SAT and clean + UNSAT and failing) / all`. A case in the
 second class is the check too lax; a case in the third is the check too strict.
-The benchmarks live in `test/python/benchmarks/` and run with
+`mqt-scpd sat-bench {local|global} <run>` runs a benchmark on a run directory;
+`docs/benchmarks.md` describes the command and its pages. The tests in
+`test/python/benchmarks/` run the same measurement on the benchmark chips with
 `MQT_SCPD_SAT_BENCHMARKS=1 uvx nox -s sat_benchmarks`. They take hours on the
 large chips, so the ordinary test suite leaves them out.
+
+A case of the local benchmark is one feedline of one run. The slot check judges
+it by its **window**: the feedline's wires, the free wires beside them and every
+terminal edge, routed alone. The `/graph?bench=local` page runs that check again
+on the session: it puts the couplers on the run's options, takes the capacity
+graph of the chip, keeps the window's wires and the terminal edges and checks it
+by the crossing slots (`pyscpd.slot_check`). A window wire is lost when it has
+no way or passes an edge over its capacity. The benchmark judged the chip after
+the feedline routing, with the run's edges as the segment search drew them; the
+session judges the chip after the insertion, with the edges drawn again by
+`set_option`. The banner says so and marks a verdict that differs from the
+table.
