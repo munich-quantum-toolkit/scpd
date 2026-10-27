@@ -117,6 +117,18 @@ struct ChainProblem {
   /// far, `optimal` false and `ChainSolution::stopped` set.
   mutable bool stop = false;
 
+  /// The real price of a step of the search from the back
+  /// (`solveChainBidirectional`): the step out of choice `from` into
+  /// `suffix`, laid against the ways `suffix` has already laid. `suffix`
+  /// holds the choices of the last `suffix.size()` layers in order, so the
+  /// step runs from layer `width.size() - suffix.size() - 1` into layer
+  /// `width.size() - suffix.size()`. TRELLIS_UNREACHABLE when it cannot be
+  /// built at all. `stepBudget` is set before every call as for `step`.
+  /// Optional; without it `solveChainBidirectional` searches from the front
+  /// alone.
+  std::function<uint64_t(std::span<const uint32_t> suffix, uint32_t from)>
+      stepBack;
+
   /// Called every time the search completes a run of choices whose every
   /// step is routed — the run and what it costs. They arrive in no
   /// particular order of price: a run is reached in order of the *bound* on
@@ -210,9 +222,39 @@ struct ChainSolution {
 
   /// Whether `step` ended the search (`ChainProblem::stop`).
   bool stopped = false;
+
+  /// The search from the back (`solveChainBidirectional`): how many of its
+  /// steps were really priced, how many suffixes it grew children from, how
+  /// many times a prefix and a suffix met on an option and the run they make
+  /// was laid again from the front, and how many of those runs joined the
+  /// chain. All zero for `solveChainAStar`.
+  uint32_t routedBack = 0;
+  uint32_t expansionsBack = 0;
+  uint32_t meetings = 0;
+  uint32_t meetingsJoined = 0;
 };
 
 /// Solve one chain exactly, pricing as few steps as the bound allows.
 [[nodiscard]] ChainSolution solveChainAStar(const ChainProblem& problem);
+
+/// Solve one chain as `solveChainAStar` does, with a second search from the
+/// back of the chain.
+///
+/// The search from the back grows suffixes from the last layer toward the
+/// first, priced by `stepBack` and guided by the cheapest run of bounds from
+/// the first layer. The two searches take one priced step each in turn.
+/// When a prefix and a suffix stand on the same choice of one layer, the run
+/// they make together is laid again from the front: the steps of the suffix
+/// are priced by `step` against the prefix, as the search from the front
+/// would price them, and become nodes of that search. A suffix laid against
+/// its own ways only says where a run may be; the search from the front
+/// alone decides the answer, so the answer is what `solveChainAStar` proves,
+/// and a run found through a suffix only lowers the price that later
+/// prefixes must beat.
+///
+/// Without `stepBack`, with `accept`, or on a chain of fewer than three
+/// layers this is `solveChainAStar`.
+[[nodiscard]] ChainSolution
+solveChainBidirectional(const ChainProblem& problem);
 
 } // namespace mqt::scpd::routing

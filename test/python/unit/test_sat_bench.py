@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,7 +23,7 @@ from mqt.scpd.debug import bench
 from mqt.scpd.debug.serve import Answer, CouplerServer, Request
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from typing import Any
 
 BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
@@ -46,6 +47,7 @@ class FakeSession:
         self.options = [0, 0, 0, 0]
         self.moves: list[tuple[int, int]] = []
         self.compared = 0
+        self.asked: list[int] = []
         self.routed = 0
 
     def couplers(self) -> str:
@@ -60,6 +62,16 @@ class FakeSession:
             if c is not None
         ]
         return json.dumps({"couplers": listed})
+
+    @staticmethod
+    def add_option(coupler: int, x: int, y: int, offset: int = -1, port: int = 0) -> str:
+        """No option fits anywhere.
+
+        Returns:
+            What came of it, as JSON.
+        """
+        del offset, port
+        return json.dumps({"coupler": coupler, "built": False, "cell": x + y, "tried": []})
 
     def set_option(self, coupler: int, option: int) -> str:
         """Put a coupler on another option.
@@ -122,6 +134,14 @@ class FakeSession:
         """
         raise NotImplementedError
 
+    def local_reroute(self, chain: int, options: list[int]) -> str:
+        """Not used by the benchmarks.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError
+
     def insertion_check(self) -> str:
         """The whole-chip check: UNSAT when coupler 1 stands on option 2.
 
@@ -133,13 +153,14 @@ class FakeSession:
         graph = {**json.loads(self.graph()), "verdict": verdict}
         return json.dumps({"verdict": verdict, "lost": lost, "over": [], "graph": graph})
 
-    def compare_locally(self, runs: int, span: int) -> str:
-        """The comparison of :func:`compared`.
+    def compare_locally(self, runs: int, span: int, feedlines: Sequence[int] = ()) -> str:
+        """The comparison of :func:`compared`, and the feedlines it was asked for.
 
         Returns:
             The JSON.
         """
         self.compared += 1
+        self.asked = list(feedlines)
         return json.dumps(compared(runs, span))
 
     def route_feedlines(self) -> str:
@@ -405,10 +426,27 @@ def test_the_global_benchmark_runs_the_local_cases_for_other_inputs(tmp_path: Pa
         assert (written["inputs"], written["span"]) == (inputs, span)
 
 
+def test_the_local_benchmark_judges_only_the_feedlines_asked_for(tmp_path: Path) -> None:
+    """The feedlines asked for go to the comparison and into the table; a global benchmark of others runs it again."""
+    session = FakeSession()
+    table = bench.local_cases(session, feedlines=[2, 0, 2])
+    assert session.asked == [0, 2]
+    assert table["asked"] == [0, 2]
+    assert "of feedlines 0, 2" in bench.page("local", table, live=False)
+    assert bench.local_cases(FakeSession())["asked"] == []
+
+    bench.write_table(tmp_path, "local", {**table, "chip": "fake", "inputs": "abc"})
+    assert bench.reusable(bench.read_table(tmp_path / "sat-local.json"), 8, 3, "abc", [0, 2])
+    assert not bench.reusable(bench.read_table(tmp_path / "sat-local.json"), 8, 3, "abc", [])
+    assert not bench.reusable(bench.read_table(tmp_path / "sat-local.json"), 8, 3, "abc", [1])
+
+
 def test_the_command_line_parses_a_sat_bench() -> None:
     """``sat-bench`` takes the kind and the run, with eight runs of three edges and twelve cases by default."""
     args = build_parser().parse_args(["sat-bench", "global", "runs/17q", "--cases", "3"])
     assert (args.kind, args.run_dir, args.runs, args.span, args.cases) == ("global", Path("runs/17q"), 8, 3, 3)
+    assert args.feedlines == []
+    assert build_parser().parse_args(["sat-bench", "local", "runs/17q", "--feedlines", "1, 3"]).feedlines == [1, 3]
     assert args.output is None
     assert args.run is command_sat_bench
     with pytest.raises(SystemExit) as stopped:
@@ -416,20 +454,25 @@ def test_the_command_line_parses_a_sat_bench() -> None:
     assert stopped.value.code == 2
     with pytest.raises(SystemExit):
         main(["sat-bench", "local", "runs/17q", "--runs", "0"])
+    with pytest.raises(SystemExit):
+        main(["sat-bench", "local", "runs/17q", "--feedlines", "one"])
 
 
 def test_the_window_check_judges_the_window_alone_and_counts_crowded_wires() -> None:
-    """Only the window's wires and the terminal edges reach the slot check; a window wire over an edge is lost."""
-    seen: list[list[str]] = []
+    """Only the window's wires and the terminal edges reach the slot check; a window wire over an edge is lost.
+
+    A terminal edge outside the window stands and is not routed.
+    """
+    seen: list[list[tuple[str, bool]]] = []
 
     def check(text: str) -> str:
         graph = json.loads(text)
-        seen.append([w["name"] for w in graph["wires"]])
+        seen.append([(w["name"], bool(w.get("standing"))) for w in graph["wires"]])
         edges = [{"overflow": 1, "through": ["w2", "w9"]}, {"overflow": 0, "through": ["w1"]}]
         return json.dumps({"verdict": "UNSAT", "lost": [], "over": ["g1"], "graph": {**graph, "edges": edges}})
 
     _, lost = bench.window_check(json.loads(FakeSession().graph()), ["w1", "w2"], check)
-    assert seen == [["w1", "w2", "f0"]]
+    assert seen == [[("w1", False), ("w2", False), ("f0", True)]]
     assert lost == ["w2"]
 
 
@@ -490,6 +533,20 @@ def test_the_routed_page_draws_the_wires_along_the_ways_of_the_case(tmp_path: Pa
     assert '"path":[[1,1],[2,1]]' in answer.body
     assert session.options == before
     assert get(server, "/routed").status == 400
+
+
+def test_the_routed_page_marks_the_wires_the_routing_left_failing(tmp_path: Path) -> None:
+    """The routed page draws the routing's wires as a layer of their own and marks each one a fail names."""
+    bench.write_table(tmp_path, "local", local_table())
+    server, _, _ = served(tmp_path)
+    answer = get(server, "/routed", {"bench": "local", "case": "c0-w0-r1", "chain": "0"})
+    found = re.search(r'<script id="graph-data" type="application/json">(.*?)</script>', answer.body, re.DOTALL)
+    assert found is not None
+    routed = {wire["name"]: wire for wire in json.loads(found.group(1))["routed"]["wires"]}
+    assert routed["w2"]["bad"] is True
+    assert routed["w2"]["fails"] == ["open"]
+    assert routed["w1"]["bad"] is False
+    assert routed["w1"]["fails"] == []
 
 
 def test_a_chain_graph_without_a_bench_stays_with_the_dashboard_route(tmp_path: Path) -> None:

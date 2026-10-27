@@ -15,6 +15,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -141,6 +142,11 @@ struct SlotGraph {
     std::vector<std::string> crosses;
     bool terminal = false;
     bool resonator = false;
+    /// Whether the wire stands and is not routed: a terminal edge of
+    /// another chain in the local check of a chain. It names the mouth it
+    /// stands at, as every terminal edge does, but takes no room and is
+    /// neither lost nor shown. JSON key `standing`.
+    bool standing = false;
     bool operator==(const Wire&) const = default;
   };
   std::vector<Wire> wires;
@@ -165,6 +171,9 @@ struct SlotCheckResult {
   /// The wires whose way passes an edge or a self-bottleneck that is over,
   /// in the order they were routed.
   std::vector<std::string> crowded;
+  /// The crossing slots the check placed across each feedline edge, by the
+  /// edge's name.
+  std::map<std::string, std::size_t> slots;
   /// The capacity graph as the check saw it, as JSON in the form of
   /// `final-capacity-graph.json`: the slot edges in place of the stretches,
   /// a self-bottleneck edge (`S …`) per line that limits a group of slots,

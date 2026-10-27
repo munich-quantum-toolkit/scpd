@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from itertools import pairwise, starmap
 from pathlib import Path
@@ -447,6 +448,7 @@ def test_the_routing_pictures_draw_the_copper_as_waveguides() -> None:
     }
     assert [path.get("class") for path in groups["l-signal cpw"].findall(f"{SVG}path")] == ["edge", "gap", "core"]
     assert [path.get("class") for path in groups["l-feedline cpw"].findall(f"{SVG}path")] == ["edge", "gap", "core"]
+    # The picture draws the bridges that the planning geometry carries, and finds none of its own.
     assert "l-bridge" not in groups
     assert "l-clearance" in groups
     style = root.find(f"{SVG}style")
@@ -454,6 +456,34 @@ def test_the_routing_pictures_draw_the_copper_as_waveguides() -> None:
     assert style.text is not None
     assert "g.l-signal>path.edge" in style.text
     assert "g.l-clearance>path" in style.text
+
+
+def test_an_air_bridge_is_a_translucent_deck_on_two_posts() -> None:
+    """Each bridge is a deck along the wire with a line down its middle, on one post either side of the feedline."""
+    wire = [(1000.0, 1000.0), (1400.0, 1000.0)]
+    feedline = [(1200.0, 900.0), (1200.0, 1100.0)]
+    planning = PlanningGeometry(
+        wires=[wire],
+        feedline_wires=[feedline],
+        bridges=[((1200.0, 1000.0), (1.0, 0.0))],
+        bridge_length=100.0,
+        clearance=190.0,
+    )
+
+    svg = layout_svg(_mini(), stage="final", planning=planning)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    bridge = next(group for group in root.iter(f"{SVG}g") if group.get("class") == "l-bridge")
+    shapes = {path.get("class"): path.get("d") or "" for path in bridge.findall(f"{SVG}path")}
+    assert set(shapes) == {"deck", "span", "post"}
+    assert shapes["deck"].count("M") == 1
+    assert shapes["span"].count("M") == 1
+    assert shapes["post"].count("M") == 2
+    # The deck is as long as the geometry says, not the clearance.
+    (x0, y0), (x1, y1) = [tuple(map(float, point.split())) for point in shapes["span"][1:].split("L")]
+    assert math.hypot(x1 - x0, y1 - y0) == pytest.approx(100.0)
+    # The deck lets the feedline under it show.
+    assert "g.l-bridge>path.deck{fill:#7b7b80;fill-opacity:.32" in svg
 
 
 def test_the_failing_wires_are_marked_over_the_picture() -> None:

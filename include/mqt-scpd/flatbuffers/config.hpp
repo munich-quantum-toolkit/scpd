@@ -1210,6 +1210,7 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   double coupler_max_shortfall = 0.30;
   uint32_t coupler_box_margin_cells = 5;
   uint32_t coupler_shift_cells = 20;
+  uint32_t coupler_copy_cells = 0;
   uint32_t coupler_lead_margin_cells = 5;
   double launcher_lead = 10.0;
   std::string coupler_offsets{};
@@ -1242,12 +1243,19 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   uint32_t global_sat_states = 8;
   uint32_t global_sat_tries = 200;
   uint32_t chain_rule_refusals = 1500;
+  bool chain_end_blacklist = true;
+  bool chain_slot_blacklist = true;
   uint32_t research_ring_members = 2;
-  uint32_t research_rounds = 2;
+  uint32_t research_rounds = 4;
   uint32_t fence_pairs = 3;
   uint32_t halo_reach = 1;
   uint32_t rise_reach = 3;
   uint32_t rise_peak = 3;
+  bool meander_relaxation = true;
+  std::string jog_options{};
+  std::string coupler_option_extension{};
+  std::string chain_search{};
+  bool coupler_line_options = false;
 };
 
 /// What the Final stage is allowed to do.
@@ -1286,44 +1294,52 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_COUPLER_MAX_SHORTFALL = 38,
     VT_COUPLER_BOX_MARGIN_CELLS = 40,
     VT_COUPLER_SHIFT_CELLS = 42,
-    VT_COUPLER_LEAD_MARGIN_CELLS = 44,
-    VT_LAUNCHER_LEAD = 46,
-    VT_COUPLER_OFFSETS = 48,
-    VT_EDGE_LAUNCHER_MARGIN_CELLS = 50,
-    VT_TERMINAL_SLOT_CELLS = 52,
-    VT_CHAIN_END_EDGE_WEIGHT = 54,
-    VT_EDGE_BEND_FACTOR = 56,
-    VT_CHAIN_LENGTH_WEIGHT = 58,
-    VT_CAPACITY_CHECK = 60,
-    VT_LENGTH_POINT_RADIUS_CELLS = 62,
-    VT_LENGTH_POINT_BAND_PERCENT = 64,
-    VT_SWEEP_LENGTH_BAND = 66,
-    VT_MEANDER_LEG_SPACING_CELLS = 68,
-    VT_MEANDER_START_MARGIN_CELLS = 70,
-    VT_CAPACITY_MARGIN = 72,
-    VT_CAPACITY_MARGIN_FROM_WIRES = 74,
-    VT_RESONATOR_PASSAGE = 76,
-    VT_CROSSING_REACH_CELLS = 78,
-    VT_CROSSING_SPACING = 80,
-    VT_SLOT_PIN_CELLS = 82,
-    VT_ESCAPE_STRAIGHT_CELLS = 84,
-    VT_ESCAPE_STUB_MARGIN_CELLS = 86,
-    VT_BOTTLENECK_WIRES = 88,
-    VT_BOTTLENECK_RISE = 90,
-    VT_ROOM_MARGIN_CELLS = 92,
-    VT_ROOM_CHANNEL_REACH_CELLS = 94,
-    VT_DETOUR_FACTOR = 96,
-    VT_TERMINAL_STUB_EXTRA_CELLS = 98,
-    VT_GLOBAL_SAT_RUNS = 100,
-    VT_GLOBAL_SAT_STATES = 102,
-    VT_GLOBAL_SAT_TRIES = 104,
-    VT_CHAIN_RULE_REFUSALS = 106,
-    VT_RESEARCH_RING_MEMBERS = 108,
-    VT_RESEARCH_ROUNDS = 110,
-    VT_FENCE_PAIRS = 112,
-    VT_HALO_REACH = 114,
-    VT_RISE_REACH = 116,
-    VT_RISE_PEAK = 118
+    VT_COUPLER_COPY_CELLS = 44,
+    VT_COUPLER_LEAD_MARGIN_CELLS = 46,
+    VT_LAUNCHER_LEAD = 48,
+    VT_COUPLER_OFFSETS = 50,
+    VT_EDGE_LAUNCHER_MARGIN_CELLS = 52,
+    VT_TERMINAL_SLOT_CELLS = 54,
+    VT_CHAIN_END_EDGE_WEIGHT = 56,
+    VT_EDGE_BEND_FACTOR = 58,
+    VT_CHAIN_LENGTH_WEIGHT = 60,
+    VT_CAPACITY_CHECK = 62,
+    VT_LENGTH_POINT_RADIUS_CELLS = 64,
+    VT_LENGTH_POINT_BAND_PERCENT = 66,
+    VT_SWEEP_LENGTH_BAND = 68,
+    VT_MEANDER_LEG_SPACING_CELLS = 70,
+    VT_MEANDER_START_MARGIN_CELLS = 72,
+    VT_CAPACITY_MARGIN = 74,
+    VT_CAPACITY_MARGIN_FROM_WIRES = 76,
+    VT_RESONATOR_PASSAGE = 78,
+    VT_CROSSING_REACH_CELLS = 80,
+    VT_CROSSING_SPACING = 82,
+    VT_SLOT_PIN_CELLS = 84,
+    VT_ESCAPE_STRAIGHT_CELLS = 86,
+    VT_ESCAPE_STUB_MARGIN_CELLS = 88,
+    VT_BOTTLENECK_WIRES = 90,
+    VT_BOTTLENECK_RISE = 92,
+    VT_ROOM_MARGIN_CELLS = 94,
+    VT_ROOM_CHANNEL_REACH_CELLS = 96,
+    VT_DETOUR_FACTOR = 98,
+    VT_TERMINAL_STUB_EXTRA_CELLS = 100,
+    VT_GLOBAL_SAT_RUNS = 102,
+    VT_GLOBAL_SAT_STATES = 104,
+    VT_GLOBAL_SAT_TRIES = 106,
+    VT_CHAIN_RULE_REFUSALS = 108,
+    VT_CHAIN_END_BLACKLIST = 110,
+    VT_CHAIN_SLOT_BLACKLIST = 112,
+    VT_RESEARCH_RING_MEMBERS = 114,
+    VT_RESEARCH_ROUNDS = 116,
+    VT_FENCE_PAIRS = 118,
+    VT_HALO_REACH = 120,
+    VT_RISE_REACH = 122,
+    VT_RISE_PEAK = 124,
+    VT_MEANDER_RELAXATION = 126,
+    VT_JOG_OPTIONS = 128,
+    VT_COUPLER_OPTION_EXTENSION = 130,
+    VT_CHAIN_SEARCH = 132,
+    VT_COUPLER_LINE_OPTIONS = 134
   };
   /// The implementation, by the name it is registered under.
   const ::flatbuffers::String *router() const {
@@ -1435,7 +1451,7 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   /// How far below `target_resonator_length` a coupler may leave the
   /// resonator, as a share of that figure. A place that leaves less is
-  /// refused.
+  /// refused. The centred options of `coupler_option_extension` are exempt.
   double coupler_max_shortfall() const {
     return GetField<double>(VT_COUPLER_MAX_SHORTFALL, 0.30);
   }
@@ -1448,6 +1464,17 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// cells on an axis, before the place is given up.
   uint32_t coupler_shift_cells() const {
     return GetField<uint32_t>(VT_COUPLER_SHIFT_CELLS, 20);
+  }
+  /// How far the option generator copies every plain option, in cells on
+  /// each axis: eight copies, moved by this figure in each of the eight
+  /// directions, each with its lead joined to the cell of the resonator's way
+  /// nearest its tip. A copy whose resonator is then longer than the target
+  /// or shorter than `coupler_max_shortfall` allows is refused. With copies
+  /// the generator builds no jogs (`jog_options`). The chain search opens a
+  /// coupler's copies as it opens its jogs: only when no run of its plain
+  /// options reaches past it. 0 makes no copies.
+  uint32_t coupler_copy_cells() const {
+    return GetField<uint32_t>(VT_COUPLER_COPY_CELLS, 0);
   }
   /// How many cells of straight run the coupler's lead keeps beyond
   /// `min_straight_length`, so that the join with the resonator's way has
@@ -1596,13 +1623,25 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t chain_rule_refusals() const {
     return GetField<uint32_t>(VT_CHAIN_RULE_REFUSALS, 1500);
   }
+  /// Whether the chain search keeps a blacklist of the pairs of options of
+  /// the two couplers at each end of a chain that close the wires there,
+  /// and drops a later step on such a pair unchecked.
+  bool chain_end_blacklist() const {
+    return GetField<uint8_t>(VT_CHAIN_END_BLACKLIST, 1) != 0;
+  }
+  /// Whether the chain search keeps a blacklist of the pairs of options
+  /// whose edge gets fewer crossing slots than wires must cross it, and
+  /// drops a later step on such a pair unchecked.
+  bool chain_slot_blacklist() const {
+    return GetField<uint8_t>(VT_CHAIN_SLOT_BLACKLIST, 1) != 0;
+  }
   /// The targeted repair: how many ring members beside a segment are drawn
   /// again and how many local rip-up rounds it runs.
   uint32_t research_ring_members() const {
     return GetField<uint32_t>(VT_RESEARCH_RING_MEMBERS, 2);
   }
   uint32_t research_rounds() const {
-    return GetField<uint32_t>(VT_RESEARCH_ROUNDS, 2);
+    return GetField<uint32_t>(VT_RESEARCH_ROUNDS, 4);
   }
   /// How many ring neighbours to either side a wire is fenced against in
   /// the feedline pass and the refinements.
@@ -1620,6 +1659,50 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   uint32_t rise_peak() const {
     return GetField<uint32_t>(VT_RISE_PEAK, 3);
+  }
+  /// Whether a resonator whose way has no room for its meander goes into the
+  /// relaxation, as a wire with no way does: the neighbours are let go of one
+  /// level at a time until a way long enough is found. Off, the resonator
+  /// keeps the short way and lets no neighbour go.
+  bool meander_relaxation() const {
+    return GetField<uint8_t>(VT_MEANDER_RELAXATION, 1) != 0;
+  }
+  /// The jogs a coupler option may take, as a comma list of lengths in
+  /// cells. A jog is the second dogleg in front of the pad: it moves the pad
+  /// sideways off the resonator's way, and every length is tried turned to
+  /// either side. Empty takes the one jog of 20 cells.
+  const ::flatbuffers::String *jog_options() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_JOG_OPTIONS);
+  }
+  /// Where the option generator adds centred coupler options, as a comma
+  /// list of cells along the resonator's way from the place nearest the
+  /// target length, toward the qubit (a negative entry back from the qubit).
+  /// A centred option has the pad's centre on the resonator's way at that
+  /// cell, for every allowed offset and both ports. `0,20` adds them at the
+  /// place and twenty cells further along. The plain options stay as they
+  /// are. Empty adds none. `coupler_max_shortfall` does not refuse them. The
+  /// chain search opens a coupler's centred options only when no run reaches
+  /// past it with its jogs open.
+  const ::flatbuffers::String *coupler_option_extension() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_COUPLER_OPTION_EXTENSION);
+  }
+  /// How the coupler insertion searches the options of a chain: "astar"
+  /// (empty is the same) grows the prefixes of the chain from its first
+  /// waypoint; "bidirectional" grows the suffixes from its last waypoint as
+  /// well, one priced step each in turn, and lays the run of a prefix and a
+  /// suffix that meet on an option again from the front. The search from the
+  /// front decides the answer either way.
+  const ::flatbuffers::String *chain_search() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_CHAIN_SEARCH);
+  }
+  /// Whether the option generator adds line options: per coupler, options
+  /// whose feedline ports lie on the chord of its two neighbours or on the
+  /// line that fits its whole chain best, each turned to the nearest of the
+  /// eight headings, at a cut of the resonator
+  /// within `length_point_band_percent` of the target length. They are open
+  /// from the start, and `coupler_max_shortfall` does not refuse them.
+  bool coupler_line_options() const {
+    return GetField<uint8_t>(VT_COUPLER_LINE_OPTIONS, 0) != 0;
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -1645,6 +1728,7 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<double>(verifier, VT_COUPLER_MAX_SHORTFALL, 8) &&
            VerifyField<uint32_t>(verifier, VT_COUPLER_BOX_MARGIN_CELLS, 4) &&
            VerifyField<uint32_t>(verifier, VT_COUPLER_SHIFT_CELLS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_COUPLER_COPY_CELLS, 4) &&
            VerifyField<uint32_t>(verifier, VT_COUPLER_LEAD_MARGIN_CELLS, 4) &&
            VerifyField<double>(verifier, VT_LAUNCHER_LEAD, 8) &&
            VerifyOffset(verifier, VT_COUPLER_OFFSETS) &&
@@ -1678,12 +1762,22 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_GLOBAL_SAT_STATES, 4) &&
            VerifyField<uint32_t>(verifier, VT_GLOBAL_SAT_TRIES, 4) &&
            VerifyField<uint32_t>(verifier, VT_CHAIN_RULE_REFUSALS, 4) &&
+           VerifyField<uint8_t>(verifier, VT_CHAIN_END_BLACKLIST, 1) &&
+           VerifyField<uint8_t>(verifier, VT_CHAIN_SLOT_BLACKLIST, 1) &&
            VerifyField<uint32_t>(verifier, VT_RESEARCH_RING_MEMBERS, 4) &&
            VerifyField<uint32_t>(verifier, VT_RESEARCH_ROUNDS, 4) &&
            VerifyField<uint32_t>(verifier, VT_FENCE_PAIRS, 4) &&
            VerifyField<uint32_t>(verifier, VT_HALO_REACH, 4) &&
            VerifyField<uint32_t>(verifier, VT_RISE_REACH, 4) &&
            VerifyField<uint32_t>(verifier, VT_RISE_PEAK, 4) &&
+           VerifyField<uint8_t>(verifier, VT_MEANDER_RELAXATION, 1) &&
+           VerifyOffset(verifier, VT_JOG_OPTIONS) &&
+           verifier.VerifyString(jog_options()) &&
+           VerifyOffset(verifier, VT_COUPLER_OPTION_EXTENSION) &&
+           verifier.VerifyString(coupler_option_extension()) &&
+           VerifyOffset(verifier, VT_CHAIN_SEARCH) &&
+           verifier.VerifyString(chain_search()) &&
+           VerifyField<uint8_t>(verifier, VT_COUPLER_LINE_OPTIONS, 1) &&
            verifier.EndTable();
   }
   FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1754,6 +1848,9 @@ struct FinalParamsBuilder {
   }
   void add_coupler_shift_cells(uint32_t coupler_shift_cells) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_COUPLER_SHIFT_CELLS, coupler_shift_cells, 20);
+  }
+  void add_coupler_copy_cells(uint32_t coupler_copy_cells) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_COUPLER_COPY_CELLS, coupler_copy_cells, 0);
   }
   void add_coupler_lead_margin_cells(uint32_t coupler_lead_margin_cells) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_COUPLER_LEAD_MARGIN_CELLS, coupler_lead_margin_cells, 5);
@@ -1851,11 +1948,17 @@ struct FinalParamsBuilder {
   void add_chain_rule_refusals(uint32_t chain_rule_refusals) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_CHAIN_RULE_REFUSALS, chain_rule_refusals, 1500);
   }
+  void add_chain_end_blacklist(bool chain_end_blacklist) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CHAIN_END_BLACKLIST, static_cast<uint8_t>(chain_end_blacklist), 1);
+  }
+  void add_chain_slot_blacklist(bool chain_slot_blacklist) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CHAIN_SLOT_BLACKLIST, static_cast<uint8_t>(chain_slot_blacklist), 1);
+  }
   void add_research_ring_members(uint32_t research_ring_members) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_RESEARCH_RING_MEMBERS, research_ring_members, 2);
   }
   void add_research_rounds(uint32_t research_rounds) {
-    fbb_.AddElement<uint32_t>(FinalParams::VT_RESEARCH_ROUNDS, research_rounds, 2);
+    fbb_.AddElement<uint32_t>(FinalParams::VT_RESEARCH_ROUNDS, research_rounds, 4);
   }
   void add_fence_pairs(uint32_t fence_pairs) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_FENCE_PAIRS, fence_pairs, 3);
@@ -1868,6 +1971,21 @@ struct FinalParamsBuilder {
   }
   void add_rise_peak(uint32_t rise_peak) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_RISE_PEAK, rise_peak, 3);
+  }
+  void add_meander_relaxation(bool meander_relaxation) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_MEANDER_RELAXATION, static_cast<uint8_t>(meander_relaxation), 1);
+  }
+  void add_jog_options(::flatbuffers::Offset<::flatbuffers::String> jog_options) {
+    fbb_.AddOffset(FinalParams::VT_JOG_OPTIONS, jog_options);
+  }
+  void add_coupler_option_extension(::flatbuffers::Offset<::flatbuffers::String> coupler_option_extension) {
+    fbb_.AddOffset(FinalParams::VT_COUPLER_OPTION_EXTENSION, coupler_option_extension);
+  }
+  void add_chain_search(::flatbuffers::Offset<::flatbuffers::String> chain_search) {
+    fbb_.AddOffset(FinalParams::VT_CHAIN_SEARCH, chain_search);
+  }
+  void add_coupler_line_options(bool coupler_line_options) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_COUPLER_LINE_OPTIONS, static_cast<uint8_t>(coupler_line_options), 0);
   }
   explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -1902,6 +2020,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     double coupler_max_shortfall = 0.30,
     uint32_t coupler_box_margin_cells = 5,
     uint32_t coupler_shift_cells = 20,
+    uint32_t coupler_copy_cells = 0,
     uint32_t coupler_lead_margin_cells = 5,
     double launcher_lead = 10.0,
     ::flatbuffers::Offset<::flatbuffers::String> coupler_offsets = 0,
@@ -1934,12 +2053,19 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     uint32_t global_sat_states = 8,
     uint32_t global_sat_tries = 200,
     uint32_t chain_rule_refusals = 1500,
+    bool chain_end_blacklist = true,
+    bool chain_slot_blacklist = true,
     uint32_t research_ring_members = 2,
-    uint32_t research_rounds = 2,
+    uint32_t research_rounds = 4,
     uint32_t fence_pairs = 3,
     uint32_t halo_reach = 1,
     uint32_t rise_reach = 3,
-    uint32_t rise_peak = 3) {
+    uint32_t rise_peak = 3,
+    bool meander_relaxation = true,
+    ::flatbuffers::Offset<::flatbuffers::String> jog_options = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> coupler_option_extension = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> chain_search = 0,
+    bool coupler_line_options = false) {
   FinalParamsBuilder builder_(_fbb);
   builder_.add_detour_factor(detour_factor);
   builder_.add_bottleneck_rise(bottleneck_rise);
@@ -1959,6 +2085,9 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_static_proximity_penalty_norm(static_proximity_penalty_norm);
   builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
   builder_.add_bend_penalty_norm(bend_penalty_norm);
+  builder_.add_chain_search(chain_search);
+  builder_.add_coupler_option_extension(coupler_option_extension);
+  builder_.add_jog_options(jog_options);
   builder_.add_rise_peak(rise_peak);
   builder_.add_rise_reach(rise_reach);
   builder_.add_halo_reach(halo_reach);
@@ -1986,6 +2115,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_edge_launcher_margin_cells(edge_launcher_margin_cells);
   builder_.add_coupler_offsets(coupler_offsets);
   builder_.add_coupler_lead_margin_cells(coupler_lead_margin_cells);
+  builder_.add_coupler_copy_cells(coupler_copy_cells);
   builder_.add_coupler_shift_cells(coupler_shift_cells);
   builder_.add_coupler_box_margin_cells(coupler_box_margin_cells);
   builder_.add_refinement_corridor_spacings(refinement_corridor_spacings);
@@ -1998,6 +2128,10 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_inner_corridor_spacings(inner_corridor_spacings);
   builder_.add_corridor_spacings(corridor_spacings);
   builder_.add_router(router);
+  builder_.add_coupler_line_options(coupler_line_options);
+  builder_.add_meander_relaxation(meander_relaxation);
+  builder_.add_chain_slot_blacklist(chain_slot_blacklist);
+  builder_.add_chain_end_blacklist(chain_end_blacklist);
   builder_.add_capacity_check(capacity_check);
   return builder_.Finish();
 }
@@ -2029,6 +2163,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     double coupler_max_shortfall = 0.30,
     uint32_t coupler_box_margin_cells = 5,
     uint32_t coupler_shift_cells = 20,
+    uint32_t coupler_copy_cells = 0,
     uint32_t coupler_lead_margin_cells = 5,
     double launcher_lead = 10.0,
     const char *coupler_offsets = nullptr,
@@ -2061,14 +2196,24 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     uint32_t global_sat_states = 8,
     uint32_t global_sat_tries = 200,
     uint32_t chain_rule_refusals = 1500,
+    bool chain_end_blacklist = true,
+    bool chain_slot_blacklist = true,
     uint32_t research_ring_members = 2,
-    uint32_t research_rounds = 2,
+    uint32_t research_rounds = 4,
     uint32_t fence_pairs = 3,
     uint32_t halo_reach = 1,
     uint32_t rise_reach = 3,
-    uint32_t rise_peak = 3) {
+    uint32_t rise_peak = 3,
+    bool meander_relaxation = true,
+    const char *jog_options = nullptr,
+    const char *coupler_option_extension = nullptr,
+    const char *chain_search = nullptr,
+    bool coupler_line_options = false) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
   auto coupler_offsets__ = coupler_offsets ? _fbb.CreateString(coupler_offsets) : 0;
+  auto jog_options__ = jog_options ? _fbb.CreateString(jog_options) : 0;
+  auto coupler_option_extension__ = coupler_option_extension ? _fbb.CreateString(coupler_option_extension) : 0;
+  auto chain_search__ = chain_search ? _fbb.CreateString(chain_search) : 0;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       router__,
@@ -2091,6 +2236,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       coupler_max_shortfall,
       coupler_box_margin_cells,
       coupler_shift_cells,
+      coupler_copy_cells,
       coupler_lead_margin_cells,
       launcher_lead,
       coupler_offsets__,
@@ -2123,12 +2269,19 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       global_sat_states,
       global_sat_tries,
       chain_rule_refusals,
+      chain_end_blacklist,
+      chain_slot_blacklist,
       research_ring_members,
       research_rounds,
       fence_pairs,
       halo_reach,
       rise_reach,
-      rise_peak);
+      rise_peak,
+      meander_relaxation,
+      jog_options__,
+      coupler_option_extension__,
+      chain_search__,
+      coupler_line_options);
 }
 
 ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -3358,6 +3511,7 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.coupler_max_shortfall == rhs.coupler_max_shortfall) &&
       (lhs.coupler_box_margin_cells == rhs.coupler_box_margin_cells) &&
       (lhs.coupler_shift_cells == rhs.coupler_shift_cells) &&
+      (lhs.coupler_copy_cells == rhs.coupler_copy_cells) &&
       (lhs.coupler_lead_margin_cells == rhs.coupler_lead_margin_cells) &&
       (lhs.launcher_lead == rhs.launcher_lead) &&
       (lhs.coupler_offsets == rhs.coupler_offsets) &&
@@ -3390,12 +3544,19 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.global_sat_states == rhs.global_sat_states) &&
       (lhs.global_sat_tries == rhs.global_sat_tries) &&
       (lhs.chain_rule_refusals == rhs.chain_rule_refusals) &&
+      (lhs.chain_end_blacklist == rhs.chain_end_blacklist) &&
+      (lhs.chain_slot_blacklist == rhs.chain_slot_blacklist) &&
       (lhs.research_ring_members == rhs.research_ring_members) &&
       (lhs.research_rounds == rhs.research_rounds) &&
       (lhs.fence_pairs == rhs.fence_pairs) &&
       (lhs.halo_reach == rhs.halo_reach) &&
       (lhs.rise_reach == rhs.rise_reach) &&
-      (lhs.rise_peak == rhs.rise_peak);
+      (lhs.rise_peak == rhs.rise_peak) &&
+      (lhs.meander_relaxation == rhs.meander_relaxation) &&
+      (lhs.jog_options == rhs.jog_options) &&
+      (lhs.coupler_option_extension == rhs.coupler_option_extension) &&
+      (lhs.chain_search == rhs.chain_search) &&
+      (lhs.coupler_line_options == rhs.coupler_line_options);
 }
 
 inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
@@ -3432,6 +3593,7 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = coupler_max_shortfall(); _o->coupler_max_shortfall = _e; }
   { auto _e = coupler_box_margin_cells(); _o->coupler_box_margin_cells = _e; }
   { auto _e = coupler_shift_cells(); _o->coupler_shift_cells = _e; }
+  { auto _e = coupler_copy_cells(); _o->coupler_copy_cells = _e; }
   { auto _e = coupler_lead_margin_cells(); _o->coupler_lead_margin_cells = _e; }
   { auto _e = launcher_lead(); _o->launcher_lead = _e; }
   { auto _e = coupler_offsets(); if (_e) _o->coupler_offsets = _e->str(); }
@@ -3464,12 +3626,19 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = global_sat_states(); _o->global_sat_states = _e; }
   { auto _e = global_sat_tries(); _o->global_sat_tries = _e; }
   { auto _e = chain_rule_refusals(); _o->chain_rule_refusals = _e; }
+  { auto _e = chain_end_blacklist(); _o->chain_end_blacklist = _e; }
+  { auto _e = chain_slot_blacklist(); _o->chain_slot_blacklist = _e; }
   { auto _e = research_ring_members(); _o->research_ring_members = _e; }
   { auto _e = research_rounds(); _o->research_rounds = _e; }
   { auto _e = fence_pairs(); _o->fence_pairs = _e; }
   { auto _e = halo_reach(); _o->halo_reach = _e; }
   { auto _e = rise_reach(); _o->rise_reach = _e; }
   { auto _e = rise_peak(); _o->rise_peak = _e; }
+  { auto _e = meander_relaxation(); _o->meander_relaxation = _e; }
+  { auto _e = jog_options(); if (_e) _o->jog_options = _e->str(); }
+  { auto _e = coupler_option_extension(); if (_e) _o->coupler_option_extension = _e->str(); }
+  { auto _e = chain_search(); if (_e) _o->chain_search = _e->str(); }
+  { auto _e = coupler_line_options(); _o->coupler_line_options = _e; }
 }
 
 inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -3500,6 +3669,7 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _coupler_max_shortfall = _o->coupler_max_shortfall;
   auto _coupler_box_margin_cells = _o->coupler_box_margin_cells;
   auto _coupler_shift_cells = _o->coupler_shift_cells;
+  auto _coupler_copy_cells = _o->coupler_copy_cells;
   auto _coupler_lead_margin_cells = _o->coupler_lead_margin_cells;
   auto _launcher_lead = _o->launcher_lead;
   auto _coupler_offsets = _o->coupler_offsets.empty() ? 0 : _fbb.CreateString(_o->coupler_offsets);
@@ -3532,12 +3702,19 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _global_sat_states = _o->global_sat_states;
   auto _global_sat_tries = _o->global_sat_tries;
   auto _chain_rule_refusals = _o->chain_rule_refusals;
+  auto _chain_end_blacklist = _o->chain_end_blacklist;
+  auto _chain_slot_blacklist = _o->chain_slot_blacklist;
   auto _research_ring_members = _o->research_ring_members;
   auto _research_rounds = _o->research_rounds;
   auto _fence_pairs = _o->fence_pairs;
   auto _halo_reach = _o->halo_reach;
   auto _rise_reach = _o->rise_reach;
   auto _rise_peak = _o->rise_peak;
+  auto _meander_relaxation = _o->meander_relaxation;
+  auto _jog_options = _o->jog_options.empty() ? 0 : _fbb.CreateString(_o->jog_options);
+  auto _coupler_option_extension = _o->coupler_option_extension.empty() ? 0 : _fbb.CreateString(_o->coupler_option_extension);
+  auto _chain_search = _o->chain_search.empty() ? 0 : _fbb.CreateString(_o->chain_search);
+  auto _coupler_line_options = _o->coupler_line_options;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       _router,
@@ -3560,6 +3737,7 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _coupler_max_shortfall,
       _coupler_box_margin_cells,
       _coupler_shift_cells,
+      _coupler_copy_cells,
       _coupler_lead_margin_cells,
       _launcher_lead,
       _coupler_offsets,
@@ -3592,12 +3770,19 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _global_sat_states,
       _global_sat_tries,
       _chain_rule_refusals,
+      _chain_end_blacklist,
+      _chain_slot_blacklist,
       _research_ring_members,
       _research_rounds,
       _fence_pairs,
       _halo_reach,
       _rise_reach,
-      _rise_peak);
+      _rise_peak,
+      _meander_relaxation,
+      _jog_options,
+      _coupler_option_extension,
+      _chain_search,
+      _coupler_line_options);
 }
 
 
@@ -4151,6 +4336,7 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_DOUBLE, 0, -1 },
     { ::flatbuffers::ET_STRING, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
@@ -4182,12 +4368,19 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
-    { ::flatbuffers::ET_UINT, 0, -1 }
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 }
   };
   static const char * const names[] = {
     "router",
@@ -4210,6 +4403,7 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     "coupler_max_shortfall",
     "coupler_box_margin_cells",
     "coupler_shift_cells",
+    "coupler_copy_cells",
     "coupler_lead_margin_cells",
     "launcher_lead",
     "coupler_offsets",
@@ -4242,15 +4436,22 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     "global_sat_states",
     "global_sat_tries",
     "chain_rule_refusals",
+    "chain_end_blacklist",
+    "chain_slot_blacklist",
     "research_ring_members",
     "research_rounds",
     "fence_pairs",
     "halo_reach",
     "rise_reach",
-    "rise_peak"
+    "rise_peak",
+    "meander_relaxation",
+    "jog_options",
+    "coupler_option_extension",
+    "chain_search",
+    "coupler_line_options"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 58, type_codes, nullptr, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 66, type_codes, nullptr, nullptr, nullptr, names
   };
   return &tt;
 }

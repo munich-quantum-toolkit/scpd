@@ -12,6 +12,52 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Add the button "Rip up and reroute feedline C" to the coupler tab of a
+  feedline on the coupler server: `POST /reroute?chain=C` reroutes the
+  feedline's wires and the free wires beside it alone on the options it stands
+  on, as the local benchmark does, puts the chip back and draws the ways
+  (`CouplerSession.local_reroute`) ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] chain_end_blacklist` and `chain_slot_blacklist`, on by
+  default: under the capacity rule the chain search blacklists the pairs of
+  options at an end of a chain whose refused step closed only wires of that end,
+  and the pairs whose edge got fewer crossing slots than wires must cross it,
+  and drops a later step on a blacklisted pair unrouted and unchecked ([#XXX])
+  ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] coupler_copy_cells`: eight copies of every plain
+  coupler option, moved by that many cells on each axis, each with its lead
+  joined to the nearest cell of the resonator's way and refused when the
+  resonator is then too long or too short; they replace the jogs and open as the
+  jogs do ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] coupler_line_options`: options whose feedline ports lie
+  on a line of their chain, the chord of their neighbours or the line that fits
+  the whole chain, turned to the nearest of the eight headings ([#XXX])
+  ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] chain_search`: `bidirectional` searches the options of
+  a chain from its last waypoint as well and lays the run of a prefix and a
+  suffix that meet again from the front; `astar`, the default, searches from the
+  front alone ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Place a coupler option by hand on the coupler server: `POST /place` and the
+  "Place an option" button of the coupler tab build an option centred on the
+  cell clicked, cut the resonator at its nearest cell, put the coupler on it and
+  check the feedline and the chip again (`CouplerSession.add_option`) ([#XXX])
+  ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] coupler_option_extension`: centred coupler options,
+  with the pad's centre on the resonator's way at the place nearest the target
+  length and at each listed number of cells further along it, toward the qubit,
+  for every allowed offset; `0,20` adds them at the place and twenty cells
+  further on, and empty adds none. The plain options stay as they are, and
+  `coupler_max_shortfall` does not refuse the centred ones. The chain search
+  opens a coupler's centred options only when no run reaches past it with its
+  jogs open, or when `chain_rule_refusals` stops it ([#XXX])
+  ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] jog_options`: the jogs a coupler option may take in
+  front of the pad, as a comma list of lengths in cells, each tried turned to
+  either side; empty takes the one jog of 20 cells, as before ([#XXX])
+  ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] meander_relaxation` (on by default): a resonator whose
+  way has no room for its meander goes into the relaxation, as a wire with no
+  way does, and keeps its short way when no level finds one long enough ([#XXX])
+  ([**@FeldmeierMichael**])
 - ✨ Add the routing stages ([#XXX]) ([**@FeldmeierMichael**]):
   - The Detail stage draws every corridor as a path of cells on the detail grid,
     with an eight-connected search inside the corridor.
@@ -23,10 +69,10 @@ releases may include breaking changes.
     artifact, and `[run] stop_after` and `--stop-after` take a phase as well as
     a step.
   - The coupler insertion checks every chain of feedline edges against a
-    capacity graph of the free space, judges the whole chip by the crossing
-    slots of its feedline edges, and searches a globally satisfiable state over
-    the chains when the chip is not. `[stages.final] capacity_check` turns the
-    check off.
+    capacity graph of the free space, with the wires of its feedline and the
+    free wires beside them, judges the whole chip by the crossing slots of its
+    feedline edges, and searches a globally satisfiable state over the chains
+    when the chip is not. `[stages.final] capacity_check` turns the check off.
   - Every resonator reaches its target length in every phase: the meander takes
     several loops where one does not fit, the cheapest placement, and a loop
     along the other diagonal only as the last resort; before the couplers it
@@ -73,6 +119,15 @@ releases may include breaking changes.
     After every move the server checks the moved feedlines locally and the chip
     as a whole; the coupler tab shows the three verdicts and can undo, reset to
     the commit and check every feedline.
+  - The coupler tab lists every option of a coupler with why the chain search
+    closed it and what its step checks found, and every candidate the option
+    generator refused, with the reason; `couplers()` and the `coupler-options`
+    record carry the reasons, and a `step-skip` record names the steps the chain
+    search dropped without a step check.
+  - `mqt-scpd debug <run> --serve` answers from the first second: it builds the
+    session on a thread of its own, `/status.json` says how far the stage is,
+    and `/sat` and `/global` show the records so far under a progress bar and
+    fill in as the records come.
 - ✅ Add the local and the global SAT benchmark, which measure how well the
   capacity check of the coupler insertion predicts the feedline routing; the
   coupler session's `compare_locally` is their entry, and
@@ -90,6 +145,12 @@ releases may include breaking changes.
   - Every wire is a coplanar waveguide in the colors of the figures: the plain
     wires and the feedline edges gray and the resonators light, with the room
     every wire keeps as a translucent band and the couplers as pads.
+  - Every wire of the Final stage runs into its ports, over the straight
+    approach that the stage keeps clear in front of each port.
+  - In the two phases that route under the feedline constraints, and in the end
+    state, an air bridge stands where a wire crosses a feedline edge between two
+    couplers: a translucent deck on two posts, so that the feedline under it
+    stays visible.
   - The wires the Final stage left failing and the resonators off their length
     are marked on layers of their own and counted in the legend.
   - `--phase` draws the snapshot of one phase of the Final stage; the GDS
@@ -206,6 +267,17 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🔧 The `standing` local check of a chain and the window check of the local SAT
+  benchmark no longer route the terminal edges of the other chains: they only
+  name the mouths between the chains (`SlotGraph::Wire::standing`); in the
+  `standing` check they are walls, inflated by the wire clearance as every
+  feedline edge is (`InsertionState::terminalChain`); the `alone` check routes
+  the chain's terminal edges as wires with their port runs as well, where they
+  were thin walls, and so do the step checks of the chain search and the check
+  of each chain alone of the whole-chip check ([#XXX]) ([**@FeldmeierMichael**])
+- 🔧 Run the local rip-up of the targeted repair and of the local SAT comparison
+  for four rounds by default: `[stages.final] research_rounds` is `4` ([#XXX])
+  ([**@FeldmeierMichael**])
 - 🔧 Turn the targeted repair of the Final stage off by default:
   `[stages.final] repair_trials` is `0` unless a configuration sets it ([#XXX])
   ([**@FeldmeierMichael**])
@@ -243,6 +315,18 @@ releases may include breaking changes.
 
 ### Fixed
 
+- 🐛 Put the terminal edges of a state of the insertion at the ports of the
+  options the state names, not of the options the couplers hold: a step of the
+  chain search judged the run of its end edge at the wrong port and passed steps
+  that close wires; and name the wires a step loses from the state's wires, not
+  out of range of the chip's ([#XXX]) ([**@FeldmeierMichael**])
+- 🐛 Close the slot of a terminal edge's port run at both flanks when the
+  terminal edges are wires: such a run is no static wall, so it had no mouth,
+  and a flank whose open end no profile reached had no gate to the wall ahead of
+  it ([#XXX]) ([**@FeldmeierMichael**])
+- 🐛 Route a chip whose configuration leaves out `[grid]` through the Final
+  stage and the coupler session with the grid defaults, as the planning stages
+  do, instead of stopping at the Final stage ([#XXX]) ([**@FeldmeierMichael**])
 - 🐛 Handle self-addition and self-subtraction of linear expressions, preserve
   port-keepout holes in GDS/OASIS exports, and check launcher order
   independently of the chip's position ([#140]) ([**@FeldmeierMichael**],

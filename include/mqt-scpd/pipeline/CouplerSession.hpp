@@ -39,8 +39,9 @@ public:
   /// the stage hands them in a run with `-d`, and every record of the
   /// session's later calls.
   ///
-  /// @throws std::invalid_argument when the configuration carries no grid
-  /// section or no design rules, or the detail routing no grid.
+  /// @throws std::invalid_argument when the configuration carries no design
+  /// rules or the detail routing no grid. A configuration without [grid]
+  /// takes the grid defaults.
   CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
                  const AssignmentT& assignment, const DetailRoutingT& detail,
                  const ConfigT& config, const Report& report = {},
@@ -51,7 +52,9 @@ public:
   CouplerSession(CouplerSession&&) = delete;
   CouplerSession& operator=(CouplerSession&&) = delete;
 
-  /// The couplers as they stand and every option of each, as JSON.
+  /// The couplers as they stand and every option of each, as JSON: per
+  /// option why the chain search does not offer it, and per coupler the
+  /// candidates of the option generator that gave no option, with why.
   [[nodiscard]] std::string couplers() const;
 
   /// Puts coupler `coupler` on option `option` and draws its two feedline
@@ -60,6 +63,23 @@ public:
   /// @throws std::invalid_argument when the coupler or the option does not
   /// exist.
   std::string setOption(std::uint32_t coupler, std::uint32_t option);
+
+  /// Builds an option of coupler `coupler` by hand: the pad's centre on
+  /// the cell (`x`, `y`) and the resonator cut at the cell of its way
+  /// nearest it, as a centred option of `coupler_option_extension` is cut.
+  /// `offset` names the offset (0 to 7), or -1 for the first that fits;
+  /// `port` names the port (1 or 2), or 0 for the first that fits. Every
+  /// test of the option generator applies, the shortfall test excepted. An
+  /// option that fits is appended to the coupler's options, open; the
+  /// coupler stays where it stands, and `setOption` moves it. Returns JSON
+  /// with `coupler`, `built`, `cell` (the cut, as an index into the way),
+  /// `option`, `offset` and `secondPort` of the option built, and `tried`,
+  /// every candidate refused, with why.
+  ///
+  /// @throws std::invalid_argument when the coupler does not exist, the
+  /// cell lies off the grid, or the offset or the port does not exist.
+  std::string addOption(std::uint32_t coupler, std::uint32_t x, std::uint32_t y,
+                        std::int32_t offset = -1, std::int32_t port = 0);
 
   /// The capacity graph of the chip as it stands, as the JSON of
   /// `final-capacity-graph.json`.
@@ -135,9 +155,25 @@ public:
   /// record per run with the chain, the segment, the moves of couplers onto
   /// options, the slot verdict and what each feedline came to. The feedline
   /// routing changes the state for good; the comparison leaves it as it
-  /// found it.
-  [[nodiscard]] std::string compareLocally(std::uint32_t runs,
-                                           std::size_t span);
+  /// found it. With `feedlines`, only the segments of those chains are
+  /// searched and only those feedlines judged; empty means every one.
+  [[nodiscard]] std::string
+  compareLocally(std::uint32_t runs, std::size_t span,
+                 const std::vector<std::uint32_t>& feedlines = {});
+
+  /// Rips up the wires of one feedline and routes them again, its couplers
+  /// on `options`, one per waypoint (0 at a fixed waypoint), as the local
+  /// benchmark reroutes a feedline: the feedline's wires and the free wires
+  /// beside it, under the feedline constraints, every other wire ignored.
+  /// The chip is then put back as it was. Returns JSON with `chain`,
+  /// `options`, `window` (the wires rerouted), `clean`, `failing` (the wires
+  /// left unrouted, open or crossing), `blocked` (who each open wire meets),
+  /// `rounds`, `seconds` and `wires`: every rerouted wire and every feedline
+  /// edge of the chain with its verdict and its way.
+  ///
+  /// @throws std::invalid_argument as `localCheck`.
+  [[nodiscard]] std::string
+  localReroute(std::uint32_t chain, const std::vector<std::size_t>& options);
 
   /// Runs the feedline routing of the Final stage on the chip as it stands:
   /// phase 4, as `stop_after_phase = "feedline-constrained-routing"` runs it.

@@ -50,6 +50,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -195,7 +196,7 @@ struct Tuning {
   /// The targeted repair: how many ring members beside a segment are drawn
   /// again and how many local rip-up rounds it runs.
   std::uint32_t researchRingMembers = 2;
-  std::uint32_t researchRounds = 2;
+  std::uint32_t researchRounds = 4;
   /// The coupler insertion's knobs of `[stages.final]`, see `config.fbs`.
   /// Shares of `target_resonator_length`: where the coupler cuts the
   /// resonator, and the most it may leave it short by.
@@ -213,6 +214,18 @@ struct Tuning {
   /// The offsets the option generator turns a pad by, one flag per eighth
   /// turn.
   std::array<bool, routing::NUM_HEADINGS> couplerOffsets{};
+  /// The jogs the option generator tries, as straight lengths in cells, each
+  /// turned to either side; ascending, without repeats.
+  std::vector<std::uint32_t> jogOptions{20};
+  /// How far the copies of `coupler_copy_cells` move a plain option on each
+  /// axis, in cells; 0 for no copies. With copies the generator builds no
+  /// jogs.
+  std::int64_t copyCells = 0;
+  /// The places the option generator centres a pad on the resonator at, as
+  /// cells along the resonator's way from the place nearest the target
+  /// length, toward the qubit; 0 is that place. Ascending, without repeats;
+  /// empty for no centred options.
+  std::vector<std::int32_t> optionExtensions;
   /// The chain search's prices: the weight of an edge at a launcher, the
   /// bend price of a feedline edge as a factor on the outer routing's, and
   /// the price of one cell of length.
@@ -224,6 +237,20 @@ struct Tuning {
   /// a chain.
   bool capacityCheck = true;
   std::uint32_t chainRuleRefusals = 1500;
+  /// Whether the chain search keeps a blacklist of the pairs of options at
+  /// each end of a chain that close the wires there
+  /// (`chain_end_blacklist`).
+  bool chainEndBlacklist = true;
+  /// Whether it keeps a blacklist of the pairs of options whose edge gets
+  /// fewer crossing slots than wires must cross it
+  /// (`chain_slot_blacklist`).
+  bool chainSlotBlacklist = true;
+  /// Whether the chain search searches from the back of a chain as well
+  /// (`chain_search = "bidirectional"`).
+  bool chainBidirectional = false;
+  /// Whether the option generator adds the line options of a chain
+  /// (`coupler_line_options`).
+  bool lineOptions = false;
   /// The capacity graph: the band beside a feedline edge where a wire may
   /// only cross at a right angle, in cells; the spacing of the crossing
   /// points in clearances; the detour a wire may take through a gap.
@@ -254,6 +281,9 @@ struct Tuning {
   double sweepLengthBand = 1.0;
   std::uint32_t meanderLegSpacing = 25;
   std::uint32_t meanderStartMargin = 0;
+  /// Whether a resonator whose way has no room for its meander goes into the
+  /// relaxation, as a wire with no way does.
+  bool meanderRelaxation = true;
   /// How many ring neighbours to either side a wire is fenced against in
   /// the feedline pass and the refinements, and how far a terminal edge's
   /// run is guarded past the pad, in cells.
@@ -351,6 +381,78 @@ offsetsOf(const std::string& text) {
   return any ? listed : on;
 }
 
+/// The jog lengths `[stages.final] jog_options` lists, in cells, ascending and
+/// without repeats; the one jog of 20 cells when it lists none. An entry that
+/// is not a whole number from 1 to 200 is left out (the configuration reports
+/// it).
+[[nodiscard]] std::vector<std::uint32_t> jogsOf(const std::string& text) {
+  static constexpr std::uint32_t DEFAULT_JOG = 20;
+  static constexpr std::uint32_t MAX_JOG = 200;
+  std::vector<std::uint32_t> jogs;
+  std::string_view rest(text);
+  while (!rest.empty()) {
+    const auto comma = rest.find(',');
+    auto item = rest.substr(0, comma);
+    rest = comma == std::string_view::npos ? std::string_view{}
+                                           : rest.substr(comma + 1);
+    while (!item.empty() && item.front() == ' ') {
+      item.remove_prefix(1);
+    }
+    while (!item.empty() && item.back() == ' ') {
+      item.remove_suffix(1);
+    }
+    std::uint32_t length = 0;
+    const auto [end, error] =
+        std::from_chars(item.data(), item.data() + item.size(), length);
+    if (error == std::errc{} && end == item.data() + item.size() &&
+        length >= 1 && length <= MAX_JOG) {
+      jogs.push_back(length);
+    }
+  }
+  std::ranges::sort(jogs);
+  jogs.erase(std::ranges::unique(jogs).begin(), jogs.end());
+  if (jogs.empty()) {
+    jogs.push_back(DEFAULT_JOG);
+  }
+  return jogs;
+}
+
+/// The extensions `[stages.final] coupler_option_extension` lists, in cells
+/// along the resonator's way, ascending and without repeats; empty when it
+/// lists none. An entry that is not a whole number from -200 to 200 is left
+/// out (the configuration reports it).
+[[nodiscard]] std::vector<std::int32_t> extensionsOf(const std::string& text) {
+  static constexpr std::int32_t MAX_EXTENSION = 200;
+  std::vector<std::int32_t> extensions;
+  std::string_view rest(text);
+  while (!rest.empty()) {
+    const auto comma = rest.find(',');
+    auto item = rest.substr(0, comma);
+    rest = comma == std::string_view::npos ? std::string_view{}
+                                           : rest.substr(comma + 1);
+    while (!item.empty() && item.front() == ' ') {
+      item.remove_prefix(1);
+    }
+    while (!item.empty() && item.back() == ' ') {
+      item.remove_suffix(1);
+    }
+    // `from_chars` takes no plus sign; the configuration does.
+    if (item.size() > 1 && item.front() == '+') {
+      item.remove_prefix(1);
+    }
+    std::int32_t cells = 0;
+    const auto [end, error] =
+        std::from_chars(item.data(), item.data() + item.size(), cells);
+    if (!item.empty() && error == std::errc{} &&
+        end == item.data() + item.size() && std::abs(cells) <= MAX_EXTENSION) {
+      extensions.push_back(cells);
+    }
+  }
+  std::ranges::sort(extensions);
+  extensions.erase(std::ranges::unique(extensions).begin(), extensions.end());
+  return extensions;
+}
+
 [[nodiscard]] Tuning tuningOf(const ConfigT& config,
                               const grid::GridMetrics& router) {
   const fbc::FinalParamsT defaults;
@@ -427,12 +529,19 @@ offsetsOf(const std::string& text) {
       std::min<std::int64_t>(params.edge_launcher_margin_cells, 500);
   tuning.terminalSlot = std::min(params.terminal_slot_cells, 200U);
   tuning.couplerOffsets = offsetsOf(params.coupler_offsets);
+  tuning.jogOptions = jogsOf(params.jog_options);
+  tuning.copyCells = std::min<std::int64_t>(params.coupler_copy_cells, 200);
+  tuning.optionExtensions = extensionsOf(params.coupler_option_extension);
   tuning.chainEndEdgeWeight =
       std::clamp(params.chain_end_edge_weight, 0.0, 1000.0);
   tuning.edgeBendFactor = std::clamp(params.edge_bend_factor, 0.01, 16.0);
   tuning.chainLengthWeight = std::min(params.chain_length_weight, 1000U);
   tuning.capacityCheck = params.capacity_check;
   tuning.chainRuleRefusals = params.chain_rule_refusals;
+  tuning.chainEndBlacklist = params.chain_end_blacklist;
+  tuning.chainSlotBlacklist = params.chain_slot_blacklist;
+  tuning.chainBidirectional = params.chain_search == "bidirectional";
+  tuning.lineOptions = params.coupler_line_options;
   tuning.crossingReach =
       std::clamp(static_cast<int>(params.crossing_reach_cells), 1, 200);
   tuning.crossingSpacing = std::clamp(params.crossing_spacing, 1.0, 4.0);
@@ -450,6 +559,7 @@ offsetsOf(const std::string& text) {
   tuning.lengthPointBand =
       std::clamp(params.length_point_band_percent, 0.0, 100.0) / 100.0;
   tuning.sweepLengthBand = std::max(1.0, params.sweep_length_band);
+  tuning.meanderRelaxation = params.meander_relaxation;
   tuning.meanderLegSpacing =
       std::clamp(params.meander_leg_spacing_cells, 4U, 200U);
   // By default the meander leaves the lead's straight run alone and may
@@ -579,7 +689,8 @@ void blockOutsideTheSources(const ChipT& chip, Scene& scene) {
   const auto& rules = *config.rules;
 
   Scene scene;
-  scene.router = grid::routerGrid(capacity, config.grid->router_cell_size);
+  scene.router =
+      grid::routerGrid(capacity, gridParamsOf(config).router_cell_size);
 
   const design::BridgeRules noRules;
   const auto& bridgeRules =
@@ -1169,8 +1280,8 @@ constexpr std::array<std::string_view, 5> PHASES{
 
 /// The kinds of record the `[debug]` section asks for: "grid",
 /// "search:<phase>", "coupler-options", "capacity-graph", "step-check",
-/// "global-sat", "chain-state" and "phase". A run records nothing of a kind
-/// no page needs.
+/// "step-skip", "global-sat", "chain-state" and "phase". A run records nothing
+/// of a kind no page needs.
 using DebugRecords = std::set<std::string>;
 
 /// The record kinds the pages of `config.debug` need.
@@ -1197,6 +1308,7 @@ using DebugRecords = std::set<std::string>;
   }
   if (debug->local_sat) {
     wanted.insert("step-check");
+    wanted.insert("step-skip");
   }
   if (debug->global_sat) {
     wanted.insert("global-sat");
@@ -2834,8 +2946,37 @@ public:
     std::uint32_t secondStraight = 0;
     bool secondReverse = false;
     /// Which place of the resonator's way the option sits at, in the order
-    /// `couplerPlace` offers them: 0 is the place nearest the target length.
+    /// `couplerPlace` offers them: 0 is the place nearest the target length,
+    /// and the number of places for a centred option on a cell the list
+    /// leaves out.
     std::uint32_t place = 0;
+    /// Whether the pad's centre sits on the resonator's way (see
+    /// `coupler_option_extension`), not the tip of its lead.
+    bool centred = false;
+    /// For a centred option: how many cells further along the resonator's
+    /// way, toward the qubit, the centre sits than the place nearest the
+    /// target length; negative back from the qubit, 0 for that place itself.
+    std::int32_t extension = 0;
+    /// Whether the option was placed by hand on the page that moves couplers
+    /// (`CouplerSession::addOption`). Such an option is centred and never
+    /// locked.
+    bool custom = false;
+    /// Whether the option opens with the jogs (`jogsUnlocked`): one with a
+    /// second dogleg, or a copy of `coupler_copy_cells`.
+    [[nodiscard]] bool opensWithJogs() const {
+      return secondStraight > 0 || copyX != 0 || copyY != 0;
+    }
+    /// Whether the option is a line option of `coupler_line_options`: its
+    /// feedline port on a line of its chain. Such an option is centred and
+    /// never locked.
+    bool lined = false;
+    /// For a copy of `coupler_copy_cells`: the direction it was moved in off
+    /// the plain option it copies, -1, 0 or 1 on each axis; both 0 for an
+    /// option that is no copy.
+    std::int8_t copyX = 0;
+    std::int8_t copyY = 0;
+    /// For a copy: the index of the plain option it copies.
+    std::size_t copyOf = 0;
     /// How many cells of `arc` the first quarter turn and its straight take;
     /// with a second dogleg the cell after them is the first lead's tip.
     std::size_t firstLead = 0;
@@ -2873,10 +3014,40 @@ public:
     std::uint32_t guarded = 0;
   };
 
+  /// A candidate of the option generator that gave no option: one offset,
+  /// port and jog for which no place of the resonator's way fits, or one
+  /// offset that `couplerOffsets` leaves out.
+  struct RefusedOption {
+    Heading offset = 0;
+    /// False for an offset the generator does not sweep: then it has no
+    /// port, no jog and no place.
+    bool swept = true;
+    bool secondPort = false;
+    std::uint32_t secondStraight = 0;
+    bool secondReverse = false;
+    /// Whether the candidate is a centred one of `coupler_option_extension`,
+    /// and its extension.
+    bool centred = false;
+    std::int32_t extension = 0;
+    /// Whether the candidate is a copy of `coupler_copy_cells`, the
+    /// direction it was moved in and the index of the option it copies.
+    bool copy = false;
+    std::int8_t copyX = 0;
+    std::int8_t copyY = 0;
+    std::size_t copyOf = 0;
+    /// How many places of the way the generator tried.
+    std::size_t places = 0;
+    /// Why the last place tried was refused (`makeOption`), or why the
+    /// offset was not swept.
+    std::string why;
+  };
+
   /// A coupler: the resonator it belongs to and every way it can sit.
   struct Coupler {
     std::uint32_t wire = NO_OWNER;
     std::vector<CouplerOption> options;
+    /// Every candidate of the option generator that gave no option.
+    std::vector<RefusedOption> refused;
     std::size_t chosen = 0;
     /// The anchor of the chosen option, for the meeting exemption.
     PathPoint anchor;
@@ -2890,8 +3061,16 @@ public:
     /// judge — its cost measures the feedline's turning and knows nothing of
     /// the resonator. So a coupler gets them only once it has shown it needs
     /// them: a pass in which not one of its plain options brought both of
-    /// its feedline edges home unlocks them for the passes after.
+    /// its feedline edges home unlocks them for the passes after. The copies
+    /// of `coupler_copy_cells` open with them.
     bool jogsUnlocked = false;
+    /// Whether the centred options of `coupler_option_extension` are open to
+    /// this coupler. Like the jogs they are not, to begin with: the cheaper
+    /// options they add lead the search into runs the capacity rule refuses,
+    /// so that it spends its `chain_rule_refusals` before it reaches a run on
+    /// the plain options. A coupler gets them only once its jogs are open and
+    /// still no run reaches past it.
+    bool extensionsUnlocked = false;
     /// The feedline edges into and out of it, by wire key.
     std::uint32_t edgeIn = NO_OWNER;
     std::uint32_t edgeOut = NO_OWNER;
@@ -3114,7 +3293,7 @@ public:
       coupler.wire = wire.key;
       coupler.outerWay = wire.way;
       const auto offsets = tuning_.couplerOffsets;
-      coupler.options = optionsOf(wire, offsets);
+      coupler.options = optionsOf(wire, offsets, coupler.refused);
       if (coupler.options.empty() &&
           std::ranges::any_of(offsets, [](const bool on) { return !on; })) {
         // None of the allowed offsets fits this coupler: it takes every
@@ -3126,7 +3305,8 @@ public:
                         wireId(wire), offsetsText(offsets)));
         std::array<bool, routing::NUM_HEADINGS> every{};
         every.fill(true);
-        coupler.options = optionsOf(wire, every);
+        coupler.refused.clear();
+        coupler.options = optionsOf(wire, every, coupler.refused);
       }
       if (coupler.options.empty()) {
         ++withoutOptions;
@@ -3253,6 +3433,10 @@ public:
       }
     }
 
+    if (tuning_.lineOptions) {
+      addLineOptions(wires);
+    }
+
     // R0: the ring as the feedline pass will sweep it — every wire that is
     // not inner, in the order the assignment feeds them, which is the order
     // `wires` holds them in before the edges are appended — and for every
@@ -3285,15 +3469,23 @@ public:
 
     say(std::format(
         "coupler insertion: settings: end edge weight {:g}, coupler offsets "
-        "{}{}, shortfall {:.0f}%, moved into the box by up to {} cells; room: "
-        "pitch {}, margin {}, channel reach {}",
+        "{}{}, jogs {}, extensions {}, shortfall {:.0f}%, moved into the box "
+        "by up to {} cells, chain search {}, line options {}; room: pitch {}, "
+        "margin {}, channel reach {}",
         tuning_.chainEndEdgeWeight, offsetsText(tuning_.couplerOffsets),
         offsetFallbacks_ == 0
             ? std::string{}
             : std::format("; {} coupler{} on every offset", offsetFallbacks_,
                           offsetFallbacks_ == 1 ? "" : "s"),
-        tuning_.couplerMaxShortfall * 100.0, tuning_.couplerShift, roomPitch(),
-        tuning_.roomMargin, tuning_.roomChannelReach));
+        tuning_.copyCells > 0
+            ? std::format("none, copies by {} cells", tuning_.copyCells)
+            : jogsText(tuning_.jogOptions),
+        extensionsText(tuning_.optionExtensions),
+        tuning_.couplerMaxShortfall * 100.0, tuning_.couplerShift,
+        tuning_.chainBidirectional ? "bidirectional" : "astar",
+        tuning_.lineOptions ? std::format("{} added", lineOptionsAdded_)
+                            : std::string("off"),
+        roomPitch(), tuning_.roomMargin, tuning_.roomChannelReach));
 
     // The search for the options: every chain on its own, by the prefix A*.
     const auto passes = optimizeChainsPrefix(wires);
@@ -3570,12 +3762,31 @@ public:
                     missing, missing == 1 ? "" : "s", angle, seconds));
   }
 
+  /// The eight directions a copy of `coupler_copy_cells` is moved in, as
+  /// signs on the two axes.
+  static constexpr std::array<std::pair<std::int8_t, std::int8_t>, 8>
+      COPY_DIRECTIONS{{{1, 0},
+                       {1, 1},
+                       {0, 1},
+                       {-1, 1},
+                       {-1, 0},
+                       {-1, -1},
+                       {0, -1},
+                       {1, -1}}};
+
   /// Every option of a coupler on a resonator's way: the prototype's sweep
   /// over the orientation offsets and the mirror, with the direction of the
-  /// feedline and one second dogleg on top.
+  /// feedline and one second dogleg on top, and the centred options of
+  /// `coupler_option_extension`.
+  ///
+  /// `refused` receives every candidate that gives no option, with the
+  /// reason: each offset `offsets` leaves out, each offset, port and jog
+  /// for which no place fits, with the refusal of the last place tried, and
+  /// each centred candidate that does not fit.
   [[nodiscard]] std::vector<CouplerOption>
   optionsOf(Wire& resonator,
-            const std::array<bool, routing::NUM_HEADINGS>& offsets) {
+            const std::array<bool, routing::NUM_HEADINGS>& offsets,
+            std::vector<RefusedOption>& refused) {
     std::vector<CouplerOption> options;
     // The resonator's own room must not stand in the way of its own body.
     lift(resonator);
@@ -3592,40 +3803,58 @@ public:
     // orientation's perfect point is another's impossible one, and the
     // whole coupler was built at the first point that suited *anybody*.
     const auto places = couplerPlace(resonator);
+    // Where each cell of the way stands in `places`, by its index on the way,
+    // for the centred options of `coupler_option_extension`.
+    std::unordered_map<std::size_t, std::size_t> placeRanks;
+    placeRanks.reserve(places.size());
+    for (std::size_t rank = 0; rank < places.size(); ++rank) {
+      placeRanks.emplace(places[rank].at, rank);
+    }
     for (Heading offset = 0; offset < routing::NUM_HEADINGS; ++offset) {
       if (!offsets.at(offset)) {
+        refused.push_back(
+            {.offset = offset,
+             .swept = false,
+             .why = std::format(
+                 "offset not swept: coupler_offsets leaves it out{}",
+                 offset == 3 || offset == 4
+                     ? " (the default leaves out 3 and 4, the pad turned "
+                       "135 and 180 degrees against the way)"
+                     : "")});
         continue;
       }
+      // The second dogleg: none, or one of the jogs of `jog_options` (twenty
+      // cells unless it says otherwise) turned each way. It slides the pad
+      // sideways off the way it sits on without changing which way the
+      // coupler points, which is the one freedom the offsets and the two
+      // ports do not give.
+      // With the copies of `coupler_copy_cells` the generator builds no
+      // jog: the copies move the pad instead.
+      std::vector<std::pair<std::uint32_t, bool>> doglegs{{0U, false}};
+      for (const auto jog : tuning_.jogOptions) {
+        if (tuning_.copyCells > 0) {
+          break;
+        }
+        doglegs.emplace_back(jog, true);
+        doglegs.emplace_back(jog, false);
+      }
       for (const bool secondPort : {false, true}) {
-        // The second dogleg, as the prototype sweeps it: none, or one of
-        // twenty turned each way. It slides the pad sideways off the way it
-        // sits on without changing which way the coupler points, which is
-        // the one freedom the offsets and the two ports do not give.
-        for (const auto& [secondStraight, secondReverse] :
-             {std::pair{0U, false}, std::pair{COUPLER_SECOND_STRAIGHT, true},
-              std::pair{COUPLER_SECOND_STRAIGHT, false}}) {
+        for (const auto& [secondStraight, secondReverse] : doglegs) {
           std::string why;
-          std::size_t tried = 0;
-          bool got = false;
-          // Every place, in order of mismatch, until one fits. No cap: the
-          // cap was what broke 4q, where the two dozen places nearest the
-          // target length all put the pad through the box edge and the
-          // coupler was given up on while places that fitted lay further
-          // along the way.
-          for (const auto& spot : places) {
-            ++tried;
-            // An option that leaves the box is moved by what its cell outside
-            // lacks and built again, until it fits or the move passes
-            // `couplerShift` on an axis. A move can push another cell out on
-            // the other side; `COUPLER_SHIFT_ROUNDS` ends that.
+          // Build the option at one place. An option that leaves the box is
+          // moved by what its cell outside lacks and built again, until it
+          // fits or the move passes `couplerShift` on an axis. A move can push
+          // another cell out on the other side; `COUPLER_SHIFT_ROUNDS` ends
+          // that.
+          const auto buildAt = [&](const CouplerPlace& spot,
+                                   std::int64_t& shiftX, std::int64_t& shiftY) {
             std::pair<std::int64_t, std::int64_t> miss{0, 0};
-            std::int64_t shiftX = 0;
-            std::int64_t shiftY = 0;
-            auto option = makeOption(
-                resonator, spot, secondPort, secondStraight, secondReverse,
-                offset, explaining() ? &why : nullptr, 0, 0, &miss);
+            shiftX = 0;
+            shiftY = 0;
+            auto built = makeOption(resonator, spot, secondPort, secondStraight,
+                                    secondReverse, offset, &why, 0, 0, &miss);
             for (std::uint32_t round = 0;
-                 !option.has_value() && round < COUPLER_SHIFT_ROUNDS &&
+                 !built.has_value() && round < COUPLER_SHIFT_ROUNDS &&
                  (miss.first != 0 || miss.second != 0);
                  ++round) {
               shiftX += miss.first;
@@ -3635,44 +3864,175 @@ public:
                 break;
               }
               miss = {0, 0};
-              option = makeOption(
-                  resonator, spot, secondPort, secondStraight, secondReverse,
-                  offset, explaining() ? &why : nullptr, shiftX, shiftY, &miss);
+              built = makeOption(resonator, spot, secondPort, secondStraight,
+                                 secondReverse, offset, &why, shiftX, shiftY,
+                                 &miss);
             }
-            if (!option.has_value()) {
-              continue;
+            return built;
+          };
+          const auto jogText = [&] {
+            return secondStraight == 0
+                       ? std::string{}
+                       : std::format(" jog {}{}", secondStraight,
+                                     secondReverse ? " reversed" : "");
+          };
+          // Every place, in order of mismatch, until one fits. No cap: the
+          // cap was what broke 4q, where the two dozen places nearest the
+          // target length all put the pad through the box edge and the
+          // coupler was given up on while places that fitted lay further
+          // along the way.
+          std::size_t tried = 0;
+          std::optional<CouplerOption> found;
+          std::size_t foundRank = 0;
+          std::int64_t foundX = 0;
+          std::int64_t foundY = 0;
+          for (const auto& spot : places) {
+            ++tried;
+            found = buildAt(spot, foundX, foundY);
+            if (found.has_value()) {
+              foundRank = tried - 1;
+              break;
             }
-            explain(std::format(
-                "coupler insertion:   '{}' offset {} port {}{}: option {} at "
-                "place {} of {} ({:.0f} of {:.0f} cells to the port), "
-                "angle {}°, centre ({},{}), {} priced cells",
-                wireId(resonator), offset, secondPort ? 2 : 1,
-                (secondStraight == 0
-                     ? std::string{}
-                     : std::format(" jog {}{}", secondStraight,
-                                   secondReverse ? " reversed" : "")) +
-                    (shiftX == 0 && shiftY == 0
-                         ? std::string{}
-                         : std::format(" moved ({},{})", shiftX, shiftY)),
-                options.size(), tried - 1, places.size(), spot.centreLength,
-                spot.wanted, degreesOfHeading(option->couplerOrientation),
-                option->centre.x, option->centre.y, option->guarded));
-            option->place = static_cast<std::uint32_t>(tried - 1);
-            options.push_back(std::move(*option));
-            got = true;
-            break;
           }
-          if (!got && explaining()) {
-            explain(std::format(
-                "coupler insertion:   '{}' offset {} port {}{}: no place of "
-                "{} tried fits — last refusal: {}",
-                wireId(resonator), offset, secondPort ? 2 : 1,
-                secondStraight == 0
-                    ? std::string{}
-                    : std::format(" jog {}{}", secondStraight,
-                                  secondReverse ? " reversed" : ""),
-                tried, why.empty() ? std::string("none offered") : why));
+          if (!found.has_value()) {
+            if (why.empty()) {
+              why = places.empty()
+                        ? "no cell of the way carries the biased target"
+                        : "none offered";
+            }
+            refused.push_back({.offset = offset,
+                               .secondPort = secondPort,
+                               .secondStraight = secondStraight,
+                               .secondReverse = secondReverse,
+                               .places = tried,
+                               .why = why});
+            if (explaining()) {
+              explain(std::format(
+                  "coupler insertion:   '{}' offset {} port {}{}: no place "
+                  "of {} tried fits — last refusal: {}",
+                  wireId(resonator), offset, secondPort ? 2 : 1, jogText(),
+                  tried, why));
+            }
+            continue;
           }
+          const auto& spot = places[foundRank];
+          explain(std::format(
+              "coupler insertion:   '{}' offset {} port {}{}: option {} at "
+              "place {} of {} ({:.0f} of {:.0f} cells to the port), "
+              "angle {}°, centre ({},{}), {} priced cells",
+              wireId(resonator), offset, secondPort ? 2 : 1,
+              jogText() + (foundX == 0 && foundY == 0
+                               ? std::string{}
+                               : std::format(" moved ({},{})", foundX, foundY)),
+              options.size(), foundRank, places.size(), spot.centreLength,
+              spot.wanted, degreesOfHeading(found->couplerOrientation),
+              found->centre.x, found->centre.y, found->guarded));
+          found->place = static_cast<std::uint32_t>(foundRank);
+          options.push_back(std::move(*found));
+          // The copies of `coupler_copy_cells`: the option moved by the
+          // figure on each axis in each of the eight directions, its lead
+          // joined to the resonator's way where that lies nearest the tip.
+          // A copy whose resonator is then too long or too short is
+          // refused, as every plain option is.
+          if (tuning_.copyCells > 0 && secondStraight == 0) {
+            const auto of = options.size() - 1;
+            for (const auto& [cx, cy] : COPY_DIRECTIONS) {
+              std::string whyCopy;
+              auto copy = makeOption(
+                  resonator, spot, secondPort, 0, false, offset, &whyCopy,
+                  foundX + (cx * tuning_.copyCells),
+                  foundY + (cy * tuning_.copyCells), nullptr, false, true);
+              if (!copy.has_value()) {
+                refused.push_back({.offset = offset,
+                                   .secondPort = secondPort,
+                                   .copy = true,
+                                   .copyX = cx,
+                                   .copyY = cy,
+                                   .copyOf = of,
+                                   .places = 1,
+                                   .why = whyCopy});
+                continue;
+              }
+              copy->place = static_cast<std::uint32_t>(foundRank);
+              copy->copyX = cx;
+              copy->copyY = cy;
+              copy->copyOf = of;
+              options.push_back(std::move(*copy));
+            }
+          }
+        }
+      }
+      // The centred options of `coupler_option_extension`: the pad's centre
+      // on the resonator's way, at the place nearest the target length and
+      // as many cells further along the way toward the qubit as each
+      // extension says (back from the qubit for a negative one). Both ports,
+      // no jog and no move into the box: the centre is the one thing such
+      // an option fixes. The chain search opens them last.
+      for (const auto extension : tuning_.optionExtensions) {
+        // The cell the centre takes. `couplerPlace` leaves out some cells of
+        // the way; such a cell is taken from the way itself, and the length
+        // tests of `makeOption` still decide it.
+        const auto target =
+            places.empty()
+                ? std::int64_t{-1}
+                : static_cast<std::int64_t>(places.front().at) + extension;
+        std::optional<CouplerPlace> spot;
+        std::size_t rank = places.size();
+        if (target >= 0 &&
+            static_cast<std::size_t>(target) + 1 < resonator.way.size()) {
+          const auto at = static_cast<std::size_t>(target);
+          if (const auto found = placeRanks.find(at);
+              found != placeRanks.end()) {
+            rank = found->second;
+            spot = places[rank];
+          } else {
+            const auto& cell = resonator.way[at];
+            spot = CouplerPlace{.at = at,
+                                .x = static_cast<std::int64_t>(cell.x),
+                                .y = static_cast<std::int64_t>(cell.y),
+                                .leaves = cell.heading,
+                                .centreLength = 0.0,
+                                .wanted = places.front().wanted};
+          }
+        }
+        for (const bool secondPort : {false, true}) {
+          std::string why;
+          std::optional<CouplerOption> centred;
+          if (!spot.has_value()) {
+            why = std::format("extension {} leaves the resonator's way",
+                              extension);
+          } else {
+            centred = makeOption(resonator, *spot, secondPort, 0, false, offset,
+                                 &why, 0, 0, nullptr, true);
+          }
+          if (!centred.has_value()) {
+            refused.push_back({.offset = offset,
+                               .secondPort = secondPort,
+                               .centred = true,
+                               .extension = extension,
+                               .places = 1,
+                               .why = why.empty() ? "none offered" : why});
+            if (explaining()) {
+              explain(std::format(
+                  "coupler insertion:   '{}' offset {} port {} centred at "
+                  "extension {}: does not fit — {}",
+                  wireId(resonator), offset, secondPort ? 2 : 1, extension,
+                  why));
+            }
+            continue;
+          }
+          explain(std::format(
+              "coupler insertion:   '{}' offset {} port {} centred at "
+              "extension {}: option {} at cell {} of the way, angle {}°, "
+              "centre ({},{}), {} priced cells",
+              wireId(resonator), offset, secondPort ? 2 : 1, extension,
+              options.size(), spot->at,
+              degreesOfHeading(centred->couplerOrientation), centred->centre.x,
+              centred->centre.y, centred->guarded));
+          centred->place = static_cast<std::uint32_t>(rank);
+          centred->centred = true;
+          centred->extension = extension;
+          options.push_back(std::move(*centred));
         }
       }
     }
@@ -3683,6 +4043,265 @@ public:
     }
     place(resonator);
     return options;
+  }
+
+  /// How many line options `addLineOptions` added.
+  std::size_t lineOptionsAdded_ = 0;
+
+  /// How far from a line of `addLineOptions` a cut of the resonator may lie,
+  /// in cells.
+  static constexpr double LINE_REACH = 60.0;
+
+  /// The line options of `coupler_line_options`: options whose feedline
+  /// port lies on a line of the chain, so that the feedline can run straight
+  /// from coupler to coupler.
+  ///
+  /// Every waypoint of a chain has a point: a launcher its cell, a coupler
+  /// the place of its resonator nearest the target length. Each coupler gets
+  /// two lines: the chord of its two neighbours, through the middle of their
+  /// points, and the line that fits the points of the whole chain best,
+  /// through their mean. A pad runs along one of the eight headings only, so
+  /// each line takes the heading nearest its own: every pad on a line then
+  /// has both feedline ports on it. For each line the
+  /// cells of the resonator's way whose length to the qubit lies within
+  /// `length_point_band_percent` of the target are cut candidates; the two
+  /// nearest the line, at most `LINE_REACH` cells from it, are taken. The pad
+  /// is centred where the cut projects onto the line and moved across it
+  /// until its first feedline port lies on the line. Every offset and both
+  /// ports are tried; an option whose pad does not run along the heading
+  /// nearest the line's is dropped. Every test of `makeOption` applies, the
+  /// shortfall test excepted, as for a centred option. The options are open
+  /// from the start.
+  void addLineOptions(std::vector<Wire>& wires) {
+    using Point = std::array<double, 2>;
+    const auto placesOf = [&](const Coupler& coupler) {
+      Wire resonator = wires[coupler.wire];
+      resonator.way = coupler.outerWay;
+      return couplerPlace(resonator);
+    };
+    struct Line {
+      Point at;
+      Point along;
+    };
+    // A pad runs along one of the eight headings only, so a line does too:
+    // its direction is the heading nearest it, either way along it, so that
+    // both feedline ports of every pad on it lie on it.
+    const auto snapped = [](const Point at, const Point along) {
+      Point best{1.0, 0.0};
+      double most = -2.0;
+      for (Heading h = 0; h < routing::NUM_HEADINGS; ++h) {
+        const auto v = routing::headingVector(h);
+        const auto norm =
+            std::hypot(static_cast<double>(v.dx), static_cast<double>(v.dy));
+        const Point unit{v.dx / norm, v.dy / norm};
+        const auto dot = (unit[0] * along[0]) + (unit[1] * along[1]);
+        if (dot > most) {
+          most = dot;
+          best = unit;
+        }
+      }
+      return Line{.at = at, .along = best};
+    };
+    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      const auto& points = chains_[chain];
+      // The point of every waypoint.
+      std::vector<std::optional<Point>> spots;
+      for (const auto& point : points) {
+        if (point.fixed) {
+          spots.emplace_back(Point{static_cast<double>(point.asSource.x),
+                                   static_cast<double>(point.asSource.y)});
+          continue;
+        }
+        const auto places = placesOf(couplers_[point.coupler]);
+        if (places.empty()) {
+          spots.emplace_back(std::nullopt);
+        } else {
+          spots.emplace_back(Point{static_cast<double>(places.front().x),
+                                   static_cast<double>(places.front().y)});
+        }
+      }
+      // The line that fits every point best: through their mean, along the
+      // principal axis of their spread.
+      std::optional<Line> fitted;
+      {
+        double sx = 0.0;
+        double sy = 0.0;
+        double n = 0.0;
+        for (const auto& spot : spots) {
+          if (spot) {
+            sx += (*spot)[0];
+            sy += (*spot)[1];
+            n += 1.0;
+          }
+        }
+        if (n >= 2.0) {
+          const double mx = sx / n;
+          const double my = sy / n;
+          double xx = 0.0;
+          double xy = 0.0;
+          double yy = 0.0;
+          for (const auto& spot : spots) {
+            if (spot) {
+              const auto dx = (*spot)[0] - mx;
+              const auto dy = (*spot)[1] - my;
+              xx += dx * dx;
+              xy += dx * dy;
+              yy += dy * dy;
+            }
+          }
+          const double angle = 0.5 * std::atan2(2.0 * xy, xx - yy);
+          fitted = snapped({mx, my}, {std::cos(angle), std::sin(angle)});
+        }
+      }
+      for (std::size_t at = 0; at < points.size(); ++at) {
+        if (points[at].fixed) {
+          continue;
+        }
+        std::vector<Line> lines;
+        if (at > 0 && at + 1 < points.size() && spots[at - 1] &&
+            spots[at + 1]) {
+          const auto& a = *spots[at - 1];
+          const auto& b = *spots[at + 1];
+          const auto length = std::hypot(b[0] - a[0], b[1] - a[1]);
+          if (length > 0.0) {
+            lines.push_back(
+                snapped({(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0},
+                        {(b[0] - a[0]) / length, (b[1] - a[1]) / length}));
+          }
+        }
+        if (fitted) {
+          lines.push_back(*fitted);
+        }
+        const auto index = points[at].coupler;
+        auto& coupler = couplers_[index];
+        auto& real = wires[coupler.wire];
+        Wire resonator = real;
+        resonator.way = coupler.outerWay;
+        const auto places = couplerPlace(resonator);
+        if (places.empty()) {
+          continue;
+        }
+        lift(real);
+        const auto wanted = places.front().wanted;
+        std::size_t added = 0;
+        for (const auto& line : lines) {
+          const Point normal{-line.along[1], line.along[0]};
+          const auto across = [&](const double x, const double y) {
+            return ((x - line.at[0]) * normal[0]) +
+                   ((y - line.at[1]) * normal[1]);
+          };
+          // The heading nearest the line's, either way along it.
+          Heading heading = 0;
+          double best = -2.0;
+          for (Heading h = 0; h < routing::NUM_HEADINGS; ++h) {
+            const auto v = routing::headingVector(h);
+            const auto norm = std::hypot(static_cast<double>(v.dx),
+                                         static_cast<double>(v.dy));
+            const auto dot =
+                ((v.dx * line.along[0]) + (v.dy * line.along[1])) / norm;
+            if (dot > best) {
+              best = dot;
+              heading = h;
+            }
+          }
+          const auto onAxis = [heading](const Heading orientation) {
+            return orientation == heading ||
+                   orientation == routing::reverse(heading);
+          };
+          // The cut candidates: the two cells of the band nearest the line,
+          // at least ten cells apart along the way.
+          std::vector<std::size_t> band;
+          for (std::size_t rank = 0; rank < places.size(); ++rank) {
+            const auto& spot = places[rank];
+            if (std::abs(spot.centreLength - wanted) <=
+                    tuning_.lengthPointBand * wanted &&
+                std::abs(across(static_cast<double>(spot.x),
+                                static_cast<double>(spot.y))) <= LINE_REACH) {
+              band.push_back(rank);
+            }
+          }
+          const auto distance = [&](const std::size_t rank) {
+            return std::abs(across(static_cast<double>(places[rank].x),
+                                   static_cast<double>(places[rank].y)));
+          };
+          std::ranges::sort(
+              band, [&](const std::size_t a, const std::size_t b) {
+                const auto da = distance(a);
+                const auto db = distance(b);
+                return da != db ? da < db : places[a].at < places[b].at;
+              });
+          std::vector<std::size_t> cuts;
+          for (const auto rank : band) {
+            const auto apart = [&](const std::size_t taken) {
+              const auto one = places[rank].at;
+              const auto two = places[taken].at;
+              return (one > two ? one - two : two - one) >= 10;
+            };
+            if (std::ranges::all_of(cuts, apart)) {
+              cuts.push_back(rank);
+            }
+            if (cuts.size() == 2) {
+              break;
+            }
+          }
+          for (const auto rank : cuts) {
+            const auto& cut = places[rank];
+            const auto off =
+                across(static_cast<double>(cut.x), static_cast<double>(cut.y));
+            for (Heading offset = 0; offset < routing::NUM_HEADINGS; ++offset) {
+              for (const bool secondPort : {false, true}) {
+                // The pad's centre on the line first, then moved across it
+                // until the first feedline port lies on it.
+                auto moveX = std::lround(-off * normal[0]);
+                auto moveY = std::lround(-off * normal[1]);
+                std::optional<CouplerOption> built;
+                for (int round = 0; round < 3; ++round) {
+                  built =
+                      makeOption(resonator, cut, secondPort, 0, false, offset,
+                                 nullptr, moveX, moveY, nullptr, true);
+                  if (!built.has_value() || !onAxis(built->orientation)) {
+                    built.reset();
+                    break;
+                  }
+                  const auto miss = across(static_cast<double>(built->in.x),
+                                           static_cast<double>(built->in.y));
+                  if (std::abs(miss) <= 1.0) {
+                    break;
+                  }
+                  moveX -= std::lround(miss * normal[0]);
+                  moveY -= std::lround(miss * normal[1]);
+                  built.reset();
+                }
+                if (!built.has_value()) {
+                  continue;
+                }
+                const bool known = std::ranges::any_of(
+                    coupler.options, [&](const CouplerOption& option) {
+                      return option.centre.x == built->centre.x &&
+                             option.centre.y == built->centre.y &&
+                             option.orientation == built->orientation &&
+                             option.secondPort == built->secondPort;
+                    });
+                if (known) {
+                  continue;
+                }
+                built->centred = true;
+                built->lined = true;
+                built->place = static_cast<std::uint32_t>(rank);
+                built->extension = static_cast<std::int32_t>(cut.at) -
+                                   static_cast<std::int32_t>(places.front().at);
+                coupler.options.push_back(std::move(*built));
+                ++added;
+              }
+            }
+          }
+        }
+        place(real);
+        lineOptionsAdded_ += added;
+        tell(std::format("coupler insertion: '{}' chain {}: {} line option{}",
+                         wireId(real), chain, added, added == 1 ? "" : "s"));
+      }
+    }
   }
 
   /// The rectangle a coupler may sit in.
@@ -4110,9 +4729,6 @@ public:
     return kinks;
   }
 
-  /// The straight of the second dogleg, in cells. The prototype's twenty.
-  static constexpr std::uint32_t COUPLER_SECOND_STRAIGHT = 20;
-
   /// How often an option that leaves the box is moved and built again (see
   /// `couplerShift`). A round puts the cell that was outside inside, but can
   /// push another one out; the cap ends a move that goes back and forth.
@@ -4126,13 +4742,25 @@ public:
   /// lands that far off the place (see `couplerShift`). When the option is
   /// refused because a cell leaves the box, `boxMiss` receives the move
   /// that would bring that cell inside it.
+  ///
+  /// `centred` puts the pad's centre on the place instead of the lead's tip
+  /// (see `coupler_option_extension`): the option is moved by what that
+  /// takes, and `moveX` and `moveY` then move the centre off the place (an
+  /// option placed by hand, `addCouplerOption`).
+  ///
+  /// `nearestJoin` joins a moved option's lead to the cell of the
+  /// resonator's way nearest its tip that a clear connector reaches, anywhere
+  /// along the way, in place of the cell in front of the tip: the copies of
+  /// `coupler_copy_cells`. The connector and the way onward from that cell
+  /// are the resonator, and the length tests judge it.
   [[nodiscard]] std::optional<CouplerOption>
   makeOption(const Wire& resonator, const CouplerPlace& place,
              const bool secondPort, const std::uint32_t secondStraight,
              const bool secondReverse, const Heading offset,
-             std::string* why = nullptr, const std::int64_t shiftX = 0,
-             const std::int64_t shiftY = 0,
-             std::pair<std::int64_t, std::int64_t>* boxMiss = nullptr) const {
+             std::string* why = nullptr, const std::int64_t moveX = 0,
+             const std::int64_t moveY = 0,
+             std::pair<std::int64_t, std::int64_t>* boxMiss = nullptr,
+             const bool centred = false, const bool nearestJoin = false) const {
     const auto refuse =
         [&why](std::string reason) -> std::optional<CouplerOption> {
       if (why != nullptr) {
@@ -4158,8 +4786,8 @@ public:
     };
     CouplerOption option;
     option.offset = offset;
-    option.shiftX = shiftX;
-    option.shiftY = shiftY;
+    auto shiftX = moveX;
+    auto shiftY = moveY;
     // The way is cut at the place. Nothing is spliced in front of it: the
     // resonator simply runs out of the pad it ends on.
     option.way.assign(resonator.way.begin() +
@@ -4280,6 +4908,29 @@ public:
     } catch (const std::logic_error&) {
       return refuse("the primitives hold no quarter turn for the lead");
     }
+    // A centred option: the move that puts the pad's centre on the place.
+    // The centre lies half a depth across from the port and half a run back
+    // along the pad (see below), and the port is the place less the whole
+    // lead, so the move is the lead less that.
+    if (centred) {
+      const std::int64_t towards = secondPort ? 1 : -1;
+      shiftX =
+          moveX +
+          static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.x)) +
+          (secondStraight > 0
+               ? static_cast<std::int64_t>(static_cast<std::int32_t>(jog.tip.x))
+               : 0) -
+          ((halfDepth + 1) * across.dx) - (towards * halfRun * along.dx);
+      shiftY =
+          moveY +
+          static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.y)) +
+          (secondStraight > 0
+               ? static_cast<std::int64_t>(static_cast<std::int32_t>(jog.tip.y))
+               : 0) -
+          ((halfDepth + 1) * across.dy) - (towards * halfRun * along.dy);
+    }
+    option.shiftX = shiftX;
+    option.shiftY = shiftY;
     // A moved option: the lead's tip lands off the place, and the resonator
     // runs from the tip to its way in a straight line, the connector. It
     // joins the way at the first cell at least `BEND_RADIUS` cells in front
@@ -4300,33 +4951,219 @@ public:
           secondStraight > 0 ? jog.tip.heading : lead.tip.heading);
       const auto reach = static_cast<std::int64_t>(BEND_RADIUS) *
                          ((ahead.dx * ahead.dx) + (ahead.dy * ahead.dy));
+      const auto aheadOf = [&](const std::size_t at) {
+        return ((static_cast<std::int64_t>(resonator.way[at].x) - tipX) *
+                ahead.dx) +
+               ((static_cast<std::int64_t>(resonator.way[at].y) - tipY) *
+                ahead.dy);
+      };
+      // The way from the tip: the connector to the cell `join` of the way,
+      // and the way onward from there.
+      const auto joined = [&](const std::size_t join, std::size_t& cells) {
+        Path way{{.x = static_cast<std::uint32_t>(tipX),
+                  .y = static_cast<std::uint32_t>(tipY),
+                  .heading = 0,
+                  .primitive = 0}};
+        connect(way, resonator.way[join]);
+        cells = way.size() - 1;
+        for (std::size_t at = 0; at < cells; ++at) {
+          way[at].heading = headingOfStep(way[at], way[at + 1]);
+        }
+        way.back() = resonator.way[join];
+        way.insert(way.end(),
+                   resonator.way.begin() +
+                       static_cast<std::ptrdiff_t>(join + 1),
+                   resonator.way.end());
+        return way;
+      };
       auto join = place.at;
-      while (
-          join + 1 < resonator.way.size() &&
-          ((static_cast<std::int64_t>(resonator.way[join].x) - tipX) *
-           ahead.dx) +
-                  ((static_cast<std::int64_t>(resonator.way[join].y) - tipY) *
-                   ahead.dy) <
-              reach) {
+      while (join + 1 < resonator.way.size() && aheadOf(join) < reach) {
         ++join;
       }
-      if (join + 1 >= resonator.way.size()) {
-        return refuse("no cell of the way lies in front of the moved tip");
+      if (!centred && !nearestJoin) {
+        if (join + 1 >= resonator.way.size()) {
+          return refuse("no cell of the way lies in front of the moved tip");
+        }
+        option.way = joined(join, connector);
+      } else {
+        // **A centred option may join the way anywhere along it.** Its pad
+        // lies on the way, so the cell in front of the tip that a moved
+        // option joins is often not there, or the line to it crosses the
+        // pad or the feedline's run. The cells are tried in three tiers:
+        // the one a moved option takes, then every cell in front of the tip,
+        // then every other cell; within a tier, nearest the place first.
+        // The first whose connector is clear, whose way onward stays off
+        // the pad and that does not meet the lead is taken. The routing
+        // draws the resonator again from the tip in any case.
+        const auto alongNorm = (along.dx * along.dx) + (along.dy * along.dy);
+        const auto acrossNorm =
+            (across.dx * across.dx) + (across.dy * across.dy);
+        // The pad's centre: the place, unless the option was moved off it.
+        // A moved option that is not centred hangs its pad off the port, as
+        // below.
+        const std::int64_t side = secondPort ? 1 : -1;
+        const auto padX = centred
+                              ? place.x + moveX
+                              : place.x -
+                                    static_cast<std::int64_t>(
+                                        static_cast<std::int32_t>(lead.tip.x)) +
+                                    shiftX + ((halfDepth + 1) * across.dx) +
+                                    (side * halfRun * along.dx);
+        const auto padY = centred
+                              ? place.y + moveY
+                              : place.y -
+                                    static_cast<std::int64_t>(
+                                        static_cast<std::int32_t>(lead.tip.y)) +
+                                    shiftY + ((halfDepth + 1) * across.dy) +
+                                    (side * halfRun * along.dy);
+        const auto onPad = [&](const std::int64_t x, const std::int64_t y) {
+          const auto dx = x - padX;
+          const auto dy = y - padY;
+          return std::abs((dx * along.dx) + (dy * along.dy)) <=
+                     halfRun * alongNorm &&
+                 std::abs((dx * across.dx) + (dy * across.dy)) <=
+                     halfDepth * acrossNorm;
+        };
+        // The feedline's stub along the far edge, as `stubs` below.
+        std::unordered_set<std::size_t> run;
+        {
+          const auto edgeX = padX + ((halfDepth + 1) * across.dx);
+          const auto edgeY = padY + ((halfDepth + 1) * across.dy);
+          for (std::int64_t k = -halfRun - tuning_.straightStart;
+               k <= halfRun + tuning_.straightStart; ++k) {
+            const auto x = edgeX + (k * along.dx);
+            const auto y = edgeY + (k * along.dy);
+            if (x >= 0 && y >= 0 && x < width && y < height) {
+              run.insert(static_cast<std::size_t>((y * width) + x));
+            }
+          }
+        }
+        // The lead, from the port to the tip.
+        Path leadWay;
+        {
+          const auto portX =
+              place.x -
+              static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.x)) +
+              shiftX;
+          const auto portY =
+              place.y -
+              static_cast<std::int64_t>(static_cast<std::int32_t>(lead.tip.y)) +
+              shiftY;
+          for (const auto& move : lead.path) {
+            const auto x = portX + static_cast<std::int64_t>(
+                                       static_cast<std::int32_t>(move.x));
+            const auto y = portY + static_cast<std::int64_t>(
+                                       static_cast<std::int32_t>(move.y));
+            if (x < 0 || y < 0 || x >= width || y >= height) {
+              return refuse("the resonator's lead leaves the grid");
+            }
+            leadWay.push_back({.x = static_cast<std::uint32_t>(x),
+                               .y = static_cast<std::uint32_t>(y),
+                               .heading = move.heading,
+                               .primitive = move.primitive});
+          }
+        }
+        // The way onward from a join has to stay off the pad, so a join
+        // lies past the last cell of the way on it.
+        // A copy may join the way before the place as well.
+        std::size_t first = nearestJoin ? 0 : place.at + 1;
+        for (std::size_t at = nearestJoin ? 0 : place.at;
+             at < resonator.way.size(); ++at) {
+          if (onPad(static_cast<std::int64_t>(resonator.way[at].x),
+                    static_cast<std::int64_t>(resonator.way[at].y))) {
+            first = at + 1;
+          }
+        }
+        // The connector alone first, which is short; the whole way only for
+        // a connector that is clear.
+        const auto clear = [&](const std::size_t at) {
+          Path line{{.x = static_cast<std::uint32_t>(tipX),
+                     .y = static_cast<std::uint32_t>(tipY),
+                     .heading = 0,
+                     .primitive = 0}};
+          connect(line, resonator.way[at]);
+          for (std::size_t step = 1; step < line.size(); ++step) {
+            const auto x = static_cast<std::int64_t>(line[step].x);
+            const auto y = static_cast<std::int64_t>(line[step].y);
+            const auto cell = static_cast<std::size_t>((y * width) + x);
+            if (onPad(x, y) || scene_.blocked.test(cell) ||
+                approaches_.test(cell) || run.contains(cell)) {
+              return false;
+            }
+          }
+          return true;
+        };
+        const auto meetsTheLead = [&](const Path& way) {
+          Path spliced = leadWay;
+          if (!spliced.empty()) {
+            spliced.pop_back();
+          }
+          spliced.insert(spliced.end(), way.begin(), way.end());
+          return routing::pathSelfIntersects(
+              spliced, scene_.router.width, scene_.router.height, loopScratch_);
+        };
+        const auto tierOf = [&](const std::size_t at) {
+          if (at == join) {
+            return 0;
+          }
+          return aheadOf(at) > 0 ? 1 : 2;
+        };
+        bool found = false;
+        if (nearestJoin) {
+          // The cells by their distance from the tip, as a way of the eight
+          // headings measures it, the nearest first.
+          const auto octile = [&](const std::size_t at) {
+            const auto dx =
+                std::abs(static_cast<std::int64_t>(resonator.way[at].x) - tipX);
+            const auto dy =
+                std::abs(static_cast<std::int64_t>(resonator.way[at].y) - tipY);
+            return static_cast<double>(std::max(dx, dy)) +
+                   ((std::numbers::sqrt2 - 1.0) *
+                    static_cast<double>(std::min(dx, dy)));
+          };
+          std::vector<std::size_t> cells;
+          for (std::size_t at = first; at + 1 < resonator.way.size(); ++at) {
+            cells.push_back(at);
+          }
+          std::ranges::stable_sort(cells, {}, octile);
+          for (const auto at : cells) {
+            if (!clear(at)) {
+              continue;
+            }
+            std::size_t length = 0;
+            auto way = joined(at, length);
+            if (!meetsTheLead(way)) {
+              option.way = std::move(way);
+              connector = length;
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            return refuse("no cell of the way can be joined from the tip of "
+                          "the copy's lead");
+          }
+        }
+        for (int tier = 0; tier < 3 && !found; ++tier) {
+          for (std::size_t at = first; at + 1 < resonator.way.size() && !found;
+               ++at) {
+            if (tierOf(at) != tier || !clear(at)) {
+              continue;
+            }
+            std::size_t cells = 0;
+            auto way = joined(at, cells);
+            if (!meetsTheLead(way)) {
+              option.way = std::move(way);
+              connector = cells;
+              found = true;
+            }
+          }
+        }
+        if (!found) {
+          return refuse("no cell of the way can be joined from the tip of the "
+                        "centred lead");
+        }
       }
-      Path way{{.x = static_cast<std::uint32_t>(tipX),
-                .y = static_cast<std::uint32_t>(tipY),
-                .heading = 0,
-                .primitive = 0}};
-      connect(way, resonator.way[join]);
-      connector = way.size() - 1;
-      for (std::size_t at = 0; at < connector; ++at) {
-        way[at].heading = headingOfStep(way[at], way[at + 1]);
-      }
-      way.back() = resonator.way[join];
-      way.insert(way.end(),
-                 resonator.way.begin() + static_cast<std::ptrdiff_t>(join + 1),
-                 resonator.way.end());
-      option.way = std::move(way);
     }
     // A resonator that only feeds a bridge has no length to hold, so no
     // place is refused for what is left of it.
@@ -4354,10 +5191,14 @@ public:
       // 6000-unit target and an eighth of a 2500-unit one. Measured without
       // it, the same share would refuse on the small chips the very place
       // `couplerPlace` aims at.
+      //
+      // A centred option is exempt: its place is named by the configuration
+      // (`coupler_option_extension`), and the meander is what makes up its
+      // length.
       const auto whole = left + leadLength() + resonator.anchorGap;
       const auto least =
           tuning_.targetLength * (1.0 - tuning_.couplerMaxShortfall);
-      if (whole < least) {
+      if (!centred && whole < least) {
         return refuse(std::format(
             "what is left of the resonator is {:.0f} against a target of "
             "{:.0f}, past the {:.0f}% a coupler may take off",
@@ -5542,6 +6383,26 @@ public:
   // rest of the chip frozen — and every complete run of options the search
   // reaches is tested by a local rip-up-and-reroute of the wires the segment
   // touches before it is taken. Plan: `plan-coupler-repair-search.md`.
+
+  /// The extensions as a comma list.
+  [[nodiscard]] static std::string
+  extensionsText(const std::vector<std::int32_t>& extensions) {
+    std::string text;
+    for (const auto extension : extensions) {
+      text += std::format("{}{}", text.empty() ? "" : ",", extension);
+    }
+    return text.empty() ? "none" : text;
+  }
+
+  /// The jog lengths as a comma list.
+  [[nodiscard]] static std::string
+  jogsText(const std::vector<std::uint32_t>& jogs) {
+    std::string text;
+    for (const auto jog : jogs) {
+      text += std::format("{}{}", text.empty() ? "" : ",", jog);
+    }
+    return text;
+  }
 
   /// The allowed offsets as a comma list.
   [[nodiscard]] static std::string
@@ -6777,12 +7638,16 @@ public:
   /// with no pad and no feedline edge. With `terminalsOpen` the terminal
   /// edges are no walls either: the check of the whole chip takes them as
   /// wires (`terminalDemands`). Without it a terminal edge is a wall one
-  /// cell to either side of its line, not inflated.
+  /// cell to either side of its line, not inflated. With `terminalsOpen`
+  /// and a `terminalChain`, only that chain's terminal edges are no walls;
+  /// those of the other chains keep their port runs and stand as walls
+  /// inflated as every feedline edge is (`InsertionState::terminalChain`).
   [[nodiscard]] Walls
   wallsOf(const std::vector<Wire>& wires, const std::vector<Edge>& edges,
           const std::vector<bool>* placed, const std::uint32_t without,
           const bool staticOnly = false, const bool terminalsOpen = false,
-          const std::vector<std::size_t>* options = nullptr) const {
+          const std::vector<std::size_t>* options = nullptr,
+          const std::uint32_t terminalChain = NO_OWNER) const {
     const auto width = static_cast<std::int64_t>(scene_.router.width);
     const auto height = static_cast<std::int64_t>(scene_.router.height);
     Walls walls{.mask =
@@ -6983,13 +7848,17 @@ public:
         continue;
       }
       const auto& wire = wires[edge.wire];
+      // A terminal edge of another chain than `terminalChain` stands.
+      const bool stands = terminalsOpen && edge.terminal &&
+                          terminalChain != NO_OWNER &&
+                          edge.chain != terminalChain;
       if (staticOnly || !wire.drawn || wire.way.empty() ||
-          edge.wire == without || (terminalsOpen && edge.terminal)) {
+          edge.wire == without || (terminalsOpen && edge.terminal && !stands)) {
         continue;
       }
       markThick(cellsOf(wire.way),
                 add(WallKind::Feedline, wireId(wire), edge.wire),
-                edge.terminal);
+                edge.terminal && !stands);
     }
     // A feedline's own line takes any cell, so a slot keeps only the cells
     // still free.
@@ -7889,8 +8758,9 @@ public:
     double length = 0.0;
     /// The wires whose way through the graph takes it.
     std::vector<std::uint32_t> through;
-    /// A bottleneck with an end on a terminal feedline edge, or a stretch of
-    /// one: it takes every wire (`capacityProblemOf`, `crossingStretches`).
+    /// A bottleneck with an end on a terminal feedline edge, which holds
+    /// what its width holds (`capacityProblemOf`), or a stretch of one,
+    /// which takes every wire (`crossingStretches`).
     bool terminal = false;
     /// A stretch: the cells of its crossings, one per wire it takes.
     std::vector<std::size_t> points;
@@ -8407,12 +9277,13 @@ public:
     CapacityProblem problem;
     auto& graph = problem.graph;
     // A bottleneck with an end on a terminal feedline edge — the edge from
-    // or to a launcher — takes every wire: the feedline routing lays the
-    // terminal edges again later, so a gap at one is no limit yet, and the
-    // check of the whole chip takes them as wires (`terminalDemands`). Only
-    // a check that keeps them as walls, that of a chain on its own, has
-    // such bottlenecks; there the terminal edges close the chain's pocket
-    // and nothing more.
+    // or to a launcher — holds what its width holds, as every other
+    // bottleneck does. Only a check that keeps the terminal edges as walls,
+    // that of a chain on its own, has such bottlenecks; the check of the
+    // whole chip takes them as wires (`terminalDemands`). A local check
+    // finds a feedline SAT only when the free wires beside it pass its
+    // terminal edges (user, 2026-10-26): the gap between a terminal edge's
+    // coupler and the artwork is as narrow there as in the whole chip.
     std::unordered_set<std::uint32_t> terminalEdges;
     for (const auto& edge : edges) {
       if (edge.terminal) {
@@ -8439,7 +9310,6 @@ public:
                  : NO_OWNER;
     };
     const auto clearance = static_cast<double>(tuning_.clearance);
-    const auto everyWire = static_cast<std::uint32_t>(wires.size());
     for (std::uint32_t gate = 0; gate < measured.size(); ++gate) {
       if (chambers.beside[gate].size() < 2) {
         ++problem.roundabout;
@@ -8447,7 +9317,7 @@ public:
       }
       const auto& ends = measured[gate].gate;
       const bool terminal = onTerminal(ends.first) || onTerminal(ends.second);
-      auto capacity = terminal ? everyWire : measured[gate].holds;
+      auto capacity = measured[gate].holds;
       std::optional<std::vector<std::uint32_t>> users;
       if (capacity == 0 &&
           wiresThroughGap(measured[gate].cells + wallInflation(), clearance) >
@@ -9364,6 +10234,17 @@ public:
         if (ends != walls.terminals.end()) {
           mouth = mouthOf(walls, slots, index, ends->second[0]);
         }
+      } else if (wall.terminalRun) {
+        // A run of a terminal edge taken as a wire is no static wall, so
+        // `fastCapacityOf` knows no mouth of it: its slot is closed here, at
+        // both flanks, as a lead's is (45q_dense, chain 2 alone: no cut
+        // closed the left flank of f17's run at its coupler; user,
+        // 2026-10-27).
+        const auto ends = walls.terminals.find(wall.wire);
+        if (ends != walls.terminals.end()) {
+          mouth =
+              mouthOf(walls, slots, index, ends->second[wall.target ? 1 : 0]);
+        }
       } else if (const auto found = fast.mouths.find(
                      {wall.wire, wall.target, index != wall.run});
                  found != fast.mouths.end() &&
@@ -9420,12 +10301,14 @@ public:
   /// walls the insertion moves, against fields of the walls it does not,
   /// with no distance transform and no medial axis of the chip. With
   /// `options` (`InsertionState::options`) every pad stands on the option
-  /// the state names for its coupler.
+  /// the state names for its coupler. `terminalChain` is
+  /// `InsertionState::terminalChain`.
   [[nodiscard]] CapacityPass
   capacityPass(const std::vector<Wire>& wires, const std::vector<Edge>& edges,
                const std::vector<bool>* placed, const std::uint32_t without,
                const bool fast = false, const bool terminalsAsWires = false,
-               const std::vector<std::size_t>* options = nullptr) const {
+               const std::vector<std::size_t>* options = nullptr,
+               const std::uint32_t terminalChain = NO_OWNER) const {
     CapacityPass pass;
     auto mark = std::chrono::steady_clock::now();
     std::size_t step = 0;
@@ -9436,7 +10319,7 @@ public:
       mark = now;
     };
     pass.walls = wallsOf(wires, edges, placed, without, false, terminalsAsWires,
-                         options);
+                         options, terminalChain);
     lap();
     // No distance transform, Voronoi diagram or axis: their laps stay
     // empty, and the profiles count as the saddles.
@@ -10231,7 +11114,8 @@ public:
       way = routeEdge(wires, objective, edge);
       prefixFence_ = nullptr;
       // An edge with no way under a fence may have one under another fence.
-      if (remember && !lastCutOff_ && (fence == nullptr || !way.empty())) {
+      if (remember && !memoReadOnly_ && !lastCutOff_ &&
+          (fence == nullptr || !way.empty())) {
         edgeMemo_[key] = way;
       }
     }
@@ -10246,6 +11130,11 @@ public:
     }
     return wayCostOf(way, objective.target.heading);
   }
+
+  /// Whether `edgeCost` reads its memo without writing to it: so while the
+  /// search from the back (`chain_search`) prices a step, so that a way laid
+  /// against a suffix is never what the search from the front remembers.
+  bool memoReadOnly_ = false;
 
   /// What the search made of one chain: the options it would have it stand
   /// on, and the way it found for each of its edges. Nothing is written
@@ -10309,8 +11198,8 @@ public:
   }
 
   /// Which options a waypoint offers a search: a launcher offers the one it
-  /// is, a coupler its plain options, and its jogs only once it has shown it
-  /// needs them.
+  /// is, a coupler its plain options, and its jogs and then its centred options
+  /// only once it has shown it needs them.
   ///
   /// And, where `feedlines` is given, only the options whose body is clear
   /// of every feedline that stands. Where that
@@ -10328,7 +11217,11 @@ public:
     const auto& coupler = couplers_[point.coupler];
     std::vector<std::uint32_t> all;
     for (std::size_t option = 0; option < coupler.options.size(); ++option) {
-      if (coupler.options[option].secondStraight > 0 && !coupler.jogsUnlocked) {
+      if (coupler.options[option].opensWithJogs() && !coupler.jogsUnlocked) {
+        continue;
+      }
+      if (coupler.options[option].centred && !coupler.options[option].custom &&
+          !coupler.options[option].lined && !coupler.extensionsUnlocked) {
         continue;
       }
       all.push_back(static_cast<std::uint32_t>(option));
@@ -10530,10 +11423,12 @@ public:
     std::uint32_t stepsClosing = 0;
     std::uint32_t stepsRefused = 0;
     // The steps the capacity rule refused while no run of options had joined
-    // the chain, over both goes, for `chainRuleRefusals`; and whether a run
-    // has joined.
+    // the chain, over every go since the last stop on them, for
+    // `chainRuleRefusals`; and whether a run has joined.
     std::uint32_t refusedBeforeRun = 0;
     bool joined = false;
+    // Whether a stop on those refusals has opened the options at the wall.
+    bool stopReopened = false;
     // The checks left out because no verdict could change the answer.
     std::uint32_t stepsUnread = 0;
     double stepSeconds = 0.0;
@@ -10543,10 +11438,114 @@ public:
           stepStateOf(wires, *stepSettled_, chain, {}, {}, 0));
     }
 
-    // Two goes at most: the plain options, then the jogs opened at the wall
-    // if the plain ones did not reach.
+    // Three goes, as a rule: the plain options, then the jogs opened at the
+    // wall if the plain ones did not reach, then the centred options opened
+    // there if the jogs did not reach either. A stop on `chainRuleRefusals`
+    // opens both at once, and gives the search a fourth go, for a stop on the
+    // third.
     const auto feedlines = feedlineCellsBut(chain);
-    for (int go = 0; go < 2; ++go) {
+
+    // **The blacklists of the two ends** (`chain_end_blacklist`). The two
+    // couplers next to a launcher stand where the free wires of the feedline
+    // leave it, and a pair of options there that shuts them is shut whatever
+    // the chain does in between: on 45q_dense, chain 3, the capacity rule
+    // refused the two last couplers on the same pairs some four thousand
+    // times, once per prefix (user, 2026-10-27). So a refused step whose
+    // every closed wire belongs to an end puts the pair of options of that
+    // end on its blacklist, and a later step that stands a pair on it is
+    // dropped unrouted, without a step check and without counting toward
+    // `chain_rule_refusals`. A wire belongs to an end when it must cross
+    // one of the end's two edges, is one of them, or is the resonator of a
+    // coupler beside them; a free wire, one that crosses no edge of the
+    // chain, belongs to the end whose edge the step lays.
+    struct EndPair {
+      // The layers of the two couplers, and the edges at that end.
+      std::size_t a = 0;
+      std::size_t b = 0;
+      std::set<std::size_t> edges;
+      std::set<std::pair<std::uint32_t, std::uint32_t>> blacklist;
+    };
+    std::vector<EndPair> endPairs;
+    if (tuning_.chainEndBlacklist && layers >= 4) {
+      if (points.front().fixed && !points[1].fixed && !points[2].fixed) {
+        endPairs.push_back({.a = 1, .b = 2, .edges = {0, 1}, .blacklist = {}});
+      }
+      if (points.back().fixed && !points[layers - 2].fixed &&
+          !points[layers - 3].fixed) {
+        endPairs.push_back({.a = layers - 3,
+                            .b = layers - 2,
+                            .edges = {layers - 3, layers - 2},
+                            .blacklist = {}});
+      }
+    }
+    // The edges of the chain a wire belongs to, by its key in a step's
+    // state: none for a free wire.
+    const auto edgesOfWire = [&](const InsertionState& state,
+                                 const std::uint32_t key) {
+      std::set<std::size_t> of;
+      for (const auto& edge : state.edges) {
+        if (edge.chain == chain && edge.wire == key) {
+          of.insert(edge.from);
+        }
+      }
+      for (std::size_t at = 0; at + 1 < layers; ++at) {
+        if (std::ranges::find(bridgers_[chain][at], key) !=
+            bridgers_[chain][at].end()) {
+          of.insert(at);
+        }
+      }
+      for (std::size_t at = 0; at < layers; ++at) {
+        if (!points[at].fixed && couplers_[points[at].coupler].wire == key) {
+          if (at > 0) {
+            of.insert(at - 1);
+          }
+          if (at + 1 < layers) {
+            of.insert(at);
+          }
+        }
+      }
+      return of;
+    };
+    std::uint32_t endDropped = 0;
+
+    // **The slot blacklist** (`chain_slot_blacklist`). The plain wires that
+    // must cross an edge between two couplers are known before the search
+    // (`bridgers_`), and the slot check of a step says how many crossing
+    // slots the edge it lays gets. A refused step whose edge gets fewer
+    // slots than wires must cross it puts its pair of options on the edge's
+    // blacklist, and a later step on that pair is dropped unrouted, as on
+    // an end's (user, 2026-10-27): the way of an edge between two couplers
+    // is remembered by its pair of options (`edgeMemo_`), so the next
+    // prefix lays the same edge with the same slots.
+    std::vector<std::set<std::pair<std::uint32_t, std::uint32_t>>>
+        slotBlacklist(layers - 1);
+    std::uint32_t slotDropped = 0;
+    // What the blacklists hold, for the step-check line of the chain.
+    const auto blacklistSaid = [&] {
+      std::size_t pairs = 0;
+      for (const auto& end : endPairs) {
+        pairs += end.blacklist.size();
+      }
+      std::size_t short_ = 0;
+      for (const auto& list : slotBlacklist) {
+        short_ += list.size();
+      }
+      std::string said;
+      if (pairs > 0) {
+        said += std::format("; {} pair{} of end options blacklisted, {} "
+                            "step{} on them dropped unrouted",
+                            pairs, pairs == 1 ? "" : "s", endDropped,
+                            endDropped == 1 ? "" : "s");
+      }
+      if (short_ > 0) {
+        said += std::format("; {} pair{} of options short of crossing slots "
+                            "blacklisted, {} step{} on them dropped unrouted",
+                            short_, short_ == 1 ? "" : "s", slotDropped,
+                            slotDropped == 1 ? "" : "s");
+      }
+      return said;
+    };
+    for (int go = 0; go < (stopReopened ? 4 : 3); ++go) {
       open.clear();
       for (std::size_t at = 0; at < layers; ++at) {
         open.push_back(openOptionsOf(chain, at, &feedlines));
@@ -10695,6 +11694,49 @@ public:
         stepSeconds += seconds;
         const bool refused = stepRefuses_ && !closed.empty();
         stepsRefused += refused ? 1U : 0U;
+        for (auto& end : endPairs) {
+          if (!refused || end.b > at + 1) {
+            continue;
+          }
+          const bool ours = std::ranges::all_of(closed, [&](const auto key) {
+            const auto of = edgesOfWire(state, key);
+            if (of.empty()) {
+              return end.edges.contains(at);
+            }
+            return std::ranges::any_of(
+                of, [&](const std::size_t e) { return end.edges.contains(e); });
+          });
+          const std::pair pair{static_cast<std::uint32_t>(options[end.a]),
+                               static_cast<std::uint32_t>(options[end.b])};
+          if (ours && end.blacklist.insert(pair).second) {
+            tell(std::format(
+                "coupler insertion:   chain {} waypoints {} and {}: options "
+                "{} and {} blacklisted under the capacity rule — f{} closes "
+                "{}, all at that end",
+                chain, end.a, end.b, pair.first, pair.second, firstSlot + at,
+                namesOf(state.wires, closed)));
+          }
+        }
+        // The slots of this step's edge against the wires that must cross
+        // it (the slot blacklist, above).
+        if (refused && tuning_.chainSlotBlacklist && !points[at].fixed &&
+            !points[at + 1].fixed && !bridgers_[chain][at].empty()) {
+          const auto need = bridgers_[chain][at].size();
+          const auto got =
+              verdict.slots.find(std::format("f{}", firstSlot + at));
+          const std::pair pair{static_cast<std::uint32_t>(options[at]),
+                               static_cast<std::uint32_t>(options[at + 1])};
+          if (got != verdict.slots.end() && got->second < need &&
+              slotBlacklist[at].insert(pair).second) {
+            tell(std::format(
+                "coupler insertion:   chain {} edge {}->{}: options {} and {} "
+                "blacklisted under the capacity rule — f{} gets {} crossing "
+                "slot{} for {} wire{} that must cross it",
+                chain, at, at + 1, pair.first, pair.second, firstSlot + at,
+                got->second, got->second == 1 ? "" : "s", need,
+                need == 1 ? "" : "s"));
+          }
+        }
         // A step that closes a wire names the feedline edges its edge
         // meets.
         std::string meets;
@@ -10716,16 +11758,18 @@ public:
                 ? std::string()
                 : std::format(" — {} wire{} without a way ({}), short by {}",
                               lost.size(), lost.size() == 1 ? "" : "s",
-                              namesOf(wires, lost), verdict.shortBy),
-            closed.empty()
-                ? std::string("this edge closes no wire")
-                : std::format("this edge closes {}", namesOf(wires, closed)),
+                              namesOf(state.wires, lost), verdict.shortBy),
+            closed.empty() ? std::string("this edge closes no wire")
+                           : std::format("this edge closes {}",
+                                         namesOf(state.wires, closed)),
             meets, refused ? " — refused by the capacity rule" : "", seconds));
         if (wants("step-check")) {
-          const auto ids = [&wires](const std::vector<std::uint32_t>& keys) {
+          // The keys index the state's wires, which hold the feedline
+          // edges after the chip's own.
+          const auto ids = [&state](const std::vector<std::uint32_t>& keys) {
             nlohmann::json named = nlohmann::json::array();
             for (const auto key : keys) {
-              named.push_back(wireId(wires[key]));
+              named.push_back(wireId(state.wires[key]));
             }
             return named;
           };
@@ -10749,12 +11793,57 @@ public:
                                              .closed = std::move(closed)};
         return false;
       };
+      // A step the search drops without a capacity check, for the coupler
+      // tab: the options as `checkStep` names them and why.
+      const auto skipStep = [&](const std::vector<std::uint32_t>& key,
+                                const std::uint32_t j, const char* why) {
+        if (!wants("step-skip")) {
+          return;
+        }
+        const auto at = key.size() - 1;
+        std::vector<std::size_t> options(layers, 0);
+        for (std::size_t layer = 0; layer <= at + 1; ++layer) {
+          options[layer] = open[layer][layer <= at ? key[layer] : j];
+        }
+        record("step-skip", {{"chain", chain},
+                             {"step", at},
+                             {"edge", firstSlot + at},
+                             {"options", options},
+                             {"couplers", couplersOfChain(chain)},
+                             {"why", why}});
+      };
       problem.step = [&](const std::span<const std::uint32_t> prefix,
                          const std::uint32_t j, std::int64_t& redone) {
         redone = 0;
         const auto at = prefix.size() - 1;
         const auto edges = layers - 1;
         std::vector<std::uint32_t> key(prefix.begin(), prefix.end());
+        // A step that stands a pair of an end's blacklist or of the slot
+        // blacklist (above).
+        if (stepRefuses_) {
+          const auto optionAt = [&](const std::size_t layer) {
+            return open[layer][layer <= at ? prefix[layer] : j];
+          };
+          for (std::size_t e = 0; e <= at; ++e) {
+            if (slotBlacklist[e].contains({optionAt(e), optionAt(e + 1)})) {
+              ++slotDropped;
+              skipStep(key, j,
+                       "dropped: a pair of options whose edge gets fewer "
+                       "crossing slots than wires must cross it");
+              return routing::TRELLIS_UNREACHABLE;
+            }
+          }
+          for (const auto& end : endPairs) {
+            if (end.b <= at + 1 &&
+                end.blacklist.contains({optionAt(end.a), optionAt(end.b)})) {
+              ++endDropped;
+              skipStep(key, j,
+                       "dropped: a pair of options on the blacklist of an "
+                       "end of the chain");
+              return routing::TRELLIS_UNREACHABLE;
+            }
+          }
+        }
         const auto upto = [&](const std::size_t take) {
           return std::vector<std::uint32_t>(
               key.begin(), key.begin() + static_cast<std::ptrdiff_t>(take));
@@ -10883,6 +11972,13 @@ public:
           // The prefix blocks itself here, in either order. Nothing that
           // extends it is a chain, and the search takes another combination
           // — which is the whole of what the trellis cannot do.
+          skipStep(key, j,
+                   !mayReorder &&
+                           problem.stepBudget != routing::TRELLIS_UNREACHABLE
+                       ? "no way within the step budget: the edge has no "
+                         "way, or its way costs more than the best run "
+                         "so far allows"
+                       : "no way: the edge has no way on these options");
           return real;
         }
         // The capacity check of this step (`checkStep`).
@@ -10910,6 +12006,9 @@ public:
         if (unread) {
           ++stepsUnread;
           problem.stepTested = false;
+          skipStep(key, j,
+                   "not checked: the step costs more than the best run so "
+                   "far, so no verdict can change the answer");
         } else if (stepSettled_ != nullptr && checkStep(key, j, way, before)) {
           // Refused by the capacity rule. Before a run joins the chain, the
           // refusals count toward `chainRuleRefusals`.
@@ -10927,32 +12026,168 @@ public:
         return weighted(real, weight);
       };
 
-      answer = routing::solveChainAStar(problem);
-      if (answer.solved || answer.stopped) {
+      // **The search from the back** (`chain_search = "bidirectional"`): a
+      // suffix lays its edges from the last waypoint toward the first, each
+      // against the ways of the edges after it, and the capacity check
+      // judges the suffix as it stands. What a suffix laid is kept under
+      // the suffix, apart from what the prefixes laid; the search from the
+      // front lays a run of a meeting again under its own keys. No end pair
+      // is laid the other way round here.
+      std::map<std::vector<std::uint32_t>, Path> laidBack;
+      std::map<std::vector<std::uint32_t>, CapacityVerdict> checkedBack;
+      problem.stepBack = [&](const std::span<const std::uint32_t> suffix,
+                             const std::uint32_t i) -> std::uint64_t {
+        const auto edges = layers - 1;
+        const auto at = layers - 1 - suffix.size();
+        const std::vector<std::uint32_t> key(suffix.begin(), suffix.end());
+        // The ways of the edges after this one: edge `e` was laid by the
+        // suffix from layer `e`.
+        std::vector<const Path*> fence;
+        std::vector<const Path*> ways(edges, nullptr);
+        for (std::size_t e = at + 1; e < edges; ++e) {
+          const std::vector<std::uint32_t> from(
+              key.begin() + static_cast<std::ptrdiff_t>(e - at - 1), key.end());
+          if (const auto found = laidBack.find(from);
+              found != laidBack.end() && !found->second.empty()) {
+            fence.push_back(&found->second);
+            ways[e] = &found->second;
+          }
+        }
+        const bool fresh =
+            (at < CHAIN_FRESH_EDGES && points.front().fixed) ||
+            (at + CHAIN_FRESH_EDGES >= edges && points.back().fixed);
+        const auto weight = edgeWeight(chain, at);
+        stepBudget_ = weightedBudget(problem.stepBudget, weight);
+        stepBound_ =
+            turns[at][(static_cast<std::size_t>(i) * open[at + 1].size()) +
+                      suffix.front()];
+        Path way;
+        memoReadOnly_ = true;
+        const auto real = edgeCost(
+            wires, chain, at, open[at][i], open[at + 1][suffix.front()], 0,
+            fence.empty() ? nullptr : &fence, &way, !fresh);
+        memoReadOnly_ = false;
+        stepBudget_ = routing::TRELLIS_UNREACHABLE;
+        stepBound_ = routing::TRELLIS_UNREACHABLE;
+        if (real == routing::TRELLIS_UNREACHABLE) {
+          return real;
+        }
+        std::vector<std::uint32_t> mine{i};
+        mine.insert(mine.end(), key.begin(), key.end());
+        if (stepSettled_ != nullptr) {
+          const auto began = std::chrono::steady_clock::now();
+          std::vector<std::size_t> options(layers, 0);
+          for (std::size_t layer = at; layer < layers; ++layer) {
+            options[layer] = open[layer][mine[layer - at]];
+          }
+          ways[at] = &way;
+          const auto backState = stepStateOf(wires, *stepSettled_, chain,
+                                             options, ways, layers, at);
+          auto verdict = capacityVerdictOf(backState);
+          const auto parent = checkedBack.find(key);
+          const auto closed =
+              closedBy(verdict, parent == checkedBack.end() ? unchained
+                                                            : parent->second);
+          stepSeconds += std::chrono::duration<double>(
+                             std::chrono::steady_clock::now() - began)
+                             .count();
+          ++stepChecks;
+          stepsCarrying += verdict.lost.empty() ? 1U : 0U;
+          stepsClosing += closed.empty() ? 0U : 1U;
+          tell(std::format(
+              "capacity step (back): chain {} f{} ({}->{}): {}; {}", chain,
+              firstSlot + at, at, at + 1,
+              verdict.lost.empty() ? std::string("SAT") : std::string("UNSAT"),
+              closed.empty() ? std::string("this edge closes no wire")
+                             : std::format("this edge closes {}",
+                                           namesOf(backState.wires, closed))));
+          if (stepRefuses_ && !closed.empty()) {
+            ++stepsRefused;
+            if (!joined && ++refusedBeforeRun == tuning_.chainRuleRefusals) {
+              problem.stop = true;
+            }
+            return routing::TRELLIS_UNREACHABLE;
+          }
+          checkedBack[mine] = std::move(verdict);
+        }
+        laidBack[std::move(mine)] = std::move(way);
+        return weighted(real, weight);
+      };
+
+      answer = tuning_.chainBidirectional
+                   ? routing::solveChainBidirectional(problem)
+                   : routing::solveChainAStar(problem);
+      if (tuning_.chainBidirectional) {
+        say(std::format(
+            "coupler insertion: chain {} go {}: bidirectional search — {} "
+            "steps from the front, {} from the back, {} meetings laid again, "
+            "{} joined the chain",
+            chain, go, answer.routed, answer.routedBack, answer.meetings,
+            answer.meetingsJoined));
+      }
+      if (answer.solved) {
         break;
       }
       // The wall: the deepest layer a prefix whose every step is real ever
       // got to. The step out of it is what shut the chain, so those are the
       // two couplers whose choice is widened — never the whole chain, which
       // trebles what every round has to route and was measured worse.
+      //
+      // `every` opens the jogs and the centred options at once.
       bool widened = false;
-      const auto unlock = [&](const std::size_t at) {
+      const auto unlock = [&](const std::size_t at, const bool every) {
         if (at >= layers || points[at].fixed) {
           return;
         }
         auto& coupler = couplers_[points[at].coupler];
-        if (coupler.jogsUnlocked) {
+        if (!coupler.jogsUnlocked) {
+          coupler.jogsUnlocked = true;
+          widened = true;
+          tell(std::format(
+              "coupler insertion:   '{}' chain {}: no prefix reaches past it "
+              "on plain options — opening the second-dogleg options and "
+              "the copies",
+              wireId(wires[coupler.wire]), chain));
+          if (!every) {
+            return;
+          }
+        }
+        const bool centred = std::ranges::any_of(
+            coupler.options,
+            [](const CouplerOption& option) { return option.centred; });
+        if (coupler.extensionsUnlocked || !centred) {
           return;
         }
-        coupler.jogsUnlocked = true;
+        coupler.extensionsUnlocked = true;
         widened = true;
         tell(std::format(
             "coupler insertion:   '{}' chain {}: no prefix reaches past it "
-            "on plain options — opening the second-dogleg options",
+            "with its jogs — opening the centred options of "
+            "coupler_option_extension",
             wireId(wires[coupler.wire]), chain));
       };
-      unlock(answer.reached);
-      unlock(answer.reached + 1);
+      // A search stopped by the refusals of `chainRuleRefusals` failed on
+      // the options it had as well. The couplers at the wall get every
+      // option still locked and the search a new budget, once; with nothing
+      // locked there, or no `coupler_option_extension`, the stop stands.
+      if (answer.stopped) {
+        if (!stopReopened && !tuning_.optionExtensions.empty()) {
+          unlock(answer.reached, true);
+          unlock(answer.reached + 1, true);
+        }
+        if (!widened) {
+          break;
+        }
+        stopReopened = true;
+        refusedBeforeRun = 0;
+        tell(std::format("coupler insertion: chain {}: the capacity rule "
+                         "refused {} steps before a run joined the chain — "
+                         "searching again with the options opened at layer {}",
+                         chain, tuning_.chainRuleRefusals, answer.reached));
+        continue;
+      }
+      unlock(answer.reached, false);
+      unlock(answer.reached + 1, false);
       if (!widened) {
         break;
       }
@@ -10978,7 +12213,8 @@ public:
           stepsClosing, stepsRefused, lost.size(), lost.size() == 1 ? "" : "s",
           namesOf(wires, lost),
           std::format("; {} checks left out, their verdict unread",
-                      stepsUnread)));
+                      stepsUnread) +
+              blacklistSaid()));
       if (fastPasses_ > 0) {
         std::string laps;
         for (std::size_t step = 0; step < fastLaps_.size(); ++step) {
@@ -11388,8 +12624,10 @@ public:
   /// left it, the terminal edges are wires, and only the chain's own wires,
   /// the free wires beside them and its terminal edges are routed and
   /// judged. A state SAT there can stand on its own. The second check
-  /// routes the chain alone, with its own wires and the free wires beside
-  /// them. A state SAT only there may need its neighbours to move as well.
+  /// routes the chain alone, with its own wires, the free wires beside
+  /// them and its terminal edges, as wires with their port runs at the
+  /// launcher and at the coupler. A state SAT only there may need its
+  /// neighbours to move as well.
   /// The second check runs when the first finds the state UNSAT, or always
   /// with `bothChecks`. With `graphs` given, it receives the graph of each
   /// check that ran.
@@ -11402,6 +12640,7 @@ public:
     const std::vector<bool> every(chains_.size(), true);
     auto state = stateOf(before, every, chain, &options, &paths);
     state.terminalsAsWires = true;
+    state.terminalChain = chain;
     auto judged = own;
     for (const auto& edge : state.edges) {
       if (edge.chain == chain && edge.terminal) {
@@ -11433,9 +12672,20 @@ public:
     }
     std::vector<bool> only(chains_.size(), false);
     only[chain] = true;
-    const auto alone = stateOf(before, only, chain, &options, &paths);
+    // The chain's terminal edges are wires here as well, with their port
+    // runs at the launcher and at the coupler, and are judged: a state SAT
+    // alone has a way for them (user, 2026-10-27).
+    auto alone = stateOf(before, only, chain, &options, &paths);
+    alone.terminalsAsWires = true;
+    alone.terminalChain = chain;
+    auto judgedAlone = own;
+    for (const auto& edge : alone.edges) {
+      if (edge.chain == chain && edge.terminal) {
+        judgedAlone.insert(wireId(alone.wires[edge.wire]));
+      }
+    }
     {
-      const LocalWires local(localWires_, own);
+      const LocalWires local(localWires_, judgedAlone);
       const auto began = std::chrono::steady_clock::now();
       const auto verdict = capacityVerdictOf(alone);
       out.seconds += std::chrono::duration<double>(
@@ -11443,12 +12693,18 @@ public:
                          .count();
       auto& lost = out.aloneLost.emplace();
       for (const auto key : verdict.lost) {
-        lost.push_back(wireId(alone.wires[key]));
+        if (const auto name = wireId(alone.wires[key]);
+            judgedAlone.contains(name)) {
+          lost.push_back(name);
+        }
       }
     }
     if (graphs != nullptr) {
       graphs->alone = localGraphOf(
-          alone, own, std::format("the local check of chain {} alone", chain));
+          alone, judgedAlone,
+          std::format("the local check of chain {} alone, its terminal edges "
+                      "as wires",
+                      chain));
     }
     return out;
   }
@@ -12241,7 +13497,7 @@ public:
       report_.progress("coupler insertion", std::format("chain {}", chain + 1),
                        chain, chains_.size());
       soloChain_ = chain;
-      const auto own = localCheckWires(wires, chain);
+      const auto own = withTerminalEdges(localCheckWires(wires, chain), chain);
       localWires_ = &own;
       stepSettled_ = tuning_.capacityCheck ? &none : nullptr;
       stepRefuses_ = tuning_.capacityCheck;
@@ -12369,8 +13625,11 @@ public:
     for (std::uint32_t other = 0; other < chains_.size(); ++other) {
       owned.push_back(chainWires(wires, other));
     }
-    auto names = std::move(owned[chain]);
-    names.merge(freeWiresBeside(wires, owned)[chain]);
+    // The free wires first, while every chain still owns its wires: a free
+    // wire joins the chains that own the nearest owned ring wire on either
+    // side of it, this chain among them.
+    auto names = freeWiresBeside(wires, owned)[chain];
+    names.merge(owned[chain]);
     return names;
   }
 
@@ -12444,6 +13703,12 @@ public:
     /// Whether the terminal edges are wires of the capacity graph and not
     /// walls (`terminalDemands`): the check of the whole chip.
     bool terminalsAsWires = false;
+    /// With `terminalsAsWires`, the chain whose terminal edges alone are
+    /// wires: those of every other chain stand, as walls inflated as every
+    /// feedline edge is, and keep their port runs (the `standing` local
+    /// check of a chain, user, 2026-10-27). `NO_OWNER`: every terminal edge
+    /// is a wire.
+    std::uint32_t terminalChain = NO_OWNER;
     /// The option every coupler stands on in this state, by coupler: a
     /// placed coupler's pad stands there, as its lead does.
     std::vector<std::size_t> options;
@@ -12500,8 +13765,10 @@ public:
   /// The insertion with the chains `in` standing on the options and ways
   /// they settled on, and chain `chain`, when `options` is given, on
   /// `options` (one per waypoint) and `ways` (one per edge; an edge with no
-  /// way is not drawn). Of that chain only the first `standing` waypoints
-  /// stand, as a prefix of the chain search leaves it. A standing
+  /// way is not drawn). Of that chain only the waypoints from `first` up to
+  /// before `standing` stand: the first `standing`, as a prefix of the chain
+  /// search leaves it, or the last ones from `first`, as a suffix of the
+  /// search from the back (`chain_search`) leaves it. A standing
   /// coupler has its pad and its resonator the lead `applyOption` gives
   /// it; a resonator whose coupler does not stand yet is left out, since
   /// its lead is not known. The feedline edges are numbered as the commit
@@ -12511,8 +13778,8 @@ public:
           const std::uint32_t chain = NO_OWNER,
           const std::vector<std::size_t>* options = nullptr,
           const std::vector<const Path*>* ways = nullptr,
-          const std::size_t standing =
-              std::numeric_limits<std::size_t>::max()) const {
+          const std::size_t standing = std::numeric_limits<std::size_t>::max(),
+          const std::size_t first = 0) const {
     InsertionState state{.wires = wires,
                          .edges = {},
                          .placed = std::vector<bool>(couplers_.size(), false)};
@@ -12530,7 +13797,8 @@ public:
         continue;
       }
       for (std::size_t point = 0; point < points.size(); ++point) {
-        if (points[point].fixed || (given && point >= standing)) {
+        if (points[point].fixed ||
+            (given && (point >= standing || point < first))) {
           continue;
         }
         const auto index = points[point].coupler;
@@ -12557,19 +13825,31 @@ public:
         feed.terminal = points[from].fixed || points[from + 1].fixed;
         // Its two ends, for the port runs a terminal edge gets as a wire
         // of the capacity graph (`terminalDemands`): the launcher's cell
-        // and the coupler's port on the chosen option.
-        feed.objective.source = sourceOf(points[from]);
-        feed.objective.target = targetOf(points[from + 1]);
+        // and the coupler's port on the option it stands on in this state,
+        // not the option it holds: a step of the chain search judges options
+        // the couplers do not hold (user, 2026-10-27: the run of f17 at its
+        // coupler stood on the held option's port, and the step was SAT).
+        const auto portOn = [&](const Waypoint& point, const bool leaves) {
+          if (point.fixed) {
+            return leaves ? point.asSource : point.asTarget;
+          }
+          const auto& coupler = couplers_[point.coupler];
+          const auto& option = coupler.options[state.options[point.coupler]];
+          return leaves ? option.out : option.in;
+        };
+        feed.objective.source = portOn(points[from], true);
+        feed.objective.target = portOn(points[from + 1], false);
         if (way != nullptr) {
           feed.way = *way;
         }
         feed.drawn = !feed.way.empty();
-        state.edges.push_back({.chain = at,
-                               .from = from,
-                               .to = from + 1,
-                               .wire = feed.key,
-                               .terminal = feed.terminal,
-                               .open = given && standing < points.size()});
+        state.edges.push_back(
+            {.chain = at,
+             .from = from,
+             .to = from + 1,
+             .wire = feed.key,
+             .terminal = feed.terminal,
+             .open = given && (standing < points.size() || first > 0)});
         state.wires.push_back(std::move(feed));
       }
     }
@@ -12594,15 +13874,48 @@ public:
   /// and its edges on `ways` (one entry per edge, null for no way). The
   /// step at edge `at` stands `at + 2` waypoints and the edges 0 to `at`;
   /// `standing` 0 is the chip with none of the chain standing, which the
-  /// first step is compared with.
-  [[nodiscard]] InsertionState stepStateOf(
-      const std::vector<Wire>& wires, const std::vector<bool>& settled,
-      const std::uint32_t chain, const std::vector<std::size_t>& options,
-      const std::vector<const Path*>& ways, const std::size_t standing) const {
-    if (standing == 0) {
-      return stateOf(wires, settled);
+  /// first step is compared with. A step of the search from the back
+  /// (`chain_search`) stands the waypoints from `first` on instead.
+  ///
+  /// The chain's terminal edges are wires with their port runs at the
+  /// launcher and at the coupler, as in the local checks
+  /// (`checkChainLocally`), and are judged with the chain's wires
+  /// (`withTerminalEdges`); a terminal edge the step has drawn no way for
+  /// yet is no wire (user, 2026-10-27). Those of a chain `settled` marks
+  /// stand as walls.
+  [[nodiscard]] InsertionState
+  stepStateOf(const std::vector<Wire>& wires, const std::vector<bool>& settled,
+              const std::uint32_t chain,
+              const std::vector<std::size_t>& options,
+              const std::vector<const Path*>& ways, const std::size_t standing,
+              const std::size_t first = 0) const {
+    auto state = standing == 0 ? stateOf(wires, settled)
+                               : stateOf(wires, settled, chain, &options, &ways,
+                                         standing, first);
+    state.terminalsAsWires = true;
+    state.terminalChain = chain;
+    for (const auto& edge : state.edges) {
+      if (edge.chain == chain && edge.terminal &&
+          !state.wires[edge.wire].drawn) {
+        state.wires[edge.wire].feasible = false;
+      }
     }
-    return stateOf(wires, settled, chain, &options, &ways, standing);
+    return state;
+  }
+
+  /// `names` with the terminal edges of chain `chain` added, by the names
+  /// the commit gives them: the wires a step check of the chain judges.
+  [[nodiscard]] std::set<std::string>
+  withTerminalEdges(std::set<std::string> names,
+                    const std::uint32_t chain) const {
+    const auto& points = chains_[chain];
+    const auto slot = firstEdgeSlotOf(chain);
+    for (std::size_t from = 0; from + 1 < points.size(); ++from) {
+      if (points[from].fixed || points[from + 1].fixed) {
+        names.insert(std::format("f{}", slot + from));
+      }
+    }
+    return names;
   }
 
   /// The slot the commit gives the first feedline edge of chain `chain`:
@@ -12624,6 +13937,9 @@ public:
     std::uint32_t shortBy = 0;
     /// The edges the slot check finds over their capacity, by name.
     std::vector<std::string> over;
+    /// The crossing slots of each feedline edge, by name
+    /// (`SlotCheckResult::slots`).
+    std::map<std::string, std::size_t> slots;
     double seconds = 0.0;
   };
 
@@ -12652,7 +13968,8 @@ public:
     CapacityVerdict verdict;
     const auto began = std::chrono::steady_clock::now();
     auto pass = capacityPass(state.wires, state.edges, &state.placed, NO_OWNER,
-                             true, state.terminalsAsWires, &state.options);
+                             true, state.terminalsAsWires, &state.options,
+                             state.terminalChain);
     verdict.seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
             .count();
@@ -12665,11 +13982,15 @@ public:
         fillSlotGraphOfPass(graph, state.wires, pass, true);
         if (localWires_ != nullptr) {
           // The wires of the chain's feedline and the free wires beside it
-          // alone (`localCheckWires`), and every terminal edge, which names
-          // the mouths between the chains.
+          // alone (`localCheckWires`). A terminal edge of another chain
+          // stands: it names the mouth between two chains, and is not
+          // routed (user, 2026-10-27).
           std::erase_if(graph.wires, [&](const SlotGraph::Wire& wire) {
             return !wire.terminal && !localWires_->contains(wire.name);
           });
+          for (auto& wire : graph.wires) {
+            wire.standing = !localWires_->contains(wire.name);
+          }
         }
         const auto result = slotCheck(graph);
         std::unordered_map<std::string, std::uint32_t> keyOf;
@@ -12687,6 +14008,7 @@ public:
         verdict.lost = std::move(lost);
         verdict.shortBy = static_cast<std::uint32_t>(result.over.size());
         verdict.over = result.over;
+        verdict.slots = result.slots;
       } catch (const std::invalid_argument& error) {
         tell(std::format("capacity step: the slot check failed ({}); the "
                          "check by stretches decides",
@@ -12710,7 +14032,8 @@ public:
                       std::optional<SlotCheckResult>* slotOut = nullptr,
                       SlotGraph* slotGraphOut = nullptr) {
     auto pass = capacityPass(state.wires, state.edges, &state.placed, NO_OWNER,
-                             true, state.terminalsAsWires, &state.options);
+                             true, state.terminalsAsWires, &state.options,
+                             state.terminalChain);
     if (slotOut != nullptr) {
       auto input = slotGraphOfPass(state.wires, pass);
       *slotOut = slotCheck(input);
@@ -12803,10 +14126,13 @@ public:
     auto graph = nlohmann::json::parse(capacityGraphJsonOf(state, said));
     auto& wires = graph.at("wires");
     for (auto it = wires.begin(); it != wires.end();) {
-      if (!it->value("terminal", false) &&
-          !judged.contains(it->at("name").get<std::string>())) {
+      const bool mine = judged.contains(it->at("name").get<std::string>());
+      if (!it->value("terminal", false) && !mine) {
         it = wires.erase(it);
       } else {
+        if (!mine) {
+          (*it)["standing"] = true;
+        }
         ++it;
       }
     }
@@ -12830,7 +14156,8 @@ public:
                        std::optional<SlotCheckResult>* slotOut = nullptr,
                        SlotGraph* slotGraphOut = nullptr) {
     auto pass = capacityPass(state.wires, state.edges, &state.placed, NO_OWNER,
-                             true, state.terminalsAsWires, &state.options);
+                             true, state.terminalsAsWires, &state.options,
+                             state.terminalChain);
     if (slotOut != nullptr) {
       auto input = slotGraphOfPass(state.wires, pass);
       *slotOut = slotCheck(input);
@@ -12919,13 +14246,60 @@ public:
 
   /// The couplers as they stand, with every option of each, as JSON for the
   /// page that moves couplers (`CouplerSession`). Per coupler: its index,
-  /// its resonator, its chain and waypoint, the option it stands on and its
-  /// two feedline edges. Per option: the pad as four corners, the two
+  /// its resonator, its chain and waypoint, the option it stands on, its
+  /// two feedline edges, whether the body guard stands down
+  /// (`guardStoodDown`: every option it offers lies on a feedline) and every
+  /// candidate of the option generator that gave no option (`refused`: the
+  /// offset, the port, the jog, how many places were tried and why the last
+  /// one was refused). Per option: the pad as four corners, the two
   /// feedline ports, the lead, the length of resonator left in layout
-  /// units, and whether the chain search offers it (`openOptionsOf`: the
-  /// shortfall rule, the body guard, the jogs).
+  /// units, whether the chain search offers it (`openOptionsOf`: the jogs,
+  /// the body guard), why it does not (`closed`: null, or the kind and the
+  /// reason) and the feedline edges of the other chains its body lies on
+  /// (`onFeedline`).
   [[nodiscard]] std::string couplersJson(const std::vector<Wire>& wires) const {
     return couplersData(wires).dump();
+  }
+
+  /// A way as JSON for a page: its ends and the cells where it turns.
+  [[nodiscard]] static nlohmann::json turnsOf(const Path& way) {
+    auto list = nlohmann::json::array();
+    for (std::size_t k = 0; k < way.size(); ++k) {
+      if (k == 0 || k + 1 == way.size() ||
+          way[k].x - way[k - 1].x != way[k + 1].x - way[k].x ||
+          way[k].y - way[k - 1].y != way[k + 1].y - way[k].y) {
+        list.push_back(nlohmann::json::array({way[k].x, way[k].y}));
+      }
+    }
+    return list;
+  }
+
+  /// The candidates of the option generator that gave a coupler no option,
+  /// as JSON: per candidate the offset, the port, the jog, how many places
+  /// were tried and why. An offset the generator does not sweep has no
+  /// port and no jog (null).
+  [[nodiscard]] static nlohmann::json refusedData(const Coupler& coupler) {
+    using nlohmann::json;
+    json list = json::array();
+    for (const auto& candidate : coupler.refused) {
+      list.push_back(
+          {{"offset", candidate.offset},
+           {"secondPort",
+            candidate.swept ? json(candidate.secondPort) : json(nullptr)},
+           {"jog",
+            candidate.swept ? json(candidate.secondStraight) : json(nullptr)},
+           {"reversed",
+            candidate.swept ? json(candidate.secondReverse) : json(nullptr)},
+           {"centred", candidate.centred},
+           {"extension", candidate.extension},
+           {"copy", candidate.copy
+                        ? json::array({candidate.copyX, candidate.copyY})
+                        : json(nullptr)},
+           {"copyOf", candidate.copy ? json(candidate.copyOf) : json(nullptr)},
+           {"places", candidate.places},
+           {"why", candidate.why}});
+    }
+    return list;
   }
 
   /// The data of `couplersJson`.
@@ -12938,6 +14312,38 @@ public:
     const auto edgeName = [&wires](const std::uint32_t key) {
       return key < wires.size() ? json(wireId(wires[key])) : json(nullptr);
     };
+    // The feedline edges of the chains other than `chain` that meet a body.
+    const auto feedlinesOn = [&](const std::uint32_t chain,
+                                 const std::vector<std::size_t>& body) {
+      const std::unordered_set<std::size_t> cells(body.begin(), body.end());
+      json met = json::array();
+      for (std::uint32_t other = 0; other < chainEdgePaths_.size(); ++other) {
+        if (other == chain) {
+          continue;
+        }
+        for (std::size_t e = 0; e < chainEdgePaths_[other].size(); ++e) {
+          const bool meets = std::ranges::any_of(
+              chainEdgePaths_[other][e], [&](const PathPoint& at) {
+                return at.x < scene_.router.width &&
+                       at.y < scene_.router.height &&
+                       cells.contains(scene_.router.index(at.x, at.y));
+              });
+          if (meets && e < edgeWireOf_[other].size()) {
+            met.push_back(edgeName(edgeWireOf_[other][e]));
+          }
+        }
+      }
+      return met;
+    };
+    const auto namesText = [](const json& names) {
+      std::string text;
+      for (const auto& name : names) {
+        text += (text.empty() ? "" : ", ") + (name.is_string()
+                                                  ? name.get<std::string>()
+                                                  : std::string("an edge"));
+      }
+      return text;
+    };
     json list = json::array();
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
       const auto& points = chains_[chain];
@@ -12949,6 +14355,33 @@ public:
         const auto index = points[at].coupler;
         const auto& coupler = couplers_[index];
         const auto open = openOptionsOf(chain, at, &feedlines);
+        // The reasons of `openOptionsOf`, option by option: a jog or an
+        // extension the coupler has not unlocked, and a body on a feedline
+        // that stands. The guard stands down when every option the locks
+        // leave lies on a feedline.
+        const auto jogLocked = [&coupler](const CouplerOption& option) {
+          return option.opensWithJogs() && !coupler.jogsUnlocked;
+        };
+        const auto extensionLocked = [&coupler](const CouplerOption& option) {
+          return option.centred && !option.custom && !option.lined &&
+                 !coupler.extensionsUnlocked;
+        };
+        const auto locked = [&](const CouplerOption& option) {
+          return jogLocked(option) || extensionLocked(option);
+        };
+        const auto onFeedline = [&feedlines](const CouplerOption& option) {
+          return std::ranges::any_of(option.body, [&](const std::size_t cell) {
+            return feedlines.test(cell);
+          });
+        };
+        const bool guardStoodDown =
+            std::ranges::any_of(
+                coupler.options,
+                [&](const CouplerOption& option) { return !locked(option); }) &&
+            std::ranges::all_of(coupler.options,
+                                [&](const CouplerOption& option) {
+                                  return locked(option) || onFeedline(option);
+                                });
         json options = json::array();
         for (std::size_t k = 0; k < coupler.options.size(); ++k) {
           const auto& option = coupler.options[k];
@@ -12956,15 +14389,48 @@ public:
           for (const auto& cell : option.arc) {
             lead.push_back(point(cell));
           }
+          const auto met = onFeedline(option) ? feedlinesOn(chain, option.body)
+                                              : json::array();
+          json closed = nullptr;
+          if (jogLocked(option)) {
+            closed = {{"kind", "jog-locked"},
+                      {"why", "jog locked: the chain search opens a "
+                              "coupler's jogs and copies only when no run of "
+                              "its plain options reaches past it"}};
+          } else if (extensionLocked(option)) {
+            closed = {{"kind", "extension-locked"},
+                      {"why", "extension locked: the chain search opens a "
+                              "coupler's centred options only when no run "
+                              "reaches past it with its jogs open"}};
+          } else if (!met.empty() && !guardStoodDown) {
+            closed = {{"kind", "on-feedline"},
+                      {"why", std::format("the body lies on feedline {} of "
+                                          "another chain",
+                                          namesText(met))}};
+          }
           options.push_back(
               {{"index", k},
                {"open", std::ranges::find(
                             open, static_cast<std::uint32_t>(k)) != open.end()},
+               {"closed", closed},
+               {"onFeedline", met},
                {"orientation", option.orientation},
                {"offset", option.offset},
                {"secondPort", option.secondPort},
                {"jog", option.secondStraight},
+               {"reversed", option.secondReverse},
+               {"centred", option.centred},
+               {"extension", option.extension},
+               {"custom", option.custom},
+               {"lined", option.lined},
+               {"copy", option.copyX != 0 || option.copyY != 0
+                            ? json::array({option.copyX, option.copyY})
+                            : json(nullptr)},
+               {"copyOf", option.copyX != 0 || option.copyY != 0
+                              ? json(option.copyOf)
+                              : json(nullptr)},
                {"moved", {option.shiftX, option.shiftY}},
+               {"wayOut", turnsOf(option.way)},
                {"centre", point(option.centre)},
                {"anchor", point(option.anchor)},
                {"in", point(option.in)},
@@ -12979,9 +14445,13 @@ public:
                         {"at", at},
                         {"chosen", coupler.chosen},
                         {"jogs", coupler.jogsUnlocked},
+                        {"extensions", coupler.extensionsUnlocked},
                         {"edgeIn", edgeName(coupler.edgeIn)},
                         {"edgeOut", edgeName(coupler.edgeOut)},
-                        {"options", options}});
+                        {"guardStoodDown", guardStoodDown},
+                        {"way", turnsOf(coupler.outerWay)},
+                        {"options", options},
+                        {"refused", refusedData(coupler)}});
       }
     }
     return json{{"couplers", list}};
@@ -13102,6 +14572,140 @@ public:
         .dump();
   }
 
+  /// Build an option of a coupler by hand, for the page that moves couplers
+  /// (`CouplerSession::addOption`): the pad's centre on the cell (`x`, `y`)
+  /// and the resonator cut at the cell of its way before the insertion
+  /// (`outerWay`) nearest that cell, as a centred option of
+  /// `coupler_option_extension` is cut. The lead's tip joins the way as
+  /// there. `offset` names the offset, or -1 for the first that fits: the
+  /// offsets of `coupler_offsets` first, then the others. `port` names the
+  /// port (1 or 2), or 0 for the first that fits. Every test of
+  /// `makeOption` applies, the shortfall test excepted. An option that fits
+  /// is appended to the coupler's options and is open; the coupler does not
+  /// move. Returns JSON with `coupler`, `built`, `cell` (the index of the
+  /// cut on the way), `option`, `offset` and `secondPort` of the option
+  /// built, and `tried`, every candidate refused, with why.
+  ///
+  /// @throws std::invalid_argument when the coupler does not exist, the
+  /// cell lies off the grid, or the offset or the port does not exist.
+  [[nodiscard]] std::string
+  addCouplerOption(const std::vector<Wire>& wires, const std::uint32_t index,
+                   const std::uint32_t x, const std::uint32_t y,
+                   const std::int32_t offset, const std::int32_t port) {
+    if (index >= couplers_.size()) {
+      throw std::invalid_argument(std::format("there is no coupler {}", index));
+    }
+    if (x >= scene_.router.width || y >= scene_.router.height) {
+      throw std::invalid_argument(
+          std::format("the cell ({},{}) lies off the grid", x, y));
+    }
+    if (offset < -1 ||
+        offset >= static_cast<std::int32_t>(routing::NUM_HEADINGS)) {
+      throw std::invalid_argument(
+          std::format("there is no offset {}: 0 to 7, or -1 for any", offset));
+    }
+    if (port < 0 || port > 2) {
+      throw std::invalid_argument(
+          std::format("there is no port {}: 1 or 2, or 0 for any", port));
+    }
+    using nlohmann::json;
+    auto& coupler = couplers_[index];
+    // The resonator as it stood before the insertion cut it.
+    Wire resonator = wires[coupler.wire];
+    resonator.way = coupler.outerWay;
+    json answer{{"coupler", index}, {"built", false}, {"tried", json::array()}};
+    if (resonator.way.size() < 2) {
+      answer["tried"].push_back(
+          {{"why", "the resonator's way is too short to cut"}});
+      return answer.dump();
+    }
+    // The cell of the way nearest the one asked for; the last cell leaves no
+    // way to cut.
+    std::size_t at = 0;
+    std::int64_t nearest = std::numeric_limits<std::int64_t>::max();
+    for (std::size_t r = 0; r + 1 < resonator.way.size(); ++r) {
+      const auto dx = static_cast<std::int64_t>(resonator.way[r].x) - x;
+      const auto dy = static_cast<std::int64_t>(resonator.way[r].y) - y;
+      if ((dx * dx) + (dy * dy) < nearest) {
+        nearest = (dx * dx) + (dy * dy);
+        at = r;
+      }
+    }
+    answer["cell"] = at;
+    const auto places = couplerPlace(resonator);
+    const auto ranked = std::ranges::find_if(
+        places, [at](const CouplerPlace& spot) { return spot.at == at; });
+    const auto& cell = resonator.way[at];
+    const auto spot =
+        ranked != places.end()
+            ? *ranked
+            : CouplerPlace{.at = at,
+                           .x = static_cast<std::int64_t>(cell.x),
+                           .y = static_cast<std::int64_t>(cell.y),
+                           .leaves = cell.heading,
+                           .centreLength = 0.0,
+                           .wanted = places.empty() ? leftAtCoupler(resonator)
+                                                    : places.front().wanted};
+    const auto moveX = static_cast<std::int64_t>(x) - spot.x;
+    const auto moveY = static_cast<std::int64_t>(y) - spot.y;
+    std::vector<Heading> offsets;
+    if (offset >= 0) {
+      offsets.push_back(static_cast<Heading>(offset));
+    } else {
+      for (const bool allowed : {true, false}) {
+        for (Heading o = 0; o < routing::NUM_HEADINGS; ++o) {
+          if (tuning_.couplerOffsets.at(o) == allowed) {
+            offsets.push_back(o);
+          }
+        }
+      }
+    }
+    std::vector<bool> ports;
+    if (port != 2) {
+      ports.push_back(false);
+    }
+    if (port != 1) {
+      ports.push_back(true);
+    }
+    for (const auto o : offsets) {
+      for (const bool secondPort : ports) {
+        std::string why;
+        auto built = makeOption(resonator, spot, secondPort, 0, false, o, &why,
+                                moveX, moveY, nullptr, true);
+        if (!built.has_value()) {
+          answer["tried"].push_back(
+              {{"offset", o},
+               {"secondPort", secondPort},
+               {"why", why.empty() ? "none offered" : why}});
+          continue;
+        }
+        built->place = static_cast<std::uint32_t>(
+            ranked != places.end() ? ranked - places.begin() : places.size());
+        built->centred = true;
+        built->custom = true;
+        built->extension =
+            places.empty() ? 0
+                           : static_cast<std::int32_t>(at) -
+                                 static_cast<std::int32_t>(places.front().at);
+        coupler.options.push_back(std::move(*built));
+        const auto option = coupler.options.size() - 1;
+        say(std::format("coupler session: '{}': option {} placed by hand at "
+                        "({},{}), offset {} port {}, cut at cell {} of the way",
+                        wireId(wires[coupler.wire]), option, x, y, o,
+                        secondPort ? 2 : 1, at));
+        answer["built"] = true;
+        answer["option"] = option;
+        answer["offset"] = o;
+        answer["secondPort"] = secondPort;
+        return answer.dump();
+      }
+    }
+    say(std::format("coupler session: '{}': no option fits at ({},{}) — {} "
+                    "candidates refused",
+                    wireId(wires[coupler.wire]), x, y, answer["tried"].size()));
+    return answer.dump();
+  }
+
   /// The capacity graph of the chip as it stands, as the JSON
   /// `writeCapacityGraph` writes, without a picture
   /// (`CouplerSession`). The lines of the analysis are said as ever.
@@ -13146,14 +14750,16 @@ public:
       return names;
     };
     // Every chain on its own first (user, 2026-10-14): the chip with that
-    // chain's edges standing and no other's, its terminal edges as walls,
-    // as the chain search checked it.
+    // chain's edges standing and no other's, its terminal edges as wires
+    // with their port runs, as the chain search checks it.
     json local = json::array();
     for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
       std::vector<bool> only(chains_.size(), false);
       only[chain] = true;
-      const auto alone = stateOf(before, only);
-      const auto own = localCheckWires(before, chain);
+      auto alone = stateOf(before, only);
+      alone.terminalsAsWires = true;
+      alone.terminalChain = chain;
+      const auto own = withTerminalEdges(localCheckWires(before, chain), chain);
       localWires_ = &own;
       const auto verdict = capacityVerdictOf(alone);
       localWires_ = nullptr;
@@ -13339,6 +14945,89 @@ public:
         .dump();
   }
 
+  /// **The local rip-up-and-reroute of one feedline** on `options`, one
+  /// per waypoint, for the coupler session (`CouplerSession::localReroute`),
+  /// so that a move made by hand can be routed as well as checked (user,
+  /// 2026-10-27). The chain's couplers are put on `options` and their edges
+  /// drawn as `setCouplerOption` draws them; the wires of the feedline and
+  /// the free wires beside it (`feedlineWindow`, `freeWiresBeside`) are
+  /// ripped up and routed again under the feedline constraints with every
+  /// other wire ignored, as the local benchmark reroutes a feedline
+  /// (`ripFeedline`); then the chip is put back as it was. Returns JSON:
+  /// `chain`, `options`, `window` (the wires rerouted, by name), `clean`,
+  /// `failing` (the wires left unrouted, open or crossing, and what each
+  /// was), `blocked` (who each open wire meets), `rounds`, `seconds`, and
+  /// `wires`: every rerouted wire and every feedline edge of the chain with
+  /// its verdict and its way, as `routedJson` gives them.
+  ///
+  /// @throws std::invalid_argument as `requireChainOptions`.
+  [[nodiscard]] std::string
+  localRerouteJson(std::vector<Wire>& wires,
+                   const std::vector<std::uint32_t>& outer, const Pass& pass,
+                   const std::uint32_t chain,
+                   const std::vector<std::size_t>& options) {
+    requireChainOptions(chain, options);
+    using nlohmann::json;
+    json out;
+    withChainOn(wires, chain, options, chains_[chain].size(), [&]() {
+      assignBridges(wires, outer);
+      const auto members = ringWithEdges(wires, outer);
+      std::vector<std::uint32_t> every(wires.size());
+      std::iota(every.begin(), every.end(), 0U);
+      // The windows of every feedline, for the free wires beside this one.
+      std::vector<std::set<std::string>> names(chains_.size());
+      for (std::uint32_t other = 0; other < chains_.size(); ++other) {
+        for (const auto key : feedlineWindow(wires, members, other)) {
+          names[other].insert(wireId(wires[key]));
+        }
+      }
+      auto window = feedlineWindow(wires, members, chain);
+      const auto beside = freeWiresBeside(wires, names);
+      for (const auto member : members) {
+        if (beside[chain].contains(wireId(wires[member]))) {
+          window.insert(member);
+        }
+      }
+      const auto rip = ripFeedline(wires, members, every, pass, window);
+      std::set<std::string> shown;
+      for (const auto key : window) {
+        shown.insert(wireId(wires[key]));
+      }
+      json windowNames = json::array();
+      for (const auto& name : shown) {
+        windowNames.push_back(name);
+      }
+      for (const auto key : edgeWireOf_[chain]) {
+        shown.insert(wireId(wires[key]));
+      }
+      // `routedJson` counts the fails again; its lines stay out of the log.
+      const auto loud = std::exchange(report_, Report{});
+      auto routed = json::parse(routedJson(wires));
+      report_ = loud;
+      json drawn = json::array();
+      for (auto& wire : routed.at("wires")) {
+        if (shown.contains(wire.at("name").get<std::string>())) {
+          drawn.push_back(std::move(wire));
+        }
+      }
+      out = json{{"chain", chain},
+                 {"options", options},
+                 {"window", std::move(windowNames)},
+                 {"clean", rip.clean},
+                 {"failing", rip.failing},
+                 {"blocked", rip.blocked},
+                 {"rounds", rip.rounds},
+                 {"seconds", rip.seconds},
+                 {"wires", std::move(drawn)}};
+      say(std::format(
+          "coupler session: feedline {} rerouted locally on "
+          "options {}: {}{}",
+          chain, json(options).dump(), rip.clean ? "clean" : "fails",
+          rip.failing.empty() ? std::string{} : " (" + rip.failing + ")"));
+    });
+    return out.dump();
+  }
+
   /// **The step check** of the chain search (`checkStep`) at edge `step` of
   /// chain `chain` on `options`, rebuilt for the coupler session
   /// (`CouplerSession::stepCheck`). The couplers of waypoints 0 to
@@ -13372,7 +15061,7 @@ public:
                       chain, points.size() < 2 ? 0 : points.size() - 1, step));
     }
     const auto before = wiresBeforeTheEdges(wires);
-    const auto own = localCheckWires(before, chain);
+    const auto own = withTerminalEdges(localCheckWires(before, chain), chain);
     const auto settled = stepCheckChains();
     std::vector<std::size_t> standing(points.size(), 0);
     for (std::size_t layer = 0; layer <= step + 1; ++layer) {
@@ -15199,7 +16888,8 @@ public:
   ///    segment. Lengths are no criterion (user, 2026-10-04).
   /// 5. Refused: `restore` to the segment's start — the whole wire list,
   ///    `bodies_`, `chosen`, the anchors, the field rebuilt, the crossing
-  ///    rule; not `chainEdgePaths_`, `edgeMemo_`, `jogsUnlocked`. Kept: the
+  ///    rule; not `chainEdgePaths_`, `edgeMemo_`, `jogsUnlocked`,
+  ///    `extensionsUnlocked`. Kept: the
   ///    edges' ways go into `chainEdgePaths_` and `badNow` moves.
   [[nodiscard]] bool tryRun(std::vector<Wire>& wires,
                             const std::vector<std::uint32_t>& members,
@@ -15313,7 +17003,9 @@ public:
   /// feedline's check routes only its own wires. The terminal edges of the
   /// other feedlines stay in the graph: they name the mouths between the
   /// chains, and without them a feedline's own terminal edge lost its way
-  /// (17q, f6 and f0). Nothing when the check cannot read the graph.
+  /// (17q, f6 and f0). They stand and are not routed
+  /// (`SlotGraph::Wire::standing`), as in the local check of a chain (user,
+  /// 2026-10-27). Nothing when the check cannot read the graph.
   struct SlotChecks {
     SlotCheckResult whole;
     std::vector<std::optional<SlotCheckResult>> feedlines;
@@ -15337,6 +17029,7 @@ public:
         for (const auto& wire : every) {
           if (window.contains(wire.name) || wire.terminal) {
             graph.wires.push_back(wire);
+            graph.wires.back().standing = !window.contains(wire.name);
           }
         }
         checks.feedlines.emplace_back(slotCheck(graph));
@@ -15603,8 +17296,15 @@ public:
   compareLocally(std::vector<Wire>& wires,
                  const std::vector<std::uint32_t>& members,
                  const std::vector<std::uint32_t>& every, const Pass& pass,
-                 const std::uint32_t runs, const std::size_t spanAsked) {
+                 const std::uint32_t runs, const std::size_t spanAsked,
+                 const std::vector<std::uint32_t>& only = {}) {
     const auto began = std::chrono::steady_clock::now();
+    // The feedlines asked for, or every one: only their segments are
+    // searched and only they are judged, which saves the rip-ups of the
+    // others.
+    const auto asked = [&only](const std::uint32_t chain) {
+      return only.empty() || std::ranges::find(only, chain) != only.end();
+    };
     say(std::format("local agreement: {} run{} a segment of {} edges", runs,
                     runs == 1 ? "" : "s", spanAsked));
     agreement_ = Agreement{.on = true};
@@ -15637,6 +17337,13 @@ public:
         }
       }
     }
+    // A feedline not asked for has no window, so nothing judges it.
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      if (!asked(chain)) {
+        agreement_.windows[chain].clear();
+        agreement_.windowNames[chain].clear();
+      }
+    }
     if (const auto checks = slotCheckNow(wires, agreement_.windowNames,
                                          "local agreement: as begun");
         checks.has_value()) {
@@ -15667,15 +17374,29 @@ public:
       }
     }
     auto badNow = failsOf(wires, every).bad();
+    // Every segment is counted first, so that the progress says how far the
+    // comparison is.
+    std::uint32_t total = 0;
+    for (std::uint32_t chain = 0; chain < chains; ++chain) {
+      const auto size = chains_[chain].size();
+      if (size >= 3 && asked(chain)) {
+        total +=
+            static_cast<std::uint32_t>(size - std::min(spanAsked, size - 1));
+      }
+    }
     std::uint32_t segments = 0;
     for (std::uint32_t chain = 0; chain < chains; ++chain) {
       const auto& points = chains_[chain];
-      if (points.size() < 3) {
+      if (points.size() < 3 || !asked(chain)) {
         continue;
       }
       const auto span = std::min(spanAsked, points.size() - 1);
       for (std::size_t lo = 0; lo + span < points.size(); ++lo) {
         ++segments;
+        report_.progress("local agreement",
+                         std::format("chain {} segment {}", chain, lo),
+                         segments - 1, total);
+        const auto segmentBegan = std::chrono::steady_clock::now();
         static_cast<void>(researchSegment(wires, members, every, pass,
                                           {.chain = chain,
                                            .lo = lo,
@@ -15683,8 +17404,18 @@ public:
                                            .fails = {},
                                            .because = {}},
                                           runs, badNow));
+        const auto& so = agreement_.whole;
+        say(std::format("local agreement: segment {}/{} · chain {} edges "
+                        "{}..{} · {:.1f}s · so far {} SAT and clean, {} SAT "
+                        "but failing, {} UNSAT but clean, {} UNSAT and failing",
+                        segments, total, chain, lo, lo + span,
+                        std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - segmentBegan)
+                            .count(),
+                        so[0], so[1], so[2], so[3]));
       }
     }
+    report_.progress("local agreement", "done", total, total);
     const auto& w = agreement_.whole;
     const auto seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
@@ -15719,6 +17450,7 @@ public:
                        {"rerouteSeconds", agreement_.rerouteSeconds},
                        {"seconds", seconds},
                        {"begun", std::move(begun)},
+                       {"feedlines", only},
                        {"runs", std::move(agreement_.records)}};
     agreement_ = Agreement{};
     return out;
@@ -16145,12 +17877,14 @@ private:
                        arrival));
     }
 
-    // A resonator whose way was found but had no room for its meander keeps
-    // that way and lets no neighbour go to make room for one (user,
-    // 2026-10-13): the relaxation would draw the meander into the room of
-    // the wires it lets go of, and those then find no way back. The wire
-    // is tried again in the next round, when the wires around it may have
-    // moved.
+    // A resonator whose way was found but had no room for its meander first
+    // tries the way it had. Then, under `meander_relaxation` (on), it goes
+    // into the relaxation as a wire with no way does, and only a way long
+    // enough ends it. With the switch off it keeps the way it found and lets
+    // no neighbour go: the relaxation can draw the meander into the room of
+    // the wires it lets go of, and those may then find no way back. The wire
+    // is then tried again in the next round, when the wires around it may
+    // have moved.
     if (found.empty() && !plain.empty() && !held.empty()) {
       wire.way = held;
       wire.drawn = true;
@@ -16186,7 +17920,7 @@ private:
                        "· {}",
                        id, where, made.note));
     }
-    if (found.empty() && !plain.empty()) {
+    if (found.empty() && !plain.empty() && !tuning_.meanderRelaxation) {
       wire.way = std::move(plain);
       wire.drawn = true;
       wire.tooShort = !plainTooLong;
@@ -16201,6 +17935,17 @@ private:
         record->tooShort += wire.tooShort ? 1 : 0;
       }
       return false;
+    }
+
+    // The way that had no room for its meander, which the wire keeps when
+    // the relaxation finds no way long enough: a short way found while a
+    // neighbour was let go of may run through that neighbour's room.
+    const bool forMeander = found.empty() && !plain.empty();
+    const Path shortWay = forMeander ? plain : Path{};
+    const bool shortTooLong = plainTooLong;
+    if (forMeander) {
+      tell(std::format("wire {} · {}: no room for its meander; relaxing", id,
+                       where));
     }
 
     // Phase 2: the relaxation.
@@ -16356,6 +18101,10 @@ private:
       // A resonator whose way was found but could not be made long enough
       // keeps that way: it is what the wires around it see, and the wire is
       // tried again in the next round.
+      if (forMeander) {
+        plain = shortWay;
+        plainTooLong = shortTooLong;
+      }
       if (!plain.empty()) {
         wire.way = std::move(plain);
         wire.drawn = true;
@@ -20165,17 +21914,16 @@ public:
       const GlobalRoutingT& global, const AssignmentT& assignment,
       const DetailRoutingT& detail, const ConfigT& config, const Report& report,
       const Debug& debug) const override {
-    if (config.grid == nullptr || config.rules == nullptr) {
-      throw std::invalid_argument(
-          "the configuration carries no grid section or no design rules");
+    if (config.rules == nullptr) {
+      throw std::invalid_argument("the configuration carries no design rules");
     }
     if (detail.grid == nullptr) {
       throw std::invalid_argument("the detail routing carries no grid");
     }
     const auto scene = buildScene(chip, config);
-    const auto tuning =
-        tuningOf(config, grid::routerGrid(scene.capacity,
-                                          config.grid->router_cell_size));
+    const auto tuning = tuningOf(
+        config, grid::routerGrid(scene.capacity,
+                                 gridParamsOf(config).router_cell_size));
     const auto field = sceneOf(chip, config, scene.capacity);
 
     auto wires = wiresOf(chip, global, assignment, detail, field);
@@ -20372,9 +22120,8 @@ CouplerSession::CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
                                const DetailRoutingT& detail,
                                const ConfigT& config, const Report& report,
                                Debug debug) {
-  if (config.grid == nullptr || config.rules == nullptr) {
-    throw std::invalid_argument(
-        "the configuration carries no grid section or no design rules");
+  if (config.rules == nullptr) {
+    throw std::invalid_argument("the configuration carries no design rules");
   }
   if (detail.grid == nullptr) {
     throw std::invalid_argument("the detail routing carries no grid");
@@ -20382,8 +22129,9 @@ CouplerSession::CouplerSession(const ChipT& chip, const GlobalRoutingT& global,
   const auto scene = buildScene(chip, config);
   state_ = std::make_unique<State>(
       sceneOf(chip, config, scene.capacity),
-      tuningOf(config, grid::routerGrid(scene.capacity,
-                                        config.grid->router_cell_size)));
+      tuningOf(config,
+               grid::routerGrid(scene.capacity,
+                                gridParamsOf(config).router_cell_size)));
   auto& wires = state_->wires;
   wires = wiresOf(chip, global, assignment, detail, state_->field);
   auto& outer = state_->outer;
@@ -20417,6 +22165,15 @@ std::string CouplerSession::setOption(const std::uint32_t coupler,
   return state_->driver->setCouplerOption(state_->wires, coupler, option);
 }
 
+std::string CouplerSession::addOption(const std::uint32_t coupler,
+                                      const std::uint32_t x,
+                                      const std::uint32_t y,
+                                      const std::int32_t offset,
+                                      const std::int32_t port) {
+  return state_->driver->addCouplerOption(state_->wires, coupler, x, y, offset,
+                                          port);
+}
+
 std::string CouplerSession::graph() {
   return state_->driver->capacityGraphJson(state_->wires);
 }
@@ -20445,8 +22202,9 @@ void CouplerSession::setDebug(Debug debug) {
   state_->driver->setDebug(std::move(debug));
 }
 
-std::string CouplerSession::compareLocally(const std::uint32_t runs,
-                                           const std::size_t span) {
+std::string
+CouplerSession::compareLocally(const std::uint32_t runs, const std::size_t span,
+                               const std::vector<std::uint32_t>& feedlines) {
   auto& driver = *state_->driver;
   auto& wires = state_->wires;
   driver.enterPhase(PHASES[3]);
@@ -20456,8 +22214,18 @@ std::string CouplerSession::compareLocally(const std::uint32_t runs,
   std::iota(every.begin(), every.end(), 0U);
   return driver
       .compareLocally(wires, members, every, feedlinePassOf(state_->tuning),
-                      runs, span)
+                      runs, span, feedlines)
       .dump();
+}
+
+std::string
+CouplerSession::localReroute(const std::uint32_t chain,
+                             const std::vector<std::size_t>& options) {
+  auto& driver = *state_->driver;
+  driver.enterPhase(PHASES[3]);
+  return driver.localRerouteJson(state_->wires, state_->outer,
+                                 feedlinePassOf(state_->tuning), chain,
+                                 options);
 }
 
 std::string CouplerSession::routeFeedlines() {

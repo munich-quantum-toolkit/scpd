@@ -170,8 +170,12 @@ def _insertion(debug: Path) -> str:
     graph = graphs[-1]
     session = None
     if options is not None:
+        steps = list(store.read(debug, "step-check"))
+        skips = list(store.read(debug, "step-skip"))
         session = {
             "couplers": options.get("couplers", []),
+            "outcomes": serve.option_outcomes(steps, skips),
+            "searched": bool(steps or skips),
             "last": {"action": "the coupler insertion", "lines": graph.get("summary", [])},
         }
     return serve.page_text(graph, session)
@@ -220,14 +224,16 @@ SAT_STYLE = """
 
 #: The filter bar, the search box and the address of a SAT dashboard: an element of class ``item``
 #: carries ``data-verdict`` and ``data-text``; ``#<id>`` in the address opens and marks that element.
+#: The listeners sit on the document, so a dashboard that :data:`BUILDING_SCRIPT` swaps in later
+#: needs none of its own; ``satRefilter`` applies the filter and the mark to it.
 SAT_SCRIPT = """<script>
 (() => {
-  const items = [...document.querySelectorAll(".item")];
-  const find = document.getElementById("find");
-  const shown = document.getElementById("shown");
-  const buttons = [...document.querySelectorAll("[data-filter]")];
   let filter = "all";
   function apply() {
+    const find = document.getElementById("find");
+    const shown = document.getElementById("shown");
+    if (!find || !shown) return;
+    const items = [...document.querySelectorAll(".item")];
     const query = find.value.trim().toLowerCase();
     let count = 0;
     for (const item of items) {
@@ -240,27 +246,175 @@ SAT_SCRIPT = """<script>
   }
   function choose(value) {
     filter = value;
-    for (const b of buttons) b.classList.toggle("on", b.dataset.filter === value);
+    for (const b of document.querySelectorAll("[data-filter]")) b.classList.toggle("on", b.dataset.filter === value);
     apply();
   }
-  for (const b of buttons) b.addEventListener("click", () => choose(b.dataset.filter));
-  find.addEventListener("input", apply);
-  function reveal() {
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-filter]");
+    if (button) choose(button.dataset.filter);
+  });
+  document.addEventListener("input", (event) => { if (event.target.id === "find") apply(); });
+  function mark() {
+    for (const old of document.querySelectorAll(".hit")) old.classList.remove("hit");
     const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (target) target.classList.add("hit");
+    return target;
+  }
+  function reveal() {
+    const target = mark();
     if (!target) return;
     for (let d = target.closest("details"); d; d = d.parentElement.closest("details")) d.open = true;
     const item = target.closest(".item");
-    if (item && item.hidden) { find.value = ""; choose("all"); }
-    for (const old of document.querySelectorAll(".hit")) old.classList.remove("hit");
-    target.classList.add("hit");
+    const find = document.getElementById("find");
+    if (item && item.hidden && find) { find.value = ""; choose("all"); }
     target.scrollIntoView({ block: "center" });
   }
   addEventListener("hashchange", reveal);
+  window.satRefilter = () => { choose(filter); mark(); };
   choose("all");
   reveal();
 })();
 </script>
 """
+
+#: What a SAT dashboard of a session still being built says in place of its graph and mover links.
+BUILDING_NOTE = "the graph and mover links open when the session stands"
+
+#: The look of the status bar of a session still being built, on top of :data:`SAT_STYLE`.
+STATUS_STYLE = """
+ .status { position: sticky; top: 0; z-index: 3; background: Canvas; padding: 8px 12px; margin: 0 0 10px;
+   border: 1.5px solid #E69F00; border-radius: 8px; max-width: 1100px }
+ .status.failed { border-color: #D55E00 }
+ .status .line { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center }
+ .status progress { width: 220px }
+ .status pre { max-height: 240px; overflow: auto; font-size: 11px; margin: 6px 0 0; white-space: pre-wrap }
+"""
+
+#: The script of a page whose session is still being built. Every 1.5 s it reads ``status.json``
+#: and shows it in the status bar. When the number of records grows, it fetches the page again and
+#: swaps the element ``#dashboard`` in place: the filter, the search text, the open ``details``
+#: and the scroll position stay. When the session stands or failed, it loads the page once more.
+BUILDING_SCRIPT = """<script>
+(() => {
+  const status = document.getElementById("status");
+  if (!status || status.dataset.state !== "building") return;
+  let records = +status.dataset.records;
+  const set = (id, text) => { const e = document.getElementById(id); if (e) e.textContent = text; };
+  function show(s) {
+    set("status-task", s.task ? `${s.task}${s.detail ? `: ${s.detail}` : ""}` : "starting the Final stage");
+    const bar = document.getElementById("status-bar");
+    if (bar) { bar.max = Math.max(s.total, 1); bar.value = s.total ? s.done : 0; }
+    set("status-count", s.total ? `${s.done} / ${s.total}` : "");
+    set("status-seconds", `${Math.round(s.seconds)} s`);
+    set("status-phase", s.phase ? `last step: ${s.phase}` : "");
+    const kinds = Object.entries(s.records).map(([kind, n]) => `${n} ${kind}`).join(" · ");
+    set("status-records", kinds ? `records so far: ${kinds}` : "no records yet");
+    set("status-lines", s.lines.join("\\n"));
+  }
+  function key(details) {
+    const owner = details.parentElement.closest("[id]");
+    const all = owner ? [...owner.querySelectorAll("details")] : [];
+    return `${owner ? owner.id : ""}:${all.indexOf(details)}`;
+  }
+  async function swap() {
+    const text = await (await fetch(location.pathname + location.search, { cache: "no-store" })).text();
+    const fresh = new DOMParser().parseFromString(text, "text/html").getElementById("dashboard");
+    const board = document.getElementById("dashboard");
+    if (!fresh || !board) return;
+    const find = document.getElementById("find");
+    const query = find ? find.value : "";
+    const focused = find !== null && document.activeElement === find;
+    const open = new Set([...board.querySelectorAll("details[open]")].map(key));
+    const y = scrollY;
+    board.replaceWith(document.adoptNode(fresh));
+    for (const d of fresh.querySelectorAll("details")) if (open.has(key(d))) d.open = true;
+    const box = document.getElementById("find");
+    if (box) { box.value = query; if (focused) box.focus(); }
+    if (window.satRefilter) window.satRefilter();
+    scrollTo(0, y);
+  }
+  async function poll() {
+    try {
+      const s = await (await fetch("status.json", { cache: "no-store" })).json();
+      if (!s.building) { location.reload(); return; }
+      show(s);
+      const count = Object.values(s.records).reduce((a, b) => a + b, 0);
+      if (count !== records) { records = count; await swap(); }
+    } catch (error) {
+      set("status-task", `the server does not answer: ${error.message}`);
+    }
+    setTimeout(poll, 1500);
+  }
+  setTimeout(poll, 1500);
+})();
+</script>
+"""
+
+
+def status_bar(status: dict[str, Any]) -> str:
+    """The bar on top of a page whose session is still being built or failed to build.
+
+    Args:
+        status: How far the session is, as ``GET /status.json`` of :mod:`.serve` gives it.
+
+    Returns:
+        The bar as HTML. :data:`BUILDING_SCRIPT` keeps it up to date.
+    """
+    lines = html.escape("\n".join(status.get("lines", [])))
+    counts = status.get("records", {})
+    kinds = " · ".join(f"{n} {kind}" for kind, n in counts.items())
+    records = f"records so far: {kinds}" if kinds else "no records yet"
+    seconds = f"{status.get('seconds', 0.0):.0f} s"
+    if status.get("failed"):
+        return (
+            f'<div class="status failed" id="status" data-state="failed"><div class="line">'
+            f"<b>the session could not be built</b><span>{html.escape(str(status.get('error', '')))}</span>"
+            f"<span>{seconds}</span><span>{html.escape(records)}</span></div>"
+            f"<details open><summary>the last lines of the stage</summary><pre>{lines}</pre></details></div>"
+        )
+    task = str(status.get("task", ""))
+    detail = str(status.get("detail", ""))
+    done, total = int(status.get("done", 0)), int(status.get("total", 0))
+    phase = str(status.get("phase", ""))
+    return (
+        f'<div class="status" id="status" data-state="building" data-records="{sum(counts.values())}">'
+        '<div class="line"><b>the session is still being built</b>'
+        f'<span id="status-task">{html.escape(f"{task}: {detail}" if detail else task or "starting the Final stage")}'
+        f'</span><progress id="status-bar" max="{max(total, 1)}" value="{done if total else 0}"></progress>'
+        f'<span id="status-count">{f"{done} / {total}" if total else ""}</span>'
+        f'<span id="status-seconds">{seconds}</span></div>'
+        f'<div class="line sub"><span id="status-phase">{html.escape(f"last step: {phase}" if phase else "")}</span>'
+        f'<span id="status-records">{html.escape(records)}</span></div>'
+        f'<p class="note">The page fills in as the records come; {BUILDING_NOTE}.</p>'
+        f'<details><summary>the last lines of the stage</summary><pre id="status-lines">{lines}</pre></details></div>'
+    )
+
+
+def building_page(status: dict[str, Any]) -> str:
+    """The page a coupler server answers for a page that needs the session while it is still being built.
+
+    Args:
+        status: How far the session is, as ``GET /status.json`` of :mod:`.serve` gives it.
+
+    Returns:
+        The page as HTML; it loads itself again when the session stands.
+    """
+    title = "the session could not be built" if status.get("failed") else "the session is still being built"
+    nav = '<nav class="links"><a href="sat">local SAT</a><a href="global">global SAT</a></nav>'
+    return _page(title, "", status_bar(status) + nav, BUILDING_SCRIPT, SAT_STYLE + STATUS_STYLE)
+
+
+def _while_building(body: str, status: dict[str, Any]) -> str:
+    """The body of a SAT dashboard of a session still being built: the status bar, then the dashboard.
+
+    The dashboard sits in the element ``#dashboard``, which :data:`BUILDING_SCRIPT` swaps. The off
+    links say why they are off.
+
+    Returns:
+        The body as HTML.
+    """
+    body = body.replace(f'title="{html.escape(STATIC_NOTE)}"', f'title="{html.escape(BUILDING_NOTE)}"')
+    return f'{status_bar(status)}<div id="dashboard">{body}</div>'
 
 
 @dataclass
@@ -270,12 +424,14 @@ class SatRecords:
     Attributes:
         states: The ``chain-state`` records, in the order the search made them.
         steps: The ``step-check`` records of the chain search.
+        skips: The ``step-skip`` records: the steps the chain search dropped without a step check.
         events: The ``global-sat`` events.
         couplers: The couplers of the ``coupler-options`` record, or empty.
     """
 
     states: list[dict[str, Any]] = field(default_factory=list)
     steps: list[dict[str, Any]] = field(default_factory=list)
+    skips: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     couplers: list[dict[str, Any]] = field(default_factory=list)
 
@@ -293,6 +449,7 @@ class SatRecords:
         return cls(
             states=list(read("chain-state")),
             steps=list(read("step-check")),
+            skips=list(read("step-skip")),
             events=list(read("global-sat")),
             couplers=list(options.get("couplers", [])) if options else [],
         )
@@ -406,16 +563,19 @@ def recorded_verdict(state: dict[str, Any], check: str) -> str | None:
     return "SAT" if found == "alone" else "UNSAT"
 
 
-def search_verdict(result: dict[str, Any] | None) -> tuple[str, str]:
+def search_verdict(result: dict[str, Any] | None, *, building: bool = False) -> tuple[str, str]:
     """What the global SAT search came to, for a banner.
 
     Args:
         result: The search's ``result`` event, or None.
+        building: Whether the session is still being built, so that the search may yet run.
 
     Returns:
         ``SAT``, ``UNSAT`` or ``none``, and the sentence that says it.
     """
     if result is None:
+        if building:
+            return "none", "the global SAT search runs after the coupler insertion; nothing of it is recorded yet"
         return "none", "no global SAT search was recorded"
     seconds = f"{result.get('seconds', 0.0):.1f} s"
     if not result.get("searched"):
@@ -464,20 +624,21 @@ def _link(live: Live | None, href: str, text: str, title: str, *, tab: bool = Tr
     return f'<a href="{html.escape(href)}"{target} title="{html.escape(title)}">{html.escape(text)}</a>'
 
 
-def _nav(live: Live | None) -> str:
-    if live is None:
+def _nav(live: Live | None, *, building: bool = False) -> str:
+    if live is None and not building:
         pages = (("index.html", "debug pages"), ("local-sat.html", "local SAT"), ("global-sat.html", "global SAT"))
     else:
         pages = (
-            ("./", "capacity graph with the coupler tab"),
+            ("./", "global mover (capacity graph)"),
             ("sat", "local SAT"),
             ("global", "global SAT"),
-            *live.links,
+            *(live.links if live is not None else ()),
         )
     links = "".join(f'<a href="{href}">{html.escape(text)}</a>' for href, text in pages)
+    # A session still being built says so in its status bar.
     note = (
         ""
-        if live is not None
+        if live is not None or building
         else f'<p class="note">The graph and mover links are off: {html.escape(STATIC_NOTE)}.</p>'
     )
     return f'<nav class="links">{links}</nav>{note}'
@@ -739,15 +900,22 @@ def _card(
     kept: list[list[int]],
     live: Live | None,
     result: dict[str, Any] | None,
+    *,
+    building: bool = False,
 ) -> tuple[str, str]:
     verdict = local_verdict(steps, _edge_count(chain, steps, live))
+    # While the session is being built, a chain search that has not reached its last edge with a SAT
+    # step may still be running: it is no verdict yet.
+    running = building and verdict == "UNSAT"
+    if running:
+        verdict = "none"
     numbers = {tuple(options): n for n, options in enumerate(kept)}
     text = [f"feedline {chain}", *edges]
     for state in states:
         text += [f"c{m['coupler']}" for m in state.get("moved", [])] + list(state.get("lost", []))
     for step in steps:
         text += [_tried(step), *step.get("lost", []), *step.get("closed", [])]
-    label = "no local check" if verdict == "none" else None
+    label = "in progress" if running else "no local check" if verdict == "none" else None
     body = [
         (
             f"<header><h2>feedline {chain}</h2>{_badge(verdict, label)}{_search_badge(states, result)}"
@@ -771,6 +939,22 @@ def _card(
         if now:
             links = "" if standing is None else " " + _check_links(live, chain, standing["options"], "now")
             body.append(f'<p class="facts">now: {html.escape(" · ".join(now))}{links}</p>')
+        # The movers of the feedline as it stands: its own, and the whole chip's.
+        local_mover = _link(
+            live,
+            f"feedline?chain={chain}#tab=couplers",
+            "local mover ↗",
+            f"move the couplers of feedline {chain} alone",
+            tab=False,
+        )
+        global_mover = _link(
+            live,
+            "./#tab=couplers",
+            "global mover ↗",
+            "move the couplers of every feedline on the whole chip",
+            tab=False,
+        )
+        body.append(f'<p class="facts">movers: {local_mover} {global_mover}</p>')
     if steps:
         # Per edge its SAT options; an edge with none shows its UNSAT options; the rest waits below.
         waypoints = len(standing["options"]) if standing is not None else None
@@ -820,7 +1004,7 @@ def _card(
     )
 
 
-def local_sat_page(records: SatRecords, live: Live | None = None) -> str:
+def local_sat_page(records: SatRecords, live: Live | None = None, building: dict[str, Any] | None = None) -> str:
     """The feedline dashboard: one card per feedline with the local checks of the coupler insertion.
 
     The chain search of the coupler insertion checks every step it prices locally: the feedline
@@ -833,12 +1017,15 @@ def local_sat_page(records: SatRecords, live: Live | None = None) -> str:
     Args:
         records: The records of the run or of the session.
         live: What the session adds, or None for a page that stands alone (its links are off).
+        building: How far a session still being built is, as ``GET /status.json`` of :mod:`.serve`
+            gives it, or None. The page then shows the records so far under a status bar, links the
+            session's pages and keeps the graph and mover links off.
 
     Returns:
         The page as HTML.
     """
     title = "local SAT · feedlines"
-    if live is None and not records.states and not records.steps:
+    if live is None and building is None and not records.states and not records.steps:
         return _page(title, "", "<p>no step check and no chain state was recorded</p>")
     edges = _edges_by_chain(records, live)
     chains = sorted({*edges, *(int(s["chain"]) for s in records.states), *(int(s["chain"]) for s in records.steps)})
@@ -855,11 +1042,12 @@ def local_sat_page(records: SatRecords, live: Live | None = None) -> str:
             kept.get(chain, []),
             live,
             result,
+            building=building is not None,
         )
         cards.append(card)
         counts["all"] += 1
         counts[verdict] = counts.get(verdict, 0) + 1
-    verdict, said = search_verdict(result)
+    verdict, said = search_verdict(result, building=building is not None)
     steps = records.steps
     sat_steps = sum(1 for s in steps if s["verdict"] == "SAT")
     tiles = [
@@ -873,7 +1061,7 @@ def local_sat_page(records: SatRecords, live: Live | None = None) -> str:
         now = str(live.verdict.get("verdict", "?"))
         tiles.insert(0, (now, "the chip now (whole-chip check)", now))
     body = (
-        _nav(live)
+        _nav(live, building=building is not None)
         + f'<p class="banner {verdict}">{html.escape(said)}</p>'
         + _tiles(tiles)
         + _bar(counts, "feedline, edge, coupler or wire")
@@ -883,6 +1071,9 @@ def local_sat_page(records: SatRecords, live: Live | None = None) -> str:
         f"{len(chains)} feedlines · a feedline is SAT when the chain search's step check of its last edge is SAT; "
         "a card lists per edge the SAT options, or the UNSAT options when the edge has none"
     )
+    if building is not None:
+        body = _while_building(body, building)
+        return _page(title, sub, body, SAT_SCRIPT + BUILDING_SCRIPT, SAT_STYLE + STATUS_STYLE)
     return _page(title, sub, body, SAT_SCRIPT, SAT_STYLE)
 
 
@@ -895,22 +1086,24 @@ def _picks(states: Sequence[int], feedlines: str) -> str:
     return ", ".join(picked) or "the commit"
 
 
-def global_sat_page(records: SatRecords, live: Live | None = None) -> str:
+def global_sat_page(records: SatRecords, live: Live | None = None, building: dict[str, Any] | None = None) -> str:
     """The global dashboard: the course of the global SAT search and every combination it checked.
 
     Args:
         records: The records of the run or of the session.
         live: What the session adds, or None for a page that stands alone (its links are off).
+        building: How far a session still being built is, as for :func:`local_sat_page`, or None.
 
     Returns:
         The page as HTML.
     """
     title = "global SAT · combinations"
-    if live is None and not records.events:
+    if live is None and building is None and not records.events:
         return _page(title, "", "<p>no global SAT search was recorded</p>")
-    feedlines = "sat" if live is not None else PAGES["local_sat"]
-    verdict, said = search_verdict(records.result())
-    parts = [_nav(live), f'<p class="banner {verdict}">{html.escape(said)}</p>']
+    served = live is not None or building is not None
+    feedlines = "sat" if served else PAGES["local_sat"]
+    verdict, said = search_verdict(records.result(), building=building is not None)
+    parts = [_nav(live, building=building is not None), f'<p class="banner {verdict}">{html.escape(said)}</p>']
     start = next((e for e in records.events if e.get("event") == "start"), None)
     combinations = [e for e in records.events if e.get("event") == "combination"]
     kept = records.kept()
@@ -975,6 +1168,9 @@ def global_sat_page(records: SatRecords, live: Live | None = None) -> str:
     elif verdict == "SAT" and not result.get("searched"):
         parts.append(f'<p>the <a href="{feedlines}">local SAT page</a> lists the step checks of the chain search</p>')
     sub = "a state number links to that state of its feedline on the local SAT page"
+    if building is not None:
+        body = _while_building("\n".join(parts), building)
+        return _page(title, sub, body, SAT_SCRIPT + BUILDING_SCRIPT, SAT_STYLE + STATUS_STYLE)
     script = SAT_SCRIPT if combinations else ""
     return _page(title, sub, "\n".join(parts), script, SAT_STYLE)
 

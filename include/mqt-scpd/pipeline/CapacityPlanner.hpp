@@ -77,6 +77,18 @@ struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
 crossingPitch(const ConfigT& config);
 
 /**
+ * @brief Returns the grid section of a configuration.
+ *
+ * A configuration leaves out [grid] when every value in it is a default, so
+ * an absent section is one of defaults. Every stage reads the section here.
+ *
+ * @param config The run configuration.
+ * @return The grid section, or the defaults when the configuration has none.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const flatbuffers::config::GridParamsT&
+gridParamsOf(const ConfigT& config);
+
+/**
  * @brief Returns the crossing slots of a partition border that a wire may
  * take.
  *

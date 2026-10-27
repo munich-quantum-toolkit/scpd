@@ -446,6 +446,8 @@ def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> Non
     assert final.couplerLeadMarginCells == 5
     assert final.launcherLead == pytest.approx(10.0)
     assert not final.couplerOffsets
+    assert not final.jogOptions
+    assert not final.couplerOptionExtension
     assert final.edgeLauncherMarginCells == 6
     assert final.terminalSlotCells == 20
     assert final.chainEndEdgeWeight == pytest.approx(0.1)
@@ -455,11 +457,15 @@ def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> Non
     assert final.capacityMargin == pytest.approx(1.06)
     assert final.globalSatTries == 200
     assert final.meanderStartMarginCells == -1
+    assert final.meanderRelaxation is True
+    assert final.chainSearch == "astar"
 
     config = parse_config(
         MANUAL
         + '\n[stages.final]\ncoupler_box_margin_cells = 20\ncoupler_offsets = "0,1,2,3,4,5,6,7"\n'
         + "chain_end_edge_weight = 1.0\ncapacity_check = false\nchain_rule_refusals = 1\n"
+        + 'meander_relaxation = false\njog_options = "20, 40"\ncoupler_option_extension = "0, 10, -5"\n'
+        + 'chain_search = "bidirectional"\n'
     )
     assert config.stages is not None
     assert config.stages.final is not None
@@ -474,6 +480,30 @@ def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> Non
     assert back.stages.final.chainEndEdgeWeight == pytest.approx(1.0)
     assert back.stages.final.capacityCheck is False
     assert back.stages.final.chainRuleRefusals == 1
+    assert back.stages.final.meanderRelaxation is False
+    assert back.stages.final.jogOptions == "20, 40"
+    assert back.stages.final.couplerOptionExtension == "0, 10, -5"
+    assert back.stages.final.chainSearch == "bidirectional"
+
+
+def test_chain_search_names_the_searches() -> None:
+    """`[stages.final] chain_search` is astar or bidirectional, and names the value it refuses."""
+    with pytest.raises(ConfigError, match="chain_search: 'dijkstra'"):
+        parse_config(MANUAL + '\n[stages.final]\nchain_search = "dijkstra"\n')
+
+
+@pytest.mark.parametrize("extensions", ["0,x", "0,10.5", "201", "-201", "0,--3"])
+def test_coupler_option_extension_names_cells(extensions: str) -> None:
+    """`[stages.final] coupler_option_extension` takes whole cells from -200 to 200, and names the entry it refuses."""
+    with pytest.raises(ConfigError, match="coupler_option_extension"):
+        parse_config(MANUAL + f'\n[stages.final]\ncoupler_option_extension = "{extensions}"\n')
+
+
+@pytest.mark.parametrize("jogs", ["20,0", "20,x", "-20", "201", "20,4.5"])
+def test_jog_options_names_jog_lengths_in_cells(jogs: str) -> None:
+    """`[stages.final] jog_options` takes whole jog lengths in cells from 1 to 200, and names the entry it refuses."""
+    with pytest.raises(ConfigError, match="jog_options"):
+        parse_config(MANUAL + f'\n[stages.final]\njog_options = "{jogs}"\n')
 
 
 def test_the_debug_section_reads_and_defaults() -> None:

@@ -209,6 +209,30 @@ TEST(SlotCheck, CrossingPrescriptionTakesTheSlot) {
   EXPECT_EQ(graph.at("verdict"), "SAT");
 }
 
+/// The result counts the crossing slots of every feedline edge by its name,
+/// as many as the page draws: the chain search reads them against the wires
+/// that must cross the edge (`chain_slot_blacklist`).
+TEST(SlotCheck, CountsTheCrossingSlotsOfEveryFeedlineEdge) {
+  Drawing chip(260, 240, 19.0);
+  chip.fill(0, 180, 259, 239, CHAMBER + 1);
+  chip.fill(0, 161, 259, 179, ARTWORK);
+  chip.fill(60, 161, 170, 179, FEEDLINE);
+  json points = json::array();
+  for (int x = 60; x <= 170; ++x) {
+    points.push_back({x, 170});
+  }
+  chip.strokes.push_back(
+      {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
+  chip.wire("1", {200, 60}, 0, {200, 220}, 1, {"f1"});
+  const auto result = slotCheck(chip.text());
+  const auto graph = json::parse(result.graph);
+
+  ASSERT_TRUE(result.slots.contains("f1"));
+  EXPECT_GT(result.slots.at("f1"), 0U);
+  EXPECT_EQ(result.slots.at("f1"),
+            graph.at("crossSlots").at("edges").at(0).at("slots").size());
+}
+
 /// The slots of a straight piece are spread evenly over it, with equal gaps
 /// between them and to the two ends. On f1 from x 60 to 170 they lie as far
 /// from the one end as from the other.
@@ -370,6 +394,200 @@ TEST(SlotCheck, LetsNoWirePastAMouthByItsTwin) {
   EXPECT_EQ(edgeNamed(json::parse(result.graph), "g1").at("mouth"), true);
 }
 
+/// A wire end with a label, as the Final stage writes one.
+[[nodiscard]] json endAt(const std::pair<int, int> cell, const int chamber,
+                         const std::string& label) {
+  return {{"cell", {cell.first, cell.second}},
+          {"chambers", {chamber}},
+          {"label", label}};
+}
+
+/// A wire of a mouth passes that mouth, but a wire whose two ends lie in one
+/// chamber passes no gate at all: the mouth line runs through that chamber
+/// where no gate cuts it. Wire 1's launcher lies between the launchers of
+/// the terminal edges f1 and f2 round the middle of the chip, so it belongs
+/// to their mouth g0; g0 holds no wire, and wire 1 needs none of it.
+TEST(SlotCheck, AWireOfAMouthWithBothEndsInOneChamberTakesNoGate) {
+  Drawing chip(200, 200, 19.0);
+  chip.fill(0, 0, 199, 39, CHAMBER + 1);
+  chip.fill(0, 40, 199, 40, ARTWORK);
+  chip.fill(90, 40, 110, 40, FREE);
+  chip.edges.push_back(
+      {{"kind", "bottleneck"},
+       {"name", "g0"},
+       {"line", {{89, 40}, {111, 40}}},
+       {"ends", {"f1 at its coupler, left", "f2 at its coupler, right"}},
+       {"chambers", {0, 1}},
+       {"capacity", 0},
+       {"users", nullptr},
+       {"length", 22.0},
+       {"mouth", true},
+       {"slot", false},
+       {"terminal", false}});
+  const auto add = [&](const std::string& name, const json& source,
+                       const json& target, const bool terminal) {
+    chip.wires.push_back({{"name", name},
+                          {"source", source},
+                          {"target", target},
+                          {"crosses", json::array()},
+                          {"terminal", terminal},
+                          {"resonator", false}});
+  };
+  add("f1", endAt({60, 100}, 0, "coupler port"),
+      endAt({10, 100}, 0, "Chip.port1"), true);
+  add("f2", endAt({100, 190}, 0, "Chip.port2"),
+      endAt({100, 150}, 0, "coupler port"), true);
+  add("1", endAt({40, 170}, 0, "Chip.port3"), endAt({60, 150}, 0, "Qb1.port1"),
+      false);
+
+  const auto result = slotCheck(chip.text());
+  const auto graph = json::parse(result.graph);
+
+  EXPECT_EQ(result.verdict, "SAT");
+  EXPECT_EQ(result.lost, std::vector<std::string>{});
+  EXPECT_EQ(wireNamed(graph, "1").at("status"), "routed");
+  EXPECT_EQ(wireNamed(graph, "1").at("way"), json::array());
+}
+
+/// A wire's own mouth binds it only where the mouth separates its two ends.
+/// Wire 1 belongs to the mouth g0 of f1 and f2, which holds no wire, but
+/// the gate g1 beside it joins the wire's two chambers without crossing the
+/// mouth line: the wire's port lies on the near side of it, and the wire
+/// takes g1.
+TEST(SlotCheck, AWireOfAMouthThatDoesNotSeparateItsEndsPassesElsewhere) {
+  Drawing chip(200, 200, 19.0);
+  chip.fill(0, 0, 199, 39, CHAMBER + 1);
+  chip.fill(0, 40, 199, 40, ARTWORK);
+  chip.fill(90, 40, 110, 40, FREE);
+  chip.fill(150, 40, 170, 40, FREE);
+  const auto gate = [&](const std::string& name, const int x0, const int x1,
+                        const json& ends, const int capacity,
+                        const bool mouth) {
+    chip.edges.push_back({{"kind", "bottleneck"},
+                          {"name", name},
+                          {"line", {{x0, 40}, {x1, 40}}},
+                          {"ends", ends},
+                          {"chambers", {0, 1}},
+                          {"capacity", capacity},
+                          {"users", nullptr},
+                          {"length", static_cast<double>(x1 - x0)},
+                          {"mouth", mouth},
+                          {"slot", false},
+                          {"terminal", false}});
+  };
+  gate("g0", 89, 111, {"f1 at its coupler, left", "f2 at its coupler, right"},
+       0, true);
+  gate("g1", 149, 171, {"artwork", "artwork"}, 1, false);
+  const auto add = [&](const std::string& name, const json& source,
+                       const json& target, const bool terminal) {
+    chip.wires.push_back({{"name", name},
+                          {"source", source},
+                          {"target", target},
+                          {"crosses", json::array()},
+                          {"terminal", terminal},
+                          {"resonator", false}});
+  };
+  add("f1", endAt({60, 100}, 0, "coupler port"),
+      endAt({10, 100}, 0, "Chip.port1"), true);
+  add("f2", endAt({100, 190}, 0, "Chip.port2"),
+      endAt({100, 150}, 0, "coupler port"), true);
+  add("1", endAt({40, 170}, 0, "Chip.port3"), endAt({160, 20}, 1, "Qb1.port1"),
+      false);
+
+  const auto result = slotCheck(chip.text());
+  const auto graph = json::parse(result.graph);
+
+  EXPECT_EQ(result.lost, std::vector<std::string>{});
+  EXPECT_EQ(wireNamed(graph, "1").at("way"),
+            json::array({edgeNamed(graph, "g1").at("index")}));
+}
+
+/// A gate with both ends on one feedline edge lies along that edge's own
+/// run: the terminal edge routed as a wire passes it, however narrow it is
+/// for any other wire. Here g0 holds no wire by its length, f1 passes it,
+/// and wire 2 still has no way.
+TEST(SlotCheck, AGateAlongATerminalEdgeLetsThatEdgePass) {
+  auto chip = gateChip(0);
+  chip.edges[0]["ends"] = {"f1 at its coupler, right",
+                           "f1 at its launcher, right"};
+  chip.wires.push_back({{"name", "f1"},
+                        {"source", endAt({20, 5}, 0, "Chip.port1")},
+                        {"target", endAt({20, 35}, 1, "coupler port")},
+                        {"crosses", json::array()},
+                        {"terminal", true},
+                        {"resonator", false}});
+  chip.wire("2", {22, 5}, 0, {22, 35}, 1, {});
+
+  const auto result = slotCheck(chip.text());
+  const auto graph = json::parse(result.graph);
+
+  EXPECT_EQ(result.lost, std::vector<std::string>{"2"});
+  EXPECT_EQ(wireNamed(graph, "f1").at("way"),
+            json::array({edgeNamed(graph, "g0").at("index")}));
+}
+
+/// A gate from one side of a feedline edge to the other lies across that
+/// edge, not along it: the terminal edge routed as a wire takes its room
+/// like any wire. Here g0 holds one wire, f1 and wire 2 both need it.
+TEST(SlotCheck, AGateAcrossATerminalEdgeCountsThatEdge) {
+  auto chip = gateChip(1);
+  chip.edges[0]["ends"] = {"f1 at its launcher, left",
+                           "f1 at its launcher, right"};
+  chip.wires.push_back({{"name", "f1"},
+                        {"source", endAt({20, 5}, 0, "Chip.port1")},
+                        {"target", endAt({20, 35}, 1, "coupler port")},
+                        {"crosses", json::array()},
+                        {"terminal", true},
+                        {"resonator", false}});
+  chip.wire("2", {22, 5}, 0, {22, 35}, 1, {});
+
+  const auto result = slotCheck(chip.text());
+
+  EXPECT_EQ(result.verdict, "UNSAT");
+  EXPECT_EQ(result.over, std::vector<std::string>{"g0"});
+  EXPECT_EQ(edgeNamed(json::parse(result.graph), "g0").at("load"), 2);
+}
+
+/// A way out of a slot keeps its clearance from the stub of a port at a
+/// qubit or a coupler, but not from the stub of a launcher: a wire that
+/// crosses the edge may leave its slot along a launcher's straight run. A
+/// stub of wire 2 lies a few cells under f1 from x 60 to 110; at a
+/// launcher it leaves the slots there, at a qubit it pushes them past it.
+TEST(SlotCheck, AWayOutMayRunBesideALauncherStub) {
+  const auto lowestSlot = [](const std::string& label) {
+    Drawing chip(260, 240, 19.0);
+    chip.fill(0, 180, 259, 239, CHAMBER + 1);
+    chip.fill(0, 161, 259, 179, ARTWORK);
+    chip.fill(60, 161, 170, 179, FEEDLINE);
+    chip.fill(60, 195, 110, 195, STUB);
+    json points = json::array();
+    for (int x = 60; x <= 170; ++x) {
+      points.push_back({x, 170});
+    }
+    chip.strokes.push_back(
+        {{"name", "f1"}, {"kind", "feedline"}, {"points", std::move(points)}});
+    chip.strokes.push_back({{"name", "2 at its source, left"},
+                            {"kind", "stub"},
+                            {"points", {{110, 195}, {60, 195}}}});
+    chip.wires.push_back({{"name", "2"},
+                          {"source", endAt({110, 195}, 1, label)},
+                          {"target", endAt({200, 60}, 0, "coupler port")},
+                          {"crosses", {"f1"}},
+                          {"terminal", false},
+                          {"resonator", false}});
+    const auto graph = json::parse(slotCheck(chip.text()).graph);
+    double lowest = 1e9;
+    for (const auto& slot :
+         graph.at("crossSlots").at("edges").at(0).at("slots")) {
+      lowest = std::min(lowest, slot.at("at").at(0).get<double>());
+    }
+    return lowest;
+  };
+
+  EXPECT_LT(lowestSlot("Chip.port1"), 110.0);
+  EXPECT_GT(lowestSlot("Qb1.port1"), 110.0);
+}
+
 TEST(SlotCheck, WireWithoutPrescriptionCannotCross) {
   auto chip = feedlineChip();
   chip.wire("1", {200, 60}, 0, {200, 220}, 1, {});
@@ -489,6 +707,24 @@ TEST(SlotCheck, CountsAGateAcrossTheHeadingTheWiresCrossItOn) {
   EXPECT_EQ(result.verdict, "UNSAT");
   EXPECT_EQ(result.over, std::vector<std::string>{"g0"});
   EXPECT_EQ(edgeNamed(json::parse(result.graph), "g0").at("capacity"), 1);
+}
+
+/// A standing wire, as a terminal edge of another chain in a local check, is
+/// not routed: it takes no room of a gate, is not lost and is not shown.
+TEST(SlotCheck, AStandingWireTakesNoRoom) {
+  auto chip = gateChip(1);
+  chip.wire("1", {20, 5}, 0, {20, 35}, 1, {});
+  chip.wire("2", {22, 5}, 0, {22, 35}, 1, {});
+  chip.wires[1]["standing"] = true;
+
+  const auto result = slotCheck(chip.text());
+  const auto graph = json::parse(result.graph);
+
+  EXPECT_EQ(result.verdict, "SAT");
+  EXPECT_TRUE(result.lost.empty());
+  EXPECT_EQ(edgeNamed(graph, "g0").at("load"), 1);
+  ASSERT_EQ(graph.at("wires").size(), 1U);
+  EXPECT_EQ(graph.at("wires")[0].at("name"), "1");
 }
 
 TEST(SlotCheck, GateWithRoomForBothIsSat) {

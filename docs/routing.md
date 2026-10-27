@@ -193,6 +193,22 @@ two ends. When the second edge of an end pair finds no way, the pair is laid the
 other way round: this edge first, then its predecessor again against it. Each
 chain is searched without the edges of the other chains.
 
+With `chain_search = "bidirectional"` a second search runs from the last
+waypoint of the chain toward the first. A node of it is a suffix: each step lays
+the edge before the suffix against the ways the suffix has laid, and the step
+check judges the suffix as it stands. Its heuristic is the cheapest run of
+bounds from the first waypoint. The two searches take one priced step each in
+turn. When a prefix and a suffix stand on the same option of one waypoint, the
+run they make is laid again from the front: the suffix's edges are routed
+against the prefix as the search from the front routes them, and become prefixes
+of it. Only the search from the front decides the answer, so the answer is the
+one `astar` proves; a run found through a suffix only lowers the price that
+later prefixes have to beat. No end pair is laid the other way round from the
+back, and the search from the back reads the remembered edges but adds none, so
+that no way laid against a suffix is taken by a prefix. The line
+`bidirectional search` of every go gives the steps priced from the front and
+from the back, the meetings laid again and how many joined the chain.
+
 The corridor of an edge closes the artwork, everything outside a box around the
 edge's two ports, every coupler pad, every lead inflated by the clearance, every
 resonator past its lead as an uncrossable line, the straight run of every
@@ -210,7 +226,31 @@ step whose edge loses a wire is refused, and the search takes the next option.
 After `chain_rule_refusals` refused steps without a complete run, the chain is
 searched again without the rule, because a chain left on its first options is
 worse than one that loses a wire. The check judges only the wires of the chain's
-own feedline; every terminal edge stays in the graph.
+own feedline and the free wires beside them: the ring wires of no feedline
+between this feedline and the next one on either side, and its terminal edges.
+The terminal edges the step has drawn are wires, with their port runs at the
+launcher and at the coupler, as in the local checks of the global SAT search: a
+step whose terminal edge finds no way, or whose terminal edge and free wires
+crowd a gap past its room, loses a wire.
+
+Under the rule the search keeps blacklists of pairs of options, and drops a
+later step that stands a pair on one unrouted, without a step check and without
+counting toward `chain_rule_refusals`:
+
+- With `chain_end_blacklist`, one per end of the chain at a launcher, for its
+  two couplers. A refused step whose every closed wire belongs to that end puts
+  the pair there on the list. A wire belongs to an end when it must cross one of
+  the end's two edges, is one of them, or is the resonator of a coupler beside
+  them; a free wire, one that crosses no edge of the chain, belongs to the end
+  whose edge the step lays. The pair shuts the wires there whatever the chain
+  does in between.
+- With `chain_slot_blacklist`, one per edge between two couplers. A refused step
+  whose edge gets fewer crossing slots than plain wires must cross it puts its
+  pair of options on the edge's list: the way of such an edge is remembered by
+  its pair of options, so the next prefix lays it with the same slots.
+
+The step-check line of the chain counts the pairs blacklisted and the steps
+dropped on them.
 
 ### The commit
 
@@ -252,8 +292,9 @@ gaps the chip leaves. It builds a graph of the free space.
   counts `capacity_margin` times. A gate at a wire's own port run takes that
   wire half a clearance more; a gate narrower than `resonator_passage`
   clearances at a resonator's own run takes no resonator. A gate at a terminal
-  edge takes every wire, and every wire may cross a terminal edge, because the
-  feedline routing lays the terminal edges again.
+  edge takes what its width takes, as every other gate does. Every wire may
+  cross a terminal edge, because the feedline routing lays the terminal edges
+  again.
 
 Every outer wire whose two ends lie in chambers is a demand. A plain wire must
 cross exactly the edges it bridges, each once, and no other. A resonator crosses
@@ -469,6 +510,7 @@ The routing passes:
 | `sweep_length_band`             | `1.0`     | The band of lengths the feedline sweep accepts, as a multiple of `resonator_length_tolerance`                        |
 | `meander_leg_spacing_cells`     | `25`      | What the two legs of a meander loop keep between them, in cells                                                      |
 | `meander_start_margin_cells`    | `-1`      | How many straight cells at the start of a resonator the meander leaves alone; negative takes the lead's straight run |
+| `meander_relaxation`            | `true`    | Whether a resonator with no room for its meander lets its neighbours go, as a wire with no way does                  |
 
 The couplers and the chain search:
 
@@ -491,7 +533,7 @@ The couplers and the chain search:
 | `chain_length_weight`        | `0`     | The price of one cell of an edge's length in the chain search; `0` prices length not at all                                                            |
 | `repair_trials`              | `0`     | How many legality tests the targeted repair may run per chip; `0` turns the repair off                                                                 |
 | `research_ring_members`      | `2`     | How many ring members beside each window wire the repair draws again                                                                                   |
-| `research_rounds`            | `2`     | The rounds of the repair's local pass                                                                                                                  |
+| `research_rounds`            | `4`     | The rounds of the repair's local pass                                                                                                                  |
 
 The capacity check:
 
@@ -499,6 +541,8 @@ The capacity check:
 | ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `capacity_check`             | `true`   | Whether the insertion runs the step checks, the whole-chip check and the global SAT search; off, the chains are settled by cost alone |
 | `chain_rule_refusals`        | `1500`   | How many steps the capacity rule may refuse before a run of options joins a chain; then the chain is searched again without the rule  |
+| `chain_end_blacklist`        | `true`   | Whether the search under the capacity rule blacklists the pairs of options at an end of a chain that close the wires there            |
+| `chain_slot_blacklist`       | `true`   | Whether it blacklists the pairs of options whose edge gets fewer crossing slots than wires must cross it                              |
 | `bottleneck_wires`           | `10`     | The widest gap, in wires, that is still a bottleneck                                                                                  |
 | `bottleneck_rise`            | `2.0`    | The least rise of a gap profile on both sides of a minimum, in cells                                                                  |
 | `crossing_reach_cells`       | `10`     | The band beside a feedline edge where a wire may cross only at a right angle, in cells                                                |
@@ -541,13 +585,18 @@ a coupler to another option. The core writes no file.
 
 Every key is off by default. A run records only the kinds the pages it writes
 need: `grid` and `search` for a dashboard, `coupler-options` and
-`capacity-graph` for the insertion page, `step-check`, `global-sat` and
-`chain-state` for the SAT pages, and `phase`. The records are plain JSON, one
-per line, so a script can read them without the pages.
+`capacity-graph` for the insertion page, `step-check`, `step-skip`, `global-sat`
+and `chain-state` for the SAT pages, and `phase`. The records are plain JSON,
+one per line, so a script can read them without the pages.
 
 A `step-check` record gives the option of every waypoint of the chain in
 `options` and the coupler of every waypoint in `couplers` (null for a fixed
-waypoint). The `states` event of `global-sat` gives the option vectors of the
+waypoint). Step `S` lays the edge from waypoint `S` to waypoint `S + 1` and adds
+the option at waypoint `S + 1`; the options after it are 0. A `step-skip` record
+has the same `chain`, `step`, `edge`, `options` and `couplers` and names in
+`why` why the chain search dropped the step without a step check: the edge has
+no way, it has no way within the step budget, or it costs more than the best run
+so far. The `states` event of `global-sat` gives the option vectors of the
 states a chain keeps in `options`, in the order it keeps them; the search
 records it when it first collects the chain, so every chain a combination moves
 has one. The `states` index of a chain in a `combination` event points into that
@@ -575,8 +624,13 @@ collects is the committed state, judged by the same two checks:
 
 The `standing` check keeps every other chain as the commit left it and routes
 the chain's own wires, the free wires beside them and its terminal edges. The
-`alone` check routes the chain without the other chains. It runs only when the
-`standing` check finds the state UNSAT.
+terminal edges of the other chains stand: they are walls, inflated by the wire
+clearance as every feedline edge is, and are not routed; as wires they only name
+the mouths between the chains, and the graph of the check leaves them out. The
+`alone` check routes the chain without the other chains: its own wires, the free
+wires beside them and its terminal edges, as wires with their port runs at the
+launcher and at the coupler. It runs only when the `standing` check finds the
+state UNSAT.
 
 The feedline dashboard (`local-sat.html`) has a card per feedline, with its
 `f<n>` edges. Its badge comes from the local checks of the coupler insertion,
@@ -609,15 +663,16 @@ and keeps the state (`pyscpd.CouplerSession`). `debug`, when given, is called
 with the kind and the JSON text of every record the `[debug]` section asks for,
 from that run and from every later call. Every method answers JSON:
 
-| Method                             | Answer                                                                                                                                      |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `couplers()`                       | Every coupler as it stands and every option of each                                                                                         |
-| `set_option(coupler, option)`      | Puts a coupler on another option and draws its two feedline edges again                                                                     |
-| `chains()`                         | Per chain: `couplers` (the coupler of every waypoint, null when fixed), `options` (the option of every waypoint) and `edges` (`f<n>` names) |
-| `local_check(chain, options)`      | The two checks of a `chain-state` record on `options`, then the couplers go back                                                            |
-| `step_check(chain, step, options)` | The check of a `step-check` record at edge `step` on `options`, then the couplers go back                                                   |
-| `graph()`                          | The capacity graph of the chip as it stands                                                                                                 |
-| `insertion_check()`                | The whole-chip check of the coupler insertion                                                                                               |
+| Method                                    | Answer                                                                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `couplers()`                              | Every coupler as it stands and every option of each                                                                                         |
+| `set_option(coupler, option)`             | Puts a coupler on another option and draws its two feedline edges again                                                                     |
+| `add_option(coupler, x, y, offset, port)` | Builds an option of a coupler by hand, centred on the cell (`x`, `y`); see below                                                            |
+| `chains()`                                | Per chain: `couplers` (the coupler of every waypoint, null when fixed), `options` (the option of every waypoint) and `edges` (`f<n>` names) |
+| `local_check(chain, options)`             | The two checks of a `chain-state` record on `options`, then the couplers go back                                                            |
+| `step_check(chain, step, options)`        | The check of a `step-check` record at edge `step` on `options`, then the couplers go back                                                   |
+| `graph()`                                 | The capacity graph of the chip as it stands                                                                                                 |
+| `insertion_check()`                       | The whole-chip check of the coupler insertion                                                                                               |
 
 `local_check` puts the chain's couplers on `options`, one per waypoint, and
 draws their edges as `set_option` does. It then runs the `standing` and the
@@ -640,6 +695,60 @@ waypoints after `step + 1` on 0, as the record holds them), `verdict`, `lost`,
 `closed`, `undrawn` and `graph`. A chain, a step, an option count or an option
 that does not exist raises `ValueError`.
 
+`local_reroute` rips up the wires of one feedline and routes them again, its
+couplers on `options`, as the local benchmark reroutes a feedline: the
+feedline's wires and the free wires beside it, under the feedline constraints,
+every other wire ignored. The chip is then put back as it was. It answers
+`chain`, `options`, `window` (the wires rerouted), `clean`, `failing` (the wires
+left unrouted, open or crossing), `blocked` (who each open wire meets),
+`rounds`, `seconds` and `wires`: every rerouted wire and every feedline edge of
+the chain with its verdict and its way.
+
+`add_option` builds an option by hand. The pad's centre takes the cell (`x`,
+`y`), and the resonator is cut at the cell of its way before the insertion that
+is nearest to that cell, as a centred option of `coupler_option_extension` is
+cut. `offset` names the offset (0 to 7), or -1 for the first that fits: the
+offsets of `coupler_offsets` first, then the others. `port` names the port (1 or
+2), or 0 for the first that fits. Every test of the option generator applies,
+except the shortfall test. An option that fits is appended to the coupler's
+options, with `custom` true, and is always open. The coupler stays on its option
+until `set_option` moves it. The answer gives `coupler`, `built`, `cell` (the
+cut, as an index into the way), `option`, `offset` and `secondPort` of the
+option built, and `tried`: every candidate refused, with its reason. A coupler,
+a cell, an offset or a port that does not exist raises `ValueError`.
+
+`couplers()` answers `{"couplers": [...]}`, the data of the `coupler-options`
+record. The record holds the couplers before the chain search; `couplers()`
+holds them as they stand. Per coupler:
+
+| Field            | Meaning                                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `index`          | The coupler, by index                                                                                            |
+| `resonator`      | The resonator it belongs to                                                                                      |
+| `chain`, `at`    | Its chain and its waypoint in the chain                                                                          |
+| `chosen`         | The option it stands on                                                                                          |
+| `jogs`           | Whether the chain search has opened its jog options                                                              |
+| `edgeIn`         | The feedline edge into it                                                                                        |
+| `edgeOut`        | The feedline edge out of it                                                                                      |
+| `way`            | The resonator's way before the insertion: its ends and the cells where it turns                                  |
+| `guardStoodDown` | Whether every option the jogs leave lies on a feedline of another chain, so that the search offers them all      |
+| `options`        | Every option the generator made, below                                                                           |
+| `refused`        | Every candidate of the generator that gave no option: `offset`, `secondPort`, `jog`, `reversed`, `places`, `why` |
+
+A refused candidate is one offset, port and jog for which no place of the
+resonator's way fits; `places` counts the places tried and `why` gives the
+reason the last one was refused. An offset that `coupler_offsets` leaves out is
+a refused candidate too, with `secondPort`, `jog` and `reversed` null and
+`places` 0. Per option, `open` says whether the chain search offers it, and
+`closed` says why it does not: null, or `{"kind", "why"}` with the kind
+`jog-locked` (the coupler has not opened its jogs) or `on-feedline` (the body
+lies on a feedline edge of another chain). `onFeedline` names those edges; when
+the guard stands down an option can lie on a feedline and still be open. The
+other fields of an option are `index`, `orientation`, `offset`, `secondPort`,
+`jog`, `reversed` (the direction of the jog), `centred`, `extension`, `custom`
+(placed by hand with `add_option`), `moved`, `centre`, `anchor`, `in`, `out`,
+`pad`, `lead` and `resonator` (the resonator's length left, in layout units).
+
 ### Coupler Server
 
 `mqt-scpd debug <run> --serve [PORT]` builds a coupler session with `local_sat`
@@ -656,9 +765,11 @@ and `global_sat` on, keeps the records of its run in memory and answers on
 | `GET /mover?chain=C&options=a,b,c`                       | Puts feedline `C` on the options, keeps them and opens `/` on its first edge with the coupler tab          |
 | `POST /option`                                           | `{"coupler", "option"}`: puts one coupler on another option                                                |
 | `POST /options`                                          | `{"moves": [{"coupler", "option"}]}`: puts several couplers on other options                               |
+| `POST /place`                                            | `{"coupler", "x", "y", "offset"?, "port"?}`: builds an option by hand and puts the coupler on it           |
 | `POST /undo`                                             | Takes the last move back                                                                                   |
 | `POST /reset`                                            | Puts every feedline back on its committed options; `POST /undo` takes the reset back                       |
 | `POST /check-all`                                        | Checks every feedline locally                                                                              |
+| `POST /reroute?chain=C`                                  | Rips up and reroutes the wires of feedline `C` alone on the options it stands on (`local_reroute`)         |
 | `GET /state.json`                                        | The options of every chain, the whole-chip verdict and the local checks of the chains checked since a move |
 | `GET /graph.json`, `GET /couplers.json`                  | The capacity graph and the couplers as data                                                                |
 | `GET /bench/local`, `GET /bench/global`                  | The pages of the SAT benchmarks, from the tables in `<run>/sat-bench`, with live links                     |
@@ -666,6 +777,42 @@ and `global_sat` on, keeps the records of its run in memory and answers on
 | `GET /graph?bench=global&case=K`                         | The whole-chip check on the state of global case `K`; the couplers go back                                 |
 | `GET /routed?bench=local&case=ID&chain=C`                | The capacity graph of the state of run `ID`, its wires drawn along the ways the rip-up laid                |
 | `GET /routed?bench=global&case=K`                        | The capacity graph of the state of case `K`, its wires drawn along the ways the feedline routing laid      |
+| `GET /status.json`                                       | How far the session is; see below                                                                          |
+
+The server answers from the first second. It builds the session on a thread of
+its own, and the stage releases the GIL while it runs. Until the session stands,
+`GET /status.json` says how far the stage is:
+
+```json
+{
+  "building": true,
+  "failed": false,
+  "error": null,
+  "phase": "outer recovery",
+  "task": "coupler insertion",
+  "detail": "chain 2",
+  "done": 1,
+  "total": 4,
+  "seconds": 5.4,
+  "records": { "step-check": 21, "step-skip": 1 },
+  "lines": ["outer recovery: drawn 58/58 · unrouted 0 · open 0"]
+}
+```
+
+`phase` is the label of the last step the stage reported, `task` to `total` its
+last progress update, `records` the number of records so far by kind, and
+`lines` the last 200 lines the stage said. `seconds` stops when the session
+stands. Meanwhile `GET /sat` and `GET /global` show the records so far under a
+status bar with a progress bar, with the graph and mover links off. Every 1.5 s
+the page reads `status.json`. When the number of records grows, the page fetches
+itself again and swaps the dashboard in place; the filter, the search text, the
+open lists and the scroll position stay. When the session stands, the page loads
+once more with its live links. The bench pages answer too, since they read their
+tables alone. Every other route answers `503`: an HTML page that shows the
+progress and loads itself again when the session stands, or `{"error"}` for data
+and moves. When the session cannot be built, `failed` is true, `error` says why,
+and the pages show the error and the last lines. Ctrl-C stops the stage at its
+next line or progress update.
 
 The banner of a `/graph` page names the check, its verdict and its lost wires,
 and compares the verdict with the record of the search. It marks a mismatch in
@@ -699,6 +846,42 @@ graph again. A move answers `action`, `edges`, `lines` and `verdicts`:
 verdicts and has buttons to undo, to reset and to check every feedline. A move
 that fails answers `400` with `{"error"}` and moves nothing.
 
+`POST /place` builds an option by hand with `add_option` and puts the coupler on
+it as `POST /option` does. The server then checks the feedline and the chip
+again. The answer is that of a move, with `placed` added: what `add_option`
+answered. When no option fits, nothing moves and the answer gives `placed` with
+`built` false. The coupler tab draws the resonator's way of the coupler picked
+as a dotted line. The button "Place an option" turns placing on: each click on
+the chip then places an option there, with the offset and the port of the two
+list boxes ("first that fits" by default). Escape turns placing off. The log
+gives the reason of every candidate refused. `POST /undo` puts the coupler back,
+and the option stays among the coupler's options.
+
+On the page of one feedline (`/feedline?chain=C`) the coupler tab also has the
+button "Rip up and reroute feedline C". It asks `POST /reroute?chain=C`, which
+reroutes the feedline on the options it stands on, a move made by hand included,
+and puts the chip back. The log says whether the reroute came out clean, which
+wires failed and who each open wire meets, and gives every round of the pass.
+The rerouted ways are drawn over the chip until the page loads again: a failing
+wire in the colour of an edge over its room, the feedline's edges dashed. The
+box "rerouted ways" hides them.
+
+The coupler tab lists every option of the coupler picked: the option it stands
+on, the open options and the closed ones with the reason, and then the refused
+candidates with the places tried and the reason. A list box filters the list by
+these kinds and counts each; `#coupler=8&kind=refused` in the address picks a
+coupler and a kind. The pointer on an option row marks its pad on the chip.
+Every option can be moved to, a closed one too. The column "Chain search" joins
+the `step-check` and `step-skip` records of the run per option. A record counts
+for the options at both ends of its edge, and the option at the far end is the
+one the step tried. The column gives how often the search tried the option, the
+SAT, UNSAT and refused checks with the lost and closed wires, and the dropped
+steps with their reasons. An option with only SAT checks that does not stand is
+"not chosen: SAT but more expensive". An open option with no record is "never
+reached by the search". In the served page, links open the graph of one SAT, one
+UNSAT and one refused check (`/graph?step=S&chain=C&options=...`). The insertion
+page of a run's records shows the same list without the links and the moves.
+
 ## SAT Benchmarks
 
 Two benchmarks measure how well the capacity check predicts the routing. The
@@ -724,13 +907,15 @@ second class is the check too lax; a case in the third is the check too strict.
 large chips, so the ordinary test suite leaves them out.
 
 A case of the local benchmark is one feedline of one run. The slot check judges
-it by its **window**: the feedline's wires, the free wires beside them and every
-terminal edge, routed alone. The `/graph?bench=local` page runs that check again
-on the session: it puts the couplers on the run's options, takes the capacity
-graph of the chip, keeps the window's wires and the terminal edges and checks it
-by the crossing slots (`pyscpd.slot_check`). A window wire is lost when it has
-no way or passes an edge over its capacity. The benchmark judged the chip after
-the feedline routing, with the run's edges as the segment search drew them; the
+it by its **window**: the feedline's wires and the free wires beside them,
+routed alone. The terminal edges of the other feedlines stand in the graph to
+name the mouths between the chains and are not routed. The `/graph?bench=local`
+page runs that check again on the session: it puts the couplers on the run's
+options, takes the capacity graph of the chip, keeps the window's wires and the
+terminal edges, marks those of the other feedlines as standing and checks it by
+the crossing slots (`pyscpd.slot_check`). A window wire is lost when it has no
+way or passes an edge over its capacity. The benchmark judged the chip after the
+feedline routing, with the run's edges as the segment search drew them; the
 session judges the chip after the insertion, with the edges drawn again by
 `set_option`. The banner says so and marks a verdict that differs from the
 table.

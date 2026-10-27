@@ -683,4 +683,101 @@ TEST(ChainSearch, IsDeterministicUnderTies) {
   EXPECT_EQ(first.chosen, (std::vector<uint32_t>{0, 0, 0, 0, 0}));
 }
 
+/// The search from the back of a chain prices a step from the table alone,
+/// as a suffix laid against its own ways knows nothing of the prefix.
+ChainProblem bothWays(const Chain& chain, uint32_t* back = nullptr) {
+  auto problem = chain.problem();
+  problem.stepBack = [&chain, back](const std::span<const uint32_t> suffix,
+                                    const uint32_t from) {
+    if (back != nullptr) {
+      ++*back;
+    }
+    const auto layer = chain.width.size() - suffix.size() - 1;
+    return chain.price[layer][from][suffix.front()];
+  };
+  return problem;
+}
+
+TEST(ChainSearch, BothWaysFindTheOptimumTheFrontAloneFinds) {
+  // Random chains, some with a pair that blocks the prefix and with bounds
+  // too low: the search from the back only points the way, so the answer
+  // is the one the search from the front proves.
+  std::mt19937 random(7);
+  std::uniform_int_distribution<uint32_t> price(1, 40);
+  for (int round = 0; round < 40; ++round) {
+    const std::size_t layers = 3 + (round % 4);
+    const uint32_t width = 2 + (round % 3);
+    auto chain = chainOf(layers, width, [&](std::size_t, uint32_t, uint32_t) {
+      return uint64_t{price(random)};
+    });
+    if (round % 2 == 1) {
+      chain.conflict = [](const std::span<const uint32_t> prefix,
+                          const uint32_t to) {
+        const auto held = std::ranges::find(prefix, 1U) != prefix.end();
+        return (held && to == 0) ? TRELLIS_UNREACHABLE : uint64_t{3};
+      };
+    }
+    if (round % 3 == 0) {
+      blind(chain);
+    }
+    const auto front = solveChainAStar(chain.problem());
+    uint32_t back = 0;
+    const auto both = solveChainBidirectional(bothWays(chain, &back));
+    ASSERT_EQ(both.solved, front.solved) << "round " << round;
+    EXPECT_EQ(both.cost, front.cost) << "round " << round;
+    EXPECT_EQ(both.cost, chain.exhaustive()) << "round " << round;
+    if (both.solved) {
+      EXPECT_EQ(chain.priceOf(both.chosen), both.cost) << "round " << round;
+    }
+    EXPECT_EQ(both.routedBack, back);
+    EXPECT_GT(back, 0U) << "round " << round;
+  }
+}
+
+TEST(ChainSearch, ARunFoundFromTheBackIsLaidAgainFromTheFront) {
+  // A bound of zero leaves the search from the front to wander; the search
+  // from the back reaches the start of the chain and its run is laid again
+  // from the front, which joins the chain.
+  auto chain =
+      chainOf(6, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>(((from * 13) ^ (to * 5)) + 1);
+      });
+  blind(chain);
+  const auto front = solveChainAStar(chain.problem());
+  const auto both = solveChainBidirectional(bothWays(chain));
+  ASSERT_TRUE(both.solved);
+  EXPECT_EQ(both.cost, front.cost);
+  EXPECT_GT(both.meetings, 0U);
+  EXPECT_GT(both.meetingsJoined, 0U);
+}
+
+TEST(ChainSearch, WithoutAStepFromTheBackBothWaysIsTheFrontAlone) {
+  auto chain =
+      chainOf(5, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>(((from * 13) ^ (to * 5)) + 1);
+      });
+  const auto front = solveChainAStar(chain.problem());
+  const auto both = solveChainBidirectional(chain.problem());
+  EXPECT_EQ(both.chosen, front.chosen);
+  EXPECT_EQ(both.routed, front.routed);
+  EXPECT_EQ(both.routedBack, 0U);
+}
+
+TEST(ChainSearch, AStepFromTheBackCanEndTheSearch) {
+  auto chain =
+      chainOf(5, 4, [](std::size_t, const uint32_t from, const uint32_t to) {
+        return static_cast<uint64_t>(((from * 13) ^ (to * 5)) + 1);
+      });
+  blind(chain);
+  auto problem = bothWays(chain);
+  problem.stepBack = [&problem](std::span<const uint32_t>, uint32_t) {
+    problem.stop = true;
+    return uint64_t{1};
+  };
+  const auto stopped = solveChainBidirectional(problem);
+  EXPECT_TRUE(stopped.stopped);
+  EXPECT_EQ(stopped.routedBack, 1U);
+  EXPECT_FALSE(stopped.optimal);
+}
+
 } // namespace

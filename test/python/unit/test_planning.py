@@ -29,6 +29,7 @@ from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
 from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
+from mqt.scpd.flatbuffers.artifacts.FeedlineEdge import FeedlineEdgeT
 from mqt.scpd.flatbuffers.artifacts.FinalPhase import FinalPhaseT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.FinalVerdict import FinalVerdict
@@ -46,6 +47,7 @@ from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
 from mqt.scpd.flatbuffers.geometry.RCoord import RCoordT
 from mqt.scpd.planning import (
     BAD_VERDICTS,
+    BRIDGED_PHASES,
     LENGTH_VERDICTS,
     Feedline,
     PlanningError,
@@ -60,6 +62,7 @@ from mqt.scpd.steps import FINAL_PHASES, STEPS
 
 if TYPE_CHECKING:
     from mqt.scpd.flatbuffers.design.Chip import ChipT
+    from mqt.scpd.flatbuffers.design.Port import PortT
 
 CONFIG = Path(__file__).resolve().parents[2] / "fixtures" / "mini" / "config.toml"
 
@@ -777,3 +780,153 @@ def test_the_final_routing_marks_the_wires_the_stage_left_failing(run: RunDirect
     assert FinalVerdict.Short | FinalVerdict.Long == LENGTH_VERDICTS
     assert verdict_names(FinalVerdict.Short | FinalVerdict.Loop) == ["short", "meeting itself"]
     assert verdict_names(0) == []
+
+
+def test_every_wire_of_the_final_routing_reaches_its_ports(run: RunDirectory) -> None:
+    """The stage stops a wire before the band of each port; the picture draws the straight run into the port."""
+    chip = chip_of(run)
+    data = run.artifact("final").read_bytes()
+    assignment = run.artifact("assign").read_bytes()
+    global_routing = run.artifact("global").read_bytes()
+    chosen = read_artifact(assignment).output
+    solved = read_artifact(global_routing).output
+    assert isinstance(chosen, AssignmentT)
+    assert isinstance(solved, GlobalRoutingT)
+    ports = chip.ports or []
+    by_center = {(port.center.x, port.center.y): port for port in ports if port is not None and port.center is not None}
+    named = set()
+    targets = set()
+    for connection in [*(chosen.connections or []), *(solved.connections or [])]:
+        assert connection is not None
+        for end in (connection.source, connection.target):
+            if end is not None:
+                center = ports[end.index].center
+                assert center is not None
+                named.add((center.x, center.y))
+                if end is connection.target:
+                    targets.add((center.x, center.y))
+
+    for phase in (None, *FINAL_PHASES):
+        geometry = planning_geometry(
+            data, chip, "final", assignment=assignment, global_routing=global_routing, phase=phase
+        )
+        drawn = geometry.wires + geometry.resonators + geometry.inner_wires
+        assert drawn
+        ends = {end for wire in drawn for end in (wire[0], wire[-1])}
+        assert named <= ends, f"a wire stops short of its port in {phase or 'the end state'}"
+        # The leg into a target port runs along the direction of the port. A launcher is no target:
+        # a wire starts on the cell the launcher falls on, which can lie beside its axis.
+        for wire in drawn:
+            for end, before in ((wire[0], wire[1]), (wire[-1], wire[-2])):
+                if end not in targets:
+                    continue
+                angle = math.radians(by_center[end].orientation)
+                dx, dy = before[0] - end[0], before[1] - end[1]
+                assert abs(dx * math.sin(angle) - dy * math.cos(angle)) < 1e-6
+
+
+def test_a_wire_of_the_inner_circuit_runs_into_both_its_ports(run: RunDirectory) -> None:
+    """The global routing names the ports of an inner wire, and the picture draws the wire into both."""
+    chip = chip_of(run)
+    ports = [
+        port
+        for port in chip.ports or []
+        if port is not None and port.center is not None and math.isclose(float(port.orientation) % 90, 0.0)
+    ][:2]
+    assert len(ports) == 2
+    origin, cell = -2000.0, 10.0
+
+    def ahead(port: PortT) -> tuple[float, float]:
+        # The first cell beyond the band, 100 layout units out along the port.
+        assert port.center is not None
+        angle = math.radians(float(port.orientation))
+        return (port.center.x + round(math.cos(angle)) * 100.0, port.center.y + round(math.sin(angle)) * 100.0)
+
+    start, end = ahead(ports[0]), ahead(ports[1])
+    cells = [start, (end[0], start[1]), end]
+    path = [RCoordT(round((x - origin) / cell), round((y - origin) / cell), 6) for x, y in cells]
+    grid = GridExtentT(width=1000, height=1000, origin=PointT(origin, origin), cellWidth=cell, cellHeight=cell)
+    final = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.FinalRouting,
+            output=FinalRoutingT(
+                grid=grid,
+                wires=[],
+                inner=[FinalWireT(path=path, length=100.0)],
+                feedlines=[],
+                feedlineEdges=[],
+                phases=[],
+                couplers=[],
+                bridges=[],
+                unresolved=[],
+            ),
+        )
+    )
+    index = {id(port): number for number, port in enumerate(chip.ports or [])}
+    connection = ConnectionT(source=PortRefT(index[id(ports[0])]), target=PortRefT(index[id(ports[1])]))
+    global_routing = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.GlobalRouting,
+            output=GlobalRoutingT(lattices=[], connections=[connection], outerRing=[], resonators=[]),
+        )
+    )
+
+    (drawn,) = planning_geometry(final, chip, "final", global_routing=global_routing).inner_wires
+    assert drawn[0] == (ports[0].center.x, ports[0].center.y)
+    assert drawn[-1] == (ports[1].center.x, ports[1].center.y)
+    # Without the global routing the wire ends where the stage stopped it.
+    (short,) = planning_geometry(final, chip, "final").inner_wires
+    assert short[0] == start
+    assert short[-1] == end
+
+
+def test_the_final_routing_bridges_a_wire_over_a_feedline_edge_between_two_couplers(run: RunDirectory) -> None:
+    """A bridge stands where a wire crosses an edge between two couplers, once the wires route under the feedlines."""
+    chip = chip_of(run)
+
+    def wire(cells: list[tuple[int, int]]) -> FinalWireT:
+        return FinalWireT(path=[RCoordT(x, y, 6) for x, y in cells], length=100.0)
+
+    def phase(name: str) -> FinalPhaseT:
+        return FinalPhaseT(
+            name=name,
+            wires=[wire([(1, 5), (9, 5)])],
+            inner=[wire([(1, 2), (9, 2)])],
+            feedlines=[wire([(4, 0), (4, 9)]), wire([(7, 0), (7, 9)])],
+            couplers=[],
+        )
+
+    grid = GridExtentT(width=100, height=100, origin=PointT(0.0, 0.0), cellWidth=10.0, cellHeight=10.0)
+    end = phase("")
+    data = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.FinalRouting,
+            output=FinalRoutingT(
+                grid=grid,
+                wires=end.wires,
+                inner=end.inner,
+                feedlines=end.feedlines,
+                # The first edge runs between two couplers; the second ends at a launcher.
+                feedlineEdges=[
+                    FeedlineEdgeT(chain=0, from_=PortRefT(0), to=PortRefT(1), terminal=False),
+                    FeedlineEdgeT(chain=0, from_=PortRefT(1), to=PortRefT(2), terminal=True),
+                ],
+                phases=[phase(name) for name in FINAL_PHASES],
+                couplers=[],
+                bridges=[],
+                unresolved=[],
+            ),
+        )
+    )
+
+    assert BRIDGED_PHASES == ("feedline-constrained-routing", "feedline-constrained-refinement")
+    for name in (None, *BRIDGED_PHASES):
+        geometry = planning_geometry(data, chip, "final", phase=name)
+        assert sorted(geometry.bridges) == [((40.0, 20.0), (1.0, 0.0)), ((40.0, 50.0), (1.0, 0.0))]
+        # The deck is ten cells of the router grid long.
+        assert geometry.bridge_length == pytest.approx(100.0)
+    # Before the feedline constraints a feedline edge drawn over a wire is a conflict, not a bridge.
+    assert not planning_geometry(data, chip, "final", phase="feedline-insertion").bridges

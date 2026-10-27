@@ -15,10 +15,12 @@ import http.client
 import json
 import re
 import threading
+import time
 from http.server import HTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mqt.scpd import cli
 from mqt.scpd.cli import main
 from mqt.scpd.debug import pages, serve
 from mqt.scpd.debug.serve import Answer, CouplerServer, Recorder, Request
@@ -28,6 +30,8 @@ from mqt.scpd.run import RunDirectory
 
 if TYPE_CHECKING:
     from typing import Any
+
+    import pytest
 
 BENCHMARKS = Path(__file__).resolve().parents[3] / "benchmarks"
 
@@ -239,6 +243,16 @@ class FakeSession:
                     listed.append({"index": coupler, "chain": chain, "at": at, "chosen": self.options[chain][at]})
         return json.dumps({"couplers": listed})
 
+    @staticmethod
+    def add_option(coupler: int, x: int, y: int, offset: int = -1, port: int = 0) -> str:
+        """No option fits anywhere.
+
+        Returns:
+            What came of it, as JSON.
+        """
+        del offset, port
+        return json.dumps({"coupler": coupler, "built": False, "cell": x + y, "tried": []})
+
     def set_option(self, coupler: int, option: int) -> str:
         """Put a coupler on another option.
 
@@ -337,6 +351,34 @@ class FakeSession:
             "closed": lost,
             "undrawn": [],
             "graph": graph(f"step {chain} {step} {standing}", verdict),
+        })
+
+    @staticmethod
+    def local_reroute(chain: int, options: list[int]) -> str:
+        """The rip-up and reroute of a chain's wires on options; clean on the options it starts on.
+
+        Returns:
+            The JSON.
+
+        Raises:
+            ValueError: When the chain or an option does not exist.
+        """
+        if chain not in WAYPOINTS or len(options) != len(WAYPOINTS[chain]) or any(o not in {0, 1, 2} for o in options):
+            msg = f"chain {chain} has no options {options}"
+            raise ValueError(msg)
+        clean = options == [0, 2, 0, 0] if chain == 0 else options == [0, 0, 0]
+        return json.dumps({
+            "chain": chain,
+            "options": options,
+            "window": ["w5"],
+            "clean": clean,
+            "failing": "" if clean else "w5 open",
+            "blocked": "",
+            "rounds": [],
+            "seconds": 0.1,
+            "wires": [
+                {"name": "w5", "kind": "plain", "drawn": True, "verdict": 0 if clean else 2, "path": [[0, 0], [1, 1]]}
+            ],
         })
 
     def insertion_check(self) -> str:
@@ -632,12 +674,12 @@ def test_a_combination_graph_puts_every_coupler_back() -> None:
 
 
 def test_the_mover_keeps_the_options_and_opens_the_coupler_tab() -> None:
-    """`/mover` puts a feedline on the options, checks it, and sends the browser to its first edge."""
+    """`/mover` puts a feedline on the options, checks it, and opens its local mover, or the global one."""
     server, session = fake_server()
 
     answer = get(server, "/mover", {"chain": "0", "options": "0,1,0,0"})
     assert answer.status == 303
-    assert answer.location == "./#feedline=f0&tab=couplers"
+    assert answer.location == "feedline?chain=0#tab=couplers"
     assert session.options[0] == [0, 1, 0, 0]
     state = json.loads(get(server, "/state.json").body)
     assert state["undo"] == 1
@@ -647,6 +689,19 @@ def test_the_mover_keeps_the_options_and_opens_the_coupler_tab() -> None:
     assert [local["chain"] for local in state["local"]] == [0]
     assert state["local"][0]["standing"]["verdict"] == "UNSAT"
     assert server.last["verdicts"]["global"]["verdict"] == "UNSAT"
+    globally = get(server, "/mover", {"chain": "0", "options": "0,1,0,0", "view": "global"})
+    assert globally.location == "./#feedline=f0&tab=couplers"
+
+
+def test_the_feedline_page_draws_the_local_sat_check_of_the_feedline_alone() -> None:
+    """`/feedline` draws the graph of the feedline alone, as the chain search judges it, not the one with the others."""
+    server, _ = fake_server()
+
+    answer = get(server, "/feedline", {"chain": "0"})
+    assert answer.status == 200
+    assert "alone 0 [0, 2, 0, 0]" in answer.body
+    assert "standing 0 [0, 2, 0, 0]" not in answer.body
+    assert "local SAT check (the feedline alone) SAT" in answer.body
 
 
 def test_undo_and_reset_move_the_couplers_back() -> None:
@@ -687,6 +742,22 @@ def test_a_move_that_fails_moves_nothing() -> None:
     assert post(server, "/options", {"moves": []}).status == 400
     assert get(server, "/mover", {"chain": "0", "options": "0,1"}).status == 400
     assert session.options == started
+
+
+def test_reroute_rips_up_a_feedline_on_the_options_it_stands_on() -> None:
+    """`/reroute?chain=` reroutes a feedline on the options it stands on, a move by hand included."""
+    server, session = fake_server()
+    clean = json.loads(server.answer(Request("POST", "/reroute", {"chain": "0"}, b"")).body)
+    assert clean["options"] == [0, 2, 0, 0]
+    assert clean["clean"]
+    post(server, "/option", {"coupler": 0, "option": 1})
+    moved = json.loads(server.answer(Request("POST", "/reroute", {"chain": "0"}, b"")).body)
+    assert moved["options"] == session.options[0]
+    assert not moved["clean"]
+    assert moved["failing"] == "w5 open"
+    assert server.answer(Request("POST", "/reroute", {}, b"")).status == 400
+    assert server.answer(Request("POST", "/reroute", {"chain": "7"}, b"")).status == 400
+    assert 'id="session-reroute"' in get(server, "/feedline", {"chain": "0"}).body
 
 
 def test_check_all_checks_every_feedline_locally() -> None:
@@ -746,7 +817,7 @@ def test_the_handler_answers_redirects_and_queries_over_http() -> None:
         reply = connection.getresponse()
         reply.read()
         assert reply.status == 303
-        assert reply.getheader("Location") == "./#feedline=f3&tab=couplers"
+        assert reply.getheader("Location") == "feedline?chain=1#tab=couplers"
         connection.request("POST", "/undo", body=b"")
         reply = connection.getresponse()
         assert reply.status == 200
@@ -926,3 +997,288 @@ def test_a_step_graph_compares_with_the_first_of_several_records() -> None:
 
     answer = get(server, "/graph", {"step": "2", "chain": "0", "options": "0,1,1,0"})
     assert "matches the chain search&#x27;s record (SAT) (the first of 2 records)" in answer.body
+
+
+def building_server(by_kind: dict[str, list[dict[str, Any]]] | None = None) -> tuple[CouplerServer, Recorder]:
+    """A coupler server whose session is still being built, with the records so far.
+
+    Returns:
+        The server and the recorder the session hands its records to.
+    """
+    records = recorder(by_kind or {})
+    return CouplerServer(None, [], records), records
+
+
+def test_a_server_still_building_answers_its_status() -> None:
+    """`/status.json` says how far the stage is: its last step, its progress, the records so far and its lines."""
+    by_kind = sat_records()
+    server, _ = building_server({"step-check": by_kind["step-check"][:3]})
+    server.stage.line("outer routing: drawn 58/58")
+    server.stage.entered("outer routing")
+    server.stage.progress("coupler insertion", "chain 2", 1, 4)
+
+    answer = get(server, "/status.json")
+    assert answer.status == 200
+    status = json.loads(answer.body)
+    assert status["building"]
+    assert not status["failed"]
+    assert status["phase"] == "outer routing"
+    assert (status["task"], status["detail"], status["done"], status["total"]) == ("coupler insertion", "chain 2", 1, 4)
+    assert status["records"] == {"step-check": 3}
+    assert status["lines"] == ["outer routing: drawn 58/58"]
+    assert status["seconds"] >= 0
+
+
+def test_a_server_still_building_shows_the_records_so_far_with_the_links_off() -> None:
+    """`/sat` and `/global` answer at once: a status bar on top, the dashboard below, its graph and mover links off."""
+    by_kind = sat_records()
+    server, records = building_server({"step-check": by_kind["step-check"][:5]})
+    server.stage.progress("coupler insertion", "chain 1", 0, 2)
+
+    local = get(server, "/sat")
+    assert local.status == 200
+    assert 'id="status" data-state="building" data-records="5"' in local.body
+    assert '<progress id="status-bar" max="2" value="0">' in local.body
+    assert "coupler insertion: chain 1" in local.body
+    assert 'id="dashboard"' in local.body
+    assert 'id="chain-0"' in local.body
+    assert 'id="chain-1"' not in local.body
+    assert "graph?step=" not in local.body
+    assert f'title="{pages.BUILDING_NOTE}"' in local.body
+    # The navigation links the session's pages, not the files of a run.
+    assert '<a href="global">global SAT</a>' in local.body
+    assert "local-sat.html" not in local.body
+
+    # A record that comes later shows on the next request.
+    records("step-check", json.dumps(by_kind["step-check"][5]))
+    assert json.loads(get(server, "/status.json").body)["records"] == {"step-check": 6}
+    assert 'id="chain-1"' in get(server, "/sat").body
+
+    empty, _ = building_server()
+    glob = get(empty, "/global")
+    assert glob.status == 200
+    assert 'data-state="building" data-records="0"' in glob.body
+    assert "no records yet" in glob.body
+
+
+def test_a_page_while_building_calls_an_unfinished_chain_search_in_progress() -> None:
+    """While building, a feedline with no SAT step at its last edge is in progress, not UNSAT; so is the search."""
+    records = records_of({"step-check": [step(0, 0, [0, 1, 0, 0], "SAT")]})
+    status = {"building": True, "records": {"step-check": 1}}
+
+    building = pages.local_sat_page(records, building=status)
+    card = re.search(r'<section class="card item" id="chain-0".*?</section>', building, re.DOTALL)
+    assert card is not None
+    assert 'data-verdict="none"' in card.group(0)
+    assert "in progress" in card.group(0)
+    assert "the global SAT search runs after the coupler insertion" in building
+
+    standing = pages.local_sat_page(records)
+    assert 'id="chain-0" data-verdict="UNSAT"' in standing
+    assert "no global SAT search was recorded" in standing
+
+
+def test_a_server_still_building_answers_503_where_a_page_needs_the_session() -> None:
+    """The capacity graph and the graph pages say the session is still being built; data and moves answer 503."""
+    server, _ = building_server(sat_records())
+
+    page = get(server, "/")
+    assert page.status == 503
+    assert page.kind.startswith("text/html")
+    assert "the session is still being built" in page.body
+    assert 'data-state="building"' in page.body
+    assert get(server, "/graph", {"step": "0", "chain": "0", "options": "0,1,0,0"}).status == 503
+    assert get(server, "/mover", {"chain": "0", "options": "0,1,0,0"}).status == 503
+    for path in ("/state.json", "/couplers.json", "/graph.json"):
+        answer = get(server, path)
+        assert answer.status == 503
+        assert json.loads(answer.body) == {"error": "the session is still being built"}
+    assert post(server, "/undo").status == 503
+    assert post(server, "/option", {"coupler": 0, "option": 1}).status == 503
+
+
+def test_attach_makes_a_building_server_live() -> None:
+    """Once the session stands, the dashboards carry live links and no status bar, and every route answers."""
+    server, _ = building_server(sat_records())
+    lines: list[str] = server.lines
+    server.attach(FakeSession(lines))
+
+    status = json.loads(get(server, "/status.json").body)
+    assert not status["building"]
+    assert not status["failed"]
+    local = get(server, "/sat")
+    assert 'id="status"' not in local.body
+    assert 'href="mover?chain=0&amp;options=0,1,0,0"' in local.body
+    assert get(server, "/state.json").status == 200
+    assert get(server, "/").status == 200
+
+
+def test_a_server_whose_session_failed_shows_why() -> None:
+    """When the session cannot be built, the dashboards and the session's pages show the error and the last lines."""
+    server, _ = building_server(sat_records())
+    server.stage.line("coupler insertion: chain 1")
+    server.fail("the configuration carries no design rules")
+
+    status = json.loads(get(server, "/status.json").body)
+    assert not status["building"]
+    assert status["failed"]
+    assert status["error"] == "the configuration carries no design rules"
+    local = get(server, "/sat")
+    assert local.status == 200
+    assert 'data-state="failed"' in local.body
+    assert "the session could not be built" in local.body
+    assert "the configuration carries no design rules" in local.body
+    assert "coupler insertion: chain 1" in local.body
+    page = get(server, "/")
+    assert page.status == 503
+    assert "the configuration carries no design rules" in page.body
+    assert json.loads(get(server, "/state.json").body) == {
+        "error": "the session could not be built: the configuration carries no design rules"
+    }
+
+
+def test_build_attaches_the_session_or_notes_why_it_failed() -> None:
+    """`build` builds the session on a thread of its own: it attaches the session, or fails with its error."""
+    server, _ = building_server(sat_records())
+    server.build(lambda: FakeSession(server.lines)).join(10)
+    assert get(server, "/state.json").status == 200
+
+    def broken() -> FakeSession:
+        msg = "no detail routing"
+        raise ValueError(msg)
+
+    failed, _ = building_server()
+    failed.build(broken).join(10)
+    assert json.loads(get(failed, "/status.json").body)["error"] == "no detail routing"
+
+
+def test_stop_ends_a_build_at_the_next_progress_update() -> None:
+    """When the server ends, the stage's next progress update raises, and the build ends without failing."""
+    server, _ = building_server()
+    started = threading.Event()
+
+    def endless() -> FakeSession:
+        while True:
+            server.stage.progress("refinement", "round 1", 0, 1)
+            started.set()
+
+    server.build(endless)
+    assert started.wait(10)
+    assert server.stop(10)
+    status = json.loads(get(server, "/status.json").body)
+    assert status["building"]
+    assert not status["failed"]
+
+
+def test_a_real_session_lets_other_threads_run_while_it_is_built(tmp_path: Path) -> None:
+    """On the 4-qubit chip, a thread keeps running while the session is built, and the records still come.
+
+    The debug callback is a method written in C, so no Python code runs between two records: the
+    thread runs only when the stage releases the GIL.
+    """
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run), "--stop-after", "detail"]) == 0
+    directory = RunDirectory(run)
+    config = directory.load()
+    serve.want_sat_records(config)
+    stamps: list[float] = []
+    stop = threading.Event()
+
+    def tick() -> None:
+        while not stop.is_set():
+            stamps.append(time.monotonic())
+            time.sleep(0.002)
+
+    ticker = threading.Thread(target=tick, daemon=True)
+    ticker.start()
+    last: dict[str, str] = {}
+    began = time.monotonic()
+    directory.coupler_session(config, debug=last.__setitem__)
+    ended = time.monotonic()
+    stop.set()
+    ticker.join(10)
+
+    assert "step-check" in last
+    during = [stamp for stamp in stamps if began < stamp < ended]
+    # The ticker wakes every 2 ms; without the GIL released it would not run at all.
+    assert len(during) >= (ended - began) / 0.002 / 4
+
+
+def test_the_debug_command_serves_while_the_session_is_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`mqt-scpd debug --serve` answers before the session stands, and goes live once it stands."""
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(BENCHMARKS / "4q" / "config.toml"), "-o", str(run), "--stop-after", "detail"]) == 0
+    seen: dict[str, Any] = {}
+
+    def fake_serve(server: CouplerServer, port: int) -> bool:
+        del port
+        httpd = HTTPServer(("127.0.0.1", 0), server.handler())
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        connection = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=30)
+
+        def fetch(path: str) -> tuple[int, str]:
+            connection.request("GET", path)
+            reply = connection.getresponse()
+            return reply.status, reply.read().decode()
+
+        try:
+            seen["first"] = json.loads(fetch("/status.json")[1])
+            seen["sat"] = fetch("/sat")[0]
+            deadline = time.monotonic() + 120
+            status = seen["first"]
+            while status["building"] and time.monotonic() < deadline:
+                time.sleep(0.1)
+                status = json.loads(fetch("/status.json")[1])
+            seen["last"] = status
+            seen["live"] = fetch("/sat")
+        finally:
+            connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+        return server.stop()
+
+    monkeypatch.setattr(cli, "serve", fake_serve)
+    assert main(["debug", str(run), "--serve", "0"]) == 0
+
+    assert seen["sat"] == 200
+    assert not seen["last"]["building"]
+    assert not seen["last"]["failed"]
+    assert seen["last"]["records"]["step-check"] > 0
+    assert seen["last"]["lines"]
+    status, body = seen["live"]
+    assert status == 200
+    assert 'id="status"' not in body
+    assert 'href="graph?' in body
+
+
+def test_the_local_mover_shows_one_feedline_and_moves_only_its_couplers() -> None:
+    """`/feedline?chain=C` draws the feedline's local check with its couplers; its reset and check are its own."""
+    server, session = fake_server()
+
+    page = get(server, "/feedline", {"chain": "0"})
+    assert page.status == 200
+    data = embedded(page.body, "session-data")
+    assert data["scope"] == {"chain": 0}
+    assert data["chains"] == [0, 1]
+    assert {int(c["chain"]) for c in data["couplers"]} == {0}
+    assert "local mover · feedline 0" in page.body
+    assert 'href="./#tab=couplers">global mover</a>' in page.body
+    assert 'href="feedline?chain=1#tab=couplers">1</a>' in page.body
+    assert 'class="here"' in page.body
+
+    whole = get(server, "/")
+    assert embedded(whole.body, "session-data")["scope"] is None
+    assert "global mover · the whole chip" in whole.body
+    assert 'href="feedline?chain=0#tab=couplers">0</a>' in whole.body
+
+    post(server, "/options", {"moves": [{"coupler": 0, "option": 1}, {"coupler": 2, "option": 1}]})
+    reset = json.loads(server.answer(Request("POST", "/reset", {"chain": "0"}, b"")).body)
+    assert reset["action"] == "feedline 0 back on the commit"
+    assert session.options[0] == [0, 0, 0, 0]
+    assert session.options[1] != [0, 0, 0]
+    checked = json.loads(server.answer(Request("POST", "/check-all", {"chain": "1"}, b"")).body)
+    assert [local["chain"] for local in checked["verdicts"]["local"]] == [1]
+    assert checked["action"] == "feedline 1 checked locally"
+    assert get(server, "/feedline", {"chain": "7"}).status == 400
+    assert server.answer(Request("POST", "/reset", {"chain": "7"}, b"")).status == 400

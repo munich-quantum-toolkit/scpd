@@ -45,6 +45,7 @@
 #include <system_error>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -328,6 +329,8 @@ struct Wire {
   std::vector<std::string> crosses;
   bool terminal = false;
   bool resonator = false;
+  /// Whether it stands and is not routed (`SlotGraph::Wire::standing`).
+  bool standing = false;
 };
 
 /// A cell of the raster.
@@ -702,6 +705,46 @@ couplerRunsOf(const SlotGraph& graph) {
   return runs;
 }
 
+/// The lines of the stubs at the launchers: a stub stroke named after a wire
+/// end, `<wire> at its source` or `<wire> at its target`, whose wire has a
+/// launcher port (`Chip.port…`) at that end. Each as its segments.
+[[nodiscard]] std::vector<std::array<Point, 2>>
+launcherStubLines(const SlotGraph& graph) {
+  std::unordered_map<std::string, const SlotGraph::Wire*> byName;
+  for (const auto& wire : graph.wires) {
+    byName.emplace(wire.name, &wire);
+  }
+  std::vector<std::array<Point, 2>> lines;
+  for (const auto& stroke : graph.strokes) {
+    if (stroke.kind != "stub" || stroke.points.size() < 2) {
+      continue;
+    }
+    const auto owner = runName(stroke.name, true);
+    if (!owner.has_value()) {
+      continue;
+    }
+    const auto found = byName.find(*owner);
+    if (found == byName.end()) {
+      continue;
+    }
+    const auto* wire = found->second;
+    const bool atSource =
+        stroke.name.find(" at its source") != std::string::npos;
+    const bool atTarget =
+        stroke.name.find(" at its target") != std::string::npos;
+    if (!((atSource && wire->source.label.starts_with("Chip.port")) ||
+          (atTarget && wire->target.label.starts_with("Chip.port")))) {
+      continue;
+    }
+    for (std::size_t k = 0; k + 1 < stroke.points.size(); ++k) {
+      lines.push_back(
+          {Point{stroke.points[k][0], stroke.points[k][1]},
+           Point{stroke.points[k + 1][0], stroke.points[k + 1][1]}});
+    }
+  }
+  return lines;
+}
+
 /// The ways out of the ends of crossing slots. An end
 /// lies the crossing reach across the edge from the slot's point. A way
 /// counts when every cell of it is free and a clearance from the line of
@@ -800,12 +843,32 @@ public:
         tiles_(static_cast<std::size_t>(tilesX_ *
                                         ((grid.height + TILE - 1) / TILE)),
                NO_TILE) {
-    // The stubs' cells by square of a clearance, the squares one apart from
-    // the chip's edges so that the squares around every cell exist.
+    // The cells of the launchers' stubs, which a way out may run beside and
+    // over: a wire that crosses the edge may leave its slot along a
+    // launcher's straight run, as the wire of that launcher often does.
+    const auto launcherLines = launcherStubLines(graph);
+    const auto wallReach = graph.inflation + 1.5;
+    std::vector<std::size_t> kept;
+    if (grid.stubCells != nullptr) {
+      for (const auto cell : *grid.stubCells) {
+        const Point at{
+            static_cast<double>(static_cast<std::int64_t>(cell) % grid.width),
+            static_cast<double>(static_cast<std::int64_t>(cell) / grid.width)};
+        if (std::ranges::any_of(launcherLines, [&](const auto& line) {
+              return distanceToSegment(at, line[0], line[1]) <= wallReach;
+            })) {
+          launcherCells_.insert(cell);
+        } else {
+          kept.push_back(cell);
+        }
+      }
+    }
+    // The other stubs' cells by square of a clearance, the squares one apart
+    // from the chip's edges so that the squares around every cell exist.
     const auto squares = static_cast<std::size_t>(bucketsX_ * bucketsY_);
     stubsFrom_.assign(squares + 1, 0);
-    if (grid.stubCells != nullptr && bucket_ > 0) {
-      for (const auto cell : *grid.stubCells) {
+    if (bucket_ > 0) {
+      for (const auto cell : kept) {
         ++stubsFrom_[squareOf(static_cast<std::int64_t>(cell) % grid.width,
                               static_cast<std::int64_t>(cell) / grid.width) +
                      1];
@@ -815,7 +878,7 @@ public:
       }
       stubs_.resize(stubsFrom_.back());
       auto next = stubsFrom_;
-      for (const auto cell : *grid.stubCells) {
+      for (const auto cell : kept) {
         const auto x = static_cast<std::int64_t>(cell) % grid.width;
         const auto y = static_cast<std::int64_t>(cell) / grid.width;
         stubs_[next[squareOf(x, y)]++] = {x, y};
@@ -889,6 +952,70 @@ public:
       }
     }
     return both;
+  }
+
+  /// What keeps every way out of one end of a slot, in words, for the page:
+  /// the first thing each way out meets, cell by cell, and of those the one
+  /// the most ways meet. Only asked for a slot that has no way out there.
+  [[nodiscard]] std::string blockedAt(const Point& at, const Point& direction,
+                                      const std::size_t side) const {
+    const auto sign = side == 0 ? 1.0 : -1.0;
+    const auto heading =
+        headingOfStep(signOf(-direction.y * sign), signOf(direction.x * sign));
+    if (!heading.has_value()) {
+      return "no heading";
+    }
+    const auto end = endOf(at, direction, side);
+    const auto x0 = rounded(end.x);
+    const auto y0 = rounded(end.y);
+    std::map<std::string, int> met;
+    const auto what = [&](const std::int64_t x,
+                          const std::int64_t y) -> const char* {
+      if (!grid_.inside(x, y)) {
+        return "the border";
+      }
+      const auto value = grid_.at(x, y);
+      if (value != 0 && value < CHAMBER &&
+          !(value == STUB && launcherCells_.contains(static_cast<std::size_t>(
+                                 (y * grid_.width) + x)))) {
+        return "a wall";
+      }
+      if (nearStub(x, y)) {
+        return "a stub";
+      }
+      if (nearRun(x, y)) {
+        return "a coupler run";
+      }
+      return nullptr;
+    };
+    for (const auto& move : primitives().of(*heading)) {
+      if (move.exitHeading == *heading) {
+        continue;
+      }
+      const auto turn = (move.exitHeading + 8U - *heading) % 8U;
+      if (!escapeQuarterTurns() && (turn == 2U || turn == 6U)) {
+        continue;
+      }
+      const auto onward = routing::headingVector(move.exitHeading);
+      const char* first = nullptr;
+      for (const auto& offset : move.swept) {
+        if ((first = what(x0 + offset.dx, y0 + offset.dy)) != nullptr) {
+          break;
+        }
+      }
+      for (std::int64_t step = 1; first == nullptr && step <= escapeStraight();
+           ++step) {
+        first = what(x0 + move.dx + (step * onward.dx),
+                     y0 + move.dy + (step * onward.dy));
+      }
+      if (first != nullptr) {
+        ++met[first];
+      }
+    }
+    const auto most = std::ranges::max_element(
+        met, {}, [](const auto& entry) { return entry.second; });
+    return most == met.end() ? std::string("nothing")
+                             : std::string(most->first);
   }
 
   /// Whether every cell of one way lies a clearance from every cell of the
@@ -1071,10 +1198,13 @@ private:
                static_cast<std::size_t>(((y % TILE) * TILE) + (x % TILE))];
     if (known == UNKNOWN) {
       const auto value = grid_.at(x, y);
-      known =
-          (value == 0 || value >= CHAMBER) && !nearStub(x, y) && !nearRun(x, y)
-              ? FREE
-              : TAKEN;
+      const bool launcher =
+          value == STUB && launcherCells_.contains(
+                               static_cast<std::size_t>((y * grid_.width) + x));
+      known = (value == 0 || value >= CHAMBER || launcher) && !nearStub(x, y) &&
+                      !nearRun(x, y)
+                  ? FREE
+                  : TAKEN;
     }
     return known == FREE;
   }
@@ -1088,6 +1218,9 @@ private:
   double clear_;
   /// How far a way out keeps from the wall of a stub.
   double stubClear_;
+  /// The stub cells of the launchers' straight runs, which a way out may
+  /// cover and need keep no clearance from.
+  std::unordered_set<std::size_t> launcherCells_;
   double reach_;
   double near_;
   /// The stubs' cells by square of a clearance: square s holds
@@ -1925,6 +2058,25 @@ struct SlotPlacer {
     return {options.data(), options.data() + 1};
   }
 
+  /// Why a slot has no way out: per end, whether it has no way out of its
+  /// own, and what keeps them, or whether its ways out come within a
+  /// clearance of a way out another slot took.
+  [[nodiscard]] std::string noWayOut(const Slot& slot,
+                                     const EscapeChoice& options) const {
+    std::string why;
+    for (std::size_t side = 0; side < 2; ++side) {
+      const auto* name = side == 0 ? "left" : "right";
+      if (options.at(side)->empty()) {
+        why += std::format("{}no way out at its {} end: {}",
+                           why.empty() ? "" : "; ", name,
+                           escapes->blockedAt(slot.at, slot.direction, side));
+      }
+    }
+    return why.empty() ? std::string("no way out: its ways out come within a "
+                                     "clearance of another slot's")
+                       : why;
+  }
+
   /// The distance along a line to each of its points.
   [[nodiscard]] static std::vector<double>
   distancesAlong(const std::vector<Point>& line) {
@@ -1979,7 +2131,7 @@ struct SlotPlacer {
           escapes->take(slot, mine);
         } else {
           kind = Examined::Kind::Refused;
-          why = "no way out";
+          why = explain ? noWayOut(slot, options) : "no way out";
         }
       }
       if (kind == Examined::Kind::Refused) {
@@ -2049,6 +2201,14 @@ struct SlotPlacer {
     // Whether the slot at a point shares no cell with the slots placed
     // before this run or with the try's, and gets away from them; it joins
     // the try.
+    // For the page: why a place where a slot fits took none, once per place.
+    std::set<std::size_t> told;
+    const auto tell = [&](const std::size_t point, std::string why) {
+      if (explain && told.insert(point).second) {
+        result.refused.push_back(
+            {line[point], std::move(why), found[point]->slot.corners});
+      }
+    };
     const auto free = [&](const std::size_t point, Try& tried) {
       const auto& slotHere = *found[point];
       const auto meets = [&](const std::size_t other) {
@@ -2056,6 +2216,7 @@ struct SlotPlacer {
       };
       if (std::ranges::any_of(placed, meets) ||
           std::ranges::any_of(tried.at, meets)) {
+        tell(point, "another slot: the two share a cell");
         return false;
       }
       if (escapes.has_value()) {
@@ -2064,6 +2225,7 @@ struct SlotPlacer {
         auto chosen =
             escapes->choose(slot, options, {&taken, &mine, &tried.taken});
         if (!chosen.has_value()) {
+          tell(point, noWayOut(slot, options));
           return false;
         }
         Slot placedSlot = slot;
@@ -2151,6 +2313,13 @@ struct SlotPlacer {
       }
       mine.append(tried.taken);
     }
+    // A place one try refused and another took holds a slot; it is no
+    // refusal.
+    std::erase_if(result.refused, [&](const auto& refusal) {
+      return std::ranges::any_of(result.placed, [&](const Slot& slot) {
+        return slot.at.x == refusal.at.x && slot.at.y == refusal.at.y;
+      });
+    });
     if (result.placed.size() < wanted) {
       return std::nullopt;
     }
@@ -2985,7 +3154,8 @@ slotStubBottlenecks(const SlotGraph& graph, const Grid& grid, RasterBits& bits,
         }
         std::vector<std::string> enders;
         for (const auto& wire : wires) {
-          if (inRoom(wire.source.cell) != inRoom(wire.target.cell)) {
+          if (!wire.standing &&
+              inRoom(wire.source.cell) != inRoom(wire.target.cell)) {
             enders.push_back(wire.name);
           }
         }
@@ -3178,6 +3348,11 @@ private:
   std::unordered_map<std::string, std::string> mouthOfWire_;
   /// Per terminal edge: the one mouth it may pass.
   std::unordered_map<std::string, std::string> barred_;
+  /// Per edge: the feedline edge both its ends lie on, on one side of it,
+  /// when they do (`findOwners`). Such a gate runs along that edge's own
+  /// run, which the terminal edge routed as a wire passes; a gate from one
+  /// side of the edge to the other lies across it instead.
+  std::vector<std::optional<std::string>> alongRun_;
   std::unordered_map<std::string, std::pair<Point, Point>> ends_;
 
   void readStrokesAndWires();
@@ -3220,7 +3395,8 @@ void Checker::readStrokesAndWires() {
              .target = endOf(wire.target),
              .crosses = wire.crosses,
              .terminal = wire.terminal,
-             .resonator = wire.resonator};
+             .resonator = wire.resonator,
+             .standing = wire.standing};
     ends_[one.name] = {one.source.cell, one.target.cell};
     wires_.push_back(std::move(one));
   }
@@ -3491,15 +3667,30 @@ void Checker::findOwners() {
   };
   for (const auto& edge : edges_) {
     std::set<std::string> found;
+    std::set<std::string> alongRuns;
+    std::set<std::string> alongSides;
+    bool allRuns = !edge.stretch && !edge.ends.empty();
     if (!edge.stretch) {
       for (const auto& end : edge.ends) {
-        if (auto owner = runName(end, true);
-            owner.has_value() && leavesStraight(*owner, edge)) {
+        auto owner = runName(end, true);
+        const auto comma = end.rfind(", ");
+        if (owner.has_value() && owner->starts_with("f") &&
+            comma != std::string::npos) {
+          alongRuns.insert(*owner);
+          alongSides.insert(end.substr(comma + 2));
+        } else {
+          allRuns = false;
+        }
+        if (owner.has_value() && leavesStraight(*owner, edge)) {
           found.insert(*owner);
         }
       }
     }
     owners_.push_back(std::move(found));
+    alongRun_.push_back(allRuns && alongRuns.size() == 1 &&
+                                alongSides.size() == 1
+                            ? std::optional<std::string>{*alongRuns.begin()}
+                            : std::nullopt);
   }
 }
 
@@ -3807,7 +3998,11 @@ Way Checker::shortest(const Demand& demand,
   const auto nc = demand.crosses.size();
   const std::uint64_t mouthBit = demand.mouth.has_value() ? (1ULL << nc) : 0;
   const std::uint64_t full = ((1ULL << nc) - 1) | mouthBit;
-  if (full == 0 && std::ranges::any_of(demand.from, [&](const auto chamber) {
+  // A wire whose two ends lie in one chamber takes no gate, unless it is
+  // prescribed to cross a feedline edge. Its own mouth binds it no further:
+  // the mouth line runs through that chamber where no gate cuts it, and a
+  // way of no gate passes no other mouth.
+  if (nc == 0 && std::ranges::any_of(demand.from, [&](const auto chamber) {
         return std::ranges::find(demand.to, chamber) != demand.to.end();
       })) {
     return {std::vector<std::size_t>{}, 0.0};
@@ -4020,6 +4215,10 @@ std::pair<SlotCheckResult, json> Checker::run() {
   std::vector<Demand> demands;
   std::vector<std::string> lost;
   for (const auto& wire : wires_) {
+    // A standing wire names its mouth (`findMouths`) and is no demand.
+    if (wire.standing) {
+      continue;
+    }
     if (wire.source.chambers.empty() || wire.target.chambers.empty()) {
       lost.push_back(wire.name);
       continue;
@@ -4139,11 +4338,51 @@ std::pair<SlotCheckResult, json> Checker::run() {
   }
   std::unordered_map<std::string, Way> base;
   std::unordered_map<std::string, double> tautBase;
+  // Per wire and edge: whether the edge runs along the wire's own run, a
+  // gate with both ends on the terminal edge that the wire is. The wire
+  // passes it whatever it holds for others, and its passage takes nothing
+  // of it from them.
+  std::vector<std::vector<std::size_t>> alongEdges(demands.size());
+  std::vector<std::vector<bool>> along(demands.size(),
+                                       std::vector<bool>(ne, false));
+  for (std::size_t k = 0; k < ne; ++k) {
+    if (alongRun_[k].has_value()) {
+      if (const auto found = demandOf.find(*alongRun_[k]);
+          found != demandOf.end()) {
+        along[found->second][k] = true;
+        alongEdges[found->second].push_back(k);
+      }
+    }
+  }
+  // A wire's own mouth binds it only where the mouth separates its two
+  // ends. Where gates that take a wire join them and none of them is a gate
+  // of that mouth, the wire passes the mouth nowhere: its port lies on the
+  // near side of the mouth line, as wire 8 of 9Q_dense does, which runs from
+  // its launcher round the start of f0 to a port outside the line. Other
+  // mouths stay closed to it.
+  for (std::size_t d = 0; d < demands.size(); ++d) {
+    auto& demand = demands[d];
+    if (!demand.mouth.has_value()) {
+      continue;
+    }
+    std::vector<double> weight(ne, -1.0);
+    for (std::size_t k = 0; k < ne; ++k) {
+      if ((limitOf(k, owns[d][k]) >= 1 || along[d][k]) && !demand.ownMouth[k]) {
+        weight[k] = 1.0;
+      }
+    }
+    auto unbound = demand;
+    unbound.mouth.reset();
+    if (shortest(unbound, weight).path.has_value()) {
+      demand.mouth.reset();
+      demand.ownMouth.assign(ne, false);
+    }
+  }
   for (std::size_t d = 0; d < demands.size(); ++d) {
     const auto& demand = demands[d];
     std::vector<double> weight(ne, -1.0);
     for (std::size_t k = 0; k < ne; ++k) {
-      if (limitOf(k, owns[d][k]) >= 1) {
+      if (limitOf(k, owns[d][k]) >= 1 || along[d][k]) {
         weight[k] = 1.0;
       }
     }
@@ -4216,7 +4455,15 @@ std::pair<SlotCheckResult, json> Checker::run() {
         saved.push_back(common[k]);
         common[k] = priceOf(k, 1);
       }
+      std::vector<double> savedAlong;
+      for (const auto k : alongEdges[d]) {
+        savedAlong.push_back(common[k]);
+        common[k] = 1.0 + hist[k];
+      }
       auto [path, length] = shortest(demand, common);
+      for (std::size_t at = alongEdges[d].size(); at-- > 0;) {
+        common[alongEdges[d][at]] = savedAlong[at];
+      }
       for (std::size_t own = 0; own < ownEdges[d].size(); ++own) {
         common[ownEdges[d][own]] = saved[own];
       }
@@ -4259,6 +4506,9 @@ std::pair<SlotCheckResult, json> Checker::run() {
       }
       if (path.has_value()) {
         for (const auto k : *path) {
+          if (along[d][k]) {
+            continue;
+          }
           ++load[k];
           ownLoad[k] += owns[d][k];
         }
@@ -4317,6 +4567,9 @@ std::pair<SlotCheckResult, json> Checker::run() {
       over.empty() && gover.empty() && unrouted.empty() && lost.empty();
   SlotCheckResult result;
   result.verdict = sat ? "SAT" : "UNSAT";
+  for (const auto& edge : slots) {
+    result.slots[edge.name] = edge.slots.size();
+  }
   result.lost = lost;
   result.lost.insert(result.lost.end(), unrouted.begin(), unrouted.end());
   for (const auto k : over) {
@@ -4435,6 +4688,9 @@ std::pair<SlotCheckResult, json> Checker::run() {
   }
   auto wiresOut = json::array();
   for (const auto& wire : page_->at("wires")) {
+    if (wire.value("standing", false)) {
+      continue;
+    }
     auto out = wire;
     const auto name = wire.at("name").get<std::string>();
     const auto at = wayOf.find(name);
@@ -4640,7 +4896,8 @@ std::pair<SlotCheckResult, json> Checker::run() {
                         .target = endOf(wire.at("target")),
                         .crosses = {},
                         .terminal = truthy(wire, "terminal"),
-                        .resonator = truthy(wire, "resonator")};
+                        .resonator = truthy(wire, "resonator"),
+                        .standing = truthy(wire, "standing")};
     if (truthy(wire, "crosses")) {
       one.crosses = wire.at("crosses").get<std::vector<std::string>>();
     }

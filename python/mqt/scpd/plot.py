@@ -103,6 +103,10 @@ CPW: dict[str, tuple[str, float, float, float]] = {
 #: The color of the gaps of a coplanar waveguide: the substrate.
 CPW_GAP = "#f7f7f6"
 
+#: The color of an air bridge: its deck, drawn translucent so that the feedline under it shows, and
+#: its two posts.
+BRIDGE_COLOR = "#7b7b80"
+
 #: The stroke width of each planning layer, in screen pixels.
 _PLANNING_WIDTHS: dict[str, float] = {
     "partition": 0.8,
@@ -460,8 +464,8 @@ def _routing_layers(
 ) -> None:
     """Draw what the routing stages produced.
 
-    The copper is drawn as coplanar waveguides, with the room it keeps, the couplers and the
-    wires the Final stage left failing.
+    The copper is drawn as coplanar waveguides, with the room it keeps, the couplers, the air
+    bridges and the wires the Final stage left failing.
     """
     kinds = (
         ("signal", planning.wires),
@@ -492,6 +496,30 @@ def _routing_layers(
             + "".join(f'<path class="gap" d="{d}"/>' for d in data)
             + "".join(f'<path class="core" d="{d}"/>' for d in data)
             + "</g>"
+        )
+    if planning.bridges:
+        # An air bridge where a wire crosses a feedline edge: a deck along the wire over the
+        # feedline, with a dashed line down its middle, on two posts either side of the feedline.
+        # The deck is translucent, so the feedline under it stays visible. It is centered on the
+        # crossing. Across the wire, the deck and the posts scale with the clearance; along it,
+        # the posts scale with the deck.
+        clearance = planning.clearance if planning.clearance > 0 else 2 * radius
+        length = planning.bridge_length if planning.bridge_length > 0 else clearance
+        half = 0.5 * length
+        decks, spans, posts = [], [], []
+        for (px, py), (dx, dy) in planning.bridges:
+            decks.append(polyline(_rect((px, py), (dx, dy), half, 0.22 * clearance), close=True))
+            spans.append(polyline([(px - dx * half, py - dy * half), (px + dx * half, py + dy * half)]))
+            posts.extend(
+                polyline(
+                    _rect((px + side * dx * half, py + side * dy * half), (dx, dy), 0.15 * length, 0.34 * clearance),
+                    close=True,
+                )
+                for side in (-1, 1)
+            )
+        parts.append(
+            f'<g class="l-bridge"><path class="deck" d="{"".join(decks)}"/><path class="span" d="{"".join(spans)}"/>'
+            f'<path class="post" d="{"".join(posts)}"/></g>'
         )
     if planning.off_length:
         # The resonators off their target length, under the failing layer: both figures of the
@@ -530,6 +558,22 @@ def _routing_layers(
         parts.append(f'<g class="l-squeezed">{marks}{lines}</g>')
 
 
+def _rect(
+    center: tuple[float, float], along: tuple[float, float], half_along: float, half_across: float
+) -> list[tuple[float, float]]:
+    """A rectangle around a center, with its length along a unit direction.
+
+    Returns:
+        The four corners, in layout units.
+    """
+    (cx, cy), (dx, dy) = center, along
+    nx, ny = -dy, dx
+    return [
+        (cx + sa * half_along * dx + sc * half_across * nx, cy + sa * half_along * dy + sc * half_across * ny)
+        for sa, sc in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+    ]
+
+
 def _planning_style(font: float, planning: PlanningGeometry | None = None) -> str:
     """The stroke of every planning layer, and the type of the gate labels.
 
@@ -564,8 +608,8 @@ def _planning_style(font: float, planning: PlanningGeometry | None = None) -> st
 def _routing_style(planning: PlanningGeometry | None) -> str:
     """The strokes of the routing layers.
 
-    The coplanar waveguides, their room, the couplers and the marks of the failing
-    wires.
+    The coplanar waveguides, their room, the couplers, the air bridges and the marks of the
+    failing wires.
 
     Returns:
         The CSS rules.
@@ -580,6 +624,10 @@ def _routing_style(planning: PlanningGeometry | None) -> str:
     style += (
         f"g.l-coupler>path{{fill:{PLANNING_COLORS['coupler']};fill-opacity:.9;stroke:{METAL_EDGE};stroke-width:1.2;"
         "vector-effect:non-scaling-stroke}"
+        f"g.l-bridge>path{{vector-effect:non-scaling-stroke}}"
+        f"g.l-bridge>path.deck{{fill:{BRIDGE_COLOR};fill-opacity:.32;stroke:{METAL_EDGE};stroke-width:1.1}}"
+        f"g.l-bridge>path.span{{fill:none;stroke:{METAL_EDGE};stroke-width:1;stroke-dasharray:3 2.5}}"
+        f"g.l-bridge>path.post{{fill:{BRIDGE_COLOR};stroke:#ffffff;stroke-width:1;paint-order:stroke}}"
     )
     if planning is None:
         return style

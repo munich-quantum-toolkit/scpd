@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from itertools import pairwise, starmap
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .artifacts import read_artifact
@@ -31,10 +32,12 @@ from .flatbuffers.artifacts.FinalVerdict import FinalVerdict
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from .flatbuffers.design.AssignedRole import AssignedRole
 from .run import STAGE_FILES
+from .steps import FINAL_PHASES
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
+    from .flatbuffers.artifacts.FinalWire import FinalWireT
     from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.design.Chip import ChipT
 
@@ -42,6 +45,16 @@ __all__ = ["PLANNING_STAGES", "Feedline", "PlanningError", "PlanningGeometry", "
 
 #: The planning stages that can be drawn, and the artifact each is read from.
 PLANNING_STAGES: dict[str, str] = dict(STAGE_FILES)
+
+#: The phases of the Final stage that route every wire under the feedline constraints, and the end
+#: state they leave. There a wire crosses a feedline edge between two couplers at a right angle, on an
+#: air bridge. In the phases before them, a feedline edge drawn over a wire is a conflict that the
+#: next phase resolves, not a bridge.
+BRIDGED_PHASES: tuple[str, ...] = FINAL_PHASES[3:]
+
+#: The length of an air bridge's deck, in cells of the router grid: about a hundred layout units
+#: on a grid of ten-unit cells.
+BRIDGE_CELLS = 10
 
 #: The verdicts of the Final stage that count a wire as failing: unrouted, open or crossing a
 #: feedline. A way that meets itself is carried in the artifact and named in a wire's tooltip but
@@ -165,6 +178,13 @@ class PlanningGeometry:
     inner_wires: list[list[Point]] = field(default_factory=list)
     #: Each edge of the feedline chains as the Final stage drew it, likewise.
     feedline_wires: list[list[Point]] = field(default_factory=list)
+    #: The air bridges of the Final stage: where a wire crosses a feedline edge between two
+    #: couplers, in the phases that route under the feedline constraints and in the end state
+    #: (``BRIDGED_PHASES``). Each is the crossing point and the unit heading of the wire there.
+    bridges: list[tuple[Point, Point]] = field(default_factory=list)
+    #: The length of the deck of every bridge, ``BRIDGE_CELLS`` cells of the router grid, in layout
+    #: units; zero when the stage carries no grid.
+    bridge_length: float = 0.0
     #: The body of every coupler the Final stage placed, as a closed ring of four corners.
     couplers: list[list[Point]] = field(default_factory=list)
     #: The wires the Final stage left failing at its end, ``BAD_VERDICTS``: each as the wire's id
@@ -735,6 +755,46 @@ def _stub(chip: ChipT, index: int, start: Point) -> list[Point]:
     return [start, corner, port]
 
 
+def _into_port(chip: ChipT, index: int, points: list[Point]) -> list[Point]:
+    """A routed wire with the straight run into one of its ports.
+
+    The Final stage routes a wire to the first cell beyond the band that its port keeps clear, so the
+    straight run over the band into the port is not among the cells the stage carries. The run is
+    added at the end of the wire that lies closer to the port, as ``_stub`` draws it.
+
+    Returns:
+        The points of the wire, from end to end.
+    """
+    port = _center(chip, index)
+    if port is None or len(points) < 2:
+        return points
+    if math.dist(points[0], port) < math.dist(points[-1], port):
+        return [*reversed(_stub(chip, index, points[0])[1:]), *points]
+    return [*points, *_stub(chip, index, points[-1])[1:]]
+
+
+def _crossings(wire: list[Point], edge: list[Point]) -> list[tuple[Point, Point]]:
+    """Where a wire crosses a feedline edge.
+
+    Returns:
+        The crossing point and the unit heading of the wire there, one per crossing.
+    """
+    found = []
+    for (ax, ay), (bx, by) in pairwise(wire):
+        rx, ry = bx - ax, by - ay
+        for (cx, cy), (dx, dy) in pairwise(edge):
+            sx, sy = dx - cx, dy - cy
+            den = rx * sy - ry * sx
+            if abs(den) < 1e-9:
+                continue
+            t = ((cx - ax) * sy - (cy - ay) * sx) / den
+            u = ((cx - ax) * ry - (cy - ay) * rx) / den
+            if 0 <= t <= 1 and 0 <= u <= 1:
+                length = math.hypot(rx, ry)
+                found.append(((ax + t * rx, ay + t * ry), (rx / length, ry / length)))
+    return found
+
+
 def _corridor(
     routing: CorridorRoutingT, chip: ChipT, assignment: AssignmentT | None, geometry: PlanningGeometry
 ) -> None:
@@ -885,12 +945,18 @@ def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: f
 
 def _final(
     routing: FinalRoutingT,
+    chip: ChipT,
+    assignment: AssignmentT | None,
+    inner: GlobalRoutingT | None,
     geometry: PlanningGeometry,
     wire_spacing: float,
     phase: str | None,
-    resonators: set[int],
 ) -> None:
     """Fill the layers a final routing carries, for one phase or for the end state.
+
+    The assignment tells a resonator from a plain wire and names the ports of every wire of the
+    ring; the global routing names the ports of every wire of the inner circuit. Each wire is drawn
+    into the ports its connection names.
 
     Raises:
         PlanningError: If the run holds no snapshot of the phase asked for.
@@ -899,6 +965,7 @@ def _final(
     if grid is None or grid.origin is None:
         return
     geometry.clearance = spacing_cells(wire_spacing, min(float(grid.cellWidth), float(grid.cellHeight)))
+    geometry.bridge_length = BRIDGE_CELLS * min(float(grid.cellWidth), float(grid.cellHeight))
 
     def to_layout(x: int, y: int) -> Point:
         # A cell of the router grid is a point: cell (0, 0) sits on the corner of the chip box.
@@ -915,11 +982,36 @@ def _final(
                 found.append(points)
         return found
 
+    resonators = _resonator_slots(assignment)
+    # The wires of the ring line up with the connections of the assignment, the wires of the inner
+    # circuit with those of the global routing.
+    ring_connections = _entries(assignment.connections) if assignment is not None else []
+    inner_connections = _entries(inner.connections) if inner is not None else []
+
+    def ported(connections: list[Any]) -> Callable[[int, FinalWireT], list[Point]]:
+        # A wire, into the ports its connection names. A resonator has no source port in the
+        # assignment: its wire starts on the coupler port, which the stage drew exactly.
+        def into(index: int, wire: FinalWireT) -> list[Point]:
+            points = _bends(_entries(wire.path), to_layout)
+            if index < len(connections):
+                for end in (connections[index].source, connections[index].target):
+                    if end is not None:
+                        points = _into_port(chip, int(end.index), points)
+            return points
+
+        return into
+
+    ring_wire = ported(ring_connections)
+    inner_wire = ported(inner_connections)
+
+    def all_drawn(wires: list[Any] | None, into: Callable[[int, FinalWireT], list[Point]]) -> list[list[Point]]:
+        return [points for points in starmap(into, enumerate(_entries(wires))) if len(points) >= 2]
+
     def split(wires: list[Any] | None) -> tuple[list[list[Point]], list[list[Point]]]:
         plain: list[list[Point]] = []
         resonant: list[list[Point]] = []
         for index, wire in enumerate(_entries(wires)):
-            points = _bends(_entries(wire.path), to_layout)
+            points = ring_wire(index, wire)
             if len(points) >= 2:
                 (resonant if index in resonators else plain).append(points)
         return plain, resonant
@@ -954,7 +1046,9 @@ def _final(
         for index, wire in enumerate(_entries(wires)):
             verdict = int(wire.verdict or 0)
             if verdict & bits:
-                found.append((f"{prefix}{index}", verdict_names(verdict), _bends(_entries(wire.path), to_layout)))
+                into = {"": ring_wire, "i": inner_wire}.get(prefix)
+                points = into(index, wire) if into is not None else _bends(_entries(wire.path), to_layout)
+                found.append((f"{prefix}{index}", verdict_names(verdict), points))
         return found
 
     def squeezed(feedlines: list[Any] | None) -> list[tuple[str, str, list[Point], list[Point]]]:
@@ -971,7 +1065,9 @@ def _final(
 
     for snapshot in _entries(routing.phases):
         name = snapshot.name or ""
-        geometry.phases[name] = drawn(snapshot.wires) + drawn(snapshot.inner) + drawn(snapshot.feedlines)
+        geometry.phases[name] = (
+            all_drawn(snapshot.wires, ring_wire) + all_drawn(snapshot.inner, inner_wire) + drawn(snapshot.feedlines)
+        )
 
     chosen = None
     for snapshot in _entries(routing.phases):
@@ -985,10 +1081,25 @@ def _final(
         raise PlanningError(msg)
     state = chosen if chosen is not None else routing
     geometry.wires, geometry.resonators = split(state.wires)
-    geometry.inner_wires = drawn(state.inner)
+    geometry.inner_wires = all_drawn(state.inner, inner_wire)
     geometry.feedline_wires = drawn(state.feedlines)
     geometry.couplers = bodies(state.couplers)
     geometry.squeezed = squeezed(state.feedlines)
+    if phase is None or phase in BRIDGED_PHASES:
+        # A wire may cross only an edge between two couplers. An edge from a launcher is a hard
+        # obstacle, and a wire across it is a failure, not a bridge.
+        edges = _entries(routing.feedlineEdges)
+        crossed = [
+            _bends(_entries(wire.path), to_layout)
+            for index, wire in enumerate(_entries(state.feedlines))
+            if index < len(edges) and not edges[index].terminal
+        ]
+        geometry.bridges = [
+            bridge
+            for wire in (*geometry.wires, *geometry.resonators, *geometry.inner_wires)
+            for edge in crossed
+            for bridge in _crossings(wire, edge)
+        ]
     if chosen is None:
         # The verdicts are the end state's alone: the phase snapshots are not judged.
         geometry.failing = (
@@ -1026,9 +1137,11 @@ def planning_geometry(
             the assign and corridor stages over the partitions their chords and wires run through.
         assignment: The assignment artifact of the same run, for the corridor stage, which is drawn
             with the feedlines that its resonator wires start at and the approach of every wire to
-            its target port.
+            its target port, and for the routing stages, which tell a resonator from a plain wire by
+            it. The final stage also draws every wire of the ring into the ports it names.
         global_routing: The global artifact of the same run, for the assign and corridor stages,
-            which are drawn with the lattice edges that the inner circuit selected.
+            which are drawn with the lattice edges that the inner circuit selected, and for the
+            final stage, which draws every wire of the inner circuit into the ports it names.
         clearance: The design rule ``min_wire_spacing``, in layout units. The detail and final
             stages convert it to the whole number of cells their router works in and draw a band
             of that width around every wire, so that two wires closer than the router's own
@@ -1091,7 +1204,8 @@ def planning_geometry(
             msg = "the artifact is not a final routing"
             raise PlanningError(msg)
         chosen = _assignment_of(assignment) if assignment is not None else None
-        _final(output, geometry, clearance, phase, _resonator_slots(chosen))
+        inner = _routing_of(global_routing) if global_routing is not None else None
+        _final(output, chip, chosen, inner, geometry, clearance, phase)
     else:
         if not isinstance(output, CorridorRoutingT):
             msg = "the artifact is not a corridor routing"

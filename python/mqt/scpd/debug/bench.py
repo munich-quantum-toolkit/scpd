@@ -79,8 +79,8 @@ SEED = 2026
 class BenchSession(Session, Protocol):
     """What the benchmarks need of a coupler session (``pyscpd.CouplerSession``) beyond the server's needs."""
 
-    def compare_locally(self, runs: int, span: int) -> str:
-        """Route the feedlines, then compare the slot check of every feedline with a rip-up, as JSON."""
+    def compare_locally(self, runs: int, span: int, feedlines: Sequence[int] = ()) -> str:
+        """Route the feedlines, then compare the slot check of every feedline asked for with a rip-up, as JSON."""
         ...
 
     def route_feedlines(self) -> str:
@@ -218,7 +218,11 @@ def ways_of(table: dict[str, Any], routed: dict[str, Any]) -> dict[str, list[lis
 
 
 def local_cases(
-    session: BenchSession, runs: int = RUNS_PER_SEGMENT, span: int = SPAN, say: Callable[[str], None] = _quiet
+    session: BenchSession,
+    runs: int = RUNS_PER_SEGMENT,
+    span: int = SPAN,
+    say: Callable[[str], None] = _quiet,
+    feedlines: Sequence[int] = (),
 ) -> dict[str, Any]:
     """Run the local benchmark on a session.
 
@@ -230,18 +234,23 @@ def local_cases(
         runs: The runs of options a segment contributes at most.
         span: The edges of a segment.
         say: Says a line of progress.
+        feedlines: The chains whose segments are searched and whose feedlines are judged; empty for
+            every one. Fewer feedlines save the rip-ups of the others.
 
     Returns:
-        The table: the four classes and the figures of the comparison; ``committed``, the option of
+        The table: the four classes and the figures of the comparison; ``asked``, the feedlines asked
+        for (empty for every one); ``committed``, the option of
         every coupler before it; ``feedlines``, the edges of every chain; ``begun``; ``ways``, the
         ways of the first run's routing; and ``runs``, every run with its moves and its feedlines,
         each with its ``class``, and the routing it ended with.
     """
     began = time.monotonic()
-    feedlines = [{"chain": int(c["chain"]), "edges": list(c["edges"])} for c in json.loads(session.chains())["chains"]]
+    edges = [{"chain": int(c["chain"]), "edges": list(c["edges"])} for c in json.loads(session.chains())["chains"]]
     committed = _chosen(session)
-    say(f"local: {runs} runs a segment of {span} edges; routing the feedlines and comparing every run ...")
-    compared = json.loads(session.compare_locally(runs, span))
+    asked = sorted({int(chain) for chain in feedlines})
+    which = "feedline" + ("s " if len(asked) != 1 else " ") + ", ".join(map(str, asked)) if asked else "every feedline"
+    say(f"local: {runs} runs a segment of {span} edges on {which}; routing the feedlines and comparing every run ...")
+    compared = json.loads(session.compare_locally(runs, span, asked))
     classes = {name: int(compared["classes"][name]) for name in CLASSES}
     base: dict[str, list[list[int]]] | None = None
     for run in compared["runs"]:
@@ -256,6 +265,7 @@ def local_cases(
         "kind": "local",
         "runsPerSegment": runs,
         "span": span,
+        "asked": asked,
         "segments": compared["segments"],
         "cases": sum(classes.values()),
         "unjudged": compared["unjudged"],
@@ -264,7 +274,7 @@ def local_cases(
         "rerouteSeconds": compared["rerouteSeconds"],
         "seconds": time.monotonic() - began,
         "committed": [{"coupler": c, "option": o} for c, o in sorted(committed.items())],
-        "feedlines": feedlines,
+        "feedlines": edges,
         "begun": compared.get("begun", []),
         "ways": base or {},
         "runs": compared["runs"],
@@ -444,8 +454,8 @@ def write_table(directory: Path, kind: str, table: dict[str, Any]) -> tuple[Path
     return data, shown
 
 
-def reusable(table: dict[str, Any] | None, runs: int, span: int, inputs: str) -> bool:
-    """Whether a local table fits a global benchmark: the same runs, span and run inputs.
+def reusable(table: dict[str, Any] | None, runs: int, span: int, inputs: str, feedlines: Sequence[int] = ()) -> bool:
+    """Whether a local table fits a global benchmark: the same runs, span, feedlines and run inputs.
 
     Returns:
         True when the global benchmark can take its runs.
@@ -456,6 +466,7 @@ def reusable(table: dict[str, Any] | None, runs: int, span: int, inputs: str) ->
         and table.get("runsPerSegment") == runs
         and table.get("span") == span
         and table.get("inputs") == inputs
+        and table.get("asked", []) == sorted({int(chain) for chain in feedlines})
     )
 
 
@@ -471,6 +482,7 @@ def run_bench(
     cases: int = CASES,
     say: Callable[[str], None] = _quiet,
     route: Callable[[BenchSession], dict[str, Any]] = routed_in_child,
+    feedlines: Sequence[int] = (),
 ) -> dict[str, Any]:
     """Run one benchmark and write its table and page into ``output``.
 
@@ -488,6 +500,7 @@ def run_bench(
         cases: The whole-chip states beyond the committed one.
         say: Says a line of progress.
         route: Routes the feedlines of a global case, as :func:`routed_in_child` does.
+        feedlines: The feedlines the local benchmark searches and judges; empty for every one.
 
     Returns:
         The table.
@@ -499,9 +512,9 @@ def run_bench(
         msg = f"there is no SAT benchmark {kind}: local or global"
         raise ValueError(msg)
     local = read_table(output / json_name("local"))
-    fresh = kind == "local" or not reusable(local, runs, span, inputs)
+    fresh = kind == "local" or not reusable(local, runs, span, inputs, feedlines)
     if fresh:
-        local = {**local_cases(session, runs, span, say), "chip": name, "inputs": inputs}
+        local = {**local_cases(session, runs, span, say, feedlines), "chip": name, "inputs": inputs}
         write_table(output, "local", local)
         say(summary("local", name, local))
     else:
@@ -545,7 +558,7 @@ STYLE = """
 def _nav(kind: str, *, live: bool) -> str:
     if live:
         links = (
-            ("../", "capacity graph with the coupler tab"),
+            ("../", "global mover (capacity graph)"),
             ("../sat", "local SAT"),
             ("../global", "global SAT"),
             ("local", "local SAT bench"),
@@ -769,11 +782,13 @@ def _local_page(table: dict[str, Any], *, live: bool) -> str:
         + _class_bar(counts, "feedline, run, edge, coupler or wire")
         + f'<div class="wide"><table>{head}{"".join(row for _, row in rows)}</table></div>',
     ))
+    asked = table.get("asked") or []
+    of = f" of feedline{'s' if len(asked) != 1 else ''} {', '.join(map(str, asked))}" if asked else ""
     sub = (
         f"{table.get('runsPerSegment')} runs a segment of {table.get('span')} edges · {table.get('segments')} segments"
-        f" · {table.get('unjudged', 0)} not judged · {float(table.get('slotSeconds', 0.0)):.0f} s in the slot check, "
-        f"{float(table.get('rerouteSeconds', 0.0)):.0f} s rerouting · a case is one feedline of one run, judged by the "
-        "slot check of its window and by a rip-up and re-route of its wires"
+        f"{of} · {table.get('unjudged', 0)} not judged · {float(table.get('slotSeconds', 0.0)):.0f} s in the slot "
+        f"check, {float(table.get('rerouteSeconds', 0.0)):.0f} s rerouting · a case is one feedline of one run, judged "
+        "by the slot check of its window and by a rip-up and re-route of its wires"
     )
     return _page(title, sub, "\n".join(parts), pages.SAT_SCRIPT, pages.SAT_STYLE + STYLE)
 
@@ -858,8 +873,9 @@ def window_check(
 ) -> tuple[dict[str, Any], list[str]]:
     """The slot check of one feedline's window, as the local benchmark judges a feedline.
 
-    The check routes the window's wires and every terminal edge alone, and a wire of the window
-    that has no way or passes an edge over its capacity is lost.
+    The check routes the window's wires alone. The terminal edges of the other feedlines stand in
+    the graph to name the mouths between the chains and are not routed (``standing``). A wire of
+    the window that has no way or passes an edge over its capacity is lost.
 
     Args:
         graph: The capacity graph of the chip as it stands.
@@ -870,7 +886,14 @@ def window_check(
         What the slot check answered, and the lost wires of the window.
     """
     names = set(window)
-    alone = {**graph, "wires": [w for w in graph["wires"] if w["name"] in names or w.get("terminal")]}
+    alone = {
+        **graph,
+        "wires": [
+            w if w["name"] in names else {**w, "standing": True}
+            for w in graph["wires"]
+            if w["name"] in names or w.get("terminal")
+        ],
+    }
     checked = json.loads(slot_check(json.dumps(alone)))
     judged = checked.get("graph", {})
     crowded = {n for e in judged.get("edges", []) if e.get("overflow", 0) > 0 for n in e.get("through", [])}
@@ -914,33 +937,71 @@ def _missing(kind: str, path: Path) -> Answer:
     return Answer(404, "text/html; charset=utf-8", text)
 
 
-def _with_ways(graph: dict[str, Any], ways: dict[str, list[list[int]]]) -> tuple[dict[str, Any], int]:
-    wires = []
-    drawn = 0
-    for wire in graph["wires"]:
-        if wire["name"] in ways:
-            wires.append({**wire, "path": ways[wire["name"]]})
-            drawn += 1
-        else:
-            wires.append(wire)
-    return {**graph, "wires": wires}, drawn
+#: The fails of a routing that leave a wire without a usable way, and those that leave it off its length.
+BAD_FAILS = ("unrouted", "open", "crossing")
+LENGTH_FAILS = ("short", "long")
+
+
+def _with_routing(
+    graph: dict[str, Any], ways: dict[str, list[list[int]]], routed: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    """The graph with the wires of a routing as a layer of their own, over the chip.
+
+    The ways the check found stay as they are; the page draws the routing's ways in ``routed``, the
+    wires a fail names marked with it.
+
+    Returns:
+        The graph, and how many wires the routing drew.
+    """
+    marks: dict[str, list[str]] = {}
+    for fail in (*BAD_FAILS, *LENGTH_FAILS):
+        for name in routed.get(fail) or []:
+            marks.setdefault(str(name), []).append(fail)
+    wires = [
+        {
+            "name": name,
+            "path": path,
+            "fails": marks.get(name, []),
+            "bad": any(fail in BAD_FAILS for fail in marks.get(name, [])),
+        }
+        for name, path in sorted(ways.items(), key=lambda item: _wire_order(item[0]))
+        if len(path) >= 2
+    ]
+    return {**graph, "routed": {"wires": wires}}, len(wires)
+
+
+def _wire_order(name: str) -> tuple[int, str]:
+    digits = name.lstrip("fi")
+    return (int(digits) if digits.isdigit() else 1 << 30, name)
 
 
 class Bench:
     """The routes of the bench pages behind a coupler server; :func:`add_routes` makes one."""
 
-    def __init__(self, session: Session, directory: Path, slot_check: Callable[[str], str]) -> None:
-        """Serve the tables of ``directory`` through ``session``.
+    def __init__(self, server: CouplerServer, directory: Path, slot_check: Callable[[str], str]) -> None:
+        """Serve the tables of ``directory`` through the session of ``server``.
 
         Args:
-            session: The coupler session of the server.
+            server: The coupler server, whose session may still be being built.
             directory: The run's ``sat-bench`` directory.
             slot_check: The slot check of a capacity graph.
         """
-        self.session = session
+        self.server = server
         self.directory = directory
         self.slot_check = slot_check
         self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    @property
+    def session(self) -> Session:
+        """The session of the server; the server asks the routes that need it only once it stands.
+
+        Raises:
+            ValueError: When the session is still being built.
+        """
+        if self.server.session is None:
+            msg = "the session is still being built"
+            raise ValueError(msg)
+        return self.server.session
 
     def table(self, kind: str) -> dict[str, Any] | None:
         """The table of a benchmark as the directory holds it now.
@@ -1041,10 +1102,10 @@ class Bench:
         text += " · rip-up: " + ("clean" if feedline["clean"] else f"failing {feedline.get('failing') or '?'}")
         text += f" ({LABELS[feedline['class']]})"
         note = (
-            "The window slot check routes the feedline's window wires and every terminal edge alone, as the "
-            "benchmark judged the feedline. The benchmark judged the chip after the feedline routing, with the "
-            "run's edges as the segment search drew them; this page judges the chip after the insertion, with the "
-            "edges drawn again for the moves."
+            "The window slot check routes the feedline's window wires alone; the terminal edges of the other "
+            "feedlines stand and are not routed, as the benchmark judged the feedline. The benchmark judged the "
+            "chip after the feedline routing, with the run's edges as the segment search drew them; this page "
+            "judges the chip after the insertion, with the edges drawn again for the moves."
         )
         back = f'<a href="bench/local#case-{html.escape(str(run["id"]))}-{chain}">local SAT bench</a> · '
         banner = back + html.escape(text) + f"<br><small>{html.escape(note)}</small>"
@@ -1090,7 +1151,7 @@ class Bench:
             chain = int(feedline["chain"])
             with moved(self.session, table, run["moves"]):
                 graph = json.loads(self.session.graph())
-            shown, drawn = _with_ways(graph, ways_of(table, run["routed"]))
+            shown, drawn = _with_routing(graph, ways_of(table, run["routed"]), run["routed"])
             text = (
                 f"run {run['id']} · feedline {chain} · wires as the rip-up laid them ({drawn} drawn) · rip-up of "
                 f"feedline {chain}: "
@@ -1110,7 +1171,7 @@ class Bench:
             number = int(case["case"])
             with moved(self.session, table, case["moves"]):
                 graph = json.loads(self.session.graph())
-            shown, drawn = _with_ways(graph, ways_of(table, case["routed"]))
+            shown, drawn = _with_routing(graph, ways_of(table, case["routed"]), case["routed"])
             text = (
                 f"case {number} · wires as the feedline routing laid them ({drawn} drawn) · bad {case['bad']} "
                 f"({LABELS[case['class']]})"
@@ -1137,9 +1198,10 @@ def add_routes(server: CouplerServer, directory: Path, slot_check: Callable[[str
     Returns:
         The routes.
     """
-    bench = Bench(server.session, Path(directory), slot_check)
+    bench = Bench(server, Path(directory), slot_check)
     for kind in KINDS:
-        server.add_route("GET", f"/bench/{kind}", lambda _, kind=kind: bench.page(kind))
+        # The page reads its table alone; its graph links answer once the session stands.
+        server.add_route("GET", f"/bench/{kind}", lambda _, kind=kind: bench.page(kind), building=True)
         server.add_link(
             f"bench/{kind}", f"{kind} SAT bench", lambda kind=kind: (bench.directory / json_name(kind)).is_file()
         )

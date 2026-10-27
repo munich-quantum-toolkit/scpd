@@ -275,7 +275,9 @@ def test_the_insertion_page_holds_the_graph_and_the_coupler_options(tmp_path: Pa
     assert json.loads(embedded.group(1)) == graph()
     session = re.search(r'<script id="session-data" type="application/json">(.*?)</script>', text, re.DOTALL)
     assert session is not None
-    assert json.loads(session.group(1))["couplers"] == couplers()
+    embedded_session = json.loads(session.group(1))
+    assert embedded_session["couplers"] == couplers()
+    assert embedded_session["searched"]
     # The data, the session data, the page's script and the coupler tab's.
     assert text.count("</script>") == 4
     for view in ("chip", "graph", "both"):
@@ -394,10 +396,13 @@ def couplers() -> list[dict[str, Any]]:
     """
     option = {
         "open": True,
+        "closed": None,
+        "onFeedline": [],
         "orientation": 0,
         "offset": 0,
         "secondPort": False,
         "jog": 0,
+        "reversed": False,
         "centre": [1, 1],
         "in": [1, 0],
         "out": [1, 2],
@@ -415,7 +420,36 @@ def couplers() -> list[dict[str, Any]]:
             "jogs": False,
             "edgeIn": "f0",
             "edgeOut": "f1",
-            "options": [{**option, "index": 0}, {**option, "index": 1, "open": False}],
+            "guardStoodDown": False,
+            "options": [
+                {**option, "index": 0},
+                {
+                    **option,
+                    "index": 1,
+                    "open": False,
+                    "jog": 20,
+                    "reversed": True,
+                    "closed": {"kind": "jog-locked", "why": "jog locked"},
+                },
+            ],
+            "refused": [
+                {
+                    "offset": 1,
+                    "secondPort": True,
+                    "jog": 0,
+                    "reversed": False,
+                    "places": 4,
+                    "why": "the pad leaves the grid",
+                },
+                {
+                    "offset": 3,
+                    "secondPort": None,
+                    "jog": None,
+                    "reversed": None,
+                    "places": 0,
+                    "why": "offset not swept: coupler_offsets leaves it out",
+                },
+            ],
         }
     ]
 
@@ -431,6 +465,7 @@ class FakeSession:
         """
         self.lines = lines
         self.chosen = 0
+        self.placed: list[tuple[int, int, int, int]] = []
 
     def couplers(self) -> str:
         """The couplers as JSON.
@@ -451,12 +486,39 @@ class FakeSession:
         Raises:
             ValueError: When the coupler or the option does not exist.
         """
-        if coupler != 0 or option not in {0, 1}:
+        if coupler != 0 or not 0 <= option < 2 + len(self.placed):
             msg = f"coupler {coupler} has no option {option}"
             raise ValueError(msg)
         self.chosen = option
         self.lines.append(f"coupler session: '7' on option {option}: edge f0 NO WAY")
         return json.dumps({"coupler": 0, "option": option, "edges": [{"edge": "f0", "drawn": False, "cells": 0}]})
+
+    def add_option(self, coupler: int, x: int, y: int, offset: int = -1, port: int = 0) -> str:
+        """Build an option of coupler 0 at the cell (1, 1) only.
+
+        Returns:
+            What came of it, as JSON.
+
+        Raises:
+            ValueError: When the coupler does not exist.
+        """
+        if coupler != 0:
+            msg = f"there is no coupler {coupler}"
+            raise ValueError(msg)
+        if (x, y) != (1, 1):
+            tried = [{"offset": 0, "secondPort": False, "why": "the pad leaves the grid"}]
+            return json.dumps({"coupler": 0, "built": False, "cell": 0, "tried": tried})
+        self.placed.append((x, y, offset, port))
+        option = 1 + len(self.placed)
+        return json.dumps({
+            "coupler": 0,
+            "built": True,
+            "cell": 0,
+            "option": option,
+            "offset": max(offset, 0),
+            "secondPort": port == 2,
+            "tried": [],
+        })
 
     def graph(self) -> str:
         """The capacity graph as JSON.
@@ -507,6 +569,25 @@ class FakeSession:
         })
 
     @staticmethod
+    def local_reroute(chain: int, options: list[int]) -> str:
+        """The rip-up and reroute comes out clean.
+
+        Returns:
+            The JSON.
+        """
+        return json.dumps({
+            "chain": chain,
+            "options": options,
+            "window": [],
+            "clean": True,
+            "failing": "",
+            "blocked": "",
+            "rounds": [],
+            "seconds": 0.0,
+            "wires": [],
+        })
+
+    @staticmethod
     def insertion_check() -> str:
         """The whole-chip check finds the chip SAT.
 
@@ -514,6 +595,49 @@ class FakeSession:
             The JSON.
         """
         return json.dumps({"verdict": "SAT", "lost": [], "graph": graph()})
+
+
+def test_the_step_records_count_for_the_options_at_both_ends_of_their_edge() -> None:
+    """A step record counts for the options at both ends of its edge; the far end's is the one tried."""
+    steps = [
+        {
+            "chain": 0,
+            "step": 1,
+            "options": [0, 2, 1, 0],
+            "couplers": [None, 5, 6, None],
+            "verdict": "UNSAT",
+            "lost": ["9"],
+            "closed": ["9"],
+            "refused": True,
+        },
+        {
+            "chain": 0,
+            "step": 1,
+            "options": [0, 2, 3, 0],
+            "couplers": [None, 5, 6, None],
+            "verdict": "SAT",
+            "lost": [],
+            "closed": [],
+            "refused": False,
+        },
+    ]
+    skips = [{"chain": 0, "step": 2, "options": [0, 2, 3, 0], "couplers": [None, 5, 6, None], "why": "no way"}]
+    found = serve.option_outcomes(steps, skips)
+
+    assert set(found) == {"5", "6"}
+    near = found["5"]["2"]
+    assert (near["tried"], near["checks"], near["SAT"], near["UNSAT"], near["refused"]) == (0, 2, 1, 1, 1)
+    assert near["lost"] == ["9"]
+    assert near["closed"] == ["9"]
+    assert set(near["example"]) == {"refused", "SAT"}
+    refused = found["6"]["1"]
+    assert (refused["tried"], refused["UNSAT"], refused["refused"]) == (1, 1, 1)
+    assert refused["example"]["refused"] == {"chain": 0, "step": 1, "options": [0, 2, 1, 0]}
+    # The skip of step 2 has no coupler at its far end and the option at its near end in the prefix.
+    skipped = found["6"]["3"]
+    assert (skipped["tried"], skipped["checks"], skipped["SAT"]) == (1, 1, 1)
+    assert skipped["skipped"] == {"no way": 1}
+    assert serve.option_outcomes([], []) == {}
 
 
 def test_the_session_data_is_embedded_and_no_name_ends_its_script() -> None:
@@ -574,6 +698,43 @@ def test_the_server_moves_a_coupler_and_answers_the_new_graph() -> None:
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_the_server_places_an_option_by_hand_and_checks_the_chip_again() -> None:
+    """`POST /place` builds an option, moves the coupler onto it and checks again; a refusal moves nothing."""
+    lines: list[str] = []
+    fake = FakeSession(lines)
+    server = serve.CouplerServer(fake, lines)
+
+    def place(body: dict[str, Any]) -> serve.Answer:
+        return server.answer(serve.Request("POST", "/place", body=json.dumps(body).encode()))
+
+    answer = place({"coupler": 0, "x": 1, "y": 1, "offset": 5, "port": 2})
+    assert answer.status == 200
+    moved = json.loads(answer.body)
+    assert fake.placed == [(1, 1, 5, 2)]
+    assert moved["placed"]["option"] == 2
+    assert moved["action"] == "coupler 0 on option 2, placed by hand at (1, 1) · offset 5 · port 2"
+    assert moved["verdicts"]["local"][0]["standing"]["verdict"] == "SAT"
+    assert moved["verdicts"]["global"]["verdict"] == "SAT"
+    assert server.standing() == {0: [0, 2, 0]}
+    assert len(server.undo) == 1
+
+    answer = place({"coupler": 0, "x": 1, "y": 1})
+    assert json.loads(answer.body)["placed"]["option"] == 3
+    assert fake.placed[-1] == (1, 1, -1, 0)
+
+    answer = place({"coupler": 0, "x": 4, "y": 4})
+    assert answer.status == 200
+    refused = json.loads(answer.body)
+    assert not refused["placed"]["built"]
+    assert refused["action"].startswith("no option of coupler 0 fits at (4, 4)")
+    assert server.standing() == {0: [0, 3, 0]}
+    assert len(server.undo) == 2
+
+    answer = place({"coupler": 5, "x": 1, "y": 1})
+    assert answer.status == 400
+    assert "no coupler 5" in json.loads(answer.body)["error"]
 
 
 class LinesInto:

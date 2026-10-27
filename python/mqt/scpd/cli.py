@@ -41,10 +41,30 @@ from .solvers import register as register_external_solver
 from .steps import FINAL_PHASES, STEPS
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from .console import StageBlock
     from .flatbuffers.config.Config import ConfigT
+
+
+def _chain_list(text: str) -> list[int]:
+    """Read a list of chains such as ``0,2``.
+
+    Returns:
+        The chains.
+
+    Raises:
+        argparse.ArgumentTypeError: When an entry is no whole number of zero or more.
+    """
+    chains = []
+    for part in text.replace(" ", "").split(","):
+        if not part:
+            continue
+        if not part.isdigit():
+            msg = f"{part!r} is no feedline number"
+            raise argparse.ArgumentTypeError(msg)
+        chains.append(int(part))
+    return chains
 
 
 def _positive_int(text: str) -> int:
@@ -222,44 +242,98 @@ def command_debug(args: argparse.Namespace) -> int:
     # The SAT dashboards read the records of the session's own run.
     want_sat_records(config)
     records = Recorder()
-    lines: list[str] = []
+    # The server answers at once; the session is built on a thread of its own and attached when it stands.
+    server = CouplerServer(None, [], records)
+    # The reporter holds the stage's progress and not the server, which holds the session.
+    stage = server.stage
 
     class Spoken:
-        """Keeps every line the session says for the server, and shows the ones a terminal wants."""
+        """Hands every line and progress update of the session to the server, and shows the lines a terminal wants."""
 
         @staticmethod
         def line(level: int, text: str) -> None:
             del level
-            lines.append(text)
+            stage.line(text)
             if args.verbose or "CAPACITY GRAPH" in text or "coupler session:" in text:
-                write_out(text)
+                write_out(text + "\n")
 
         @staticmethod
         def entry(level: int, label: str, figures: Sequence[tuple[str, str]]) -> None:
             del level
-            lines.append(f"{label}: " + " · ".join(text for text, _ in figures))
+            stage.entered(label)
+            stage.line(f"{label}: " + " · ".join(text for text, _ in figures))
 
         @staticmethod
         def result(figures: Sequence[tuple[str, str]], fails: int | None) -> None:
             del fails
-            lines.append(" · ".join(text for text, _ in figures))
+            stage.line(" · ".join(text for text, _ in figures))
 
         @staticmethod
         def progress(task: str, detail: str, done: int, total: int) -> None:
-            del task, detail, done, total
+            stage.progress(task, detail, done, total)
 
-    write_out(f"running the Final stage of {args.run_dir} to the end of the coupler insertion ...")
-    # The steps of the stage are what the server reads; -v adds the items.
-    session = directory.coupler_session(config, Spoken(), args.verbose + 1, records)
-    server = CouplerServer(session, lines, records)
     benches = directory.path / bench.DIRECTORY
     bench.add_routes(server, benches)
+    began = time.monotonic()
+
+    def build() -> pyscpd.CouplerSession:
+        # The steps of the stage are what the server reads; -v adds the items.
+        try:
+            session = directory.coupler_session(config, Spoken(), args.verbose + 1, records)
+        except Exception as error:
+            if not stage.stopping.is_set():
+                Console(file=sys.stderr).failure(f"the session could not be built: {error}")
+            raise
+        write_out(f"the session stands after {duration(time.monotonic() - began)}\n")
+        return session
+
+    write_out(f"running the Final stage of {args.run_dir} to the end of the coupler insertion ...\n")
+    server.build(build)
     address = f"http://127.0.0.1:{args.serve}"
-    write_out(f"capacity graph with the coupler tab on {address}/ (Ctrl-C ends it)")
-    write_out(f"SAT dashboards on {address}/sat (the feedlines) and {address}/global (the combinations)")
-    write_out(f"SAT benchmarks on {address}/bench/local and {address}/bench/global, from {benches}")
-    serve(server, args.serve)
+    write_out(f"capacity graph with the coupler tab on {address}/ (Ctrl-C ends it)\n")
+    write_out(
+        f"SAT dashboards on {address}/sat (the feedlines) and {address}/global (the combinations), "
+        "filled in while the stage runs\n"
+    )
+    write_out(f"how far the session is on {address}/status.json\n")
+    write_out(f"SAT benchmarks on {address}/bench/local and {address}/bench/global, from {benches}\n")
+    if not serve(server, args.serve):
+        # The stage is between two progress updates; the process ends without waiting for it.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(130)
     return 0
+
+
+class _BenchProgress:
+    """Says how far a SAT benchmark is.
+
+    It says each phase of the session's Final stage as it ends, each task the stage starts, and
+    every segment of the local comparison with the classes counted so far.
+    """
+
+    def __init__(self, say: Callable[[str], None]) -> None:
+        self.say = say
+        self.task = ""
+
+    def line(self, level: int, text: str) -> None:
+        del level
+        if text.startswith(("local agreement", "==> local agreement")):
+            self.say(text)
+
+    def entry(self, level: int, label: str, figures: Sequence[tuple[str, str]]) -> None:
+        del level
+        self.say(f"  {label}: " + " · ".join(text for text, _ in figures))
+
+    @staticmethod
+    def result(figures: Sequence[tuple[str, str]], fails: int | None) -> None:
+        del figures, fails
+
+    def progress(self, task: str, detail: str, done: int, total: int) -> None:
+        del detail, done, total
+        if task not in {self.task, "local agreement"}:
+            self.task = task
+            self.say(f"  {task} ...")
 
 
 def command_sat_bench(args: argparse.Namespace) -> int:
@@ -280,7 +354,7 @@ def command_sat_bench(args: argparse.Namespace) -> int:
     name = args.name or directory.path.resolve().name
     began = time.monotonic()
     say(f"sat-bench {args.kind} {name}: running the Final stage to the end of the coupler insertion ...")
-    session = directory.coupler_session(config)
+    session = directory.coupler_session(config, _BenchProgress(say), 1)
     say(f"sat-bench {args.kind} {name}: the session stands after {duration(time.monotonic() - began)}")
     bench.run_bench(
         args.kind,
@@ -291,6 +365,7 @@ def command_sat_bench(args: argparse.Namespace) -> int:
         runs=args.runs,
         span=args.span,
         cases=args.cases,
+        feedlines=args.feedlines,
         say=say,
     )
     say(f"sat-bench {args.kind} {name}: {output / bench.json_name(args.kind)} and {bench.html_name(args.kind)}")
@@ -342,14 +417,16 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
     # pictures over the partitions their chords and wires run through, with the inner circuit of the
     # global step. The corridor picture also shows the feedlines its resonator wires start at.
     # The detail picture is drawn over the partitions its wires had to stay inside; the two routing
-    # pictures tell a resonator from a plain wire by the assignment.
+    # pictures tell a resonator from a plain wire by the assignment. The final picture draws every
+    # wire into its ports, which the assignment names for the ring and the global step for the inner
+    # circuit.
     plan = directory.artifact("capacity")
     over_plan = args.stage in {"global", "assign", "corridor", "detail"}
     capacity = plan.read_bytes() if over_plan and plan.is_file() else None
     chosen = directory.artifact("assign")
     assignment = chosen.read_bytes() if args.stage in {"corridor", "detail", "final"} and chosen.is_file() else None
     solved = directory.artifact("global")
-    routing = solved.read_bytes() if args.stage in {"assign", "corridor"} and solved.is_file() else None
+    routing = solved.read_bytes() if args.stage in {"assign", "corridor", "final"} and solved.is_file() else None
     # The routing pictures draw the room every wire keeps, which is the design rule as the stage
     # converted it onto its grid.
     spacing = config.rules.minWireSpacing if config.rules is not None else 0.0
@@ -575,7 +652,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "run the Final stage to the end of its coupler insertion and serve on PORT (8765): / the capacity graph "
             "with the coupler tab, /sat and /global the SAT dashboards with live graph and mover links, /bench/local "
-            "and /bench/global the tables of mqt-scpd sat-bench"
+            "and /bench/global the tables of mqt-scpd sat-bench. The server answers at once: /status.json says how "
+            "far the stage is, and /sat and /global fill in as the records come"
         ),
     )
     debug.add_argument(
@@ -603,6 +681,12 @@ def build_parser() -> argparse.ArgumentParser:
     sat_bench.add_argument("--span", type=_positive_int, default=bench.SPAN, help="the edges of a segment (3)")
     sat_bench.add_argument(
         "--cases", type=_positive_int, default=bench.CASES, help="global: the states beyond the committed one (12)"
+    )
+    sat_bench.add_argument(
+        "--feedlines",
+        type=_chain_list,
+        default=[],
+        help="the feedlines (chains) to search and judge, as 0,2; every one when left out",
     )
     sat_bench.add_argument(
         "-o", "--output", type=Path, help="the directory of the table and the page; <run>/sat-bench by default"

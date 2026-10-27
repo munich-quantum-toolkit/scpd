@@ -268,7 +268,7 @@ table FinalParams {
   coupler_bias: double = 0.98;
   /// How far below `target_resonator_length` a coupler may leave the
   /// resonator, as a share of that figure. A place that leaves less is
-  /// refused.
+  /// refused. The centred options of `coupler_option_extension` are exempt.
   coupler_max_shortfall: double = 0.30;
   /// How many cells a coupler keeps off every side of the coupler box, the
   /// room the launcher stubs leave open.
@@ -276,6 +276,15 @@ table FinalParams {
   /// How far an option that leaves the coupler box is moved into it, in
   /// cells on an axis, before the place is given up.
   coupler_shift_cells: uint32 = 20;
+  /// How far the option generator copies every plain option, in cells on
+  /// each axis: eight copies, moved by this figure in each of the eight
+  /// directions, each with its lead joined to the cell of the resonator's way
+  /// nearest its tip. A copy whose resonator is then longer than the target
+  /// or shorter than `coupler_max_shortfall` allows is refused. With copies
+  /// the generator builds no jogs (`jog_options`). The chain search opens a
+  /// coupler's copies as it opens its jogs: only when no run of its plain
+  /// options reaches past it. 0 makes no copies.
+  coupler_copy_cells: uint32 = 0;
   /// How many cells of straight run the coupler's lead keeps beyond
   /// `min_straight_length`, so that the join with the resonator's way has
   /// room to be a turn.
@@ -359,10 +368,18 @@ table FinalParams {
   /// How many steps the capacity rule may refuse before a run of options
   /// joins a chain; then the chain is searched again without the rule.
   chain_rule_refusals: uint32 = 1500;
+  /// Whether the chain search keeps a blacklist of the pairs of options of
+  /// the two couplers at each end of a chain that close the wires there,
+  /// and drops a later step on such a pair unchecked.
+  chain_end_blacklist: bool = true;
+  /// Whether the chain search keeps a blacklist of the pairs of options
+  /// whose edge gets fewer crossing slots than wires must cross it, and
+  /// drops a later step on such a pair unchecked.
+  chain_slot_blacklist: bool = true;
   /// The targeted repair: how many ring members beside a segment are drawn
   /// again and how many local rip-up rounds it runs.
   research_ring_members: uint32 = 2;
-  research_rounds: uint32 = 2;
+  research_rounds: uint32 = 4;
   /// How many ring neighbours to either side a wire is fenced against in
   /// the feedline pass and the refinements.
   fence_pairs: uint32 = 3;
@@ -372,6 +389,40 @@ table FinalParams {
   halo_reach: uint32 = 1;
   rise_reach: uint32 = 3;
   rise_peak: uint32 = 3;
+  /// Whether a resonator whose way has no room for its meander goes into the
+  /// relaxation, as a wire with no way does: the neighbours are let go of one
+  /// level at a time until a way long enough is found. Off, the resonator
+  /// keeps the short way and lets no neighbour go.
+  meander_relaxation: bool = true;
+  /// The jogs a coupler option may take, as a comma list of lengths in
+  /// cells. A jog is the second dogleg in front of the pad: it moves the pad
+  /// sideways off the resonator's way, and every length is tried turned to
+  /// either side. Empty takes the one jog of 20 cells.
+  jog_options: string;
+  /// Where the option generator adds centred coupler options, as a comma
+  /// list of cells along the resonator's way from the place nearest the
+  /// target length, toward the qubit (a negative entry back from the qubit).
+  /// A centred option has the pad's centre on the resonator's way at that
+  /// cell, for every allowed offset and both ports. `0,20` adds them at the
+  /// place and twenty cells further along. The plain options stay as they
+  /// are. Empty adds none. `coupler_max_shortfall` does not refuse them. The
+  /// chain search opens a coupler's centred options only when no run reaches
+  /// past it with its jogs open.
+  coupler_option_extension: string;
+  /// How the coupler insertion searches the options of a chain: "astar"
+  /// (empty is the same) grows the prefixes of the chain from its first
+  /// waypoint; "bidirectional" grows the suffixes from its last waypoint as
+  /// well, one priced step each in turn, and lays the run of a prefix and a
+  /// suffix that meet on an option again from the front. The search from the
+  /// front decides the answer either way.
+  chain_search: string;
+  /// Whether the option generator adds line options: per coupler, options
+  /// whose feedline ports lie on the chord of its two neighbours or on the
+  /// line that fits its whole chain best, each turned to the nearest of the
+  /// eight headings, at a cut of the resonator
+  /// within `length_point_band_percent` of the target length. They are open
+  /// from the start, and `coupler_max_shortfall` does not refuse them.
+  coupler_line_options: bool = false;
 }
 
 /// How the mixed-integer programs of the planning stages are solved.

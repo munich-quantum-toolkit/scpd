@@ -268,13 +268,16 @@ mqt::scpd::pipeline::Report reportTo(const nb::object& reporter,
 
 /// The same for an object that keeps the report after the call that made it
 /// returns: it holds its own reference, taken while the call holds the GIL.
+/// The sinks share that reference through a PythonCallable, so copies of
+/// them never touch the reference count, and the last copy takes the GIL to
+/// release it on whichever thread drops it.
 mqt::scpd::pipeline::Report keepReporting(const nb::object& reporter,
                                           const int verbosity) {
   if (reporter.is_none()) {
     return signalsOnly();
   }
-  const auto held = std::make_shared<const nb::object>(reporter);
-  return reportThrough([held]() -> const nb::object& { return *held; },
+  const auto held = std::make_shared<const PythonCallable>(reporter);
+  return reportThrough([held]() -> const nb::object& { return held->get(); },
                        verbosity);
 }
 
@@ -300,15 +303,18 @@ mqt::scpd::pipeline::Debug recordTo(const nb::object& debug) {
 }
 
 /// `recordTo` for a coupler session, which calls the callable after the call
-/// that handed it over: the sink holds a copy of the callable and not the
-/// reference `recordTo` takes.
+/// that handed it over and builds itself with the GIL released. The sink holds
+/// its own reference as keepReporting does and takes the GIL back for every
+/// record.
 mqt::scpd::pipeline::Debug keepRecording(const nb::object& debug) {
   if (debug.is_none()) {
     return {};
   }
-  return [debug](const std::string_view kind, const std::string_view record) {
-    debug(nb::str(kind.data(), kind.size()),
-          nb::str(record.data(), record.size()));
+  const auto held = std::make_shared<const PythonCallable>(debug);
+  return [held](const std::string_view kind, const std::string_view record) {
+    const nb::gil_scoped_acquire gil;
+    held->get()(nb::str(kind.data(), kind.size()),
+                nb::str(record.data(), record.size()));
   };
 }
 
@@ -572,10 +578,17 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
             const auto assigned =
                 mqt::scpd::io::readArtifact(asSpan(assignment));
             const auto drawn = mqt::scpd::io::readArtifact(asSpan(detail));
+            // The sinks take their references while the GIL is held; the
+            // stage then runs without it, so that other Python threads, such
+            // as a server that shows how far the stage is, keep running. The
+            // two locals outlive the stage, so no sink the stage drops is the
+            // last owner of a reference.
+            const auto report = keepReporting(reporter, verbosity);
+            const auto record = keepRecording(debug);
+            const nb::gil_scoped_release release;
             new (self) mqt::scpd::pipeline::CouplerSession(
                 design, globalOf(circuit), assignmentOf(assigned),
-                detailOf(drawn), configuration,
-                keepReporting(reporter, verbosity), keepRecording(debug));
+                detailOf(drawn), configuration, report, record);
           },
           "chip"_a, "global_"_a, "assignment"_a, "detail"_a, "config"_a,
           "reporter"_a = nb::none(), "verbosity"_a = 0, "debug"_a = nb::none(),
@@ -586,11 +599,22 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
           "asks for, from this run, the global SAT search included, and from "
           "every later call.")
       .def("couplers", &mqt::scpd::pipeline::CouplerSession::couplers,
-           "The couplers as they stand and every option of each, as JSON.")
+           "The couplers as they stand and every option of each, as JSON: per "
+           "option why the chain search does not offer it, and per coupler the "
+           "candidates of the option generator that gave no option, with why.")
       .def("set_option", &mqt::scpd::pipeline::CouplerSession::setOption,
            "coupler"_a, "option"_a,
            "Put a coupler on another option and draw its two feedline edges "
            "again. Returns JSON with what became of each edge.")
+      .def("add_option", &mqt::scpd::pipeline::CouplerSession::addOption,
+           "coupler"_a, "x"_a, "y"_a, "offset"_a = -1, "port"_a = 0,
+           "Build an option of a coupler by hand: the pad's centre on the "
+           "cell (x, y) and the resonator cut at the cell of its way nearest "
+           "it. offset names the offset (0 to 7) or -1 for the first that "
+           "fits; port names the port (1 or 2) or 0 for the first that fits. "
+           "An option that fits is appended, open; the coupler does not move. "
+           "Returns JSON with coupler, built, cell, option, offset, "
+           "secondPort and tried, every candidate refused with why.")
       .def("graph", &mqt::scpd::pipeline::CouplerSession::graph,
            "The capacity graph of the chip as it stands, as the JSON of "
            "final-capacity-graph.json.")
@@ -623,13 +647,23 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
            "stands on and its feedline edges by name.")
       .def("compare_locally",
            &mqt::scpd::pipeline::CouplerSession::compareLocally, "runs"_a,
-           "span"_a,
+           "span"_a, "feedlines"_a = std::vector<std::uint32_t>{},
            "Route the feedlines, then compare the slot check of every "
            "feedline alone with a rip-up and re-route of its wires alone, "
            "over up to runs runs of options of every segment of span edges "
            "of every chain. Returns JSON with the four classes, the runs "
            "judged and what the chip as it began came to; the routing "
-           "changes the state for good, the comparison leaves it as found.")
+           "changes the state for good, the comparison leaves it as found. "
+           "With feedlines, only those chains are searched and judged.")
+      .def("local_reroute", &mqt::scpd::pipeline::CouplerSession::localReroute,
+           "chain"_a, "options"_a,
+           "Rip up the wires of one feedline and route them again with its "
+           "couplers on options, one per waypoint (0 at a fixed waypoint), "
+           "as the local benchmark reroutes a feedline: its wires and the "
+           "free wires beside it, every other wire ignored; then put the "
+           "chip back. Returns JSON with chain, options, window, clean, "
+           "failing, blocked, rounds, seconds and the ways of the wires "
+           "rerouted and of the chain's feedline edges.")
       .def("route_feedlines",
            &mqt::scpd::pipeline::CouplerSession::routeFeedlines,
            "Run the feedline routing on the chip as it stands. Returns JSON "

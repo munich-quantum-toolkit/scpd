@@ -119,9 +119,14 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "coupler_max_shortfall": 0.30,
         "coupler_box_margin_cells": 5,
         "coupler_shift_cells": 20,
+        "coupler_copy_cells": 0,
         "coupler_lead_margin_cells": 5,
         "launcher_lead": 10.0,
         "coupler_offsets": "",
+        "jog_options": "",
+        "coupler_option_extension": "",
+        "chain_search": "astar",
+        "coupler_line_options": False,
         "edge_launcher_margin_cells": 6,
         "terminal_slot_cells": 20,
         "chain_end_edge_weight": 0.1,
@@ -133,6 +138,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "sweep_length_band": 1.0,
         "meander_leg_spacing_cells": 25,
         "meander_start_margin_cells": -1,
+        "meander_relaxation": True,
         "capacity_margin": 1.06,
         "capacity_margin_from_wires": 3,
         "resonator_passage": 0.8,
@@ -151,8 +157,10 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "global_sat_states": 8,
         "global_sat_tries": 200,
         "chain_rule_refusals": 1500,
+        "chain_end_blacklist": True,
+        "chain_slot_blacklist": True,
         "research_ring_members": 2,
-        "research_rounds": 2,
+        "research_rounds": 4,
         "fence_pairs": 3,
         "halo_reach": 1,
         "rise_reach": 3,
@@ -352,6 +360,54 @@ def _read_grid(table: dict[str, Any], problems: list[str]) -> GridParamsT:
     return grid
 
 
+#: The longest jog ``[stages.final] jog_options`` takes, in cells.
+MAX_JOG_CELLS = 200
+
+
+def _jog_problems(text: str) -> list[str]:
+    """What is wrong with ``[stages.final] jog_options``.
+
+    Args:
+        text: The comma list of jog lengths in cells.
+
+    Returns:
+        One problem per entry that is not a whole number from 1 to ``MAX_JOG_CELLS``.
+    """
+    return [
+        f"[stages.final] jog_options: '{item.strip()}' is not a jog length in cells from 1 to {MAX_JOG_CELLS}"
+        for item in text.split(",")
+        if item.strip() and not (item.strip().isdigit() and 1 <= int(item.strip()) <= MAX_JOG_CELLS)
+    ]
+
+
+#: The searches ``[stages.final] chain_search`` names: from the front of a chain alone, or from both ends.
+CHAIN_SEARCHES = ("astar", "bidirectional")
+
+#: The furthest ``[stages.final] coupler_option_extension`` places a centred option, in cells.
+MAX_EXTENSION_CELLS = 200
+
+
+def _extension_problems(text: str) -> list[str]:
+    """What is wrong with ``[stages.final] coupler_option_extension``.
+
+    Args:
+        text: The comma list of extensions in cells.
+
+    Returns:
+        One problem per entry that is not a whole number from ``-MAX_EXTENSION_CELLS`` to
+        ``MAX_EXTENSION_CELLS``.
+    """
+    problems = []
+    for item in (part.strip() for part in text.split(",")):
+        number = item[1:] if item[:1] in {"-", "+"} else item
+        if item and not (number.isdigit() and int(number) <= MAX_EXTENSION_CELLS):
+            problems.append(
+                f"[stages.final] coupler_option_extension: '{item}' is not a number of cells from "
+                f"-{MAX_EXTENSION_CELLS} to {MAX_EXTENSION_CELLS}"
+            )
+    return problems
+
+
 def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     """Read the stage sections, with the defaults for everything the file leaves out.
 
@@ -435,6 +491,7 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("repair_trials", "repairTrials"),
         ("coupler_box_margin_cells", "couplerBoxMarginCells"),
         ("coupler_shift_cells", "couplerShiftCells"),
+        ("coupler_copy_cells", "couplerCopyCells"),
         ("coupler_lead_margin_cells", "couplerLeadMarginCells"),
         ("edge_launcher_margin_cells", "edgeLauncherMarginCells"),
         ("terminal_slot_cells", "terminalSlotCells"),
@@ -489,7 +546,20 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     margin = final.take("meander_start_margin_cells", int, default=-1, signed=True)
     stages.final.meanderStartMarginCells = margin
     stages.final.capacityCheck = take(final, "capacity_check", bool)
+    stages.final.chainEndBlacklist = take(final, "chain_end_blacklist", bool)
+    stages.final.chainSlotBlacklist = take(final, "chain_slot_blacklist", bool)
+    stages.final.meanderRelaxation = take(final, "meander_relaxation", bool)
+    stages.final.couplerLineOptions = take(final, "coupler_line_options", bool)
     stages.final.couplerOffsets = take(final, "coupler_offsets", str)
+    stages.final.jogOptions = take(final, "jog_options", str)
+    problems.extend(_jog_problems(stages.final.jogOptions))
+    stages.final.couplerOptionExtension = take(final, "coupler_option_extension", str)
+    problems.extend(_extension_problems(stages.final.couplerOptionExtension))
+    stages.final.chainSearch = take(final, "chain_search", str)
+    if stages.final.chainSearch not in CHAIN_SEARCHES:
+        problems.append(
+            f"[stages.final] chain_search: '{stages.final.chainSearch}' is not one of {', '.join(CHAIN_SEARCHES)}"
+        )
     final.finish()
 
     section.finish()

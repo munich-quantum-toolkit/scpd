@@ -37,6 +37,12 @@
 #include <vector>
 
 namespace mqt::scpd::pipeline {
+
+const flatbuffers::config::GridParamsT& gridParamsOf(const ConfigT& config) {
+  static const flatbuffers::config::GridParamsT DEFAULTS;
+  return config.grid != nullptr ? *config.grid : DEFAULTS;
+}
+
 namespace {
 
 using flatbuffers::design::UnassignedRole;
@@ -70,14 +76,6 @@ grid::GridMetrics capacityGrid(const geometry::BoundingBox& box,
   }
   return grid::GridMetrics::fit(box, params.capacity_cells_x,
                                 params.capacity_cells_y);
-}
-
-/// The grid section of a configuration. A configuration leaves out [grid]
-/// when every value in it is a default, so an absent section is one of
-/// defaults.
-const flatbuffers::config::GridParamsT& gridParamsOf(const ConfigT& config) {
-  static const flatbuffers::config::GridParamsT DEFAULTS;
-  return config.grid != nullptr ? *config.grid : DEFAULTS;
 }
 
 /// The capacity grid and the detail grid a configuration asks for.

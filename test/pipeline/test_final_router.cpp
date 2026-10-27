@@ -784,6 +784,97 @@ TEST(FinalRouter, StopsItsEntriesAtThePhaseTheRunStopsAfter) {
   EXPECT_FALSE(valueOf(spoken.results.front(), "angle cost").has_value());
 }
 
+/// A resonator whose way has no room for its meander keeps that way and lets
+/// no neighbour go, unless `meander_relaxation` sends it into the relaxation
+/// as a wire with no way. The seventeen-qubit chip has such resonators in its
+/// first phase.
+TEST(FinalRouter, MeanderRelaxationLetsAResonatorWithoutRoomRelax) {
+  const auto said = [](const bool relax) {
+    auto benchmark = seventeenQubit();
+    benchmark.config.run = std::make_unique<flatbuffers::config::RunParamsT>();
+    benchmark.config.run->stop_after = "pre-feedline-routing";
+    finalParamsOf(benchmark).meander_relaxation = relax;
+    const auto planned = plan(benchmark);
+    std::vector<std::string> lines;
+    static_cast<void>(finalRouters().make("dubins")->run(
+        benchmark.chip, planned.capacity, planned.global, planned.assignment,
+        planned.detail, benchmark.config, linesInto(lines, Detail::Items)));
+    const auto count = [&lines](const std::string_view text) {
+      return std::ranges::count_if(lines, [text](const std::string& line) {
+        return line.find(text) != std::string::npos;
+      });
+    };
+    return std::pair{count("no room for its meander; keeps the way it found "
+                           "and lets no neighbour go"),
+                     count("no room for its meander; relaxing")};
+  };
+
+  const auto [keptOff, relaxedOff] = said(false);
+  EXPECT_GT(keptOff, 0);
+  EXPECT_EQ(relaxedOff, 0);
+  const auto [keptOn, relaxedOn] = said(true);
+  EXPECT_EQ(keptOn, 0);
+  EXPECT_GT(relaxedOn, 0);
+}
+
+/// A pair of options an end of a chain blacklists is never checked again:
+/// on 17q, chain 2 blacklists pairs of its first two couplers, and no step
+/// check after that stands one of them. Without `chain_end_blacklist`
+/// nothing is blacklisted.
+TEST(FinalRouter, ChecksNoStepAgainOnAPairAnEndBlacklisted) {
+  const auto blacklisted = [](const bool on) {
+    auto benchmark = seventeenQubit();
+    finalParamsOf(benchmark).chain_end_blacklist = on;
+    const auto planned = plan(benchmark);
+    std::vector<std::string> lines;
+    static_cast<void>(finalRouters().make("dubins")->run(
+        benchmark.chip, planned.capacity, planned.global, planned.assignment,
+        planned.detail, benchmark.config, linesInto(lines, Detail::Items)));
+    return lines;
+  };
+  const std::regex listed(
+      R"(chain (\d+) waypoints (\d+) and (\d+): options (\d+) and (\d+) blacklisted)");
+  const std::regex step(
+      R"(capacity step: chain (\d+) f\d+ \(\d+->\d+\) on options ([\w ]+?):)");
+  // Per chain, the pairs blacklisted so far: waypoints and options. A pair
+  // is said before the line of the step that blacklisted it, so it counts
+  // from the step line after that one.
+  std::map<long, std::set<std::array<long, 4>>> lists;
+  std::map<long, std::set<std::array<long, 4>>> said;
+  std::size_t pairs = 0;
+  for (const auto& line : blacklisted(true)) {
+    std::smatch match;
+    if (std::regex_search(line, match, listed)) {
+      said[std::stol(match[1].str())].insert(
+          {std::stol(match[2].str()), std::stol(match[3].str()),
+           std::stol(match[4].str()), std::stol(match[5].str())});
+      ++pairs;
+      continue;
+    }
+    if (!std::regex_search(line, match, step)) {
+      continue;
+    }
+    std::vector<std::string> options;
+    std::istringstream words(match[2].str());
+    for (std::string word; words >> word;) {
+      options.push_back(word);
+    }
+    const auto chain = std::stol(match[1].str());
+    for (const auto& [a, b, first, second] : lists[chain]) {
+      if (static_cast<std::size_t>(b) < options.size()) {
+        EXPECT_FALSE(options[a] == std::to_string(first) &&
+                     options[b] == std::to_string(second))
+            << line;
+      }
+    }
+    lists[chain].merge(said[chain]);
+  }
+  EXPECT_GT(pairs, 0U);
+  for (const auto& line : blacklisted(false)) {
+    EXPECT_EQ(line.find("blacklisted"), std::string::npos) << line;
+  }
+}
+
 /// The global SAT search starts from the slot check of the whole chip as the
 /// commit leaves it. The nine-qubit chip is SAT there, so the search says
 /// so and searches nothing.
@@ -915,6 +1006,215 @@ TEST(CouplerSession, OffersOnlyTheAllowedOffsets) {
   EXPECT_TRUE(std::ranges::any_of(reduced.every, [&](const std::string& line) {
     return line.find(named) != std::string::npos;
   }));
+}
+
+/// `jog_options` names the jogs the option generator tries in front of a
+/// pad, each turned to either side; one jog of 20 cells by default. Named as
+/// the default, the couplers come out with the same options. With a second
+/// jog of 40 cells, the couplers offer options on it as well, and the
+/// settings line names both jogs.
+TEST(CouplerSession, OffersTheListedJogs) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  const auto withJogs = [&](const char* jogs) {
+    auto chip = benchmark;
+    finalParamsOf(chip).jog_options = jogs;
+    return globalSatOf(chip, planned);
+  };
+  const auto jogsOf = [](const GlobalSatOutcome& outcome) {
+    std::set<std::uint32_t> seen;
+    const auto parsed = nlohmann::json::parse(outcome.couplers);
+    for (const auto& coupler : parsed.at("couplers")) {
+      for (const auto& option : coupler.at("options")) {
+        seen.insert(option.at("jog").get<std::uint32_t>());
+      }
+    }
+    return seen;
+  };
+  const auto plain = globalSatOf(benchmark, planned);
+  EXPECT_EQ(withJogs("20").couplers, plain.couplers);
+  const auto byDefault = jogsOf(plain);
+  EXPECT_TRUE(byDefault.contains(0));
+  EXPECT_FALSE(byDefault.contains(40));
+
+  const auto both = withJogs("40, 20");
+  const auto seen = jogsOf(both);
+  EXPECT_TRUE(seen.contains(0));
+  EXPECT_TRUE(seen.contains(40));
+  EXPECT_TRUE(std::ranges::any_of(both.every, [](const std::string& line) {
+    return line.find("jogs 20,40") != std::string::npos;
+  }));
+}
+
+/// `coupler_copy_cells` copies every plain option eight times, moved by the
+/// figure on each axis in each direction, in place of the jogs: no option has
+/// a jog, every copy's pad is its plain option's moved by the figure, a copy
+/// stays closed with the jogs until the coupler opens them, and every copy
+/// refused says why. The settings line names the copies.
+TEST(CouplerSession, CopiesThePlainOptionsInPlaceOfTheJogs) {
+  auto chip = nineQubit();
+  const auto planned = plan(chip);
+  constexpr int CELLS = 20;
+  finalParamsOf(chip).coupler_copy_cells = CELLS;
+  const auto outcome = globalSatOf(chip, planned);
+  const auto parsed = nlohmann::json::parse(outcome.couplers);
+  std::size_t copies = 0;
+  std::size_t refused = 0;
+  for (const auto& coupler : parsed.at("couplers")) {
+    const auto& options = coupler.at("options");
+    for (const auto& option : options) {
+      EXPECT_EQ(option.at("jog"), 0);
+      if (option.at("copy").is_null()) {
+        continue;
+      }
+      ++copies;
+      const auto& base = options.at(option.at("copyOf").get<std::size_t>());
+      ASSERT_TRUE(base.at("copy").is_null());
+      const auto dx = option.at("copy").at(0).get<int>() * CELLS;
+      const auto dy = option.at("copy").at(1).get<int>() * CELLS;
+      for (std::size_t corner = 0; corner < 4; ++corner) {
+        EXPECT_DOUBLE_EQ(option.at("pad").at(corner).at(0).get<double>(),
+                         base.at("pad").at(corner).at(0).get<double>() + dx);
+        EXPECT_DOUBLE_EQ(option.at("pad").at(corner).at(1).get<double>(),
+                         base.at("pad").at(corner).at(1).get<double>() + dy);
+      }
+      if (!coupler.at("jogs").get<bool>()) {
+        EXPECT_FALSE(option.at("open").get<bool>());
+        EXPECT_EQ(option.at("closed").at("kind"), "jog-locked");
+      }
+    }
+    for (const auto& candidate : coupler.at("refused")) {
+      if (!candidate.at("copy").is_null()) {
+        ++refused;
+        EXPECT_FALSE(candidate.at("why").get<std::string>().empty());
+      }
+    }
+  }
+  EXPECT_GT(copies, 0U);
+  EXPECT_GT(refused, 0U);
+  EXPECT_TRUE(std::ranges::any_of(outcome.every, [](const std::string& line) {
+    return line.find("jogs none, copies by 20 cells") != std::string::npos;
+  }));
+}
+
+/// `coupler_option_extension` adds centred options: the pad's centre on the
+/// resonator's way, at the place nearest the target length and as many cells
+/// further along it as each extension says; none by default. With `0,20`
+/// every coupler keeps its plain options as they are, the chip gains centred
+/// options at both extensions, every centred option of one coupler and one
+/// extension has its centre on the same cell whatever its offset and port,
+/// and the settings line names both extensions. The centred options start
+/// locked: a coupler whose chain the search settles on its plain options, as
+/// on this chip, keeps them closed, and stands on the option it stands on
+/// without them.
+TEST(CouplerSession, CentresTheExtensionOptionsOnTheResonator) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  auto chip = benchmark;
+  finalParamsOf(chip).coupler_option_extension = "20, 0";
+  const auto both = globalSatOf(chip, planned);
+  const auto plain = globalSatOf(benchmark, planned);
+  EXPECT_TRUE(std::ranges::any_of(plain.every, [](const std::string& line) {
+    return line.find("extensions none") != std::string::npos;
+  }));
+  EXPECT_TRUE(std::ranges::any_of(both.every, [](const std::string& line) {
+    return line.find("extensions 0,20") != std::string::npos;
+  }));
+
+  const auto before = nlohmann::json::parse(plain.couplers).at("couplers");
+  const auto after = nlohmann::json::parse(both.couplers).at("couplers");
+  ASSERT_EQ(before.size(), after.size());
+  const auto plainOf = [](const nlohmann::json& coupler) {
+    std::vector<std::string> options;
+    for (const auto& option : coupler.at("options")) {
+      if (!option.at("centred").get<bool>()) {
+        auto kept = option;
+        kept.erase("index");
+        kept.erase("open");
+        kept.erase("closed");
+        options.push_back(kept.dump());
+      }
+    }
+    return options;
+  };
+  std::map<int, std::size_t> centredAt;
+  for (std::size_t c = 0; c < after.size(); ++c) {
+    EXPECT_EQ(plainOf(after[c]), plainOf(before[c]));
+    std::map<int, std::set<std::string>> centres;
+    for (const auto& option : after[c].at("options")) {
+      if (!option.at("centred").get<bool>()) {
+        EXPECT_EQ(option.at("extension").get<int>(), 0);
+        continue;
+      }
+      const auto extension = option.at("extension").get<int>();
+      EXPECT_TRUE(extension == 0 || extension == 20);
+      EXPECT_EQ(option.at("jog").get<int>(), 0);
+      ++centredAt[extension];
+      centres[extension].insert(option.at("centre").dump());
+    }
+    for (const auto& [extension, cells] : centres) {
+      EXPECT_EQ(cells.size(), 1U) << "extension " << extension;
+    }
+  }
+  EXPECT_GT(centredAt[0], 0U);
+  EXPECT_GT(centredAt[20], 0U);
+
+  const auto chosenOf = [](const nlohmann::json& coupler) {
+    const auto& option =
+        coupler.at("options").at(coupler.at("chosen").get<std::size_t>());
+    return std::tuple{
+        option.at("offset").get<int>(), option.at("secondPort").get<bool>(),
+        option.at("jog").get<int>(), option.at("reversed").get<bool>(),
+        option.at("centre").dump()};
+  };
+  for (std::size_t c = 0; c < after.size(); ++c) {
+    ASSERT_FALSE(after[c].at("extensions").get<bool>());
+    for (const auto& option : after[c].at("options")) {
+      if (option.at("centred").get<bool>()) {
+        EXPECT_EQ(option.at("closed").at("kind"), "extension-locked");
+        EXPECT_FALSE(option.at("open").get<bool>());
+      }
+    }
+    EXPECT_EQ(chosenOf(after[c]), chosenOf(before[c]));
+  }
+  EXPECT_EQ(both.verdict, plain.verdict);
+}
+
+/// `coupler_max_shortfall` does not refuse a centred option of
+/// `coupler_option_extension`. With no shortfall allowed at all, plain options
+/// are refused for it, and not one centred option is, and every coupler
+/// still has centred options at the place nearest the target length.
+TEST(CouplerSession, TheShortfallDoesNotRefuseTheCentredOptions) {
+  const auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  auto chip = benchmark;
+  finalParamsOf(chip).coupler_option_extension = "0,20,40";
+  finalParamsOf(chip).coupler_max_shortfall = 0.0;
+  const auto outcome = globalSatOf(chip, planned);
+  const auto couplers = nlohmann::json::parse(outcome.couplers).at("couplers");
+  const auto isShortfall = [](const nlohmann::json& refused) {
+    return refused.at("why").get<std::string>().find(
+               "a coupler may take off") != std::string::npos;
+  };
+  std::size_t plainRefused = 0;
+  for (const auto& coupler : couplers) {
+    std::size_t centredAtZero = 0;
+    for (const auto& option : coupler.at("options")) {
+      centredAtZero += option.at("centred").get<bool>() &&
+                               option.at("extension").get<int>() == 0
+                           ? 1U
+                           : 0U;
+    }
+    EXPECT_GT(centredAtZero, 0U);
+    for (const auto& refused : coupler.at("refused")) {
+      if (refused.at("centred").get<bool>()) {
+        EXPECT_FALSE(isShortfall(refused)) << refused.dump();
+      } else {
+        plainRefused += isShortfall(refused) ? 1U : 0U;
+      }
+    }
+  }
+  EXPECT_GT(plainRefused, 0U);
 }
 
 /// `chain_end_edge_weight` weighs the price of the edges between a
@@ -1161,6 +1461,139 @@ TEST(CouplerSession, MovesACouplerAndDrawsItsEdgesAgain) {
       static_cast<void>(session.setOption(
           index, static_cast<std::uint32_t>(picked->at("options").size()))),
       std::invalid_argument);
+}
+
+/// A coupler session builds an option by hand (`addOption`). Placed on the
+/// centre of a centred option, with its offset and port, it is that option
+/// again, appended, open and marked as placed by hand; the coupler stays
+/// where it stood and moves onto it with `setOption`. Placed where no pad
+/// fits, nothing is appended and every candidate says why.
+TEST(CouplerSession, PlacesAnOptionByHand) {
+  auto benchmark = fourQubit();
+  finalParamsOf(benchmark).coupler_option_extension = "0";
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto listed = nlohmann::json::parse(session.couplers()).at("couplers");
+  const nlohmann::json* picked = nullptr;
+  const nlohmann::json* centred = nullptr;
+  for (const auto& coupler : listed) {
+    for (const auto& option : coupler.at("options")) {
+      if (option.at("centred").get<bool>()) {
+        picked = &coupler;
+        centred = &option;
+        break;
+      }
+    }
+    if (picked != nullptr) {
+      break;
+    }
+  }
+  ASSERT_NE(centred, nullptr);
+  EXPECT_FALSE(picked->at("way").empty());
+  const auto index = picked->at("index").get<std::uint32_t>();
+  const auto count = picked->at("options").size();
+  const auto centre = centred->at("centre");
+  const auto port = centred->at("secondPort").get<bool>() ? 2 : 1;
+
+  const auto placed = nlohmann::json::parse(session.addOption(
+      index, centre[0].get<std::uint32_t>(), centre[1].get<std::uint32_t>(),
+      centred->at("offset").get<std::int32_t>(), port));
+  ASSERT_TRUE(placed.at("built").get<bool>()) << placed.dump();
+  EXPECT_EQ(placed.at("option").get<std::size_t>(), count);
+  const auto after = nlohmann::json::parse(session.couplers()).at("couplers");
+  for (const auto& coupler : after) {
+    if (coupler.at("index").get<std::uint32_t>() != index) {
+      continue;
+    }
+    ASSERT_EQ(coupler.at("options").size(), count + 1);
+    EXPECT_EQ(coupler.at("chosen"), picked->at("chosen"));
+    const auto& made = coupler.at("options").back();
+    EXPECT_TRUE(made.at("custom").get<bool>());
+    EXPECT_TRUE(made.at("open").get<bool>());
+    EXPECT_EQ(made.at("centre"), centre);
+    EXPECT_EQ(made.at("pad"), centred->at("pad"));
+    EXPECT_EQ(made.at("offset"), centred->at("offset"));
+  }
+  const auto moved = nlohmann::json::parse(
+      session.setOption(index, static_cast<std::uint32_t>(count)));
+  EXPECT_EQ(moved.at("option").get<std::size_t>(), count);
+
+  const auto refused =
+      nlohmann::json::parse(session.addOption(index, 0, 0, -1, 0));
+  EXPECT_FALSE(refused.at("built").get<bool>());
+  EXPECT_EQ(refused.at("tried").size(), 16U);
+  for (const auto& candidate : refused.at("tried")) {
+    EXPECT_FALSE(candidate.at("why").get<std::string>().empty());
+  }
+  EXPECT_THROW(static_cast<void>(session.addOption(
+                   static_cast<std::uint32_t>(listed.size() + 100), 0, 0)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(session.addOption(index, 0, 0, 8)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(session.addOption(index, 0, 0, -1, 3)),
+               std::invalid_argument);
+}
+
+/// A coupler session lists every candidate of the option generator. Each
+/// offset, port and jog that the generator sweeps gives an option or a
+/// refused candidate with the places tried and a reason; each offset it
+/// does not sweep (3 and 4 by default) is a refused candidate without a
+/// port, a jog or a place. Each option the chain search does not offer
+/// names why (`closed`). On 4q no coupler has unlocked its jogs, so every
+/// jog option is closed as locked.
+TEST(CouplerSession, NamesWhyEveryOptionIsRefusedOrClosed) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto listed = nlohmann::json::parse(session.couplers()).at("couplers");
+  ASSERT_FALSE(listed.empty());
+  std::size_t locked = 0;
+  for (const auto& coupler : listed) {
+    for (const auto& option : coupler.at("options")) {
+      const auto jog = option.at("jog").get<int>();
+      const auto& closed = option.at("closed");
+      EXPECT_EQ(option.at("open").get<bool>(), closed.is_null())
+          << "coupler " << coupler.at("index") << " option "
+          << option.at("index");
+      if (!closed.is_null()) {
+        EXPECT_FALSE(closed.at("why").get<std::string>().empty());
+        EXPECT_TRUE(closed.at("kind") == "jog-locked" ||
+                    closed.at("kind") == "on-feedline");
+      }
+      EXPECT_TRUE(option.at("onFeedline").is_array());
+      EXPECT_TRUE(option.at("reversed").is_boolean());
+      if (jog > 0 && !coupler.at("jogs").get<bool>()) {
+        EXPECT_EQ(closed.at("kind"), "jog-locked");
+        ++locked;
+      }
+    }
+    std::set<int> unswept;
+    std::size_t swept = 0;
+    for (const auto& refused : coupler.at("refused")) {
+      EXPECT_FALSE(refused.at("why").get<std::string>().empty());
+      const auto offset = refused.at("offset").get<int>();
+      if (refused.at("secondPort").is_null()) {
+        EXPECT_TRUE(refused.at("jog").is_null());
+        EXPECT_EQ(refused.at("places").get<int>(), 0);
+        EXPECT_TRUE(refused.at("why").get<std::string>().starts_with(
+            "offset not swept"));
+        unswept.insert(offset);
+        continue;
+      }
+      ++swept;
+      EXPECT_GT(refused.at("places").get<int>(), 0);
+    }
+    EXPECT_EQ(unswept, (std::set<int>{3, 4}));
+    // Six offsets, two ports, three jogs: each candidate gave an option or
+    // a refusal, and none gave both.
+    EXPECT_EQ(coupler.at("options").size() + swept, 6U * 2U * 3U);
+    EXPECT_FALSE(coupler.at("guardStoodDown").get<bool>());
+  }
+  EXPECT_GT(locked, 0U);
 }
 
 /// A coupler session runs the capacity check of the coupler insertion on
@@ -2674,13 +3107,15 @@ Records sessionRecordsOf(const Benchmark& benchmark, const Planned& planned,
 /// state a segment's runs reach. A record names the chain, the segment, the
 /// options per waypoint, the coupler per waypoint, the couplers it moves off
 /// the committed state, the check that found it SAT and the chain's own
-/// lost wires. The 17-qubit chip is UNSAT after the commit, so its search
-/// runs; the 4- and 9-qubit chips are SAT there. A local check of the
-/// coupler session on the committed options judges as the search did, and
-/// puts the chip back as it stood.
+/// lost wires. The 17-qubit chip is SAT after the commit; with the capacity
+/// rule given up after the first refusal its chains are settled by cost, the
+/// commit is UNSAT, and its search runs. A local check of the coupler
+/// session on the committed options judges as the search did, and puts the
+/// chip back as it stood.
 TEST(CouplerSession, RecordsEveryChainStateTheGlobalSatSearchChecks) {
-  const auto benchmark = withDebugPages(
-      seventeenQubit(), [](auto& debug) { debug.global_sat = true; });
+  auto benchmark = withDebugPages(seventeenQubit(),
+                                  [](auto& debug) { debug.global_sat = true; });
+  finalParamsOf(benchmark).chain_rule_refusals = 1;
   const auto planned = plan(benchmark);
   std::unique_ptr<CouplerSession> session;
   const auto records = sessionRecordsOf(benchmark, planned, session);
@@ -2794,6 +3229,35 @@ TEST(CouplerSession, RecordsNoChainStateWithoutTheGlobalSatPage) {
 /// option it stands on and the chain's feedline edges. A local check puts
 /// the chain's couplers on other options for the checks only, and refuses a
 /// chain, an option count or an option that does not exist.
+// A configuration leaves out [grid] when every value in it is a default, so the
+// Final stage and the coupler session take the defaults as the planning stages
+// do, and route the chip as under a [grid] of defaults.
+TEST(FinalRouter, TakesTheGridDefaultsWithoutAGridSection) {
+  auto withoutGrid = fourQubit();
+  withoutGrid.config.grid.reset();
+  auto withDefaults = fourQubit();
+  withDefaults.config.grid =
+      std::make_unique<mqt::scpd::flatbuffers::config::GridParamsT>();
+
+  const auto route = [](const Benchmark& benchmark) {
+    const auto planned = plan(benchmark);
+    return finalRouters().make("dubins")->run(
+        benchmark.chip, planned.capacity, planned.global, planned.assignment,
+        planned.detail, benchmark.config, {});
+  };
+  const auto without = route(withoutGrid);
+  const auto with = route(withDefaults);
+  ASSERT_EQ(without.wires.size(), with.wires.size());
+  for (std::size_t at = 0; at < with.wires.size(); ++at) {
+    EXPECT_EQ(without.wires[at]->path, with.wires[at]->path) << "wire " << at;
+  }
+
+  const auto planned = plan(withoutGrid);
+  EXPECT_NO_THROW(CouplerSession(withoutGrid.chip, planned.global,
+                                 planned.assignment, planned.detail,
+                                 withoutGrid.config));
+}
+
 TEST(CouplerSession, ListsTheChainsAndChecksOneLocally) {
   const auto benchmark = fourQubit();
   const auto planned = plan(benchmark);
@@ -2864,6 +3328,164 @@ TEST(CouplerSession, ListsTheChainsAndChecksOneLocally) {
   }
   EXPECT_THROW(static_cast<void>(session.localCheck(0, beyond)),
                std::invalid_argument);
+}
+
+/// The local rip-up and reroute of a feedline, for the coupler server's
+/// button: on the four-qubit chip, its one feedline on the options it
+/// stands on and on another option, its wires are routed again and drawn
+/// with its feedline edges, `clean` says whether any failed, and the chip
+/// is put back as it stood.
+TEST(CouplerSession, ReroutesAFeedlineLocallyAndPutsTheChipBack) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  const auto chain =
+      nlohmann::json::parse(session.chains()).at("chains").front();
+  const auto options = chain.at("options").get<std::vector<std::size_t>>();
+  const auto edges = chain.at("edges").get<std::vector<std::string>>();
+  const auto before = session.chains();
+  auto moved = options;
+  for (std::size_t at = 0; at < options.size(); ++at) {
+    if (!chain.at("couplers").at(at).is_null()) {
+      moved[at] = options[at] == 0 ? 1 : 0;
+      break;
+    }
+  }
+  for (const auto& on : {options, moved}) {
+    const auto rerouted = nlohmann::json::parse(session.localReroute(0, on));
+    EXPECT_EQ(rerouted.at("options").get<std::vector<std::size_t>>(), on);
+    EXPECT_FALSE(rerouted.at("window").empty());
+    EXPECT_EQ(rerouted.at("clean").get<bool>(),
+              rerouted.at("failing").get<std::string>().empty());
+    std::set<std::string> drawn;
+    for (const auto& wire : rerouted.at("wires")) {
+      drawn.insert(wire.at("name").get<std::string>());
+    }
+    for (const auto& name : rerouted.at("window")) {
+      EXPECT_TRUE(drawn.contains(name.get<std::string>())) << name;
+    }
+    for (const auto& edge : edges) {
+      EXPECT_TRUE(drawn.contains(edge)) << edge;
+    }
+    EXPECT_EQ(session.chains(), before);
+  }
+  EXPECT_THROW(static_cast<void>(session.localReroute(1, options)),
+               std::invalid_argument);
+}
+
+/// A local check routes and judges the wires of its chain's feedline and the
+/// free wires beside them: the ring wires of no feedline. The four-qubit chip
+/// has one feedline, so every ring wire is its own or free, and both local
+/// checks and the step check of its last edge judge every wire that the
+/// capacity check of the whole chip judges.
+TEST(CouplerSession, ChecksTheFreeWiresBesideAFeedlineLocally) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto judged = [](const nlohmann::json& graph) {
+    std::set<std::string> names;
+    for (const auto& wire : graph.at("wires")) {
+      if (!wire.value("terminal", false)) {
+        names.insert(wire.at("name").get<std::string>());
+      }
+    }
+    return names;
+  };
+  const auto whole =
+      judged(nlohmann::json::parse(session.insertionCheck()).at("graph"));
+  ASSERT_FALSE(whole.empty());
+
+  const auto chains = nlohmann::json::parse(session.chains()).at("chains");
+  ASSERT_EQ(chains.size(), 1U);
+  const auto options =
+      chains.front().at("options").get<std::vector<std::size_t>>();
+  ASSERT_GE(options.size(), 2U);
+  const auto local = nlohmann::json::parse(session.localCheck(0, options));
+  EXPECT_EQ(judged(local.at("standing").at("graph")), whole);
+  EXPECT_EQ(judged(local.at("alone").at("graph")), whole);
+  const auto step =
+      nlohmann::json::parse(session.stepCheck(0, options.size() - 2, options));
+  EXPECT_EQ(judged(step.at("graph")), whole);
+}
+
+/// A local check and a step check take the chain's terminal edges as wires
+/// with their port runs, as the whole-chip check does (user, 2026-10-27):
+/// no terminal edge is a wall, the slot of each run is closed at both
+/// flanks, each flank's open end by a gate of its own besides the gate
+/// across the slot, and a gate at a flank holds what its width holds, as
+/// every other gate does.
+TEST(CouplerSession, ClosesBothFlanksOfATerminalEdgesRunLocally) {
+  const auto benchmark = fourQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  const auto chains = nlohmann::json::parse(session.chains()).at("chains");
+  ASSERT_EQ(chains.size(), 1U);
+  const auto options =
+      chains.front().at("options").get<std::vector<std::size_t>>();
+  const auto local = nlohmann::json::parse(session.localCheck(0, options));
+  const auto step =
+      nlohmann::json::parse(session.stepCheck(0, options.size() - 2, options));
+
+  for (const auto* const graph :
+       {&step.at("graph"), &local.at("alone").at("graph")}) {
+    std::set<std::string> terminals;
+    for (const auto& wire : graph->at("wires")) {
+      if (wire.value("terminal", false)) {
+        terminals.insert(wire.at("name").get<std::string>());
+      }
+    }
+    ASSERT_FALSE(terminals.empty());
+    for (const auto& stroke : graph->at("strokes")) {
+      if (stroke.at("kind") == "feedline") {
+        EXPECT_FALSE(terminals.contains(stroke.at("name").get<std::string>()))
+            << stroke.at("name") << " is a wall";
+      }
+    }
+    const auto clearance = graph->at("clearance").get<double>();
+    // Per flank of a terminal edge's run: the gates at it, the gate across
+    // the slot to the other flank left out.
+    std::map<std::string, std::size_t> closing;
+    for (const auto& name : terminals) {
+      for (const auto* end : {"coupler", "launcher"}) {
+        for (const auto* side : {"left", "right"}) {
+          closing[std::format("{} at its {}, {}", name, end, side)] = 0;
+        }
+      }
+    }
+    for (const auto& edge : graph->at("edges")) {
+      if (edge.at("kind") != "bottleneck") {
+        continue;
+      }
+      const auto ends = edge.at("ends").get<std::vector<std::string>>();
+      const auto runOf = [](const std::string& end) {
+        return end.substr(0, end.rfind(", "));
+      };
+      const bool across = ends.size() == 2 && runOf(ends[0]) == runOf(ends[1]);
+      bool atFlank = false;
+      for (const auto& end : ends) {
+        if (const auto found = closing.find(end); found != closing.end()) {
+          atFlank = true;
+          found->second += across ? 0U : 1U;
+        }
+      }
+      if (atFlank) {
+        const auto length = edge.at("length").get<double>();
+        const auto byWidth = static_cast<std::int64_t>(length / clearance);
+        EXPECT_LE(edge.at("capacity").get<std::int64_t>(),
+                  std::max<std::int64_t>(byWidth, 1))
+            << edge.at("name") << " is " << length << " cells long";
+      }
+    }
+    for (const auto& [flank, gates] : closing) {
+      if (flank.find(" at its coupler, ") != std::string::npos) {
+        EXPECT_GT(gates, 0U) << "no gate closes " << flank;
+      }
+    }
+  }
 }
 
 /// A step check of the coupler session rebuilds a step check of the chain
