@@ -171,6 +171,29 @@ GridMetrics routerGrid(const GridMetrics& capacity, const double unitDivision) {
                           cellCount(capacity.height * perCellY));
 }
 
+GridMetrics routerGridSnapped(const GridMetrics& capacity, const double cell,
+                              const double snap) {
+  if (!(cell > 0.0) || !(snap > 0.0)) {
+    throw std::invalid_argument(
+        "the router cell size and the lattice pitch must be positive");
+  }
+  const double steps = snap / cell;
+  if (std::abs(steps - std::round(steps)) > 1e-9 * steps) {
+    throw std::invalid_argument(
+        "the lattice pitch must be a whole multiple of the router cell size");
+  }
+  const BoundingBox box = capacity.box();
+  const double x0 = std::floor(box.minX / snap) * snap;
+  const double y0 = std::floor(box.minY / snap) * snap;
+  GridMetrics grid;
+  grid.origin = Point{x0, y0};
+  grid.cellWidth = cell;
+  grid.cellHeight = cell;
+  grid.width = cellCount(ceilWithTolerance((box.maxX - x0) / cell) + 1.0);
+  grid.height = cellCount(ceilWithTolerance((box.maxY - y0) / cell) + 1.0);
+  return grid;
+}
+
 uint32_t cellsFor(const double distance, const GridMetrics& grid) {
   if (!(distance > 0.0)) {
     return 0;

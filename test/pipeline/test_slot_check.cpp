@@ -674,6 +674,58 @@ TEST(SlotCheck, WireWithAPortInNoChamberIsLost) {
       << graph.at("summary");
 }
 
+/// Under the order rule of a local check (`ringOrder`) a wire passes a gate
+/// between the ends of two wires of the ring only when it lies between them
+/// in the ring. Row 40 has two cuts: g0, the nearer, between the pad of
+/// wire 5 and the target of wire 7, and g1 between artwork. Wire 6 lies
+/// between 5 and 7 and takes g0; wire 9 does not and takes g1, which it
+/// takes without the rule only when g0 is not nearer.
+TEST(SlotCheck, KeepsTheWiresInTheirRingOrderAtAGateBetweenWireEnds) {
+  Drawing chip(200, 200, 19.0);
+  chip.fill(0, 41, 199, 199, CHAMBER + 1);
+  chip.fill(0, 40, 199, 40, ARTWORK);
+  chip.fill(90, 40, 110, 40, FREE);
+  chip.fill(150, 40, 170, 40, FREE);
+  const auto gate = [&](const std::string& name, const int x0, const int x1,
+                        const json& ends) {
+    chip.edges.push_back({{"kind", "bottleneck"},
+                          {"name", name},
+                          {"line", {{x0, 40}, {x1, 40}}},
+                          {"ends", ends},
+                          {"chambers", {0, 1}},
+                          {"capacity", 2},
+                          {"users", nullptr},
+                          {"length", static_cast<double>(x1 - x0)},
+                          {"mouth", false},
+                          {"slot", false},
+                          {"terminal", false}});
+  };
+  gate("g0", 89, 111, {"pad of 5", "7 at its target, left"});
+  gate("g1", 149, 171, {"artwork", "artwork"});
+  chip.wire("6", {100, 10}, 0, {100, 190}, 1, {});
+  chip.wire("9", {100, 12}, 0, {102, 190}, 1, {});
+  // The way of a wire as the one gate it takes.
+  const auto through = [](const json& graph, const std::string& wire,
+                          const std::string& gate) {
+    return wireNamed(graph, wire).at("way") ==
+           json::array({edgeNamed(graph, gate).at("index")});
+  };
+  const auto judged = [&](const bool ordered) {
+    auto graph = json::parse(chip.text());
+    graph["ringOrder"] = ordered;
+    graph["ring"] = {{"5", 0}, {"6", 1}, {"7", 2}, {"9", 4}};
+    graph["ringSize"] = 10;
+    return json::parse(slotCheck(graph.dump()).graph);
+  };
+
+  const auto ordered = judged(true);
+  EXPECT_TRUE(through(ordered, "6", "g0"));
+  EXPECT_TRUE(through(ordered, "9", "g1"));
+  EXPECT_EQ(ordered.at("verdict"), "SAT");
+  const auto free = judged(false);
+  EXPECT_TRUE(through(free, "9", "g0"));
+}
+
 TEST(SlotCheck, GateOverCapacityIsUnsat) {
   auto chip = gateChip(1);
   chip.wire("1", {20, 5}, 0, {20, 35}, 1, {});
@@ -707,6 +759,32 @@ TEST(SlotCheck, CountsAGateAcrossTheHeadingTheWiresCrossItOn) {
   EXPECT_EQ(result.verdict, "UNSAT");
   EXPECT_EQ(result.over, std::vector<std::string>{"g0"});
   EXPECT_EQ(edgeNamed(json::parse(result.graph), "g0").at("capacity"), 1);
+}
+
+/// With the own-run bonus, a gate with an end on a wire's own port run holds
+/// that wire half a clearance more where the wire leaves the run straight
+/// through the gate: g0, 11 cells at clearance 4, holds two wires, and three
+/// when one of them is the wire whose run it ends on. Without the bonus the
+/// three wires overfill it.
+TEST(SlotCheck, AGateAtAWiresOwnRunHoldsItHalfAClearanceMoreWithTheBonus) {
+  const auto verdict = [](const bool bonus) {
+    auto chip = gateChip(2);
+    chip.edges[0]["line"] = {{14, 20}, {25, 20}};
+    chip.edges[0]["length"] = 11.0;
+    chip.edges[0]["ends"] = {"1 at its source, left", "artwork"};
+    chip.strokes.push_back({{"name", "1 at its source, left"},
+                            {"kind", "stub"},
+                            {"points", {{16, 10}, {16, 14}}}});
+    chip.wire("1", {16, 5}, 0, {16, 35}, 1, {});
+    chip.wire("2", {20, 5}, 0, {20, 35}, 1, {});
+    chip.wire("3", {23, 5}, 0, {23, 35}, 1, {});
+    auto graph = json::parse(chip.text());
+    graph["ownRunBonus"] = bonus;
+    return slotCheck(graph.dump()).verdict;
+  };
+
+  EXPECT_EQ(verdict(false), "UNSAT");
+  EXPECT_EQ(verdict(true), "SAT");
 }
 
 /// A standing wire, as a terminal edge of another chain in a local check, is

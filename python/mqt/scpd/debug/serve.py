@@ -489,6 +489,23 @@ def _chain_asked(request: Request) -> int | None:
     return request.number("chain") if "chain" in request.query else None
 
 
+def _couplers_of(listed: dict[str, Any], chain: int | None = None) -> dict[str, Any]:
+    """The couplers and the launcher guards of the session, for the coupler tab, of one feedline or all.
+
+    Args:
+        listed: What the session's ``couplers`` answered.
+        chain: The feedline, or None for every one.
+
+    Returns:
+        ``couplers`` and ``launcherGuards``.
+    """
+    mine = (lambda item: int(item["chain"]) == chain) if chain is not None else (lambda _: True)
+    return {
+        "couplers": [c for c in listed["couplers"] if mine(c)],
+        "launcherGuards": [g for g in listed.get("launcherGuards", []) if mine(g)],
+    }
+
+
 def _joined(names: list[str]) -> str:
     return ", ".join(names) if names else "none"
 
@@ -807,7 +824,7 @@ class CouplerServer:
             The page as HTML.
         """
         session = {
-            "couplers": json.loads(self._session().couplers())["couplers"],
+            **_couplers_of(json.loads(self._session().couplers())),
             "outcomes": option_outcomes(self.records.steps, self.records.skips),
             "searched": bool(self.records.steps or self.records.skips),
             "last": self.last,
@@ -864,7 +881,7 @@ class CouplerServer:
         local = json.loads(self._session().local_check(chain, options))
         judged, alone = local["standing"], local["alone"]
         session = {
-            "couplers": [c for c in json.loads(self._session().couplers())["couplers"] if int(c["chain"]) == chain],
+            **_couplers_of(json.loads(self._session().couplers()), chain),
             "outcomes": option_outcomes(self.records.steps, self.records.skips),
             "searched": bool(self.records.steps or self.records.skips),
             "last": self.last,

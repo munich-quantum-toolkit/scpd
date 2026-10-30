@@ -9,10 +9,16 @@
 """The pages built from a run's debug records.
 
 Every page is one HTML file with its data inlined, so it opens from the file
-system. ``index.html`` links the pages the ``[debug]`` section asked for and
-lists what every phase came to. A dashboard shows one phase: a row per wire,
-a column per round and relaxation level, and the way a search found drawn
-over the grid on a click. The insertion page is the capacity graph's page
+system — but for the ground of a dashboard's searches, the cells each search
+found open and the price it read, which is most of what the records hold and
+is written beside the page, ``<page>-ground/<k>.js``, a file per
+:data:`GROUND_CHUNK` searches that the page loads as a script when one of them
+is opened. ``index.html`` links the pages the ``[debug]`` section asked for and
+lists what every phase came to. A dashboard shows one phase: a table per
+pass, a row per wire, the columns grouped by round with a column per
+relaxation level, and every cell a link to ``<page>#search-<n>``, the same
+file showing that one search: its picture with layers that switch off and
+what the records say of why it failed. The insertion page is the capacity graph's page
 (:mod:`.serve`) with the coupler options as its session.
 
 The local SAT page is the feedline dashboard: a card per feedline with the
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 import html
 import json
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -139,27 +146,200 @@ def _table(head: Iterable[str], rows: Iterable[Iterable[str]], numeric: set[int]
     return out + "</table>"
 
 
-#: The table and the picture of a dashboard, which read the inlined records.
+#: The two views of a dashboard, which read the inlined records: the table (``#board``) and the
+#: picture of one search (``#detail``), which ``#search-<n>`` in the address opens.
 DASHBOARD_SCRIPT = (
-    '<div id="board"></div>\n'
-    '<div id="panel" hidden><h2 id="panel-title"></h2><p id="panel-text"></p>'
-    '<svg id="picture" width="640" height="480"></svg></div>\n'
+    '<div id="board"></div>\n<div id="detail" hidden></div>\n<style id="hidden"></style>\n'
     "<script>\n" + Path(__file__).with_name("dashboard.js").read_text(encoding="utf-8") + "</script>\n"
 )
 
+#: The look of a dashboard, on top of :data:`STYLE`: the compact table of the original dashboard,
+#: rounds as groups of columns with a gap between them, and the picture of a search with its layer
+#: panel. The picture's palette and line signatures are those of the Final stage's debug pictures.
+DASHBOARD_STYLE = """
+ [hidden] { display: none !important }
+ nav.links a { display: inline-block; margin: 2px 14px 2px 0 }
+ .wide { overflow-x: auto }
+ table.routes { border-collapse: separate; border-spacing: 1px; margin-bottom: 10px }
+ table.routes th, table.routes td { padding: 0; background: transparent }
+ table.routes thead th { font-weight: 600; font-size: 11px; text-align: center; position: sticky; z-index: 1;
+   background: Canvas; opacity: 1 }
+ table.routes thead tr:first-child th { top: 0; height: 18px }
+ table.routes thead tr.levels th { top: 19px; font-size: 10px; font-weight: 400; opacity: .75; min-width: 17px }
+ table.routes th.r { border-bottom: 2px solid color-mix(in srgb, CanvasText 30%, transparent); white-space: nowrap;
+   padding: 0 2px }
+ table.routes .sep { width: 7px; min-width: 7px;
+   background: linear-gradient(90deg, transparent 3px, color-mix(in srgb, CanvasText 18%, transparent) 3px,
+   color-mix(in srgb, CanvasText 18%, transparent) 4px, transparent 4px) }
+ table.routes td.w { font: 11px ui-monospace, monospace; text-align: right; padding-right: 7px; white-space: nowrap;
+   position: sticky; left: 0; background: Canvas }
+ table.routes td.w.resonator { color: #0072B2; font-weight: 600 }
+ table.routes td.w.feedline { color: #D55E00; font-weight: 600 }
+ table.routes tr:hover td.w { text-decoration: underline }
+ a.c, span.c { display: block; width: 17px; height: 15px; border-radius: 2px;
+   background: color-mix(in srgb, CanvasText 6%, transparent); position: relative }
+ a.c:hover { outline: 2px solid CanvasText }
+ a.c.many::after { content: ""; position: absolute; right: 2px; top: 2px; width: 4px; height: 4px; border-radius: 50%;
+   background: #fff }
+ table.routes td.sum { font-size: 11px; padding-left: 10px; white-space: nowrap }
+ .badge { display: inline-block; padding: 0 6px; border-radius: 8px; color: #fff; background: #D55E00;
+   margin-right: 3px; font-size: 11px }
+ .key { display: flex; gap: 6px 16px; flex-wrap: wrap; margin: 0 0 10px; font-size: 12px }
+ .key i, i.chip { display: inline-block; width: 13px; height: 11px; border-radius: 2px; margin-right: 5px;
+   vertical-align: -1px }
+ label.filt { font-size: 12px }
+ body.detail { padding: 0; overflow: hidden }
+ body.detail > h1, body.detail > .sub, body.detail > nav, body.detail #board { display: none }
+ #detail:not([hidden]) { display: flex; height: 100vh }
+ #dpanel { width: 360px; flex: 0 0 360px; overflow-y: auto; padding: 14px 16px; box-sizing: border-box;
+   border-right: 1px solid color-mix(in srgb, CanvasText 18%, transparent) }
+ #dpanel h1 { font-size: 15px } #dpanel .sub { font-size: 12px; margin: 0 0 8px }
+ #dpanel .badge { font-size: 12px; padding: 1px 8px }
+ #dpanel nav.links a, #dpanel nav.links span { margin-right: 10px; font-size: 12px }
+ #dpanel .off { opacity: .4 }
+ ul.why { padding-left: 18px; margin: 4px 0 8px } ul.why li { margin: 2px 0 }
+ #dstage { flex: 1; overflow: auto; background: #fff }
+ #dstage svg { display: block }
+ fieldset { border: 0; border-top: 1px solid color-mix(in srgb, CanvasText 15%, transparent); margin: 0 0 8px;
+   padding: 8px 0 0 }
+ legend { font-weight: 600; font-size: 12px; padding: 0 }
+ #dpanel label { display: flex; gap: 7px; align-items: center; padding: 2px 0; cursor: pointer }
+ #dpanel label span { flex: 1 }
+ .bulk { margin: 4px 0 8px; display: flex; flex-wrap: wrap; gap: 6px }
+ .bulk button { font: inherit; font-size: 12px; padding: 2px 9px; border-radius: 4px; cursor: pointer; color: inherit;
+   background: transparent; border: 1px solid color-mix(in srgb, CanvasText 30%, transparent) }
+ .bulk button:disabled { opacity: .4; cursor: default }
+ #zoom { width: 100% }
+ table.mine { font-size: 12px } table.mine td { padding: 1px 4px } table.mine tr.here td { font-weight: 700 }
+ i.sw { display: inline-block; width: 22px; height: 10px; flex: 0 0 22px; border-radius: 2px }
+ i.sw.ob { background: #333a40 } i.sw.cl { background: rgba(204, 121, 167, .3) }
+ i.sw.co { background: rgba(86, 180, 233, .45) } i.sw.cz { background: rgba(51, 58, 64, .3) }
+ i.sw.bx { border: 1.5px dashed #1a1a1a; height: 7px; background: none }
+ i.sw.tg { background: rgba(213, 94, 0, .4) } i.sw.sg { background: rgba(0, 114, 178, .4) }
+ i.sw.p { background: linear-gradient(90deg, rgba(204, 121, 167, .1), rgba(204, 121, 167, .6)) }
+ i.sw.s { background: linear-gradient(90deg, rgba(230, 159, 0, .1), rgba(230, 159, 0, .6)) }
+ i.sw.xr { background: rgba(240, 228, 66, .6) } i.sw.xc { background: rgba(213, 94, 0, .4) }
+ i.sw.lane { border: 1.5px dashed #5D3A9B; height: 7px; background: none }
+ i.sw.cbx { border: 1.5px dashed #5D3A9B; height: 7px; background: none; border-style: dotted dashed }
+ i.sw.fz { background: rgba(51, 58, 64, .25); border-bottom: 1px solid #333a40 }
+ i.sw.fd { border-bottom: 3px solid #0072B2; height: 6px; border-radius: 0 }
+ i.sw.ow { border-bottom: 2px dotted #6b6b6b; height: 6px; border-radius: 0 }
+ i.sw.rp { border-bottom: 2px dashed #CC79A7; height: 6px; border-radius: 0 }
+ i.sw.fw { border-bottom: 2px solid #D55E00; height: 6px; border-radius: 0 }
+ i.sw.fwg { border-bottom: 2px dashed rgba(213, 94, 0, .6); height: 6px; border-radius: 0 }
+ i.sw.nb { border-bottom: 2px solid #009E73; height: 6px; border-radius: 0 }
+ i.sw.sd { border-bottom: 2px dashed #8a8a8a; height: 6px; border-radius: 0 }
+ i.sw.ocp { border: 2px solid #5D3A9B; height: 6px; background: none }
+ i.sw.ar { border-bottom: 1.5px solid #1a1a1a; height: 6px; border-radius: 0 }
+ i.sw.src { background: #0072B2; width: 10px; flex-basis: 10px; border-radius: 50% }
+ i.sw.tgt { background: #D55E00; width: 10px; flex-basis: 10px }
+ i.sw.oe { background: #8a8a8a; width: 6px; flex-basis: 6px; border-radius: 50% }
+ i.sw.prt { border: 1.5px solid #009E73; width: 7px; flex-basis: 7px; height: 7px }
+ i.sw.prx { background: #009E73; width: 5px; flex-basis: 5px; height: 5px; border-radius: 50% }
+ i.sw.wl, i.sw.prl { width: 22px; height: 10px; background: none; border-bottom: 0 }
+ #picture { font: 400 var(--fs, 12px) ui-sans-serif, system-ui, sans-serif }
+ #picture .bg { fill: #fff }
+ #picture image { image-rendering: optimizeSpeed; image-rendering: pixelated }
+ #picture .ob { fill: #333a40; fill-opacity: .85; shape-rendering: crispEdges }
+ #picture .bx { fill: none; stroke: #1a1a1a; stroke-width: 1.2px; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke }
+ #picture .cbx { fill: none; stroke: #5D3A9B; stroke-width: 1.4px; stroke-dasharray: 10 4 2 4;
+   vector-effect: non-scaling-stroke }
+ #picture .tg .band, #picture .sg .band, #picture .fz .band { fill: none; stroke-linecap: round; stroke-linejoin: round }
+ #picture .tg .band { stroke: #D55E00; stroke-opacity: .32 } #picture .sg .band { stroke: #0072B2; stroke-opacity: .32 }
+ #picture .fz .band { stroke: #333a40; stroke-opacity: .2 }
+ #picture .tg .mid, #picture .sg .mid, #picture .fz .mid { fill: none; stroke-width: 1px; vector-effect: non-scaling-stroke }
+ #picture .tg .mid { stroke: #a14400 } #picture .sg .mid { stroke: #004f7c } #picture .fz .mid { stroke: #333a40 }
+ #picture .lane { fill: none; stroke: #5D3A9B; stroke-width: 1.6px; stroke-dasharray: 8 4; stroke-opacity: .9;
+   vector-effect: non-scaling-stroke }
+ #picture .cl polyline { fill: none; stroke: #CC79A7; stroke-opacity: .16; stroke-linecap: round;
+   stroke-linejoin: round }
+ #picture .ocp polygon, #picture .ocp polyline { fill: none; stroke: #5D3A9B; stroke-width: 2.2px;
+   vector-effect: non-scaling-stroke }
+ #picture .nb { fill: none; stroke: #009E73; stroke-width: 1.8px; vector-effect: non-scaling-stroke }
+ #picture .sd { fill: none; stroke: #8a8a8a; stroke-width: 1.2px; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke }
+ #picture .fw { fill: none; stroke: #D55E00; stroke-width: 2.4px; vector-effect: non-scaling-stroke }
+ #picture .fwg { fill: none; stroke: #D55E00; stroke-width: 1.4px; stroke-opacity: .5; stroke-dasharray: 4 3;
+   vector-effect: non-scaling-stroke }
+ #picture .rp { fill: none; stroke: #CC79A7; stroke-width: 2px; stroke-dasharray: 9 5;
+   vector-effect: non-scaling-stroke }
+ #picture .ow { fill: none; stroke: #6b6b6b; stroke-width: 1.6px; stroke-dasharray: 1.5 3;
+   vector-effect: non-scaling-stroke }
+ #picture .fd { fill: none; stroke: #0072B2; stroke-width: 3.2px; vector-effect: non-scaling-stroke }
+ #picture .ar polyline { fill: none; stroke: #1a1a1a; stroke-width: 1.2px; vector-effect: non-scaling-stroke }
+ #picture .src, #picture .tgt, #picture .oe, #picture .prt, #picture .prx path { fill: none; vector-effect: non-scaling-stroke }
+ #picture .src { stroke: #0072B2; stroke-width: 13px; stroke-linecap: round }
+ #picture .tgt { stroke: #D55E00; stroke-width: 12px; stroke-linecap: square }
+ #picture .oe { stroke: #8a8a8a; stroke-width: 5px; stroke-linecap: round }
+ #picture .prt { stroke: #009E73; stroke-width: 6px; stroke-linecap: square; stroke-opacity: .55 }
+ #picture .prx path { stroke: #009E73; stroke-width: 4px; stroke-linecap: round }
+ #picture .prx line { stroke: #009E73; stroke-width: 1px; vector-effect: non-scaling-stroke }
+ #picture text { font-size: var(--fs, 12px); paint-order: stroke; stroke: #fff; stroke-width: .25em }
+ #picture .prl { fill: #00704f } #picture .wl { fill: #222; font-weight: 600 }
+"""
 
-def _dashboard(debug: Path, phase: str, title: str) -> str:
+
+#: How many searches one file of a dashboard's ground holds: opening a search loads the file of
+#: its chunk, a few hundred kilobytes on the 17-qubit chip.
+GROUND_CHUNK = 16
+
+#: The fields of a search record that go into the ground files rather than into the page: the cells
+#: the corridor left open and the wire price, the two cell layers of the picture of a search.
+GROUND_FIELDS = ("open", "price")
+
+
+def ground_dir(page: Path) -> Path:
+    """The directory the ground of a dashboard's searches is written to, beside the page.
+
+    Returns:
+        ``<page>-ground`` next to the page.
+    """
+    return page.with_name(page.stem + "-ground")
+
+
+def _write_ground(page: Path, searches: list[dict[str, Any]]) -> str | None:
+    """Move the ground of every search out of its record and into the files beside ``page``.
+
+    The files are scripts, ``window.__ground(<k>, [<ground of search 16k>, …])``, so that a page
+    opened from the file system loads them as well as one served over HTTP, where a fetch would be
+    refused. The directory is started over, so no file of an earlier build stays.
+
+    Returns:
+        The directory's name, relative to the page, or None when no record carries any ground.
+    """
+    directory = ground_dir(page)
+    shutil.rmtree(directory, ignore_errors=True)
+    grounds = [{key: s.pop(key) for key in GROUND_FIELDS if key in s} for s in searches]
+    if not any(grounds):
+        return None
+    directory.mkdir(parents=True)
+    for k in range(0, len(grounds), GROUND_CHUNK):
+        chunk = json.dumps(grounds[k : k + GROUND_CHUNK], separators=(",", ":"))
+        (directory / f"{k // GROUND_CHUNK}.js").write_text(
+            f"window.__ground({k // GROUND_CHUNK},{chunk});\n", encoding="utf-8"
+        )
+    return directory.name
+
+
+def _dashboard(debug: Path, phase: str, title: str, page: Path) -> str:
     grid = next(iter(store.read(debug, "grid")), None)
     searches = [s for s in store.read(debug, "search") if s.get("phase") == phase]
     if grid is None or not searches:
+        shutil.rmtree(ground_dir(page), ignore_errors=True)
         return _page(title, "", f"<p>no search of the {html.escape(phase)} phase was recorded</p>")
+    ground = _write_ground(page, searches)
+    meta = {"dir": ground, "chunk": GROUND_CHUNK}
     body = (
+        f'<nav class="links"><a href="{INDEX}">debug pages</a></nav>\n'
         f'<script id="grid-data" type="application/json">{_embedded(grid)}</script>\n'
-        f'<script id="search-data" type="application/json">{_embedded(searches)}</script>'
+        f'<script id="search-data" type="application/json">{_embedded(searches)}</script>\n'
+        f'<script id="ground-data" type="application/json">{_embedded(meta)}</script>'
     )
     wires = len({s["wire"] for s in searches})
-    sub = f"{wires} wires · {len(searches)} searches · a click on a cell draws the way the search found"
-    return _page(title, sub, body, DASHBOARD_SCRIPT)
+    sub = (
+        f"{wires} wires · {len(searches)} searches · a row per wire, the columns grouped by round; "
+        "a cell opens its search in a tab of its own: the way, the walls and the wires around it, layer by layer"
+    )
+    return _page(title, sub, body, DASHBOARD_SCRIPT, DASHBOARD_STYLE)
 
 
 def _insertion(debug: Path) -> str:
@@ -1222,7 +1402,7 @@ def build(debug: Path, params: DebugParamsT) -> list[Path]:
     for key in enabled(params):
         path = debug / PAGES[key]
         if key in DASHBOARDS:
-            text = _dashboard(debug, DASHBOARDS[key], _title(key))
+            text = _dashboard(debug, DASHBOARDS[key], _title(key), path)
         elif key == "feedline_insertion":
             text = _insertion(debug)
         elif key == "local_sat":
@@ -1242,14 +1422,17 @@ def build(debug: Path, params: DebugParamsT) -> list[Path]:
 def with_data(debug: Path) -> DebugParamsT:
     """A section that turns on every page the store under ``debug`` has records for.
 
+    A dashboard is on when the store holds a search of its phase.
+
     Returns:
         The section, with the index on.
     """
     present = set(store.kinds(debug))
+    phases = {s.get("phase") for s in store.read(debug, "search")} if "search" in present else set()
     params = DebugParamsT()
     params.html = True
     for key, kinds in KINDS.items():
-        if present.issuperset(kinds):
+        if present.issuperset(kinds) and (key not in DASHBOARDS or DASHBOARDS[key] in phases):
             setattr(params, _camel(key), True)
     return params
 

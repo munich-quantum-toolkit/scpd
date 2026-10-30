@@ -342,5 +342,79 @@ TEST(Chambers, LabelEveryCellOfAWideGridAsAFloodWould) {
   }
 }
 
+/// The cached labelling over a run of grids, each a few gates and walls off
+/// the one before, as the capacity stage asks for it: the same chambers, the
+/// same order and the same sides of every gate as a labelling from scratch.
+TEST(Chambers, CachedLabellingMatchesAFreshOneCallForCall) {
+  constexpr std::uint32_t WIDE = 130;
+  constexpr std::uint32_t ROWS = 70;
+  const auto grid = GridMetrics::fit({.minX = 0.0,
+                                      .minY = 0.0,
+                                      .maxX = static_cast<double>(WIDE - 1),
+                                      .maxY = static_cast<double>(ROWS - 1)},
+                                     WIDE, ROWS);
+  for (std::uint32_t seed = 1; seed <= 6; ++seed) {
+    std::mt19937 rng(seed);
+    std::bernoulli_distribution wall(0.08);
+    std::bernoulli_distribution coin(0.5);
+    std::uniform_int_distribution<std::uint32_t> column(0, WIDE - 1);
+    std::uniform_int_distribution<std::uint32_t> row(0, ROWS - 1);
+    std::uniform_int_distribution<int> reach(-25, 25);
+    BitGrid mask(WIDE, ROWS);
+    for (std::size_t cell = 0; cell < mask.size(); ++cell) {
+      if (wall(rng)) {
+        mask.set(cell);
+      }
+    }
+    const auto randomGate = [&] {
+      const auto x0 = column(rng);
+      const auto y0 = row(rng);
+      const auto x1 = static_cast<std::uint32_t>(
+          std::clamp<int>(static_cast<int>(x0) + reach(rng), 0, WIDE - 1));
+      const auto y1 = static_cast<std::uint32_t>(
+          std::clamp<int>(static_cast<int>(y0) + reach(rng), 0, ROWS - 1));
+      const auto first = (static_cast<std::size_t>(y0) * WIDE) + x0;
+      const auto second = (static_cast<std::size_t>(y1) * WIDE) + x1;
+      return Bottleneck{.first = first, .second = second, .saddle = first};
+    };
+    std::vector<Bottleneck> gates;
+    for (int k = 0; k < 40; ++k) {
+      gates.push_back(randomGate());
+    }
+    ChamberCache cache;
+    Chambers cached;
+    for (int call = 0; call < 25; ++call) {
+      // A few gates go, a few come, and a few walls change.
+      for (int k = 0; k < 4 && !gates.empty(); ++k) {
+        if (coin(rng)) {
+          gates.erase(gates.begin() + static_cast<std::ptrdiff_t>(
+                                          rng() % gates.size()));
+        }
+        if (coin(rng)) {
+          gates.push_back(randomGate());
+        }
+      }
+      if (call % 5 == 4 && !gates.empty()) {
+        // A gate seen before comes back, and one is there twice.
+        gates.push_back(gates.front());
+      }
+      for (int k = 0; k < 30; ++k) {
+        const auto cell = (static_cast<std::size_t>(row(rng)) * WIDE) + column(rng);
+        mask.set(cell, coin(rng));
+      }
+      for (const auto& gate : gates) {
+        mask.set(gate.first);
+        mask.set(gate.second);
+      }
+      chambersOfCached(mask, gates, grid, cached, cache);
+      const auto fresh = chambersOf(mask, gates, grid);
+      ASSERT_EQ(cached.of, fresh.of) << "seed " << seed << " call " << call;
+      ASSERT_EQ(cached.count, fresh.count) << "seed " << seed << " call " << call;
+      ASSERT_EQ(cached.beside, fresh.beside) << "seed " << seed << " call " << call;
+    }
+    EXPECT_GT(cache.reused, cache.computed);
+  }
+}
+
 } // namespace
 } // namespace mqt::scpd::grid

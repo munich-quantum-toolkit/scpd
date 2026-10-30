@@ -45,12 +45,34 @@ struct SlotGraph {
   std::int64_t capacityMarginFromWires = 3;
   /// The narrowest gap a resonator passes, as a share of the clearance.
   double resonatorPassage = 0.8;
+  /// Whether a gate with an end on a wire's own port run holds that wire
+  /// half a clearance more, where the wire leaves the run straight through
+  /// the gate: the wire keeps no clearance from its own run.
+  bool ownRunBonus = false;
+  /// The area budget of the chambers (`capacity_chamber_fill`): the share
+  /// of a chamber's free cells the wires through it may cover, each piece
+  /// of a way inside it its length times the clearance; 0 for none.
+  double chamberFill = 0.0;
+  /// The free cells of every chamber, by chamber; empty to count them from
+  /// the raster.
+  std::vector<std::uint32_t> chamberArea;
   /// The cells closed at the ends of a feedline edge, where no slot lies.
   std::size_t slotPinCells = 10;
   /// The straight run after the escape turn of a slot's end and the
   /// clearance an escape keeps from a stub, in cells.
   std::int64_t escapeStraight = 5;
   double escapeStubMargin = 4.0;
+  /// The order rule of a local check (`ringOrder`): a wire with a place in
+  /// the ring (`ring`, by name, of `ringSize` places) passes a gate whose two
+  /// ends lie on wires of the ring (their stub, lead or pad) only when it lies
+  /// between them in the ring, on the shorter way round. A wire that slips
+  /// between the ends of wires it does not lie between would have to cross
+  /// them; the gates alone, which count wires and not their order, let it
+  /// round the back of a feedline into the partition its neighbours end in
+  /// (user, 2026-10-27).
+  bool ringOrder = false;
+  std::map<std::string, std::int64_t> ring;
+  std::int64_t ringSize = 0;
   /// The names of the wall kinds; wall code k + 1 is kind k.
   std::vector<std::string> wallKinds;
   /// Per cell, row by row: 0 a cut line, 1 to 5 a wall (`wallKinds`),

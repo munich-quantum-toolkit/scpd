@@ -38,6 +38,12 @@ constexpr uint32_t MAX_FINGERS = 15;
 /// every cell tries: the prototype's `kSmallDetourMaxSpan`.
 constexpr std::int64_t SMALL_SPAN = 150;
 
+/// How many placements the insertion builds per alternative asked for before
+/// it stops looking for more. Most of the next cheapest placements start
+/// inside the box of the meander taken and are skipped unbuilt; the rest are
+/// built, and some of them still overlap it.
+constexpr uint32_t MAX_ALTERNATIVE_BUILDS = 16;
+
 /// A cell with a heading and the move that leaves it, in signed arithmetic,
 /// so that a candidate off the grid is a number and not a wrapped one.
 struct Spot {
@@ -651,12 +657,14 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
     return spliced;
   };
 
-  // Take a placement: the meander is built for the length it should have,
+  // Build a placement: the meander is built for the length it should have,
   // and where the rendering falls short of the requirement by a fraction of
-  // a cell per bend, it is built again that much deeper.
-  const auto take = [&](const Straight& g0, const Straight& g1,
-                        const Chain& head, const Chain& tail, double loopLength,
-                        const uint32_t fingers) {
+  // a cell per bend, it is built again that much deeper. The path itself is
+  // left as it is.
+  const auto build =
+      [&](const Straight& g0, const Straight& g1, const Chain& head,
+          const Chain& tail, double loopLength,
+          const uint32_t fingers) -> std::optional<MeanderResult::Alternative> {
     // The best rendering that met the requirement, and whether any meander
     // was built at all.
     Path best;
@@ -711,14 +719,46 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
       if (built) {
         ++result.refusals.offLength;
       }
+      return std::nullopt;
+    }
+    return MeanderResult::Alternative{
+        .path = std::move(best), .lengthAfter = bestAfter, .meander = bestBox};
+  };
+
+  // Take a placement: build it and splice it into the path.
+  const auto take = [&](const Straight& g0, const Straight& g1,
+                        const Chain& head, const Chain& tail,
+                        const double loopLength, const uint32_t fingers) {
+    auto made = build(g0, g1, head, tail, loopLength, fingers);
+    if (!made.has_value()) {
       return false;
     }
-    path = std::move(best);
+    path = std::move(made->path);
     result.reached = true;
     result.inserted = true;
-    result.lengthAfter = bestAfter;
-    result.meander = bestBox;
+    result.lengthAfter = made->lengthAfter;
+    result.meander = made->meander;
     return true;
+  };
+
+  // Whether two meander boxes lie apart: they share at most a quarter of
+  // the smaller one. The loop on the other side of the same run shares only
+  // the cells along the run with the loop on this side, and is apart.
+  const auto apart = [](const CellBox& a, const CellBox& b) {
+    const auto cells = [](const CellBox& box) {
+      return static_cast<uint64_t>(box.maxX - box.minX + 1) *
+             (box.maxY - box.minY + 1);
+    };
+    const uint32_t minX = std::max(a.minX, b.minX);
+    const uint32_t maxX = std::min(a.maxX, b.maxX);
+    const uint32_t minY = std::max(a.minY, b.minY);
+    const uint32_t maxY = std::min(a.maxY, b.maxY);
+    if (minX > maxX || minY > maxY) {
+      return true;
+    }
+    const auto shared =
+        static_cast<uint64_t>(maxX - minX + 1) * (maxY - minY + 1);
+    return 4 * shared <= std::min(cells(a), cells(b));
   };
 
   // What the cells of the path cost and where its steps change direction,
@@ -891,17 +931,81 @@ MeanderResult insertMeander(const MovePrimitives& primitives, Path& path,
       }
     }
     std::ranges::stable_sort(fits, {}, &Fit::score);
-    for (const Fit& fit : fits) {
+    const auto buildFit = [&](const Fit& fit) {
       const Straight& g0 = straights[fit.from];
       const Straight& g1 = straights[fit.to];
       pairBox = boxOfPair(g0, g1);
       const Chain head = headsOf(fit.from, fit.key, fit.target)[fit.head];
       const Chain tail = tailsOf(fit.to, fit.key, fit.target)[fit.tail];
-      if (take(g0, g1, head, tail, fit.loopLength, fit.fingers)) {
-        return true;
-      }
+      return build(g0, g1, head, tail, fit.loopLength, fit.fingers);
+    };
+    std::optional<MeanderResult::Alternative> chosen;
+    std::size_t at = 0;
+    for (; at < fits.size() && !chosen.has_value(); ++at) {
+      chosen = buildFit(fits[at]);
     }
-    return false;
+    if (!chosen.has_value()) {
+      return false;
+    }
+    // The alternatives: the next cheapest placements whose meanders lie
+    // apart from the one taken and from each other. A placement that reaches
+    // out to the same side as one taken, over more than half of the same
+    // stretch of the path, overlaps it and is not built.
+    struct Taken {
+      CellBox box;
+      std::size_t from = 0;
+      std::size_t to = 0;
+      Heading out = 0;
+    };
+    const auto takenOf = [&](const Fit& fit, const CellBox& box) {
+      return Taken{
+          .box = box,
+          .from = straights[fit.from].index,
+          .to = straights[fit.to].index,
+          .out = headsOf(fit.from, fit.key, fit.target)[fit.head].to.heading};
+    };
+    std::vector<Taken> taken{takenOf(fits[at - 1], chosen->meander)};
+    const auto sameStretch = [&](const Fit& fit) {
+      const std::size_t from = straights[fit.from].index;
+      const std::size_t to = straights[fit.to].index;
+      const Heading out =
+          headsOf(fit.from, fit.key, fit.target)[fit.head].to.heading;
+      return std::ranges::any_of(taken, [&](const Taken& one) {
+        if (one.out != out) {
+          return false;
+        }
+        const std::size_t low = std::max(from, one.from);
+        const std::size_t high = std::min(to, one.to);
+        return high > low &&
+               2 * (high - low) > std::min(to - from, one.to - one.from);
+      });
+    };
+    uint32_t builds = 0;
+    for (; at < fits.size() &&
+           result.alternatives.size() < options.alternatives &&
+           builds < MAX_ALTERNATIVE_BUILDS * options.alternatives;
+         ++at) {
+      const Fit& fit = fits[at];
+      if (sameStretch(fit)) {
+        continue;
+      }
+      ++builds;
+      auto made = buildFit(fit);
+      if (!made.has_value() ||
+          std::ranges::any_of(taken, [&](const Taken& one) {
+            return !apart(one.box, made->meander);
+          })) {
+        continue;
+      }
+      taken.push_back(takenOf(fit, made->meander));
+      result.alternatives.push_back(std::move(*made));
+    }
+    path = std::move(chosen->path);
+    result.reached = true;
+    result.inserted = true;
+    result.lengthAfter = chosen->lengthAfter;
+    result.meander = chosen->meander;
+    return true;
   };
 
   // The coarse sweep first, about a hundred cells of the path to choose

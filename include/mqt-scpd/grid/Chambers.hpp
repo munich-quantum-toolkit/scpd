@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <unordered_map>
 #include <vector>
 
 namespace mqt::scpd::grid {
@@ -62,6 +63,11 @@ struct BlockedMove {
 bottleneckMoves(const std::vector<Bottleneck>& bottlenecks,
                 const GridMetrics& grid);
 
+/// `bottleneckMoves` for one bottleneck, into a list already there.
+MQT_SCPD_GRID_EXPORT void bottleneckMovesOf(const Bottleneck& bottleneck,
+                                            const GridMetrics& grid,
+                                            std::vector<BlockedMove>& into);
+
 /// The chamber of a cell that lies in none: a blocked cell, or a cell on the
 /// line of a bottleneck.
 inline constexpr std::uint32_t NO_CHAMBER =
@@ -100,5 +106,64 @@ chambersOf(const BitGrid& blocked, const std::vector<Bottleneck>& bottlenecks,
 MQT_SCPD_GRID_EXPORT void chambersOf(const BitGrid& blocked,
                                      const std::vector<Bottleneck>& bottlenecks,
                                      const GridMetrics& grid, Chambers& into);
+
+/// What `chambersOfCached` keeps from one labelling of a grid to the next:
+/// the moves of the gates it has seen lately, and the steps the gates of the
+/// last labelling refuse out of each cell.
+struct ChamberCache {
+  /// The moves of one gate, and the box of their cells.
+  struct Entry {
+    std::vector<BlockedMove> moves;
+    std::int64_t minX = 0;
+    std::int64_t minY = 0;
+    std::int64_t maxX = -1;
+    std::int64_t maxY = -1;
+    /// The call that last used the gate.
+    std::uint64_t used = 0;
+  };
+  /// The gates by their two ends.
+  std::unordered_map<std::uint64_t, Entry> entries;
+  /// The gates whose moves `refused` holds, sorted.
+  std::vector<std::uint64_t> applied;
+  /// The directions the applied gates refuse out of each cell, one bit each,
+  /// and the cells with any as a bit each.
+  std::vector<std::uint8_t> refused;
+  std::vector<std::uint64_t> refusedBits;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  /// The number of calls so far.
+  std::uint64_t clock = 0;
+  /// How many calls ago a gate may last have been used and still be kept.
+  std::uint64_t keep = 4;
+  /// The gates whose moves were taken from the cache and computed, and the
+  /// gates added to and taken from the refused steps, over all calls.
+  std::size_t reused = 0;
+  std::size_t computed = 0;
+  std::size_t added = 0;
+  std::size_t removed = 0;
+};
+
+/// The refused steps of `cache` brought from the gates of its last call to
+/// `bottlenecks`, as `chambersOfCached` does before it labels, and the moves
+/// of every bottleneck, in order, pointing into the cache: they stay valid
+/// until the next call.
+///
+/// @throws std::invalid_argument when the cache's grid does not fit `grid`
+/// after a reset.
+MQT_SCPD_GRID_EXPORT void
+chamberCacheUpdate(const std::vector<Bottleneck>& bottlenecks,
+                   const GridMetrics& grid, ChamberCache& cache,
+                   std::vector<const std::vector<BlockedMove>*>& moves);
+
+/// `chambersOf` with the moves of the gates and the refused steps kept from
+/// call to call: a gate already seen is not traced again, and only the steps
+/// of the gates that came or went since the last call are changed. The
+/// chambers are those `chambersOf` gives, cell for cell, in the same order.
+///
+/// @throws std::invalid_argument when the mask does not fit the grid.
+MQT_SCPD_GRID_EXPORT void
+chambersOfCached(const BitGrid& blocked,
+                 const std::vector<Bottleneck>& bottlenecks,
+                 const GridMetrics& grid, Chambers& into, ChamberCache& cache);
 
 } // namespace mqt::scpd::grid

@@ -21,9 +21,10 @@ description = "Physical Design for Superconducting Quantum Chips"
 readme = "README.md"
 keywords = [ "design-automation", "MQT", "quantum-computing" ]
 # The wheels link in HiGHS and nlohmann/json (MIT), FlatBuffers (Apache-2.0), Boost.Polygon
-# (BSL-1.0) and pdqsort, which HiGHS compiles in (Zlib); the sdist carries MIT code only.
-license = "MIT AND Apache-2.0 AND BSL-1.0 AND Zlib"
-license-files = [ "LICENSE" ]
+# (BSL-1.0), pdqsort, which HiGHS compiles in (Zlib), and CDT (MPL-2.0, one header modified at
+# build time; see THIRD_PARTY_NOTICES.md); the sdist carries MIT code only.
+license = "MIT AND Apache-2.0 AND BSL-1.0 AND MPL-2.0 AND Zlib"
+license-files = [ "LICENSE", "THIRD_PARTY_NOTICES.md" ]
 requires-python = ">=3.11"
 classifiers = [
   "Development Status :: 4 - Beta",

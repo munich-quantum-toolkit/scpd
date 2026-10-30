@@ -888,6 +888,7 @@ def window_check(
     names = set(window)
     alone = {
         **graph,
+        "ringOrder": bool(graph.get("localRingOrder")),
         "wires": [
             w if w["name"] in names else {**w, "standing": True}
             for w in graph["wires"]

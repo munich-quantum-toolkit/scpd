@@ -13,6 +13,8 @@ from __future__ import annotations
 import http.client
 import json
 import re
+import shutil
+import subprocess
 import threading
 from http.server import HTTPServer
 from pathlib import Path
@@ -259,6 +261,222 @@ def test_a_dashboard_holds_the_searches_of_its_phase_alone(tmp_path: Path) -> No
     constrained = (debug / pages.PAGES["feedline_constrained_routing_dashboard"]).read_text(encoding="utf-8")
     assert '"wire":"3"' in constrained
     assert '"ripped":["4"]' in constrained
+
+
+def search_record(
+    wire: str,
+    round_: int,
+    kind: str,
+    *,
+    found: bool,
+    ripped: Sequence[str] = (),
+    forward: bool = True,
+    way: Sequence[Sequence[int]] = (),
+) -> str:
+    """One search of the feedline-constrained routing, as the Final stage records it.
+
+    Returns:
+        The record as JSON text.
+    """
+    return json.dumps({
+        "phase": "feedline-constrained-routing",
+        "pass": "feedline",
+        "round": round_,
+        "forward": forward,
+        "wire": wire,
+        "kind": kind,
+        "ripped": list(ripped),
+        "found": found,
+        "cells": 9 if found else 0,
+        "note": "",
+        "way": [list(p) for p in way] if found else [],
+    })
+
+
+def dashboard_records(debug: Path) -> None:
+    """The records of a feedline-constrained routing of two rounds.
+
+    Wire ``a`` finds its way in round 0; wire ``b`` finds none, then finds one after letting go of
+    ``a``. In the backward round 1 ``a`` finds no way, not even after letting go of ``b``.
+    """
+    sink = store.Sink(debug)
+    sink(
+        "grid",
+        json.dumps({
+            "width": 20,
+            "height": 10,
+            "cellSize": 10.0,
+            "clearance": 2,
+            "blocked": [[0, 0, 20], [1, 0, 20], [2, 5, 3]],
+            "ports": [{"label": "Chip.port0", "x": 1, "y": 9}],
+            "wires": [
+                {"wire": "a", "inner": False, "resonator": True, "source": [1, 5], "target": [18, 5]},
+                {"wire": "b", "inner": False, "resonator": False, "source": [1, 7], "target": [18, 7]},
+            ],
+        }),
+    )
+    sink("search", search_record("a", 0, "normal", found=True, way=[[1, 5], [18, 5]]))
+    sink("search", search_record("b", 0, "normal", found=False))
+    sink("search", search_record("b", 0, "relax 1", found=True, ripped=["a"], way=[[1, 7], [18, 7]]))
+    sink("search", search_record("a", 1, "normal", found=False, forward=False))
+    sink("search", search_record("a", 1, "relax 1", found=False, forward=False, ripped=["b"]))
+    sink.close()
+
+
+def test_a_dashboard_has_its_two_views_and_relative_links_only(tmp_path: Path) -> None:
+    """The table and the view of one search are one file, and every link holds wherever it is served."""
+    debug = tmp_path / "debug"
+    dashboard_records(debug)
+    params = DebugParamsT()
+    params.feedlineConstrainedRoutingDashboard = True
+
+    pages.build(debug, params)
+
+    text = (debug / pages.PAGES["feedline_constrained_routing_dashboard"]).read_text(encoding="utf-8")
+    for element in ('id="board"', 'id="detail"', 'id="hidden"', 'id="grid-data"', 'id="search-data"'):
+        assert element in text
+    # The cells link to fragments of the page and open them in a tab of their own.
+    assert 'href="#search-${at}" target="_blank"' in text
+    assert 'href="index.html"' in text
+    assert re.search(r'href="(?:/|[a-z]+:)', text) is None
+    assert "src=" not in text
+
+
+def test_the_debug_command_builds_a_dashboard_only_for_a_phase_with_searches(tmp_path: Path) -> None:
+    """A store with searches of two phases turns on the dashboards of those two phases alone."""
+    debug = tmp_path / "debug"
+    records(debug)
+
+    params = pages.with_data(debug)
+
+    assert params.preFeedlineRoutingDashboard
+    assert params.feedlineConstrainedRoutingDashboard
+    assert not params.preFeedlineRefinementDashboard
+    assert not params.feedlineConstrainedRefinementDashboard
+
+
+#: Runs the script of a dashboard on a few stand-in elements and prints what it wrote into them.
+HARNESS = """
+const vm = require("vm");
+const input = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8"));
+class Element {
+  constructor(text = "") {
+    this.textContent = text; this.innerHTML = ""; this.hidden = false; this.dataset = {};
+    this.style = { setProperty() {} }; this.attributes = {};
+  }
+  addEventListener() {}
+  querySelectorAll() { return []; }
+  querySelector() { return null; }
+  setAttribute(key, value) { this.attributes[key] = value; }
+  get clientWidth() { return 1000; }
+  get clientHeight() { return 800; }
+}
+const elements = { "grid-data": new Element(input.grid), "search-data": new Element(input.searches) };
+const classes = new Set();
+global.document = {
+  title: "feedline constrained routing",
+  body: { classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } },
+  getElementById: (id) => (elements[id] ||= new Element()),
+};
+global.location = { hash: input.hash };
+global.addEventListener = () => {};
+vm.runInThisContext(input.code);
+const picture = elements.picture ? elements.picture.attributes : {};
+console.log(JSON.stringify({
+  board: elements.board.innerHTML, detail: elements.detail.innerHTML, hidden: elements.detail.hidden,
+  title: document.title, detailClass: classes.has("detail"), viewBox: picture.viewBox || "",
+}));
+"""
+
+
+def run_dashboard(page: Path, hash_: str, tmp_path: Path) -> dict[str, Any]:
+    """What the script of a dashboard writes when the page is opened at ``hash_``.
+
+    Returns:
+        The table's and the search view's HTML, whether the search view is hidden, the title, whether
+        the page is in its search view, and the picture's view box.
+    """
+    text = page.read_text(encoding="utf-8")
+
+    def inline(pattern: str) -> str:
+        found = re.search(pattern, text, re.DOTALL)
+        assert found is not None, pattern
+        return found.group(1)
+
+    data = {
+        "grid": inline(r'<script id="grid-data" type="application/json">(.*?)</script>'),
+        "searches": inline(r'<script id="search-data" type="application/json">(.*?)</script>'),
+        "code": inline(r"<script>\n(.*?)</script>"),
+        "hash": hash_,
+    }
+    harness = tmp_path / "harness.js"
+    harness.write_text(HARNESS, encoding="utf-8")
+    given = tmp_path / "input.json"
+    given.write_text(json.dumps(data), encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+    done = subprocess.run([node, str(harness), str(given)], capture_output=True, text=True, check=True)  # ruff: ignore[subprocess-without-shell-equals-true]
+    return json.loads(done.stdout)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the page's script")
+def test_the_dashboard_groups_its_columns_by_round_and_links_every_search(tmp_path: Path) -> None:
+    """A round is one group of columns, a plain search and its relaxation levels; every cell links its search."""
+    debug = tmp_path / "debug"
+    dashboard_records(debug)
+    params = DebugParamsT()
+    params.feedlineConstrainedRoutingDashboard = True
+    pages.build(debug, params)
+    page = debug / pages.PAGES["feedline_constrained_routing_dashboard"]
+
+    shown = run_dashboard(page, "", tmp_path)
+
+    board = shown["board"]
+    assert shown["hidden"]
+    assert not shown["detailClass"]
+    assert board.count('colspan="2"') == 2
+    assert "round 0 →" in board
+    assert "round 1 ←" in board
+    for at in range(5):
+        assert f'href="#search-{at}" target="_blank"' in board
+    # Wire a ends without a way: its round 1 gave up; wire b stands.
+    assert '<span class="badge">no way</span>' in board
+    assert board.count('data-fail="1"') == 1
+    assert '<td class="w resonator">a</td>' in board
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the page's script")
+def test_a_search_opens_with_its_layers_and_what_the_records_say(tmp_path: Path) -> None:
+    """``#search-<n>`` shows that search: the layers its picture holds and why it failed."""
+    debug = tmp_path / "debug"
+    dashboard_records(debug)
+    params = DebugParamsT()
+    params.feedlineConstrainedRoutingDashboard = True
+    pages.build(debug, params)
+    page = debug / pages.PAGES["feedline_constrained_routing_dashboard"]
+
+    shown = run_dashboard(page, "#search-4", tmp_path)
+
+    detail = shown["detail"]
+    assert not shown["hidden"]
+    assert shown["detailClass"]
+    assert shown["title"].startswith("wire a · feedline · round 1 ← · relax 1")
+    for layer in ("ob", "rp", "src", "tgt", "prt", "prl"):
+        assert f'data-cls="{layer}"' in detail, layer
+    # No other wire stands (b is let go of), so there is no clearance of one to draw.
+    assert 'data-cls="cl"' not in detail
+    # Nothing found and a was let go of by b's relaxation: no way of its own, and none of a to draw.
+    assert 'data-cls="fd"' not in detail
+    assert 'data-cls="ow"' not in detail
+    assert "this round gave up" in detail
+    assert "it let go of b" in detail
+    assert 'href="#search-3"' in detail
+    assert 'href="#table"' in detail
+    # The picture is looked at around the search, y flipped: the box spans the wire's two ends.
+    x, y, width, height = (float(v) for v in shown["viewBox"].split())
+    assert x == 0
+    assert width == 20
+    assert y + height <= 10
 
 
 def test_the_insertion_page_holds_the_graph_and_the_coupler_options(tmp_path: Path) -> None:

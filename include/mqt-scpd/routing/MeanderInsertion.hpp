@@ -72,6 +72,13 @@ struct MeanderOptions {
   /// the widest free strip along the line between the two, in the
   /// prototype's strict insertion. It is cut down to `box`.
   std::function<CellBox(const PathPoint&, const PathPoint&)> boxFor;
+  /// How many other placements the priced insertion builds after the one it
+  /// takes, the next cheapest first, each with a meander box that shares at
+  /// most a quarter of the smaller box with the box of the meander taken and
+  /// of every other placement built. The loop on the other side of the same
+  /// run is such a placement. The path still carries only the meander taken.
+  /// 0 for none.
+  uint32_t alternatives = 0;
 };
 
 /// What an insertion came to.
@@ -103,6 +110,17 @@ struct MeanderResult {
   /// The box the inserted meander spans, its two turns onto the loop
   /// included, both bounds included; empty when none was inserted.
   CellBox meander{.minX = 1, .maxX = 0, .minY = 1, .maxY = 0};
+
+  /// A placement built besides the one taken: the whole path with its
+  /// meander, its rendered length and the box its meander spans.
+  struct Alternative {
+    Path path;
+    double lengthAfter = 0.0;
+    CellBox meander;
+  };
+  /// The placements built besides the one taken, the cheapest first, as
+  /// `MeanderOptions::alternatives` asks.
+  std::vector<Alternative> alternatives;
 
   /// Why the placements that were tried did not fit. A resonator that stays
   /// short says what stood in its way rather than only how many placements
@@ -165,7 +183,10 @@ struct MeanderResult {
 /// Without a price the first placement that fits is taken, as in phase 1 of
 /// the prototype's final routing. With one, every placement that fits is
 /// scored by the price of its cells plus `bendPrice` per direction change,
-/// and the cheapest is taken, as in the prototype's relaxation.
+/// and the cheapest is taken, as in the prototype's relaxation. The priced
+/// insertion may also build the next cheapest placements whose meanders lie
+/// apart from the one taken (`MeanderOptions::alternatives`), so that a
+/// caller can move the meander when it stands in another wire's way.
 ///
 /// The length is measured as the sampler renders it, so what the result says
 /// is what a reader of the path will measure.

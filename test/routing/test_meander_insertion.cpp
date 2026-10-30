@@ -203,6 +203,76 @@ TEST(MeanderInsertion, ThePricedInsertionTakesTheCheaperSide) {
   }
 }
 
+/// How many cells two boxes share.
+uint64_t sharedCells(const CellBox& a, const CellBox& b) {
+  const auto low = [](const uint32_t p, const uint32_t q) {
+    return std::max(p, q);
+  };
+  const auto high = [](const uint32_t p, const uint32_t q) {
+    return std::min(p, q);
+  };
+  if (low(a.minX, b.minX) > high(a.maxX, b.maxX) ||
+      low(a.minY, b.minY) > high(a.maxY, b.maxY)) {
+    return 0;
+  }
+  return static_cast<uint64_t>(high(a.maxX, b.maxX) - low(a.minX, b.minX) + 1) *
+         (high(a.maxY, b.maxY) - low(a.minY, b.minY) + 1);
+}
+
+uint64_t cellsOf(const CellBox& box) {
+  return static_cast<uint64_t>(box.maxX - box.minX + 1) *
+         (box.maxY - box.minY + 1);
+}
+
+TEST(MeanderInsertion, OffersAlternativesThatLieApartFromTheMeander) {
+  const auto free = [](const uint32_t /*x*/, const uint32_t /*y*/) {
+    return 0U;
+  };
+  Path plain = straightRun(20, 200, 6, 360);
+  const auto taken =
+      insertMeander(PRIMITIVES, plain, 500.0, anyCell, everywhere(), free);
+  ASSERT_TRUE(taken.inserted);
+  EXPECT_TRUE(taken.alternatives.empty());
+
+  Path path = straightRun(20, 200, 6, 360);
+  const Path before = path;
+  MeanderOptions options = everywhere();
+  options.alternatives = 3;
+  const auto result =
+      insertMeander(PRIMITIVES, path, 500.0, anyCell, options, free);
+
+  ASSERT_TRUE(result.inserted);
+  // The meander taken is the one taken without alternatives.
+  EXPECT_EQ(path, plain);
+  ASSERT_EQ(result.alternatives.size(), 3U);
+  // At most a quarter of the smaller box is shared with the meander taken
+  // or with another alternative.
+  const auto apart = [](const CellBox& a, const CellBox& b) {
+    return 4 * sharedCells(a, b) <= std::min(cellsOf(a), cellsOf(b));
+  };
+  // One of them is the loop on the other side of the run.
+  const bool takenAbove = result.meander.minY < 200;
+  bool otherSide = false;
+  for (std::size_t at = 0; at < result.alternatives.size(); ++at) {
+    const auto& alternative = result.alternatives[at];
+    EXPECT_GE(alternative.lengthAfter, 500.0);
+    EXPECT_NEAR(renderedLength(PRIMITIVES, alternative.path),
+                alternative.lengthAfter, 1e-9);
+    EXPECT_EQ(alternative.path.front(), before.front());
+    EXPECT_EQ(alternative.path.back(), before.back());
+    EXPECT_TRUE(apart(alternative.meander, result.meander)) << at;
+    for (std::size_t other = 0; other < at; ++other) {
+      EXPECT_TRUE(
+          apart(alternative.meander, result.alternatives[other].meander))
+          << at << " and " << other;
+    }
+    otherSide |= (alternative.meander.minY < 200) != takenAbove;
+    PathLoopScratch scratch;
+    EXPECT_FALSE(pathSelfIntersects(alternative.path, WIDTH, HEIGHT, scratch));
+  }
+  EXPECT_TRUE(otherSide);
+}
+
 TEST(MeanderInsertion, PutsTheLoopAsNearTheEndAsItFits) {
   // With nothing in its way the loop takes the end of the run: the first
   // hundred cells stay as they were and every cell off the run lies beyond

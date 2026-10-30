@@ -254,6 +254,30 @@ struct MQT_SCPD_GRID_EXPORT GridMetrics {
 routerGrid(const GridMetrics& capacity, double unitDivision);
 
 /**
+ * @brief A router grid whose cells are exactly @p cell layout units and whose
+ * origin lies on a multiple of @p snap (`router_grid_snap`).
+ *
+ * routerGrid() fits its cells over the box of the capacity grid, so its step
+ * is the extent divided by one less than the count and a point of a lattice
+ * of @p snap units lies between cells. This grid starts at the multiple of
+ * @p snap at or below the minimum corner of the box, steps by exactly @p cell
+ * and reaches at or beyond the maximum corner, so that every point of the
+ * lattice of @p snap units (diagonal steps included) is a cell.
+ *
+ * @param capacity The capacity grid whose box the router grid covers.
+ * @param cell The router cell size, in layout units.
+ * @param snap The lattice pitch the grid lies on, in layout units: a whole
+ * multiple of @p cell.
+ * @return The router grid.
+ * @throws std::invalid_argument If @p cell or @p snap is not positive, or if
+ * @p snap is not a whole multiple of @p cell.
+ * @throws std::length_error If the grid has more than 2^32 - 1 cells along an
+ * axis.
+ */
+[[nodiscard]] MQT_SCPD_GRID_EXPORT GridMetrics
+routerGridSnapped(const GridMetrics& capacity, double cell, double snap);
+
+/**
  * @brief Converts a length in layout units into a number of cells.
  *
  * Every design rule is a length in layout units, and this function is the one

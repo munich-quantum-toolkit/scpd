@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -239,6 +240,14 @@ def command_debug(args: argparse.Namespace) -> int:
 
     register_external_solver()
     config = directory.load()
+    if args.chains is not None:
+        chains = args.chains.replace(" ", "")
+        if chains and not re.fullmatch(r"\d+(,\d+)*", chains):
+            Console(file=sys.stderr).failure(f"--chains {args.chains}: a comma list of chain numbers such as 1 or 0,2")
+            return 2
+        config.stages.final.capacityCheckChains = chains
+        if chains:
+            write_out(f"checking the capacity of chain {chains} alone (--chains)\n")
     # The SAT dashboards read the records of the session's own run.
     want_sat_records(config)
     records = Recorder()
@@ -662,6 +671,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="count",
         default=0,
         help="with --serve, show every line the stage says; -vv one line per wire and search as well",
+    )
+    debug.add_argument(
+        "--chains",
+        default=None,
+        metavar="LIST",
+        help=(
+            "with --serve, check the capacity of these feedline chains alone, as a comma list such as 1 or 0,2: "
+            "[stages.final] capacity_check_chains for this session, the run's configuration left as it is"
+        ),
     )
     debug.set_defaults(run=command_debug)
 

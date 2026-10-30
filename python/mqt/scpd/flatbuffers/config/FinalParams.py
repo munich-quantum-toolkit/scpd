@@ -548,18 +548,84 @@ class FinalParams(object):
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return True
 
+    # Whether a local check keeps the wires in their ring order: a wire
+    # passes a gate between the ends of two wires of the ring only when it
+    # lies between them in the ring.
+    # FinalParams
+    def LocalRingOrder(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(114))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # Whether a chain's launcher keeps a longer straight run against the
+    # chain's own edges, `clearance` cells for each other launcher that lies
+    # along the border between it and the place the end coupler's resonator
+    # reaches its target length.
+    # FinalParams
+    def EdgeLauncherGuard(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(116))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # Whether two neighbouring couplers of a chain whose edge no plain wire
+    # must cross get merged options: the second coupler's pad built against
+    # each plain option of the first, linked straight, or by an eighth or a
+    # quarter turn, with `min_straight_length` before and after the turn.
+    # FinalParams
+    def CouplerMerge(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(118))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # Whether the relaxation of the feedline routing lets each wire go in
+    # two levels: the lower half of its way first, toward its target, its
+    # upper half still fenced; then the whole wire. The levels of
+    # `max_relaxation` then reach half as many wires.
+    # FinalParams
+    def RelaxHalfRips(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(120))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # How far the guard behind every source port's stub reaches in the
+    # feedline routing only, in cells: from the end of the stub on, inflated
+    # by the clearance, closed to every wire but the one that leaves there,
+    # so that it has room to turn. 0 for none.
+    # FinalParams
+    def FeedlineSourceGuardCells(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(122))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # How far the guard in front of every target port reaches in the
+    # feedline routing only, in cells: from the target cell on out the way a
+    # wire arrives from, inflated by the clearance, closed to every
+    # wire but the one that ends there, which still runs only its own end run
+    # straight. 0 for none.
+    # FinalParams
+    def FeedlineTargetStubCells(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(124))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
     # The targeted repair: how many ring members beside a segment are drawn
     # again and how many local rip-up rounds it runs.
     # FinalParams
     def ResearchRingMembers(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(114))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(126))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 2
 
     # FinalParams
     def ResearchRounds(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(116))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(128))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 4
@@ -568,7 +634,7 @@ class FinalParams(object):
     # the feedline pass and the refinements.
     # FinalParams
     def FencePairs(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(118))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(130))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 3
@@ -578,21 +644,21 @@ class FinalParams(object):
     # times the flat price at `rise_reach` clearances.
     # FinalParams
     def HaloReach(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(120))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(132))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 1
 
     # FinalParams
     def RiseReach(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(122))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(134))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 3
 
     # FinalParams
     def RisePeak(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(124))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(136))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 3
@@ -603,7 +669,7 @@ class FinalParams(object):
     # keeps the short way and lets no neighbour go.
     # FinalParams
     def MeanderRelaxation(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(126))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(138))
         if o != 0:
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return True
@@ -614,7 +680,7 @@ class FinalParams(object):
     # either side. Empty takes the one jog of 20 cells.
     # FinalParams
     def JogOptions(self) -> Optional[str]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(128))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(140))
         if o != 0:
             return self._tab.String(o + self._tab.Pos)
         return None
@@ -630,7 +696,7 @@ class FinalParams(object):
     # past it with its jogs open.
     # FinalParams
     def CouplerOptionExtension(self) -> Optional[str]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(130))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(142))
         if o != 0:
             return self._tab.String(o + self._tab.Pos)
         return None
@@ -643,7 +709,7 @@ class FinalParams(object):
     # front decides the answer either way.
     # FinalParams
     def ChainSearch(self) -> Optional[str]:
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(132))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(144))
         if o != 0:
             return self._tab.String(o + self._tab.Pos)
         return None
@@ -656,13 +722,405 @@ class FinalParams(object):
     # from the start, and `coupler_max_shortfall` does not refuse them.
     # FinalParams
     def CouplerLineOptions(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(134))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(146))
         if o != 0:
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return False
 
+    # Whether the clearance disc a wire closes around its cells holds only the
+    # cells within `min_wire_spacing` itself, the distance the design-rule
+    # check measures. Off, it holds the cells within the rule rounded up to
+    # whole cells, so two parallel wires along an axis keep one cell more.
+    # FinalParams
+    def ExactWireClearance(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(148))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # How many other meanders the meander rip-up of a sweep tries: when a
+    # wire finds no way and its ring neighbour drawn just before it put a new
+    # meander into its way in the same round, the neighbour's meander moves to
+    # each of up to this many other placements, the cheapest first, and the
+    # wire is drawn again after each move. Each placement shares at most a
+    # quarter of its box with the meander and with the other placements.
+    # 0 turns the rip-up off.
+    # FinalParams
+    def MeanderRipupAlternatives(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(150))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # How many occupied launchers to either side of the one a plain wire
+    # leaves keep their straight run out of the border clear of it: the
+    # nearest `min_straight_length` long, and each one further
+    # out `min_wire_spacing` longer. A launcher is occupied when a plain wire
+    # leaves it. 0 for none.
+    # FinalParams
+    def WireLauncherGuard(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(152))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # How many cells every run of `wire_launcher_guard` is kept clear beyond
+    # its straight length, so that the wire that leaves there can turn.
+    # FinalParams
+    def WireLauncherTurnCells(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(154))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 5
+
+    # Whether `meander_relaxation` holds under the feedline constraints as
+    # well. Off, a resonator whose way has no room for its meander keeps the
+    # way it found and lets no neighbour go in the feedline routing, and
+    # relaxes before the feedlines as `meander_relaxation` says.
+    # FinalParams
+    def FeedlineMeanderRelaxation(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(156))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # Whether a gate of the capacity check with an end on a wire's own port
+    # run holds that wire half a clearance more, where the wire leaves the run
+    # straight through the gate: the wire keeps no clearance from its own run.
+    # FinalParams
+    def CapacityOwnRunBonus(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(158))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # The grid options of the coupler insertion: how many steps a lattice
+    # takes per launcher pitch, laid on the launchers. Every plain option
+    # without a jog is moved so that its feedline lies on the lattice: the
+    # middle of its feedline ports on the middle of a lattice edge for a pad
+    # along an axis, of a lattice cell for a pad along a diagonal, wherever
+    # the move lands its lead's tip within half a lattice diagonal of the
+    # resonator's way, its lead joined to the way there; such an option is
+    # kept when it passes the tests of every option and leaves the resonator
+    # at least the target length less `length_point_band_percent`. 0 for none.
+    # FinalParams
+    def CouplerGridOptions(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(160))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # Whether a coupler keeps its grid options alone, under
+    # `coupler_grid_options`: its other options serve only as their
+    # templates. A coupler that no grid option fits keeps its other options.
+    # FinalParams
+    def CouplerGridOnly(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(162))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # The lattice the feedline edges between two couplers are routed on: how
+    # many steps it takes per launcher pitch, laid on the launchers like the
+    # lattice of `coupler_grid_options`. An edge whose two feedline ports lie
+    # on the lattice takes the lattice way with the fewest bends, the
+    # shortest of those, or none: no other search stands in. 0 for none.
+    # FinalParams
+    def FeedlineLatticeEdges(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(164))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # Whether a lattice way of `feedline_lattice_edges` is drawn straight off
+    # its points, an arc of the primitives at every turn, rather than by a
+    # search in a band round it.
+    # FinalParams
+    def FeedlineLatticeDirect(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(166))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Whether the local rip-up of the SAT benchmark and the coupler session
+    # (`local_reroute`) sees the feedline edges and the coupler pads of the
+    # feedline it reroutes alone: those of every other feedline are no
+    # obstacle for its length.
+    # FinalParams
+    def LocalRipOwnChainOnly(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(168))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Whether the bottlenecks of the capacity check come from one constrained
+    # Delaunay triangulation of the free space: per pair of obstacles the
+    # narrowest edge of every basin between them, not both static, rather
+    # than from the profiles along the walls.
+    # FinalParams
+    def CapacityCdt(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(170))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # The area budget of every chamber of the capacity check, as the share
+    # of its free area the wires through it may cover: each piece of a
+    # wire's way inside a chamber, from where it enters to where it leaves
+    # (or to its end), covers its length times the clearance. A chamber
+    # covered beyond the share is over, as a gate over its capacity is. 0
+    # for no budget.
+    # FinalParams
+    def CapacityChamberFill(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(172))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # Whether a coupler place counts the meander of the resonator's way
+    # behind it as length the routing can leave out. The places are taken
+    # in the order of how far the asked-for length (`coupler_bias` times the
+    # target, less the lead) lies outside what is left of the way and what
+    # is left with that meander cut to its chord; of the places that reach
+    # it, the one farthest from the qubit first. The test that refuses an
+    # option whose resonator is left longer than the target, every option's,
+    # the grid options' included, takes the meander off as well.
+    # FinalParams
+    def CouplerMeanderSlack(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(174))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # The chains `coupler_meander_slack` holds for, as a comma list of their
+    # numbers in the assignment, such as "1" or "0,2"; empty for every chain.
+    # FinalParams
+    def CouplerMeanderSlackChains(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(176))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # How many steps the capacity rule may check before a run of options
+    # joins a chain, SAT or not; then the search stops as on
+    # `chain_rule_refusals`. 0 for no bound.
+    # FinalParams
+    def ChainRuleSteps(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(178))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # Whether `capacity_cdt` triangulates a pass incrementally: against the
+    # one of the last passes whose walls differ least, only a window around
+    # the cells that differ, grown by twice the widest gap, and the gates
+    # elsewhere are that pass's. Off, every pass triangulates the whole
+    # raster.
+    # FinalParams
+    def CapacityCdtIncremental(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(180))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # Whether the outer routing lengthens a resonator for a coupler at the
+    # box entry: the way from the first cell deep enough inside the coupler
+    # box carries what the coupler leaves to the qubit, and what runs before
+    # that cell comes on top. Off, a resonator is lengthened to the target
+    # length alone.
+    # FinalParams
+    def CouplerEntryLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(182))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # Whether the feedline edges of the coupler insertion keep out of the box
+    # of every resonator's meander, grown by the clearance; off, a meander's
+    # box is no obstacle to them.
+    # FinalParams
+    def FeedlineMeanderKeepout(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(184))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # The chains the coupler insertion checks the capacity of, as a comma
+    # list of their numbers in the assignment, such as "1" or "0,2": only
+    # their search runs the step checks; every other chain is settled by
+    # cost alone, and no global SAT search follows. Empty for every chain.
+    # FinalParams
+    def CapacityCheckChains(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(186))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # After how many refused steps out of a prefix of the chain search, none
+    # carried and each closing a wire that must cross an edge the prefix
+    # laid, the prefix is dead: no step out of it, or out of a prefix that
+    # extends it, is routed or checked again, and none counts toward
+    # `chain_rule_refusals`. 0 for never.
+    # FinalParams
+    def ChainDeadPrefixRefusals(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(188))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # Whether the gates of `capacity_cdt` are canonical: every point of the
+    # triangulation moved by a deterministic amount below 1e-4 cells drawn
+    # from its coordinates, so that the triangulation is unique, ties between
+    # candidates of one width broken by their ends, and the gates sorted. The
+    # gates then depend on the walls alone, not on the order of the points;
+    # `capacity_cdt_incremental` then gives the gates of the whole raster.
+    # FinalParams
+    def CapacityCdtCanonical(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(190))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # The fixes of the coupler option generator: a grid option's length with
+    # its lead counted once (it was counted twice), a jog option's length
+    # with its second dogleg (it was measured with the plain lead), and no
+    # line options under `coupler_grid_only`.
+    # FinalParams
+    def CouplerOptionFixes(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(192))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # The lattice pitch the router grid of this stage lies on, in layout
+    # units: the cells are exactly `router_cell_size` and the origin a
+    # multiple of the pitch, so that every point of the lattice, diagonal
+    # steps included, is a cell. The pitch must be a whole multiple of the
+    # cell size. 0 fits the cells over the chip's box as before.
+    # FinalParams
+    def RouterGridSnap(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(194))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # The lattice the coupler options are generated on, in layout units
+    # (e.g. 50): every option has both feedline ports on lattice points, the
+    # plain, grid, jog, copy and line options are not built. 0 for the
+    # generator of those. Best with `router_grid_snap` at the same pitch.
+    # FinalParams
+    def CouplerLatticePitch(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(196))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # How many lattice options a coupler keeps open, and how many more as a
+    # reserve that opens with the jogs.
+    # FinalParams
+    def CouplerLatticeOptions(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(198))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 32
+
+    # FinalParams
+    def CouplerLatticeReserve(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(200))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 32
+
+    # How many bins the window of a resonator's way is cut into, each with
+    # options on every axis and both sides of the way.
+    # FinalParams
+    def CouplerLatticeBins(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(202))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 6
+
+    # How far a lattice point may lie from the resonator's way, in layout
+    # units, at the first step of the cascade (twice that at the next).
+    # FinalParams
+    def CouplerLatticeLateral(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(204))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 150.0
+
+    # Under `coupler_lattice_pitch`: every option whose first feedline port
+    # lies within this many lattice steps of the point of the resonator's way
+    # where what is left is the target length, all of them open; 0 for the
+    # window, the bins and the reserve.
+    # FinalParams
+    def CouplerLatticeReach(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(206))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # Under `coupler_lattice_pitch`: every option whose lead, the shortest
+    # way from the lead's tip round the artwork to the resonator's way, and
+    # what is left of the way to the qubit (its meander left out) come to a
+    # resonator within the shortfall, all of them open.
+    # FinalParams
+    def CouplerLatticeShortest(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(208))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Whether the gates of `capacity_cdt` come from a world kept over the
+    # insertion: the border and the artwork triangulated once, every other
+    # wall an object inserted into a cached state (canonical, about a
+    # millisecond a pass instead of several).
+    # FinalParams
+    def CapacityCdtWorld(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(210))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # Under `coupler_lattice_shortest`: the least resonator an option may
+    # leave without its meander, as a fraction of the target; 0 for
+    # `1 - coupler_max_shortfall`.
+    # FinalParams
+    def CouplerLatticeFloor(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(212))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # Under `coupler_lattice_shortest`: how far a lattice point may lie from
+    # the resonator's way, in layout units; 0 for no bound.
+    # FinalParams
+    def CouplerLatticeNear(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(214))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # Under `coupler_lattice_shortest`: whether only every second lattice
+    # point is tried, those of one colour of a checkerboard.
+    # FinalParams
+    def CouplerLatticeChecker(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(216))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # How many options of a coupler's lattice reserve the chain search opens
+    # at a time, at the wall; 0 for all of them at once with the jogs.
+    # FinalParams
+    def CouplerLatticeReserveStep(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(218))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
 def FinalParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(66)
+    builder.StartObject(108)
 
 def Start(builder: flatbuffers.Builder):
     FinalParamsStart(builder)
@@ -997,71 +1455,323 @@ def FinalParamsAddChainSlotBlacklist(builder: flatbuffers.Builder, chainSlotBlac
 def AddChainSlotBlacklist(builder: flatbuffers.Builder, chainSlotBlacklist: bool):
     FinalParamsAddChainSlotBlacklist(builder, chainSlotBlacklist)
 
+def FinalParamsAddLocalRingOrder(builder: flatbuffers.Builder, localRingOrder: bool):
+    builder.PrependBoolSlot(55, localRingOrder, 1)
+
+def AddLocalRingOrder(builder: flatbuffers.Builder, localRingOrder: bool):
+    FinalParamsAddLocalRingOrder(builder, localRingOrder)
+
+def FinalParamsAddEdgeLauncherGuard(builder: flatbuffers.Builder, edgeLauncherGuard: bool):
+    builder.PrependBoolSlot(56, edgeLauncherGuard, 1)
+
+def AddEdgeLauncherGuard(builder: flatbuffers.Builder, edgeLauncherGuard: bool):
+    FinalParamsAddEdgeLauncherGuard(builder, edgeLauncherGuard)
+
+def FinalParamsAddCouplerMerge(builder: flatbuffers.Builder, couplerMerge: bool):
+    builder.PrependBoolSlot(57, couplerMerge, 1)
+
+def AddCouplerMerge(builder: flatbuffers.Builder, couplerMerge: bool):
+    FinalParamsAddCouplerMerge(builder, couplerMerge)
+
+def FinalParamsAddRelaxHalfRips(builder: flatbuffers.Builder, relaxHalfRips: bool):
+    builder.PrependBoolSlot(58, relaxHalfRips, 0)
+
+def AddRelaxHalfRips(builder: flatbuffers.Builder, relaxHalfRips: bool):
+    FinalParamsAddRelaxHalfRips(builder, relaxHalfRips)
+
+def FinalParamsAddFeedlineSourceGuardCells(builder: flatbuffers.Builder, feedlineSourceGuardCells: int):
+    builder.PrependUint32Slot(59, feedlineSourceGuardCells, 0)
+
+def AddFeedlineSourceGuardCells(builder: flatbuffers.Builder, feedlineSourceGuardCells: int):
+    FinalParamsAddFeedlineSourceGuardCells(builder, feedlineSourceGuardCells)
+
+def FinalParamsAddFeedlineTargetStubCells(builder: flatbuffers.Builder, feedlineTargetStubCells: int):
+    builder.PrependUint32Slot(60, feedlineTargetStubCells, 0)
+
+def AddFeedlineTargetStubCells(builder: flatbuffers.Builder, feedlineTargetStubCells: int):
+    FinalParamsAddFeedlineTargetStubCells(builder, feedlineTargetStubCells)
+
 def FinalParamsAddResearchRingMembers(builder: flatbuffers.Builder, researchRingMembers: int):
-    builder.PrependUint32Slot(55, researchRingMembers, 2)
+    builder.PrependUint32Slot(61, researchRingMembers, 2)
 
 def AddResearchRingMembers(builder: flatbuffers.Builder, researchRingMembers: int):
     FinalParamsAddResearchRingMembers(builder, researchRingMembers)
 
 def FinalParamsAddResearchRounds(builder: flatbuffers.Builder, researchRounds: int):
-    builder.PrependUint32Slot(56, researchRounds, 4)
+    builder.PrependUint32Slot(62, researchRounds, 4)
 
 def AddResearchRounds(builder: flatbuffers.Builder, researchRounds: int):
     FinalParamsAddResearchRounds(builder, researchRounds)
 
 def FinalParamsAddFencePairs(builder: flatbuffers.Builder, fencePairs: int):
-    builder.PrependUint32Slot(57, fencePairs, 3)
+    builder.PrependUint32Slot(63, fencePairs, 3)
 
 def AddFencePairs(builder: flatbuffers.Builder, fencePairs: int):
     FinalParamsAddFencePairs(builder, fencePairs)
 
 def FinalParamsAddHaloReach(builder: flatbuffers.Builder, haloReach: int):
-    builder.PrependUint32Slot(58, haloReach, 1)
+    builder.PrependUint32Slot(64, haloReach, 1)
 
 def AddHaloReach(builder: flatbuffers.Builder, haloReach: int):
     FinalParamsAddHaloReach(builder, haloReach)
 
 def FinalParamsAddRiseReach(builder: flatbuffers.Builder, riseReach: int):
-    builder.PrependUint32Slot(59, riseReach, 3)
+    builder.PrependUint32Slot(65, riseReach, 3)
 
 def AddRiseReach(builder: flatbuffers.Builder, riseReach: int):
     FinalParamsAddRiseReach(builder, riseReach)
 
 def FinalParamsAddRisePeak(builder: flatbuffers.Builder, risePeak: int):
-    builder.PrependUint32Slot(60, risePeak, 3)
+    builder.PrependUint32Slot(66, risePeak, 3)
 
 def AddRisePeak(builder: flatbuffers.Builder, risePeak: int):
     FinalParamsAddRisePeak(builder, risePeak)
 
 def FinalParamsAddMeanderRelaxation(builder: flatbuffers.Builder, meanderRelaxation: bool):
-    builder.PrependBoolSlot(61, meanderRelaxation, 1)
+    builder.PrependBoolSlot(67, meanderRelaxation, 1)
 
 def AddMeanderRelaxation(builder: flatbuffers.Builder, meanderRelaxation: bool):
     FinalParamsAddMeanderRelaxation(builder, meanderRelaxation)
 
 def FinalParamsAddJogOptions(builder: flatbuffers.Builder, jogOptions: int):
-    builder.PrependUOffsetTRelativeSlot(62, flatbuffers.number_types.UOffsetTFlags.py_type(jogOptions), 0)
+    builder.PrependUOffsetTRelativeSlot(68, flatbuffers.number_types.UOffsetTFlags.py_type(jogOptions), 0)
 
 def AddJogOptions(builder: flatbuffers.Builder, jogOptions: int):
     FinalParamsAddJogOptions(builder, jogOptions)
 
 def FinalParamsAddCouplerOptionExtension(builder: flatbuffers.Builder, couplerOptionExtension: int):
-    builder.PrependUOffsetTRelativeSlot(63, flatbuffers.number_types.UOffsetTFlags.py_type(couplerOptionExtension), 0)
+    builder.PrependUOffsetTRelativeSlot(69, flatbuffers.number_types.UOffsetTFlags.py_type(couplerOptionExtension), 0)
 
 def AddCouplerOptionExtension(builder: flatbuffers.Builder, couplerOptionExtension: int):
     FinalParamsAddCouplerOptionExtension(builder, couplerOptionExtension)
 
 def FinalParamsAddChainSearch(builder: flatbuffers.Builder, chainSearch: int):
-    builder.PrependUOffsetTRelativeSlot(64, flatbuffers.number_types.UOffsetTFlags.py_type(chainSearch), 0)
+    builder.PrependUOffsetTRelativeSlot(70, flatbuffers.number_types.UOffsetTFlags.py_type(chainSearch), 0)
 
 def AddChainSearch(builder: flatbuffers.Builder, chainSearch: int):
     FinalParamsAddChainSearch(builder, chainSearch)
 
 def FinalParamsAddCouplerLineOptions(builder: flatbuffers.Builder, couplerLineOptions: bool):
-    builder.PrependBoolSlot(65, couplerLineOptions, 0)
+    builder.PrependBoolSlot(71, couplerLineOptions, 0)
 
 def AddCouplerLineOptions(builder: flatbuffers.Builder, couplerLineOptions: bool):
     FinalParamsAddCouplerLineOptions(builder, couplerLineOptions)
+
+def FinalParamsAddExactWireClearance(builder: flatbuffers.Builder, exactWireClearance: bool):
+    builder.PrependBoolSlot(72, exactWireClearance, 0)
+
+def AddExactWireClearance(builder: flatbuffers.Builder, exactWireClearance: bool):
+    FinalParamsAddExactWireClearance(builder, exactWireClearance)
+
+def FinalParamsAddMeanderRipupAlternatives(builder: flatbuffers.Builder, meanderRipupAlternatives: int):
+    builder.PrependUint32Slot(73, meanderRipupAlternatives, 0)
+
+def AddMeanderRipupAlternatives(builder: flatbuffers.Builder, meanderRipupAlternatives: int):
+    FinalParamsAddMeanderRipupAlternatives(builder, meanderRipupAlternatives)
+
+def FinalParamsAddWireLauncherGuard(builder: flatbuffers.Builder, wireLauncherGuard: int):
+    builder.PrependUint32Slot(74, wireLauncherGuard, 0)
+
+def AddWireLauncherGuard(builder: flatbuffers.Builder, wireLauncherGuard: int):
+    FinalParamsAddWireLauncherGuard(builder, wireLauncherGuard)
+
+def FinalParamsAddWireLauncherTurnCells(builder: flatbuffers.Builder, wireLauncherTurnCells: int):
+    builder.PrependUint32Slot(75, wireLauncherTurnCells, 5)
+
+def AddWireLauncherTurnCells(builder: flatbuffers.Builder, wireLauncherTurnCells: int):
+    FinalParamsAddWireLauncherTurnCells(builder, wireLauncherTurnCells)
+
+def FinalParamsAddFeedlineMeanderRelaxation(builder: flatbuffers.Builder, feedlineMeanderRelaxation: bool):
+    builder.PrependBoolSlot(76, feedlineMeanderRelaxation, 1)
+
+def AddFeedlineMeanderRelaxation(builder: flatbuffers.Builder, feedlineMeanderRelaxation: bool):
+    FinalParamsAddFeedlineMeanderRelaxation(builder, feedlineMeanderRelaxation)
+
+def FinalParamsAddCapacityOwnRunBonus(builder: flatbuffers.Builder, capacityOwnRunBonus: bool):
+    builder.PrependBoolSlot(77, capacityOwnRunBonus, 0)
+
+def AddCapacityOwnRunBonus(builder: flatbuffers.Builder, capacityOwnRunBonus: bool):
+    FinalParamsAddCapacityOwnRunBonus(builder, capacityOwnRunBonus)
+
+def FinalParamsAddCouplerGridOptions(builder: flatbuffers.Builder, couplerGridOptions: int):
+    builder.PrependUint32Slot(78, couplerGridOptions, 0)
+
+def AddCouplerGridOptions(builder: flatbuffers.Builder, couplerGridOptions: int):
+    FinalParamsAddCouplerGridOptions(builder, couplerGridOptions)
+
+def FinalParamsAddCouplerGridOnly(builder: flatbuffers.Builder, couplerGridOnly: bool):
+    builder.PrependBoolSlot(79, couplerGridOnly, 0)
+
+def AddCouplerGridOnly(builder: flatbuffers.Builder, couplerGridOnly: bool):
+    FinalParamsAddCouplerGridOnly(builder, couplerGridOnly)
+
+def FinalParamsAddFeedlineLatticeEdges(builder: flatbuffers.Builder, feedlineLatticeEdges: int):
+    builder.PrependUint32Slot(80, feedlineLatticeEdges, 0)
+
+def AddFeedlineLatticeEdges(builder: flatbuffers.Builder, feedlineLatticeEdges: int):
+    FinalParamsAddFeedlineLatticeEdges(builder, feedlineLatticeEdges)
+
+def FinalParamsAddFeedlineLatticeDirect(builder: flatbuffers.Builder, feedlineLatticeDirect: bool):
+    builder.PrependBoolSlot(81, feedlineLatticeDirect, 0)
+
+def AddFeedlineLatticeDirect(builder: flatbuffers.Builder, feedlineLatticeDirect: bool):
+    FinalParamsAddFeedlineLatticeDirect(builder, feedlineLatticeDirect)
+
+def FinalParamsAddLocalRipOwnChainOnly(builder: flatbuffers.Builder, localRipOwnChainOnly: bool):
+    builder.PrependBoolSlot(82, localRipOwnChainOnly, 0)
+
+def AddLocalRipOwnChainOnly(builder: flatbuffers.Builder, localRipOwnChainOnly: bool):
+    FinalParamsAddLocalRipOwnChainOnly(builder, localRipOwnChainOnly)
+
+def FinalParamsAddCapacityCdt(builder: flatbuffers.Builder, capacityCdt: bool):
+    builder.PrependBoolSlot(83, capacityCdt, 1)
+
+def AddCapacityCdt(builder: flatbuffers.Builder, capacityCdt: bool):
+    FinalParamsAddCapacityCdt(builder, capacityCdt)
+
+def FinalParamsAddCapacityChamberFill(builder: flatbuffers.Builder, capacityChamberFill: float):
+    builder.PrependFloat64Slot(84, capacityChamberFill, 0.0)
+
+def AddCapacityChamberFill(builder: flatbuffers.Builder, capacityChamberFill: float):
+    FinalParamsAddCapacityChamberFill(builder, capacityChamberFill)
+
+def FinalParamsAddCouplerMeanderSlack(builder: flatbuffers.Builder, couplerMeanderSlack: bool):
+    builder.PrependBoolSlot(85, couplerMeanderSlack, 0)
+
+def AddCouplerMeanderSlack(builder: flatbuffers.Builder, couplerMeanderSlack: bool):
+    FinalParamsAddCouplerMeanderSlack(builder, couplerMeanderSlack)
+
+def FinalParamsAddCouplerMeanderSlackChains(builder: flatbuffers.Builder, couplerMeanderSlackChains: int):
+    builder.PrependUOffsetTRelativeSlot(86, flatbuffers.number_types.UOffsetTFlags.py_type(couplerMeanderSlackChains), 0)
+
+def AddCouplerMeanderSlackChains(builder: flatbuffers.Builder, couplerMeanderSlackChains: int):
+    FinalParamsAddCouplerMeanderSlackChains(builder, couplerMeanderSlackChains)
+
+def FinalParamsAddChainRuleSteps(builder: flatbuffers.Builder, chainRuleSteps: int):
+    builder.PrependUint32Slot(87, chainRuleSteps, 0)
+
+def AddChainRuleSteps(builder: flatbuffers.Builder, chainRuleSteps: int):
+    FinalParamsAddChainRuleSteps(builder, chainRuleSteps)
+
+def FinalParamsAddCapacityCdtIncremental(builder: flatbuffers.Builder, capacityCdtIncremental: bool):
+    builder.PrependBoolSlot(88, capacityCdtIncremental, 1)
+
+def AddCapacityCdtIncremental(builder: flatbuffers.Builder, capacityCdtIncremental: bool):
+    FinalParamsAddCapacityCdtIncremental(builder, capacityCdtIncremental)
+
+def FinalParamsAddCouplerEntryLength(builder: flatbuffers.Builder, couplerEntryLength: bool):
+    builder.PrependBoolSlot(89, couplerEntryLength, 1)
+
+def AddCouplerEntryLength(builder: flatbuffers.Builder, couplerEntryLength: bool):
+    FinalParamsAddCouplerEntryLength(builder, couplerEntryLength)
+
+def FinalParamsAddFeedlineMeanderKeepout(builder: flatbuffers.Builder, feedlineMeanderKeepout: bool):
+    builder.PrependBoolSlot(90, feedlineMeanderKeepout, 1)
+
+def AddFeedlineMeanderKeepout(builder: flatbuffers.Builder, feedlineMeanderKeepout: bool):
+    FinalParamsAddFeedlineMeanderKeepout(builder, feedlineMeanderKeepout)
+
+def FinalParamsAddCapacityCheckChains(builder: flatbuffers.Builder, capacityCheckChains: int):
+    builder.PrependUOffsetTRelativeSlot(91, flatbuffers.number_types.UOffsetTFlags.py_type(capacityCheckChains), 0)
+
+def AddCapacityCheckChains(builder: flatbuffers.Builder, capacityCheckChains: int):
+    FinalParamsAddCapacityCheckChains(builder, capacityCheckChains)
+
+def FinalParamsAddChainDeadPrefixRefusals(builder: flatbuffers.Builder, chainDeadPrefixRefusals: int):
+    builder.PrependUint32Slot(92, chainDeadPrefixRefusals, 0)
+
+def AddChainDeadPrefixRefusals(builder: flatbuffers.Builder, chainDeadPrefixRefusals: int):
+    FinalParamsAddChainDeadPrefixRefusals(builder, chainDeadPrefixRefusals)
+
+def FinalParamsAddCapacityCdtCanonical(builder: flatbuffers.Builder, capacityCdtCanonical: bool):
+    builder.PrependBoolSlot(93, capacityCdtCanonical, 0)
+
+def AddCapacityCdtCanonical(builder: flatbuffers.Builder, capacityCdtCanonical: bool):
+    FinalParamsAddCapacityCdtCanonical(builder, capacityCdtCanonical)
+
+def FinalParamsAddCouplerOptionFixes(builder: flatbuffers.Builder, couplerOptionFixes: bool):
+    builder.PrependBoolSlot(94, couplerOptionFixes, 0)
+
+def AddCouplerOptionFixes(builder: flatbuffers.Builder, couplerOptionFixes: bool):
+    FinalParamsAddCouplerOptionFixes(builder, couplerOptionFixes)
+
+def FinalParamsAddRouterGridSnap(builder: flatbuffers.Builder, routerGridSnap: float):
+    builder.PrependFloat64Slot(95, routerGridSnap, 0.0)
+
+def AddRouterGridSnap(builder: flatbuffers.Builder, routerGridSnap: float):
+    FinalParamsAddRouterGridSnap(builder, routerGridSnap)
+
+def FinalParamsAddCouplerLatticePitch(builder: flatbuffers.Builder, couplerLatticePitch: float):
+    builder.PrependFloat64Slot(96, couplerLatticePitch, 0.0)
+
+def AddCouplerLatticePitch(builder: flatbuffers.Builder, couplerLatticePitch: float):
+    FinalParamsAddCouplerLatticePitch(builder, couplerLatticePitch)
+
+def FinalParamsAddCouplerLatticeOptions(builder: flatbuffers.Builder, couplerLatticeOptions: int):
+    builder.PrependUint32Slot(97, couplerLatticeOptions, 32)
+
+def AddCouplerLatticeOptions(builder: flatbuffers.Builder, couplerLatticeOptions: int):
+    FinalParamsAddCouplerLatticeOptions(builder, couplerLatticeOptions)
+
+def FinalParamsAddCouplerLatticeReserve(builder: flatbuffers.Builder, couplerLatticeReserve: int):
+    builder.PrependUint32Slot(98, couplerLatticeReserve, 32)
+
+def AddCouplerLatticeReserve(builder: flatbuffers.Builder, couplerLatticeReserve: int):
+    FinalParamsAddCouplerLatticeReserve(builder, couplerLatticeReserve)
+
+def FinalParamsAddCouplerLatticeBins(builder: flatbuffers.Builder, couplerLatticeBins: int):
+    builder.PrependUint32Slot(99, couplerLatticeBins, 6)
+
+def AddCouplerLatticeBins(builder: flatbuffers.Builder, couplerLatticeBins: int):
+    FinalParamsAddCouplerLatticeBins(builder, couplerLatticeBins)
+
+def FinalParamsAddCouplerLatticeLateral(builder: flatbuffers.Builder, couplerLatticeLateral: float):
+    builder.PrependFloat64Slot(100, couplerLatticeLateral, 150.0)
+
+def AddCouplerLatticeLateral(builder: flatbuffers.Builder, couplerLatticeLateral: float):
+    FinalParamsAddCouplerLatticeLateral(builder, couplerLatticeLateral)
+
+def FinalParamsAddCouplerLatticeReach(builder: flatbuffers.Builder, couplerLatticeReach: int):
+    builder.PrependUint32Slot(101, couplerLatticeReach, 0)
+
+def AddCouplerLatticeReach(builder: flatbuffers.Builder, couplerLatticeReach: int):
+    FinalParamsAddCouplerLatticeReach(builder, couplerLatticeReach)
+
+def FinalParamsAddCouplerLatticeShortest(builder: flatbuffers.Builder, couplerLatticeShortest: bool):
+    builder.PrependBoolSlot(102, couplerLatticeShortest, 0)
+
+def AddCouplerLatticeShortest(builder: flatbuffers.Builder, couplerLatticeShortest: bool):
+    FinalParamsAddCouplerLatticeShortest(builder, couplerLatticeShortest)
+
+def FinalParamsAddCapacityCdtWorld(builder: flatbuffers.Builder, capacityCdtWorld: bool):
+    builder.PrependBoolSlot(103, capacityCdtWorld, 1)
+
+def AddCapacityCdtWorld(builder: flatbuffers.Builder, capacityCdtWorld: bool):
+    FinalParamsAddCapacityCdtWorld(builder, capacityCdtWorld)
+
+def FinalParamsAddCouplerLatticeFloor(builder: flatbuffers.Builder, couplerLatticeFloor: float):
+    builder.PrependFloat64Slot(104, couplerLatticeFloor, 0.0)
+
+def AddCouplerLatticeFloor(builder: flatbuffers.Builder, couplerLatticeFloor: float):
+    FinalParamsAddCouplerLatticeFloor(builder, couplerLatticeFloor)
+
+def FinalParamsAddCouplerLatticeNear(builder: flatbuffers.Builder, couplerLatticeNear: float):
+    builder.PrependFloat64Slot(105, couplerLatticeNear, 0.0)
+
+def AddCouplerLatticeNear(builder: flatbuffers.Builder, couplerLatticeNear: float):
+    FinalParamsAddCouplerLatticeNear(builder, couplerLatticeNear)
+
+def FinalParamsAddCouplerLatticeChecker(builder: flatbuffers.Builder, couplerLatticeChecker: bool):
+    builder.PrependBoolSlot(106, couplerLatticeChecker, 0)
+
+def AddCouplerLatticeChecker(builder: flatbuffers.Builder, couplerLatticeChecker: bool):
+    FinalParamsAddCouplerLatticeChecker(builder, couplerLatticeChecker)
+
+def FinalParamsAddCouplerLatticeReserveStep(builder: flatbuffers.Builder, couplerLatticeReserveStep: int):
+    builder.PrependUint32Slot(107, couplerLatticeReserveStep, 0)
+
+def AddCouplerLatticeReserveStep(builder: flatbuffers.Builder, couplerLatticeReserveStep: int):
+    FinalParamsAddCouplerLatticeReserveStep(builder, couplerLatticeReserveStep)
 
 def FinalParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -1130,6 +1840,12 @@ class FinalParamsT(object):
         chainRuleRefusals = 1500,
         chainEndBlacklist = True,
         chainSlotBlacklist = True,
+        localRingOrder = True,
+        edgeLauncherGuard = True,
+        couplerMerge = True,
+        relaxHalfRips = False,
+        feedlineSourceGuardCells = 0,
+        feedlineTargetStubCells = 0,
         researchRingMembers = 2,
         researchRounds = 4,
         fencePairs = 3,
@@ -1141,6 +1857,42 @@ class FinalParamsT(object):
         couplerOptionExtension = None,
         chainSearch = None,
         couplerLineOptions = False,
+        exactWireClearance = False,
+        meanderRipupAlternatives = 0,
+        wireLauncherGuard = 0,
+        wireLauncherTurnCells = 5,
+        feedlineMeanderRelaxation = True,
+        capacityOwnRunBonus = False,
+        couplerGridOptions = 0,
+        couplerGridOnly = False,
+        feedlineLatticeEdges = 0,
+        feedlineLatticeDirect = False,
+        localRipOwnChainOnly = False,
+        capacityCdt = True,
+        capacityChamberFill = 0.0,
+        couplerMeanderSlack = False,
+        couplerMeanderSlackChains = None,
+        chainRuleSteps = 0,
+        capacityCdtIncremental = True,
+        couplerEntryLength = True,
+        feedlineMeanderKeepout = True,
+        capacityCheckChains = None,
+        chainDeadPrefixRefusals = 0,
+        capacityCdtCanonical = False,
+        couplerOptionFixes = False,
+        routerGridSnap = 0.0,
+        couplerLatticePitch = 0.0,
+        couplerLatticeOptions = 32,
+        couplerLatticeReserve = 32,
+        couplerLatticeBins = 6,
+        couplerLatticeLateral = 150.0,
+        couplerLatticeReach = 0,
+        couplerLatticeShortest = False,
+        capacityCdtWorld = True,
+        couplerLatticeFloor = 0.0,
+        couplerLatticeNear = 0.0,
+        couplerLatticeChecker = False,
+        couplerLatticeReserveStep = 0,
     ):
         self.router = router  # type: Optional[str]
         self.corridorSpacings = corridorSpacings  # type: int
@@ -1197,6 +1949,12 @@ class FinalParamsT(object):
         self.chainRuleRefusals = chainRuleRefusals  # type: int
         self.chainEndBlacklist = chainEndBlacklist  # type: bool
         self.chainSlotBlacklist = chainSlotBlacklist  # type: bool
+        self.localRingOrder = localRingOrder  # type: bool
+        self.edgeLauncherGuard = edgeLauncherGuard  # type: bool
+        self.couplerMerge = couplerMerge  # type: bool
+        self.relaxHalfRips = relaxHalfRips  # type: bool
+        self.feedlineSourceGuardCells = feedlineSourceGuardCells  # type: int
+        self.feedlineTargetStubCells = feedlineTargetStubCells  # type: int
         self.researchRingMembers = researchRingMembers  # type: int
         self.researchRounds = researchRounds  # type: int
         self.fencePairs = fencePairs  # type: int
@@ -1208,6 +1966,42 @@ class FinalParamsT(object):
         self.couplerOptionExtension = couplerOptionExtension  # type: Optional[str]
         self.chainSearch = chainSearch  # type: Optional[str]
         self.couplerLineOptions = couplerLineOptions  # type: bool
+        self.exactWireClearance = exactWireClearance  # type: bool
+        self.meanderRipupAlternatives = meanderRipupAlternatives  # type: int
+        self.wireLauncherGuard = wireLauncherGuard  # type: int
+        self.wireLauncherTurnCells = wireLauncherTurnCells  # type: int
+        self.feedlineMeanderRelaxation = feedlineMeanderRelaxation  # type: bool
+        self.capacityOwnRunBonus = capacityOwnRunBonus  # type: bool
+        self.couplerGridOptions = couplerGridOptions  # type: int
+        self.couplerGridOnly = couplerGridOnly  # type: bool
+        self.feedlineLatticeEdges = feedlineLatticeEdges  # type: int
+        self.feedlineLatticeDirect = feedlineLatticeDirect  # type: bool
+        self.localRipOwnChainOnly = localRipOwnChainOnly  # type: bool
+        self.capacityCdt = capacityCdt  # type: bool
+        self.capacityChamberFill = capacityChamberFill  # type: float
+        self.couplerMeanderSlack = couplerMeanderSlack  # type: bool
+        self.couplerMeanderSlackChains = couplerMeanderSlackChains  # type: Optional[str]
+        self.chainRuleSteps = chainRuleSteps  # type: int
+        self.capacityCdtIncremental = capacityCdtIncremental  # type: bool
+        self.couplerEntryLength = couplerEntryLength  # type: bool
+        self.feedlineMeanderKeepout = feedlineMeanderKeepout  # type: bool
+        self.capacityCheckChains = capacityCheckChains  # type: Optional[str]
+        self.chainDeadPrefixRefusals = chainDeadPrefixRefusals  # type: int
+        self.capacityCdtCanonical = capacityCdtCanonical  # type: bool
+        self.couplerOptionFixes = couplerOptionFixes  # type: bool
+        self.routerGridSnap = routerGridSnap  # type: float
+        self.couplerLatticePitch = couplerLatticePitch  # type: float
+        self.couplerLatticeOptions = couplerLatticeOptions  # type: int
+        self.couplerLatticeReserve = couplerLatticeReserve  # type: int
+        self.couplerLatticeBins = couplerLatticeBins  # type: int
+        self.couplerLatticeLateral = couplerLatticeLateral  # type: float
+        self.couplerLatticeReach = couplerLatticeReach  # type: int
+        self.couplerLatticeShortest = couplerLatticeShortest  # type: bool
+        self.capacityCdtWorld = capacityCdtWorld  # type: bool
+        self.couplerLatticeFloor = couplerLatticeFloor  # type: float
+        self.couplerLatticeNear = couplerLatticeNear  # type: float
+        self.couplerLatticeChecker = couplerLatticeChecker  # type: bool
+        self.couplerLatticeReserveStep = couplerLatticeReserveStep  # type: int
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -1289,6 +2083,12 @@ class FinalParamsT(object):
         self.chainRuleRefusals = finalParams.ChainRuleRefusals()
         self.chainEndBlacklist = finalParams.ChainEndBlacklist()
         self.chainSlotBlacklist = finalParams.ChainSlotBlacklist()
+        self.localRingOrder = finalParams.LocalRingOrder()
+        self.edgeLauncherGuard = finalParams.EdgeLauncherGuard()
+        self.couplerMerge = finalParams.CouplerMerge()
+        self.relaxHalfRips = finalParams.RelaxHalfRips()
+        self.feedlineSourceGuardCells = finalParams.FeedlineSourceGuardCells()
+        self.feedlineTargetStubCells = finalParams.FeedlineTargetStubCells()
         self.researchRingMembers = finalParams.ResearchRingMembers()
         self.researchRounds = finalParams.ResearchRounds()
         self.fencePairs = finalParams.FencePairs()
@@ -1306,6 +2106,46 @@ class FinalParamsT(object):
         if self.chainSearch is not None:
             self.chainSearch = self.chainSearch.decode('utf-8')
         self.couplerLineOptions = finalParams.CouplerLineOptions()
+        self.exactWireClearance = finalParams.ExactWireClearance()
+        self.meanderRipupAlternatives = finalParams.MeanderRipupAlternatives()
+        self.wireLauncherGuard = finalParams.WireLauncherGuard()
+        self.wireLauncherTurnCells = finalParams.WireLauncherTurnCells()
+        self.feedlineMeanderRelaxation = finalParams.FeedlineMeanderRelaxation()
+        self.capacityOwnRunBonus = finalParams.CapacityOwnRunBonus()
+        self.couplerGridOptions = finalParams.CouplerGridOptions()
+        self.couplerGridOnly = finalParams.CouplerGridOnly()
+        self.feedlineLatticeEdges = finalParams.FeedlineLatticeEdges()
+        self.feedlineLatticeDirect = finalParams.FeedlineLatticeDirect()
+        self.localRipOwnChainOnly = finalParams.LocalRipOwnChainOnly()
+        self.capacityCdt = finalParams.CapacityCdt()
+        self.capacityChamberFill = finalParams.CapacityChamberFill()
+        self.couplerMeanderSlack = finalParams.CouplerMeanderSlack()
+        self.couplerMeanderSlackChains = finalParams.CouplerMeanderSlackChains()
+        if self.couplerMeanderSlackChains is not None:
+            self.couplerMeanderSlackChains = self.couplerMeanderSlackChains.decode('utf-8')
+        self.chainRuleSteps = finalParams.ChainRuleSteps()
+        self.capacityCdtIncremental = finalParams.CapacityCdtIncremental()
+        self.couplerEntryLength = finalParams.CouplerEntryLength()
+        self.feedlineMeanderKeepout = finalParams.FeedlineMeanderKeepout()
+        self.capacityCheckChains = finalParams.CapacityCheckChains()
+        if self.capacityCheckChains is not None:
+            self.capacityCheckChains = self.capacityCheckChains.decode('utf-8')
+        self.chainDeadPrefixRefusals = finalParams.ChainDeadPrefixRefusals()
+        self.capacityCdtCanonical = finalParams.CapacityCdtCanonical()
+        self.couplerOptionFixes = finalParams.CouplerOptionFixes()
+        self.routerGridSnap = finalParams.RouterGridSnap()
+        self.couplerLatticePitch = finalParams.CouplerLatticePitch()
+        self.couplerLatticeOptions = finalParams.CouplerLatticeOptions()
+        self.couplerLatticeReserve = finalParams.CouplerLatticeReserve()
+        self.couplerLatticeBins = finalParams.CouplerLatticeBins()
+        self.couplerLatticeLateral = finalParams.CouplerLatticeLateral()
+        self.couplerLatticeReach = finalParams.CouplerLatticeReach()
+        self.couplerLatticeShortest = finalParams.CouplerLatticeShortest()
+        self.capacityCdtWorld = finalParams.CapacityCdtWorld()
+        self.couplerLatticeFloor = finalParams.CouplerLatticeFloor()
+        self.couplerLatticeNear = finalParams.CouplerLatticeNear()
+        self.couplerLatticeChecker = finalParams.CouplerLatticeChecker()
+        self.couplerLatticeReserveStep = finalParams.CouplerLatticeReserveStep()
 
     # FinalParamsT
     def Pack(self, builder):
@@ -1319,6 +2159,10 @@ class FinalParamsT(object):
             couplerOptionExtension = builder.CreateString(self.couplerOptionExtension)
         if self.chainSearch is not None:
             chainSearch = builder.CreateString(self.chainSearch)
+        if self.couplerMeanderSlackChains is not None:
+            couplerMeanderSlackChains = builder.CreateString(self.couplerMeanderSlackChains)
+        if self.capacityCheckChains is not None:
+            capacityCheckChains = builder.CreateString(self.capacityCheckChains)
         FinalParamsStart(builder)
         if self.router is not None:
             FinalParamsAddRouter(builder, router)
@@ -1377,6 +2221,12 @@ class FinalParamsT(object):
         FinalParamsAddChainRuleRefusals(builder, self.chainRuleRefusals)
         FinalParamsAddChainEndBlacklist(builder, self.chainEndBlacklist)
         FinalParamsAddChainSlotBlacklist(builder, self.chainSlotBlacklist)
+        FinalParamsAddLocalRingOrder(builder, self.localRingOrder)
+        FinalParamsAddEdgeLauncherGuard(builder, self.edgeLauncherGuard)
+        FinalParamsAddCouplerMerge(builder, self.couplerMerge)
+        FinalParamsAddRelaxHalfRips(builder, self.relaxHalfRips)
+        FinalParamsAddFeedlineSourceGuardCells(builder, self.feedlineSourceGuardCells)
+        FinalParamsAddFeedlineTargetStubCells(builder, self.feedlineTargetStubCells)
         FinalParamsAddResearchRingMembers(builder, self.researchRingMembers)
         FinalParamsAddResearchRounds(builder, self.researchRounds)
         FinalParamsAddFencePairs(builder, self.fencePairs)
@@ -1391,5 +2241,43 @@ class FinalParamsT(object):
         if self.chainSearch is not None:
             FinalParamsAddChainSearch(builder, chainSearch)
         FinalParamsAddCouplerLineOptions(builder, self.couplerLineOptions)
+        FinalParamsAddExactWireClearance(builder, self.exactWireClearance)
+        FinalParamsAddMeanderRipupAlternatives(builder, self.meanderRipupAlternatives)
+        FinalParamsAddWireLauncherGuard(builder, self.wireLauncherGuard)
+        FinalParamsAddWireLauncherTurnCells(builder, self.wireLauncherTurnCells)
+        FinalParamsAddFeedlineMeanderRelaxation(builder, self.feedlineMeanderRelaxation)
+        FinalParamsAddCapacityOwnRunBonus(builder, self.capacityOwnRunBonus)
+        FinalParamsAddCouplerGridOptions(builder, self.couplerGridOptions)
+        FinalParamsAddCouplerGridOnly(builder, self.couplerGridOnly)
+        FinalParamsAddFeedlineLatticeEdges(builder, self.feedlineLatticeEdges)
+        FinalParamsAddFeedlineLatticeDirect(builder, self.feedlineLatticeDirect)
+        FinalParamsAddLocalRipOwnChainOnly(builder, self.localRipOwnChainOnly)
+        FinalParamsAddCapacityCdt(builder, self.capacityCdt)
+        FinalParamsAddCapacityChamberFill(builder, self.capacityChamberFill)
+        FinalParamsAddCouplerMeanderSlack(builder, self.couplerMeanderSlack)
+        if self.couplerMeanderSlackChains is not None:
+            FinalParamsAddCouplerMeanderSlackChains(builder, couplerMeanderSlackChains)
+        FinalParamsAddChainRuleSteps(builder, self.chainRuleSteps)
+        FinalParamsAddCapacityCdtIncremental(builder, self.capacityCdtIncremental)
+        FinalParamsAddCouplerEntryLength(builder, self.couplerEntryLength)
+        FinalParamsAddFeedlineMeanderKeepout(builder, self.feedlineMeanderKeepout)
+        if self.capacityCheckChains is not None:
+            FinalParamsAddCapacityCheckChains(builder, capacityCheckChains)
+        FinalParamsAddChainDeadPrefixRefusals(builder, self.chainDeadPrefixRefusals)
+        FinalParamsAddCapacityCdtCanonical(builder, self.capacityCdtCanonical)
+        FinalParamsAddCouplerOptionFixes(builder, self.couplerOptionFixes)
+        FinalParamsAddRouterGridSnap(builder, self.routerGridSnap)
+        FinalParamsAddCouplerLatticePitch(builder, self.couplerLatticePitch)
+        FinalParamsAddCouplerLatticeOptions(builder, self.couplerLatticeOptions)
+        FinalParamsAddCouplerLatticeReserve(builder, self.couplerLatticeReserve)
+        FinalParamsAddCouplerLatticeBins(builder, self.couplerLatticeBins)
+        FinalParamsAddCouplerLatticeLateral(builder, self.couplerLatticeLateral)
+        FinalParamsAddCouplerLatticeReach(builder, self.couplerLatticeReach)
+        FinalParamsAddCouplerLatticeShortest(builder, self.couplerLatticeShortest)
+        FinalParamsAddCapacityCdtWorld(builder, self.capacityCdtWorld)
+        FinalParamsAddCouplerLatticeFloor(builder, self.couplerLatticeFloor)
+        FinalParamsAddCouplerLatticeNear(builder, self.couplerLatticeNear)
+        FinalParamsAddCouplerLatticeChecker(builder, self.couplerLatticeChecker)
+        FinalParamsAddCouplerLatticeReserveStep(builder, self.couplerLatticeReserveStep)
         finalParams = FinalParamsEnd(builder)
         return finalParams

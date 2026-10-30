@@ -529,6 +529,7 @@ struct Settings {
   double margin = 1.06;
   std::int64_t marginFrom = 3;
   double resonatorPassage = 0.8;
+  bool ownRunBonus = false;
   std::size_t slotPinCells = SLOT_PIN_CELLS;
   std::int64_t escapeStraight = 5;
   double escapeStubMargin = ESCAPE_STUB_MARGIN;
@@ -543,6 +544,7 @@ struct Settings {
 [[nodiscard]] double capacityMargin() { return settings().margin; }
 [[nodiscard]] std::int64_t marginFrom() { return settings().marginFrom; }
 [[nodiscard]] double resonatorPassage() { return settings().resonatorPassage; }
+[[nodiscard]] bool ownRunBonus() { return settings().ownRunBonus; }
 [[nodiscard]] std::size_t slotPinCells() { return settings().slotPinCells; }
 [[nodiscard]] double escapeStubMargin() { return settings().escapeStubMargin; }
 [[nodiscard]] std::int64_t escapeStraight() {
@@ -554,8 +556,8 @@ struct Settings {
 // plain gate on a mouth line between the same chambers counts as the
 // mouth; the slots of a straight piece are spread evenly; a slot goes only
 // where each of its ends has a way out, a quarter turn allowed; an escape
-// keeps no clearance from coupler runs and a gate at the wire's own run
-// holds it no more than any other.
+// keeps no clearance from coupler runs. Whether a gate at the wire's own
+// run holds it half a clearance more is a setting (`ownRunBonus`).
 [[nodiscard]] constexpr bool gateHeading() { return true; }
 [[nodiscard]] constexpr bool slotCrossingRule() { return true; }
 [[nodiscard]] constexpr bool mouthTwins() { return true; }
@@ -563,7 +565,6 @@ struct Settings {
 [[nodiscard]] constexpr bool slotEscape() { return true; }
 [[nodiscard]] constexpr bool escapeQuarterTurns() { return true; }
 [[nodiscard]] constexpr bool escapeCouplerRuns() { return false; }
-[[nodiscard]] constexpr bool ownRunBonus() { return false; }
 [[nodiscard]] constexpr double staticGapBonus() { return 0.0; }
 [[nodiscard]] constexpr double slotReachMargin() { return 0.0; }
 [[nodiscard]] constexpr double slotStubGap() { return 0.0; }
@@ -1261,6 +1262,7 @@ void useSettings(const SlotGraph& graph) {
   settings() = Settings{.margin = graph.capacityMargin,
                         .marginFrom = graph.capacityMarginFromWires,
                         .resonatorPassage = graph.resonatorPassage,
+                        .ownRunBonus = graph.ownRunBonus,
                         .slotPinCells = graph.slotPinCells,
                         .escapeStraight = graph.escapeStraight,
                         .escapeStubMargin = graph.escapeStubMargin};
@@ -3270,6 +3272,9 @@ private:
   std::vector<Stroke> strokes_;
   std::vector<Wire> wires_;
   std::vector<Edge> edges_;
+  /// Per edge, under the order rule (`SlotGraph::ringOrder`): the places in
+  /// the ring of the wires its two ends lie on, when both have one.
+  std::vector<std::optional<std::array<std::int64_t, 2>>> ringEnds_;
   std::vector<Point> mid_;
   /// A move of the search: along an edge out of a chamber into another,
   /// and the number of that pair of edge and chamber entered.
@@ -3280,6 +3285,15 @@ private:
   };
   /// Per chamber: the moves out of it.
   std::vector<std::vector<Move>> around_;
+  /// Per chamber, under the area budget (`SlotGraph::chamberFill`): the
+  /// factor on the length of every piece of a way inside it, from its load;
+  /// empty without the budget, so that a piece counts its length alone.
+  std::vector<double> chamberWeight_;
+  [[nodiscard]] double chamberFactor(const std::int64_t chamber) const {
+    return chamber >= 0 && std::cmp_less(chamber, chamberWeight_.size())
+               ? chamberWeight_[static_cast<std::size_t>(chamber)]
+               : 1.0;
+  }
   /// How many pairs of edge and chamber entered there are, and how many
   /// crossing masks a state may carry: a state of the search is a pair and
   /// a mask, `pair * maskCount_ + mask`.
@@ -3363,6 +3377,11 @@ private:
   void findMouths();
   void indexEdges();
   void openEdges(Demand& demand) const;
+  /// Whether a place in the ring lies between the places of two ends, on
+  /// the shorter way round.
+  [[nodiscard]] bool
+  betweenInRing(std::int64_t place,
+                const std::array<std::int64_t, 2>& ends) const;
   /// What edge k holds with `own` of its users at their own run, from
   /// `limits_`.
   [[nodiscard]] std::int64_t limitOf(std::size_t k, std::int64_t own) const {
@@ -3913,7 +3932,48 @@ void Checker::findMouths() {
 }
 
 /// The users and the mouth of every edge, for `openEdges`.
+/// The wire a wall of a gate's end lies on, by the end's label: `pad of
+/// <wire>`, `lead of <wire>` or `<wire> at its <end>`, a side after a comma.
+std::string ownerOfEnd(const std::string& end) {
+  auto label = end.substr(0, end.find(','));
+  for (const std::string_view head : {"pad of ", "lead of "}) {
+    if (label.starts_with(head)) {
+      return label.substr(head.size());
+    }
+  }
+  if (const auto at = label.find(" at its "); at != std::string::npos) {
+    return label.substr(0, at);
+  }
+  return {};
+}
+
+bool Checker::betweenInRing(const std::int64_t place,
+                            const std::array<std::int64_t, 2>& ends) const {
+  const auto lo = std::min(ends[0], ends[1]);
+  const auto hi = std::max(ends[0], ends[1]);
+  const auto inside = place >= lo && place <= hi;
+  // The shorter way round from one end to the other.
+  if (graph_.ringSize <= 0 || 2 * (hi - lo) <= graph_.ringSize) {
+    return inside;
+  }
+  return place >= hi || place <= lo;
+}
+
 void Checker::indexEdges() {
+  ringEnds_.assign(edges_.size(), std::nullopt);
+  if (graph_.ringOrder) {
+    for (std::size_t k = 0; k < edges_.size(); ++k) {
+      const auto& edge = edges_[k];
+      if (edge.stretch || edge.ends.size() != 2) {
+        continue;
+      }
+      const auto a = graph_.ring.find(ownerOfEnd(edge.ends[0]));
+      const auto b = graph_.ring.find(ownerOfEnd(edge.ends[1]));
+      if (a != graph_.ring.end() && b != graph_.ring.end()) {
+        ringEnds_[k] = std::array{a->second, b->second};
+      }
+    }
+  }
   gateMouth_.assign(edges_.size(), nullptr);
   for (const auto& [k, key] : mouthOfGate_) {
     gateMouth_[k] = &key;
@@ -3960,6 +4020,14 @@ void Checker::openEdges(Demand& demand) const {
     }
   }
   static const std::optional<std::string> NO_MOUTH;
+  // The wire's place in the ring, for the order rule.
+  std::optional<std::int64_t> place;
+  if (graph_.ringOrder) {
+    if (const auto found = graph_.ring.find(demand.name);
+        found != graph_.ring.end()) {
+      place = found->second;
+    }
+  }
   for (std::size_t k = 0; k < ne; ++k) {
     const auto& edge = edges_[k];
     bool ok = user[k];
@@ -3984,6 +4052,11 @@ void Checker::openEdges(Demand& demand) const {
     // to f6 in the mouth of f5).
     if (mine.has_value() && edge.mouth && mouthOf.has_value() &&
         mouthOf != mine) {
+      ok = false;
+    }
+    // The order rule of a local check (`SlotGraph::ringOrder`).
+    if (ok && place.has_value() && ringEnds_[k].has_value() &&
+        !betweenInRing(*place, *ringEnds_[k])) {
       ok = false;
     }
     demand.open[k] = ok;
@@ -4067,7 +4140,7 @@ Way Checker::shortest(const Demand& demand,
       }
       const auto mask =
           demand.crossBit[k] | (demand.ownMouth[k] ? mouthBit : 0);
-      const auto d = (apart * weight[k]) + 1.0;
+      const auto d = (apart * weight[k] * chamberFactor(chamber)) + 1.0;
       const auto at = (move.pair * maskCount_) + mask;
       if (d < known(at)) {
         keep(at, d, NO_STATE, apart);
@@ -4090,7 +4163,7 @@ Way Checker::shortest(const Demand& demand,
     const auto mask = static_cast<std::uint64_t>(item.at % maskCount_);
     const auto& steps = stepsOf(item.at / maskCount_);
     if (mask == full && std::ranges::find(demand.to, c) != demand.to.end()) {
-      const auto total = d + distance(end, mid_[k]);
+      const auto total = d + (distance(end, mid_[k]) * chamberFactor(c));
       if (total < goalCost) {
         goalCost = total;
         goal = item.at;
@@ -4127,7 +4200,7 @@ Way Checker::shortest(const Demand& demand,
         mask2 |= mouthBit;
       }
       const auto step = steps[m];
-      const auto d2 = d + (step * weight[k2]) + 1.0;
+      const auto d2 = d + (step * weight[k2] * chamberFactor(c)) + 1.0;
       const auto at2 = (move.pair * maskCount_) + mask2;
       if (d2 < known(at2)) {
         keep(at2, d2, item.at, step);
@@ -4401,6 +4474,143 @@ std::pair<SlotCheckResult, json> Checker::run() {
     return lines;
   };
 
+  // The area budget of the chambers (`SlotGraph::chamberFill`): every piece
+  // of a way inside a chamber, from the point it enters (its end, or the
+  // middle of the gate it came by) to the middle of the gate it leaves by or
+  // its other end, covers its length
+  // times the clearance; a chamber holds the share `chamberFill` of its free
+  // cells. Its overload is counted in units of a way across it: the
+  // clearance times the side of a square of its area.
+  const auto fill = graph_.chamberFill;
+  const auto chamberCount =
+      std::max<std::size_t>(around_.size(), graph_.chambers);
+  std::vector<double> roomOf;
+  std::vector<double> unitOf;
+  std::vector<double> cload;
+  std::vector<double> chist;
+  std::vector<std::size_t> cover;
+  std::map<std::pair<std::int64_t, std::size_t>, std::vector<std::int64_t>>
+      intoBy;
+  if (fill > 0.0) {
+    std::vector<double> area(chamberCount, 0.0);
+    if (graph_.chamberArea.size() >= chamberCount) {
+      for (std::size_t c = 0; c < chamberCount; ++c) {
+        area[c] = static_cast<double>(graph_.chamberArea[c]);
+      }
+    } else {
+      const auto cells =
+          static_cast<std::size_t>(graph_.width * graph_.height);
+      for (std::size_t cell = 0; cell < cells; ++cell) {
+        const auto code = static_cast<int>(grid_.codeAt(cell));
+        if (code >= CHAMBER &&
+            static_cast<std::size_t>(code - CHAMBER) < chamberCount) {
+          area[static_cast<std::size_t>(code - CHAMBER)] += 1.0;
+        }
+      }
+    }
+    // The cells of a gate's line belong to no chamber: each chamber beside
+    // it takes half of them, or a chamber between two gates keeps hardly
+    // any area.
+    for (const auto& edge : edges_) {
+      const auto cells = edge.stretch ? graph_.clearance : edge.length;
+      for (const auto chamber : edge.chambers) {
+        if (chamber >= 0 && std::cmp_less(chamber, chamberCount)) {
+          area[static_cast<std::size_t>(chamber)] +=
+              cells / (2.0 * static_cast<double>(edge.chambers.size()));
+        }
+      }
+    }
+    roomOf.resize(chamberCount);
+    unitOf.resize(chamberCount);
+    for (std::size_t c = 0; c < chamberCount; ++c) {
+      roomOf[c] = fill * area[c];
+      unitOf[c] = graph_.clearance *
+                  std::max(std::sqrt(area[c]), graph_.clearance);
+    }
+    cload.assign(chamberCount, 0.0);
+    chist.assign(chamberCount, 0.0);
+    for (const auto& [x, k, y] : moves) {
+      intoBy[{x, k}].push_back(y);
+    }
+  }
+  // How far a piece runs: from the middle of the gate it enters by to the
+  // middle of the gate it leaves by, and from a way's end to the middle of
+  // its first or last gate (user, 2026-10-29). The shortest distance
+  // between the two lines is no length for a piece: two gates that start at
+  // one point are no distance apart, and a chamber between them took no
+  // load from the wires through it.
+  const auto middleOf = [&](const std::size_t k) {
+    return Point{(edges_[k].from.x + edges_[k].to.x) / 2.0,
+                 (edges_[k].from.y + edges_[k].to.y) / 2.0};
+  };
+  const auto pointToEdge = [&](const Point& p, const std::size_t k) {
+    return distance(p, middleOf(k));
+  };
+  const auto edgeToEdge = [&](const std::size_t k1, const std::size_t k2) {
+    return distance(middleOf(k1), middleOf(k2));
+  };
+  // The pieces of a way by chamber: the chamber and the cells they cover.
+  const auto piecesOf =
+      [&](const Demand& demand,
+          const std::optional<std::vector<std::size_t>>& path) {
+        std::vector<std::pair<std::int64_t, double>> out;
+        if (fill <= 0.0 || !path.has_value()) {
+          return out;
+        }
+        const auto& [start, end] = ends_.at(demand.name);
+        const auto clearance = graph_.clearance;
+        if (path->empty()) {
+          for (const auto chamber : demand.from) {
+            if (std::ranges::find(demand.to, chamber) != demand.to.end()) {
+              out.emplace_back(chamber, distance(start, end) * clearance);
+              break;
+            }
+          }
+          return out;
+        }
+        std::int64_t here = -1;
+        for (const auto chamber : demand.from) {
+          if (intoBy.contains({chamber, path->front()})) {
+            here = chamber;
+            break;
+          }
+        }
+        if (here < 0) {
+          return out;
+        }
+        for (std::size_t i = 0; i < path->size(); ++i) {
+          const auto k = (*path)[i];
+          const auto piece =
+              i == 0 ? pointToEdge(start, k) : edgeToEdge((*path)[i - 1], k);
+          out.emplace_back(here, piece * clearance);
+          const auto found = intoBy.find({here, k});
+          if (found == intoBy.end()) {
+            return out;
+          }
+          auto next = found->second.front();
+          for (const auto y : found->second) {
+            const bool onward =
+                i + 1 < path->size()
+                    ? intoBy.contains({y, (*path)[i + 1]})
+                    : std::ranges::find(demand.to, y) != demand.to.end();
+            if (onward) {
+              next = y;
+              break;
+            }
+          }
+          here = next;
+        }
+        out.emplace_back(here, pointToEdge(end, path->back()) * clearance);
+        return out;
+      };
+  // The price of a piece in chamber c, from the load of the ways so far.
+  const auto chamberPrice = [&](const std::size_t c, const int round) {
+    const auto overC =
+        std::max(0.0, (cload[c] + unitOf[c] - roomOf[c]) / unitOf[c]);
+    return (1.0 + chist[c]) *
+           (1.0 + ((0.5 * static_cast<double>(round + 1)) * overC));
+  };
+
   std::vector<double> hist(ne, 0.0);
   // The ways by wire, in the order the wires were first routed.
   std::vector<std::pair<std::string, std::optional<std::vector<std::size_t>>>>
@@ -4423,6 +4633,13 @@ std::pair<SlotCheckResult, json> Checker::run() {
   }
   for (round = 0; round < ROUNDS; ++round) {
     std::ranges::fill(load, 0);
+    if (fill > 0.0) {
+      std::ranges::fill(cload, 0.0);
+      chamberWeight_.assign(chamberCount, 1.0);
+      for (std::size_t c = 0; c < chamberCount; ++c) {
+        chamberWeight_[c] = chamberPrice(c, round);
+      }
+    }
     std::vector<std::int64_t> ownLoad(ne, 0);
     std::ranges::fill(gload, 0);
     // The price of edge k for a wire with `own` ends at its own run there,
@@ -4517,6 +4734,13 @@ std::pair<SlotCheckResult, json> Checker::run() {
       for (const auto gi : passed) {
         ++gload[gi];
       }
+      for (const auto& [chamber, covered] : piecesOf(demand, path)) {
+        if (chamber >= 0 && std::cmp_less(chamber, chamberCount)) {
+          const auto c = static_cast<std::size_t>(chamber);
+          cload[c] += covered;
+          chamberWeight_[c] = chamberPrice(c, round);
+        }
+      }
       if (path.has_value()) {
         for (const auto k : *path) {
           common[k] = priceOf(k, 0);
@@ -4541,10 +4765,19 @@ std::pair<SlotCheckResult, json> Checker::run() {
         gover.push_back(gi);
       }
     }
+    cover.clear();
+    for (std::size_t c = 0; fill > 0.0 && c < chamberCount; ++c) {
+      if (cload[c] > roomOf[c] + 1e-9) {
+        cover.push_back(c);
+      }
+    }
     const bool routed = std::ranges::all_of(
         ways, [](const auto& entry) { return entry.second.has_value(); });
-    if (over.empty() && gover.empty() && routed) {
+    if (over.empty() && gover.empty() && cover.empty() && routed) {
       break;
+    }
+    for (const auto c : cover) {
+      chist[c] += 0.3 * (cload[c] - roomOf[c]) / unitOf[c];
     }
     for (const auto k : over) {
       hist[k] += 0.3 * static_cast<double>(load[k] - limits[k]);
@@ -4563,8 +4796,9 @@ std::pair<SlotCheckResult, json> Checker::run() {
       unrouted.push_back(demand.name);
     }
   }
-  const bool sat =
-      over.empty() && gover.empty() && unrouted.empty() && lost.empty();
+  chamberWeight_.clear();
+  const bool sat = over.empty() && gover.empty() && cover.empty() &&
+                   unrouted.empty() && lost.empty();
   SlotCheckResult result;
   result.verdict = sat ? "SAT" : "UNSAT";
   for (const auto& edge : slots) {
@@ -4579,7 +4813,11 @@ std::pair<SlotCheckResult, json> Checker::run() {
     result.over.push_back(std::format("{} {}/{}", groups[gi].name, gload[gi],
                                       groups[gi].capacity));
   }
-  if (!over.empty() || !gover.empty()) {
+  for (const auto c : cover) {
+    result.over.push_back(std::format("c{} area {:.0f}%", c,
+                                      100.0 * cload[c] / roomOf[c]));
+  }
+  if (!over.empty() || !gover.empty() || !cover.empty()) {
     std::vector<bool> isOver(ne, false);
     for (const auto k : over) {
       isOver[k] = true;
@@ -4593,6 +4831,16 @@ std::pair<SlotCheckResult, json> Checker::run() {
         crowded = std::ranges::any_of(passed, [&](const auto gi) {
           return std::ranges::find(gover, gi) != gover.end();
         });
+      }
+      if (!crowded && !cover.empty()) {
+        if (const auto d = demandOf.find(name); d != demandOf.end()) {
+          for (const auto& [chamber, covered] :
+               piecesOf(demands[d->second], path)) {
+            crowded = crowded ||
+                      std::ranges::find(cover, static_cast<std::size_t>(
+                                                   chamber)) != cover.end();
+          }
+        }
       }
       if (crowded) {
         result.crowded.push_back(name);
@@ -4757,6 +5005,16 @@ std::pair<SlotCheckResult, json> Checker::run() {
   const auto gates = std::ranges::count_if(
       edges_, [](const Edge& edge) { return !edge.stretch; });
   auto out = *page_;
+  if (fill > 0.0 && out.contains("nodes") && out.at("nodes").is_array()) {
+    for (auto& node : out.at("nodes")) {
+      const auto c = node.value("chamber", std::size_t{0});
+      if (c < chamberCount) {
+        node["areaCapacity"] = std::round(roomOf[c]);
+        node["areaLoad"] = std::round(cload[c]);
+      }
+    }
+    out["chamberFill"] = fill;
+  }
   out["edges"] = std::move(edgesOut);
   out["wires"] = std::move(wiresOut);
   out["verdict"] = result.verdict;
@@ -4813,9 +5071,18 @@ std::pair<SlotCheckResult, json> Checker::run() {
   out.crossingReach = graph.at("crossingReach").get<double>();
   out.inflation = graph.at("inflation").get<double>();
   out.capacityMargin = graph.value("capacityMargin", out.capacityMargin);
+  out.ringOrder = graph.value("ringOrder", false);
+  if (graph.contains("ring") && graph.at("ring").is_object()) {
+    for (const auto& [name, place] : graph.at("ring").items()) {
+      out.ring.emplace(name, place.get<std::int64_t>());
+    }
+  }
+  out.ringSize = graph.value("ringSize", std::int64_t{0});
   out.capacityMarginFromWires =
       graph.value("capacityMarginFromWires", out.capacityMarginFromWires);
   out.resonatorPassage = graph.value("resonatorPassage", out.resonatorPassage);
+  out.ownRunBonus = graph.value("ownRunBonus", out.ownRunBonus);
+  out.chamberFill = graph.value("chamberFill", out.chamberFill);
   out.slotPinCells = graph.value("slotPinCells", out.slotPinCells);
   out.escapeStraight = graph.value("escapeStraight", out.escapeStraight);
   out.escapeStubMargin = graph.value("escapeStubMargin", out.escapeStubMargin);
@@ -4904,6 +5171,13 @@ std::pair<SlotCheckResult, json> Checker::run() {
     out.wires.push_back(std::move(one));
   }
   out.chambers = graph.at("nodes").size();
+  for (const auto& node : graph.at("nodes")) {
+    if (!node.contains("cells")) {
+      out.chamberArea.clear();
+      break;
+    }
+    out.chamberArea.push_back(node.at("cells").get<std::uint32_t>());
+  }
   return out;
 }
 

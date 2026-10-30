@@ -92,6 +92,21 @@ foreach(library IN ITEMS polygon config)
   list(APPEND FETCH_PACKAGES boost_${library})
 endforeach()
 
+# artem-ogre/CDT, the constrained Delaunay triangulation of the CDT capacity graph
+# (`capacity_cdt`). It is header-only: SOURCE_SUBDIR names its include directory, which has no
+# CMakeLists.txt, so FetchContent only unpacks it.
+set(CDT_VERSION
+    1.4.5
+    CACHE STRING "artem-ogre/CDT version")
+FetchContent_Declare(
+  artem_cdt
+  URL https://github.com/artem-ogre/CDT/archive/refs/tags/${CDT_VERSION}.tar.gz
+      SOURCE_SUBDIR CDT/include EXCLUDE_FROM_ALL
+  # The flat set of constraint edges for the CDT world (cmake/PatchCdt.cmake).
+  PATCH_COMMAND ${CMAKE_COMMAND} -DCDT_DIR=<SOURCE_DIR> -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -P
+                ${PROJECT_SOURCE_DIR}/cmake/PatchCdt.cmake)
+list(APPEND FETCH_PACKAGES artem_cdt)
+
 if(BUILD_MQT_SCPD_TESTS)
   set(gtest_force_shared_crt
       ON
@@ -118,7 +133,8 @@ block(
   nlohmann_json_SOURCE_DIR
   highs_SOURCE_DIR
   boost_polygon_SOURCE_DIR
-  boost_config_SOURCE_DIR)
+  boost_config_SOURCE_DIR
+  artem_cdt_SOURCE_DIR)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
 # The tests of the dependencies: HiGHS would otherwise add its test tree and the CTest dashboard
@@ -175,6 +191,17 @@ if(NOT TARGET mqt-scpd-highs)
   if(MQT_SCPD_HIGHS_INCLUDES)
     target_include_directories(mqt-scpd-highs SYSTEM INTERFACE ${MQT_SCPD_HIGHS_INCLUDES})
   endif()
+endif()
+
+# artem-ogre/CDT as a system include.
+if(NOT TARGET mqt-scpd-cdt)
+  add_library(mqt-scpd-cdt INTERFACE)
+  target_include_directories(mqt-scpd-cdt SYSTEM
+                             INTERFACE $<BUILD_INTERFACE:${artem_cdt_SOURCE_DIR}/CDT/include>)
+  # The callback handler lets `CdtWorld` put the vertex CDT adds where two
+  # constraints cross exactly onto the row or column of the constraint it is
+  # inserting, before the rest of that constraint is walked.
+  target_compile_definitions(mqt-scpd-cdt INTERFACE CDT_ENABLE_CALLBACK_HANDLER)
 endif()
 
 # Boost.Polygon and Boost.Config, likewise as system includes.

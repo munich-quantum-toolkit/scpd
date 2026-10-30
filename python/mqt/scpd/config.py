@@ -127,6 +127,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "coupler_option_extension": "",
         "chain_search": "astar",
         "coupler_line_options": False,
+        "exact_wire_clearance": False,
         "edge_launcher_margin_cells": 6,
         "terminal_slot_cells": 20,
         "chain_end_edge_weight": 0.1,
@@ -139,9 +140,41 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "meander_leg_spacing_cells": 25,
         "meander_start_margin_cells": -1,
         "meander_relaxation": True,
+        "feedline_meander_relaxation": True,
+        "meander_ripup_alternatives": 0,
         "capacity_margin": 1.06,
         "capacity_margin_from_wires": 3,
         "resonator_passage": 0.8,
+        "capacity_own_run_bonus": False,
+        "coupler_grid_options": 0,
+        "coupler_grid_only": False,
+        "feedline_lattice_edges": 0,
+        "feedline_lattice_direct": False,
+        "local_rip_own_chain_only": False,
+        "capacity_cdt": True,
+        "capacity_cdt_incremental": True,
+        "coupler_entry_length": True,
+        "feedline_meander_keepout": True,
+        "capacity_check_chains": "",
+        "chain_dead_prefix_refusals": 0,
+        "capacity_cdt_canonical": False,
+        "coupler_option_fixes": False,
+        "router_grid_snap": 0.0,
+        "coupler_lattice_pitch": 0.0,
+        "coupler_lattice_options": 32,
+        "coupler_lattice_reserve": 32,
+        "coupler_lattice_bins": 6,
+        "coupler_lattice_lateral": 150.0,
+        "coupler_lattice_reach": 0,
+        "coupler_lattice_shortest": False,
+        "capacity_cdt_world": True,
+        "coupler_lattice_floor": 0.0,
+        "coupler_lattice_near": 0.0,
+        "coupler_lattice_checker": False,
+        "coupler_lattice_reserve_step": 0,
+        "capacity_chamber_fill": 0.0,
+        "coupler_meander_slack": False,
+        "coupler_meander_slack_chains": "",
         "crossing_reach_cells": 10,
         "crossing_spacing": 1.4142135623730951,
         "slot_pin_cells": 10,
@@ -157,8 +190,17 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "global_sat_states": 8,
         "global_sat_tries": 200,
         "chain_rule_refusals": 1500,
+        "chain_rule_steps": 0,
         "chain_end_blacklist": True,
         "chain_slot_blacklist": True,
+        "local_ring_order": True,
+        "edge_launcher_guard": True,
+        "wire_launcher_guard": 0,
+        "wire_launcher_turn_cells": 5,
+        "coupler_merge": True,
+        "relax_half_rips": False,
+        "feedline_source_guard_cells": 0,
+        "feedline_target_stub_cells": 0,
         "research_ring_members": 2,
         "research_rounds": 4,
         "fence_pairs": 3,
@@ -498,6 +540,11 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("chain_length_weight", "chainLengthWeight"),
         ("length_point_radius_cells", "lengthPointRadiusCells"),
         ("meander_leg_spacing_cells", "meanderLegSpacingCells"),
+        ("meander_ripup_alternatives", "meanderRipupAlternatives"),
+        ("wire_launcher_guard", "wireLauncherGuard"),
+        ("wire_launcher_turn_cells", "wireLauncherTurnCells"),
+        ("coupler_grid_options", "couplerGridOptions"),
+        ("feedline_lattice_edges", "feedlineLatticeEdges"),
         ("capacity_margin_from_wires", "capacityMarginFromWires"),
         ("crossing_reach_cells", "crossingReachCells"),
         ("slot_pin_cells", "slotPinCells"),
@@ -511,6 +558,14 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("global_sat_states", "globalSatStates"),
         ("global_sat_tries", "globalSatTries"),
         ("chain_rule_refusals", "chainRuleRefusals"),
+        ("chain_rule_steps", "chainRuleSteps"),
+        ("chain_dead_prefix_refusals", "chainDeadPrefixRefusals"),
+        ("coupler_lattice_options", "couplerLatticeOptions"),
+        ("coupler_lattice_reserve", "couplerLatticeReserve"),
+        ("coupler_lattice_bins", "couplerLatticeBins"),
+        ("coupler_lattice_reach", "couplerLatticeReach"),
+        ("feedline_target_stub_cells", "feedlineTargetStubCells"),
+        ("feedline_source_guard_cells", "feedlineSourceGuardCells"),
         ("research_ring_members", "researchRingMembers"),
         ("research_rounds", "researchRounds"),
         ("fence_pairs", "fencePairs"),
@@ -546,10 +601,39 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     margin = final.take("meander_start_margin_cells", int, default=-1, signed=True)
     stages.final.meanderStartMarginCells = margin
     stages.final.capacityCheck = take(final, "capacity_check", bool)
+    stages.final.capacityOwnRunBonus = take(final, "capacity_own_run_bonus", bool)
+    stages.final.couplerGridOnly = take(final, "coupler_grid_only", bool)
+    stages.final.feedlineLatticeDirect = take(final, "feedline_lattice_direct", bool)
+    stages.final.localRipOwnChainOnly = take(final, "local_rip_own_chain_only", bool)
+    stages.final.capacityCdt = take(final, "capacity_cdt", bool)
+    stages.final.capacityCdtIncremental = take(final, "capacity_cdt_incremental", bool)
+    stages.final.couplerEntryLength = take(final, "coupler_entry_length", bool)
+    stages.final.feedlineMeanderKeepout = take(final, "feedline_meander_keepout", bool)
+    stages.final.capacityCheckChains = take(final, "capacity_check_chains", str)
+    stages.final.capacityCdtCanonical = take(final, "capacity_cdt_canonical", bool)
+    stages.final.couplerOptionFixes = take(final, "coupler_option_fixes", bool)
+    stages.final.routerGridSnap = take(final, "router_grid_snap", float)
+    stages.final.couplerLatticePitch = take(final, "coupler_lattice_pitch", float)
+    stages.final.couplerLatticeLateral = take(final, "coupler_lattice_lateral", float)
+    stages.final.couplerLatticeShortest = take(final, "coupler_lattice_shortest", bool)
+    stages.final.capacityCdtWorld = take(final, "capacity_cdt_world", bool)
+    stages.final.couplerLatticeFloor = take(final, "coupler_lattice_floor", float)
+    stages.final.couplerLatticeNear = take(final, "coupler_lattice_near", float)
+    stages.final.couplerLatticeChecker = take(final, "coupler_lattice_checker", bool)
+    stages.final.couplerLatticeReserveStep = take(final, "coupler_lattice_reserve_step", int)
+    stages.final.capacityChamberFill = take(final, "capacity_chamber_fill", float)
+    stages.final.couplerMeanderSlack = take(final, "coupler_meander_slack", bool)
+    stages.final.couplerMeanderSlackChains = take(final, "coupler_meander_slack_chains", str)
     stages.final.chainEndBlacklist = take(final, "chain_end_blacklist", bool)
     stages.final.chainSlotBlacklist = take(final, "chain_slot_blacklist", bool)
+    stages.final.localRingOrder = take(final, "local_ring_order", bool)
+    stages.final.edgeLauncherGuard = take(final, "edge_launcher_guard", bool)
+    stages.final.couplerMerge = take(final, "coupler_merge", bool)
+    stages.final.relaxHalfRips = take(final, "relax_half_rips", bool)
     stages.final.meanderRelaxation = take(final, "meander_relaxation", bool)
+    stages.final.feedlineMeanderRelaxation = take(final, "feedline_meander_relaxation", bool)
     stages.final.couplerLineOptions = take(final, "coupler_line_options", bool)
+    stages.final.exactWireClearance = take(final, "exact_wire_clearance", bool)
     stages.final.couplerOffsets = take(final, "coupler_offsets", str)
     stages.final.jogOptions = take(final, "jog_options", str)
     problems.extend(_jog_problems(stages.final.jogOptions))

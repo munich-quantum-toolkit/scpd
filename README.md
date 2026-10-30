@@ -164,6 +164,15 @@ When discussing the overall MQT project or its ecosystem, cite the MQT Handbook:
 
 ---
 
+## Third-Party Licenses
+
+The build fetches and compiles in a few third-party libraries, among them
+[CDT](https://github.com/artem-ogre/CDT) under the Mozilla Public License 2.0,
+one header of which is modified at build time. Every library, its license and
+the modification are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+---
+
 ## Acknowledgements
 
 The Munich Quantum Toolkit has been supported by the European Research Council

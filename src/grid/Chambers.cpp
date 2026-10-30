@@ -65,66 +65,88 @@ bool pointOnSegment(const double px, const double py, const double x0,
 
 } // namespace
 
+void bottleneckMovesOf(const Bottleneck& gate, const GridMetrics& grid,
+                       std::vector<BlockedMove>& blocked) {
+  const auto width = static_cast<std::int64_t>(grid.width);
+  const auto height = static_cast<std::int64_t>(grid.height);
+  const std::size_t firstRow = gate.first / grid.width;
+  const std::size_t secondRow = gate.second / grid.width;
+  const auto x0 = static_cast<double>(gate.first % grid.width) + 0.5;
+  const auto y0 = static_cast<double>(firstRow) + 0.5;
+  const auto x1 = static_cast<double>(gate.second % grid.width) + 0.5;
+  const auto y1 = static_cast<double>(secondRow) + 0.5;
+
+  const auto minX = std::max<std::int64_t>(
+      0, static_cast<std::int64_t>(std::floor(std::min(x0, x1))) - 1);
+  const auto maxX = std::min<std::int64_t>(
+      width - 1, static_cast<std::int64_t>(std::ceil(std::max(x0, x1))) + 1);
+  const auto minY = std::max<std::int64_t>(
+      0, static_cast<std::int64_t>(std::floor(std::min(y0, y1))) - 1);
+  const auto maxY = std::min<std::int64_t>(
+      height - 1, static_cast<std::int64_t>(std::ceil(std::max(y0, y1))) + 1);
+
+  blocked.clear();
+  for (std::int64_t y = minY; y <= maxY; ++y) {
+    // Only a cell near the line has a step that crosses it or lies on it: a
+    // step reaches one cell up or down, so the cells of a row that matter
+    // are those within two of where the line runs between a row and a half
+    // above and below. A gate across many rows looks at a few cells of each,
+    // not at its whole box, in the order the box would give them.
+    auto fromX = minX;
+    auto toX = maxX;
+    if (y0 != y1) {
+      const auto rowY = static_cast<double>(y) + 0.5;
+      const auto at = [&](const double ty) {
+        const auto t = std::clamp((ty - y0) / (y1 - y0), 0.0, 1.0);
+        return x0 + (t * (x1 - x0));
+      };
+      const auto a = at(rowY - 1.5);
+      const auto b = at(rowY + 1.5);
+      fromX = std::max(
+          minX, static_cast<std::int64_t>(std::floor(std::min(a, b))) - 2);
+      toX = std::min(
+          maxX, static_cast<std::int64_t>(std::ceil(std::max(a, b))) + 2);
+    }
+    for (std::int64_t x = fromX; x <= toX; ++x) {
+      const auto cell = grid.index(static_cast<std::uint32_t>(x),
+                                   static_cast<std::uint32_t>(y));
+      const auto ax = static_cast<double>(x) + 0.5;
+      const auto ay = static_cast<double>(y) + 0.5;
+      const auto onLine = pointOnSegment(ax, ay, x0, y0, x1, y1) &&
+                          cell != gate.first && cell != gate.second;
+
+      for (std::size_t step = 0; step < STEP_DX.size(); ++step) {
+        const auto nx = x + STEP_DX[step];
+        const auto ny = y + STEP_DY[step];
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+          continue;
+        }
+        const auto neighbor = grid.index(static_cast<std::uint32_t>(nx),
+                                         static_cast<std::uint32_t>(ny));
+        if (!onLine) {
+          // Each edge is decided once, from its lower cell.
+          if (cell > neighbor) {
+            continue;
+          }
+          if (!segmentsCrossStrictly(ax, ay, static_cast<double>(nx) + 0.5,
+                                     static_cast<double>(ny) + 0.5, x0, y0, x1,
+                                     y1)) {
+            continue;
+          }
+        }
+        blocked.push_back({.cell = cell, .direction = step});
+        blocked.push_back({.cell = neighbor, .direction = REVERSE_STEP[step]});
+      }
+    }
+  }
+}
+
 std::vector<std::vector<BlockedMove>>
 bottleneckMoves(const std::vector<Bottleneck>& bottlenecks,
                 const GridMetrics& grid) {
   std::vector<std::vector<BlockedMove>> moves(bottlenecks.size());
-  const auto width = static_cast<std::int64_t>(grid.width);
-  const auto height = static_cast<std::int64_t>(grid.height);
-
   for (std::size_t index = 0; index < bottlenecks.size(); ++index) {
-    const auto& gate = bottlenecks[index];
-    const std::size_t firstRow = gate.first / grid.width;
-    const std::size_t secondRow = gate.second / grid.width;
-    const auto x0 = static_cast<double>(gate.first % grid.width) + 0.5;
-    const auto y0 = static_cast<double>(firstRow) + 0.5;
-    const auto x1 = static_cast<double>(gate.second % grid.width) + 0.5;
-    const auto y1 = static_cast<double>(secondRow) + 0.5;
-
-    const auto minX = std::max<std::int64_t>(
-        0, static_cast<std::int64_t>(std::floor(std::min(x0, x1))) - 1);
-    const auto maxX = std::min<std::int64_t>(
-        width - 1, static_cast<std::int64_t>(std::ceil(std::max(x0, x1))) + 1);
-    const auto minY = std::max<std::int64_t>(
-        0, static_cast<std::int64_t>(std::floor(std::min(y0, y1))) - 1);
-    const auto maxY = std::min<std::int64_t>(
-        height - 1, static_cast<std::int64_t>(std::ceil(std::max(y0, y1))) + 1);
-
-    auto& blocked = moves[index];
-    for (std::int64_t y = minY; y <= maxY; ++y) {
-      for (std::int64_t x = minX; x <= maxX; ++x) {
-        const auto cell = grid.index(static_cast<std::uint32_t>(x),
-                                     static_cast<std::uint32_t>(y));
-        const auto ax = static_cast<double>(x) + 0.5;
-        const auto ay = static_cast<double>(y) + 0.5;
-        const auto onLine = pointOnSegment(ax, ay, x0, y0, x1, y1) &&
-                            cell != gate.first && cell != gate.second;
-
-        for (std::size_t step = 0; step < STEP_DX.size(); ++step) {
-          const auto nx = x + STEP_DX[step];
-          const auto ny = y + STEP_DY[step];
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
-            continue;
-          }
-          const auto neighbor = grid.index(static_cast<std::uint32_t>(nx),
-                                           static_cast<std::uint32_t>(ny));
-          if (!onLine) {
-            // Each edge is decided once, from its lower cell.
-            if (cell > neighbor) {
-              continue;
-            }
-            if (!segmentsCrossStrictly(ax, ay, static_cast<double>(nx) + 0.5,
-                                       static_cast<double>(ny) + 0.5, x0, y0,
-                                       x1, y1)) {
-              continue;
-            }
-          }
-          blocked.push_back({.cell = cell, .direction = step});
-          blocked.push_back(
-              {.cell = neighbor, .direction = REVERSE_STEP[step]});
-        }
-      }
-    }
+    bottleneckMovesOf(bottlenecks[index], grid, moves[index]);
   }
   return moves;
 }
@@ -137,35 +159,18 @@ Chambers chambersOf(const BitGrid& blocked,
   return chambers;
 }
 
-void chambersOf(const BitGrid& blocked,
-                const std::vector<Bottleneck>& bottlenecks,
-                const GridMetrics& grid, Chambers& chambers) {
-  if (blocked.width() != grid.width || blocked.height() != grid.height) {
-    throw std::invalid_argument(std::format(
-        "the mask is {}x{} cells and the grid {}x{}", blocked.width(),
-        blocked.height(), grid.width, grid.height));
-  }
+namespace {
+
+/// The labelling of `chambersOf`, with the moves of every gate and the steps
+/// they refuse out of each cell, as a bit per direction and as a bit per
+/// cell, already there.
+void labelChambers(const BitGrid& blocked,
+                   const std::vector<const std::vector<BlockedMove>*>& moves,
+                   const std::vector<std::uint8_t>& refused,
+                   const std::vector<std::uint64_t>& refusedBits,
+                   const GridMetrics& grid, Chambers& chambers) {
   const auto width = static_cast<std::int64_t>(grid.width);
   const auto height = static_cast<std::int64_t>(grid.height);
-  const auto moves = bottleneckMoves(bottlenecks, grid);
-
-  // The directions a gate refuses out of each cell, one bit each. The bits
-  // are kept per thread from call to call and cleared where they were set:
-  // a grid of millions of cells is labelled many times, and fresh memory
-  // costs more than the labelling itself.
-  // The same cells as a bit each, for the scan of the rows below.
-  thread_local std::vector<std::uint8_t> refused;
-  thread_local std::vector<std::uint64_t> refusedBits;
-  if (refused.size() != grid.cells()) {
-    refused.assign(grid.cells(), 0);
-    refusedBits.assign((grid.cells() + 63) / 64, 0);
-  }
-  for (const auto& gate : moves) {
-    for (const auto& move : gate) {
-      refused[move.cell] |= static_cast<std::uint8_t>(1U << move.direction);
-      refusedBits[move.cell >> 6U] |= std::uint64_t{1} << (move.cell & 63U);
-    }
-  }
   // A cell every one of whose steps is refused lies on a line.
   const auto onALine = [&](const std::int64_t x, const std::int64_t y) {
     const auto cell = static_cast<std::size_t>((y * width) + x);
@@ -222,20 +227,6 @@ void chambersOf(const BitGrid& blocked,
   const auto free = [&](const std::int64_t x, const std::int64_t y) {
     return !blocked.test(static_cast<std::size_t>((y * width) + x));
   };
-  // The run of row `y` that holds column `x`, if any.
-  const auto runAt = [&](const std::int64_t x,
-                         const std::int64_t y) -> std::optional<std::uint32_t> {
-    const auto first = runs.begin() + static_cast<std::ptrdiff_t>(rowStart[y]);
-    const auto last =
-        runs.begin() + static_cast<std::ptrdiff_t>(rowStart[y + 1]);
-    const auto found = std::upper_bound(
-        first, last, x,
-        [](const std::int64_t v, const Run& r) { return v < r.from; });
-    if (found == first || std::prev(found)->to < x) {
-      return std::nullopt;
-    }
-    return static_cast<std::uint32_t>(std::prev(found) - runs.begin());
-  };
   // The first cell in [from, to) whose bit `wordAt` sets, or `to`: the
   // rows are scanned 64 cells at a time.
   const auto& blockedWords = blocked.words();
@@ -284,9 +275,34 @@ void chambersOf(const BitGrid& blocked,
     for (auto index = rowStart[y]; index < rowStart[y + 1]; ++index) {
       parent.push_back(static_cast<std::uint32_t>(index));
     }
+    // The runs of a row are sorted and apart, so the first run above that
+    // may touch a run of this row only moves on along the row; the run
+    // left of a cell is the one before it, when it ends there.
+    auto upFirst = y > 0 ? rowStart[y - 1] : rowStart[y];
+    const auto leftOf = [&](const std::size_t index,
+                            const std::int64_t x) -> std::optional<std::uint32_t> {
+      if (index > rowStart[y] && runs[index - 1].to == x - 1) {
+        return static_cast<std::uint32_t>(index - 1);
+      }
+      return std::nullopt;
+    };
+    const auto aboveAt = [&](const std::int64_t x) -> std::optional<std::uint32_t> {
+      for (auto other = upFirst; other < rowStart[y] && runs[other].from <= x;
+           ++other) {
+        if (runs[other].to >= x) {
+          return static_cast<std::uint32_t>(other);
+        }
+      }
+      return std::nullopt;
+    };
     for (auto index = rowStart[y]; index < rowStart[y + 1]; ++index) {
       const auto run = runs[index];
       const auto me = static_cast<std::uint32_t>(index);
+      if (y > 0) {
+        while (upFirst < rowStart[y] && runs[upFirst].to < run.from - 1) {
+          ++upFirst;
+        }
+      }
       if (run.single) {
         // Step by step, as a flood: left, above, above left, above right.
         const auto cell = static_cast<std::size_t>((y * width) + run.from);
@@ -301,7 +317,8 @@ void chambersOf(const BitGrid& blocked,
               !free(run.from, ny)) {
             continue;
           }
-          if (const auto other = runAt(nx, ny)) {
+          if (const auto other =
+                  ny == y ? leftOf(index, run.from) : aboveAt(nx)) {
             join(me, *other);
           }
         }
@@ -309,20 +326,16 @@ void chambersOf(const BitGrid& blocked,
       }
       // The cell left of the run is no cell of a plain run: a single cell,
       // a line cell or a wall.
-      if (run.from > 0) {
-        if (const auto other = runAt(run.from - 1, y)) {
-          join(me, *other);
-        }
+      if (const auto other = leftOf(index, run.from)) {
+        join(me, *other);
       }
       if (y == 0) {
         continue;
       }
       const auto above = y - 1;
-      for (auto other = rowStart[above]; other < rowStart[y]; ++other) {
+      for (auto other = upFirst;
+           other < rowStart[y] && runs[other].from <= run.to + 1; ++other) {
         const auto& up = runs[other];
-        if (up.to < run.from - 1 || up.from > run.to + 1) {
-          continue;
-        }
         const bool straight = up.to >= run.from && up.from <= run.to;
         const bool leftCorner =
             up.to == run.from - 1 &&
@@ -366,7 +379,7 @@ void chambersOf(const BitGrid& blocked,
   chambers.beside.resize(moves.size());
   for (std::size_t gate = 0; gate < moves.size(); ++gate) {
     auto& beside = chambers.beside[gate];
-    for (const auto& move : moves[gate]) {
+    for (const auto& move : *moves[gate]) {
       auto x = static_cast<std::int64_t>(move.cell) % width;
       auto y = static_cast<std::int64_t>(move.cell) / width;
       auto at = move.cell;
@@ -380,20 +393,180 @@ void chambersOf(const BitGrid& blocked,
         }
         at = static_cast<std::size_t>((y * width) + x);
       }
-      if (chambers.of[at] != NO_CHAMBER) {
-        beside.push_back(chambers.of[at]);
+      // A gate's moves see the same two or three chambers over and over.
+      if (const auto chamber = chambers.of[at];
+          chamber != NO_CHAMBER && std::ranges::find(beside, chamber) == beside.end()) {
+        beside.push_back(chamber);
       }
     }
     std::ranges::sort(beside);
     const auto repeated = std::ranges::unique(beside);
     beside.erase(repeated.begin(), repeated.end());
   }
+}
+
+void checkFits(const BitGrid& blocked, const GridMetrics& grid) {
+  if (blocked.width() != grid.width || blocked.height() != grid.height) {
+    throw std::invalid_argument(std::format(
+        "the mask is {}x{} cells and the grid {}x{}", blocked.width(),
+        blocked.height(), grid.width, grid.height));
+  }
+}
+
+} // namespace
+
+void chambersOf(const BitGrid& blocked,
+                const std::vector<Bottleneck>& bottlenecks,
+                const GridMetrics& grid, Chambers& chambers) {
+  checkFits(blocked, grid);
+  const auto moves = bottleneckMoves(bottlenecks, grid);
+
+  // The directions a gate refuses out of each cell, one bit each. The bits
+  // are kept per thread from call to call and cleared where they were set:
+  // a grid of millions of cells is labelled many times, and fresh memory
+  // costs more than the labelling itself.
+  // The same cells as a bit each, for the scan of the rows below.
+  thread_local std::vector<std::uint8_t> refused;
+  thread_local std::vector<std::uint64_t> refusedBits;
+  if (refused.size() != grid.cells()) {
+    refused.assign(grid.cells(), 0);
+    refusedBits.assign((grid.cells() + 63) / 64, 0);
+  }
+  for (const auto& gate : moves) {
+    for (const auto& move : gate) {
+      refused[move.cell] |= static_cast<std::uint8_t>(1U << move.direction);
+      refusedBits[move.cell >> 6U] |= std::uint64_t{1} << (move.cell & 63U);
+    }
+  }
+  std::vector<const std::vector<BlockedMove>*> of;
+  of.reserve(moves.size());
+  for (const auto& gate : moves) {
+    of.push_back(&gate);
+  }
+  labelChambers(blocked, of, refused, refusedBits, grid, chambers);
   for (const auto& gate : moves) {
     for (const auto& move : gate) {
       refused[move.cell] = 0;
       refusedBits[move.cell >> 6U] = 0;
     }
   }
+}
+
+void chamberCacheUpdate(const std::vector<Bottleneck>& bottlenecks,
+                        const GridMetrics& grid, ChamberCache& cache,
+                        std::vector<const std::vector<BlockedMove>*>& moves) {
+  const auto cells = grid.cells();
+  if (cache.width != grid.width || cache.height != grid.height ||
+      cache.refused.size() != cells) {
+    cache.entries.clear();
+    cache.applied.clear();
+    cache.refused.assign(cells, 0);
+    cache.refusedBits.assign((cells + 63) / 64, 0);
+    cache.width = grid.width;
+    cache.height = grid.height;
+  }
+  const auto clock = ++cache.clock;
+  const auto keyOf = [&](const Bottleneck& gate) {
+    return (static_cast<std::uint64_t>(gate.first) * cells) + gate.second;
+  };
+  const auto width = static_cast<std::int64_t>(grid.width);
+
+  // The moves of every gate, from the cache or traced now. The entries of
+  // an unordered map stay where they are as it grows.
+  moves.clear();
+  moves.reserve(bottlenecks.size());
+  std::vector<std::uint64_t> keys;
+  keys.reserve(bottlenecks.size());
+  for (const auto& gate : bottlenecks) {
+    const auto key = keyOf(gate);
+    auto [found, fresh] = cache.entries.try_emplace(key);
+    auto& entry = found->second;
+    if (fresh) {
+      bottleneckMovesOf(gate, grid, entry.moves);
+      entry.minX = width;
+      entry.minY = static_cast<std::int64_t>(grid.height);
+      for (const auto& move : entry.moves) {
+        const auto x = static_cast<std::int64_t>(move.cell) % width;
+        const auto y = static_cast<std::int64_t>(move.cell) / width;
+        entry.minX = std::min(entry.minX, x);
+        entry.minY = std::min(entry.minY, y);
+        entry.maxX = std::max(entry.maxX, x);
+        entry.maxY = std::max(entry.maxY, y);
+      }
+      ++cache.computed;
+    } else {
+      ++cache.reused;
+    }
+    entry.used = clock;
+    moves.push_back(&entry.moves);
+    keys.push_back(key);
+  }
+  std::ranges::sort(keys);
+  keys.erase(std::ranges::unique(keys).begin(), keys.end());
+
+  // The refused steps of the last call, changed to those of this one: the
+  // cells of a gate that went are cleared, the gates that stay and reach
+  // into one of them are laid on again, and the gates that came are laid on.
+  std::vector<std::uint64_t> gone;
+  std::vector<std::uint64_t> came;
+  std::ranges::set_difference(cache.applied, keys, std::back_inserter(gone));
+  std::ranges::set_difference(keys, cache.applied, std::back_inserter(came));
+  const auto layOn = [&](const ChamberCache::Entry& entry) {
+    for (const auto& move : entry.moves) {
+      cache.refused[move.cell] |=
+          static_cast<std::uint8_t>(1U << move.direction);
+      cache.refusedBits[move.cell >> 6U] |= std::uint64_t{1}
+                                            << (move.cell & 63U);
+    }
+  };
+  if (!gone.empty()) {
+    std::vector<const ChamberCache::Entry*> cleared;
+    for (const auto key : gone) {
+      const auto& entry = cache.entries.at(key);
+      for (const auto& move : entry.moves) {
+        cache.refused[move.cell] = 0;
+        cache.refusedBits[move.cell >> 6U] &=
+            ~(std::uint64_t{1} << (move.cell & 63U));
+      }
+      cleared.push_back(&entry);
+    }
+    for (const auto key : keys) {
+      if (std::ranges::binary_search(came, key)) {
+        continue;
+      }
+      const auto& entry = cache.entries.at(key);
+      const auto touches = std::ranges::any_of(
+          cleared, [&](const ChamberCache::Entry* other) {
+            return entry.minX <= other->maxX && other->minX <= entry.maxX &&
+                   entry.minY <= other->maxY && other->minY <= entry.maxY;
+          });
+      if (touches) {
+        layOn(entry);
+      }
+    }
+  }
+  for (const auto key : came) {
+    layOn(cache.entries.at(key));
+  }
+  cache.added += came.size();
+  cache.removed += gone.size();
+  cache.applied = std::move(keys);
+
+  // The gates no call has used lately are forgotten.
+  std::erase_if(cache.entries, [&](const auto& item) {
+    return clock - item.second.used >= cache.keep;
+  });
+}
+
+void chambersOfCached(const BitGrid& blocked,
+                      const std::vector<Bottleneck>& bottlenecks,
+                      const GridMetrics& grid, Chambers& chambers,
+                      ChamberCache& cache) {
+  checkFits(blocked, grid);
+  thread_local std::vector<const std::vector<BlockedMove>*> moves;
+  chamberCacheUpdate(bottlenecks, grid, cache, moves);
+  labelChambers(blocked, moves, cache.refused, cache.refusedBits, grid,
+                chambers);
 }
 
 } // namespace mqt::scpd::grid

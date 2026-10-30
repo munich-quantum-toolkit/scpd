@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -120,6 +121,38 @@ TEST(GridMetrics, TheRouterGridDividesEveryCapacityCell) {
   const GridMetrics oddRouter = routerGrid(GridMetrics::fit(odd, 50, 50), 10.0);
   EXPECT_EQ(oddRouter.width, 3000U);
   EXPECT_LT(oddRouter.cellWidth, 10.0);
+}
+
+TEST(GridMetrics, TheSnappedRouterGridPutsEveryLatticePointOnACell) {
+  // A box that starts off the lattice: the grid starts at the multiple of 50
+  // below it, steps by exactly 10 and covers the box.
+  const BoundingBox chip{
+      .minX = 13.0, .minY = -27.0, .maxX = 29910.0, .maxY = 15023.0};
+  const GridMetrics capacity = GridMetrics::fit(chip, 50, 25);
+  const GridMetrics router = routerGridSnapped(capacity, 10.0, 50.0);
+  EXPECT_DOUBLE_EQ(router.origin.x(), 0.0);
+  EXPECT_DOUBLE_EQ(router.origin.y(), -50.0);
+  EXPECT_DOUBLE_EQ(router.cellWidth, 10.0);
+  EXPECT_DOUBLE_EQ(router.cellHeight, 10.0);
+  EXPECT_GE(router.box().maxX, chip.maxX);
+  EXPECT_GE(router.box().maxY, chip.maxY);
+  EXPECT_LT(router.box().maxX, chip.maxX + 10.0);
+  // Every lattice point, straight and diagonal, is a whole cell.
+  for (const double x : {0.0, 50.0, 1250.0, 29900.0}) {
+    for (const double y : {-50.0, 0.0, 700.0, 15000.0}) {
+      const auto cell = router.toCell(Point{x, y});
+      EXPECT_DOUBLE_EQ(cell.x(), std::round(cell.x()));
+      EXPECT_DOUBLE_EQ(cell.y(), std::round(cell.y()));
+      EXPECT_EQ(static_cast<long>(std::round(cell.x())) % 5, 0);
+    }
+  }
+  // A coupler of 200 units is 20 cells, the wire spacing of 185 units 19.
+  EXPECT_EQ(cellsFor(200.0, router), 20U);
+  EXPECT_EQ(cellsFor(185.0, router), 19U);
+  EXPECT_THROW(static_cast<void>(routerGridSnapped(capacity, 10.0, 45.0)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(routerGridSnapped(capacity, 0.0, 50.0)),
+               std::invalid_argument);
 }
 
 TEST(GridMetrics, CellsForReproducesTheSpacingLiterals) {

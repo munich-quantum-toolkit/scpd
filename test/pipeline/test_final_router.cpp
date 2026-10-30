@@ -512,6 +512,20 @@ INSTANTIATE_TEST_SUITE_P(EveryChip, SpacedFinal,
                            return chip.param;
                          });
 
+/// Under `exact_wire_clearance` the clearance disc holds only the cells within
+/// the rule, and the wires still keep the rule from each other.
+TEST(FinalRouter, TheExactWireClearanceKeepsTheWireSpacing) {
+  auto benchmark = nineQubit();
+  finalParamsOf(benchmark).exact_wire_clearance = true;
+  const auto planned = plan(benchmark);
+  const auto routing = routeFinal(benchmark, planned);
+  const auto report = drc::checkCells(viewOf(benchmark, planned, routing),
+                                      *benchmark.config.rules);
+
+  EXPECT_EQ(countOf(report, DrcRule::WireClearance), 0U);
+  reportFirst(report, DrcRule::WireClearance);
+}
+
 /// Two runs of the same input give the same answer, which is what makes a
 /// resumed run equal to an uninterrupted one.
 TEST(FinalRouter, IsDeterministic) {
@@ -815,6 +829,70 @@ TEST(FinalRouter, MeanderRelaxationLetsAResonatorWithoutRoomRelax) {
   const auto [keptOn, relaxedOn] = said(true);
   EXPECT_EQ(keptOn, 0);
   EXPECT_GT(relaxedOn, 0);
+}
+
+/// The meander rip-up takes on a wire that finds no way after its ring
+/// neighbour put a meander in its way, and the neighbour takes a new meander
+/// beside the wire's new way. The seventeen-qubit chip has such wires in its
+/// first phase. With `meander_ripup_alternatives` at 0 nothing is taken on.
+TEST(FinalRouter, TheMeanderRipUpMovesAMeanderOutOfTheNextWiresWay) {
+  const auto said = [](const std::uint32_t alternatives) {
+    auto benchmark = seventeenQubit();
+    benchmark.config.run = std::make_unique<flatbuffers::config::RunParamsT>();
+    benchmark.config.run->stop_after = "pre-feedline-routing";
+    finalParamsOf(benchmark).meander_ripup_alternatives = alternatives;
+    const auto planned = plan(benchmark);
+    std::vector<std::string> lines;
+    static_cast<void>(finalRouters().make("dubins")->run(
+        benchmark.chip, planned.capacity, planned.global, planned.assignment,
+        planned.detail, benchmark.config, linesInto(lines, Detail::Items)));
+    const auto count = [&lines](const std::string_view text) {
+      return std::ranges::count_if(lines, [text](const std::string& line) {
+        return line.find(text) != std::string::npos;
+      });
+    };
+    return std::pair{count("· meander rip-up:"),
+                     count("takes a new meander beside it")};
+  };
+
+  const auto [takenOff, newOff] = said(0);
+  EXPECT_EQ(takenOff, 0);
+  EXPECT_EQ(newOff, 0);
+  const auto [takenOn, newOn] = said(4);
+  EXPECT_GT(takenOn, 0);
+  EXPECT_GT(newOn, 0);
+}
+
+/// The launcher guard finds the occupied launchers of the seventeen-qubit
+/// chip and keeps every wire that leaves one off the straight runs of its
+/// neighbours; with `wire_launcher_guard` at 0 it finds none.
+TEST(FinalRouter, TheLauncherGuardFindsTheOccupiedLaunchers) {
+  const auto said = [](const std::uint32_t neighbours) {
+    auto benchmark = seventeenQubit();
+    benchmark.config.run = std::make_unique<flatbuffers::config::RunParamsT>();
+    benchmark.config.run->stop_after = "pre-feedline-routing";
+    finalParamsOf(benchmark).wire_launcher_guard = neighbours;
+    const auto planned = plan(benchmark);
+    std::vector<std::string> lines;
+    static_cast<void>(finalRouters().make("dubins")->run(
+        benchmark.chip, planned.capacity, planned.global, planned.assignment,
+        planned.detail, benchmark.config, linesInto(lines, Detail::Items)));
+    const std::regex found(
+        R"(outer routing: (\d+) occupied launchers; .* of the (\d+) to either side)");
+    for (const auto& line : lines) {
+      std::smatch match;
+      if (std::regex_search(line, match, found)) {
+        return std::pair{std::stoul(match[1].str()),
+                         std::stoul(match[2].str())};
+      }
+    }
+    return std::pair{0UL, 0UL};
+  };
+
+  EXPECT_EQ(said(0), std::pair(0UL, 0UL));
+  const auto [launchers, neighbours] = said(4);
+  EXPECT_GT(launchers, 8UL);
+  EXPECT_EQ(neighbours, 4UL);
 }
 
 /// A pair of options an end of a chain blacklists is never checked again:
@@ -3372,6 +3450,112 @@ TEST(CouplerSession, ReroutesAFeedlineLocallyAndPutsTheChipBack) {
   }
   EXPECT_THROW(static_cast<void>(session.localReroute(1, options)),
                std::invalid_argument);
+}
+
+/// The merged options (`coupler_merge`): on 9q one pair of neighbouring
+/// couplers has an edge no plain wire must cross. Both get merged options,
+/// each naming its partner, only those are open, and the chain search leaves
+/// the two on an option and its partner. Without `coupler_merge` there is
+/// no pair and no merged option.
+TEST(CouplerSession, MergesTwoCouplersWhoseEdgeNoWireCrosses) {
+  for (const bool on : {true, false}) {
+    auto benchmark = nineQubit();
+    finalParamsOf(benchmark).coupler_merge = on;
+    const auto planned = plan(benchmark);
+    CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                           planned.detail, benchmark.config);
+    const auto listed = nlohmann::json::parse(session.couplers());
+    const auto& merges = listed.at("merges");
+    std::map<std::size_t, nlohmann::json> byIndex;
+    for (const auto& coupler : listed.at("couplers")) {
+      byIndex[coupler.at("index").get<std::size_t>()] = coupler;
+    }
+    std::size_t merged = 0;
+    for (const auto& [index, coupler] : byIndex) {
+      for (const auto& option : coupler.at("options")) {
+        merged += option.at("merge").is_null() ? 0 : 1;
+      }
+    }
+    if (!on) {
+      EXPECT_TRUE(merges.empty());
+      EXPECT_EQ(merged, 0U);
+      continue;
+    }
+    ASSERT_FALSE(merges.empty());
+    for (const auto& pair : merges) {
+      const auto& first = byIndex.at(pair.at("first").get<std::size_t>());
+      const auto& second = byIndex.at(pair.at("second").get<std::size_t>());
+      ASSERT_GT(pair.at("built").get<std::size_t>(), 0U);
+      for (const auto* coupler : {&first, &second}) {
+        for (const auto& option : coupler->at("options")) {
+          EXPECT_EQ(option.at("open").get<bool>() ||
+                        option.at("closed").is_object(),
+                    true);
+          if (option.at("merge").is_null()) {
+            EXPECT_FALSE(option.at("open").get<bool>()) << option.at("index");
+          }
+        }
+      }
+      // Every merged option of the first names one of the second that
+      // names it back.
+      for (const auto& option : first.at("options")) {
+        if (option.at("merge").is_null()) {
+          continue;
+        }
+        EXPECT_EQ(option.at("merge").at("with"), second.at("index"));
+        const auto& partner = second.at("options").at(
+            option.at("merge").at("option").get<std::size_t>());
+        EXPECT_EQ(partner.at("merge").at("with"), first.at("index"));
+        EXPECT_EQ(partner.at("merge").at("option"), option.at("index"));
+      }
+      // The search left the pair on an option and its partner.
+      const auto chosen = first.at("chosen").get<std::size_t>();
+      const auto& standing = first.at("options").at(chosen);
+      ASSERT_FALSE(standing.at("merge").is_null());
+      EXPECT_EQ(standing.at("merge").at("option"), second.at("chosen"));
+    }
+  }
+}
+
+/// The launcher guards the coupler tab draws: every end of a chain at a
+/// launcher, its guard on exactly when a launcher lies between, and the
+/// launcher's run longer by the clearance for each; without
+/// `edge_launcher_guard` none is on.
+TEST(CouplerSession, ListsALauncherGuardForEveryChainEndAtALauncher) {
+  for (const bool on : {true, false}) {
+    auto benchmark = seventeenQubit();
+    finalParamsOf(benchmark).edge_launcher_guard = on;
+    const auto planned = plan(benchmark);
+    CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                           planned.detail, benchmark.config);
+    const auto listed = nlohmann::json::parse(session.couplers());
+    const auto chains = nlohmann::json::parse(session.chains()).at("chains");
+    std::size_t ends = 0;
+    for (const auto& chain : chains) {
+      const auto& couplers = chain.at("couplers");
+      if (couplers.size() < 3) {
+        continue;
+      }
+      ends += couplers.front().is_null() && !couplers.at(1).is_null() ? 1 : 0;
+      ends += couplers.back().is_null() &&
+                      !couplers.at(couplers.size() - 2).is_null()
+                  ? 1
+                  : 0;
+    }
+    const auto& guards = listed.at("launcherGuards");
+    EXPECT_EQ(guards.size(), ends);
+    for (const auto& guard : guards) {
+      const auto between = guard.at("between").size();
+      EXPECT_EQ(guard.at("on").get<bool>(), on && between > 0) << guard;
+      EXPECT_EQ(guard.at("longer").get<std::int64_t>(),
+                guard.at("on").get<bool>()
+                    ? static_cast<std::int64_t>(between) *
+                          guard.at("clearance").get<std::int64_t>()
+                    : 0)
+          << guard;
+      ASSERT_EQ(guard.at("run").size(), 3U);
+    }
+  }
 }
 
 /// A local check routes and judges the wires of its chain's feedline and the

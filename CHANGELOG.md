@@ -12,6 +12,88 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Add `[stages.final] capacity_cdt_world`, `true` by default together with
+  `capacity_cdt`: the bottlenecks of every capacity pass of the coupler
+  insertion come from one constrained Delaunay triangulation kept over the
+  insertion — the border and the artwork triangulated once, every other wall
+  an object inserted into a cached state, the state of a pass built from the
+  cached state whose objects are the largest subset of its own (or from the
+  common part with the sibling that shares most), so that a pass inserts the
+  few objects that differ from the last; the gates of a state are canonical
+  (the same objects give the same gates however the state was built), the
+  vertex a crossing of two constraints adds is put exactly onto the row or
+  column of the constraint being inserted (`CDT_ENABLE_CALLBACK_HANDLER`), and
+  the triangulation's set of constraint edges is a flat open-addressing table
+  (`cmake/PatchCdt.cmake` on the fetched CDT sources). The gates step of a
+  pass takes 1.2–2.4 ms on the benchmark chips (4q to 45q_dense) against
+  1.8–7.6 ms with the profiles and the windowed triangulation, with no pass
+  refused; `MQT_SCPD_CDT_REPLAY=<file>` writes the world's inputs and the
+  objects of every pass for the replay benchmark `CdtWorld.DISABLED_Replay`.
+  `THIRD_PARTY_NOTICES.md` lists the libraries the build compiles in with
+  their licenses and names the modification of CDT (MPL-2.0); the wheels'
+  license expression gains `MPL-2.0` ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] wire_launcher_guard`, `0` (off) by default: in every
+  phase of the Final stage, the search of a plain wire that leaves an occupied
+  launcher keeps
+  off the straight run out of the border of the occupied launchers up to this
+  many to either side, `min_straight_length` long for the nearest and
+  `min_wire_spacing` longer for each one further out, so that the wires that
+  leave there can still turn off the border; a launcher is occupied when a
+  plain wire leaves it; `wire_launcher_turn_cells` (5) more cells keep
+  room for the wire there to turn ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] feedline_lattice_edges`, `0` (off) by default: a
+  feedline edge between two couplers whose feedline ports lie on a lattice of
+  that many steps per launcher pitch takes the lattice way with the fewest
+  bends, the shortest of those, drawn in a band round it, or no way at all;
+  with `feedline_lattice_direct` the way is drawn straight off its points, an
+  arc of the primitives at every turn ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] coupler_grid_options`, `0` (off) by default: a lattice
+  of that many steps per launcher pitch, laid on the launchers, gives every
+  coupler further options, each plain option moved so that its feedline lies
+  on the lattice, the middle of its feedline ports on the middle of a lattice
+  edge or, for a pad along a diagonal, of a lattice cell, near the resonator's
+  way, its lead joined to the way there, kept when the resonator measures at least the target length less
+  `length_point_band_percent`; with `coupler_grid_only` a coupler keeps its
+  grid options alone, unless none fits it ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] capacity_own_run_bonus`, off by default: on, a gate of
+  the capacity check with an end on a wire's own port run holds that wire half a
+  clearance more where the wire leaves the run straight through the gate
+  ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] feedline_meander_relaxation`, on by default: off, a
+  resonator whose way has no room for its meander keeps the way it found and
+  lets no neighbour go in the feedline routing, while `meander_relaxation` still
+  decides before the feedlines ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] meander_ripup_alternatives`, `0` (off) by default: when
+  a wire of a Final sweep finds no way after the ring neighbour drawn just
+  before it put a new meander into its way, the sweep moves the neighbour's
+  meander to up to this many other placements and draws the wire again after
+  each move; when none helps, it draws the wire with the neighbour's meander
+  taken out and gives the neighbour a new meander beside the wire's new way.
+  `insertMeander` builds these placements on request
+  (`MeanderOptions::alternatives`) ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] exact_wire_clearance`, off by default: the clearance
+  disc a wire of the Final stage closes around its cells holds only the cells
+  within `min_wire_spacing` itself, not the cells within the rule rounded up to
+  whole cells, so two parallel wires along an axis may run nineteen router cells
+  apart instead of twenty, as the design-rule check allows
+  (`grid::stencilOf`) ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] coupler_merge`, on by default: two neighbouring
+  couplers of a chain whose edge no plain wire must cross offer only merged
+  options, both pads as one unit linked by `min_straight_length` straight or
+  with an eighth or a quarter turn, placed between the two resonators so that
+  neither exceeds its target length; the searches let an option stand only
+  beside its partner ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] edge_launcher_guard`, on by default: a chain's launcher
+  keeps a straight run one clearance longer against the chain's own edges for
+  every launcher that lies along the border between it and the place where the
+  end coupler's resonator reaches its target length, so that the other edges
+  cannot shut its terminal edge and the free wires beside it in; the coupler tab
+  draws it as the layer "launcher guard" ([#XXX]) ([**@FeldmeierMichael**])
+- ✨ Add `[stages.final] local_ring_order`, on by default: a local check keeps
+  the wires in their ring order, so that a wire passes a gate between the ends
+  of two wires of the ring only when it lies between them, and no longer rounds
+  the back of its feedline into the partition its neighbours end in ([#XXX])
+  ([**@FeldmeierMichael**])
 - ✨ Add the button "Rip up and reroute feedline C" to the coupler tab of a
   feedline on the coupler server: `POST /reroute?chain=C` reroutes the
   feedline's wires and the free wires beside it alone on the options it stands

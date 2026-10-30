@@ -187,7 +187,8 @@
         border: none;
         border-radius: 0;
       }
-      .switch button.on {
+      .switch button.on,
+      #layoutOnly.on {
         background: var(--wash);
         font-weight: 600;
       }
@@ -520,6 +521,106 @@
         stroke: var(--muted);
         stroke-opacity: 0.5;
       }
+      /* The resonator's way before the insertion, of the coupler picked: an
+         option placed by hand cuts it at the cell nearest the click. */
+      .outer-way {
+        fill: none;
+        stroke: var(--ink-2);
+        stroke-width: 1;
+        stroke-dasharray: 2 3;
+        pointer-events: none;
+      }
+      /* The ways of a local rip-up and reroute of the feedline (“Rip up and
+         reroute”): its wires and the free wires beside it as the reroute
+         left them, a wire that ended unrouted, open, crossing, short or long
+         in the colour of an edge over its room, the feedline's edges dashed. */
+      /* The launcher guard (“launcher guard” layer): the target-length point
+         of an end coupler's resonator and the border cell nearest it, the
+         launchers counted between, and the launcher's straight run, its
+         longer part thick where the guard is on. */
+      .lguard-line {
+        fill: none;
+        stroke: var(--ink-2);
+        stroke-width: 1;
+        stroke-dasharray: 4 3;
+        pointer-events: none;
+      }
+      .lguard-point {
+        fill: var(--surface);
+        stroke: var(--ink);
+        stroke-width: 1.5;
+      }
+      .lguard-between {
+        fill: var(--over);
+        fill-opacity: 0.6;
+        stroke: var(--over);
+      }
+      .lguard-run {
+        fill: none;
+        stroke: var(--ink-2);
+        stroke-width: 2;
+        pointer-events: none;
+      }
+      .lguard-longer {
+        fill: none;
+        stroke: var(--over);
+        stroke-width: 5;
+        stroke-opacity: 0.7;
+      }
+      .launcher-guards .off {
+        opacity: 0.35;
+      }
+      .rerouted {
+        fill: none;
+        stroke: var(--used);
+        stroke-width: 1.2;
+        pointer-events: none;
+      }
+      .rerouted.failing {
+        stroke: var(--over);
+        stroke-width: 2;
+      }
+      .rerouted.feedline {
+        stroke: var(--route);
+        stroke-dasharray: 3 2;
+      }
+      #map.placing {
+        cursor: crosshair;
+      }
+      .pad-custom {
+        stroke-width: 2.5;
+      }
+      /* The pad of the option row under the pointer. */
+      .pad.hot {
+        fill-opacity: 0.5;
+        stroke-width: 3;
+      }
+      /* The option list of the coupler picked: closed options and the
+         candidates the option generator refused, with their reasons. */
+      #option-table tr.closed td,
+      #option-table tr.refused td {
+        color: var(--ink-2);
+      }
+      #option-table tr.refused {
+        cursor: default;
+      }
+      /* An option takes two rows: its candidate, and under it the reasons. */
+      #option-table tr.head td {
+        border-bottom: none;
+      }
+      #option-table td.reason {
+        white-space: normal;
+        padding: 0 8px 6px 24px;
+        color: var(--ink-2);
+        font-size: 12px;
+      }
+      #option-table .bad {
+        color: var(--over);
+      }
+      #option-table a {
+        color: var(--used);
+        margin-right: 6px;
+      }
       .session-log {
         margin: 0 14px 10px;
         padding: 6px 8px;
@@ -554,6 +655,12 @@
       .session-tools a {
         color: var(--ink-2);
       }
+      /* Their own display rule would show them: a page without a server has
+         no session tools, and no option filter before a coupler is picked. */
+      .session-tools[hidden],
+      .filters[hidden] {
+        display: none;
+      }
       .banner {
         padding: 6px 16px;
         border-bottom: 1px solid var(--hairline);
@@ -569,6 +676,10 @@
       .banner.mismatch {
         color: #ffffff;
         background: var(--over);
+      }
+      .banner a.here {
+        font-weight: 700;
+        text-decoration: none;
       }
       .banner a {
         color: inherit;
@@ -624,6 +735,28 @@
         stroke-width: 1.5;
         stroke-dasharray: 5 3;
         opacity: 0.8;
+      }
+      /* The wires of a routing (the rip-up of a benchmark case), over the chip as copper. */
+      .routed {
+        fill: none;
+        stroke: #2a9d8f;
+        stroke-width: 4;
+        stroke-linejoin: round;
+        stroke-linecap: round;
+        opacity: 0.85;
+      }
+      #overlay:not(.no-rfail) .routed.off {
+        stroke: #f5a524;
+        stroke-width: 6;
+        opacity: 1;
+      }
+      #overlay:not(.no-rfail) .routed.bad {
+        stroke: #e5484d;
+        stroke-width: 7;
+        opacity: 1;
+      }
+      #overlay.no-routed .routed {
+        display: none;
       }
       .route {
         fill: none;
@@ -688,6 +821,13 @@
       .tport,
       .sport {
         cursor: pointer;
+      }
+      /* The area budget of a chamber (capacity_chamber_fill): near full, over. */
+      .node.area-full circle {
+        fill: #f5a623;
+      }
+      .node.area-over circle {
+        fill: #d93025;
       }
       .node circle {
         fill: var(--surface);
@@ -917,6 +1057,7 @@
       #overlay.no-estubs .escape-stubs,
       #overlay.no-cruns .coupler-runs,
       #overlay.no-tedges .tedge,
+      #overlay.no-lguard .launcher-guards,
       #overlay.no-xmiss .xslot-miss,
       #overlay.no-tlinks .tlink {
         display: none;
@@ -954,6 +1095,14 @@
         <button type="button" data-view="graph">Graph</button>
         <button type="button" data-view="both">Both</button>
       </span>
+      <button
+        id="layoutOnly"
+        type="button"
+        hidden
+        title="Show the chip, its feedline edges and the routed wires alone; again for the layers as they were"
+      >
+        Layout only
+      </button>
       <button id="theme" type="button" title="Switch light and dark">
         Theme
       </button>
@@ -1072,9 +1221,15 @@
           <p class="note">
             Pick a coupler in the list or click its pad on the chip: every
             option it has is drawn — blue the ones the chain search offers,
-            dashed the ones it does not. A click on an option, on the chip or in
-            the list below, puts the coupler on it; the server draws its two
-            feedline edges again and analyses the chip anew.
+            dashed the ones it closes. The list below gives every option with
+            why the search closed it and what its step checks found, and every
+            candidate the option generator refused, with the reason. A click on
+            an option, on the chip or in the list, puts the coupler on it; the
+            server draws its two feedline edges again and analyses the chip
+            anew. “Place an option” builds an option of the coupler picked where
+            you click: the pad's centre on that cell, the resonator (the dotted
+            way) cut at its cell nearest the click. The coupler moves onto it
+            and the feedline and the chip are checked again.
           </p>
           <div class="session-tools" id="session-tools" hidden>
             <button type="button" id="session-undo">Undo</button>
@@ -1084,11 +1239,31 @@
             <button type="button" id="session-check">
               Check every feedline
             </button>
+            <button type="button" id="session-reroute" hidden>
+              Rip up and reroute
+            </button>
+            <label id="reroute-shown" hidden
+              ><input type="checkbox" checked /> rerouted ways</label
+            >
             <a href="sat">local SAT</a>
             <a href="global">global SAT</a>
           </div>
+          <div class="session-tools" id="place-tools" hidden>
+            <button type="button" id="place-toggle">Place an option</button>
+            <label
+              >offset
+              <select id="place-offset"></select
+            ></label>
+            <label
+              >port
+              <select id="place-port"></select
+            ></label>
+          </div>
           <div class="session-log" id="session-log"></div>
           <div class="scroll"><table id="coupler-table"></table></div>
+          <div class="filters" id="option-filters" hidden>
+            <select id="option-kind"></select>
+          </div>
           <div class="scroll"><table id="option-table"></table></div>
         </section>
         <section class="pane" id="pane-layers">
@@ -1611,6 +1786,22 @@
               "each coupler's run between its two feedline ports, a clearance wide (hatched red)",
               true,
             ],
+            [
+              "lguard",
+              "launcher guard: where an end coupler's resonator reaches its target length, the border cell nearest it, the launchers counted between and the longer straight run of the launcher (edge_launcher_guard)",
+              true,
+            ],
+          ],
+        ],
+        [
+          "Routing",
+          [
+            ["routed", "wires as the routing laid them (routed pages)", true],
+            [
+              "rfail",
+              "its failing wires in red, those off their length in orange",
+              true,
+            ],
           ],
         ],
         [
@@ -1626,6 +1817,8 @@
         ],
       ];
       const layerState = {};
+      // The checkbox of every layer, by key, so that a button can set them.
+      const layerBoxes = {};
       function readSaved() {
         try {
           return JSON.parse(
@@ -1667,6 +1860,7 @@
             const cb = document.createElement("input");
             cb.type = "checkbox";
             cb.checked = layerState[key];
+            layerBoxes[key] = cb;
             cb.addEventListener("change", () => {
               layerState[key] = cb.checked;
               applyLayers();
@@ -2010,6 +2204,19 @@
             world,
           );
         }
+        // The wires of a routing, when the page shows one (`/routed`): over the
+        // chip as copper, a failing wire in red and one off its length in orange.
+        for (const r of (data.routed && data.routed.wires) || []) {
+          const line = el(
+            "polyline",
+            {
+              points: worldPoints(r.path),
+              class: `routed${r.bad ? " bad" : r.fails.length ? " off" : ""}`,
+            },
+            world,
+          );
+          line.dataset.tip = `wire ${r.name} as the routing laid it${r.fails.length ? ": " + r.fails.join(", ") : ""}`;
+        }
         // Spokes and edges.
         for (const e of edges) {
           for (const c of e.chambers) {
@@ -2117,6 +2324,12 @@
           el("circle", { r: 4.5 }, g);
           const t = el("text", { x: 7, y: 3.5 }, g);
           t.textContent = `c${c}`;
+          if (n.areaCapacity > 0) {
+            const share = n.areaLoad / n.areaCapacity;
+            t.textContent = `c${c} ${Math.round(100 * share)}%`;
+            if (share > 1) g.classList.add("area-over");
+            else if (share > 0.85) g.classList.add("area-full");
+          }
           g.dataset.chamber = c;
           placed.push({ el: g, x: n.at[0], y: n.at[1] });
         }
@@ -2361,6 +2574,14 @@
           const c = item;
           h.textContent = `Partition c${c}`;
           row(dl, "cells", `${data.nodes[c].cells}`);
+          if (data.nodes[c].areaCapacity > 0) {
+            const n = data.nodes[c];
+            row(
+              dl,
+              "area",
+              `${n.areaLoad} of ${n.areaCapacity} cells covered (${Math.round((100 * n.areaLoad) / n.areaCapacity)}%; fill ${data.chamberFill})`,
+            );
+          }
           row(
             dl,
             "edges",
@@ -2996,25 +3217,46 @@
           const cool = 1 - round / rounds;
           fx.fill(0);
           fy.fill(0);
+          // Nodes repel within 250: the pairs come from a grid of cells of
+          // that size, each cell with itself and the four cells after it, so
+          // that every pair within reach is met once and no pair beyond the
+          // cells next to each other is looked at.
+          const REACH = 250;
+          const cellOf = new Map();
           for (let i = 0; i < n; i++) {
-            for (let j = i + 1; j < n; j++) {
-              let dx = nodes[i].x - nodes[j].x;
-              let dy = nodes[i].y - nodes[j].y;
-              let d2 = dx * dx + dy * dy;
-              if (d2 > 62500) continue;
-              if (d2 < 0.01) {
-                // Two nodes on one place part along a direction of their own.
-                dx = Math.cos(i + j);
-                dy = Math.sin(i + j);
-                d2 = 1;
-              }
-              const d = Math.sqrt(d2);
-              const f =
-                (2400 * nodes[i].weight * nodes[j].weight) / Math.max(d2, 4);
-              fx[i] += (f * dx) / d;
-              fy[i] += (f * dy) / d;
-              fx[j] -= (f * dx) / d;
-              fy[j] -= (f * dy) / d;
+            const key =
+              Math.floor(nodes[i].x / REACH) * 65536 +
+              Math.floor(nodes[i].y / REACH);
+            let list = cellOf.get(key);
+            if (!list) cellOf.set(key, (list = []));
+            list.push(i);
+          }
+          const pair = (i, j) => {
+            let dx = nodes[i].x - nodes[j].x;
+            let dy = nodes[i].y - nodes[j].y;
+            let d2 = dx * dx + dy * dy;
+            if (d2 > 62500) return;
+            if (d2 < 0.01) {
+              // Two nodes on one place part along a direction of their own.
+              dx = Math.cos(i + j);
+              dy = Math.sin(i + j);
+              d2 = 1;
+            }
+            const d = Math.sqrt(d2);
+            const f =
+              (2400 * nodes[i].weight * nodes[j].weight) / Math.max(d2, 4);
+            fx[i] += (f * dx) / d;
+            fy[i] += (f * dy) / d;
+            fx[j] -= (f * dx) / d;
+            fy[j] -= (f * dy) / d;
+          };
+          for (const [key, list] of cellOf) {
+            for (let a = 0; a < list.length; a++)
+              for (let b = a + 1; b < list.length; b++) pair(list[a], list[b]);
+            for (const step of [65536, 1, 65537, 65535]) {
+              const other = cellOf.get(key + step);
+              if (!other) continue;
+              for (const i of list) for (const j of other) pair(i, j);
             }
           }
           for (const [a, b, length] of pulls) {
@@ -3333,6 +3575,31 @@
       for (const b of document.querySelectorAll(".switch button"))
         b.addEventListener("click", () => showView(b.dataset.view));
 
+      // On a page that shows a routing, one button leaves the chip, its
+      // feedline edges and the routed wires alone in the chip view, and
+      // brings the layers back as they were; it saves nothing.
+      if (data.routed) {
+        const button = document.getElementById("layoutOnly");
+        const keep = new Set(["strokes", "flabels", "routed", "rfail"]);
+        let before = null;
+        button.hidden = false;
+        button.addEventListener("click", () => {
+          if (before) {
+            Object.assign(layerState, before);
+            before = null;
+          } else {
+            before = { ...layerState };
+            for (const key of Object.keys(layerState))
+              layerState[key] = keep.has(key);
+            showView("chip");
+          }
+          button.classList.toggle("on", before !== null);
+          for (const [key, box] of Object.entries(layerBoxes))
+            box.checked = layerState[key];
+          applyLayers();
+        });
+      }
+
       // ---- Start ----------------------------------------------------------------
       {
         const v = document.getElementById("verdict");
@@ -3412,7 +3679,13 @@
         if (session) {
           const couplers = session.couplers;
           const byIndex = new Map(couplers.map((c) => [c.index, c]));
-          const STORE = "capacity-graph-session";
+          // Every mover keeps its own view and pick: the global one and the
+          // local one of each feedline show different graphs.
+          const STORE =
+            "capacity-graph-session" + location.pathname + location.search;
+          // A local mover (`/feedline?chain=C`) lists one feedline's couplers;
+          // its reset and its check are that feedline's alone.
+          const scope = session.scope || null;
           const recall = () => {
             try {
               return JSON.parse(sessionStorage.getItem(STORE) || "null") || {};
@@ -3434,10 +3707,15 @@
           function optionText(c, o) {
             const parts = [`option ${o.index}`];
             if (o.index === c.chosen) parts.push("stands");
-            parts.push(o.open ? "offered" : "not offered by the search");
+            parts.push(
+              o.open
+                ? "offered"
+                : `closed: ${o.closed ? o.closed.why : "not offered by the search"}`,
+            );
             parts.push(`orientation ${o.orientation}, offset ${o.offset}`);
             if (o.secondPort) parts.push("second port");
             if (o.jog) parts.push(`jog ${o.jog}`);
+            if (o.custom) parts.push("placed by hand");
             parts.push(`resonator ${o.resonator} units`);
             return `${c.resonator}: ${parts.join(" · ")}`;
           }
@@ -3446,6 +3724,12 @@
             const layer = el("g", { class: "couplers" }, world);
             for (const c of couplers) {
               const all = c.index === picked;
+              if (all && c.way && c.way.length > 1)
+                el(
+                  "polyline",
+                  { points: worldPoints(c.way), class: "outer-way" },
+                  layer,
+                );
               for (const o of c.options) {
                 const stands = o.index === c.chosen;
                 if ((!all && !stands) || o.pad.length === 0) continue;
@@ -3462,7 +3746,10 @@
                   );
                 const pad = el(
                   "polygon",
-                  { points: worldPoints(o.pad), class: `pad ${kind}` },
+                  {
+                    points: worldPoints(o.pad),
+                    class: `pad ${kind}${o.custom ? " pad-custom" : ""}`,
+                  },
                   layer,
                 );
                 pad.dataset.coupler = c.index;
@@ -3471,13 +3758,105 @@
               }
             }
           }
+          // The ways the last local rip-up and reroute left (`POST
+          // /reroute`), drawn over the chip until the page loads again.
+          let rerouted = null;
+          let reroutedShown = true;
+          function drawRerouted() {
+            if (!rerouted || !reroutedShown) return;
+            const layer = el("g", { class: "rerouted-ways" }, world);
+            for (const w of rerouted.wires) {
+              if (!w.path || w.path.length < 2) continue;
+              const kind =
+                w.kind === "feedline" ? "feedline" : w.verdict ? "failing" : "";
+              const line = el(
+                "polyline",
+                { points: worldPoints(w.path), class: `rerouted ${kind}` },
+                layer,
+              );
+              el("title", {}, line).textContent =
+                `${w.name}: ${w.drawn ? "drawn" : "not drawn"}${w.verdict ? ", failing" : ""}`;
+            }
+          }
+          // The launcher guards (`edge_launcher_guard`) of the feedlines the
+          // tab lists: the guard on draws its longer run thick, the guard off
+          // is drawn faint, as measured.
+          function drawLauncherGuards() {
+            const guards = session.launcherGuards || [];
+            if (!guards.length) return;
+            const layer = el("g", { class: "launcher-guards" }, world);
+            for (const g of guards) {
+              const one = el("g", { class: g.on ? "on" : "off" }, layer);
+              const said =
+                `feedline ${g.chain}, ${g.end} end: the resonator of the end coupler reaches its target length at (${g.lengthPoint.join(", ")}), ` +
+                `nearest the border at (${g.border.join(", ")}); ${g.between.length} launcher${g.between.length === 1 ? "" : "s"} between there and the feedline's launcher — ` +
+                (g.on
+                  ? `the launcher's straight run is ${g.longer} cells longer (${g.clearance} per launcher between) against the feedline's other edges`
+                  : "no guard (no launcher between)");
+              el(
+                "polyline",
+                {
+                  points: worldPoints([g.lengthPoint, g.border]),
+                  class: "lguard-line",
+                },
+                one,
+              );
+              for (const p of g.between) {
+                const dot = el(
+                  "circle",
+                  { cx: wx(p[0]), cy: wy(p[1]), r: 4, class: "lguard-between" },
+                  one,
+                );
+                dot.dataset.tip = `a launcher counted: ${said}`;
+              }
+              if (g.run && g.run.length === 3) {
+                el(
+                  "polyline",
+                  {
+                    points: worldPoints([g.run[0], g.run[1]]),
+                    class: "lguard-run",
+                  },
+                  one,
+                );
+                if (g.on) {
+                  const longer = el(
+                    "polyline",
+                    {
+                      points: worldPoints([g.run[1], g.run[2]]),
+                      class: "lguard-longer",
+                    },
+                    one,
+                  );
+                  longer.dataset.tip = said;
+                }
+              }
+              for (const p of [g.lengthPoint, g.border]) {
+                const dot = el(
+                  "circle",
+                  { cx: wx(p[0]), cy: wy(p[1]), r: 3.5, class: "lguard-point" },
+                  one,
+                );
+                dot.dataset.tip = said;
+              }
+            }
+          }
           const plainBuild = build;
           build = function () {
             plainBuild();
             drawCouplers();
+            drawLauncherGuards();
+            drawRerouted();
           };
           const plainPick = pick;
           pick = function (ev) {
+            if (placing && picked !== null) {
+              const r = map.getBoundingClientRect();
+              const x = Math.floor((ev.clientX - r.left - view.tx) / view.s);
+              const y =
+                H - 1 - Math.floor((ev.clientY - r.top - view.ty) / view.s);
+              if (x >= 0 && y >= 0 && x < W && y < H) placeAt(x, y);
+              return;
+            }
             const hit = ev.target.closest
               ? ev.target.closest("[data-option]")
               : null;
@@ -3488,7 +3867,7 @@
             const c = +hit.dataset.coupler;
             const o = +hit.dataset.option;
             if (c !== picked) pickCoupler(c, false);
-            else if (o !== byIndex.get(c).chosen) move(c, o);
+            else if (session.live && o !== byIndex.get(c).chosen) move(c, o);
           };
 
           function boxOfCoupler(c) {
@@ -3509,6 +3888,7 @@
           function pickCoupler(index, zoom) {
             picked = index;
             remember({ ...recall(), coupler: index });
+            showPlaceTools();
             couplerTable();
             optionTable();
             build();
@@ -3541,7 +3921,14 @@
           function couplerTable() {
             simpleTable(
               "coupler-table",
-              ["Chain", "Point", "Resonator", "Option", "Offered", "Edges"],
+              [
+                "Chain",
+                "Point",
+                "Resonator",
+                "Option",
+                "Open/closed/refused",
+                "Edges",
+              ],
               couplers.map((c) => ({
                 c,
                 cells: [
@@ -3549,7 +3936,11 @@
                   c.at,
                   c.resonator,
                   `${c.chosen} of ${c.options.length}`,
-                  c.options.filter((o) => o.open).length,
+                  [
+                    c.options.filter((o) => o.open).length,
+                    c.options.filter((o) => !o.open).length,
+                    (c.refused || []).length,
+                  ].join("/"),
                   [c.edgeIn, c.edgeOut].filter(Boolean).join(" · "),
                 ],
               })),
@@ -3557,40 +3948,240 @@
               (r) => r.c.index === picked,
             );
           }
+          // What the chain search made of an option, from the step checks
+          // the server joined (`session.outcomes`): how often it was tried,
+          // what its checks found and why the search dropped it.
+          function outcomeOf(c, o) {
+            const per = (session.outcomes || {})[c.index] || {};
+            return per[o.index] || null;
+          }
+          function searchText(c, o) {
+            if (!session.searched) return "";
+            const r = outcomeOf(c, o);
+            const stands = o.index === c.chosen;
+            if (!r) {
+              if (stands) return "stands; no step check of it recorded";
+              return o.open
+                ? "never reached by the search"
+                : "never tried: closed";
+            }
+            const parts = [];
+            if (r.checks) {
+              let text = `${r.checks} step check${r.checks === 1 ? "" : "s"}: ${r.SAT} SAT, ${r.UNSAT} UNSAT`;
+              if (r.lost.length) text += ` (lost ${r.lost.join(", ")})`;
+              parts.push(text);
+            }
+            if (r.refused)
+              parts.push(
+                `${r.refused} refused by the capacity rule` +
+                  (r.closed.length ? ` (closes ${r.closed.join(", ")})` : ""),
+              );
+            for (const [why, n] of Object.entries(r.skipped))
+              parts.push(`${n}× ${why}`);
+            let verdict;
+            if (stands) verdict = "stands";
+            else if (!r.tried) verdict = "never added by the search";
+            else if (!r.UNSAT && !r.refused && !Object.keys(r.skipped).length)
+              verdict = "not chosen: SAT but more expensive";
+            else verdict = "not chosen";
+            return `${verdict} · tried ${r.tried}× · ${parts.join(" · ")}`;
+          }
+          function stepLinks(c, o) {
+            const r = outcomeOf(c, o);
+            if (!session.live || !r || !r.example) return [];
+            return Object.entries(r.example).map(([verdict, s]) => {
+              const a = document.createElement("a");
+              a.href = `graph?step=${s.step}&chain=${s.chain}&options=${s.options.join(",")}`;
+              a.textContent = verdict;
+              a.title = `the graph of the step check of feedline ${s.chain} at step ${s.step}`;
+              a.addEventListener("click", (ev) => ev.stopPropagation());
+              return a;
+            });
+          }
+          function stateOf(c, o) {
+            if (o.index === c.chosen) return "chosen";
+            return o.open ? "open" : "closed";
+          }
+          const KINDS = [
+            ["all", "every option and candidate"],
+            ["offered", "chosen and offered"],
+            ["closed", "closed by the search"],
+            ["refused", "refused by the generator"],
+          ];
+          const kindSelect = document.getElementById("option-kind");
+          kindSelect.addEventListener("change", () => {
+            remember({ ...recall(), kind: kindSelect.value });
+            optionTable();
+          });
+          function hot(c, index, on) {
+            for (const pad of world.querySelectorAll(
+              `.pad[data-coupler="${c.index}"][data-option="${index}"]`,
+            ))
+              pad.classList.toggle("hot", on);
+          }
+          // An option or a refused candidate in one cell: the offset, the
+          // orientation when the option has one, the port and the jog.
+          function candidateText(
+            offset,
+            secondPort,
+            jog,
+            reversed,
+            orientation,
+          ) {
+            const parts = [`offset ${offset}`];
+            if (orientation !== undefined)
+              parts.push(`orientation ${orientation}`);
+            parts.push(`port ${secondPort ? 2 : 1}`);
+            if (jog) parts.push(`jog ${jog}${reversed ? " reversed" : ""}`);
+            return parts.join(" · ");
+          }
           function optionTable() {
             const c = byIndex.get(picked);
-            simpleTable(
-              "option-table",
-              [
-                "Option",
-                "Stands",
-                "Offered",
-                "Orientation",
-                "Offset",
-                "Port",
-                "Jog",
-                "Resonator",
-              ],
-              c
-                ? c.options.map((o) => ({
-                    o,
-                    cells: [
-                      o.index,
-                      o.index === c.chosen ? "yes" : "",
-                      o.open ? "yes" : "no",
-                      o.orientation,
+            const t = document.getElementById("option-table");
+            t.replaceChildren();
+            document.getElementById("option-filters").hidden = !c;
+            if (!c) return;
+            const refused = c.refused || [];
+            const counts = {
+              all: c.options.length + refused.length,
+              offered: c.options.filter((o) => o.open || o.index === c.chosen)
+                .length,
+              closed: c.options.filter((o) => !o.open && o.index !== c.chosen)
+                .length,
+              refused: refused.length,
+            };
+            const kind = KINDS.some(([k]) => k === kindSelect.value)
+              ? kindSelect.value
+              : recall().kind || "all";
+            kindSelect.replaceChildren();
+            for (const [k, text] of KINDS) {
+              const option = document.createElement("option");
+              option.value = k;
+              option.textContent = `${text} (${counts[k]})`;
+              kindSelect.appendChild(option);
+            }
+            kindSelect.value = kind;
+            const head = ["Option", "State", "Candidate", "Resonator"];
+            const hr = document.createElement("tr");
+            for (const h of head) {
+              const th = document.createElement("th");
+              th.textContent = h;
+              hr.appendChild(th);
+            }
+            t.appendChild(hr);
+            const row = (cells, className) => {
+              const tr = document.createElement("tr");
+              tr.className = className;
+              for (const cell of cells) {
+                const td = document.createElement("td");
+                if (cell && typeof cell === "object") {
+                  td.className = cell.className || "";
+                  td.append(...(cell.nodes || [cell.text || ""]));
+                  if (cell.title) td.title = cell.title;
+                } else td.textContent = cell;
+                tr.appendChild(td);
+              }
+              t.appendChild(tr);
+              return tr;
+            };
+            for (const o of c.options) {
+              const state = stateOf(c, o);
+              if (kind === "refused") break;
+              if (kind === "offered" && state === "closed") continue;
+              if (kind === "closed" && state !== "closed") continue;
+              let why = o.closed ? o.closed.why : "";
+              if (!o.closed && o.onFeedline && o.onFeedline.length)
+                why = `the body lies on feedline ${o.onFeedline.join(", ")}; the guard stands down`;
+              const search = searchText(c, o);
+              const nodes = [];
+              if (why) {
+                const line = document.createElement("div");
+                line.textContent = why;
+                nodes.push(line);
+              }
+              if (search) {
+                const line = document.createElement("div");
+                const r = outcomeOf(c, o);
+                const dropped =
+                  r &&
+                  o.index !== c.chosen &&
+                  (r.UNSAT || r.refused || Object.keys(r.skipped).length);
+                line.className = dropped ? "bad" : "";
+                line.append(...stepLinks(c, o), `chain search: ${search}`);
+                nodes.push(line);
+              }
+              const cells = [
+                o.index,
+                state === "chosen" ? "stands" : state,
+                {
+                  className: "wrap",
+                  text:
+                    candidateText(
                       o.offset,
-                      o.secondPort ? "second" : "first",
-                      o.jog || "",
-                      o.resonator,
-                    ],
-                  }))
-                : [],
-              (r) => {
-                if (r.o.index !== c.chosen) move(c.index, r.o.index);
-              },
-              (r) => c && r.o.index === c.chosen,
-            );
+                      o.secondPort,
+                      o.jog,
+                      o.reversed,
+                      o.orientation,
+                    ) + (o.custom ? " · placed by hand" : ""),
+                },
+                o.resonator,
+              ];
+              const className = `row${state === "chosen" ? " sel" : ""}${state === "closed" ? " closed" : ""}`;
+              const rows = [row(cells, `${className} head`)];
+              if (nodes.length) {
+                const tr = row([{ className: "reason", nodes }], className);
+                tr.firstChild.colSpan = head.length;
+                rows.push(tr);
+              }
+              for (const tr of rows) {
+                tr.title = session.live
+                  ? "a click puts the coupler on this option"
+                  : optionText(c, o);
+                tr.addEventListener("mouseenter", () => hot(c, o.index, true));
+                tr.addEventListener("mouseleave", () => hot(c, o.index, false));
+                tr.addEventListener("click", () => {
+                  if (session.live && o.index !== c.chosen)
+                    move(c.index, o.index);
+                });
+              }
+            }
+            if (kind === "all" || kind === "refused")
+              for (const r of refused) {
+                const swept = r.secondPort !== null;
+                const cells = [
+                  "—",
+                  "refused",
+                  {
+                    className: "wrap",
+                    text: swept
+                      ? candidateText(r.offset, r.secondPort, r.jog, r.reversed)
+                      : `offset ${r.offset}`,
+                  },
+                  "",
+                ];
+                row(cells, "refused head");
+                row(
+                  [
+                    {
+                      className: "reason",
+                      text: swept
+                        ? `${r.places} place${r.places === 1 ? "" : "s"} tried; the last: ${r.why}`
+                        : r.why,
+                    },
+                  ],
+                  "refused",
+                ).firstChild.colSpan = head.length;
+              }
+            if (c.guardStoodDown)
+              row(
+                [
+                  {
+                    className: "reason",
+                    text: "every option the jogs leave lies on a feedline of another chain, so the guard stands down and the search offers them all",
+                  },
+                ],
+                "refused",
+              ).firstChild.colSpan = head.length;
           }
 
           const log = document.getElementById("session-log");
@@ -3672,6 +4263,111 @@
             remember({
               coupler,
               tab: true,
+              place: recall().place,
+              view: { s: view.s, tx: view.tx, ty: view.ty },
+            });
+            location.reload();
+          }
+
+          // An option placed by hand: a click on the chip, while placing is
+          // on, builds an option of the coupler picked centred on that cell
+          // and puts the coupler on it (`POST /place`). The server keeps the
+          // option and checks the feedline and the chip again; an option
+          // that does not fit leaves everything as it stood and the log says
+          // why every candidate was refused.
+          let placing = false;
+          const placeTools = document.getElementById("place-tools");
+          const placeToggle = document.getElementById("place-toggle");
+          const placeOffset = document.getElementById("place-offset");
+          const placePort = document.getElementById("place-port");
+          for (const [value, text] of [
+            ["", "first that fits"],
+            ...[0, 1, 2, 3, 4, 5, 6, 7].map((o) => [String(o), String(o)]),
+          ]) {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = text;
+            placeOffset.appendChild(option);
+          }
+          for (const [value, text] of [
+            ["", "first that fits"],
+            ["1", "1"],
+            ["2", "2"],
+          ]) {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = text;
+            placePort.appendChild(option);
+          }
+          {
+            const saved = recall().place || {};
+            if (saved.offset !== undefined) placeOffset.value = saved.offset;
+            if (saved.port !== undefined) placePort.value = saved.port;
+          }
+          const keepPlace = () =>
+            remember({
+              ...recall(),
+              place: { offset: placeOffset.value, port: placePort.value },
+            });
+          placeOffset.addEventListener("change", keepPlace);
+          placePort.addEventListener("change", keepPlace);
+          function setPlacing(on) {
+            placing = on && picked !== null;
+            map.classList.toggle("placing", placing);
+            placeToggle.textContent = placing
+              ? "Click on the chip … (Esc stops)"
+              : "Place an option";
+            placeToggle.classList.toggle("on", placing);
+          }
+          function showPlaceTools() {
+            placeTools.hidden = !session.live || picked === null;
+            if (placeTools.hidden) setPlacing(false);
+          }
+          placeToggle.addEventListener("click", () => setPlacing(!placing));
+          window.addEventListener("keydown", (ev) => {
+            if (ev.key === "Escape" && placing) setPlacing(false);
+          });
+          async function placeAt(x, y) {
+            const coupler = picked;
+            const body = { coupler, x, y };
+            if (placeOffset.value !== "") body.offset = +placeOffset.value;
+            if (placePort.value !== "") body.port = +placePort.value;
+            log.textContent = `coupler ${coupler}: building an option at (${x}, ${y}), drawing its edges and checking the chip …`;
+            let answer;
+            try {
+              const reply = await fetch("/place", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+              });
+              answer = await reply.json();
+              if (!reply.ok) throw new Error(answer.error || reply.statusText);
+            } catch (error) {
+              log.textContent = `the server refused: ${error.message}`;
+              return;
+            }
+            const placed = answer.placed || {};
+            if (!placed.built) {
+              log.replaceChildren();
+              const head = document.createElement("div");
+              head.className = "bad";
+              head.textContent = `no option of coupler ${coupler} fits at (${x}, ${y}), cut at cell ${placed.cell} of the way; nothing moved`;
+              log.appendChild(head);
+              for (const t of placed.tried || []) {
+                const line = document.createElement("div");
+                line.textContent =
+                  t.offset === undefined
+                    ? t.why
+                    : `offset ${t.offset} · port ${t.secondPort ? 2 : 1}: ${t.why}`;
+                log.appendChild(line);
+              }
+              return;
+            }
+            remember({
+              ...recall(),
+              coupler,
+              tab: true,
+              placing: true,
               view: { s: view.s, tx: view.tx, ty: view.ty },
             });
             location.reload();
@@ -3708,20 +4404,96 @@
             undo.addEventListener("click", () =>
               ask("undo", "taking the last move back …", true),
             );
-            document
-              .getElementById("session-reset")
-              .addEventListener("click", () =>
-                ask(
-                  "reset",
-                  "putting every feedline back on the commit …",
-                  true,
-                ),
-              );
-            document
-              .getElementById("session-check")
-              .addEventListener("click", () =>
-                ask("check-all", "checking every feedline locally …", false),
-              );
+            const resetButton = document.getElementById("session-reset");
+            const checkButton = document.getElementById("session-check");
+            if (scope) {
+              resetButton.textContent = `Reset feedline ${scope.chain} to the commit`;
+              checkButton.textContent = `Check feedline ${scope.chain}`;
+            }
+            resetButton.addEventListener("click", () =>
+              scope
+                ? ask(
+                    `reset?chain=${scope.chain}`,
+                    `putting feedline ${scope.chain} back on the commit …`,
+                    true,
+                  )
+                : ask(
+                    "reset",
+                    "putting every feedline back on the commit …",
+                    true,
+                  ),
+            );
+            checkButton.addEventListener("click", () =>
+              scope
+                ? ask(
+                    `check-all?chain=${scope.chain}`,
+                    `checking feedline ${scope.chain} locally …`,
+                    false,
+                  )
+                : ask("check-all", "checking every feedline locally …", false),
+            );
+            // The local rip-up and reroute of the feedline on the options it
+            // stands on, as the local benchmark reroutes one: its wires and
+            // the free wires beside it, every other wire ignored. The server
+            // puts the chip back; the ways are drawn over it.
+            if (scope) {
+              const rerouteButton = document.getElementById("session-reroute");
+              const shown = document.getElementById("reroute-shown");
+              rerouteButton.hidden = false;
+              rerouteButton.textContent = `Rip up and reroute feedline ${scope.chain}`;
+              shown.querySelector("input").addEventListener("change", (ev) => {
+                reroutedShown = ev.target.checked;
+                build();
+              });
+              rerouteButton.addEventListener("click", async () => {
+                log.textContent = `ripping up and rerouting feedline ${scope.chain} on the options it stands on …`;
+                rerouteButton.disabled = true;
+                let answer;
+                try {
+                  const reply = await fetch(`reroute?chain=${scope.chain}`, {
+                    method: "POST",
+                  });
+                  answer = await reply.json();
+                  if (!reply.ok)
+                    throw new Error(answer.error || reply.statusText);
+                } catch (error) {
+                  log.textContent = `the server refused: ${error.message}`;
+                  return;
+                } finally {
+                  rerouteButton.disabled = false;
+                }
+                rerouted = answer;
+                shown.hidden = false;
+                log.replaceChildren();
+                verdictLine([
+                  [
+                    `feedline ${answer.chain} rerouted locally on options ${answer.options.join(" ")}: `,
+                    "",
+                  ],
+                  [
+                    answer.clean ? "clean" : "fails",
+                    answer.clean ? "SAT" : "UNSAT",
+                  ],
+                  [
+                    `${answer.failing ? ` (${answer.failing})` : ""} · ${answer.window.length} wires rerouted in ${answer.seconds.toFixed(1)}s`,
+                    "",
+                  ],
+                ]);
+                if (answer.blocked) verdictLine([[answer.blocked, ""]]);
+                for (const r of answer.rounds || [])
+                  verdictLine([
+                    [
+                      `round ${r.round} ${r.forward ? "forward" : "backward"}: ${r.normal} found a way, ${r.relaxed} after relaxation` +
+                        (r.failed && r.failed.length
+                          ? `, ${r.failed.length} failed: ${r.failed.join(", ")}`
+                          : ", 0 failed"),
+                      "",
+                    ],
+                  ]);
+                verdictLine([[`rerouted: ${answer.window.join(", ")}`, ""]]);
+                build();
+              });
+            }
           }
 
           sayLast(session.last);
@@ -3731,15 +4503,20 @@
           // `#tab=couplers` opens the tab, as a move of a whole feedline asks.
           const hashArgs = new URLSearchParams(location.hash.slice(1));
           const asked = hashArgs.get("coupler");
+          // `#kind=refused` (all, offered, closed, refused) filters the list
+          // of options.
+          if (KINDS.some(([k]) => k === hashArgs.get("kind")))
+            remember({ ...recall(), kind: hashArgs.get("kind") });
           const saved = recall();
           if (asked !== null && byIndex.has(+asked)) {
             tab.click();
             pickCoupler(+asked, true);
           } else {
             if (saved.tab || hashArgs.get("tab") === "couplers") tab.click();
-            if (saved.coupler !== undefined && byIndex.has(saved.coupler))
+            if (saved.coupler !== undefined && byIndex.has(saved.coupler)) {
               pickCoupler(saved.coupler, false);
-            else build();
+              if (saved.placing) setPlacing(true);
+            } else build();
             if (saved.view) {
               Object.assign(view, saved.view);
               render();

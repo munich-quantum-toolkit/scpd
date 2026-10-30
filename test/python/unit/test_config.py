@@ -458,6 +458,38 @@ def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> Non
     assert final.globalSatTries == 200
     assert final.meanderStartMarginCells == -1
     assert final.meanderRelaxation is True
+    assert final.feedlineMeanderRelaxation is True
+    assert final.capacityOwnRunBonus is False
+    assert final.couplerGridOptions == 0
+    assert final.couplerGridOnly is False
+    assert final.feedlineLatticeEdges == 0
+    assert final.feedlineLatticeDirect is False
+    assert final.localRipOwnChainOnly is False
+    assert final.capacityCdt is True
+    assert final.capacityCdtIncremental is True
+    assert final.couplerEntryLength is True
+    assert final.feedlineMeanderKeepout is True
+    assert final.capacityCheckChains == ""
+    assert final.chainDeadPrefixRefusals == 0
+    assert final.capacityCdtCanonical is False
+    assert final.couplerOptionFixes is False
+    assert final.routerGridSnap == 0.0
+    assert final.couplerLatticePitch == 0.0
+    assert final.couplerLatticeOptions == 32
+    assert final.couplerLatticeReach == 0
+    assert final.couplerLatticeShortest is False
+    assert final.capacityCdtWorld is True
+    assert final.couplerLatticeFloor == 0.0
+    assert final.couplerLatticeNear == 0.0
+    assert final.couplerLatticeChecker is False
+    assert final.couplerLatticeReserveStep == 0
+    assert final.chainRuleSteps == 0
+    assert final.capacityChamberFill == 0.0
+    assert final.couplerMeanderSlack is False
+    assert final.couplerMeanderSlackChains in ("", None, b"")
+    assert final.meanderRipupAlternatives == 0
+    assert final.wireLauncherGuard == 0
+    assert final.wireLauncherTurnCells == 5
     assert final.chainSearch == "astar"
 
     config = parse_config(
@@ -465,7 +497,7 @@ def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> Non
         + '\n[stages.final]\ncoupler_box_margin_cells = 20\ncoupler_offsets = "0,1,2,3,4,5,6,7"\n'
         + "chain_end_edge_weight = 1.0\ncapacity_check = false\nchain_rule_refusals = 1\n"
         + 'meander_relaxation = false\njog_options = "20, 40"\ncoupler_option_extension = "0, 10, -5"\n'
-        + 'chain_search = "bidirectional"\n'
+        + 'chain_search = "bidirectional"\nmeander_ripup_alternatives = 4\nwire_launcher_guard = 3\n'
     )
     assert config.stages is not None
     assert config.stages.final is not None
@@ -481,6 +513,8 @@ def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> Non
     assert back.stages.final.capacityCheck is False
     assert back.stages.final.chainRuleRefusals == 1
     assert back.stages.final.meanderRelaxation is False
+    assert back.stages.final.meanderRipupAlternatives == 4
+    assert back.stages.final.wireLauncherGuard == 3
     assert back.stages.final.jogOptions == "20, 40"
     assert back.stages.final.couplerOptionExtension == "0, 10, -5"
     assert back.stages.final.chainSearch == "bidirectional"
