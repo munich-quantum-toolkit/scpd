@@ -1019,8 +1019,9 @@ private:
       const auto center = border.center();
       entry->center =
           grid::cornerToLayout(scene.detail, center.x(), center.y());
-      // The border carries one wire per crossing slot, so the budget counts
-      // the slots.
+      // The border carries one wire per crossing slot. The Corridor stage
+      // routes across the slots of the same function, so the budget counts
+      // the slots it offers.
       entry->budget = static_cast<std::uint32_t>(
           crossingSlots(border, scene, pitch).size());
       plan.borders.push_back(std::move(entry));

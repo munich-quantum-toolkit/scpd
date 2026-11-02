@@ -48,27 +48,27 @@ def make(verbosity: int = 0, *, encoding: str = "utf-8") -> tuple[Console, io.St
     return console, out, clock
 
 
-def global_run(console: Console, clock: Clock) -> None:
-    """Report the capacity stage and the global stage of a run on 17q."""
+def corridor_run(console: Console, clock: Clock) -> None:
+    """Report the capacity stage and the corridor stage of a run on 17q."""
     console.header("plan", "17q", "runs/17q", ["HiGHS 1.11.0"])
     with console.stage("capacity") as stage:
         clock.now += 1.02
         stage.result([Figure("363 partitions"), Figure("62 bottlenecks"), Figure("69 chains")])
         stage.artifact("01-capacity.fb", 1_341_000)
-    with console.stage("global") as stage:
+    with console.stage("corridor") as stage:
         clock.now += 0.11
-        stage.entry(0, "lattice 1", [Figure("12 nodes"), Figure("fails 2", "bad")])
+        stage.entry(0, "round 1 forward", [Figure("routed 56/58"), Figure("fails 2", "bad")])
         clock.now += 0.08
-        stage.entry(0, "lattice 2", [Figure("16 nodes"), Figure("fails 0", "good")])
+        stage.entry(0, "round 2 backward", [Figure("routed 58/58"), Figure("fails 0", "good")])
         stage.result([], fails=0)
-        stage.artifact("02-global.fb", 13_700)
-    console.closing(stopped_after="global")
+        stage.artifact("04-corridor.fb", 60_768)
+    console.closing(stopped_after="corridor")
 
 
 def test_a_run_prints_one_block_per_stage() -> None:
     """The layout of a run without -v: a header, one block per stage and a closing line."""
     console, out, clock = make()
-    global_run(console, clock)
+    corridor_run(console, clock)
 
     assert out.getvalue().splitlines() == [
         "mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.11.0",
@@ -76,12 +76,12 @@ def test_a_run_prints_one_block_per_stage() -> None:
         "🧩 capacity",
         "   363 partitions · 62 bottlenecks · 69 chains                     1.02s",
         "   ✓ 01-capacity.fb  1.3 MB",
-        "🔳 global",
-        "   lattice 1          12 nodes · fails 2                           0.11s",
-        "   lattice 2          16 nodes · fails 0                           0.19s",
-        "   ✓ 02-global.fb  13.7 kB · fails 0",
+        "🧭 corridor",
+        "   round 1 forward    routed 56/58 · fails 2                       0.11s",
+        "   round 2 backward   routed 58/58 · fails 0                       0.19s",
+        "   ✓ 04-corridor.fb  60.8 kB · fails 0",
         "",
-        "✓ 2 stages · 1.21s · stopped after global · fails 0",
+        "✓ 2 stages · 1.21s · stopped after corridor · fails 0",
     ]
 
 
@@ -131,10 +131,10 @@ def test_the_closing_line_names_a_failed_stage() -> None:
 def test_the_closing_line_counts_the_fails_of_every_stage() -> None:
     """The fails of the stages that report them add up."""
     console, out, _ = make()
-    with console.stage("global") as stage:
+    with console.stage("corridor") as stage:
         stage.result([], fails=2)
-    console.closing(stopped_after="global")
-    assert out.getvalue().splitlines()[-1] == "✗ 1 stage · 0.00s · stopped after global · fails 2"
+    console.closing(stopped_after="corridor")
+    assert out.getvalue().splitlines()[-1] == "✗ 1 stage · 0.00s · stopped after corridor · fails 2"
 
 
 def test_a_long_line_keeps_its_time_after_two_spaces() -> None:
@@ -185,14 +185,14 @@ def test_an_artifact_size_reads_at_a_glance(size: int, shown: str) -> None:
 def test_a_terminal_without_unicode_gets_the_ascii_forms() -> None:
     """Where the output cannot encode the symbols, every one of them has a plain form."""
     console, out, clock = make(encoding="ascii")
-    global_run(console, clock)
+    corridor_run(console, clock)
 
     text = out.getvalue()
     text.encode("ascii")
     assert "[#] capacity" in text
-    assert "[+] global" in text
+    assert "[~] corridor" in text
     assert "   ok 01-capacity.fb  1.3 MB" in text
-    assert "12 nodes - fails 2" in text
+    assert "routed 56/58 - fails 2" in text
     assert text.splitlines()[0] == "mqt-scpd plan 17q -> runs/17q  -  HiGHS 1.11.0"
 
 
@@ -231,11 +231,11 @@ def test_every_step_has_a_style() -> None:
 def test_progress_never_reaches_a_file() -> None:
     """Live progress is for a terminal; in a file only the lasting lines remain."""
     console, out, _ = make()
-    with console.stage("global") as stage:
+    with console.stage("corridor") as stage:
         for done in range(1, 59):
-            stage.progress("building the lattices", "", done, 58)
+            stage.progress("round 1 forward", "", done, 58)
         stage.result([], fails=0)
-    assert out.getvalue().splitlines() == ["🔳 global"]
+    assert out.getvalue().splitlines() == ["🧭 corridor"]
 
 
 @pytest.mark.parametrize("variable", ["FORCE_COLOR", "TTY_COMPATIBLE"])
@@ -246,11 +246,11 @@ def test_a_forced_color_leaves_a_file_without_the_live_line(monkeypatch: pytest.
     console = Console(out, encoding="utf-8", clock=Clock())
     assert not console.show_live
     assert console.width == 72
-    with console.stage("global") as stage:
+    with console.stage("corridor") as stage:
         for done in range(1, 59):
-            stage.progress("building the lattices", "", done, 58)
+            stage.progress("round 1 forward", "", done, 58)
         stage.result([], fails=0)
-    assert visible(out.getvalue()).splitlines() == ["🔳 global"]
+    assert visible(out.getvalue()).splitlines() == ["🧭 corridor"]
     assert "\x1b[2K" not in out.getvalue()
 
 
@@ -270,11 +270,11 @@ def test_a_terminal_that_takes_no_cursor_movements_gets_no_live_line(monkeypatch
     monkeypatch.setattr(out, "isatty", lambda: True)
     console = Console(out, encoding="utf-8", clock=Clock())
     assert not console.show_live
-    with console.stage("global") as stage:
+    with console.stage("corridor") as stage:
         for done in range(1, 59):
-            stage.progress("building the lattices", "", done, 58)
+            stage.progress("round 1 forward", "", done, 58)
         stage.result([], fails=0)
-    assert out.getvalue().splitlines() == ["🔳 global"]
+    assert out.getvalue().splitlines() == ["🧭 corridor"]
 
 
 def test_the_block_header_waits_for_the_first_lasting_line_on_a_terminal() -> None:
@@ -307,10 +307,10 @@ def test_color_marks_a_verdict_and_dims_a_step() -> None:
     console = Console(
         out, verbosity=1, live=False, width=72, encoding="utf-8", clock=itertools.count().__next__, color=True
     )
-    with console.stage("global") as stage:
-        stage.entry(0, "lattice 1", [Figure("fails 2", "bad")])
-        stage.entry(0, "lattice 2", [Figure("fails 0", "good")])
-        stage.line(1, "8 lattices · 120 nodes")
+    with console.stage("corridor") as stage:
+        stage.entry(0, "round 1 forward", [Figure("fails 2", "bad")])
+        stage.entry(0, "round 2 backward", [Figure("fails 0", "good")])
+        stage.line(1, "rounds 2 · max relaxation 30")
     text = out.getvalue()
     assert "\x1b[31mfails 2" in text
     assert "\x1b[32mfails 0" in text

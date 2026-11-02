@@ -209,13 +209,18 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         msg = f"{artifact} is missing; run `mqt-scpd plan` up to the {args.stage} step first"
         raise RunError(msg)
     directory.check_current(args.stage, input_digests(config, chip_bytes))
-    # The global picture is drawn over the cells the grid blocked, and the assign picture over the
-    # partitions its chords run through, with the inner circuit of the global step.
+    # The global picture is drawn over the cells the grid blocked, and the assign and corridor
+    # pictures over the partitions their chords and wires run through, with the inner circuit of the
+    # global step. The corridor picture also shows the feedlines its resonator wires start at.
     plan = directory.artifact("capacity")
-    capacity = plan.read_bytes() if args.stage in {"global", "assign"} and plan.is_file() else None
+    capacity = plan.read_bytes() if args.stage in {"global", "assign", "corridor"} and plan.is_file() else None
+    chosen = directory.artifact("assign")
+    assignment = chosen.read_bytes() if args.stage == "corridor" and chosen.is_file() else None
     solved = directory.artifact("global")
-    routing = solved.read_bytes() if args.stage == "assign" and solved.is_file() else None
-    geometry = planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, routing)
+    routing = solved.read_bytes() if args.stage in {"assign", "corridor"} and solved.is_file() else None
+    geometry = planning_geometry(
+        artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, assignment, routing
+    )
     return chip_bytes, title, geometry
 
 

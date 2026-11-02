@@ -26,7 +26,7 @@ namespace mqt::scpd::pipeline {
 /// How much a report says. The levels match how often the command line is
 /// given -v.
 enum class Detail : std::uint8_t {
-  /// What a run says without -v: the result of a stage.
+  /// What a run says without -v: the result of a stage and its rounds.
   Summary = 0,
   /// With -v: the parameters, the steps of a stage and the result of a solve.
   Steps = 1,
@@ -102,7 +102,7 @@ public:
   struct Sinks {
     /// Receives a line of free text and its level.
     std::function<void(Detail, std::string_view)> line;
-    /// Receives an entry: a label, such as "chain 1", and its
+    /// Receives an entry: a label, such as "round 1 forward", and its
     /// figures, which a renderer aligns with those of the other entries.
     std::function<void(Detail, std::string_view, const std::vector<Figure>&)>
         entry;
@@ -150,7 +150,7 @@ public:
   void line(Detail detail, std::string_view text) const;
 
   /**
-   * @brief Reports an entry, such as one feedline chain of an assignment.
+   * @brief Reports an entry, such as one round of a stage.
    * @param detail The level of the entry.
    * @param label What the entry is about.
    * @param figures Its figures.

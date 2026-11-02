@@ -20,4 +20,4 @@ __all__ = ["STEPS"]
 #: The steps this release runs, in order. Each is a stage that writes one artifact. The Global stage
 #: runs before the Assignment stage: the assignment consumes the outer port ring that the inner
 #: circuit extends with the coupler ports it surfaces at.
-STEPS: tuple[str, ...] = ("capacity", "global", "assign")
+STEPS: tuple[str, ...] = ("capacity", "global", "assign", "corridor")

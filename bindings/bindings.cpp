@@ -151,6 +151,16 @@ globalOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
   return *output;
 }
 
+/// The assignment an artifact carries.
+const mqt::scpd::flatbuffers::artifacts::AssignmentT&
+assignmentOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
+  const auto* output = artifact.output.AsAssignment();
+  if (output == nullptr) {
+    throw std::invalid_argument("the artifact is not an assignment");
+  }
+  return *output;
+}
+
 /// The name of a tone, as the Python side spells it.
 const char* toneName(const mqt::scpd::pipeline::Tone tone) {
   switch (tone) {
@@ -377,6 +387,33 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "plan_capacity. Returns 03-assign.fb as bytes.");
 
   m.def(
+      "route_corridor",
+      [](const nb::bytes& chip, const nb::bytes& capacity,
+         const nb::bytes& assignment, const nb::bytes& config,
+         const std::string_view producer, const nb::object& reporter,
+         const int verbosity) {
+        const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
+        const auto design = mqt::scpd::io::readChip(asSpan(chip));
+        const auto plan = fittingArtifact(capacity, design);
+        const auto assigned = fittingArtifact(assignment, design);
+        const auto report = reportTo(reporter, verbosity);
+        const auto router = mqt::scpd::pipeline::corridorRouters().make(
+            mqt::scpd::pipeline::selectedCorridorRouter(configuration));
+        mqt::scpd::flatbuffers::artifacts::CorridorRoutingT routing;
+        {
+          const nb::gil_scoped_release release;
+          routing = router->run(design, capacityOf(plan),
+                                assignmentOf(assigned), configuration, report);
+        }
+        return asArtifact(std::move(routing), producer);
+      },
+      "chip"_a, "capacity"_a, "assignment"_a, "config"_a, "producer"_a,
+      "reporter"_a.none() = nb::none(), "verbosity"_a = 0,
+      "Run the Corridor stage on a classified chip, its 01-capacity.fb and "
+      "its 03-assign.fb. The reporter receives what the stage reports, as for "
+      "plan_capacity. Returns 04-corridor.fb as bytes.");
+
+  m.def(
       "algorithms",
       [] {
         std::vector<std::pair<std::string, std::vector<std::string>>>
@@ -388,6 +425,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                                 mqt::scpd::pipeline::globalRouters().names());
         registered.emplace_back("assigner",
                                 mqt::scpd::pipeline::assigners().names());
+        registered.emplace_back("corridor-router",
+                                mqt::scpd::pipeline::corridorRouters().names());
         return registered;
       },
       "The implementations this build ships, as (stage, names) pairs in "

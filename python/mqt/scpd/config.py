@@ -25,6 +25,7 @@ from .flatbuffers.config.AssignmentParams import AssignmentParamsT
 from .flatbuffers.config.BridgeRule import BridgeRuleT
 from .flatbuffers.config.CapacityParams import CapacityParamsT
 from .flatbuffers.config.Config import ConfigT
+from .flatbuffers.config.CorridorParams import CorridorParamsT
 from .flatbuffers.config.GlobalParams import GlobalParamsT
 from .flatbuffers.config.GridParams import GridParamsT
 from .flatbuffers.config.PortConfig import PortConfigT
@@ -82,6 +83,7 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
     "global": {"router": "", "internal_bridges": False},
     "assignment": {"assigner": "", "launcher_target": 0},
     "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0, "threads": 0},
+    "corridor": {"router": "", "rounds": 12, "max_relaxation": 4},
 }
 
 #: The keys of ``[run]`` with the defaults of the schema.
@@ -295,6 +297,13 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     stages.solver.relativeGap = take(solver, "relative_gap", float)
     stages.solver.threads = take(solver, "threads", int)
     solver.finish()
+
+    corridor = part("corridor")
+    stages.corridor = CorridorParamsT()
+    stages.corridor.router = take(corridor, "router", str)
+    stages.corridor.rounds = take(corridor, "rounds", int)
+    stages.corridor.maxRelaxation = take(corridor, "max_relaxation", int)
+    corridor.finish()
 
     section.finish()
     return stages

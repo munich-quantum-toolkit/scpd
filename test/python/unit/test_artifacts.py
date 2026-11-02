@@ -22,8 +22,11 @@ from mqt.scpd.flatbuffers.artifacts.Artifact import (
     ArtifactT,
 )
 from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
+from mqt.scpd.flatbuffers.artifacts.BorderSlots import BorderSlotsT
 from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
+from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
@@ -325,6 +328,32 @@ INCOMPLETE_ARTIFACTS = [
         wrap(StageOutput.GlobalRouting, _global_routing(lattices=[LatticeT(edges=[], selected=[])])),
         r"lattices\[0\]: points is missing",
         id="lattice-points",
+    ),
+    pytest.param(
+        wrap(StageOutput.CorridorRouting, CorridorRoutingT(corridors=[CorridorT(partitions=[])], slots=[])),
+        r"corridors\[0\]: crossings is missing",
+        id="corridor-crossings",
+    ),
+    pytest.param(
+        wrap(
+            StageOutput.CorridorRouting,
+            CorridorRoutingT(corridors=[CorridorT(partitions=[2, 3], crossings=[])], slots=[]),
+        ),
+        r"corridors\[0\]: names 2 partitions and 0 crossings",
+        id="corridor-count",
+    ),
+    pytest.param(
+        wrap(
+            StageOutput.CorridorRouting,
+            CorridorRoutingT(corridors=[CorridorT(partitions=[], crossings=[PointT(x=1.0, y=2.0)])], slots=[]),
+        ),
+        r"corridors\[0\]: names 0 partitions and 1 crossing(?!s)",
+        id="corridor-crossings-without-partitions",
+    ),
+    pytest.param(
+        wrap(StageOutput.CorridorRouting, CorridorRoutingT(corridors=[], slots=[BorderSlotsT()])),
+        r"slots\[0\]: positions is missing",
+        id="slot-positions",
     ),
     pytest.param(
         wrap(StageOutput.FinalRouting, FinalRoutingT(couplers=None, bridges=[], unresolved=[])),

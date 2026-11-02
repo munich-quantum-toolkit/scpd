@@ -475,7 +475,7 @@ TEST(Assigner, RefusesTwoFeedsCloseOnTheTwoSidesOfASharpCorner) {
 TEST(Assigner, RefusesTwoFeedsOnOneCellOfTheDetailGrid) {
   // The two resonators are fed about 85 units apart, more than the wire
   // spacing of 40. A detail grid of 2 by 2 cells, 200 units each, rounds both
-  // feeds onto one cell, where both wires would start.
+  // feeds onto one cell, where the Corridor stage would start both wires.
   const auto chip =
       squareChip({{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}});
   auto config = squareConfig();

@@ -196,6 +196,58 @@ table GlobalRouting {
   objective: double;
 }
 
+/// The crossing slots of one partition border.
+///
+/// A wire leaves one partition for another at one of these, and no two wires
+/// take the same one. The slots of one border lie at least one crossing pitch
+/// apart, so their count is the most wires that the border can carry, which is
+/// what PartitionBorder.budget reports. The crossings of two wires also lie at
+/// least one crossing pitch apart, so a wire that crosses another border within
+/// one crossing pitch of a slot blocks that slot. The border then carries fewer
+/// wires than its budget.
+table BorderSlots {
+  /// The border they belong to, as an index into CapacityPlan.borders.
+  border: uint32;
+  /// The slots in layout units, in the order of the walk that picked them.
+  /// The walk runs from sample to adjacent sample and starts again at another
+  /// end where it runs out, so the order can jump along the border.
+  positions: [geometry.Point] (required);
+}
+
+/// The coarse route of one connection: which partitions it passes through,
+/// and where it crosses from each into the next.
+table Corridor {
+  /// The labels of the partitions, from the one the wire is fed in to the
+  /// one its target sits in. These are Partition.label values, not indices
+  /// into CapacityPlan.partitions.
+  partitions: [uint32] (required);
+  /// The crossing slots between them, in layout units. One shorter than
+  /// `partitions`.
+  crossings: [geometry.Point] (required);
+  /// Where the wire starts: the cell the feed of the assignment was placed
+  /// at. Absent when the connection has no feed, when the feed lies off the
+  /// grid, or when no partition lies within 8 detail cells of it.
+  source: geometry.Point;
+  /// Where it ends: the cell its target port is reached at. Absent when the
+  /// port has no target cell, or when no partition lies within 8 detail
+  /// cells of it.
+  target: geometry.Point;
+}
+
+/// Output of the Corridor stage.
+///
+/// One entry per connection of the Assignment, in its order. A connection
+/// that the stage could not route carries no partitions, so a reader counts
+/// the failures instead of reading a separate list that can disagree with
+/// the routes.
+table CorridorRouting {
+  corridors: [Corridor] (required);
+  /// The slots of every border a wire could cross, so that a picture can
+  /// show which of them are taken. A border without a crossing slot, whose
+  /// budget is zero, has no entry.
+  slots: [BorderSlots] (required);
+}
+
 /// Output of the Detail stage.
 table DetailRouting {}
 
@@ -230,6 +282,7 @@ union StageOutput {
   DetailRouting,
   FinalRouting,
   Geometry,
+  CorridorRouting,
 }
 
 /// The root of every stage artifact.

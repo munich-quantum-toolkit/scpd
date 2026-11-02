@@ -36,7 +36,9 @@ using design::Problems;
  * lattice of a Global routing names only its own points and edges; an
  * Assignment has one connection, launcher and feed per ring node, connection
  * i targets the port of ring node i, and every chain runs through one ring
- * node at least, each of them on that chain only.
+ * node at least, each of them on that chain only; a corridor names one more
+ * partition than it has crossings, or neither for a connection without a
+ * way, and a corridor with a way has a source and a target.
  *
  * @param artifact The artifact to check.
  * @return A problem for an empty producer, one for a missing output or an

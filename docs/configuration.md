@@ -93,16 +93,19 @@ the aspect ratio of the chip sets the capacity cells down. The detail grid may
 have at most 25,000,000 cells, for example 5000 × 5000. The capacity step holds
 about 120 bytes per detail cell, so the limit stands for about 3 GB of memory.
 The finest benchmark chip, 69q, plans on 1500 × 1500 cells. `plan` and `doctor`
-refuse a larger grid before the first stage of a run through the capacity or
-assignment step, and name the grid that the configuration asks for.
+refuse a larger grid before the first stage of a run through the capacity,
+assignment or corridor step, and name the grid that the configuration asks for.
 
 ## `[stages.capacity]`
 
-| Key                    | Default | Meaning                                                                                                                                                 |
-| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `planner`              | `""`    | The implementation of the step; empty takes `watershed`                                                                                                 |
-| `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive |
-| `crossing_pitch`       | `165.0` | The distance between two places on one partition border where a wire may cross it; it decides how many wires a border lets through; positive            |
+| Key                    | Default | Meaning                                                                                                                                                                                                 |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `planner`              | `""`    | The implementation of the step; empty takes `watershed`                                                                                                                                                 |
+| `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive                                                 |
+| `crossing_pitch`       | `165.0` | The distance between two places on one partition border where a wire may cross it, and the least distance between the crossings of two wires; it decides how many wires a border lets through; positive |
+
+`crossing_pitch` applies to crossings only. A wire may cross a border closer
+than one pitch to the target cell or the feed of another wire.
 
 ## `[stages.global]`
 
@@ -166,8 +169,8 @@ configuration that breaks a limit for every such decision.
 The assignment also refuses a solution in which two feeds lie closer than
 `[design_rules] min_wire_spacing`, such as two conventional ports at launcher
 slots in one cell. It refuses two feeds that round onto one cell of the detail
-grid as well, since a wire starts at the cell of its feed; a detail cell
-narrower than about 0.7 wire spacings rules this out.
+grid as well, since the Corridor step starts each wire at that cell; a detail
+cell narrower than about 0.7 wire spacings rules this out.
 
 ## `[stages.solver]`
 
@@ -206,11 +209,42 @@ solutions of equal objective, its answer can differ from one machine to the
 next. A fixed `threads` makes runs on different machines comparable. The limit
 of `1024` is the largest value that Gurobi accepts.
 
+## `[stages.corridor]`
+
+| Key              | Default | Meaning                                                                                                                                                                |
+| ---------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                                          |
+| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward; at least `1`                                                                                       |
+| `max_relaxation` | `4`     | How many neighboring connections along a sweep a connection without a way may rip up, and how many wires in its way it may move aside; the stage limits it (see below) |
+
+The later sweeps let a connection without a way take room that another
+connection has not claimed yet. A sweep can take a way from a connection that
+had one, so the fails of the rounds can go up as well as down. The stage keeps
+the plan of the round with the fewest fails, and goes back to it when the last
+round ends with more. The fails of a round count every connection without a way
+at its end, also one that the round ripped up after its sweep had passed it and
+so did not place again. After the rounds, one last pass offers every connection
+without a way the free slots of that plan, and rips up nothing; the stage block
+shows it as `free slots` when it places a connection. Within a sweep, a
+connection without a way also raises the price of the slots in its way that
+another wire holds, so that the next sweeps leave them to it. The step that
+moves the wires in its way aside raises the price, so with `max_relaxation` at
+`0`, no price rises.
+
+The stage limits `max_relaxation` to a value below half the number of
+connections. A connection that may rip up all the others takes their room, they
+find no way back, and every round repeats this. With two or more connections,
+the limit is at least `1`, so that two connections that want one slot can still
+move each other aside. With the default of `4`, the eight benchmark chips route
+every wire within two rounds. `2` is the smallest value that routes every wire
+there, in up to four rounds. A value above `4` routes them in two rounds as
+well, but each round takes longer.
+
 ## `[run]`
 
-| Key          | Default | Meaning                                                                       |
-| ------------ | ------- | ----------------------------------------------------------------------------- |
-| `stop_after` | `""`    | The last step of a run: `capacity`, `global` or `assign`; empty runs them all |
+| Key          | Default | Meaning                                                                                   |
+| ------------ | ------- | ----------------------------------------------------------------------------------------- |
+| `stop_after` | `""`    | The last step of a run: `capacity`, `global`, `assign` or `corridor`; empty runs them all |
 
 `mqt-scpd list-algorithms` names the implementations that a build ships for each
 step. `--stop-after` replaces `stop_after` for one run.

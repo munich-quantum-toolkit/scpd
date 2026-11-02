@@ -160,20 +160,20 @@ def test_a_planning_stage_is_drawn_over_the_chip_on_layers_of_its_own() -> None:
     geometry = PlanningGeometry(
         partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
         bottlenecks=[((0.0, 0.0), (10.0, 0.0), 3)],
-        inner=[((0.0, 0.0), (50.0, 50.0))],
-        assignments=[((50.0, 50.0), (100.0, 0.0))],
+        corridors=[[(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)]],
+        slots=[(50.0, 50.0)],
     )
 
     svg = layout_svg(_mini(), planning=geometry)
 
     root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
     groups = {group.get("class") for group in root.iter(f"{SVG}g")}
-    assert {"l-partition", "l-bottleneck", "l-inner", "l-assignment"} <= groups
+    assert {"l-partition", "l-bottleneck", "l-corridor", "l-slot"} <= groups
     assert any(text.text == "3" for text in root.iter(f"{SVG}text"))
     style = root.find(f"{SVG}style")
     assert style is not None
     assert style.text is not None
-    assert "g.l-inner>path" in style.text
+    assert "g.l-corridor>path" in style.text
 
 
 def test_every_feedline_chain_runs_in_steps_in_one_color() -> None:
@@ -260,22 +260,52 @@ def test_a_stage_leaves_out_what_its_picture_does_not_need() -> None:
     assert other.isdisjoint({"l-bottleneck", "l-keepout", "l-chain"})
 
 
-def test_the_chords_are_dashed_and_the_ground_under_them_light() -> None:
-    """The assign picture draws its chords dashed and the borders under them light."""
+def test_the_corridors_are_solid_and_the_ground_under_them_light() -> None:
+    """A corridor is a solid line on a casing, and continues along the stub to its port.
+
+    The turns of the stub are rounded, and the corridor picture draws the borders light.
+    """
     geometry = PlanningGeometry(
-        borders=[[(0.0, 50.0), (50.0, 50.0), (100.0, 50.0)]],
-        assignments=[((0.0, 0.0), (50.0, 50.0))],
+        borders=[[(0.0, 50.0), (100.0, 50.0)]],
+        corridors=[[(0.0, 0.0), (50.0, 50.0)]],
+        stubs=[[(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)]],
     )
 
-    svg = layout_svg(_mini(), stage="assign", planning=geometry)
+    svg = layout_svg(_mini(), stage="corridor", planning=geometry)
 
     root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
-    assert root.get("class") == "assign"
+    assert root.get("class") == "corridor"
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-corridor")
+    paths = layer.findall(f"{SVG}path")
+    assert [path.get("class") for path in paths] == ["casing", None]
+    assert all(path.get("d") == paths[0].get("d") for path in paths)
+    data = paths[0].get("d") or ""
+    assert data.count("M") == 1
+    assert data.count("Q") == 2
     style = root.find(f"{SVG}style")
     assert style is not None
     assert style.text is not None
-    assert "g.l-assignment>path{stroke-dasharray" in style.text
-    assert "svg.assign g.l-border>path" in style.text
+    assert "g.l-corridor>path{stroke-dasharray" not in style.text
+    assert "svg.corridor g.l-border>path" in style.text
+
+
+def test_corridors_that_end_at_one_point_each_continue_along_their_stub() -> None:
+    """Two corridors that end at the same point both join their own stub in one line with rounded turns."""
+    geometry = PlanningGeometry(
+        corridors=[[(0.0, 0.0), (50.0, 50.0)], [(100.0, 0.0), (50.0, 50.0)]],
+        stubs=[
+            [(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)],
+            [(50.0, 50.0), (50.0, 400.0), (-500.0, 400.0)],
+        ],
+    )
+
+    svg = layout_svg(_mini(), stage="corridor", planning=geometry)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-corridor")
+    data = layer.findall(f"{SVG}path")[0].get("d") or ""
+    assert data.count("M") == 2
+    assert data.count("Q") == 4
 
 
 def test_the_panel_lists_the_layers_the_picture_carries() -> None:
@@ -287,7 +317,7 @@ def test_the_panel_lists_the_layers_the_picture_carries() -> None:
     layers = json.loads(found[1])
     names = [name for name, _, _ in layers]
     assert {"Grid", "Metal", "Ports", "Frame"} <= set(names)
-    assert "Assignments" not in names
+    assert "Corridors" not in names
     root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
     assert any(text.text == "LAYOUT" for text in root.iter(f"{SVG}text"))
 
@@ -356,11 +386,11 @@ def test_a_border_of_one_cell_edge_is_left_out() -> None:
 
 
 def test_the_partitions_take_the_gray_of_their_tone_where_the_stage_shows_them() -> None:
-    """The capacity and assign pictures shade each toned partition under the grid; others do not."""
+    """The capacity and corridor pictures shade each toned partition under the grid; others do not."""
     square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
     geometry = PlanningGeometry(partitions=[[square], [square], [square]], partition_tones=[0, 1, None])
 
-    for stage in ("capacity", "assign"):
+    for stage in ("capacity", "corridor"):
         svg = layout_svg(_mini(), stage=stage, planning=geometry)
         root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
         (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-tone")

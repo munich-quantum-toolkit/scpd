@@ -56,7 +56,7 @@ together, it names the offending port or key and exits with a nonzero status.
 beyond those of `plot` and `render`: the `launcher_target` of the assignment,
 the `component` pattern, and the bridge rules of the couplers. The configuration
 of every benchmark chip carries them. `doctor` checks the configuration for the
-steps up to `[run] stop_after`, which are all three steps when the key is
+steps up to `[run] stop_after`, which are all four steps when the key is
 missing, so a configuration without `launcher_target` passes `doctor` only with
 `stop_after = "global"` or an earlier step:
 
@@ -71,6 +71,7 @@ A run writes one artifact per step into its directory, in this order:
 | capacity | `01-capacity.fb` | Partitions the free space at its bottlenecks and budgets the wires of every capacity chain |
 | global   | `02-global.fb`   | Solves the inner circuit and the port ring that the assignment works on                    |
 | assign   | `03-assign.fb`   | Assigns the ring ports to launchers and feedline chains                                    |
+| corridor | `04-corridor.fb` | Routes every connection through the partitions                                             |
 
 The global step runs before the assignment, because the inner circuit decides at
 which coupler ports its wires surface, and the assignment works on the ring that
@@ -84,7 +85,7 @@ configuration, ends a run after a step. `--stage <step>` runs one step again on
 the copies a run carries and deletes the artifacts of every later step:
 
 ```console
-mqt-scpd plan -o runs/33q --stage assign
+mqt-scpd plan -o runs/33q --stage corridor
 ```
 
 Beside each artifact a step writes a record of its inputs, for example
@@ -99,43 +100,44 @@ block of the refused step; running that step deletes the artifacts of every
 later step:
 
 ```console
-📌 assign
+🧭 corridor
    ✗ [design_rules] in config.toml changed after the capacity step wrote 01-capacity.fb; run the capacity step again
 
-✗ stopped at assign after 0.00s
+✗ stopped at corridor after 0.00s
 ```
 
 A step may run again after a change to a section that only it reads, such as
-`[stages.assignment]` for the assign step.
+`[stages.corridor]` for the corridor step.
 
 `plot` and `render` draw a planning step of a run over the chip:
 
 ```console
-mqt-scpd plot --run-dir runs/33q --stage assign -o 33q-assign.svg
+mqt-scpd plot --run-dir runs/33q --stage corridor -o 33q-corridor.svg
 mqt-scpd render --run-dir runs/33q --stage capacity -o 33q-capacity.gds
 ```
 
-The picture of the assign step also shows every feedline chain. A chain runs
-from its first launcher through the feeds of its resonators to its last
-launcher. In SVG every chain runs in horizontal and vertical steps in one color
-and names its launchers and resonators under the pointer; in GDS the chains are
-on layer 32, `plan.feedline`. A chain that ends at a termination ends at the
-feed of its resonator there, with a square mark.
+The pictures of the assign and corridor steps also show every feedline chain. A
+chain runs from its first launcher through the feeds of its resonators to its
+last launcher. In SVG every chain runs in horizontal and vertical steps in one
+color and names its launchers and resonators under the pointer; in GDS the
+chains are on layer 32, `plan.feedline`. A chain that ends at a termination ends
+at the feed of its resonator there, with a square mark.
 
 An SVG shows the chip like a layout tool shows a mask: hatched metal on a light
 substrate, a millimeter grid, rulers and a scale bar. Every port is a red
 marker. The global picture shows the Hanan lattices and, in green, the lattice
 edges that the inner circuit selected. The capacity picture shows the partition
 borders. The assign picture shows each ring port joined to its feed by a black
-dashed chord, over light borders and with the green inner wires of the global
-step. All three show the cells the grid blocked, in dark gray under the artwork:
-the artwork as the grid rasterizes it, and the approach of every port. No
-picture shows the gates. The capacity and assign pictures leave out the borders
-of partitions that the artwork closes in on every side, such as the free space
-inside a ring of qubits. Every other partition is shaded in a light gray that
-differs from its neighbors. Opened on its own in a browser, the picture has a
-**Layers** panel in its top left corner that shows and hides each layer, and it
-leaves out the finest detail when zoomed out.
+dashed chord, and the corridor picture the corridors as dark lines, both over
+light borders and with the green inner wires of the global step. All four show
+the cells the grid blocked, in dark gray under the artwork: the artwork as the
+grid rasterizes it, and the approach of every port. No picture shows the gates.
+The capacity, assign and corridor pictures leave out the borders of partitions
+that the artwork closes in on every side, such as the free space inside a ring
+of qubits. Every other partition is shaded in a light gray that differs from its
+neighbors. Opened on its own in a browser, the picture has a **Layers** panel in
+its top left corner that shows and hides each layer, and it leaves out the
+finest detail when zoomed out.
 
 {doc}`terminal_output` describes what a run prints and what `-v`, `-vv` and
 `-vvv` add.
@@ -148,16 +150,18 @@ KLayout. The obstacles match exactly; the benchmark job checks that for every
 chip. The port labels go to layer 10, with the port's role as the datatype,
 which keeps them clear of the wire, coupler, bridge, and clearance layers 2 to 5
 of the routed layouts. A planning step goes to the layers from 20 on, one per
-kind of shape, such as `plan.partition` on layer 21 and `plan.assignment` on
-layer 28. The cells the grid blocked are on layer 33, `plan.blocked`, and the
-wire budget of each bottleneck is a text on layer 34, `plan.budget`.
+kind of shape, such as `plan.partition` on layer 21 and `plan.corridor` on layer
+30. Layer 30 also carries the approach of each corridor to its target port. The
+cells the grid blocked are on layer 33, `plan.blocked`, and the wire budget of
+each bottleneck is a text on layer 34, `plan.budget`.
 
 ## What the Current Release Does
 
 MQT SCPD is being ported, one stage at a time, from the research prototype that
 produced the results of the paper. The current release reads, checks, draws, and
 exports the chip inputs, and it plans them: it partitions the free space, solves
-the inner circuit, and assigns the ports to launchers. It does not route the
-wires yet. Until the routing stages arrive, the routed layouts and the metrics
-of Table I in `planar-superconducting-pd` come from the prototype, and this page
-grows with each stage that MQT SCPD takes over.
+the inner circuit, assigns the ports to launchers, and routes every connection
+through the partitions. It does not draw the wires yet. Until those stages
+arrive, the routed layouts and the metrics of Table I in
+`planar-superconducting-pd` come from the prototype, and this page grows with
+each stage that MQT SCPD takes over.

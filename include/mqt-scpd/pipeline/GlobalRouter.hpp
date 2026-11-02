@@ -112,7 +112,8 @@ innerCircuitOf(const ChipT& chip, const ConfigT& config);
  * circuit. The ring end of a bridge may be cut off: it needs a way only where
  * an inner wire surfaces there. The router checks only the ring ports that a
  * chain carries. The Capacity stage leaves a port off every chain only where
- * it finds no free cell for the target of the port.
+ * it finds no free cell for the target of the port, and the Corridor stage
+ * then counts the wire of the port as unrouted.
  *
  * @return The router.
  */

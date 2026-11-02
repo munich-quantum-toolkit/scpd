@@ -154,6 +154,22 @@ selectedGlobalRouter(const ConfigT& config);
 selectedAssigner(const ConfigT& config);
 
 /**
+ * @brief Returns the corridor routers this build ships.
+ * @return The registry.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<ICorridorRouter>&
+corridorRouters();
+
+/**
+ * @brief Returns the corridor router a configuration selects.
+ * @param config The run configuration.
+ * @return The configured name, or the default when the configuration names
+ * none.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
+selectedCorridorRouter(const ConfigT& config);
+
+/**
  * @brief Lists what would stop a run of the planning stages, before any stage
  * runs.
  *
@@ -161,8 +177,8 @@ selectedAssigner(const ConfigT& config);
  * it have run. The check reads only the chip and the configuration:
  *
  * - every step names an implementation this build registers;
- * - a run through the capacity or assignment step asks for a detail grid of
- *   at most MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
+ * - a run through the capacity, assignment or corridor step asks for a detail
+ *   grid of at most MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
  * - a run through the global step has a ring that innerCircuitOf() accepts;
  * - a run through the assignment sets `[stages.assignment] launcher_target`;
  * - `launcher_target` plus `[design_rules] feedline_terminations` is even,
@@ -176,8 +192,8 @@ selectedAssigner(const ConfigT& config);
  *
  * @param chip The classified chip.
  * @param config The run configuration.
- * @param steps The steps the run takes: `capacity`, `global` or `assign`.
- * The check skips any other name.
+ * @param steps The steps the run takes: `capacity`, `global`, `assign` or
+ * `corridor`. The check skips any other name.
  * @return The problems, empty when there are none.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<std::string>

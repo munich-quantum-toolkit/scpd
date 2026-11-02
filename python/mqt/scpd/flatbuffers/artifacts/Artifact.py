@@ -88,6 +88,7 @@ def End(builder: flatbuffers.Builder) -> int:
 
 import mqt.scpd.flatbuffers.artifacts.Assignment
 import mqt.scpd.flatbuffers.artifacts.CapacityPlan
+import mqt.scpd.flatbuffers.artifacts.CorridorRouting
 import mqt.scpd.flatbuffers.artifacts.DetailRouting
 import mqt.scpd.flatbuffers.artifacts.FinalRouting
 import mqt.scpd.flatbuffers.artifacts.Geometry
@@ -109,7 +110,7 @@ class ArtifactT(object):
     ):
         self.producer = producer  # type: Optional[str]
         self.outputType = outputType  # type: int
-        self.output = output  # type: Union[None, 'mqt.scpd.flatbuffers.artifacts.CapacityPlan.CapacityPlanT', 'mqt.scpd.flatbuffers.artifacts.Assignment.AssignmentT', 'mqt.scpd.flatbuffers.artifacts.GlobalRouting.GlobalRoutingT', 'mqt.scpd.flatbuffers.artifacts.DetailRouting.DetailRoutingT', 'mqt.scpd.flatbuffers.artifacts.FinalRouting.FinalRoutingT', 'mqt.scpd.flatbuffers.artifacts.Geometry.GeometryT']
+        self.output = output  # type: Union[None, 'mqt.scpd.flatbuffers.artifacts.CapacityPlan.CapacityPlanT', 'mqt.scpd.flatbuffers.artifacts.Assignment.AssignmentT', 'mqt.scpd.flatbuffers.artifacts.GlobalRouting.GlobalRoutingT', 'mqt.scpd.flatbuffers.artifacts.DetailRouting.DetailRoutingT', 'mqt.scpd.flatbuffers.artifacts.FinalRouting.FinalRoutingT', 'mqt.scpd.flatbuffers.artifacts.Geometry.GeometryT', 'mqt.scpd.flatbuffers.artifacts.CorridorRouting.CorridorRoutingT']
 
     @classmethod
     def InitFromBuf(cls, buf, pos):

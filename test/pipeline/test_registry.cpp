@@ -87,6 +87,8 @@ TEST(ShippedRegistries, ShipOneImplementationPerStage) {
             (std::vector<std::string>{"watershed"}));
   EXPECT_EQ(globalRouters().names(), (std::vector<std::string>{"hanan-milp"}));
   EXPECT_EQ(assigners().names(), (std::vector<std::string>{"ordered-milp"}));
+  EXPECT_EQ(corridorRouters().names(),
+            (std::vector<std::string>{"partition-astar"}));
 }
 
 TEST(ShippedRegistries, FallBackToTheDefaultWhenAConfigurationSelectsNothing) {
@@ -94,6 +96,7 @@ TEST(ShippedRegistries, FallBackToTheDefaultWhenAConfigurationSelectsNothing) {
   EXPECT_EQ(selectedCapacityPlanner(bare), "watershed");
   EXPECT_EQ(selectedGlobalRouter(bare), "hanan-milp");
   EXPECT_EQ(selectedAssigner(bare), "ordered-milp");
+  EXPECT_EQ(selectedCorridorRouter(bare), "partition-astar");
 
   ConfigT empty;
   empty.stages = std::make_unique<flatbuffers::config::StageParamsT>();
@@ -102,9 +105,12 @@ TEST(ShippedRegistries, FallBackToTheDefaultWhenAConfigurationSelectsNothing) {
   empty.stages->global = std::make_unique<flatbuffers::config::GlobalParamsT>();
   empty.stages->assignment =
       std::make_unique<flatbuffers::config::AssignmentParamsT>();
+  empty.stages->corridor =
+      std::make_unique<flatbuffers::config::CorridorParamsT>();
   EXPECT_EQ(selectedCapacityPlanner(empty), "watershed");
   EXPECT_EQ(selectedGlobalRouter(empty), "hanan-milp");
   EXPECT_EQ(selectedAssigner(empty), "ordered-milp");
+  EXPECT_EQ(selectedCorridorRouter(empty), "partition-astar");
 }
 
 TEST(ShippedRegistries, HonorAConfiguredName) {
@@ -121,14 +127,20 @@ TEST(ShippedRegistries, HonorAConfiguredName) {
   config.stages->assignment =
       std::make_unique<flatbuffers::config::AssignmentParamsT>();
   config.stages->assignment->assigner = "other-assigner";
+  config.stages->corridor =
+      std::make_unique<flatbuffers::config::CorridorParamsT>();
+  config.stages->corridor->router = "other-corridors";
   EXPECT_EQ(selectedCapacityPlanner(config), "other-planner");
   EXPECT_EQ(selectedGlobalRouter(config), "other-router");
   EXPECT_EQ(selectedAssigner(config), "other-assigner");
+  EXPECT_EQ(selectedCorridorRouter(config), "other-corridors");
 }
 
 /// The planning steps of a run that takes them all. A function rather than a
 /// constant, so that building the list cannot throw before main().
-std::vector<std::string> allSteps() { return {"capacity", "global", "assign"}; }
+std::vector<std::string> allSteps() {
+  return {"capacity", "global", "assign", "corridor"};
+}
 
 /// Whether one of the problems starts with a given text.
 bool mentions(const std::vector<std::string>& problems,
@@ -146,7 +158,7 @@ TEST(PlanProblems, FindNothingWrongWithTheFixture) {
 TEST(PlanProblems, NameAnImplementationThatIsNotRegistered) {
   auto config = test::miniConfig();
   config.stages->global->router = "other-router";
-  config.stages->assignment->assigner = "other-assigner";
+  config.stages->corridor->router = "other-corridors";
 
   const auto problems = planProblems(test::miniChip(), config, allSteps());
   EXPECT_EQ(problems.size(), 2U);
@@ -154,9 +166,8 @@ TEST(PlanProblems, NameAnImplementationThatIsNotRegistered) {
                        "[stages.global] router 'other-router' is not a "
                        "known implementation; the registered ones "
                        "are hanan-milp"));
-  EXPECT_TRUE(
-      mentions(problems, "[stages.assignment] assigner 'other-assigner'"));
-  // A run that ends before the assignment does not build its assigner.
+  EXPECT_TRUE(mentions(problems, "[stages.corridor] router 'other-corridors'"));
+  // A run that ends before the corridor does not build its router.
   EXPECT_EQ(
       planProblems(test::miniChip(), config, {"capacity", "global"}).size(),
       1U);
@@ -311,7 +322,7 @@ TEST(PlanProblems, RefuseADetailGridAboveTheLimit) {
                 "detail_factor 60; the limit is 25000000 cells"});
   // The global step reads no grid.
   EXPECT_TRUE(planProblems(test::miniChip(), config, {"global"}).empty());
-  EXPECT_EQ(planProblems(test::miniChip(), config, {"assign"}).size(), 1U);
+  EXPECT_EQ(planProblems(test::miniChip(), config, {"corridor"}).size(), 1U);
 }
 
 TEST(PlanProblems, AcceptADetailGridAtTheLimit) {

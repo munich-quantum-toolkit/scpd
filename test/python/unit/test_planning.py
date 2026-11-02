@@ -25,6 +25,8 @@ from mqt.scpd.flatbuffers.artifacts.Bottleneck import BottleneckT
 from mqt.scpd.flatbuffers.artifacts.CapacityElement import CapacityElement
 from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
+from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
@@ -81,7 +83,7 @@ def test_the_capacity_picture_holds_the_partitions_and_the_launchers(run: RunDir
     assert all(len(ring) >= 3 for partition in geometry.partitions for ring in partition)
     assert geometry.borders
     assert len(geometry.launchers) == 4
-    assert not geometry.assignments
+    assert not geometry.corridors
     # The grid blocks a border of cells along its edge.
     assert geometry.blocked
     assert len(geometry.partition_tones) == len(geometry.partitions)
@@ -379,6 +381,94 @@ def test_blocked_cells_alone_are_something_to_draw() -> None:
     assert not PlanningGeometry(blocked=[square]).is_empty()
 
 
+def test_the_corridor_picture_draws_the_feedlines_of_its_assignment(run: RunDirectory) -> None:
+    """The wires of the resonators start at the feeds the feedlines pass, so both are drawn together."""
+    chip = chip_of(run)
+    assignment = run.artifact("assign").read_bytes()
+    corridor = run.artifact("corridor").read_bytes()
+
+    assigned = planning_geometry(assignment, chip, "assign")
+    routed = planning_geometry(corridor, chip, "corridor", assignment=assignment)
+
+    assert assigned.feedlines
+    assert routed.feedlines == assigned.feedlines
+    assert not planning_geometry(corridor, chip, "corridor").feedlines
+    with pytest.raises(PlanningError, match="not an assignment"):
+        planning_geometry(corridor, chip, "corridor", assignment=run.artifact("capacity").read_bytes())
+
+
+def test_the_corridor_picture_draws_every_route_over_the_partitions(run: RunDirectory) -> None:
+    """A corridor runs from its feed over its crossings to its target, over the partitions it uses."""
+    geometry = planning_geometry(
+        run.artifact("corridor").read_bytes(),
+        chip_of(run),
+        "corridor",
+        capacity=run.artifact("capacity").read_bytes(),
+    )
+
+    assert len(geometry.corridors) == 5
+    assert all(len(route) >= 2 for route in geometry.corridors)
+    assert geometry.slots
+    assert geometry.partitions
+
+
+@pytest.mark.parametrize("partitions", [[0], [0, 1]], ids=["one", "two"])
+def test_a_corridor_through_the_first_partition_is_read_and_drawn(run: RunDirectory, partitions: list[int]) -> None:
+    """Partition 0 is a partition like any other, so a corridor through it is complete and drawn."""
+    crossings = [PointT(50.0, 0.0)] if len(partitions) == 2 else []
+    corridor = CorridorT(partitions=partitions, crossings=crossings, source=PointT(0.0, 0.0), target=PointT(100.0, 0.0))
+    data = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.CorridorRouting,
+            output=CorridorRoutingT(corridors=[corridor], slots=[]),
+        )
+    )
+
+    output = read_artifact(data).output
+    geometry = planning_geometry(data, chip_of(run), "corridor")
+
+    assert isinstance(output, CorridorRoutingT)
+    assert output.corridors is not None
+    (read,) = output.corridors
+    assert read is not None
+    assert read.partitions is not None
+    assert [int(partition) for partition in read.partitions] == partitions
+    assert geometry.corridors == [[(0.0, 0.0), *((point.x, point.y) for point in crossings), (100.0, 0.0)]]
+
+
+def test_every_routed_wire_approaches_its_target_port(run: RunDirectory) -> None:
+    """A stub runs from where a corridor ends to the port its connection targets, by connection order."""
+    chip = chip_of(run)
+    corridor = run.artifact("corridor").read_bytes()
+    assignment = run.artifact("assign").read_bytes()
+
+    geometry = planning_geometry(corridor, chip, "corridor", assignment=assignment)
+
+    chosen = read_artifact(assignment).output
+    assert isinstance(chosen, AssignmentT)
+    ports = chip.ports or []
+    targets = set()
+    for connection in chosen.connections or []:
+        assert connection is not None
+        assert connection.target is not None
+        center = ports[connection.target.index].center
+        assert center is not None
+        targets.add((center.x, center.y))
+    assert len(geometry.stubs) == len(geometry.corridors)
+    assert all(stub[0] == route[-1] for stub, route in zip(geometry.stubs, geometry.corridors, strict=True))
+    assert all(stub[-1] in targets for stub in geometry.stubs)
+    # The last leg runs along the direction of the port.
+    by_center = {(port.center.x, port.center.y): port for port in ports if port is not None and port.center is not None}
+    for stub in geometry.stubs:
+        if len(stub) == 3:
+            angle = math.radians(by_center[stub[-1]].orientation)
+            dx, dy = stub[1][0] - stub[2][0], stub[1][1] - stub[2][1]
+            assert abs(dx * math.sin(angle) - dy * math.cos(angle)) < 1e-6
+    # Without the assignment no corridor names its port.
+    assert not planning_geometry(corridor, chip, "corridor").stubs
+
+
 def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:
     """The artifact has to be the one of the stage it is drawn as."""
     with pytest.raises(PlanningError, match="not a global routing"):
@@ -479,17 +569,20 @@ def solved_routing() -> bytes:
     )
 
 
-def test_the_assign_picture_draws_the_selected_edges_of_the_inner_circuit(run: RunDirectory) -> None:
+@pytest.mark.parametrize("stage", ["assign", "corridor"])
+def test_the_assign_and_corridor_pictures_draw_the_selected_edges_of_the_inner_circuit(
+    run: RunDirectory, stage: str
+) -> None:
     """The inner wires show on the lattice edges the circuit selected; the rest of the lattice does not."""
-    data = run.artifact("assign").read_bytes()
+    data = run.artifact(stage).read_bytes()
 
-    geometry = planning_geometry(data, chip_of(run), "assign", global_routing=solved_routing())
+    geometry = planning_geometry(data, chip_of(run), stage, global_routing=solved_routing())
 
     assert geometry.inner == [((100.0, 0.0), (100.0, 50.0))]
     assert not geometry.lattice
-    assert not planning_geometry(data, chip_of(run), "assign").inner
+    assert not planning_geometry(data, chip_of(run), stage).inner
     with pytest.raises(PlanningError, match="the global artifact is not a global routing"):
-        planning_geometry(data, chip_of(run), "assign", global_routing=run.artifact("capacity").read_bytes())
+        planning_geometry(data, chip_of(run), stage, global_routing=run.artifact("capacity").read_bytes())
 
 
 @pytest.mark.parametrize(
@@ -497,6 +590,7 @@ def test_the_assign_picture_draws_the_selected_edges_of_the_inner_circuit(run: R
     [
         ("capacity", "global", "not a capacity plan"),
         ("assign", "capacity", "not an assignment"),
+        ("corridor", "capacity", "not a corridor routing"),
     ],
 )
 def test_every_stage_refuses_the_artifact_of_another(run: RunDirectory, stage: str, drawn: str, expected: str) -> None:

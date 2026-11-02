@@ -325,6 +325,9 @@ Problems validate(const ConfigT& config) {
                         MAX_SOLVER_THREADS, stages.solver->threads));
       }
     }
+    if (stages.corridor != nullptr && stages.corridor->rounds == 0) {
+      problems.emplace_back("stages.corridor: rounds must be at least one");
+    }
   }
   return problems;
 }

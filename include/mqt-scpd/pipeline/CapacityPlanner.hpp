@@ -31,7 +31,8 @@ namespace mqt::scpd::pipeline {
  *
  * None of it is an artifact. It is rebuilt from the chip and the configuration
  * whenever a stage needs it, which keeps the artifacts small and makes a
- * resumed run equal to an uninterrupted one.
+ * resumed run equal to an uninterrupted one. The Corridor stage rebuilds the
+ * same scene.
  */
 struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
   /// The coarse grid the wire budgets are counted on.
@@ -66,7 +67,8 @@ struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
  * @brief Returns how far apart the places sit where a wire may cross a
  * partition border.
  *
- * The Capacity stage counts them into the budget of a border.
+ * The Capacity stage counts them into the budget of a border and the Corridor
+ * stage crosses at them, so both read the figure here.
  *
  * @param config The run configuration.
  * @return The crossing pitch, in layout units.
@@ -88,7 +90,8 @@ crossingPitch(const ConfigT& config);
  * hold the port centers, so such launchers sit on the edge of the chip. The
  * same holds for each edge of the grid that no launcher sits on, where a
  * launcher sits on the edge nearest to it. The Capacity stage counts these
- * slots into the budget of a border.
+ * slots into the budget of a border, and the Corridor stage routes across the
+ * same slots.
  *
  * @param border The border, in cell coordinates of the detail grid.
  * @param scene The scene of the run, which holds the launcher cells.
@@ -187,13 +190,13 @@ buildScene(const ChipT& chip, const ConfigT& config);
  * into partitions, and grows the rest of the free space from the middle of
  * every clear capacity cell.
  *
- * A bottleneck of a chain usually parts two partitions, so a border runs
- * through it. A bottleneck between a wall and an island is the exception when
- * the free space also runs around the other side of the island and the chain
- * dropped the gate there: both sides of the bottleneck then lie in one
- * partition, and no border runs through it. The Global stage still budgets
- * the wires of the chain through the bottleneck, which counts less room than
- * the island leaves.
+ * A bottleneck of a chain usually parts two partitions, so the Corridor stage
+ * meets a border there. A bottleneck between a wall and an island is the
+ * exception when the free space also runs around the other side of the
+ * island and the chain dropped the gate there: both sides of the bottleneck
+ * then lie in one partition. The Global stage still budgets the wires of the
+ * chain through the bottleneck, which counts less room than the island
+ * leaves, and the Corridor stage meets no border at it.
  *
  * A corridor that runs at an angle other than a grid axis or a diagonal gives
  * a row of bottlenecks along its length (see grid::findBottlenecks()). Where

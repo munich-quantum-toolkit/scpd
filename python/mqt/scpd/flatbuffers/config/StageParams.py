@@ -7,6 +7,7 @@ from flatbuffers.compat import import_numpy
 from typing import Any
 from mqt.scpd.flatbuffers.config.AssignmentParams import AssignmentParams
 from mqt.scpd.flatbuffers.config.CapacityParams import CapacityParams
+from mqt.scpd.flatbuffers.config.CorridorParams import CorridorParams
 from mqt.scpd.flatbuffers.config.GlobalParams import GlobalParams
 from mqt.scpd.flatbuffers.config.SolverParams import SolverParams
 from typing import Optional
@@ -71,8 +72,18 @@ class StageParams(object):
             return obj
         return None
 
+    # StageParams
+    def Corridor(self) -> Optional[CorridorParams]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = CorridorParams()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
 def StageParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(4)
+    builder.StartObject(5)
 
 def Start(builder: flatbuffers.Builder):
     StageParamsStart(builder)
@@ -101,6 +112,12 @@ def StageParamsAddSolver(builder: flatbuffers.Builder, solver: int):
 def AddSolver(builder: flatbuffers.Builder, solver: int):
     StageParamsAddSolver(builder, solver)
 
+def StageParamsAddCorridor(builder: flatbuffers.Builder, corridor: int):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(corridor), 0)
+
+def AddCorridor(builder: flatbuffers.Builder, corridor: int):
+    StageParamsAddCorridor(builder, corridor)
+
 def StageParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -109,6 +126,7 @@ def End(builder: flatbuffers.Builder) -> int:
 
 import mqt.scpd.flatbuffers.config.AssignmentParams
 import mqt.scpd.flatbuffers.config.CapacityParams
+import mqt.scpd.flatbuffers.config.CorridorParams
 import mqt.scpd.flatbuffers.config.GlobalParams
 import mqt.scpd.flatbuffers.config.SolverParams
 try:
@@ -125,11 +143,13 @@ class StageParamsT(object):
         global_ = None,
         assignment = None,
         solver = None,
+        corridor = None,
     ):
         self.capacity = capacity  # type: Optional[mqt.scpd.flatbuffers.config.CapacityParams.CapacityParamsT]
         self.global_ = global_  # type: Optional[mqt.scpd.flatbuffers.config.GlobalParams.GlobalParamsT]
         self.assignment = assignment  # type: Optional[mqt.scpd.flatbuffers.config.AssignmentParams.AssignmentParamsT]
         self.solver = solver  # type: Optional[mqt.scpd.flatbuffers.config.SolverParams.SolverParamsT]
+        self.corridor = corridor  # type: Optional[mqt.scpd.flatbuffers.config.CorridorParams.CorridorParamsT]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -160,6 +180,8 @@ class StageParamsT(object):
             self.assignment = mqt.scpd.flatbuffers.config.AssignmentParams.AssignmentParamsT.InitFromObj(stageParams.Assignment())
         if stageParams.Solver() is not None:
             self.solver = mqt.scpd.flatbuffers.config.SolverParams.SolverParamsT.InitFromObj(stageParams.Solver())
+        if stageParams.Corridor() is not None:
+            self.corridor = mqt.scpd.flatbuffers.config.CorridorParams.CorridorParamsT.InitFromObj(stageParams.Corridor())
 
     # StageParamsT
     def Pack(self, builder):
@@ -171,6 +193,8 @@ class StageParamsT(object):
             assignment = self.assignment.Pack(builder)
         if self.solver is not None:
             solver = self.solver.Pack(builder)
+        if self.corridor is not None:
+            corridor = self.corridor.Pack(builder)
         StageParamsStart(builder)
         if self.capacity is not None:
             StageParamsAddCapacity(builder, capacity)
@@ -180,5 +204,7 @@ class StageParamsT(object):
             StageParamsAddAssignment(builder, assignment)
         if self.solver is not None:
             StageParamsAddSolver(builder, solver)
+        if self.corridor is not None:
+            StageParamsAddCorridor(builder, corridor)
         stageParams = StageParamsEnd(builder)
         return stageParams

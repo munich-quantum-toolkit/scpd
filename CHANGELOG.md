@@ -28,13 +28,14 @@ releases may include breaking changes.
   for the planning stages ([#140]) ([**@FeldmeierMichael**]):
   - `plot` and `render` refuse an artifact whose inputs have changed since its
     step, and `inspect` prints such an artifact after a warning.
-  - The assign picture shows the feedline chains.
+  - The assign and corridor pictures show the feedline chains.
 - 🎨 Draw `plot` pictures like a mask in a layout tool ([#140])
   ([**@FeldmeierMichael**]):
   - Metal is hatched and has an inner contour on a light substrate. A picture
     has a millimeter grid, rulers, corner marks, a scale bar and a caption.
   - Every port is one red marker. Feedlines run in horizontal and vertical steps
-    in one color.
+    in one color. Corridors are solid dark lines that run on into their target
+    port along its direction, with rounded turns.
   - A picture opened on its own has a panel that shows and hides each layer.
   - The capacity picture shows the partition borders. No picture shows the
     gates, the port keep-out or the capacity chains.
@@ -42,11 +43,11 @@ releases may include breaking changes.
     straightens the staircase of a slanted border.
   - Every planning picture shows the blocked cells of the grid in dark gray
     under the artwork, without strips of free cells too thin to block. The
-    capacity and assign pictures leave out the borders of the partitions that
-    the artwork closes in, and shade every partition in a light gray that
-    differs from its neighbors.
-  - The assign picture shows the inner wires on the lattice edges that the
-    global step selected.
+    capacity, assign and corridor pictures leave out the borders of the
+    partitions that the artwork closes in, and shade every partition in a light
+    gray that differs from its neighbors.
+  - The assign and corridor pictures show the inner wires on the lattice edges
+    that the global step selected.
   - The assign picture draws its chords as thick black dashes and leaves out the
     ring of its ports.
 - ✨ Add the planning stages. The Capacity stage partitions the free space at
@@ -58,8 +59,11 @@ releases may include breaking changes.
   the gates of its chain have no room for, and a ring port without a bridge that
   its chain does not carry to a launcher. The Assignment stage assigns the ring
   ports to launchers and feedline chains with an integer program, and feeds no
-  two of them at one point. The stages write the artifacts `01-capacity.fb` to
-  `03-assign.fb`. They refuse a detail grid of more than 25,000,000 cells, a
+  two of them at one point. The Corridor stage routes every connection through
+  the partitions over the border slots inside the launcher ring, which are the
+  slots that the Capacity stage budgets. It keeps the crossings of two wires one
+  crossing pitch apart. The stages write the artifacts `01-capacity.fb` to
+  `04-corridor.fb`. They refuse a detail grid of more than 25,000,000 cells, a
   chip on which the targets of two ports lie on one detail cell, and two ports
   of one capacity chain that can carry an inner wire where the points
   `[design_rules] min_straight_length` in front of them coincide ([#140])
@@ -131,7 +135,7 @@ releases may include breaking changes.
   - `doctor` shows the `bridge_pair` pattern and the solvers it can reach.
   - `doctor` checks what would stop a run of the steps up to `[run] stop_after`,
     as `plan` does before its first stage. Without that key, `doctor` checks all
-    three steps and fails a configuration without `launcher_target`.
+    four steps and fails a configuration without `launcher_target`.
   - `doctor` warns about each removed key on a line that starts with `WARNING:`.
   - Every command exits with code 130 on Ctrl-C. It stops without a message and
     exits with code 1 when the reader of its output goes away, as with `| head`.

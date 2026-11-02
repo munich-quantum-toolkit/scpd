@@ -633,7 +633,7 @@ private:
       const auto starts = model.addBinary(std::format("starts_{}", index));
 
       // `starts` is one exactly where the anchor ends a chain and the chord
-      // that leaves it is unused, which is where a new chain begins. An
+      // that leaves it is unused, which is where a new corridor begins. An
       // anchor ends a chain where it takes a launcher, a termination, or
       // both, and it takes both where it is a chain of its own. The first
       // row keeps `starts` at zero at an anchor without an end, and the
@@ -945,9 +945,10 @@ private:
       }
     }
 
-    // A wire starts at the detail cell nearest its feed. Where a detail cell
-    // is wider than about 0.7 wire spacings, two feeds one spacing apart can
-    // round onto one cell, and the second wire would start on the first.
+    // The Corridor stage starts each wire at the detail cell nearest its
+    // feed. Where a detail cell is wider than about 0.7 wire spacings, two
+    // feeds one spacing apart can round onto one cell, and the second wire
+    // would start on the first.
     if (detail != nullptr) {
       const grid::GridMetrics grid{.width = detail->width,
                                    .height = detail->height,
