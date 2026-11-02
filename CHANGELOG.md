@@ -12,6 +12,54 @@ releases may include breaking changes.
 
 ### Added
 
+- 📝 Add a configuration reference that lists every key of `config.toml` with
+  its default and meaning ([#140]) ([**@FeldmeierMichael**])
+- ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory
+  ([#140]) ([**@FeldmeierMichael**]):
+  - `--stop-after` and `[run] stop_after` end a run after a step.
+  - `--stage` runs one step again on the copies that the run carries. It refuses
+    the step when the chip or a configuration section that an earlier step read
+    has changed since that step.
+  - `-v` and `-vv` show the steps and the items.
+  - A run prints one block per stage in the format of `docs/terminal_output.md`.
+    On a terminal, each block has a live progress line, which `--no-progress`
+    turns off.
+- ✨ Add `list-algorithms`, and `--stage` and `--run-dir` of `plot` and `render`
+  for the planning stages ([#140]) ([**@FeldmeierMichael**]):
+  - `plot` and `render` refuse an artifact whose inputs have changed since its
+    step, and `inspect` prints such an artifact after a warning.
+- 🎨 Draw `plot` pictures like a mask in a layout tool ([#140])
+  ([**@FeldmeierMichael**]):
+  - Metal is hatched and has an inner contour on a light substrate. A picture
+    has a millimeter grid, rulers, corner marks, a scale bar and a caption.
+  - Every port is one red marker.
+  - A picture opened on its own has a panel that shows and hides each layer.
+  - The capacity picture shows the partition borders. No picture shows the
+    gates, the port keep-out or the capacity chains.
+  - `plot` and `render` draw a partition border along its cell edges. `plot`
+    straightens the staircase of a slanted border.
+  - Every planning picture shows the blocked cells of the grid in dark gray
+    under the artwork, without strips of free cells too thin to block. The
+    capacity picture leaves out the borders of the partitions that the artwork
+    closes in, and shades every partition in a light gray that differs from its
+    neighbors.
+- ✨ Add the first planning stage. The Capacity stage partitions the free space
+  at its bottlenecks, one at the narrowest stretch of each corridor along a grid
+  axis or a diagonal, and budgets the wires of every capacity chain. The stage
+  writes the artifact `01-capacity.fb`. It refuses a detail grid of more than
+  25,000,000 cells and a chip on which the targets of two ports lie on one
+  detail cell ([#140]) ([**@FeldmeierMichael**])
+- ➕ Add the C++ dependencies Boost.Polygon and Boost.Config of Boost 1.89.0,
+  header-only and fetched at configure time, and the Python dependency `rich`.
+  The wheel carries the licenses of FlatBuffers and nlohmann/json, which its
+  extension links in, and its license expression names Apache-2.0 and BSL-1.0
+  next to MIT ([#140]) ([**@FeldmeierMichael**])
+- ✨ Add bridge pairs and components to the configuration: the `bridge_pair` and
+  `component` patterns, the `[[ports.bridge_pairs]]` rules, the stage sections
+  and `[run]` ([#140]) ([**@FeldmeierMichael**])
+- ✨ Add the `--chip` option of `doctor`, `plot`, `render` and `plan`; without
+  it, these commands read the `config.toml` of a run directory with the chip
+  copy `00-chip.json` beside it ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins
   move primitives, with a distance-field heuristic, a bucket queue whose memory
   is that of its largest search, one shared read-only obstacle mask and
@@ -49,6 +97,20 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y`: the
+  capacity step blocks no border of its grid, so the launchers on the edge stay
+  free. A configuration that sets them still loads, and `doctor` and `plan` warn
+  about each key ([#140]) ([**@FeldmeierMichael**])
+- 🎨 Change the output of the commands ([#140]) ([**@FeldmeierMichael**]):
+  - `plot`, `render` and `inspect -o` start their result line with `✓`.
+  - Every command except `doctor` starts the line of an input or stage error
+    with `✗`.
+  - `doctor` shows the `bridge_pair` pattern.
+  - `doctor` checks what would stop a run of the steps up to `[run] stop_after`,
+    as `plan` does before its first stage.
+  - `doctor` warns about each removed key on a line that starts with `WARNING:`.
+  - Every command exits with code 130 on Ctrl-C. It stops without a message and
+    exits with code 1 when the reader of its output goes away, as with `| head`.
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that
@@ -66,12 +128,18 @@ releases may include breaking changes.
 - 💥 Require Python 3.11 or newer ([#89]) ([**@denialhaag**])
 - ⬆️ Update `nanobind` to version 3.0.1 ([#83]) ([**@denialhaag**])
 
+### Fixed
+
+- 🐛 Preserve port-keepout holes in GDS/OASIS exports ([#140])
+  ([**@FeldmeierMichael**], [**@marcelwa**])
+
 <!-- Version links -->
 
 [unreleased]: https://github.com/munich-quantum-toolkit/scpd
 
 <!-- PR links -->
 
+[#140]: https://github.com/munich-quantum-toolkit/scpd/pull/140
 [#134]: https://github.com/munich-quantum-toolkit/scpd/pull/134
 [#111]: https://github.com/munich-quantum-toolkit/scpd/pull/111
 [#98]: https://github.com/munich-quantum-toolkit/scpd/pull/98

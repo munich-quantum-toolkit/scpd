@@ -95,10 +95,19 @@ TEST(ArtifactSchema, EveryStageOutputIsAnArtifact) {
   EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 6U);
 }
 
+/// A capacity plan that carries nothing, but carries every field the schema
+/// requires. A stage that produced nothing still writes a complete artifact.
+CapacityPlanT emptyPlan() {
+  CapacityPlanT plan;
+  plan.capacity_grid = std::make_unique<GridExtentT>();
+  plan.detail_grid = std::make_unique<GridExtentT>();
+  return plan;
+}
+
 TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   // The outputs of the stages that are not implemented yet are empty tables.
   // Each still travels behind the Artifact root with its own tag.
-  const ArtifactT capacity = readArtifact(writeArtifact(wrap(CapacityPlanT{})));
+  const ArtifactT capacity = readArtifact(writeArtifact(wrap(emptyPlan())));
   EXPECT_EQ(capacity.output.type, StageOutput::CapacityPlan);
   EXPECT_NE(capacity.output.AsCapacityPlan(), nullptr);
   EXPECT_EQ(capacity.producer, "mqt-scpd test");
@@ -111,6 +120,177 @@ TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   EXPECT_EQ(detail.output.type, StageOutput::DetailRouting);
   EXPECT_NE(detail.output.AsDetailRouting(), nullptr);
   EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
+}
+
+TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {
+  // The later stages walk a chain by index, so an index outside the nodes, a
+  // link back to an earlier node or a second path to one node would make the
+  // walk read past the end, never stop or count a subtree twice.
+  // Each target node names a port of its own.
+  std::uint32_t port = 0;
+  const auto node = [&port](const std::vector<std::uint32_t>& next) {
+    auto entry = std::make_unique<CapacityNodeT>();
+    entry->kind = CapacityElement::Target;
+    entry->id = port++;
+    entry->next = next;
+    return entry;
+  };
+  const auto launcher = [] {
+    auto entry = std::make_unique<CapacityNodeT>();
+    entry->kind = CapacityElement::Launcher;
+    return entry;
+  };
+
+  CapacityPlanT shared = emptyPlan();
+  shared.nodes.push_back(node({2}));
+  shared.nodes.push_back(node({2}));
+  shared.nodes.push_back(launcher());
+  shared.chains = {0, 1};
+  // Two chains may share a subtree without a target.
+  EXPECT_TRUE(validate(wrap(std::move(shared))).empty());
+
+  CapacityPlanT diamond = emptyPlan();
+  diamond.nodes.push_back(node({1, 2}));
+  diamond.nodes.push_back(node({2}));
+  diamond.nodes.push_back(launcher());
+  diamond.chains = {0};
+  // One chain may not reach a node twice: the walk would count it twice.
+  EXPECT_EQ(
+      validate(wrap(std::move(diamond))),
+      (std::vector<std::string>{"capacity chain 0 reaches node 2 twice"}));
+
+  CapacityPlanT outside = emptyPlan();
+  outside.nodes.push_back(node({3}));
+  outside.chains = {2};
+  EXPECT_EQ(
+      validate(wrap(std::move(outside))),
+      (std::vector<std::string>{"capacity node 0 links to node 3 of 1",
+                                "capacity chain 0 starts at node 2 of 1"}));
+
+  CapacityPlanT cycle = emptyPlan();
+  cycle.nodes.push_back(node({1}));
+  cycle.nodes.push_back(node({0}));
+  cycle.chains = {0};
+  EXPECT_EQ(validate(wrap(std::move(cycle))),
+            (std::vector<std::string>{
+                "capacity nodes link in a cycle: 2 of 2 nodes lie on or "
+                "behind one"}));
+
+  CapacityPlanT loop = emptyPlan();
+  loop.nodes.push_back(node({0}));
+  loop.chains = {0};
+  EXPECT_EQ(validate(wrap(std::move(loop))),
+            (std::vector<std::string>{
+                "capacity nodes link in a cycle: 1 of 1 node lies on or "
+                "behind one"}));
+}
+
+TEST(ArtifactSchema, RefusesATargetOnTwoCapacityChains) {
+  // The budget of a chain counts one wire of each of its targets, so a
+  // target on two chains, or twice on one, would count its wire twice.
+  const auto target = [](const std::uint32_t port,
+                         const std::vector<std::uint32_t>& next) {
+    auto entry = std::make_unique<CapacityNodeT>();
+    entry->kind = CapacityElement::Target;
+    entry->id = port;
+    entry->next = next;
+    return entry;
+  };
+
+  CapacityPlanT sharedTarget = emptyPlan();
+  sharedTarget.nodes.push_back(target(0, {2}));
+  sharedTarget.nodes.push_back(target(1, {2}));
+  sharedTarget.nodes.push_back(target(2, {}));
+  sharedTarget.chains = {0, 1};
+  EXPECT_EQ(
+      validate(wrap(std::move(sharedTarget))),
+      (std::vector<std::string>{"capacity chains 0 and 1 both reach port 2"}));
+
+  CapacityPlanT twoNodes = emptyPlan();
+  twoNodes.nodes.push_back(target(0, {}));
+  twoNodes.nodes.push_back(target(0, {}));
+  twoNodes.chains = {0, 1};
+  EXPECT_EQ(
+      validate(wrap(std::move(twoNodes))),
+      (std::vector<std::string>{"capacity chains 0 and 1 both reach port 0"}));
+
+  CapacityPlanT twice = emptyPlan();
+  twice.nodes.push_back(target(0, {1}));
+  twice.nodes.push_back(target(0, {}));
+  twice.chains = {0};
+  EXPECT_EQ(
+      validate(wrap(std::move(twice))),
+      (std::vector<std::string>{"capacity chain 0 reaches port 0 twice"}));
+}
+
+TEST(ArtifactSchema, RefusesAGateNodeThatDisagreesWithItsBottleneck) {
+  // A reader takes the capacity of a gate from each of its nodes, so a node
+  // that says more than the bottleneck would let more wires through.
+  CapacityPlanT plan = emptyPlan();
+  auto bottleneck = std::make_unique<BottleneckT>();
+  bottleneck->capacity = 2;
+  plan.bottlenecks.push_back(std::move(bottleneck));
+  for (const std::uint32_t capacity : {2U, 3U}) {
+    auto gate = std::make_unique<CapacityNodeT>();
+    gate->kind = CapacityElement::Bottleneck;
+    gate->id = 0;
+    gate->capacity = capacity;
+    plan.nodes.push_back(std::move(gate));
+    plan.chains.push_back(static_cast<std::uint32_t>(plan.nodes.size() - 1));
+  }
+  EXPECT_EQ(validate(wrap(std::move(plan))),
+            (std::vector<std::string>{"capacity node 1 lets 3 wires through "
+                                      "bottleneck 0, which lets 2 wires "
+                                      "through"}));
+}
+
+TEST(ArtifactSchema, RefusesAGateNodeWithoutItsBottleneck) {
+  // A reader takes the capacity of a gate from its bottleneck, so a gate has
+  // to name one of the plan.
+  CapacityPlanT plan = emptyPlan();
+  plan.bottlenecks.push_back(std::make_unique<BottleneckT>());
+  auto gate = std::make_unique<CapacityNodeT>();
+  gate->kind = CapacityElement::Bottleneck;
+  gate->id = 1;
+  plan.nodes.push_back(std::move(gate));
+  plan.chains.push_back(0);
+
+  EXPECT_EQ(
+      validate(wrap(std::move(plan))),
+      (std::vector<std::string>{"capacity node 0 names bottleneck 1 of 1"}));
+}
+
+TEST(ArtifactSchema, RefusesAMissingEntryOfACapacityPlan) {
+  // Writing an artifact packs every entry of a vector of tables, so a missing
+  // entry is refused before the write reads it.
+  CapacityPlanT plan = emptyPlan();
+  plan.partitions.push_back(std::make_unique<PartitionT>());
+  plan.partitions.back()->outlines.push_back(nullptr);
+  plan.partitions.push_back(nullptr);
+  plan.borders.push_back(nullptr);
+  plan.bottlenecks.push_back(nullptr);
+  plan.launchers.push_back(nullptr);
+  plan.port_keepout.push_back(nullptr);
+  plan.nodes.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(plan))),
+            (std::vector<std::string>{
+                "partition 1: missing", "partition 0 outline 0: missing",
+                "border 0: missing", "bottleneck 0: missing",
+                "launcher slot 0: missing", "port keepout 0: missing",
+                "capacity node 0: missing"}));
+
+  CapacityPlanT unwritable = emptyPlan();
+  unwritable.bottlenecks.push_back(nullptr);
+  EXPECT_THROW(static_cast<void>(writeArtifact(wrap(std::move(unwritable)))),
+               std::invalid_argument);
+
+  // The two grids are required tables, which the write cannot leave out.
+  CapacityPlanT withoutGrids = emptyPlan();
+  withoutGrids.capacity_grid.reset();
+  withoutGrids.detail_grid.reset();
+  EXPECT_EQ(validate(wrap(std::move(withoutGrids))),
+            (std::vector<std::string>{"capacity grid: missing",
+                                      "detail grid: missing"}));
 }
 
 TEST(ArtifactSchema, AssignmentRoundTrips) {
@@ -261,6 +441,36 @@ TEST(ArtifactSchema, ReadArtifactRejectsForeignAndTruncatedBuffers) {
 
   bytes.resize(bytes.size() / 2);
   EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
+}
+
+TEST(ArtifactSchema, RefusesAnOutputTypeOfANewerSchema) {
+  // A newer schema may append an output type under the same identifier. The
+  // verifier lets it pass, so the read has to refuse it.
+  flatbuffers::FlatBufferBuilder builder;
+  const auto producer = builder.CreateString("mqt-scpd newer");
+  const flatbuffers::Offset<void> output(
+      builder.EndTable(builder.StartTable()));
+  // The tag is written as a plain byte, because the enum of this schema has
+  // no value for it.
+  const auto start = builder.StartTable();
+  builder.AddOffset(Artifact::VT_OUTPUT, output);
+  builder.AddOffset(Artifact::VT_PRODUCER, producer);
+  builder.AddElement<std::uint8_t>(
+      Artifact::VT_OUTPUT_TYPE, static_cast<std::uint8_t>(StageOutput::MAX) + 1,
+      0);
+  FinishArtifactBuffer(builder,
+                       flatbuffers::Offset<Artifact>(builder.EndTable(start)));
+  const std::vector<std::uint8_t> bytes(
+      builder.GetBufferPointer(),
+      std::next(builder.GetBufferPointer(), builder.GetSize()));
+
+  try {
+    static_cast<void>(readArtifact(bytes));
+    FAIL() << "the read accepted an unknown output type";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_STREQ(error.what(), "artifact is not valid: output type 7 is "
+                               "unknown to this version of mqt-scpd");
+  }
 }
 
 } // namespace

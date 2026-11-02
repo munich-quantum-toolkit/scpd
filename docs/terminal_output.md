@@ -1,0 +1,156 @@
+# Terminal Output
+
+`mqt-scpd plan` prints one block per stage. This page fixes the format of that
+output. Every stage follows it, and so does every stage that a later release
+adds. The tests in `test/python/unit/test_console.py` and
+`test/python/unit/test_cli.py` check the format.
+
+## A Run
+
+Without `-v`, a run on the 17-qubit benchmark chip prints this:
+
+```text
+mqt-scpd plan 17q → runs/17q
+
+🧩 capacity
+   356 partitions · 55 bottlenecks · 72 chains                     0.75s
+   ✓ 01-capacity.fb  1.3 MB
+
+✓ 1 stage · 0.75s · stopped after capacity
+```
+
+The run has four parts:
+
+- The header names the command, the chip and the run directory.
+- A block per stage starts with the mark and the name of the stage. It holds the
+  result of the stage and the artifact the stage wrote.
+- A blank line.
+- The closing line counts the stages, the time and the fails, and names the step
+  after which the run stopped.
+
+## Levels
+
+Each `-v` adds lines to the ones below it.
+
+| Option | What the run shows in addition                                               |
+| ------ | ---------------------------------------------------------------------------- |
+| none   | The header, the result of each stage, the artifact line and the closing line |
+| `-v`   | The parameters of a stage and its steps                                      |
+| `-vv`  | One line per item, such as a wire or a chain                                 |
+
+Warnings and failures show at every level.
+
+## Lines
+
+- A line of a block starts three spaces in. A line that only `-v` or more shows
+  starts five spaces in and is dimmed.
+- A line that a stage reports at a time carries the time since the stage began.
+  The time ends at column 72 in a file. On a terminal it ends at the width of
+  the terminal, but not after column 100. A line too long for the column carries
+  its time after two spaces.
+- An entry, such as a chain at `-vv`, has a label and figures. The label fills a
+  column of 18 characters, and the figures start after it.
+- The artifact line is `✓ <file>  <size>`, followed by `· fails <n>` for a stage
+  that reports fails.
+- A warning starts with `⚠` and is yellow. A failure starts with `✗` and is red.
+  A failure ends the run.
+- The closing line starts with `✓` when nothing failed and with `✗` when a stage
+  failed or a stage reported fails. After a failure, the closing line is
+  `✗ stopped at <stage> after <time>`.
+
+## Figures
+
+A result, an entry and most lines of `-v` are figures, joined by ` · `. A figure
+has one of these forms:
+
+| Form      | Example                 | Rule                                                                      |
+| --------- | ----------------------- | ------------------------------------------------------------------------- |
+| Count     | `363 partitions`        | The number, then the noun; singular only for a count of one               |
+| Quantity  | `length 23419.67`       | The name, then the value; two decimals for a length, one for a percentage |
+| Verdict   | `fails 2`               | A count that should be zero: green at zero, red otherwise                 |
+| Parameter | `crossing pitch 165.00` | The configuration key with spaces for underscores, then its value         |
+
+Figures are lower case and end without a full stop. Times are seconds below a
+minute (`0.38s`), minutes and seconds below an hour (`53m 10s`), and hours and
+minutes above. Sizes are decimal: `840 B`, `2.8 kB`, `1.3 MB`.
+
+## Fails
+
+A stage that can fail on part of its work reports how many parts failed. The
+artifact line shows that count, and the closing line adds the counts of every
+stage. A run that ends with fails exits with code 1. The capacity stage reports
+no fails: it plans the whole chip, or it stops with an error.
+
+## Stage Marks
+
+Each step has a mark, a plain form and a color.
+
+| Step     | Mark | Plain form | Color |
+| -------- | ---- | ---------- | ----- |
+| capacity | 🧩   | `[#]`      | cyan  |
+
+A mark is one emoji with the Unicode property `Emoji_Presentation=Yes` and
+without a variation selector, so that every terminal draws it two cells wide. A
+step that a later release adds follows the same rule.
+
+Where the output cannot encode a symbol, the run writes its plain form:
+
+| Symbol | Plain form |
+| ------ | ---------- |
+| ✓      | `ok`       |
+| ✗      | `FAIL`     |
+| ⚠      | `!`        |
+| ·      | `-`        |
+| →      | `->`       |
+| ×      | `x`        |
+
+## Progress
+
+On a terminal, a live line at the bottom shows the stage that runs: a spinner,
+the name of the stage, its time, what it is doing and how far it has got. The
+live line goes away when the stage ends, so a log or a pipe receives the lasting
+lines only.
+
+The live line is off when the output is not a terminal, with `--no-progress`,
+with `TERM=dumb`, and with `TTY_INTERACTIVE=0`. `NO_COLOR` turns color off.
+`TTY_COMPATIBLE=0` turns the live line and color off. `FORCE_COLOR` and
+`TTY_COMPATIBLE=1` turn color on, also in a file, but a file still gets no live
+line and keeps the time at column 72.
+
+## Exit Codes
+
+| Code | Meaning                                                              |
+| ---- | -------------------------------------------------------------------- |
+| 0    | The command did what it was asked                                    |
+| 1    | An input has a problem, a stage failed, or a run ended with fails    |
+| 2    | The arguments are wrong                                              |
+| 130  | The command was interrupted                                          |
+
+A command whose output goes to a reader that closes early, such as
+`mqt-scpd inspect run/01-capacity.fb | head`, stops without a message and
+returns 1.
+
+## Adding a Stage
+
+A stage reports through the `Report` it is given and never prints.
+
+1. Report the result exactly once, through `Report::result`. A stage that can
+   fail on part of its work passes the number of fails as well.
+2. Build each figure with `counted`, `verdict` or one of the forms above, and
+   join figures with `FIGURE_SEPARATOR`.
+3. Report the steps and the parameters at `Detail::Steps`, and one line per item
+   at `Detail::Items`. Ask `Report::wants` before building a line that takes
+   time to build.
+4. Report progress through `Report::progress` in every loop that can run for
+   longer than a second, so that the live line moves and Ctrl-C stops the stage.
+   A progress report is the only place where a stage notices Ctrl-C.
+5. Add the step to `STEPS` in `python/mqt/scpd/steps.py` and its mark to
+   `STAGE_STYLES` in `python/mqt/scpd/console.py`. In `python/mqt/scpd/run.py`,
+   add its artifact to `STAGE_FILES`, the configuration sections it reads to
+   `STEP_INPUTS`, the artifacts it reads to `ARTIFACT_INPUTS`, and its core call
+   to `RunDirectory.run_stage`. If `plot` and `render` draw the stage, add it to
+   `STAGES` in `python/mqt/scpd/plot.py`, name the artifacts its picture reads
+   in `planning_geometry` in `python/mqt/scpd/planning.py` and in `_drawn` in
+   `python/mqt/scpd/cli.py`, and add its GDS layers to `PLANNING_LAYERS` in
+   `python/mqt/scpd/export/klayout.py`.
+6. Extend the expected run in `test/python/unit/test_cli.py`.

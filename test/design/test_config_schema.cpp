@@ -52,8 +52,7 @@ TEST(ConfigSchema, GridDefaults) {
   const GridParamsT grid;
   EXPECT_EQ(grid.capacity_cells_x, 50U);
   EXPECT_EQ(grid.capacity_cells_y, 0U);
-  EXPECT_EQ(grid.launcher_offset_x, 15U);
-  EXPECT_EQ(grid.launcher_offset_y, 15U);
+  EXPECT_EQ(grid.detail_factor, 30U);
 }
 
 TEST(ConfigSchema, ManualConfigRoundTripsSequences) {
@@ -79,7 +78,7 @@ TEST(ConfigSchema, ManualConfigRoundTripsSequences) {
   EXPECT_TRUE(back.ports->sequences->fixed_outer.empty());
   ASSERT_NE(back.grid, nullptr);
   EXPECT_EQ(back.grid->capacity_cells_x, 60U);
-  EXPECT_EQ(back.grid->launcher_offset_x, 15U);
+  EXPECT_EQ(back.grid->detail_factor, 30U);
 }
 
 } // namespace
