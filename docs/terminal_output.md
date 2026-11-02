@@ -10,18 +10,24 @@ adds. The tests in `test/python/unit/test_console.py` and
 Without `-v`, a run on the 17-qubit benchmark chip prints this:
 
 ```text
-mqt-scpd plan 17q → runs/17q
+mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.11.0
 
 🧩 capacity
    356 partitions · 55 bottlenecks · 72 chains                     0.75s
    ✓ 01-capacity.fb  1.3 MB
+🔳 global
+   14 inner wires · 8 lattices · length 23419.67                   0.03s
+   ✓ 02-global.fb  13.7 kB · fails 0
+📌 assign
+   58 ports · 7 launcher ends · objective 27.84 · optimal          0.28s
+   ✓ 03-assign.fb  2.8 kB · fails 0
 
-✓ 1 stage · 0.75s · stopped after capacity
+✓ 3 stages · 1.06s · stopped after assign · fails 0
 ```
 
 The run has four parts:
 
-- The header names the command, the chip and the run directory.
+- The header names the command, the chip, the run directory and the solver.
 - A block per stage starts with the mark and the name of the stage. It holds the
   result of the stage and the artifact the stage wrote.
 - A blank line.
@@ -32,11 +38,12 @@ The run has four parts:
 
 Each `-v` adds lines to the ones below it.
 
-| Option | What the run shows in addition                                               |
-| ------ | ---------------------------------------------------------------------------- |
-| none   | The header, the result of each stage, the artifact line and the closing line |
-| `-v`   | The parameters of a stage and its steps                                      |
-| `-vv`  | One line per item, such as a wire or a chain                                 |
+| Option | What the run shows in addition                                                              |
+| ------ | ------------------------------------------------------------------------------------------- |
+| none   | The header, the result of each stage, the artifact line and the closing line                |
+| `-v`   | The parameters of a stage, its steps, the size of each model and how each solve ended       |
+| `-vv`  | One line per item, such as a wire, a feedline chain or a connection                         |
+| `-vvv` | The log of HiGHS; the Gurobi backend solves without a log                                   |
 
 Warnings and failures show at every level.
 
@@ -47,11 +54,12 @@ Warnings and failures show at every level.
 - A line that a stage reports at a time carries the time since the stage began.
   The time ends at column 72 in a file. On a terminal it ends at the width of
   the terminal, but not after column 100. A line too long for the column carries
-  its time after two spaces.
-- An entry, such as a chain at `-vv`, has a label and figures. The label fills a
-  column of 18 characters, and the figures start after it.
+  its time after two spaces. A solver log line carries no time.
+- An entry, such as a feedline chain at `-vv`, has a label and figures. The
+  label fills a column of 18 characters, and the figures start after it.
 - The artifact line is `✓ <file>  <size>`, followed by `· fails <n>` for a stage
-  that reports fails.
+  that reports fails. The assign stage reports them too, and its count is always
+  zero.
 - A warning starts with `⚠` and is yellow. A failure starts with `✗` and is red.
   A failure ends the run.
 - The closing line starts with `✓` when nothing failed and with `✗` when a stage
@@ -63,12 +71,12 @@ Warnings and failures show at every level.
 A result, an entry and most lines of `-v` are figures, joined by ` · `. A figure
 has one of these forms:
 
-| Form      | Example                 | Rule                                                                      |
-| --------- | ----------------------- | ------------------------------------------------------------------------- |
-| Count     | `363 partitions`        | The number, then the noun; singular only for a count of one               |
-| Quantity  | `length 23419.67`       | The name, then the value; two decimals for a length, one for a percentage |
-| Verdict   | `fails 2`               | A count that should be zero: green at zero, red otherwise                 |
-| Parameter | `crossing pitch 165.00` | The configuration key with spaces for underscores, then its value         |
+| Form      | Example             | Rule                                                                                      |
+| --------- | ------------------- | ----------------------------------------------------------------------------------------- |
+| Count     | `363 partitions`    | The number, then the noun; singular only for a count of one                               |
+| Quantity  | `objective 27.84`   | The name, then the value; two decimals for a length or an objective, one for a percentage |
+| Verdict   | `fails 2`           | A count that should be zero: green at zero, red otherwise                                 |
+| Parameter | `launcher target 7` | The configuration key with spaces for underscores, then its value                         |
 
 Figures are lower case and end without a full stop. Times are seconds below a
 minute (`0.38s`), minutes and seconds below an hour (`53m 10s`), and hours and
@@ -78,16 +86,22 @@ minutes above. Sizes are decimal: `840 B`, `2.8 kB`, `1.3 MB`.
 
 A stage that can fail on part of its work reports how many parts failed. The
 artifact line shows that count, and the closing line adds the counts of every
-stage. A run that ends with fails exits with code 1. The capacity stage reports
-no fails: it plans the whole chip, or it stops with an error.
+stage. A run that ends with fails exits with code 1.
+
+| Stage    | A fail is                                                                                                                                                                                |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| global   | An inner port that no wire of the circuit reaches, a ring port that the gates of its chain have no room for, or a ring port without a bridge that its chain does not carry to a launcher |
+| assign   | None: the stage gives every ring port a launcher, or it stops with an error. Its artifact line shows `fails 0`                                                                           |
 
 ## Stage Marks
 
 Each step has a mark, a plain form and a color.
 
-| Step     | Mark | Plain form | Color |
-| -------- | ---- | ---------- | ----- |
-| capacity | 🧩   | `[#]`      | cyan  |
+| Step     | Mark | Plain form | Color   |
+| -------- | ---- | ---------- | ------- |
+| capacity | 🧩   | `[#]`      | cyan    |
+| global   | 🔳   | `[+]`      | blue    |
+| assign   | 📌   | `[>]`      | magenta |
 
 A mark is one emoji with the Unicode property `Emoji_Presentation=Yes` and
 without a variation selector, so that every terminal draws it two cells wide. A
@@ -107,9 +121,9 @@ Where the output cannot encode a symbol, the run writes its plain form:
 ## Progress
 
 On a terminal, a live line at the bottom shows the stage that runs: a spinner,
-the name of the stage, its time, what it is doing and how far it has got. The
-live line goes away when the stage ends, so a log or a pipe receives the lasting
-lines only.
+the name of the stage, its time, what it is doing and how far it has got. A
+solve shows its objective, its gap and its node count. The live line goes away
+when the stage ends, so a log or a pipe receives the lasting lines only.
 
 The live line is off when the output is not a terminal, with `--no-progress`,
 with `TERM=dumb`, and with `TTY_INTERACTIVE=0`. `NO_COLOR` turns color off.
@@ -138,12 +152,13 @@ A stage reports through the `Report` it is given and never prints.
    fail on part of its work passes the number of fails as well.
 2. Build each figure with `counted`, `verdict` or one of the forms above, and
    join figures with `FIGURE_SEPARATOR`.
-3. Report the steps and the parameters at `Detail::Steps`, and one line per item
-   at `Detail::Items`. Ask `Report::wants` before building a line that takes
-   time to build.
+3. Report the steps, the parameters and the solves at `Detail::Steps`, and one
+   line per item at `Detail::Items`. Ask `Report::wants` before building a line
+   that takes time to build.
 4. Report progress through `Report::progress` in every loop that can run for
    longer than a second, so that the live line moves and Ctrl-C stops the stage.
-   A progress report is the only place where a stage notices Ctrl-C.
+   Outside a solve, a progress report is the only place where a stage notices
+   Ctrl-C.
 5. Add the step to `STEPS` in `python/mqt/scpd/steps.py` and its mark to
    `STAGE_STYLES` in `python/mqt/scpd/console.py`. In `python/mqt/scpd/run.py`,
    add its artifact to `STAGE_FILES`, the configuration sections it reads to

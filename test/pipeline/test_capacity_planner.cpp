@@ -257,6 +257,8 @@ TEST(CapacityScene, RefusesAConfigurationItCannotBuildAGridFrom) {
   tooFine.grid->detail_factor = 1000;
   EXPECT_THROW(static_cast<void>(buildScene(chip, tooFine)),
                std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(launcherSlotPositions(chip, tooFine)),
+               std::invalid_argument);
 }
 
 TEST(CapacityScene, RefusesAChipWithoutALauncher) {
@@ -678,9 +680,9 @@ chainsPerTarget(const CapacityPlanT& plan) {
 }
 
 TEST(CapacityPlanner, PutsEveryTargetOnOneChain) {
-  // The budget of a chain counts one wire of each of its targets, so a
-  // target on two chains would count its wire twice, and a target on no
-  // chain would count none.
+  // The Global stage asks one wire of each target over its chain, so a
+  // target on two chains would ask for its wire twice, and a target on no
+  // chain would ask for none.
   const auto pinched = pinchedCorridorConfig();
   const auto alcove = twoPinchConfig(true);
   for (const auto& [name, chip, config] :

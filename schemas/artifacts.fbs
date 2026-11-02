@@ -115,12 +115,86 @@ table CapacityPlan {
 
 /// Output of the Assignment stage.
 table Assignment {
+  /// One connection per node of `ring`, in the order of `ring`. A
+  /// conventional port runs from the launcher it was given, as
+  /// FeedlineSource to FeedlineTarget. A resonator carries ResonatorSource
+  /// to ResonatorTarget and no source port, because the port that feeds it is
+  /// the coupler that the Final stage inserts.
   connections: [design.Connection] (required);
   objective: double;
+  /// The ring the model consumed, in the order it consumed it.
+  ring: [design.PortRef] (required);
+  /// The launcher each ring node was given, parallel to `ring`.
+  launchers: [design.PortRef] (required);
+  /// Where each ring node is fed from, parallel to `ring`.
+  ///
+  /// A conventional port is fed at the launcher slot that `launchers` names.
+  /// A resonator is fed at no launcher: the wire that reaches it comes past
+  /// the slot, so its feed sits on the segment between its own launcher and a
+  /// neighboring one. The resonators fed on one segment divide it evenly, in
+  /// the order the walk of the ring reaches them. No two feeds lie closer than
+  /// the wire spacing.
+  feeds: [geometry.Point] (required);
+  /// The feedline chains the model chose: which resonators one feedline
+  /// drives, from one launcher to the next. The Final stage routes each of
+  /// them from its first launcher through the couplers of its resonators to
+  /// its last.
+  chains: [FeedlineChain] (required);
 }
 
-/// Output of the Global stage. Empty when the chip has no inner circuit.
-table GlobalRouting {}
+/// One feedline chain of the assignment.
+///
+/// The model gives every resonator degree two on the ring: a chord to the
+/// resonator before it, a chord to the one after it, or an end. An end is a
+/// launcher, or one of the permitted terminations where the feedline stops.
+/// A chain is a run of resonators joined by chords, and the Final stage
+/// drives it with one feedline: launcher, coupler, coupler, …, launcher. A
+/// chain has a launcher at one end at least; its other end may be a
+/// termination.
+table FeedlineChain {
+  /// The ring nodes the chain runs through, as indices into `ring` and
+  /// `connections`, in ring order. Every one of them is a resonator.
+  nodes: [uint32] (required);
+  /// The launcher the chain starts at: the launcher slot its first resonator
+  /// was given. Absent where the chain starts at a termination.
+  start: design.PortRef;
+  /// The launcher the chain ends at: the launcher slot its last resonator
+  /// was given. Absent where the chain ends at a termination.
+  end: design.PortRef;
+}
+
+/// One lattice the inner circuit is solved on: the Hanan grid that the ports
+/// of one capacity chain induce.
+table Lattice {
+  points: [geometry.Point] (required);
+  /// Two point indices per edge, flat.
+  edges: [uint32] (required);
+  /// The edges of the connections, as indices into `edges` divided by two.
+  /// The edges of a wire that the connections leave out are not among them.
+  selected: [uint32] (required);
+}
+
+/// Output of the Global stage. The lattices are empty when the chip has no
+/// inner circuit, which is a valid state rather than a skipped stage.
+table GlobalRouting {
+  lattices: [Lattice] (required);
+  /// The connections of the inner circuit that the solved flow implies. A
+  /// wire that reaches no target or a closed loop over crossings, which only
+  /// a solve that stops early keeps, is not among them.
+  connections: [design.Connection] (required);
+  /// The outer port ring that the Assignment stage consumes: the configured
+  /// ring in its order, without the ring end of each outer bridge where no
+  /// inner wire surfaces. The assignment reads this ring and not the
+  /// configuration.
+  outer_ring: [design.PortRef] (required);
+  /// The resonator ports of the chip, and the ring ports where the inner
+  /// wire of a resonator surfaces. The Assignment stage treats the ring
+  /// nodes among them as resonators.
+  resonators: [design.PortRef] (required);
+  /// The length of the lattice edges that the connections take, in layout
+  /// units.
+  objective: double;
+}
 
 /// Output of the Detail stage.
 table DetailRouting {}

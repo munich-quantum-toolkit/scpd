@@ -68,9 +68,9 @@ Every design rule is required. Every length must be positive.
 | `max_feedline_utilization`   | —       | The most resonators that one feedline chain feeds; at least one                                      |
 | `feedline_terminations`      | —       | How many feedline chain ends stop at a termination instead of a launcher                             |
 
-The planning steps of this release read only `min_wire_spacing`,
-`min_obstacle_spacing` and `min_straight_length`. The assignment and the routing
-stages of a later release read the others.
+The planning steps of this release do not read `min_bend_radius`,
+`target_resonator_length` and `resonator_length_tolerance`. The routing stages
+of a later release read them.
 
 ## `[grid]`
 
@@ -93,8 +93,8 @@ the aspect ratio of the chip sets the capacity cells down. The detail grid may
 have at most 25,000,000 cells, for example 5000 × 5000. The capacity step holds
 about 120 bytes per detail cell, so the limit stands for about 3 GB of memory.
 The finest benchmark chip, 69q, plans on 1500 × 1500 cells. `plan` and `doctor`
-refuse a larger grid before the first stage of a run through the capacity step,
-and name the grid that the configuration asks for.
+refuse a larger grid before the first stage of a run through the capacity or
+assignment step, and name the grid that the configuration asks for.
 
 ## `[stages.capacity]`
 
@@ -104,11 +104,113 @@ and name the grid that the configuration asks for.
 | `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive |
 | `crossing_pitch`       | `165.0` | The distance between two places on one partition border where a wire may cross it; it decides how many wires a border lets through; positive            |
 
+## `[stages.global]`
+
+| Key                | Default | Meaning                                                                                                    |
+| ------------------ | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `router`           | `""`    | The implementation of the step; empty takes `hanan-milp`                                                   |
+| `internal_bridges` | `false` | Whether an inner wire may cross a component that the outer ring does not reach, through its own bridges    |
+
+Every inner wire starts at the inner end of a bridge whose other end is on the
+ring, and surfaces at that ring end. With `internal_bridges`, the wire may cross
+internal bridges on the way. No ring port starts an inner wire, because the
+assignment gives every ring port a wire of its own. An inner port that no such
+wire can reach is a fail of the global step. An inner resonator that is a fail
+gets no feed.
+
+The lattice lines of a port run through the point
+`[design_rules] min_straight_length` in front of it. The step refuses two ports
+of one capacity chain that can carry an inner wire when these points coincide,
+since both would meet the lattice of their chain at one node. A port without an
+inner wire, such as a ring port, may share its point with any port. `doctor`
+does not check this; the step refuses such a chip when it runs.
+
+The wires of the ring ports behind a gate of a capacity chain pass that gate on
+their way to a launcher, and so do the inner wires that surface there. When the
+gates have no room for all of them, the step solves the circuit again and lets
+ring ports go without room. Each such ring port is a fail of the global step,
+and `-vv` names it. A port lies on one chain, and a gate on several chains holds
+the wires of all of them. The step checks a gate with some room only where it
+solves an inner circuit, and only on the chains without inner ports. Elsewhere,
+a gate that has room for some of its ring ports but not for all gives no fail. A
+ring port that no bridge joins always needs a way to a launcher: where its chain
+has no launcher, or a gate without room cuts it off, it is a fail too, also on a
+chip without inner ports. The ring end of a bridge may be cut off, because it
+needs a way only where an inner wire surfaces there.
+
+## `[stages.assignment]`
+
+| Key               | Default | Meaning                                                                                                                    |
+| ----------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `assigner`        | `""`    | The implementation of the step; empty takes `ordered-milp`                                                                 |
+| `launcher_target` | `0`     | How many feedline chain ends stop at a launcher; `0` leaves it unset, and `plan` refuses a run that reaches the assignment |
+
+`launcher_target` plus `[design_rules] feedline_terminations` must be even,
+since every feedline chain has two ends. A ring with resonators sets four more
+limits, which the assignment refuses to break:
+
+- the conventional ports of the ring plus `launcher_target` are at most the
+  launcher ports of the chip;
+- `launcher_target` and `feedline_terminations` are each at most the resonators
+  of the ring;
+- `feedline_terminations` is at most `launcher_target`, since every feedline
+  chain has a launcher at one end at least;
+- the resonators of the ring are at most the feedline chains,
+  (`launcher_target` + `feedline_terminations`) / 2, times
+  `[design_rules] max_feedline_utilization`.
+
+The global step decides whether a ring port at a bridge stays in the ring and
+whether it is a resonator. `plan` and `doctor` refuse before the first stage a
+configuration that breaks a limit for every such decision.
+
+The assignment also refuses a solution in which two feeds lie closer than
+`[design_rules] min_wire_spacing`, such as two conventional ports at launcher
+slots in one cell. It refuses two feeds that round onto one cell of the detail
+grid as well, since a wire starts at the cell of its feed; a detail cell
+narrower than about 0.7 wire spacings rules this out.
+
+## `[stages.solver]`
+
+| Key            | Default | Meaning                                                                                       |
+| -------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `backend`      | `""`    | `highs` or `gurobi`; empty takes `highs`. The environment variable `SCPD_SOLVER` overrides it |
+| `time_limit`   | `0.0`   | The seconds one solve may take; `0.0` sets no limit; not negative                             |
+| `relative_gap` | `0.0`   | The relative gap at which a solve may stop; `0.0` keeps the gap of the backend; not negative  |
+| `threads`      | `0`     | The threads one solve may use; `0` keeps the default of the backend; at most `1024`           |
+
+A solve that the report calls `optimal` is optimal within the relative gap: its
+objective and the best bound the solver proved differ by at most that fraction
+of the objective. With `relative_gap` at `0.0`, the gap is the default of the
+backend, which is `1e-4` for HiGHS (`mip_rel_gap`) and for Gurobi (`MIPGap`). A
+solve also stops when the objective and the bound differ by less than the
+absolute gap of the backend: `1e-6` for HiGHS (`mip_abs_gap`) and `1e-10` for
+Gurobi (`MIPGapAbs`). For an objective near zero, the absolute gap decides.
+
+HiGHS and Gurobi can report different optimal solutions: their objectives can
+differ by up to the relative gap, and between solutions of equal objective each
+backend can choose another one. A later stage then works on another input and
+can reach another objective.
+
+A solve that stops at `time_limit` keeps the best solution it has found by then.
+That solution depends on the speed of the machine, so the same inputs can give
+different artifacts. Leave `time_limit` at `0.0` where a run has to repeat. Such
+a solution of the Global stage can hold wires that reach no target: a wire
+between the inner ends of two ring bridges, a closed loop through internal
+bridges, or a closed loop over crossings. The Global artifact and its objective
+leave these wires out.
+
+With `threads` at `0`, HiGHS uses half the hardware threads of the machine, and
+Gurobi chooses the count itself (its parameter `Threads`). The count changes the
+order of the search, so the time of a solve, its node count and, between optimal
+solutions of equal objective, its answer can differ from one machine to the
+next. A fixed `threads` makes runs on different machines comparable. The limit
+of `1024` is the largest value that Gurobi accepts.
+
 ## `[run]`
 
-| Key          | Default | Meaning                                                   |
-| ------------ | ------- | --------------------------------------------------------- |
-| `stop_after` | `""`    | The last step of a run: `capacity`; empty runs every step |
+| Key          | Default | Meaning                                                                       |
+| ------------ | ------- | ----------------------------------------------------------------------------- |
+| `stop_after` | `""`    | The last step of a run: `capacity`, `global` or `assign`; empty runs them all |
 
 `mqt-scpd list-algorithms` names the implementations that a build ships for each
 step. `--stop-after` replaces `stop_after` for one run.

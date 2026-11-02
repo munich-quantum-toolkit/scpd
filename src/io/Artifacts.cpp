@@ -12,17 +12,20 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 
 #include <flatbuffers/flatbuffer_builder.h>
 #include <flatbuffers/minireflect.h>
 #include <flatbuffers/verifier.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -110,7 +113,7 @@ void validateWires(
 /// The capacity chains are trees stored flat, and the later stages walk them
 /// by index. Every index has to name a node, and no walk may come back to a
 /// node it left, or the walk would not end. A target lies on one chain only,
-/// so that the budget of its chain counts its wire once.
+/// because the Global stage asks one wire of each target over its chain.
 void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
                           Problems& problems) {
   if (plan.capacity_grid == nullptr) {
@@ -147,9 +150,9 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
       }
     }
     if (node.kind == flatbuffers::artifacts::CapacityElement::Bottleneck) {
-      // A reader takes the capacity of a gate from its node, and a gate on
-      // several chains has a node on each, so every node of a bottleneck has
-      // to say what the bottleneck says.
+      // The Global stage reads the capacity of a gate from its node, and a
+      // gate on several chains has a node on each, so every node of a
+      // bottleneck has to say what the bottleneck says.
       if (node.id >= plan.bottlenecks.size()) {
         problems.push_back(
             std::format("capacity node {} names bottleneck {} of {}", index,
@@ -272,10 +275,65 @@ Problems validate(const ArtifactT& artifact) {
   case StageOutput::NONE:
     problems.emplace_back("output is missing");
     break;
-  case StageOutput::Assignment:
-    validateEach(artifact.output.AsAssignment()->connections, "connection",
-                 problems);
+  case StageOutput::Assignment: {
+    const auto& assignment = *artifact.output.AsAssignment();
+    validateEach(assignment.connections, "connection", problems);
+    // The connections, the launchers and the feeds are each one per ring
+    // node, in the order of the ring.
+    const auto parallel = [&](const std::size_t size,
+                              const std::string_view what) {
+      if (size != assignment.ring.size()) {
+        problems.push_back(
+            std::format("{} for {}", counted(size, what),
+                        counted(assignment.ring.size(), "ring node")));
+      }
+    };
+    parallel(assignment.connections.size(), "connection");
+    parallel(assignment.launchers.size(), "launcher");
+    parallel(assignment.feeds.size(), "feed");
+    for (std::size_t index = 0; index < std::min(assignment.connections.size(),
+                                                 assignment.ring.size());
+         ++index) {
+      const auto& connection = assignment.connections[index];
+      if (connection != nullptr &&
+          connection->target.index() != assignment.ring[index].index()) {
+        problems.push_back(std::format(
+            "connection {} targets port {}, not port {} of ring node {}", index,
+            connection->target.index(), assignment.ring[index].index(), index));
+      }
+    }
+    // A chain runs through ring nodes, each of them a node of the ring, and
+    // one feedline drives each node of a chain.
+    std::vector<std::optional<std::size_t>> chainOf(assignment.ring.size());
+    for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
+      if (assignment.chains[index] == nullptr) {
+        problems.push_back(std::format("chain {}: missing", index));
+        continue;
+      }
+      if (assignment.chains[index]->nodes.empty()) {
+        problems.push_back(
+            std::format("chain {} runs through no ring node", index));
+      }
+      for (const auto node : assignment.chains[index]->nodes) {
+        if (node >= assignment.ring.size()) {
+          problems.push_back(std::format("chain {} names ring node {} of {}",
+                                         index, node, assignment.ring.size()));
+          continue;
+        }
+        if (chainOf[node].has_value()) {
+          problems.push_back(
+              *chainOf[node] == index
+                  ? std::format("chain {} names ring node {} twice", index,
+                                node)
+                  : std::format("chains {} and {} both name ring node {}",
+                                *chainOf[node], index, node));
+          continue;
+        }
+        chainOf[node] = index;
+      }
+    }
     break;
+  }
   case StageOutput::FinalRouting: {
     const auto& routing = *artifact.output.AsFinalRouting();
     validateEach(routing.couplers, "coupler", problems);
@@ -292,8 +350,127 @@ Problems validate(const ArtifactT& artifact) {
   case StageOutput::CapacityPlan:
     validateCapacityPlan(*artifact.output.AsCapacityPlan(), problems);
     break;
-  case StageOutput::GlobalRouting:
+  case StageOutput::GlobalRouting: {
+    const auto& routing = *artifact.output.AsGlobalRouting();
+    validateEach(routing.connections, "connection", problems);
+    // A picture draws a lattice by index, so every edge has two points of its
+    // lattice and every selected edge is one of its edges.
+    for (std::size_t index = 0; index < routing.lattices.size(); ++index) {
+      if (routing.lattices[index] == nullptr) {
+        problems.push_back(std::format("lattice {}: missing", index));
+        continue;
+      }
+      const auto& lattice = *routing.lattices[index];
+      if (lattice.edges.size() % 2 != 0) {
+        problems.push_back(
+            std::format("lattice {} holds {} edge indices, not two per edge",
+                        index, lattice.edges.size()));
+      }
+      for (const auto point : lattice.edges) {
+        if (point >= lattice.points.size()) {
+          problems.push_back(std::format("lattice {} names point {} of {}",
+                                         index, point, lattice.points.size()));
+          break;
+        }
+      }
+      const auto edges = lattice.edges.size() / 2;
+      for (const auto edge : lattice.selected) {
+        if (edge >= edges) {
+          problems.push_back(std::format("lattice {} selects edge {} of {}",
+                                         index, edge, edges));
+          break;
+        }
+      }
+    }
+    break;
+  }
   case StageOutput::DetailRouting:
+    break;
+  }
+  return problems;
+}
+
+Problems validate(const ArtifactT& artifact,
+                  const flatbuffers::design::ChipT& chip) {
+  using flatbuffers::design::ConnectionT;
+  using flatbuffers::design::PortRef;
+  const auto count = chip.ports.size();
+  Problems problems;
+  const auto check = [&](const std::uint32_t port, const std::string& where) {
+    if (port >= count) {
+      problems.push_back(
+          std::format("{} names port {} of {}", where, port, count));
+    }
+  };
+  const auto checkAll = [&](const std::vector<PortRef>& ports,
+                            const std::string_view what) {
+    for (std::size_t index = 0; index < ports.size(); ++index) {
+      check(ports[index].index(), std::format("{} {}", what, index));
+    }
+  };
+  const auto checkConnections =
+      [&](const std::vector<std::unique_ptr<ConnectionT>>& connections) {
+        for (std::size_t index = 0; index < connections.size(); ++index) {
+          if (connections[index] == nullptr) {
+            continue;
+          }
+          const auto& connection = *connections[index];
+          if (connection.source != nullptr) {
+            check(connection.source->index(),
+                  std::format("connection {} source", index));
+          }
+          check(connection.target.index(),
+                std::format("connection {} target", index));
+        }
+      };
+
+  switch (artifact.output.type) {
+  case StageOutput::CapacityPlan: {
+    const auto& plan = *artifact.output.AsCapacityPlan();
+    for (std::size_t index = 0; index < plan.launchers.size(); ++index) {
+      if (plan.launchers[index] != nullptr) {
+        check(plan.launchers[index]->port.index(),
+              std::format("launcher slot {}", index));
+      }
+    }
+    for (std::size_t index = 0; index < plan.nodes.size(); ++index) {
+      if (plan.nodes[index] != nullptr &&
+          plan.nodes[index]->kind ==
+              flatbuffers::artifacts::CapacityElement::Target) {
+        check(plan.nodes[index]->id, std::format("capacity node {}", index));
+      }
+    }
+    break;
+  }
+  case StageOutput::GlobalRouting: {
+    const auto& routing = *artifact.output.AsGlobalRouting();
+    checkConnections(routing.connections);
+    checkAll(routing.outer_ring, "ring node");
+    checkAll(routing.resonators, "resonator");
+    break;
+  }
+  case StageOutput::Assignment: {
+    const auto& assignment = *artifact.output.AsAssignment();
+    checkConnections(assignment.connections);
+    checkAll(assignment.ring, "ring node");
+    checkAll(assignment.launchers, "launcher");
+    for (std::size_t index = 0; index < assignment.chains.size(); ++index) {
+      if (assignment.chains[index] == nullptr) {
+        continue;
+      }
+      const auto& chain = *assignment.chains[index];
+      for (const auto* end : {chain.start.get(), chain.end.get()}) {
+        if (end != nullptr) {
+          check(end->index(), std::format("chain {}", index));
+        }
+      }
+    }
+    break;
+  }
+  case StageOutput::FinalRouting:
+  case StageOutput::Geometry:
+  case StageOutput::DetailRouting:
+  case StageOutput::NONE:
     break;
   }
   return problems;

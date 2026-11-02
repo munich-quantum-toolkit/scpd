@@ -8,10 +8,10 @@
 
 """The shapes that the planning stages produced, read back out of their artifacts.
 
-This module is the one place that knows how a capacity plan turns into geometry. Both renderers use
-it: ``plot`` draws the shapes as SVG, and ``render`` writes them to GDSII or OASIS on layers of
-their own. Neither reaches into the pipeline; both read the artifacts of a run directory, so either
-can draw a run that stopped early.
+This module is the one place that knows how a capacity plan, a global routing and an assignment turn
+into geometry. Both renderers use it: ``plot`` draws the shapes as SVG, and
+``render`` writes them to GDSII or OASIS on layers of their own. Neither reaches into the
+pipeline; both read the artifacts of a run directory, so either can draw a run that stopped early.
 """
 
 from __future__ import annotations
@@ -21,8 +21,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .artifacts import read_artifact
+from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityElement import CapacityElement
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from .run import STAGE_FILES
 
 if TYPE_CHECKING:
@@ -31,7 +33,7 @@ if TYPE_CHECKING:
     from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.design.Chip import ChipT
 
-__all__ = ["PLANNING_STAGES", "PlanningError", "PlanningGeometry", "planning_geometry"]
+__all__ = ["PLANNING_STAGES", "Feedline", "PlanningError", "PlanningGeometry", "planning_geometry"]
 
 #: The planning stages that can be drawn, and the artifact each is read from.
 PLANNING_STAGES: dict[str, str] = dict(STAGE_FILES)
@@ -49,6 +51,22 @@ class _Coordinates(Protocol):
 
 class PlanningError(ValueError):
     """An artifact that does not hold what the stage it is drawn as produces."""
+
+
+@dataclass
+class Feedline:
+    """One feedline chain of an assignment, as the line its feedline follows."""
+
+    #: The line: the launcher the chain starts at, the feed of each resonator of the chain in chain
+    #: order, and the launcher the chain ends at. Where the chain starts or ends at a termination,
+    #: the line starts or ends at the feed of the resonator there.
+    points: list[Point] = field(default_factory=list)
+    #: The feeds of the resonators: the terminals the feedline passes.
+    terminals: list[Point] = field(default_factory=list)
+    #: The ends of the line where the chain stops at a termination instead of a launcher.
+    terminations: list[Point] = field(default_factory=list)
+    #: What the chain runs through, such as "feedline 1: Chip.port62 → Qb7, Qb12 → Chip.port57".
+    label: str = ""
 
 
 @dataclass
@@ -84,6 +102,17 @@ class PlanningGeometry:
     launchers: list[Point] = field(default_factory=list)
     #: A capacity chain, as the line from each link to the next.
     chains: list[tuple[Point, Point]] = field(default_factory=list)
+    #: The Hanan lattice the inner circuit was solved on.
+    lattice: list[tuple[Point, Point]] = field(default_factory=list)
+    #: The lattice edges the inner circuit selected.
+    inner: list[tuple[Point, Point]] = field(default_factory=list)
+    #: Each assignment, as the chord from a ring port to the point it is fed from.
+    assignments: list[tuple[Point, Point]] = field(default_factory=list)
+    #: The outer ring, in the order the assignment consumed it.
+    ring: list[Point] = field(default_factory=list)
+    #: Each feedline chain of the assignment, from its first launcher through the feeds of its
+    #: resonators to its last.
+    feedlines: list[Feedline] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         """Whether the stage produced nothing to draw.
@@ -100,6 +129,11 @@ class PlanningGeometry:
             self.bottlenecks,
             self.launchers,
             self.chains,
+            self.lattice,
+            self.inner,
+            self.assignments,
+            self.ring,
+            self.feedlines,
         ))
 
 
@@ -135,6 +169,27 @@ def _point(value: _Coordinates) -> Point:
         The coordinates.
     """
     return (float(value.x), float(value.y))
+
+
+def _name(chip: ChipT, index: int, *, component: bool) -> str:
+    """The name of a port of the chip, for the label of a feedline.
+
+    Args:
+        chip: The chip.
+        index: The port index.
+        component: Whether to name the component the port belongs to, where the configuration
+            declares one, instead of the port.
+
+    Returns:
+        The name, or the index when the index names no port.
+    """
+    ports: list[Any] = chip.ports or []
+    if index >= len(ports) or ports[index] is None:
+        return str(index)
+    port = ports[index]
+    if component and port.component:
+        return str(port.component)
+    return str(port.label or index)
 
 
 def _center(chip: ChipT, index: int) -> Point | None:
@@ -474,13 +529,142 @@ def _chains(plan: CapacityPlanT, chip: ChipT, geometry: PlanningGeometry) -> Non
             walk(root)
 
 
-def planning_geometry(data: bytes, chip: ChipT, stage: str) -> PlanningGeometry:
+def _global(routing: GlobalRoutingT, geometry: PlanningGeometry, *, lattice: bool = True) -> None:
+    """Fill the layers a global routing carries.
+
+    Args:
+        routing: The global routing.
+        geometry: The shapes to fill.
+        lattice: Whether to draw every edge of the lattices, or only the edges the circuit selected.
+    """
+    for drawn in _entries(routing.lattices):
+        points = [_point(point) for point in _entries(drawn.points)]
+        edges = _indices(drawn.edges)
+        selected = set(_indices(drawn.selected))
+        for index in range(0, len(edges) - 1, 2):
+            first, second = edges[index], edges[index + 1]
+            if first >= len(points) or second >= len(points):
+                continue
+            segment = (points[first], points[second])
+            if lattice:
+                geometry.lattice.append(segment)
+            if index // 2 in selected:
+                geometry.inner.append(segment)
+
+
+def _routing_of(routing: bytes) -> GlobalRoutingT:
+    """The global routing of a run, for a stage that is drawn with the inner circuit.
+
+    Returns:
+        The global routing.
+
+    Raises:
+        PlanningError: If the bytes do not hold a global routing.
+    """
+    solved = read_artifact(routing).output
+    if not isinstance(solved, GlobalRoutingT):
+        msg = "the global artifact is not a global routing"
+        raise PlanningError(msg)
+    return solved
+
+
+def _assignment(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry) -> None:
+    """Fill the layers an assignment carries."""
+    ring = _entries(assignment.ring)
+    launchers = _entries(assignment.launchers)
+    feeds = _entries(assignment.feeds)
+    for entry in ring:
+        position = _center(chip, int(entry.index))
+        if position is not None:
+            geometry.ring.append(position)
+    # A resonator is fed on its feedline, so only the feed of a conventional port is a launcher slot.
+    chained = {node for chain in _entries(assignment.chains) for node in _indices(chain.nodes)}
+    for index, entry in enumerate(ring):
+        source = _center(chip, int(entry.index))
+        if source is None:
+            continue
+        # A resonator is fed between two launchers and not at one, so the chord runs to the point
+        # the artifact carries and not to the launcher port the resonator was given.
+        if index < len(feeds):
+            target = _point(feeds[index])
+        elif index < len(launchers):
+            center = _center(chip, int(launchers[index].index))
+            if center is None:
+                continue
+            target = center
+        else:
+            continue
+        geometry.assignments.append((source, target))
+        if index < len(feeds) and index < len(launchers) and index not in chained:
+            center = _center(chip, int(launchers[index].index))
+            if center is not None and target != center and target not in geometry.launchers:
+                geometry.launchers.append(target)
+    _feedlines(assignment, chip, geometry)
+
+
+def _feedlines(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry) -> None:
+    """Fill the feedline chains of an assignment."""
+    ring = _entries(assignment.ring)
+    feeds = _entries(assignment.feeds)
+    for number, chain in enumerate(_entries(assignment.chains), start=1):
+        nodes = [node for node in _indices(chain.nodes) if node < min(len(ring), len(feeds))]
+        if not nodes:
+            continue
+        terminals = [_point(feeds[node]) for node in nodes]
+        start = _center(chip, int(chain.start.index)) if chain.start is not None else None
+        end = _center(chip, int(chain.end.index)) if chain.end is not None else None
+        terminations = []
+        if chain.start is None:
+            terminations.append(terminals[0])
+        if chain.end is None:
+            terminations.append(terminals[-1])
+        first = _name(chip, int(chain.start.index), component=False) if chain.start is not None else "termination"
+        last = _name(chip, int(chain.end.index), component=False) if chain.end is not None else "termination"
+        resonators = ", ".join(_name(chip, int(ring[node].index), component=True) for node in nodes)
+        geometry.feedlines.append(
+            Feedline(
+                points=[*([start] if start is not None else []), *terminals, *([end] if end is not None else [])],
+                terminals=terminals,
+                terminations=terminations,
+                label=f"feedline {number}: {first} → {resonators} → {last}",
+            )
+        )
+
+
+def _plan_of(capacity: bytes) -> CapacityPlanT:
+    """The capacity plan of a run, for a stage that is drawn over it.
+
+    Returns:
+        The plan.
+
+    Raises:
+        PlanningError: If the bytes do not hold a capacity plan.
+    """
+    plan = read_artifact(capacity).output
+    if not isinstance(plan, CapacityPlanT):
+        msg = "the capacity artifact is not a capacity plan"
+        raise PlanningError(msg)
+    return plan
+
+
+def planning_geometry(
+    data: bytes,
+    chip: ChipT,
+    stage: str,
+    capacity: bytes | None = None,
+    global_routing: bytes | None = None,
+) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
     Args:
         data: The bytes of the artifact.
         chip: The chip of the run, for the positions of the ports an artifact names.
         stage: The stage the artifact is drawn as.
+        capacity: The capacity artifact of the same run, for the stages that are drawn over the
+            free space they had to fit into: the global stage over the cells the grid blocked, and
+            the assign stage over the partitions its chords run through.
+        global_routing: The global artifact of the same run, for the assign stage, which is drawn
+            with the lattice edges that the inner circuit selected.
 
     Returns:
         The geometry, in layout units.
@@ -493,9 +677,34 @@ def planning_geometry(data: bytes, chip: ChipT, stage: str) -> PlanningGeometry:
         raise PlanningError(msg)
     output = read_artifact(data).output
     geometry = PlanningGeometry()
-    if not isinstance(output, CapacityPlanT):
-        msg = "the artifact is not a capacity plan"
-        raise PlanningError(msg)
-    _capacity(output, geometry)
-    _chains(output, chip, geometry)
+
+    if stage == "capacity":
+        if not isinstance(output, CapacityPlanT):
+            msg = "the artifact is not a capacity plan"
+            raise PlanningError(msg)
+        _capacity(output, geometry)
+        _chains(output, chip, geometry)
+    elif stage == "global":
+        if not isinstance(output, GlobalRoutingT):
+            msg = "the artifact is not a global routing"
+            raise PlanningError(msg)
+        _global(output, geometry)
+        # The lattice lines run between the cells the grid blocked. The gates and the keep-out are
+        # layers of the GDS; the SVG leaves them out, as it does in the other pictures.
+        if capacity is not None:
+            plan = _plan_of(capacity)
+            geometry.blocked = _blocked(plan)
+            _bottlenecks(plan, geometry)
+            _keepout(plan, geometry)
+    else:
+        if not isinstance(output, AssignmentT):
+            msg = "the artifact is not an assignment"
+            raise PlanningError(msg)
+        # The plan comes first, so that a feed on a launcher slot of the plan is not marked twice.
+        if capacity is not None:
+            _capacity(_plan_of(capacity), geometry)
+        _assignment(output, chip, geometry)
+        # The inner circuit decided which ports joined the ring, so its wires belong in the picture.
+        if global_routing is not None:
+            _global(_routing_of(global_routing), geometry, lattice=False)
     return geometry

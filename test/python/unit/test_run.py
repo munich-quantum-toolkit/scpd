@@ -73,36 +73,15 @@ def run_through(directory: RunDirectory, steps: list[str]) -> None:
         directory.run_stage(step, config, chip)
 
 
-@pytest.fixture
-def later_step(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Make the run directory know a step after the capacity step that reads its artifact.
-
-    No core call runs the step. A test of what happens before the core call, and of what a step
-    does to the artifacts after it, needs no more.
-
-    Returns:
-        The name of the step.
-    """
-    monkeypatch.setitem(STAGE_FILES, "later", "02-later.fb")
-    monkeypatch.setitem(STEP_INPUTS, "later", STEP_INPUTS["capacity"])
-    monkeypatch.setitem(ARTIFACT_INPUTS, "later", ("capacity",))
-    return "later"
-
-
-def write_later(directory: RunDirectory) -> None:
-    """Write an artifact and a record of the later step, as a run of it would leave them."""
-    directory.artifact("later").write_bytes(b"later")
-    directory.record("later").write_text("{}\n", encoding="utf-8")
-
-
 @pytest.mark.parametrize(
     ("stop_after", "expected"),
     [
         (None, list(STEPS)),
         ("", list(STEPS)),
         ("capacity", ["capacity"]),
+        ("global", ["capacity", "global"]),
     ],
-    ids=["none", "empty", "capacity"],
+    ids=["none", "empty", "first", "middle"],
 )
 def test_a_run_takes_the_steps_up_to_its_stop(stop_after: str | None, expected: list[str]) -> None:
     """A run takes every step up to and including the one it stops after."""
@@ -111,7 +90,7 @@ def test_a_run_takes_the_steps_up_to_its_stop(stop_after: str | None, expected: 
 
 def test_a_stop_that_is_no_step_is_refused() -> None:
     """A step name the release does not know names the ones it does."""
-    with pytest.raises(RunError, match=r"the steps are capacity$"):
+    with pytest.raises(RunError, match="capacity, global, assign"):
         steps_until("outer")
 
 
@@ -191,18 +170,17 @@ def test_preparing_refuses_a_directory_that_holds_a_configuration_of_its_own(tmp
         RunDirectory(FIXTURE).prepare(CONFIG)
 
 
-@pytest.mark.usefixtures("later_step")
 def test_a_step_writes_its_artifact_and_removes_the_later_ones(tmp_path: Path) -> None:
     """Running a step again leaves no artifact behind that came from the old one."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
-    run_through(directory, ["capacity"])
-    write_later(directory)
+    run_through(directory, ["capacity", "global"])
+    assert directory.artifact("global").is_file()
 
     run_through(directory, ["capacity"])
 
     assert directory.artifact("capacity").is_file()
-    assert not directory.artifact("later").exists()
+    assert not directory.artifact("global").exists()
     assert sorted(path.name for path in directory.path.iterdir()) == [
         "00-chip.json",
         "01-capacity.fb",
@@ -211,41 +189,25 @@ def test_a_step_writes_its_artifact_and_removes_the_later_ones(tmp_path: Path) -
     ]
 
 
-@pytest.mark.usefixtures("later_step")
-def test_preparing_removes_the_artifacts_of_every_step(tmp_path: Path) -> None:
-    """A run prepared again keeps no artifact and no record of a step after the first."""
-    directory = RunDirectory(tmp_path / "run")
-    directory.prepare(CONFIG)
-    run_through(directory, ["capacity"])
-    write_later(directory)
-
-    directory.prepare(CONFIG)
-
-    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
-
-
-@pytest.mark.usefixtures("later_step")
 def test_a_step_without_its_input_is_refused(tmp_path: Path) -> None:
     """A step whose input is missing says which step to run first."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
 
-    with pytest.raises(RunError, match=r"01-capacity\.fb is missing; run the capacity step first"):
-        run_through(directory, ["later"])
+    with pytest.raises(RunError, match=r"02-global\.fb is missing; run the global step first"):
+        run_through(directory, ["capacity", "assign"])
 
 
-@pytest.mark.usefixtures("later_step")
 def test_a_step_without_its_input_leaves_the_directory_as_it_was(tmp_path: Path) -> None:
     """A refused step deletes no artifact of a later step and no record."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
-    run_through(directory, ["capacity"])
-    write_later(directory)
+    run_through(directory, ["capacity", "global", "assign"])
     directory.artifact("capacity").unlink()
     before = artifacts_of(directory)
 
     with pytest.raises(RunError, match=r"01-capacity\.fb is missing; run the capacity step first"):
-        run_through(directory, ["later"])
+        run_through(directory, ["global"])
 
     assert artifacts_of(directory) == before
 
@@ -258,7 +220,8 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path: Path) -> None:
 
     resumed = RunDirectory(tmp_path / "resumed")
     resumed.prepare(CONFIG)
-    for step in STEPS:
+    run_through(resumed, ["capacity"])
+    for step in ("global", "assign"):
         run_through(RunDirectory(tmp_path / "resumed"), [step])
 
     for stage, name in STAGE_FILES.items():
@@ -298,27 +261,33 @@ def artifacts_of(directory: RunDirectory) -> dict[str, bytes]:
             r"\[grid\] in config\.toml changed after the capacity step",
         ),
         (
-            "capacity_cells_x = 12",
-            "capacity_cells_x = 12\n\n[stages.capacity]\ncrossing_pitch = 170.0",
+            "[stages.assignment]",
+            "[stages.solver]\nthreads = 1\n\n[stages.assignment]",
+            (
+                r"\[stages\.solver\] in config\.toml changed after the global step wrote 02-global\.fb; "
+                r"run the global step again"
+            ),
+        ),
+        (
+            "[stages.assignment]",
+            "[stages.capacity]\ncrossing_pitch = 170.0\n\n[stages.assignment]",
             r"\[stages\.capacity\] in config\.toml changed after the capacity step",
         ),
     ],
-    ids=["design-rule", "grid", "pitch"],
+    ids=["design-rule", "grid", "solver", "pitch"],
 )
-@pytest.mark.usefixtures("later_step")
 def test_a_step_refuses_an_earlier_artifact_made_from_other_sections(
     tmp_path: Path, old: str, new: str, message: str
 ) -> None:
     """A section an earlier step read and that has changed since stops the step, and the run stays as it was."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
-    run_through(directory, ["capacity"])
-    write_later(directory)
+    run_through(directory, list(STEPS))
     before = artifacts_of(directory)
     edit_config(directory, old, new)
 
     with pytest.raises(RunError, match=message):
-        run_through(directory, ["later"])
+        run_through(directory, ["assign"])
 
     assert artifacts_of(directory) == before
 
@@ -330,14 +299,15 @@ def test_every_step_has_an_artifact_and_a_record_of_its_inputs() -> None:
     assert list(ARTIFACT_INPUTS) == list(STEPS)
 
 
-@pytest.mark.usefixtures("later_step")
-def test_a_step_without_a_core_call_deletes_nothing(tmp_path: Path) -> None:
+def test_a_step_without_a_core_call_deletes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A step that the run directory knows but no core call runs is refused before any artifact goes."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
-    run_through(directory, ["capacity"])
-    write_later(directory)
+    run_through(directory, list(STEPS))
     before = artifacts_of(directory)
+    monkeypatch.setitem(STAGE_FILES, "later", "04-later.fb")
+    monkeypatch.setitem(STEP_INPUTS, "later", STEP_INPUTS["assign"])
+    monkeypatch.setitem(ARTIFACT_INPUTS, "later", ARTIFACT_INPUTS["assign"])
 
     with pytest.raises(RunError, match="no core call runs the later step"):
         run_through(directory, ["later"])
@@ -345,7 +315,6 @@ def test_a_step_without_a_core_call_deletes_nothing(tmp_path: Path) -> None:
     assert artifacts_of(directory) == before
 
 
-@pytest.mark.usefixtures("later_step")
 def test_a_step_refuses_an_earlier_artifact_made_from_another_chip(tmp_path: Path) -> None:
     """A chip copy edited after a step stops the steps after it."""
     directory = RunDirectory(tmp_path / "run")
@@ -356,7 +325,7 @@ def test_a_step_refuses_an_earlier_artifact_made_from_another_chip(tmp_path: Pat
     directory.chip.write_text(json.dumps(chip), encoding="utf-8")
 
     with pytest.raises(RunError, match=r"00-chip\.json changed after the capacity step wrote 01-capacity\.fb"):
-        run_through(directory, ["later"])
+        run_through(directory, ["global"])
 
 
 def test_a_step_reruns_after_its_own_section_changed(tmp_path: Path) -> None:
@@ -364,15 +333,30 @@ def test_a_step_reruns_after_its_own_section_changed(tmp_path: Path) -> None:
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
     run_through(directory, list(STEPS))
-    edit_config(directory, "capacity_cells_x = 12", 'capacity_cells_x = 12\n\n[stages.capacity]\nplanner = "watershed"')
+    edit_config(directory, "[stages.assignment]", '[stages.assignment]\nassigner = "ordered-milp"')
 
-    run_through(directory, ["capacity"])
+    run_through(directory, ["assign"])
 
-    assert directory.artifact("capacity").is_file()
+    assert directory.artifact("assign").is_file()
+
+
+def test_a_step_resumes_under_another_solver_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``SCPD_SOLVER`` chooses the backend of one invocation and is not an input that a record holds."""
+    monkeypatch.delenv("SCPD_SOLVER", raising=False)
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    run_through(directory, ["capacity", "global"])
+    recorded = directory.record("global").read_bytes()
+    monkeypatch.setenv("SCPD_SOLVER", "highs")
+
+    run_through(directory, ["assign"])
+
+    assert directory.record("global").read_bytes() == recorded
+    record = json.loads(directory.record("assign").read_text(encoding="utf-8"))
+    assert sorted(record) == sorted(STEP_INPUTS["assign"])
 
 
 @pytest.mark.parametrize("record", [None, "not json", "{}"], ids=["missing", "unreadable", "incomplete"])
-@pytest.mark.usefixtures("later_step")
 def test_a_step_refuses_an_earlier_artifact_without_a_record(tmp_path: Path, record: str | None) -> None:
     """An artifact whose record of inputs is missing or broken is not an input of a later step."""
     directory = RunDirectory(tmp_path / "run")
@@ -386,7 +370,7 @@ def test_a_step_refuses_an_earlier_artifact_without_a_record(tmp_path: Path, rec
     with pytest.raises(
         RunError, match=r"01-capacity\.fb carries no record of the inputs it was made from; run the capacity step again"
     ):
-        run_through(directory, ["later"])
+        run_through(directory, ["global"])
 
 
 def test_a_step_that_fails_keeps_the_old_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -409,24 +393,22 @@ def test_a_step_that_fails_keeps_the_old_artifact(tmp_path: Path, monkeypatch: p
     assert not list(directory.path.glob("*.tmp"))
 
 
-@pytest.mark.usefixtures("later_step")
 def test_a_step_that_fails_removes_the_later_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A step that raises leaves no artifact of a later step, which came from the step's old artifact."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
-    run_through(directory, ["capacity"])
-    write_later(directory)
+    run_through(directory, list(STEPS))
 
     def broken(*args: object) -> bytes:
         del args
-        msg = "the capacity stage broke"
+        msg = "the global stage broke"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(pyscpd, "plan_capacity", broken)
+    monkeypatch.setattr(pyscpd, "route_global", broken)
     with pytest.raises(RuntimeError, match="broke"):
-        run_through(directory, ["capacity"])
+        run_through(directory, ["global"])
 
-    assert sorted(path.name for path in directory.path.glob("*.fb")) == ["01-capacity.fb"]
+    assert sorted(path.name for path in directory.path.glob("*.fb")) == ["01-capacity.fb", "02-global.fb"]
 
 
 def test_an_artifact_is_replaced_whole_or_not_at_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

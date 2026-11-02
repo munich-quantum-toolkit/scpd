@@ -141,6 +141,19 @@ std::optional<std::string> detailGridProblem(const ChipT& chip,
                      factor, MAX_DETAIL_CELLS);
 }
 
+std::vector<geometry::Point> launcherSlotPositions(const ChipT& chip,
+                                                   const ConfigT& config) {
+  const auto detail = gridsOf(chip, config).second;
+  std::vector<geometry::Point> positions;
+  for (const auto& port : chip.ports) {
+    if (hasLauncherSlot(*port)) {
+      const auto cell = detail.clampToCell(port->center);
+      positions.push_back(detail.toLayout(cell.x(), cell.y()));
+    }
+  }
+  return positions;
+}
+
 double crossingPitch(const ConfigT& config) {
   if (config.stages != nullptr && config.stages->capacity != nullptr) {
     return config.stages->capacity->crossing_pitch;
@@ -286,7 +299,7 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
 
   // A chain reaches a target through its cell and puts the port of that cell
   // on the chain. Two targets on one cell would leave one of the two ports on
-  // no chain, and the plan would never count its wire.
+  // no chain, and the Global stage would never count its wire.
   std::unordered_map<std::size_t, std::uint32_t> portAtCell;
   for (std::size_t index = 0; index < scene.targetCell.size(); ++index) {
     const auto [held, added] =

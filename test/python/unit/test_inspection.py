@@ -28,9 +28,10 @@ from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
 from mqt.scpd.flatbuffers.artifacts.Bottleneck import BottleneckT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.DetailRouting import DetailRoutingT
+from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
-from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingEnd, GlobalRoutingStart, GlobalRoutingT
+from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.artifacts.Wire import WireT
@@ -79,6 +80,15 @@ def artifact(output_type: int, output: object) -> bytes:
     return write_artifact(ArtifactT(producer="mqt-scpd test", outputType=output_type, output=output))
 
 
+def empty_global() -> GlobalRoutingT:
+    """A global routing that carries nothing, but every field the schema requires.
+
+    Returns:
+        The output.
+    """
+    return GlobalRoutingT(lattices=[], connections=[], outerRing=[], resonators=[])
+
+
 STAGE_OUTPUTS = [
     pytest.param(
         StageOutput.CapacityPlan,
@@ -125,6 +135,10 @@ STAGE_OUTPUTS = [
                 ),
             ],
             objective=132.68,
+            ring=[PortRefT(3), PortRefT(2)],
+            launchers=[PortRefT(9), PortRefT(1)],
+            feeds=[PointT(120.5, -40.25), PointT(0.0, 0.0)],
+            chains=[FeedlineChainT(nodes=[0], start=PortRefT(9))],
         ),
         {
             "connections": [
@@ -137,10 +151,19 @@ STAGE_OUTPUTS = [
                 },
             ],
             "objective": 132.68,
+            "ring": [{"index": 3}, {"index": 2}],
+            "launchers": [{"index": 9}, {"index": 1}],
+            "feeds": [{"x": 120.5, "y": -40.25}, {"x": 0.0, "y": 0.0}],
+            "chains": [{"nodes": [0], "start": {"index": 9}}],
         },
         id="assignment",
     ),
-    pytest.param(StageOutput.GlobalRouting, GlobalRoutingT(), {}, id="global"),
+    pytest.param(
+        StageOutput.GlobalRouting,
+        empty_global(),
+        {"lattices": [], "connections": [], "outer_ring": [], "resonators": []},
+        id="global",
+    ),
     pytest.param(StageOutput.DetailRouting, DetailRoutingT(), {}, id="detail"),
     pytest.param(
         StageOutput.FinalRouting,
@@ -233,15 +256,20 @@ def test_every_stage_output_renders_the_fields_of_its_schema(output_type: int, o
 def test_absent_fields_and_defaults_are_left_out() -> None:
     """A field the artifact does not carry does not appear, so the JSON shows what was written."""
     document = json.loads(
-        artifact_to_json(artifact(StageOutput.Assignment, AssignmentT(connections=[], objective=0.0)))
+        artifact_to_json(
+            artifact(
+                StageOutput.Assignment,
+                AssignmentT(connections=[], objective=0.0, ring=[], launchers=[], feeds=[], chains=[]),
+            )
+        )
     )
 
-    assert document["output"] == {"connections": []}
+    assert document["output"] == {"connections": [], "ring": [], "launchers": [], "feeds": [], "chains": []}
 
 
 def test_bytes_that_are_not_an_artifact_are_refused() -> None:
     """The identifier and the completeness of the artifact are checked before anything is rendered."""
-    data = bytearray(artifact(StageOutput.GlobalRouting, GlobalRoutingT()))
+    data = bytearray(artifact(StageOutput.GlobalRouting, empty_global()))
     data[4:8] = b"XXXX"
     with pytest.raises(InspectionError, match="identifier"):
         artifact_to_json(bytes(data))
@@ -252,8 +280,7 @@ def test_bytes_that_are_not_an_artifact_are_refused() -> None:
     # every artifact names what wrote it.
     builder = flatbuffers.Builder()
     producer = builder.CreateString("")
-    GlobalRoutingStart(builder)
-    output = GlobalRoutingEnd(builder)
+    output = empty_global().Pack(builder)
     ArtifactStart(builder)
     ArtifactAddProducer(builder, producer)
     ArtifactAddOutputType(builder, StageOutput.GlobalRouting)

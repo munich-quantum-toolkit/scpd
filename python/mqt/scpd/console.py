@@ -51,6 +51,8 @@ class StageStyle:
 #: cells wide on every terminal. A step without a style cannot report; a test checks every step.
 STAGE_STYLES: dict[str, StageStyle] = {
     "capacity": StageStyle("🧩", "[#]", "cyan"),
+    "global": StageStyle("🔳", "[+]", "blue"),
+    "assign": StageStyle("📌", "[>]", "magenta"),
 }
 
 #: Symbols with a plain form for an output that cannot encode them.
@@ -69,6 +71,9 @@ _LABEL_WIDTH = 18
 #: The width the time column ends at in a file, and the widest it gets on a terminal.
 _FILE_WIDTH = 72
 _TERMINAL_WIDTH = 100
+
+#: The levels of a line, as -v counts them.
+_STEPS, _SOLVER = 1, 3
 
 
 @contextmanager
@@ -209,11 +214,14 @@ class StageBlock:
         """Write a line of free text, if the verbosity shows its level."""
         if level > self.console.verbosity:
             return
+        if level >= _SOLVER:
+            self._write(Text(" " * _DEEP_INDENT + self.console.plain(text), style="dim"))
+            return
         indent = _INDENT if level == 0 else _DEEP_INDENT
         self._write(self.console.timed(Text(" " * indent + self.console.plain(text)), self.elapsed, dim=level > 0))
 
     def entry(self, level: int, label: str, figures: Sequence[Figure]) -> None:
-        """Write an entry, such as one chain, with its label in a column of its own."""
+        """Write an entry, such as one feedline chain, with its label in a column of its own."""
         if level > self.console.verbosity:
             return
         indent = _INDENT if level == 0 else _DEEP_INDENT
@@ -445,11 +453,13 @@ class Console:
         line.append(self.plain("✗ " + text), style="red")
         self.write(line)
 
-    def header(self, command: str, subject: str, target: str | None = None) -> None:
-        """Write the header of a run: what runs on what and where it writes."""
+    def header(self, command: str, subject: str, target: str | None = None, facts: Sequence[str] = ()) -> None:
+        """Write the header of a run: what runs on what, where it writes and the facts of the run."""
         line = f"mqt-scpd {command} {subject}"
         if target is not None:
             line += f" → {target}"
+        if facts:
+            line += "  ·  " + " · ".join(facts)
         self.write(Text(self.plain(line)))
         self.write(Text())
 

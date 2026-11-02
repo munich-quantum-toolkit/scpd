@@ -121,7 +121,8 @@ TEST(Bridges, ARulePairsThePortsItsCapturesAgreeOn) {
                              "Coupler1_2.port1", "Coupler1_2.port2"},
                          std::pair<std::string, std::string>{
                              "Coupler1_2.port3", "Coupler1_2.port4"}}));
-  // The port no rule claims ends a wire.
+  // The port no rule claims ends a wire. It is the one the inner circuit has
+  // to reach.
   EXPECT_EQ(endsOf(chip, "Coupler1_2", rules),
             (std::vector<std::string>{"Coupler1_2.port0"}));
 }

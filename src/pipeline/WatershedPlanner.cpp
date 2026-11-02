@@ -529,9 +529,9 @@ private:
     }
     visitedCells.insert(chamber.cells);
 
-    // A target lies on one chain only: the budget of a chain counts one wire
-    // of each of its targets, so a target on two chains would count its wire
-    // twice.
+    // A target lies on one chain only: the Global stage asks one wire of
+    // each target over its chain, so a target on two chains would ask for
+    // its wire twice.
     for (const auto& [cell, port] : chamber.targets) {
       if (heldCells.contains(cell) || !servedInWalk.insert(cell).second) {
         continue;

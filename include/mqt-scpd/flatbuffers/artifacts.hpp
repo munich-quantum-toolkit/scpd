@@ -52,6 +52,14 @@ struct Assignment;
 struct AssignmentBuilder;
 struct AssignmentT;
 
+struct FeedlineChain;
+struct FeedlineChainBuilder;
+struct FeedlineChainT;
+
+struct Lattice;
+struct LatticeBuilder;
+struct LatticeT;
+
 struct GlobalRouting;
 struct GlobalRoutingBuilder;
 struct GlobalRoutingT;
@@ -92,6 +100,10 @@ bool operator==(const CapacityPlanT &lhs, const CapacityPlanT &rhs);
 bool operator!=(const CapacityPlanT &lhs, const CapacityPlanT &rhs);
 bool operator==(const AssignmentT &lhs, const AssignmentT &rhs);
 bool operator!=(const AssignmentT &lhs, const AssignmentT &rhs);
+bool operator==(const FeedlineChainT &lhs, const FeedlineChainT &rhs);
+bool operator!=(const FeedlineChainT &lhs, const FeedlineChainT &rhs);
+bool operator==(const LatticeT &lhs, const LatticeT &rhs);
+bool operator!=(const LatticeT &lhs, const LatticeT &rhs);
 bool operator==(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
 bool operator!=(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
 bool operator==(const DetailRoutingT &lhs, const DetailRoutingT &rhs);
@@ -120,6 +132,10 @@ inline const ::flatbuffers::TypeTable *CapacityNodeTypeTable();
 inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable();
 
 inline const ::flatbuffers::TypeTable *AssignmentTypeTable();
+
+inline const ::flatbuffers::TypeTable *FeedlineChainTypeTable();
+
+inline const ::flatbuffers::TypeTable *LatticeTypeTable();
 
 inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable();
 
@@ -1244,6 +1260,10 @@ struct AssignmentT : public ::flatbuffers::NativeTable {
   typedef Assignment TableType;
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>> connections{};
   double objective = 0.0;
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> ring{};
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> launchers{};
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> feeds{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FeedlineChainT>> chains{};
   AssignmentT() = default;
   AssignmentT(const AssignmentT &o);
   AssignmentT(AssignmentT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -1260,13 +1280,48 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CONNECTIONS = 4,
-    VT_OBJECTIVE = 6
+    VT_OBJECTIVE = 6,
+    VT_RING = 8,
+    VT_LAUNCHERS = 10,
+    VT_FEEDS = 12,
+    VT_CHAINS = 14
   };
+  /// One connection per node of `ring`, in the order of `ring`. A
+  /// conventional port runs from the launcher it was given, as
+  /// FeedlineSource to FeedlineTarget. A resonator carries ResonatorSource
+  /// to ResonatorTarget and no source port, because the port that feeds it is
+  /// the coupler that the Final stage inserts.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
   }
   double objective() const {
     return GetField<double>(VT_OBJECTIVE, 0.0);
+  }
+  /// The ring the model consumed, in the order it consumed it.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *ring() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_RING);
+  }
+  /// The launcher each ring node was given, parallel to `ring`.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *launchers() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_LAUNCHERS);
+  }
+  /// Where each ring node is fed from, parallel to `ring`.
+  ///
+  /// A conventional port is fed at the launcher slot that `launchers` names.
+  /// A resonator is fed at no launcher: the wire that reaches it comes past
+  /// the slot, so its feed sits on the segment between its own launcher and a
+  /// neighboring one. The resonators fed on one segment divide it evenly, in
+  /// the order the walk of the ring reaches them. No two feeds lie closer than
+  /// the wire spacing.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *feeds() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_FEEDS);
+  }
+  /// The feedline chains the model chose: which resonators one feedline
+  /// drives, from one launcher to the next. The Final stage routes each of
+  /// them from its first launcher through the couplers of its resonators to
+  /// its last.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>> *chains() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>> *>(VT_CHAINS);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -1275,6 +1330,15 @@ struct Assignment FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(connections()) &&
            verifier.VerifyVectorOfTables(connections()) &&
            VerifyField<double>(verifier, VT_OBJECTIVE, 8) &&
+           VerifyOffsetRequired(verifier, VT_RING) &&
+           verifier.VerifyVector(ring()) &&
+           VerifyOffsetRequired(verifier, VT_LAUNCHERS) &&
+           verifier.VerifyVector(launchers()) &&
+           VerifyOffsetRequired(verifier, VT_FEEDS) &&
+           verifier.VerifyVector(feeds()) &&
+           VerifyOffsetRequired(verifier, VT_CHAINS) &&
+           verifier.VerifyVector(chains()) &&
+           verifier.VerifyVectorOfTables(chains()) &&
            verifier.EndTable();
   }
   AssignmentT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1292,6 +1356,18 @@ struct AssignmentBuilder {
   void add_objective(double objective) {
     fbb_.AddElement<double>(Assignment::VT_OBJECTIVE, objective, 0.0);
   }
+  void add_ring(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> ring) {
+    fbb_.AddOffset(Assignment::VT_RING, ring);
+  }
+  void add_launchers(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> launchers) {
+    fbb_.AddOffset(Assignment::VT_LAUNCHERS, launchers);
+  }
+  void add_feeds(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> feeds) {
+    fbb_.AddOffset(Assignment::VT_FEEDS, feeds);
+  }
+  void add_chains(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>>> chains) {
+    fbb_.AddOffset(Assignment::VT_CHAINS, chains);
+  }
   explicit AssignmentBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1300,6 +1376,10 @@ struct AssignmentBuilder {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<Assignment>(end);
     fbb_.Required(o, Assignment::VT_CONNECTIONS);
+    fbb_.Required(o, Assignment::VT_RING);
+    fbb_.Required(o, Assignment::VT_LAUNCHERS);
+    fbb_.Required(o, Assignment::VT_FEEDS);
+    fbb_.Required(o, Assignment::VT_CHAINS);
     return o;
   }
 };
@@ -1307,9 +1387,17 @@ struct AssignmentBuilder {
 inline ::flatbuffers::Offset<Assignment> CreateAssignment(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections = 0,
-    double objective = 0.0) {
+    double objective = 0.0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> ring = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> launchers = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> feeds = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>>> chains = 0) {
   AssignmentBuilder builder_(_fbb);
   builder_.add_objective(objective);
+  builder_.add_chains(chains);
+  builder_.add_feeds(feeds);
+  builder_.add_launchers(launchers);
+  builder_.add_ring(ring);
   builder_.add_connections(connections);
   return builder_.Finish();
 }
@@ -1322,21 +1410,271 @@ struct Assignment::Traits {
 inline ::flatbuffers::Offset<Assignment> CreateAssignmentDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections = nullptr,
-    double objective = 0.0) {
+    double objective = 0.0,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *ring = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *launchers = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *feeds = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>> *chains = nullptr) {
   auto connections__ = connections ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>(*connections) : 0;
+  auto ring__ = ring ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*ring) : 0;
+  auto launchers__ = launchers ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*launchers) : 0;
+  auto feeds__ = feeds ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*feeds) : 0;
+  auto chains__ = chains ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>>(*chains) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateAssignment(
       _fbb,
       connections__,
-      objective);
+      objective,
+      ring__,
+      launchers__,
+      feeds__,
+      chains__);
 }
 
 ::flatbuffers::Offset<Assignment> CreateAssignment(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
-struct GlobalRoutingT : public ::flatbuffers::NativeTable {
-  typedef GlobalRouting TableType;
+struct FeedlineChainT : public ::flatbuffers::NativeTable {
+  typedef FeedlineChain TableType;
+  std::vector<uint32_t> nodes{};
+  std::unique_ptr<mqt::scpd::flatbuffers::design::PortRef> start{};
+  std::unique_ptr<mqt::scpd::flatbuffers::design::PortRef> end{};
+  FeedlineChainT() = default;
+  FeedlineChainT(const FeedlineChainT &o);
+  FeedlineChainT(FeedlineChainT&&) FLATBUFFERS_NOEXCEPT = default;
+  FeedlineChainT &operator=(FeedlineChainT o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// Output of the Global stage. Empty when the chip has no inner circuit.
+/// One feedline chain of the assignment.
+///
+/// The model gives every resonator degree two on the ring: a chord to the
+/// resonator before it, a chord to the one after it, or an end. An end is a
+/// launcher, or one of the permitted terminations where the feedline stops.
+/// A chain is a run of resonators joined by chords, and the Final stage
+/// drives it with one feedline: launcher, coupler, coupler, …, launcher. A
+/// chain has a launcher at one end at least; its other end may be a
+/// termination.
+struct FeedlineChain FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef FeedlineChainT NativeTableType;
+  typedef FeedlineChainBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return FeedlineChainTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_NODES = 4,
+    VT_START = 6,
+    VT_END = 8
+  };
+  /// The ring nodes the chain runs through, as indices into `ring` and
+  /// `connections`, in ring order. Every one of them is a resonator.
+  const ::flatbuffers::Vector<uint32_t> *nodes() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_NODES);
+  }
+  /// The launcher the chain starts at: the launcher slot its first resonator
+  /// was given. Absent where the chain starts at a termination.
+  const mqt::scpd::flatbuffers::design::PortRef *start() const {
+    return GetStruct<const mqt::scpd::flatbuffers::design::PortRef *>(VT_START);
+  }
+  /// The launcher the chain ends at: the launcher slot its last resonator
+  /// was given. Absent where the chain ends at a termination.
+  const mqt::scpd::flatbuffers::design::PortRef *end() const {
+    return GetStruct<const mqt::scpd::flatbuffers::design::PortRef *>(VT_END);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_NODES) &&
+           verifier.VerifyVector(nodes()) &&
+           VerifyField<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_START, 4) &&
+           VerifyField<mqt::scpd::flatbuffers::design::PortRef>(verifier, VT_END, 4) &&
+           verifier.EndTable();
+  }
+  FeedlineChainT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(FeedlineChainT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<FeedlineChain> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FeedlineChainT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct FeedlineChainBuilder {
+  typedef FeedlineChain Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_nodes(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> nodes) {
+    fbb_.AddOffset(FeedlineChain::VT_NODES, nodes);
+  }
+  void add_start(const mqt::scpd::flatbuffers::design::PortRef *start) {
+    fbb_.AddStruct(FeedlineChain::VT_START, start);
+  }
+  void add_end(const mqt::scpd::flatbuffers::design::PortRef *end) {
+    fbb_.AddStruct(FeedlineChain::VT_END, end);
+  }
+  explicit FeedlineChainBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<FeedlineChain> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<FeedlineChain>(end);
+    fbb_.Required(o, FeedlineChain::VT_NODES);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<FeedlineChain> CreateFeedlineChain(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> nodes = 0,
+    const mqt::scpd::flatbuffers::design::PortRef *start = nullptr,
+    const mqt::scpd::flatbuffers::design::PortRef *end = nullptr) {
+  FeedlineChainBuilder builder_(_fbb);
+  builder_.add_end(end);
+  builder_.add_start(start);
+  builder_.add_nodes(nodes);
+  return builder_.Finish();
+}
+
+struct FeedlineChain::Traits {
+  using type = FeedlineChain;
+  static auto constexpr Create = CreateFeedlineChain;
+};
+
+inline ::flatbuffers::Offset<FeedlineChain> CreateFeedlineChainDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<uint32_t> *nodes = nullptr,
+    const mqt::scpd::flatbuffers::design::PortRef *start = nullptr,
+    const mqt::scpd::flatbuffers::design::PortRef *end = nullptr) {
+  auto nodes__ = nodes ? _fbb.CreateVector<uint32_t>(*nodes) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateFeedlineChain(
+      _fbb,
+      nodes__,
+      start,
+      end);
+}
+
+::flatbuffers::Offset<FeedlineChain> CreateFeedlineChain(::flatbuffers::FlatBufferBuilder &_fbb, const FeedlineChainT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct LatticeT : public ::flatbuffers::NativeTable {
+  typedef Lattice TableType;
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> points{};
+  std::vector<uint32_t> edges{};
+  std::vector<uint32_t> selected{};
+};
+
+/// One lattice the inner circuit is solved on: the Hanan grid that the ports
+/// of one capacity chain induce.
+struct Lattice FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef LatticeT NativeTableType;
+  typedef LatticeBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return LatticeTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_POINTS = 4,
+    VT_EDGES = 6,
+    VT_SELECTED = 8
+  };
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *points() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_POINTS);
+  }
+  /// Two point indices per edge, flat.
+  const ::flatbuffers::Vector<uint32_t> *edges() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_EDGES);
+  }
+  /// The edges of the connections, as indices into `edges` divided by two.
+  /// The edges of a wire that the connections leave out are not among them.
+  const ::flatbuffers::Vector<uint32_t> *selected() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_SELECTED);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_POINTS) &&
+           verifier.VerifyVector(points()) &&
+           VerifyOffsetRequired(verifier, VT_EDGES) &&
+           verifier.VerifyVector(edges()) &&
+           VerifyOffsetRequired(verifier, VT_SELECTED) &&
+           verifier.VerifyVector(selected()) &&
+           verifier.EndTable();
+  }
+  LatticeT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(LatticeT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<Lattice> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct LatticeBuilder {
+  typedef Lattice Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_points(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> points) {
+    fbb_.AddOffset(Lattice::VT_POINTS, points);
+  }
+  void add_edges(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> edges) {
+    fbb_.AddOffset(Lattice::VT_EDGES, edges);
+  }
+  void add_selected(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> selected) {
+    fbb_.AddOffset(Lattice::VT_SELECTED, selected);
+  }
+  explicit LatticeBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<Lattice> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<Lattice>(end);
+    fbb_.Required(o, Lattice::VT_POINTS);
+    fbb_.Required(o, Lattice::VT_EDGES);
+    fbb_.Required(o, Lattice::VT_SELECTED);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<Lattice> CreateLattice(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> points = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> edges = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> selected = 0) {
+  LatticeBuilder builder_(_fbb);
+  builder_.add_selected(selected);
+  builder_.add_edges(edges);
+  builder_.add_points(points);
+  return builder_.Finish();
+}
+
+struct Lattice::Traits {
+  using type = Lattice;
+  static auto constexpr Create = CreateLattice;
+};
+
+inline ::flatbuffers::Offset<Lattice> CreateLatticeDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *points = nullptr,
+    const std::vector<uint32_t> *edges = nullptr,
+    const std::vector<uint32_t> *selected = nullptr) {
+  auto points__ = points ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*points) : 0;
+  auto edges__ = edges ? _fbb.CreateVector<uint32_t>(*edges) : 0;
+  auto selected__ = selected ? _fbb.CreateVector<uint32_t>(*selected) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateLattice(
+      _fbb,
+      points__,
+      edges__,
+      selected__);
+}
+
+::flatbuffers::Offset<Lattice> CreateLattice(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct GlobalRoutingT : public ::flatbuffers::NativeTable {
+  typedef GlobalRouting TableType;
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT>> lattices{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>> connections{};
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> outer_ring{};
+  std::vector<mqt::scpd::flatbuffers::design::PortRef> resonators{};
+  double objective = 0.0;
+  GlobalRoutingT() = default;
+  GlobalRoutingT(const GlobalRoutingT &o);
+  GlobalRoutingT(GlobalRoutingT&&) FLATBUFFERS_NOEXCEPT = default;
+  GlobalRoutingT &operator=(GlobalRoutingT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// Output of the Global stage. The lattices are empty when the chip has no
+/// inner circuit, which is a valid state rather than a skipped stage.
 struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef GlobalRoutingT NativeTableType;
   typedef GlobalRoutingBuilder Builder;
@@ -1344,9 +1682,54 @@ struct GlobalRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
     return GlobalRoutingTypeTable();
   }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_LATTICES = 4,
+    VT_CONNECTIONS = 6,
+    VT_OUTER_RING = 8,
+    VT_RESONATORS = 10,
+    VT_OBJECTIVE = 12
+  };
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *lattices() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *>(VT_LATTICES);
+  }
+  /// The connections of the inner circuit that the solved flow implies. A
+  /// wire that reaches no target or a closed loop over crossings, which only
+  /// a solve that stops early keeps, is not among them.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *>(VT_CONNECTIONS);
+  }
+  /// The outer port ring that the Assignment stage consumes: the configured
+  /// ring in its order, without the ring end of each outer bridge where no
+  /// inner wire surfaces. The assignment reads this ring and not the
+  /// configuration.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *outer_ring() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_OUTER_RING);
+  }
+  /// The resonator ports of the chip, and the ring ports where the inner
+  /// wire of a resonator surfaces. The Assignment stage treats the ring
+  /// nodes among them as resonators.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *resonators() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *> *>(VT_RESONATORS);
+  }
+  /// The length of the lattice edges that the connections take, in layout
+  /// units.
+  double objective() const {
+    return GetField<double>(VT_OBJECTIVE, 0.0);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_LATTICES) &&
+           verifier.VerifyVector(lattices()) &&
+           verifier.VerifyVectorOfTables(lattices()) &&
+           VerifyOffsetRequired(verifier, VT_CONNECTIONS) &&
+           verifier.VerifyVector(connections()) &&
+           verifier.VerifyVectorOfTables(connections()) &&
+           VerifyOffsetRequired(verifier, VT_OUTER_RING) &&
+           verifier.VerifyVector(outer_ring()) &&
+           VerifyOffsetRequired(verifier, VT_RESONATORS) &&
+           verifier.VerifyVector(resonators()) &&
+           VerifyField<double>(verifier, VT_OBJECTIVE, 8) &&
            verifier.EndTable();
   }
   GlobalRoutingT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1358,6 +1741,21 @@ struct GlobalRoutingBuilder {
   typedef GlobalRouting Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
+  void add_lattices(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>> lattices) {
+    fbb_.AddOffset(GlobalRouting::VT_LATTICES, lattices);
+  }
+  void add_connections(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections) {
+    fbb_.AddOffset(GlobalRouting::VT_CONNECTIONS, connections);
+  }
+  void add_outer_ring(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> outer_ring) {
+    fbb_.AddOffset(GlobalRouting::VT_OUTER_RING, outer_ring);
+  }
+  void add_resonators(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> resonators) {
+    fbb_.AddOffset(GlobalRouting::VT_RESONATORS, resonators);
+  }
+  void add_objective(double objective) {
+    fbb_.AddElement<double>(GlobalRouting::VT_OBJECTIVE, objective, 0.0);
+  }
   explicit GlobalRoutingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1365,13 +1763,27 @@ struct GlobalRoutingBuilder {
   ::flatbuffers::Offset<GlobalRouting> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<GlobalRouting>(end);
+    fbb_.Required(o, GlobalRouting::VT_LATTICES);
+    fbb_.Required(o, GlobalRouting::VT_CONNECTIONS);
+    fbb_.Required(o, GlobalRouting::VT_OUTER_RING);
+    fbb_.Required(o, GlobalRouting::VT_RESONATORS);
     return o;
   }
 };
 
 inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(
-    ::flatbuffers::FlatBufferBuilder &_fbb) {
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>> lattices = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>> connections = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> outer_ring = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::design::PortRef *>> resonators = 0,
+    double objective = 0.0) {
   GlobalRoutingBuilder builder_(_fbb);
+  builder_.add_objective(objective);
+  builder_.add_resonators(resonators);
+  builder_.add_outer_ring(outer_ring);
+  builder_.add_connections(connections);
+  builder_.add_lattices(lattices);
   return builder_.Finish();
 }
 
@@ -1379,6 +1791,26 @@ struct GlobalRouting::Traits {
   using type = GlobalRouting;
   static auto constexpr Create = CreateGlobalRouting;
 };
+
+inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRoutingDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> *lattices = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> *connections = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *outer_ring = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::design::PortRef> *resonators = nullptr,
+    double objective = 0.0) {
+  auto lattices__ = lattices ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>>(*lattices) : 0;
+  auto connections__ = connections ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>>(*connections) : 0;
+  auto outer_ring__ = outer_ring ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*outer_ring) : 0;
+  auto resonators__ = resonators ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::design::PortRef>(*resonators) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateGlobalRouting(
+      _fbb,
+      lattices__,
+      connections__,
+      outer_ring__,
+      resonators__,
+      objective);
+}
 
 ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
@@ -2284,7 +2716,11 @@ inline ::flatbuffers::Offset<CapacityPlan> CapacityPlan::Pack(::flatbuffers::Fla
 inline bool operator==(const AssignmentT &lhs, const AssignmentT &rhs) {
   return
       (lhs.connections.size() == rhs.connections.size() && std::equal(lhs.connections.cbegin(), lhs.connections.cend(), rhs.connections.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
-      (lhs.objective == rhs.objective);
+      (lhs.objective == rhs.objective) &&
+      (lhs.ring == rhs.ring) &&
+      (lhs.launchers == rhs.launchers) &&
+      (lhs.feeds == rhs.feeds) &&
+      (lhs.chains.size() == rhs.chains.size() && std::equal(lhs.chains.cbegin(), lhs.chains.cend(), rhs.chains.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FeedlineChainT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FeedlineChainT> const &b) { return (a == b) || (a && b && *a == *b); }));
 }
 
 inline bool operator!=(const AssignmentT &lhs, const AssignmentT &rhs) {
@@ -2293,14 +2729,23 @@ inline bool operator!=(const AssignmentT &lhs, const AssignmentT &rhs) {
 
 
 inline AssignmentT::AssignmentT(const AssignmentT &o)
-      : objective(o.objective) {
+      : objective(o.objective),
+        ring(o.ring),
+        launchers(o.launchers),
+        feeds(o.feeds) {
   connections.reserve(o.connections.size());
   for (const auto &connections_ : o.connections) { connections.emplace_back((connections_) ? new mqt::scpd::flatbuffers::design::ConnectionT(*connections_) : nullptr); }
+  chains.reserve(o.chains.size());
+  for (const auto &chains_ : o.chains) { chains.emplace_back((chains_) ? new mqt::scpd::flatbuffers::artifacts::FeedlineChainT(*chains_) : nullptr); }
 }
 
 inline AssignmentT &AssignmentT::operator=(AssignmentT o) FLATBUFFERS_NOEXCEPT {
   std::swap(connections, o.connections);
   std::swap(objective, o.objective);
+  std::swap(ring, o.ring);
+  std::swap(launchers, o.launchers);
+  std::swap(feeds, o.feeds);
+  std::swap(chains, o.chains);
   return *this;
 }
 
@@ -2315,6 +2760,10 @@ inline void Assignment::UnPackTo(AssignmentT *_o, const ::flatbuffers::resolver_
   (void)_resolver;
   { auto _e = connections(); if (_e) { _o->connections.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->connections[_i]) { _e->Get(_i)->UnPackTo(_o->connections[_i].get(), _resolver); } else { _o->connections[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->connections.resize(0); } }
   { auto _e = objective(); _o->objective = _e; }
+  { auto _e = ring(); if (_e) { _o->ring.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->ring[_i] = *_e->Get(_i); } } else { _o->ring.resize(0); } }
+  { auto _e = launchers(); if (_e) { _o->launchers.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->launchers[_i] = *_e->Get(_i); } } else { _o->launchers.resize(0); } }
+  { auto _e = feeds(); if (_e) { _o->feeds.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->feeds[_i] = *_e->Get(_i); } } else { _o->feeds.resize(0); } }
+  { auto _e = chains(); if (_e) { _o->chains.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->chains[_i]) { _e->Get(_i)->UnPackTo(_o->chains[_i].get(), _resolver); } else { _o->chains[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::FeedlineChainT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->chains.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<Assignment> CreateAssignment(::flatbuffers::FlatBufferBuilder &_fbb, const AssignmentT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -2327,21 +2776,156 @@ inline ::flatbuffers::Offset<Assignment> Assignment::Pack(::flatbuffers::FlatBuf
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const AssignmentT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _connections = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> (_o->connections.size(), [](size_t i, _VectorArgs *__va) { return CreateConnection(*__va->__fbb, __va->__o->connections[i].get(), __va->__rehasher); }, &_va );
   auto _objective = _o->objective;
+  auto _ring = _fbb.CreateVectorOfStructs(_o->ring);
+  auto _launchers = _fbb.CreateVectorOfStructs(_o->launchers);
+  auto _feeds = _fbb.CreateVectorOfStructs(_o->feeds);
+  auto _chains = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::FeedlineChain>> (_o->chains.size(), [](size_t i, _VectorArgs *__va) { return CreateFeedlineChain(*__va->__fbb, __va->__o->chains[i].get(), __va->__rehasher); }, &_va );
   return mqt::scpd::flatbuffers::artifacts::CreateAssignment(
       _fbb,
       _connections,
-      _objective);
+      _objective,
+      _ring,
+      _launchers,
+      _feeds,
+      _chains);
 }
 
 
-inline bool operator==(const GlobalRoutingT &, const GlobalRoutingT &) {
-  return true;
+inline bool operator==(const FeedlineChainT &lhs, const FeedlineChainT &rhs) {
+  return
+      (lhs.nodes == rhs.nodes) &&
+      ((lhs.start == rhs.start) || (lhs.start && rhs.start && *lhs.start == *rhs.start)) &&
+      ((lhs.end == rhs.end) || (lhs.end && rhs.end && *lhs.end == *rhs.end));
+}
+
+inline bool operator!=(const FeedlineChainT &lhs, const FeedlineChainT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline FeedlineChainT::FeedlineChainT(const FeedlineChainT &o)
+      : nodes(o.nodes),
+        start((o.start) ? new mqt::scpd::flatbuffers::design::PortRef(*o.start) : nullptr),
+        end((o.end) ? new mqt::scpd::flatbuffers::design::PortRef(*o.end) : nullptr) {
+}
+
+inline FeedlineChainT &FeedlineChainT::operator=(FeedlineChainT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(nodes, o.nodes);
+  std::swap(start, o.start);
+  std::swap(end, o.end);
+  return *this;
+}
+
+inline FeedlineChainT *FeedlineChain::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<FeedlineChainT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void FeedlineChain::UnPackTo(FeedlineChainT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = nodes(); if (_e) { _o->nodes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->nodes[_i] = _e->Get(_i); } } else { _o->nodes.resize(0); } }
+  { auto _e = start(); if (_e) _o->start = std::unique_ptr<mqt::scpd::flatbuffers::design::PortRef>(new mqt::scpd::flatbuffers::design::PortRef(*_e)); }
+  { auto _e = end(); if (_e) _o->end = std::unique_ptr<mqt::scpd::flatbuffers::design::PortRef>(new mqt::scpd::flatbuffers::design::PortRef(*_e)); }
+}
+
+inline ::flatbuffers::Offset<FeedlineChain> CreateFeedlineChain(::flatbuffers::FlatBufferBuilder &_fbb, const FeedlineChainT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return FeedlineChain::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<FeedlineChain> FeedlineChain::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const FeedlineChainT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const FeedlineChainT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _nodes = _fbb.CreateVector(_o->nodes);
+  auto _start = _o->start ? _o->start.get() : nullptr;
+  auto _end = _o->end ? _o->end.get() : nullptr;
+  return mqt::scpd::flatbuffers::artifacts::CreateFeedlineChain(
+      _fbb,
+      _nodes,
+      _start,
+      _end);
+}
+
+
+inline bool operator==(const LatticeT &lhs, const LatticeT &rhs) {
+  return
+      (lhs.points == rhs.points) &&
+      (lhs.edges == rhs.edges) &&
+      (lhs.selected == rhs.selected);
+}
+
+inline bool operator!=(const LatticeT &lhs, const LatticeT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline LatticeT *Lattice::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<LatticeT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void Lattice::UnPackTo(LatticeT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = points(); if (_e) { _o->points.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->points[_i] = *_e->Get(_i); } } else { _o->points.resize(0); } }
+  { auto _e = edges(); if (_e) { _o->edges.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->edges[_i] = _e->Get(_i); } } else { _o->edges.resize(0); } }
+  { auto _e = selected(); if (_e) { _o->selected.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->selected[_i] = _e->Get(_i); } } else { _o->selected.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<Lattice> CreateLattice(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return Lattice::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<Lattice> Lattice::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const LatticeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const LatticeT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _points = _fbb.CreateVectorOfStructs(_o->points);
+  auto _edges = _fbb.CreateVector(_o->edges);
+  auto _selected = _fbb.CreateVector(_o->selected);
+  return mqt::scpd::flatbuffers::artifacts::CreateLattice(
+      _fbb,
+      _points,
+      _edges,
+      _selected);
+}
+
+
+inline bool operator==(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs) {
+  return
+      (lhs.lattices.size() == rhs.lattices.size() && std::equal(lhs.lattices.cbegin(), lhs.lattices.cend(), rhs.lattices.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.connections.size() == rhs.connections.size() && std::equal(lhs.connections.cbegin(), lhs.connections.cend(), rhs.connections.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.outer_ring == rhs.outer_ring) &&
+      (lhs.resonators == rhs.resonators) &&
+      (lhs.objective == rhs.objective);
 }
 
 inline bool operator!=(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs) {
     return !(lhs == rhs);
 }
 
+
+inline GlobalRoutingT::GlobalRoutingT(const GlobalRoutingT &o)
+      : outer_ring(o.outer_ring),
+        resonators(o.resonators),
+        objective(o.objective) {
+  lattices.reserve(o.lattices.size());
+  for (const auto &lattices_ : o.lattices) { lattices.emplace_back((lattices_) ? new mqt::scpd::flatbuffers::artifacts::LatticeT(*lattices_) : nullptr); }
+  connections.reserve(o.connections.size());
+  for (const auto &connections_ : o.connections) { connections.emplace_back((connections_) ? new mqt::scpd::flatbuffers::design::ConnectionT(*connections_) : nullptr); }
+}
+
+inline GlobalRoutingT &GlobalRoutingT::operator=(GlobalRoutingT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(lattices, o.lattices);
+  std::swap(connections, o.connections);
+  std::swap(outer_ring, o.outer_ring);
+  std::swap(resonators, o.resonators);
+  std::swap(objective, o.objective);
+  return *this;
+}
 
 inline GlobalRoutingT *GlobalRouting::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::make_unique<GlobalRoutingT>();
@@ -2352,6 +2936,11 @@ inline GlobalRoutingT *GlobalRouting::UnPack(const ::flatbuffers::resolver_funct
 inline void GlobalRouting::UnPackTo(GlobalRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
+  { auto _e = lattices(); if (_e) { _o->lattices.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->lattices[_i]) { _e->Get(_i)->UnPackTo(_o->lattices[_i].get(), _resolver); } else { _o->lattices[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LatticeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->lattices.resize(0); } }
+  { auto _e = connections(); if (_e) { _o->connections.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->connections[_i]) { _e->Get(_i)->UnPackTo(_o->connections[_i].get(), _resolver); } else { _o->connections[_i] = std::unique_ptr<mqt::scpd::flatbuffers::design::ConnectionT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->connections.resize(0); } }
+  { auto _e = outer_ring(); if (_e) { _o->outer_ring.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->outer_ring[_i] = *_e->Get(_i); } } else { _o->outer_ring.resize(0); } }
+  { auto _e = resonators(); if (_e) { _o->resonators.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->resonators[_i] = *_e->Get(_i); } } else { _o->resonators.resize(0); } }
+  { auto _e = objective(); _o->objective = _e; }
 }
 
 inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -2362,8 +2951,18 @@ inline ::flatbuffers::Offset<GlobalRouting> GlobalRouting::Pack(::flatbuffers::F
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GlobalRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _lattices = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Lattice>> (_o->lattices.size(), [](size_t i, _VectorArgs *__va) { return CreateLattice(*__va->__fbb, __va->__o->lattices[i].get(), __va->__rehasher); }, &_va );
+  auto _connections = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::design::Connection>> (_o->connections.size(), [](size_t i, _VectorArgs *__va) { return CreateConnection(*__va->__fbb, __va->__o->connections[i].get(), __va->__rehasher); }, &_va );
+  auto _outer_ring = _fbb.CreateVectorOfStructs(_o->outer_ring);
+  auto _resonators = _fbb.CreateVectorOfStructs(_o->resonators);
+  auto _objective = _o->objective;
   return mqt::scpd::flatbuffers::artifacts::CreateGlobalRouting(
-      _fbb);
+      _fbb,
+      _lattices,
+      _connections,
+      _outer_ring,
+      _resonators,
+      _objective);
 }
 
 
@@ -3017,24 +3616,94 @@ inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable() {
 inline const ::flatbuffers::TypeTable *AssignmentTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_SEQUENCE, 1, 0 },
-    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 3 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
-    mqt::scpd::flatbuffers::design::ConnectionTypeTable
+    mqt::scpd::flatbuffers::design::ConnectionTypeTable,
+    mqt::scpd::flatbuffers::design::PortRefTypeTable,
+    mqt::scpd::flatbuffers::geometry::PointTypeTable,
+    mqt::scpd::flatbuffers::artifacts::FeedlineChainTypeTable
   };
   static const char * const names[] = {
     "connections",
-    "objective"
+    "objective",
+    "ring",
+    "launchers",
+    "feeds",
+    "chains"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 6, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *FeedlineChainTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::design::PortRefTypeTable
+  };
+  static const char * const names[] = {
+    "nodes",
+    "start",
+    "end"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *LatticeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_UINT, 1, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "points",
+    "edges",
+    "selected"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
 
 inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::LatticeTypeTable,
+    mqt::scpd::flatbuffers::design::ConnectionTypeTable,
+    mqt::scpd::flatbuffers::design::PortRefTypeTable
+  };
+  static const char * const names[] = {
+    "lattices",
+    "connections",
+    "outer_ring",
+    "resonators",
+    "objective"
+  };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 0, nullptr, nullptr, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }

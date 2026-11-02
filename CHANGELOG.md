@@ -20,7 +20,7 @@ releases may include breaking changes.
   - `--stage` runs one step again on the copies that the run carries. It refuses
     the step when the chip or a configuration section that an earlier step read
     has changed since that step.
-  - `-v` and `-vv` show the steps and the items.
+  - `-v`, `-vv` and `-vvv` show the steps, the items and the log of HiGHS.
   - A run prints one block per stage in the format of `docs/terminal_output.md`.
     On a terminal, each block has a live progress line, which `--no-progress`
     turns off.
@@ -28,11 +28,13 @@ releases may include breaking changes.
   for the planning stages ([#140]) ([**@FeldmeierMichael**]):
   - `plot` and `render` refuse an artifact whose inputs have changed since its
     step, and `inspect` prints such an artifact after a warning.
+  - The assign picture shows the feedline chains.
 - 🎨 Draw `plot` pictures like a mask in a layout tool ([#140])
   ([**@FeldmeierMichael**]):
   - Metal is hatched and has an inner contour on a light substrate. A picture
     has a millimeter grid, rulers, corner marks, a scale bar and a caption.
-  - Every port is one red marker.
+  - Every port is one red marker. Feedlines run in horizontal and vertical steps
+    in one color.
   - A picture opened on its own has a panel that shows and hides each layer.
   - The capacity picture shows the partition borders. No picture shows the
     gates, the port keep-out or the capacity chains.
@@ -40,20 +42,41 @@ releases may include breaking changes.
     straightens the staircase of a slanted border.
   - Every planning picture shows the blocked cells of the grid in dark gray
     under the artwork, without strips of free cells too thin to block. The
-    capacity picture leaves out the borders of the partitions that the artwork
-    closes in, and shades every partition in a light gray that differs from its
-    neighbors.
-- ✨ Add the first planning stage. The Capacity stage partitions the free space
-  at its bottlenecks, one at the narrowest stretch of each corridor along a grid
-  axis or a diagonal, and budgets the wires of every capacity chain. The stage
-  writes the artifact `01-capacity.fb`. It refuses a detail grid of more than
-  25,000,000 cells and a chip on which the targets of two ports lie on one
-  detail cell ([#140]) ([**@FeldmeierMichael**])
-- ➕ Add the C++ dependencies Boost.Polygon and Boost.Config of Boost 1.89.0,
-  header-only and fetched at configure time, and the Python dependency `rich`.
-  The wheel carries the licenses of FlatBuffers and nlohmann/json, which its
-  extension links in, and its license expression names Apache-2.0 and BSL-1.0
-  next to MIT ([#140]) ([**@FeldmeierMichael**])
+    capacity and assign pictures leave out the borders of the partitions that
+    the artwork closes in, and shade every partition in a light gray that
+    differs from its neighbors.
+  - The assign picture shows the inner wires on the lattice edges that the
+    global step selected.
+  - The assign picture draws its chords as thick black dashes and leaves out the
+    ring of its ports.
+- ✨ Add the planning stages. The Capacity stage partitions the free space at
+  its bottlenecks, one at the narrowest stretch of each corridor along a grid
+  axis or a diagonal, and budgets the wires of every capacity chain. The Global
+  stage solves the inner circuit as a mixed-integer program on Hanan lattices.
+  Every inner wire leaves through a bridge to the ring. The Global stage counts
+  as a fail an inner port that no wire of the circuit reaches, a ring port that
+  the gates of its chain have no room for, and a ring port without a bridge that
+  its chain does not carry to a launcher. The Assignment stage assigns the ring
+  ports to launchers and feedline chains with an integer program, and feeds no
+  two of them at one point. The stages write the artifacts `01-capacity.fb` to
+  `03-assign.fb`. They refuse a detail grid of more than 25,000,000 cells, a
+  chip on which the targets of two ports lie on one detail cell, and two ports
+  of one capacity chain that can carry an inner wire where the points
+  `[design_rules] min_straight_length` in front of them coincide ([#140])
+  ([**@FeldmeierMichael**])
+- ✨ Add `MQT::ScpdMilp`: a linear model, the HiGHS backend with a progress and
+  log observer, MPS output, and the choice of the backend through
+  `[stages.solver] backend` or `SCPD_SOLVER`: HiGHS by default, and Gurobi
+  through an installed and licensed `gurobipy` when the backend is `gurobi`.
+  `[stages.solver] threads` sets the threads of a solve, and both backends
+  report the bound, the gap and the node count of a solve ([#140])
+  ([**@FeldmeierMichael**])
+- ➕ Add the C++ dependencies HiGHS 1.11.0, linked static, and the header-only
+  Boost.Polygon and Boost.Config of Boost 1.89.0, all fetched at configure time,
+  and the Python dependency `rich`. The wheel carries the licenses of HiGHS, its
+  LP file reader, FlatBuffers and nlohmann/json, which its extension links in,
+  and its license expression names Apache-2.0, BSL-1.0 and Zlib next to MIT
+  ([#140]) ([**@FeldmeierMichael**])
 - ✨ Add bridge pairs and components to the configuration: the `bridge_pair` and
   `component` patterns, the `[[ports.bridge_pairs]]` rules, the stage sections
   and `[run]` ([#140]) ([**@FeldmeierMichael**])
@@ -105,9 +128,10 @@ releases may include breaking changes.
   - `plot`, `render` and `inspect -o` start their result line with `✓`.
   - Every command except `doctor` starts the line of an input or stage error
     with `✗`.
-  - `doctor` shows the `bridge_pair` pattern.
+  - `doctor` shows the `bridge_pair` pattern and the solvers it can reach.
   - `doctor` checks what would stop a run of the steps up to `[run] stop_after`,
-    as `plan` does before its first stage.
+    as `plan` does before its first stage. Without that key, `doctor` checks all
+    three steps and fails a configuration without `launcher_target`.
   - `doctor` warns about each removed key on a line that starts with `WARNING:`.
   - Every command exits with code 130 on Ctrl-C. It stops without a message and
     exits with code 1 when the reader of its output goes away, as with `| head`.
@@ -130,8 +154,10 @@ releases may include breaking changes.
 
 ### Fixed
 
-- 🐛 Preserve port-keepout holes in GDS/OASIS exports ([#140])
-  ([**@FeldmeierMichael**], [**@marcelwa**])
+- 🐛 Handle self-addition and self-subtraction of linear expressions, preserve
+  port-keepout holes in GDS/OASIS exports, and check launcher order
+  independently of the chip's position ([#140]) ([**@FeldmeierMichael**],
+  [**@marcelwa**])
 
 <!-- Version links -->
 

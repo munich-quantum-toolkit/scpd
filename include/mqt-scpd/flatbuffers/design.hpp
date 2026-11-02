@@ -346,8 +346,9 @@ struct Port FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   ///
   /// The grouping is declared, never inferred: the pattern says which part of
   /// a label names the component, and no algorithm reads a label itself. The
-  /// planning stages need it because the opposite ports of a coupler let a
-  /// wire cross its artwork.
+  /// planning stages need it because the opposite ports of a coupler let an
+  /// inner wire cross its artwork, and because the inner circuit has to reach
+  /// the ports of a qubit.
   const ::flatbuffers::String *component() const {
     return GetPointer<const ::flatbuffers::String *>(VT_COMPONENT);
   }

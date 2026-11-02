@@ -65,6 +65,8 @@ class RunError(RuntimeError):
 #: of the directory reads like the pipeline.
 STAGE_FILES: dict[str, str] = {
     "capacity": "01-capacity.fb",
+    "global": "02-global.fb",
+    "assign": "03-assign.fb",
 }
 
 
@@ -72,12 +74,16 @@ STAGE_FILES: dict[str, str] = {
 #: sections, named as in ``config.toml``, and the chip copy of the run as the configuration classifies it.
 STEP_INPUTS: dict[str, tuple[str, ...]] = {
     "capacity": ("[ports]", "[design_rules]", "[grid]", "[stages.capacity]", RUN_CHIP),
+    "global": ("[ports]", "[design_rules]", "[grid]", "[stages.global]", "[stages.solver]", RUN_CHIP),
+    "assign": ("[ports]", "[design_rules]", "[grid]", "[stages.assignment]", "[stages.solver]", RUN_CHIP),
 }
 
 
 #: The artifacts each step reads, in the order the core takes them.
 ARTIFACT_INPUTS: dict[str, tuple[str, ...]] = {
     "capacity": (),
+    "global": ("capacity",),
+    "assign": ("capacity", "global"),
 }
 
 
@@ -99,6 +105,10 @@ def _plain(value: object) -> object:
 def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
     """The SHA-256 digest of every input a step can read.
 
+    ``SCPD_SOLVER`` is not an input: it chooses the backend of one invocation, and the run directory
+    records only the files of the run. A step that resumes under another backend can therefore give
+    another artifact, as ``docs/benchmarks.md`` says.
+
     Args:
         config: The configuration of the run.
         chip: The classified chip.
@@ -114,6 +124,9 @@ def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
         # A configuration without [grid] takes the defaults, as one that states them does.
         "[grid]": config.grid if config.grid is not None else GridParamsT(),
         "[stages.capacity]": stages.capacity if stages is not None else None,
+        "[stages.global]": stages.global_ if stages is not None else None,
+        "[stages.assignment]": stages.assignment if stages is not None else None,
+        "[stages.solver]": stages.solver if stages is not None else None,
     }
     digests = {
         name: hashlib.sha256(json.dumps(_plain(section), sort_keys=True).encode("utf-8")).hexdigest()
@@ -150,7 +163,7 @@ class StageBlockLike(Protocol):
         """Take a line of free text."""
 
     def entry(self, level: int, label: str, figures: Sequence[Figure]) -> None:
-        """Take an entry, such as one chain."""
+        """Take an entry, such as one feedline chain."""
 
     def result(self, figures: Sequence[Figure], fails: int | None = None) -> None:
         """Take the result of the stage."""
@@ -368,9 +381,11 @@ class RunDirectory:
         inputs = [self._read(earlier) for earlier in ARTIFACT_INPUTS[stage]]
         packed = write_config(config)
         producer = f"mqt-scpd {__version__}"
-        level = min(max(verbosity, 0), 2)
+        level = min(max(verbosity, 0), 3)
         calls: dict[str, Callable[[], bytes]] = {
-            "capacity": lambda: pyscpd.plan_capacity(chip, *inputs, packed, producer, reporter, level),
+            "capacity": lambda: pyscpd.plan_capacity(chip, packed, producer, reporter, level),
+            "global": lambda: pyscpd.route_global(chip, inputs[0], packed, producer, reporter, level),
+            "assign": lambda: pyscpd.assign(chip, inputs[0], inputs[1], packed, producer, reporter, level),
         }
         if stage not in calls:
             msg = f"no core call runs the {stage} step"

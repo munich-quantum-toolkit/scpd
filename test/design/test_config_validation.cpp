@@ -316,29 +316,60 @@ TEST(ConfigValidation, StageParametersMustBeUsable) {
   config.grid = std::make_unique<GridParamsT>();
   config.stages = std::make_unique<StageParamsT>();
   config.stages->capacity = std::make_unique<CapacityParamsT>();
+  config.stages->solver = std::make_unique<SolverParamsT>();
   EXPECT_TRUE(validate(config).empty());
 
   config.grid->detail_factor = 0;
   config.stages->capacity->bottleneck_clearance = 0.0;
   config.stages->capacity->crossing_pitch = -165.0;
+  config.stages->solver->backend = "cplex";
+  config.stages->solver->time_limit = -1.0;
+  config.stages->solver->relative_gap = -0.5;
+  const std::string backendProblem =
+      "stages.solver: backend must be one of highs, gurobi, not 'cplex'";
   EXPECT_EQ(validate(config),
             (Problems{"grid: detail_factor must be at least one",
                       "stages.capacity: bottleneck_clearance must be positive",
-                      "stages.capacity: crossing_pitch must be positive"}));
+                      "stages.capacity: crossing_pitch must be positive",
+                      backendProblem,
+                      "stages.solver: time_limit must not be negative",
+                      "stages.solver: relative_gap must not be negative"}));
+
+  config.stages->solver->backend = "highs";
+  EXPECT_EQ(validate(config).size(), 5U);
 }
 
 TEST(ConfigValidation, StageParametersMustBeFinite) {
-  // TOML reads nan and inf as numbers.
+  // TOML reads nan and inf as numbers. A NaN time limit is not above zero,
+  // so the solve would run without a limit.
   ConfigT config = manualConfig();
   config.stages = std::make_unique<StageParamsT>();
   config.stages->capacity = std::make_unique<CapacityParamsT>();
+  config.stages->solver = std::make_unique<SolverParamsT>();
   config.stages->capacity->bottleneck_clearance =
       std::numeric_limits<double>::infinity();
   config.stages->capacity->crossing_pitch =
       std::numeric_limits<double>::quiet_NaN();
+  config.stages->solver->time_limit = std::numeric_limits<double>::quiet_NaN();
+  config.stages->solver->relative_gap = std::numeric_limits<double>::infinity();
   EXPECT_EQ(validate(config),
             (Problems{"stages.capacity: bottleneck_clearance must be finite",
-                      "stages.capacity: crossing_pitch must be finite"}));
+                      "stages.capacity: crossing_pitch must be finite",
+                      "stages.solver: time_limit must be finite",
+                      "stages.solver: relative_gap must be finite"}));
+}
+
+TEST(ConfigValidation, SolverThreadsStayWithinTheLimitOfGurobi) {
+  ConfigT config = manualConfig();
+  config.stages = std::make_unique<StageParamsT>();
+  config.stages->solver = std::make_unique<SolverParamsT>();
+  config.stages->solver->threads = 1024;
+  EXPECT_TRUE(validate(config).empty());
+
+  config.stages->solver->threads = 1025;
+  EXPECT_EQ(
+      validate(config),
+      (Problems{"stages.solver: threads must be at most 1024, not 1025"}));
 }
 
 } // namespace

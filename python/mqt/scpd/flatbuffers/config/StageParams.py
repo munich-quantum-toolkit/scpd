@@ -5,7 +5,10 @@
 import flatbuffers
 from flatbuffers.compat import import_numpy
 from typing import Any
+from mqt.scpd.flatbuffers.config.AssignmentParams import AssignmentParams
 from mqt.scpd.flatbuffers.config.CapacityParams import CapacityParams
+from mqt.scpd.flatbuffers.config.GlobalParams import GlobalParams
+from mqt.scpd.flatbuffers.config.SolverParams import SolverParams
 from typing import Optional
 np = import_numpy()
 
@@ -38,8 +41,38 @@ class StageParams(object):
             return obj
         return None
 
+    # StageParams
+    def Global(self) -> Optional[GlobalParams]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = GlobalParams()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # StageParams
+    def Assignment(self) -> Optional[AssignmentParams]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = AssignmentParams()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # StageParams
+    def Solver(self) -> Optional[SolverParams]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = SolverParams()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
 def StageParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(1)
+    builder.StartObject(4)
 
 def Start(builder: flatbuffers.Builder):
     StageParamsStart(builder)
@@ -50,13 +83,34 @@ def StageParamsAddCapacity(builder: flatbuffers.Builder, capacity: int):
 def AddCapacity(builder: flatbuffers.Builder, capacity: int):
     StageParamsAddCapacity(builder, capacity)
 
+def StageParamsAddGlobal(builder: flatbuffers.Builder, global_: int):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(global_), 0)
+
+def AddGlobal(builder: flatbuffers.Builder, global_: int):
+    StageParamsAddGlobal(builder, global_)
+
+def StageParamsAddAssignment(builder: flatbuffers.Builder, assignment: int):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(assignment), 0)
+
+def AddAssignment(builder: flatbuffers.Builder, assignment: int):
+    StageParamsAddAssignment(builder, assignment)
+
+def StageParamsAddSolver(builder: flatbuffers.Builder, solver: int):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(solver), 0)
+
+def AddSolver(builder: flatbuffers.Builder, solver: int):
+    StageParamsAddSolver(builder, solver)
+
 def StageParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
 def End(builder: flatbuffers.Builder) -> int:
     return StageParamsEnd(builder)
 
+import mqt.scpd.flatbuffers.config.AssignmentParams
 import mqt.scpd.flatbuffers.config.CapacityParams
+import mqt.scpd.flatbuffers.config.GlobalParams
+import mqt.scpd.flatbuffers.config.SolverParams
 try:
     from typing import Optional
 except:
@@ -68,8 +122,14 @@ class StageParamsT(object):
     def __init__(
         self,
         capacity = None,
+        global_ = None,
+        assignment = None,
+        solver = None,
     ):
         self.capacity = capacity  # type: Optional[mqt.scpd.flatbuffers.config.CapacityParams.CapacityParamsT]
+        self.global_ = global_  # type: Optional[mqt.scpd.flatbuffers.config.GlobalParams.GlobalParamsT]
+        self.assignment = assignment  # type: Optional[mqt.scpd.flatbuffers.config.AssignmentParams.AssignmentParamsT]
+        self.solver = solver  # type: Optional[mqt.scpd.flatbuffers.config.SolverParams.SolverParamsT]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -94,13 +154,31 @@ class StageParamsT(object):
             return
         if stageParams.Capacity() is not None:
             self.capacity = mqt.scpd.flatbuffers.config.CapacityParams.CapacityParamsT.InitFromObj(stageParams.Capacity())
+        if stageParams.Global() is not None:
+            self.global_ = mqt.scpd.flatbuffers.config.GlobalParams.GlobalParamsT.InitFromObj(stageParams.Global())
+        if stageParams.Assignment() is not None:
+            self.assignment = mqt.scpd.flatbuffers.config.AssignmentParams.AssignmentParamsT.InitFromObj(stageParams.Assignment())
+        if stageParams.Solver() is not None:
+            self.solver = mqt.scpd.flatbuffers.config.SolverParams.SolverParamsT.InitFromObj(stageParams.Solver())
 
     # StageParamsT
     def Pack(self, builder):
         if self.capacity is not None:
             capacity = self.capacity.Pack(builder)
+        if self.global_ is not None:
+            global_ = self.global_.Pack(builder)
+        if self.assignment is not None:
+            assignment = self.assignment.Pack(builder)
+        if self.solver is not None:
+            solver = self.solver.Pack(builder)
         StageParamsStart(builder)
         if self.capacity is not None:
             StageParamsAddCapacity(builder, capacity)
+        if self.global_ is not None:
+            StageParamsAddGlobal(builder, global_)
+        if self.assignment is not None:
+            StageParamsAddAssignment(builder, assignment)
+        if self.solver is not None:
+            StageParamsAddSolver(builder, solver)
         stageParams = StageParamsEnd(builder)
         return stageParams

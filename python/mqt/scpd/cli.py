@@ -27,12 +27,13 @@ from .artifacts import ArtifactError
 from .chip import ChipError, decode_chip, load_chip
 from .config import ConfigError, load_config, removed_keys_in, write_config
 from .console import Console, size, write_out
-from .doctor import run_doctor
+from .doctor import run_doctor, solver_problem
 from .export import HAS_KLAYOUT
 from .inspection import InspectionError, artifact_to_json
 from .planning import PLANNING_STAGES, PlanningError, PlanningGeometry, planning_geometry
 from .plot import STAGES, PlotError, layout_svg
 from .run import STAGE_FILES, BlockReporter, RunDirectory, RunError, input_digests, steps_until
+from .solvers import register as register_external_solver
 from .steps import STEPS
 
 if TYPE_CHECKING:
@@ -103,11 +104,14 @@ def command_plan(args: argparse.Namespace) -> int:
 
     Raises:
         ConfigError: If the core refuses a value of the configuration, or if the configuration
-            and the chip would stop one of the steps, as ``pyscpd.plan_problems`` reports it. The
-            run directory stays as it was.
+            and the chip would stop one of the steps, as ``pyscpd.plan_problems`` and
+            ``solver_problem`` report it. The run directory stays as it was.
         BrokenPipeError: If the reader of the output went away, also while a stage wrote.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
+    # The core reaches gurobipy only for a configuration that names the gurobi backend; every other
+    # configuration solves with the linked-in HiGHS.
+    register_external_solver()
 
     directory = RunDirectory(args.output)
     if args.stage is not None:
@@ -126,12 +130,16 @@ def command_plan(args: argparse.Namespace) -> int:
         chip = load_chip(config, args.config, chip_input)
     # Every check runs before a fresh run deletes the artifacts of the run it replaces.
     config_bytes = write_config(config)
-    if problems := pyscpd.plan_problems(chip, config_bytes, steps):
+    problems = pyscpd.plan_problems(chip, config_bytes, steps)
+    if (problem := solver_problem(chip, config_bytes, steps)) is not None:
+        problems.append(problem)
+    if problems:
         raise ConfigError("; ".join(problems))
+    solver = pyscpd.solver_info(config_bytes)
     if args.stage is None:
         directory.prepare(args.config, args.chip)
 
-    console.header("plan", subject, str(directory.path))
+    console.header("plan", subject, str(directory.path), [solver])
     for warning in removed_keys_in(args.config if args.stage is None else directory.config):
         console.warning(warning)
     last: str | None = None
@@ -150,7 +158,8 @@ def command_plan(args: argparse.Namespace) -> int:
                     raise
                 return _stage_failed(console, block, error, last, step)
             # A stage that fails in any way ends the run with the reason in its block and the
-            # closing line, never with a traceback.
+            # closing line, never with a traceback: the core raises ValueError and RuntimeError,
+            # but a solver of the user's own may raise anything.
             except Exception as error:  # ruff: ignore[blind-except]
                 return _stage_failed(console, block, error, last, step)
             block.artifact(result.path.name, result.size)
@@ -200,7 +209,13 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         msg = f"{artifact} is missing; run `mqt-scpd plan` up to the {args.stage} step first"
         raise RunError(msg)
     directory.check_current(args.stage, input_digests(config, chip_bytes))
-    geometry = planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage)
+    # The global picture is drawn over the cells the grid blocked, and the assign picture over the
+    # partitions its chords run through, with the inner circuit of the global step.
+    plan = directory.artifact("capacity")
+    capacity = plan.read_bytes() if args.stage in {"global", "assign"} and plan.is_file() else None
+    solved = directory.artifact("global")
+    routing = solved.read_bytes() if args.stage == "assign" and solved.is_file() else None
+    geometry = planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, routing)
     return chip_bytes, title, geometry
 
 
@@ -355,7 +370,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="count",
         default=0,
-        help="show more: -v the steps of a stage, -vv one line per item",
+        help="show more: -v the steps of a stage and its solves, -vv one line per item, -vvv the log of HiGHS",
     )
     plan.add_argument("--no-progress", action="store_true", help="never show the live progress line")
     plan.set_defaults(run=command_plan)

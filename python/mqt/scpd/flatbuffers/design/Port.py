@@ -67,8 +67,9 @@ class Port(object):
     #
     # The grouping is declared, never inferred: the pattern says which part of
     # a label names the component, and no algorithm reads a label itself. The
-    # planning stages need it because the opposite ports of a coupler let a
-    # wire cross its artwork.
+    # planning stages need it because the opposite ports of a coupler let an
+    # inner wire cross its artwork, and because the inner circuit has to reach
+    # the ports of a qubit.
     # Port
     def Component(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))

@@ -9,7 +9,9 @@
 if(TARGET MQT::ScpdPipeline)
   file(GLOB_RECURSE PIPELINE_TEST_SOURCES CONFIGURE_DEPENDS *.cpp)
   if(PIPELINE_TEST_SOURCES)
-    package_add_test(mqt-scpd-pipeline-test "MQT::ScpdPipeline;MQT::ScpdIO"
+    # Some stage tests read the MPS text of their model back with HiGHS, so they reach HiGHS
+    # directly.
+    package_add_test(mqt-scpd-pipeline-test "MQT::ScpdPipeline;MQT::ScpdIO;mqt-scpd-highs"
                      ${PIPELINE_TEST_SOURCES})
     # The stage tests read the two-qubit fixture of the repository.
     target_compile_definitions(mqt-scpd-pipeline-test

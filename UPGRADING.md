@@ -8,24 +8,60 @@ of changes including minor and patch releases, please refer to the
 
 ### Planning a chip
 
-`mqt-scpd plan` runs the planning steps of a chip into a run directory:
+`mqt-scpd plan` needs a few keys that a configuration for `plot` and `render`
+does not. `doctor` checks the configuration for the steps up to
+`[run] stop_after`, which are all three steps when the key is missing. A
+configuration without `launcher_target` therefore passes `doctor` only with
+`stop_after = "global"` or an earlier step. The keys are:
+
+- `[stages.assignment] launcher_target`: how many feedline chain ends the
+  assignment puts on a launcher; every other chain end is a termination. It is a
+  figure of the chip and has no default.
+- A `component` pattern, which groups the ports by component, and, for a chip
+  whose couplers carry a wire across, a `bridge_pair` pattern with the
+  `[[ports.bridge_pairs]]` rules that pair those ports. The `component` pattern
+  has to match every `bridge_pair` port.
+
+The configurations of the benchmark chips in
+[planar-superconducting-pd](https://github.com/cda-tum/planar-superconducting-pd)
+carry these keys:
 
 ```console
 mqt-scpd plan -c planar-superconducting-pd/inputs/17q/config.toml -o runs/17q
 ```
 
-A chip whose couplers carry a wire across needs a few keys that a configuration
-for `plot` and `render` does not: a `component` pattern, which groups the ports
-by component, and a `bridge_pair` pattern with the `[[ports.bridge_pairs]]`
-rules that pair those ports. The `component` pattern has to match every
-`bridge_pair` port. `plan` checks the implementation names of the stages and the
-size of the detail grid before its first stage, and refuses a run whose steps
-they would stop; the run directory then stays as it was. `doctor` reports the
-same problems for the steps up to `[run] stop_after`, which are all steps when
-the key is missing.
+The assignment expects the chip input to list the launcher ports once around the
+chip, against the direction of the port ring, as on the benchmark chips. A chip
+with resonators needs at least three launchers that do not all lie on one line.
+With fewer, two resonators could share one feed point, and the assignment
+refuses the chip. The assignment also refuses a solution that puts two feeds, or
+a feed and its launcher, closer together than `[design_rules] min_wire_spacing`,
+or two feeds on one cell of the detail grid. `launcher_target` plus
+`[design_rules] feedline_terminations` has to be even, since every feedline
+chain has two ends. The counts of the ring set more limits: the conventional
+ports of the ring plus `launcher_target` need at most as many launchers as the
+chip has, `launcher_target` and `feedline_terminations` are each at most the
+resonators of the ring, `feedline_terminations` is at most `launcher_target`,
+since every feedline chain has a launcher at one end at least, and the
+resonators are at most the feedline chains times
+`[design_rules] max_feedline_utilization` (`docs/configuration.md` lists them).
+The global step refuses a ring that carries both ends of a bridge. `plan` checks
+these figures, the ring and the implementation names of the stages before its
+first stage, and refuses a run whose steps they would stop; the run directory
+then stays as it was. `doctor` reports the same problems for the steps that
+`[run] stop_after` configures. When it runs, the global step also refuses two
+ports of one capacity chain that can carry an inner wire when the points
+`[design_rules] min_straight_length` in front of them coincide, since both would
+meet the lattice of their chain at one node. `doctor` does not check this.
+
+Launcher-order validation also applies to chips translated far from the origin.
+An input with launchers listed in the wrong order is refused at every position.
 
 GDS/OASIS planning exports preserve holes in the port-keepout layer. Export
 existing plans again with `mqt-scpd render` to update these files.
+
+An inner routable port that the `component` pattern does not match ends a wire
+of the inner circuit, as a port of an inner qubit does.
 
 No stage reads `[grid] launcher_offset_x` and `launcher_offset_y` any more: the
 capacity step blocks no border of its grid, since the launchers sit on the edge
@@ -42,12 +78,21 @@ grid; a larger `detail_factor` makes the cells smaller.
 
 Every step writes a record of its inputs beside its artifact, for example
 `01-capacity.inputs.json`: a digest of the chip and of each configuration
-section the step reads. `plan --stage <step>` refuses a step when the chip or
-such a section has changed since an earlier step wrote its artifact, and names
-the section and the step to run again. The run directory then stays as it was.
-`plot` and `render` with `--run-dir` refuse a stage in the same way, and also an
-artifact without a record, which a step that failed leaves behind. `inspect`
-prints such an artifact of a run directory after a warning on stderr.
+section the step reads. `SCPD_SOLVER` is not an input: it chooses the backend of
+one invocation, and a step that resumes under another backend can give another
+artifact. `plan --stage <step>` refuses a step when the chip or such a section
+has changed since an earlier step wrote its artifact, and names the section and
+the step to run again. The run directory then stays as it was. `plot` and
+`render` with `--run-dir` refuse a stage in the same way, and also an artifact
+without a record, which a step that failed leaves behind. `inspect` prints such
+an artifact of a run directory after a warning on stderr.
+
+The planning stages solve with HiGHS unless `[stages.solver] backend` or the
+environment variable `SCPD_SOLVER` is `gurobi`. Gurobi needs an installed and
+licensed `gurobipy`. `plan` also refuses before its first stage a backend name
+that the core does not know, and a Gurobi backend without a usable `gurobipy`
+when a step of the run solves. `doctor` reports the same problems for the steps
+that `[run] stop_after` configures.
 
 ### Output of the commands
 

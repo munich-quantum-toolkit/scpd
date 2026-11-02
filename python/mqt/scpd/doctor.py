@@ -10,11 +10,14 @@
 
 The doctor loads the configuration, loads and classifies the chip, prints the classification table
 so that a wrong pattern is visible in a second, and prints the outer port ring the run would use,
-checked label by label against the chip. It refuses what would stop a run of the configured steps.
+checked label by label against the chip. It refuses what would stop a run of the configured steps,
+a solver backend that the run cannot reach included. It ends with the solvers the installation can
+reach.
 """
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -23,6 +26,7 @@ from . import pyscpd
 from .chip import ChipError, chip_input_path, decode_chip, load_chip, obstacles_of, ports_of, role_name
 from .config import ConfigError, load_config, removed_keys_in, write_config
 from .run import RunError, steps_until
+from .solvers import available
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -98,6 +102,46 @@ def classification_table(chip: ChipT, config: ConfigT) -> list[str]:
     return lines
 
 
+def solver_summary() -> list[str]:
+    """The solvers the installation can reach, and why not where it cannot.
+
+    Returns:
+        The lines.
+    """
+    usable, why = available()
+    return [
+        "solvers",
+        "  highs:  linked in, always available",
+        "  gurobi: " + ("available through gurobipy" if usable else why),
+    ]
+
+
+def solver_problem(chip_bytes: bytes, config_bytes: bytes, steps: list[str]) -> str | None:
+    """What keeps a run from the solver backend that the configuration and ``SCPD_SOLVER`` choose.
+
+    A backend name that the core does not know is a problem for every run. A backend that cannot
+    solve is a problem only for a run with a step that solves, as ``pyscpd.solving_steps`` lists
+    them. The doctor and ``plan`` both run this check, so they report the same problem for the same steps.
+
+    Args:
+        chip_bytes: The classified chip.
+        config_bytes: The packed configuration.
+        steps: The steps the run takes.
+
+    Returns:
+        The problem, or None when the run can reach what it solves with.
+    """
+    try:
+        solver = pyscpd.solver_info(config_bytes)
+    except ValueError as error:
+        return str(error)
+    if solver.startswith("HiGHS ") or not pyscpd.solving_steps(chip_bytes, config_bytes, steps):
+        return None
+    usable, why = available()
+    source = "SCPD_SOLVER" if os.environ.get("SCPD_SOLVER") else "[stages.solver] backend"
+    return None if usable else f"{source} asks for {solver}, but {why}"
+
+
 def ring_summary(config: ConfigT) -> list[str]:
     """The configured outer port ring: the size of each sequence and the sequences themselves.
 
@@ -159,9 +203,12 @@ def run_doctor(config_path: Path, *, list_ports: bool = False, chip_path: Path |
         steps = []
     for problem in pyscpd.plan_problems(chip_bytes, config_bytes, steps):
         report.fail(problem)
+    if (problem := solver_problem(chip_bytes, config_bytes, steps)) is not None:
+        report.fail(problem)
     report.say("", f"obstacles: {len(obstacles_of(chip))}", f"ports: {len(ports_of(chip))}", "")
     report.say(*classification_table(chip, config))
     if list_ports:
         report.say("", *(f"  {port.label or '':<24} {role_name(port.role)}" for port in ports_of(chip)))
     report.say("", *ring_summary(config))
+    report.say("", *solver_summary())
     return report

@@ -21,14 +21,17 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import flatbuffers
 
+from .flatbuffers.config.AssignmentParams import AssignmentParamsT
 from .flatbuffers.config.BridgeRule import BridgeRuleT
 from .flatbuffers.config.CapacityParams import CapacityParamsT
 from .flatbuffers.config.Config import ConfigT
+from .flatbuffers.config.GlobalParams import GlobalParamsT
 from .flatbuffers.config.GridParams import GridParamsT
 from .flatbuffers.config.PortConfig import PortConfigT
 from .flatbuffers.config.PortPatterns import PortPatternsT
 from .flatbuffers.config.PortSequences import PortSequencesT
 from .flatbuffers.config.RunParams import RunParamsT
+from .flatbuffers.config.SolverParams import SolverParamsT
 from .flatbuffers.config.StageParams import StageParamsT
 from .flatbuffers.design.DesignRules import DesignRulesT
 from .steps import STEPS
@@ -76,6 +79,9 @@ REMOVED_KEYS: dict[str, tuple[str, ...]] = {"grid": ("launcher_offset_x", "launc
 #: carries only what differs from them, the rule the grid section follows.
 STAGE_DEFAULTS: dict[str, dict[str, object]] = {
     "capacity": {"planner": "", "bottleneck_clearance": 1.5, "crossing_pitch": 165.0},
+    "global": {"router": "", "internal_bridges": False},
+    "assignment": {"assigner": "", "launcher_target": 0},
+    "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0, "threads": 0},
 }
 
 #: The keys of ``[run]`` with the defaults of the schema.
@@ -164,7 +170,13 @@ def _is_kind(value: object, kind: type) -> bool:
     return isinstance(value, kind)
 
 
-_KIND_NAMES: dict[type, str] = {float: "a number", int: "an integer", str: "a string", list: "an array of strings"}
+_KIND_NAMES: dict[type, str] = {
+    float: "a number",
+    int: "an integer",
+    bool: "true or false",
+    str: "a string",
+    list: "an array of strings",
+}
 
 
 def _kind_name(kind: type) -> str:
@@ -263,6 +275,26 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     stages.capacity.bottleneckClearance = take(capacity, "bottleneck_clearance", float)
     stages.capacity.crossingPitch = take(capacity, "crossing_pitch", float)
     capacity.finish()
+
+    inner = part("global")
+    stages.global_ = GlobalParamsT()
+    stages.global_.router = take(inner, "router", str)
+    stages.global_.internalBridges = take(inner, "internal_bridges", bool)
+    inner.finish()
+
+    assignment = part("assignment")
+    stages.assignment = AssignmentParamsT()
+    stages.assignment.assigner = take(assignment, "assigner", str)
+    stages.assignment.launcherTarget = take(assignment, "launcher_target", int)
+    assignment.finish()
+
+    solver = part("solver")
+    stages.solver = SolverParamsT()
+    stages.solver.backend = take(solver, "backend", str)
+    stages.solver.timeLimit = take(solver, "time_limit", float)
+    stages.solver.relativeGap = take(solver, "relative_gap", float)
+    stages.solver.threads = take(solver, "threads", int)
+    solver.finish()
 
     section.finish()
     return stages
@@ -372,6 +404,7 @@ def shipped_config_problems(document: dict[str, Any]) -> list[str]:
     run = document.get("run")
     if isinstance(run, dict):
         problems.extend(_defaults_problems("run", run, RUN_DEFAULTS))
+    problems.extend(removed_keys(document))
     return problems
 
 

@@ -6,4 +6,4 @@
 #
 # Licensed under the MIT License
 
-add_mqt_scpd_library(milp)
+add_mqt_scpd_library(milp PRIVATE_LINK_LIBRARIES mqt-scpd-highs)

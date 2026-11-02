@@ -105,13 +105,30 @@ crossingSlots(const grid::PartitionBorder& border, const CapacityScene& scene,
  * @brief Returns whether the Capacity stage gives a port a launcher slot.
  *
  * A port gets a slot when it is a launcher with a direction. The Capacity
- * stage reads the launchers through this one rule.
+ * stage and the checks of the Assignment stage read the launchers through
+ * this one rule.
  *
  * @param port The port of the classified chip.
  * @return True when the port gets a launcher slot.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT bool
 hasLauncherSlot(const flatbuffers::design::PortT& port);
+
+/**
+ * @brief Returns where the Capacity stage places the slot of each launcher.
+ *
+ * A launcher with a direction gets a slot at the center of the detail cell
+ * its own center rounds to. The positions match the slots of buildScene()
+ * without building the masks.
+ *
+ * @param chip The classified chip.
+ * @param config The run configuration, whose grid section places the cells.
+ * @return The slot positions in layout units, in port order.
+ * @throws std::invalid_argument When the detail grid of the configuration has
+ * no cells or more than MAX_DETAIL_CELLS.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<geometry::Point>
+launcherSlotPositions(const ChipT& chip, const ConfigT& config);
 
 /**
  * @brief The most cells a detail grid may have.
@@ -174,9 +191,9 @@ buildScene(const ChipT& chip, const ConfigT& config);
  * through it. A bottleneck between a wall and an island is the exception when
  * the free space also runs around the other side of the island and the chain
  * dropped the gate there: both sides of the bottleneck then lie in one
- * partition, and no border runs through it. The chain still budgets its
- * wires through the bottleneck, which counts less room than the island
- * leaves.
+ * partition, and no border runs through it. The Global stage still budgets
+ * the wires of the chain through the bottleneck, which counts less room than
+ * the island leaves.
  *
  * A corridor that runs at an angle other than a grid axis or a diagonal gives
  * a row of bottlenecks along its length (see grid::findBottlenecks()). Where

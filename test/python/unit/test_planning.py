@@ -20,18 +20,23 @@ import pytest
 from mqt.scpd.artifacts import read_artifact, write_artifact
 from mqt.scpd.chip import decode_chip
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
+from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
 from mqt.scpd.flatbuffers.artifacts.Bottleneck import BottleneckT
 from mqt.scpd.flatbuffers.artifacts.CapacityElement import CapacityElement
 from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
+from mqt.scpd.flatbuffers.artifacts.Lattice import LatticeT
 from mqt.scpd.flatbuffers.artifacts.Partition import PartitionT
 from mqt.scpd.flatbuffers.artifacts.PartitionBorder import PartitionBorderT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
+from mqt.scpd.flatbuffers.design.Connection import ConnectionT
+from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
-from mqt.scpd.planning import PlanningError, PlanningGeometry, planning_geometry
+from mqt.scpd.planning import Feedline, PlanningError, PlanningGeometry, planning_geometry
 from mqt.scpd.run import RunDirectory
 from mqt.scpd.steps import STEPS
 
@@ -76,9 +81,24 @@ def test_the_capacity_picture_holds_the_partitions_and_the_launchers(run: RunDir
     assert all(len(ring) >= 3 for partition in geometry.partitions for ring in partition)
     assert geometry.borders
     assert len(geometry.launchers) == 4
+    assert not geometry.assignments
     # The grid blocks a border of cells along its edge.
     assert geometry.blocked
     assert len(geometry.partition_tones) == len(geometry.partitions)
+
+
+def test_the_assign_picture_marks_only_the_launcher_slots(run: RunDirectory) -> None:
+    """The feed of a conventional port is a launcher slot, and the feed of a resonator lies on its feedline.
+
+    Over the capacity plan, the assign picture marks the slots of the plan and no feed of a resonator.
+    """
+    capacity = run.artifact("capacity").read_bytes()
+    slots = planning_geometry(capacity, chip_of(run), "capacity").launchers
+
+    geometry = planning_geometry(run.artifact("assign").read_bytes(), chip_of(run), "assign", capacity)
+
+    assert sorted(geometry.launchers) == sorted(slots)
+    assert all(not set(feedline.terminals) & set(geometry.launchers) for feedline in geometry.feedlines)
 
 
 def test_a_partition_keeps_its_rings_together(run: RunDirectory) -> None:
@@ -234,17 +254,135 @@ def test_the_borders_of_closed_in_partitions_are_kept_apart(run: RunDirectory) -
     assert closed == [None, None]
 
 
+def test_the_global_picture_draws_the_lattice_and_the_selected_edges(run: RunDirectory) -> None:
+    """Every lattice edge is drawn, and the edges the circuit selected once more on their own layer."""
+    geometry = planning_geometry(solved_routing(), chip_of(run), "global")
+
+    assert geometry.lattice == [((0.0, 0.0), (100.0, 0.0)), ((100.0, 0.0), (100.0, 50.0))]
+    assert geometry.inner == [((100.0, 0.0), (100.0, 50.0))]
+
+
+def test_the_first_lattice_edge_can_be_selected(run: RunDirectory) -> None:
+    """Edge 0 is an edge like any other: when the circuit selects it, it is drawn as selected."""
+    lattice = LatticeT(points=[PointT(0.0, 0.0), PointT(100.0, 0.0)], edges=[0, 1], selected=[0])
+    data = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.GlobalRouting,
+            output=GlobalRoutingT(lattices=[lattice], connections=[], outerRing=[], resonators=[]),
+        )
+    )
+
+    geometry = planning_geometry(data, chip_of(run), "global")
+
+    assert geometry.lattice == [((0.0, 0.0), (100.0, 0.0))]
+    assert geometry.inner == [((0.0, 0.0), (100.0, 0.0))]
+
+
+def test_the_assignment_picture_draws_a_chord_from_every_ring_port_to_its_feed(run: RunDirectory) -> None:
+    """The ring is drawn through its ports, and each port is joined to the point it is fed from."""
+    geometry = planning_geometry(run.artifact("assign").read_bytes(), chip_of(run), "assign")
+
+    assert len(geometry.ring) == 5
+    assert len(geometry.assignments) == 5
+    assert {chord[0] for chord in geometry.assignments} == set(geometry.ring)
+    assert not geometry.borders
+
+
+def test_the_assignment_picture_lies_over_the_plan_of_its_run(run: RunDirectory) -> None:
+    """With the capacity plan, the chords are drawn over its partitions and blocked cells."""
+    geometry = planning_geometry(
+        run.artifact("assign").read_bytes(),
+        chip_of(run),
+        "assign",
+        capacity=run.artifact("capacity").read_bytes(),
+    )
+
+    assert geometry.assignments
+    assert geometry.borders
+    assert geometry.blocked
+    assert any(tone is not None for tone in geometry.partition_tones)
+
+
+def assignment_of(ring: list[int], feeds: list[PointT], chain: FeedlineChainT) -> bytes:
+    """An assignment artifact with one feedline chain.
+
+    Returns:
+        The bytes of the artifact.
+    """
+    return write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.Assignment,
+            output=AssignmentT(
+                connections=[ConnectionT(target=PortRefT(index)) for index in ring],
+                ring=[PortRefT(index) for index in ring],
+                launchers=[PortRefT(index) for index in ring],
+                feeds=feeds,
+                chains=[chain],
+            ),
+        )
+    )
+
+
+def test_a_feedline_runs_from_its_launcher_through_the_feeds_of_its_resonators(run: RunDirectory) -> None:
+    """A chain runs from its first launcher over the feed of each resonator to its last launcher.
+
+    Where the chain ends at a termination instead, it ends at the feed of its resonator there. A
+    resonator is named by its component where the configuration declares one, else by its label.
+    """
+    chip = chip_of(run)
+    assert chip.ports is not None
+    resonator = chip.ports[8]
+    assert resonator is not None
+    resonator.component = "Q2"
+    feeds = [PointT(250.0, 1600.0), PointT(1000.0, 1600.0)]
+
+    between = planning_geometry(
+        assignment_of([4, 8], feeds, FeedlineChainT(nodes=[0, 1], start=PortRefT(1), end=PortRefT(2))), chip, "assign"
+    )
+    stopped = planning_geometry(
+        assignment_of([4, 8], feeds, FeedlineChainT(nodes=[0, 1], end=PortRefT(3))), chip, "assign"
+    )
+
+    (feedline,) = between.feedlines
+    assert feedline.points == [(300.0, 1600.0), (250.0, 1600.0), (1000.0, 1600.0), (2000.0, 200.0)]
+    assert feedline.terminals == [(250.0, 1600.0), (1000.0, 1600.0)]
+    assert not feedline.terminations
+    assert feedline.label == "feedline 1: Chip.port1 → Q1.port0, Q2 → Chip.port2"
+    (feedline,) = stopped.feedlines
+    assert feedline.points == [(250.0, 1600.0), (1000.0, 1600.0), (700.0, -600.0)]
+    assert feedline.terminations == [(250.0, 1600.0)]
+    assert feedline.label == "feedline 1: termination → Q1.port0, Q2 → Chip.port3"
+
+
+def test_a_feedline_through_the_first_resonator_alone_is_drawn(run: RunDirectory) -> None:
+    """A chain that names ring node 0 alone runs through the feed of that node."""
+    geometry = planning_geometry(
+        assignment_of([4], [PointT(250.0, 1600.0)], FeedlineChainT(nodes=[0], start=PortRefT(1))),
+        chip_of(run),
+        "assign",
+    )
+
+    (feedline,) = geometry.feedlines
+    assert feedline.terminals == [(250.0, 1600.0)]
+
+
+def test_a_feedline_alone_is_something_to_draw() -> None:
+    """A stage that produced only feedlines still has a picture."""
+    assert not PlanningGeometry(feedlines=[Feedline(points=[(0.0, 0.0), (1.0, 0.0)])]).is_empty()
+
+
 def test_blocked_cells_alone_are_something_to_draw() -> None:
-    """A stage that produced only blocked cells still has a picture."""
+    """A global step without an inner circuit still has a picture: the cells the grid blocked."""
     square = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)]
     assert not PlanningGeometry(blocked=[square]).is_empty()
 
 
 def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:
     """The artifact has to be the one of the stage it is drawn as."""
-    other = write_artifact(ArtifactT(producer="test", outputType=StageOutput.GlobalRouting, output=GlobalRoutingT()))
-    with pytest.raises(PlanningError, match="not a capacity plan"):
-        planning_geometry(other, chip_of(run), "capacity")
+    with pytest.raises(PlanningError, match="not a global routing"):
+        planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "global")
     with pytest.raises(PlanningError, match="not a planning stage"):
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "detail")
 
@@ -299,7 +437,7 @@ def test_a_capacity_chain_joins_the_ports_and_the_gates_it_names(run: RunDirecto
     geometry = planning_geometry(capacity_plan(), chip_of(run), "capacity")
 
     assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
-    assert geometry.chains == [((50.0, 0.0), (2000.0, 200.0))]
+    assert geometry.chains == [((50.0, 0.0), (300.0, 1600.0))]
     assert geometry.keepout == [[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]]
 
 
@@ -307,4 +445,69 @@ def test_a_cyclic_capacity_chain_is_drawn_once(run: RunDirectory) -> None:
     """A chain that leads back to a node it passed draws each link once and ends."""
     geometry = planning_geometry(capacity_plan(cyclic=True), chip_of(run), "capacity")
 
-    assert geometry.chains == [((50.0, 0.0), (2000.0, 200.0)), ((2000.0, 200.0), (50.0, 0.0))]
+    assert geometry.chains == [((50.0, 0.0), (300.0, 1600.0)), ((300.0, 1600.0), (50.0, 0.0))]
+
+
+def test_the_global_picture_lies_over_the_blocked_cells_of_its_capacity_plan(run: RunDirectory) -> None:
+    """The global stage is drawn over the cells its grid blocked, and keeps the gates and the keep-out."""
+    plan = capacity_plan()
+    geometry = planning_geometry(run.artifact("global").read_bytes(), chip_of(run), "global", capacity=plan)
+
+    assert geometry.blocked
+    assert geometry.blocked == planning_geometry(plan, chip_of(run), "capacity").blocked
+    assert geometry.bottlenecks == [((0.0, 0.0), (100.0, 0.0), 2)]
+    assert geometry.keepout == [[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]]
+
+
+def solved_routing() -> bytes:
+    """A global routing with one lattice of two edges, of which the circuit selected the second.
+
+    Returns:
+        The bytes of the artifact.
+    """
+    lattice = LatticeT(
+        points=[PointT(0.0, 0.0), PointT(100.0, 0.0), PointT(100.0, 50.0)],
+        edges=[0, 1, 1, 2],
+        selected=[1],
+    )
+    return write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.GlobalRouting,
+            output=GlobalRoutingT(lattices=[lattice], connections=[], outerRing=[], resonators=[]),
+        )
+    )
+
+
+def test_the_assign_picture_draws_the_selected_edges_of_the_inner_circuit(run: RunDirectory) -> None:
+    """The inner wires show on the lattice edges the circuit selected; the rest of the lattice does not."""
+    data = run.artifact("assign").read_bytes()
+
+    geometry = planning_geometry(data, chip_of(run), "assign", global_routing=solved_routing())
+
+    assert geometry.inner == [((100.0, 0.0), (100.0, 50.0))]
+    assert not geometry.lattice
+    assert not planning_geometry(data, chip_of(run), "assign").inner
+    with pytest.raises(PlanningError, match="the global artifact is not a global routing"):
+        planning_geometry(data, chip_of(run), "assign", global_routing=run.artifact("capacity").read_bytes())
+
+
+@pytest.mark.parametrize(
+    ("stage", "drawn", "expected"),
+    [
+        ("capacity", "global", "not a capacity plan"),
+        ("assign", "capacity", "not an assignment"),
+    ],
+)
+def test_every_stage_refuses_the_artifact_of_another(run: RunDirectory, stage: str, drawn: str, expected: str) -> None:
+    """Each planning stage draws its own artifact only."""
+    with pytest.raises(PlanningError, match=expected):
+        planning_geometry(run.artifact(drawn).read_bytes(), chip_of(run), stage)
+
+
+def test_a_capacity_artifact_has_to_be_a_capacity_plan(run: RunDirectory) -> None:
+    """The artifact that a stage is drawn over has to be the capacity plan of the run."""
+    with pytest.raises(PlanningError, match="the capacity artifact is not a capacity plan"):
+        planning_geometry(
+            run.artifact("global").read_bytes(), chip_of(run), "global", capacity=run.artifact("assign").read_bytes()
+        )

@@ -9,16 +9,19 @@
  */
 
 // What a stage says while it runs: which lines reach the caller at which
-// level, and how progress is thinned out.
+// level, how progress is thinned out, and how a solver reports through it.
 
+#include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -175,6 +178,72 @@ TEST(Report, CountsInTheSingularOnlyForOne) {
   EXPECT_EQ(counted(0, "node"), "0 nodes");
   EXPECT_EQ(counted(1, "node"), "1 node");
   EXPECT_EQ(counted(363, "partition"), "363 partitions");
+}
+
+TEST(Report, ASolverLogsOnlyAtTheSolverLevel) {
+  Recorder quiet;
+  EXPECT_FALSE(static_cast<bool>(
+      quiet.report(Detail::Items).solveObserver("solving").log));
+
+  Recorder loud;
+  const auto observer = loud.report(Detail::Solver).solveObserver("solving");
+  ASSERT_TRUE(static_cast<bool>(observer.log));
+  observer.log("Presolving model");
+
+  ASSERT_EQ(loud.lines.size(), 1U);
+  EXPECT_EQ(loud.lines[0].first, Detail::Solver);
+  EXPECT_EQ(loud.lines[0].second, "Presolving model");
+}
+
+TEST(Report, ASolverReportsItsSearchAsProgress) {
+  Recorder recorder;
+  const auto observer =
+      recorder.report(Detail::Summary).solveObserver("solving the assignment");
+  ASSERT_TRUE(static_cast<bool>(observer.progress));
+
+  observer.progress({.objective = 27.84,
+                     .bound = 27.0,
+                     .gap = 0.0310,
+                     .nodes = 120,
+                     .seconds = 0.5});
+  observer.progress({});
+
+  ASSERT_EQ(recorder.progress.size(), 1U);
+  EXPECT_EQ(
+      recorder.progress[0],
+      "solving the assignment|objective 27.84 · gap 3.1 % · 120 nodes|0/0");
+}
+
+TEST(Report, ASolverWithoutNewFiguresRepeatsItsLastState) {
+  // A backend may call the check before the first state of a search and
+  // between two states. The check then repeats the last state, so a progress
+  // sink that throws still stops the solve. The repeat waits longer than the
+  // progress sink is thinned out.
+  Recorder recorder;
+  const auto observer =
+      recorder.report(Detail::Summary).solveObserver("solving");
+  ASSERT_TRUE(static_cast<bool>(observer.check));
+
+  observer.check();
+  observer.progress({.objective = 5.02, .nodes = 3});
+  std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  observer.check();
+
+  ASSERT_EQ(recorder.progress.size(), 2U);
+  EXPECT_EQ(recorder.progress[0], "solving||0/0");
+  EXPECT_EQ(recorder.progress[1], "solving|objective 5.02 · 3 nodes|0/0");
+}
+
+TEST(Report, ASolverCountsOneNodeInTheSingular) {
+  Recorder recorder;
+  const auto observer =
+      recorder.report(Detail::Summary).solveObserver("solving");
+  ASSERT_TRUE(static_cast<bool>(observer.progress));
+
+  observer.progress({.nodes = 1});
+
+  ASSERT_EQ(recorder.progress.size(), 1U);
+  EXPECT_EQ(recorder.progress[0], "solving|1 node|0/0");
 }
 
 } // namespace

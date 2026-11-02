@@ -19,7 +19,7 @@ from mqt.scpd.config import load_config
 from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.design.Chip import ChipT
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
-from mqt.scpd.planning import PlanningGeometry
+from mqt.scpd.planning import Feedline, PlanningGeometry
 
 pytestmark = pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")
 
@@ -65,7 +65,7 @@ def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> Non
     chip = decode_chip(load_chip(load_config(config_path), config_path))
     geometry = PlanningGeometry(
         partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
-        chains=[((0.0, 0.0), (50.0, 50.0))],
+        inner=[((0.0, 0.0), (50.0, 50.0))],
         launchers=[(50.0, 50.0)],
     )
 
@@ -76,7 +76,7 @@ def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> Non
     layout = kdb.Layout()
     layout.read(str(summary.path))
     top = layout.top_cell()
-    for name in ("partitions", "chains", "launchers"):
+    for name in ("partitions", "inner", "launchers"):
         number, datatype, _ = PLANNING_LAYERS[name]
         assert top.shapes(layout.layer(number, datatype)).size() == 1, name
     assert top.shapes(layout.layer(*OBSTACLE_LAYER)).size() == 4
@@ -113,6 +113,28 @@ def test_nested_planning_rings_preserve_holes_and_filled_regions(
     assert region.area() * layout.dbu**2 == pytest.approx(area)
     inside_hole = kdb.Region(kdb.DBox(140.0, 140.0, 160.0, 160.0).to_itype(layout.dbu))
     assert (region & inside_hole).is_empty() == hole_empty
+
+
+def test_every_feedline_chain_is_one_path_on_the_feedline_layer(tmp_path: Path) -> None:
+    """A feedline chain is written as the line from its first launcher to its last."""
+    config_path = FIXTURE / "config.toml"
+    chip = decode_chip(load_chip(load_config(config_path), config_path))
+    geometry = PlanningGeometry(
+        feedlines=[
+            Feedline(points=[(0.0, 0.0), (50.0, 0.0), (100.0, 0.0)], terminals=[(50.0, 0.0)]),
+            Feedline(points=[(0.0, 50.0), (60.0, 50.0)], terminals=[(60.0, 50.0)], terminations=[(60.0, 50.0)]),
+        ]
+    )
+
+    summary = write_layout(chip, tmp_path / "feedlines.gds", planning=geometry)
+
+    assert summary.planning == 2
+    layout = kdb.Layout()
+    layout.read(str(summary.path))
+    number, datatype, _ = PLANNING_LAYERS["feedlines"]
+    shapes = layout.top_cell().shapes(layout.layer(number, datatype))
+    assert shapes.size() == 2
+    assert all(shape.is_path() for shape in shapes.each())
 
 
 def test_the_blocked_cells_and_the_budgets_are_written(tmp_path: Path) -> None:

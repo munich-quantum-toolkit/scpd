@@ -129,9 +129,10 @@ validate(const flatbuffers::config::PortConfigT& ports);
  * @return A problem for an empty chip input, for a missing port section or
  * missing design rules, for every problem of both, for a capacity grid of
  * fewer than two columns or of one row, for a detail grid of no cells, for
- * and for a capacity stage whose bottleneck clearance or crossing pitch is
- * not a finite positive number, empty when the configuration is valid on its
- * own.
+ * a capacity stage whose bottleneck clearance or crossing pitch is not a
+ * finite positive number, for a solver section with an unknown backend, a
+ * time limit or relative gap that is negative or not finite, or more than
+ * 1024 threads, empty when the configuration is valid on its own.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::ConfigT& config);

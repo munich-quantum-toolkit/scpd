@@ -11,9 +11,10 @@
 The generated FlatBuffers code neither enforces the required fields when Python writes a buffer nor
 verifies a buffer when Python reads one; a buffer without a producer or an output passes through it
 silently. The functions here check the identifier and every field the schema marks as required, so
-an artifact that Python writes is one that the core accepts, and an artifact that Python reads is
-complete. Checking the values themselves, such as a role left unset or a dimension of zero, is the
-core's job.
+an artifact that Python writes or reads is complete. They also check that the lists of an assignment
+hold one entry per ring node. Checking the other values, such as a role left unset, a dimension of
+zero or a connection that does not end at its ring node, is the core's job: the core refuses such an
+artifact when it reads it.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
+from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from .flatbuffers.artifacts.StageOutput import StageOutput
 from .flatbuffers.geometry.Arc import ArcT
 from .flatbuffers.geometry.Line import LineT
@@ -35,7 +37,9 @@ from .flatbuffers.geometry.Line import LineT
 if TYPE_CHECKING:
     from .flatbuffers.artifacts.Bottleneck import BottleneckT
     from .flatbuffers.artifacts.CapacityNode import CapacityNodeT
+    from .flatbuffers.artifacts.FeedlineChain import FeedlineChainT
     from .flatbuffers.artifacts.GridExtent import GridExtentT
+    from .flatbuffers.artifacts.Lattice import LatticeT
     from .flatbuffers.artifacts.LauncherSlot import LauncherSlotT
     from .flatbuffers.artifacts.Partition import PartitionT
     from .flatbuffers.artifacts.PartitionBorder import PartitionBorderT
@@ -51,6 +55,7 @@ IDENTIFIER = b"SCP1"
 
 _OUTPUT_TYPES: dict[int, type] = {
     StageOutput.CapacityPlan: CapacityPlanT,
+    StageOutput.GlobalRouting: GlobalRoutingT,
     StageOutput.Assignment: AssignmentT,
     StageOutput.FinalRouting: FinalRoutingT,
     StageOutput.Geometry: GeometryT,
@@ -139,8 +144,18 @@ def _problems(artifact: ArtifactT) -> list[str]:
         _check_list(output.launchers, "launchers", _launcher_problems, problems)
         _check_list(output.nodes, "nodes", _node_problems, problems)
         _require(output.chains, "chains", problems)
+    elif isinstance(output, GlobalRoutingT):
+        _check_list(output.lattices, "lattices", _lattice_problems, problems)
+        _check_list(output.connections, "connections", _connection_problems, problems)
+        _require(output.outerRing, "outer_ring", problems)
+        _require(output.resonators, "resonators", problems)
     elif isinstance(output, AssignmentT):
         _check_list(output.connections, "connections", _connection_problems, problems)
+        _require(output.ring, "ring", problems)
+        _require(output.launchers, "launchers", problems)
+        _require(output.feeds, "feeds", problems)
+        _check_list(output.chains, "chains", _chain_problems, problems)
+        problems.extend(_parallel_problems(output))
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)
@@ -190,6 +205,44 @@ def _launcher_problems(slot: LauncherSlotT) -> list[str]:
 
 def _node_problems(node: CapacityNodeT) -> list[str]:
     return _missing(node, (("next", "next"),))
+
+
+def _lattice_problems(lattice: LatticeT) -> list[str]:
+    return _missing(lattice, (("points", "points"), ("edges", "edges"), ("selected", "selected")))
+
+
+def _counted(count: int, noun: str) -> str:
+    """A count and its noun, singular only for a count of one.
+
+    Returns:
+        The count and the noun, such as ``1 feed`` or ``2 feeds``.
+    """
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _parallel_problems(assignment: AssignmentT) -> list[str]:
+    """The lists of an assignment that do not hold one entry per ring node.
+
+    Returns:
+        One message per list whose length differs from that of the ring.
+    """
+    if assignment.ring is None:
+        return []
+    ring = len(assignment.ring)
+    lists = (
+        (assignment.connections, "connection"),
+        (assignment.launchers, "launcher"),
+        (assignment.feeds, "feed"),
+    )
+    return [
+        f"{_counted(len(items), name)} for {_counted(ring, 'ring node')}"
+        for items, name in lists
+        if items is not None and len(items) != ring
+    ]
+
+
+def _chain_problems(chain: FeedlineChainT) -> list[str]:
+    return _missing(chain, (("nodes", "nodes"),))
 
 
 def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # ruff: ignore[missing-type-function-argument]

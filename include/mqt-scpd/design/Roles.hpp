@@ -34,7 +34,7 @@ roleName(flatbuffers::design::UnassignedRole role);
  *
  * A wire ends at a @c Resonator or @c Conventional port. It runs to a
  * @c BridgePair port too, crosses the component there and leaves through the
- * paired port, so the grid and the ring carry it as well.
+ * paired port, so the grid, the ring and the lattices carry it as well.
  *
  * @param role The role to test.
  * @return @c true for the roles @c Resonator, @c Conventional and

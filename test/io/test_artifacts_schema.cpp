@@ -122,6 +122,102 @@ TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
 }
 
+/// A connection of the assignment to a resonator, with both of its roles.
+std::unique_ptr<ConnectionT> resonatorConnection() {
+  auto connection = std::make_unique<ConnectionT>();
+  connection->source_role = AssignedRole::ResonatorSource;
+  connection->target_role = AssignedRole::ResonatorTarget;
+  return connection;
+}
+
+TEST(ArtifactSchema, RefusesAnAssignmentWhoseListsDoNotFollowTheRing) {
+  // The connections, the launchers and the feeds hold one entry per ring
+  // node, and a reader finds the entry of a node by the index of the node.
+  AssignmentT assignment;
+  assignment.ring = {PortRef(1), PortRef(2)};
+  assignment.connections.push_back(resonatorConnection());
+  assignment.connections.back()->target = PortRef(1);
+  assignment.launchers = {PortRef(0), PortRef(3)};
+  assignment.feeds.emplace_back(0.0, 0.0);
+  assignment.feeds.emplace_back(1.0, 0.0);
+  assignment.feeds.emplace_back(2.0, 0.0);
+
+  EXPECT_EQ(validate(wrap(std::move(assignment))),
+            (std::vector<std::string>{"1 connection for 2 ring nodes",
+                                      "3 feeds for 2 ring nodes"}));
+}
+
+TEST(ArtifactSchema, RefusesAFeedlineChainThatLeavesTheRing) {
+  // A chain names ring nodes, so each of them has to be a node of the ring.
+  AssignmentT assignment;
+  assignment.connections.push_back(resonatorConnection());
+  assignment.connections.back()->target = PortRef(3);
+  assignment.ring.emplace_back(3);
+  assignment.launchers.emplace_back(9);
+  assignment.feeds.emplace_back(0.0, 0.0);
+  auto chain = std::make_unique<FeedlineChainT>();
+  chain->nodes = {0, 1};
+  assignment.chains.push_back(std::move(chain));
+
+  const auto problems = validate(wrap(std::move(assignment)));
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_EQ(problems[0], "chain 0 names ring node 1 of 1");
+}
+
+TEST(ArtifactSchema,
+     RefusesAnAssignmentWhoseChainsOrTargetsDisagreeWithTheRing) {
+  // Connection i reaches ring node i, a chain runs through one resonator at
+  // least, and one feedline drives each resonator.
+  AssignmentT assignment;
+  assignment.ring = {PortRef(1), PortRef(2), PortRef(5)};
+  for (const std::uint32_t port : {1U, 4U, 5U}) {
+    assignment.connections.push_back(resonatorConnection());
+    assignment.connections.back()->target = PortRef(port);
+  }
+  assignment.launchers = {PortRef(0), PortRef(0), PortRef(3)};
+  assignment.feeds = {Point(0.0, 0.0), Point(1.0, 0.0), Point(2.0, 0.0)};
+  for (const auto& nodes :
+       std::vector<std::vector<std::uint32_t>>{{0, 1}, {}, {1, 2, 2}}) {
+    auto chain = std::make_unique<FeedlineChainT>();
+    chain->nodes = nodes;
+    assignment.chains.push_back(std::move(chain));
+  }
+
+  EXPECT_EQ(validate(wrap(std::move(assignment))),
+            (std::vector<std::string>{
+                "connection 1 targets port 4, not port 2 of ring node 1",
+                "chain 1 runs through no ring node",
+                "chains 0 and 2 both name ring node 1",
+                "chain 2 names ring node 2 twice"}));
+}
+
+TEST(ArtifactSchema, RefusesAGlobalRoutingThatAPictureCannotDraw) {
+  // A picture draws a lattice by index, and the Assignment stage reads the
+  // role of each connection.
+  GlobalRoutingT routing;
+  routing.connections.push_back(resonatorConnection());
+  routing.connections.push_back(std::make_unique<ConnectionT>());
+  routing.connections.back()->target = PortRef(1);
+  auto odd = std::make_unique<LatticeT>();
+  odd->points = {Point(0.0, 0.0), Point(1.0, 0.0)};
+  odd->edges = {0, 1, 0};
+  routing.lattices.push_back(std::move(odd));
+  auto outside = std::make_unique<LatticeT>();
+  outside->points = {Point(0.0, 0.0), Point(1.0, 0.0)};
+  outside->edges = {0, 2};
+  outside->selected = {1};
+  routing.lattices.push_back(std::move(outside));
+
+  EXPECT_EQ(
+      validate(wrap(std::move(routing))),
+      (std::vector<std::string>{
+          "connection 1: source role is unset",
+          "connection 1: target role is unset",
+          "lattice 0 holds 3 edge indices, not two per edge",
+          "lattice 1 names point 2 of 2", "lattice 1 selects edge 1 of 1"}));
+}
+
 TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {
   // The later stages walk a chain by index, so an index outside the nodes, a
   // link back to an earlier node or a second path to one node would make the
@@ -186,8 +282,8 @@ TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {
 }
 
 TEST(ArtifactSchema, RefusesATargetOnTwoCapacityChains) {
-  // The budget of a chain counts one wire of each of its targets, so a
-  // target on two chains, or twice on one, would count its wire twice.
+  // The Global stage asks one wire of each target over its chain, so a
+  // target on two chains, or twice on one, would ask for its wire twice.
   const auto target = [](const std::uint32_t port,
                          const std::vector<std::uint32_t>& next) {
     auto entry = std::make_unique<CapacityNodeT>();
@@ -224,8 +320,8 @@ TEST(ArtifactSchema, RefusesATargetOnTwoCapacityChains) {
 }
 
 TEST(ArtifactSchema, RefusesAGateNodeThatDisagreesWithItsBottleneck) {
-  // A reader takes the capacity of a gate from each of its nodes, so a node
-  // that says more than the bottleneck would let more wires through.
+  // The Global stage reads the capacity of a gate from each of its nodes, so
+  // a node that says more than the bottleneck would let more wires through.
   CapacityPlanT plan = emptyPlan();
   auto bottleneck = std::make_unique<BottleneckT>();
   bottleneck->capacity = 2;
@@ -245,8 +341,8 @@ TEST(ArtifactSchema, RefusesAGateNodeThatDisagreesWithItsBottleneck) {
 }
 
 TEST(ArtifactSchema, RefusesAGateNodeWithoutItsBottleneck) {
-  // A reader takes the capacity of a gate from its bottleneck, so a gate has
-  // to name one of the plan.
+  // The Global stage reads the capacity of a gate from its bottleneck, so a
+  // gate has to name one of the plan.
   CapacityPlanT plan = emptyPlan();
   plan.bottlenecks.push_back(std::make_unique<BottleneckT>());
   auto gate = std::make_unique<CapacityNodeT>();
@@ -260,7 +356,7 @@ TEST(ArtifactSchema, RefusesAGateNodeWithoutItsBottleneck) {
       (std::vector<std::string>{"capacity node 0 names bottleneck 1 of 1"}));
 }
 
-TEST(ArtifactSchema, RefusesAMissingEntryOfACapacityPlan) {
+TEST(ArtifactSchema, RefusesAMissingEntryOfEveryOutput) {
   // Writing an artifact packs every entry of a vector of tables, so a missing
   // entry is refused before the write reads it.
   CapacityPlanT plan = emptyPlan();
@@ -279,6 +375,16 @@ TEST(ArtifactSchema, RefusesAMissingEntryOfACapacityPlan) {
                 "launcher slot 0: missing", "port keepout 0: missing",
                 "capacity node 0: missing"}));
 
+  AssignmentT assignment;
+  assignment.chains.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(assignment))),
+            (std::vector<std::string>{"chain 0: missing"}));
+
+  GlobalRoutingT global;
+  global.lattices.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(global))),
+            (std::vector<std::string>{"lattice 0: missing"}));
+
   CapacityPlanT unwritable = emptyPlan();
   unwritable.bottlenecks.push_back(nullptr);
   EXPECT_THROW(static_cast<void>(writeArtifact(wrap(std::move(unwritable)))),
@@ -293,6 +399,56 @@ TEST(ArtifactSchema, RefusesAMissingEntryOfACapacityPlan) {
                                       "detail grid: missing"}));
 }
 
+TEST(ArtifactSchema, RefusesAPortTheChipDoesNotHave) {
+  // An artifact names ports by index, so one made from another chip can name
+  // a port past the end of this chip's port list.
+  ChipT chip;
+  chip.ports.push_back(std::make_unique<PortT>());
+  chip.ports.push_back(std::make_unique<PortT>());
+
+  GlobalRoutingT routing;
+  routing.outer_ring = {PortRef(0), PortRef(2)};
+  routing.resonators = {PortRef(1)};
+  routing.connections.push_back(std::make_unique<ConnectionT>());
+  routing.connections.back()->source = std::make_unique<PortRef>(5);
+  routing.connections.back()->target = PortRef(1);
+  EXPECT_EQ(validate(wrap(std::move(routing)), chip),
+            (std::vector<std::string>{"connection 0 source names port 5 of 2",
+                                      "ring node 1 names port 2 of 2"}));
+
+  AssignmentT assignment;
+  assignment.ring = {PortRef(1)};
+  assignment.launchers = {PortRef(3)};
+  auto chain = std::make_unique<FeedlineChainT>();
+  chain->start = std::make_unique<PortRef>(0);
+  chain->end = std::make_unique<PortRef>(4);
+  assignment.chains.push_back(std::move(chain));
+  EXPECT_EQ(validate(wrap(std::move(assignment)), chip),
+            (std::vector<std::string>{"launcher 0 names port 3 of 2",
+                                      "chain 0 names port 4 of 2"}));
+
+  CapacityPlanT plan;
+  auto slot = std::make_unique<LauncherSlotT>();
+  slot->port = PortRef(2);
+  plan.launchers.push_back(std::move(slot));
+  auto target = std::make_unique<CapacityNodeT>();
+  target->kind = CapacityElement::Target;
+  target->id = 9;
+  plan.nodes.push_back(std::move(target));
+  auto gate = std::make_unique<CapacityNodeT>();
+  gate->kind = CapacityElement::Bottleneck;
+  gate->id = 9;
+  plan.nodes.push_back(std::move(gate));
+  // A gate names a bottleneck and no port.
+  EXPECT_EQ(validate(wrap(std::move(plan)), chip),
+            (std::vector<std::string>{"launcher slot 0 names port 2 of 2",
+                                      "capacity node 0 names port 9 of 2"}));
+
+  GlobalRoutingT fitting;
+  fitting.outer_ring = {PortRef(0), PortRef(1)};
+  EXPECT_TRUE(validate(wrap(std::move(fitting)), chip).empty());
+}
+
 TEST(ArtifactSchema, AssignmentRoundTrips) {
   AssignmentT assignment;
   assignment.connections.push_back(std::make_unique<ConnectionT>());
@@ -300,6 +456,14 @@ TEST(ArtifactSchema, AssignmentRoundTrips) {
   assignment.connections.back()->source_role = AssignedRole::ResonatorSource;
   assignment.connections.back()->target_role = AssignedRole::ResonatorTarget;
   assignment.objective = 132.68;
+  assignment.ring.emplace_back(3);
+  assignment.launchers.emplace_back(9);
+  // A feed that is not on its launcher: the point a feedline end starts at.
+  assignment.feeds.emplace_back(120.5, -40.25);
+  auto chain = std::make_unique<FeedlineChainT>();
+  chain->nodes = {0};
+  chain->start = std::make_unique<PortRef>(9);
+  assignment.chains.push_back(std::move(chain));
 
   const ArtifactT back = readArtifact(writeArtifact(wrap(assignment)));
   ASSERT_NE(back.output.AsAssignment(), nullptr);
@@ -373,6 +537,9 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnUnsetRole) {
   AssignmentT assignment;
   assignment.connections.push_back(std::make_unique<ConnectionT>());
   assignment.connections.back()->target = PortRef(1);
+  assignment.ring = {PortRef(1)};
+  assignment.launchers = {PortRef(0)};
+  assignment.feeds.emplace_back(0.0, 0.0);
   const auto bytes = packUnchecked(wrap(assignment));
 
   EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
@@ -405,7 +572,14 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnArtifactWithoutItsProducer) {
   for (const bool withProducer : {true, false}) {
     flatbuffers::FlatBufferBuilder builder;
     const auto producer = builder.CreateString("mqt-scpd test");
-    const auto output = CreateGlobalRouting(builder);
+    // Every required vector is present, so that the producer is the only
+    // thing the artifact lacks. A null vector would leave the field out,
+    // which is a different problem.
+    const std::vector<::flatbuffers::Offset<Lattice>> noLattices;
+    const std::vector<::flatbuffers::Offset<Connection>> noConnections;
+    const std::vector<PortRef> noPorts;
+    const auto output = CreateGlobalRoutingDirect(
+        builder, &noLattices, &noConnections, &noPorts, &noPorts);
     const auto table = builder.StartTable();
     if (withProducer) {
       builder.AddOffset(Artifact::VT_PRODUCER, producer);
