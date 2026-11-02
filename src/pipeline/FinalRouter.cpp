@@ -2492,13 +2492,33 @@ public:
     // any case, and a chip whose box is that small keeps its meanders
     // where they fit.
     const bool inBox = entry.has_value();
-    const auto enterable = [this, inBox](const std::uint32_t x,
-                                         const std::uint32_t y) {
+    // Nor does it enter the band of the crossing rule around a feedline,
+    // on any heading, outside the reach of its own coupler: the search
+    // keeps the rule step by step, the meander only by its cells, and a
+    // loop laid along a feedline inside the band breaks it (9Q_dense:
+    // resonator 27's meander ran 7 cells beside f6, 2026-11-02). A meander
+    // never has to cross a feedline, so the whole band is closed to it.
+    const auto& constraints = router_.crossingConstraints();
+    const auto own =
+        wire.couplerAtSource != NO_OWNER
+            ? std::optional<PathPoint>(couplers_[wire.couplerAtSource].anchor)
+            : std::nullopt;
+    const auto reach = couplerReach();
+    const auto enterable = [this, inBox, &constraints, own,
+                            reach](const std::uint32_t x, const std::uint32_t y) {
       if (inBox && !couplerBox_.holds(x, y, tuning_.couplerBoxMargin)) {
         return false;
       }
-      return x < scene_.router.width && y < scene_.router.height &&
-             !corridor_.testCell(x, y);
+      if (x >= scene_.router.width || y >= scene_.router.height ||
+          corridor_.testCell(x, y)) {
+        return false;
+      }
+      if (constraints.empty() || constraints.maskAt(x, y) == 0U) {
+        return true;
+      }
+      return own.has_value() &&
+             std::hypot(static_cast<double>(x) - own->x,
+                        static_cast<double>(y) - own->y) <= reach;
     };
     options.bendPrice = MEANDER_BEND_PRICE;
     options.alternatives = tuning_.meanderRipupAlternatives;
