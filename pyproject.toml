@@ -20,7 +20,9 @@ name = "mqt-scpd"
 description = "Physical Design for Superconducting Quantum Chips"
 readme = "README.md"
 keywords = [ "design-automation", "MQT", "quantum-computing" ]
-license = "MIT"
+# The wheels link in HiGHS and nlohmann/json (MIT), FlatBuffers (Apache-2.0), Boost.Polygon
+# (BSL-1.0) and pdqsort, which HiGHS compiles in (Zlib); the sdist carries MIT code only.
+license = "MIT AND Apache-2.0 AND BSL-1.0 AND Zlib"
 license-files = [ "LICENSE" ]
 requires-python = ">=3.11"
 classifiers = [
@@ -49,6 +51,9 @@ dependencies = [
   # The same version as FLATBUFFERS_VERSION in cmake/ExternalDependencies.cmake, which generates the code
   "flatbuffers~=25.12.19",
   "nanobind-backend>=1",
+  # Renders the terminal output of a run: the stage blocks and the live progress. 14.1 is the
+  # first version that reads TTY_INTERACTIVE.
+  "rich>=14.1",
 ]
 
 [[project.authors]]
@@ -80,6 +85,9 @@ dev = [
 test = [
   # KLayout ships no wheels for Windows on ARM or for CPython 3.15; the export tests skip without it.
   "klayout~=0.30.6; python_version<'3.15' and (sys_platform!='win32' or platform_machine!='ARM64')",
+  # The generated FlatBuffers code reads a vector of numbers into a NumPy array when NumPy is
+  # importable. The tests read the artifacts with and without NumPy.
+  "numpy>=2.3.2",
   "pytest>=9.0.1",
   "pytest-cov>=7.1",
   "pytest-sugar>=1.1.1",
@@ -324,6 +332,7 @@ log_level = "INFO"
 minversion = "9.0"
 strict = true
 testpaths = [ "test/python" ]
+usefixtures = [ "default_solver", "plain_terminal" ]
 
 
 [tool.coverage]

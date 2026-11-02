@@ -32,10 +32,11 @@ if(NOT TARGET MQT::ProjectOptions)
   set_target_properties(project_options PROPERTIES EXPORT_NAME ProjectOptions)
 endif()
 
-# Floating-point contraction stays off in every target that MQT SCPD compiles. A parent project may
-# define MQT::ProjectOptions first, so the option comes from the target mqt-scpd-fp-contract-off,
-# which does not depend on the guard above. The module libraries, the tests and the Python bindings
-# link mqt-scpd-fp-contract-off PRIVATE, so the option does not reach their users.
+# Floating-point contraction stays off in every target of MQT SCPD itself. The dependencies, HiGHS
+# among them, keep the options of their own build. A parent project may define MQT::ProjectOptions
+# first, so the option comes from the target mqt-scpd-fp-contract-off, which does not depend on the
+# guard above. The module libraries, the tests and the Python bindings link mqt-scpd-fp-contract-off
+# PRIVATE, so the option does not reach their users.
 #
 # Contraction turns a * b + c into one fused multiply-add, which rounds once instead of twice.
 # Without contraction, +, -, *, / and std::sqrt round the same on every x86-64 and arm64 target, so
